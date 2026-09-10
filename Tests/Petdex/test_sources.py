@@ -2,6 +2,7 @@
 
 import io
 import json
+import os
 import zipfile
 
 import pytest
@@ -24,6 +25,91 @@ def package(root, **metadata):
     )
     (root / "spritesheet.png").write_bytes(sheet())
     return root
+
+
+def local_package_entry(tmp_path, kind):
+    root = package(tmp_path / f"pet-{kind}")
+    if kind == "folder":
+        return root
+    if kind == "json":
+        return root / "pet.json"
+    path = tmp_path / "pet.zip"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(
+            "demo/pet.json", json.dumps({"name": "Demo", "spriteVersionNumber": 1})
+        )
+        archive.writestr("demo/spritesheet.png", sheet())
+    return path
+
+
+@pytest.mark.parametrize("kind", ["folder", "json", "zip"])
+def test_capability_fallback_reads_regular_sources_without_posix_flags(
+    tmp_path, monkeypatch, kind
+):
+    from tldw_chatbook.Petdex import sources
+
+    entry = local_package_entry(tmp_path, kind)
+    for name in ("O_NOFOLLOW", "O_DIRECTORY", "O_NONBLOCK"):
+        monkeypatch.delattr(sources.os, name, raising=False)
+
+    source = read_local_package(entry)
+
+    assert source.title == "Demo"
+    assert source.is_current()
+
+
+@pytest.mark.parametrize("kind", ["folder", "json", "zip"])
+def test_capability_fallback_avoids_unsupported_dir_fd_operations(
+    tmp_path, monkeypatch, kind
+):
+    from tldw_chatbook.Petdex import sources
+
+    entry = local_package_entry(tmp_path, kind)
+    real_open = os.open
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+
+    def open_without_dir_fd(path, flags, mode=0o777, *, dir_fd=None):
+        if dir_fd is not None or (nofollow and flags & nofollow):
+            raise NotImplementedError("descriptor-relative open is unavailable")
+        return real_open(path, flags, mode)
+
+    monkeypatch.setattr(sources.os, "supports_dir_fd", frozenset())
+    monkeypatch.setattr(sources.os, "open", open_without_dir_fd)
+
+    source = read_local_package(entry)
+
+    assert source.title == "Demo"
+    assert source.is_current()
+
+
+@pytest.mark.parametrize("kind", ["folder", "json", "zip"])
+def test_capability_fallback_keeps_changed_sources_stale(tmp_path, monkeypatch, kind):
+    from tldw_chatbook.Petdex import sources
+
+    entry = local_package_entry(tmp_path, kind)
+    monkeypatch.setattr(sources.os, "O_NOFOLLOW", 0, raising=False)
+    source = read_local_package(entry)
+    if kind == "zip":
+        entry.write_bytes(b"changed")
+    else:
+        (entry.parent if kind == "json" else entry).joinpath(
+            "spritesheet.png"
+        ).write_bytes(b"changed")
+
+    assert not source.is_current()
+
+
+@pytest.mark.parametrize("kind", ["folder", "json", "zip"])
+def test_capability_fallback_rejects_linked_sources(tmp_path, monkeypatch, kind):
+    from tldw_chatbook.Petdex import sources
+
+    target = local_package_entry(tmp_path, kind)
+    link = tmp_path / ("linked-pet" if kind == "folder" else f"linked-{kind}")
+    link.symlink_to(target, target_is_directory=kind == "folder")
+    monkeypatch.setattr(sources.os, "O_NOFOLLOW", 0, raising=False)
+
+    with pytest.raises(ValueError, match="petdex_source_invalid"):
+        read_local_package(link)
 
 
 def test_folder_source_preserves_terms_is_immutable_and_catches_replacement(tmp_path):

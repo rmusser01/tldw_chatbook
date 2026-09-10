@@ -90,7 +90,7 @@ async def review_package(app, modal, package, pilot):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "outcome", ["cancel", "source", "profile", "publication", "apply"]
+    "outcome", ["cancel", "source", "profile", "publication", "settings", "apply"]
 )
 async def test_management_petdex_review_apply_and_safe_exits(
     journey, outcome, monkeypatch
@@ -123,6 +123,12 @@ async def test_management_petdex_review_apply_and_safe_exits(
                     raise OSError("disk full")
 
                 monkeypatch.setattr(library_module, "publish_persona_visual", fail)
+            elif outcome == "settings":
+                from tldw_chatbook import config
+
+                monkeypatch.setattr(
+                    config, "save_settings_to_cli_config", lambda _: False
+                )
             modal.query_one("#buddy-apply", Button).press()
             await pilot.pause()
             await _until(lambda: not modal._applying)
@@ -133,6 +139,16 @@ async def test_management_petdex_review_apply_and_safe_exits(
             assert (
                 manager.controller.current_preferences().selection.buddy_id == record.id
             )
+        elif outcome == "settings":
+            assert len(manager.library.list_buddies()) == 1
+            assert manager.controller.current_preferences() == before
+            recovery = str(modal.query_one("#buddy-form-error").render())
+            assert "Buddy was installed" in recovery
+            assert "previous settings" in recovery
+            assert "Retry Apply" in recovery
+            assert "reopen" in recovery
+            await pilot.press("escape")
+            assert len(manager.library.list_buddies()) == 1
         else:
             assert manager.library.list_buddies() == ()
             assert manager.controller.current_preferences() == before

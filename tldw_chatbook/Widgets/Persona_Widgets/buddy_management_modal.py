@@ -342,7 +342,8 @@ class BuddyManagementModal(
                     self.query_one("#buddy-import", Input).value = ""
                     self.staged_review = result
                     self.query_one("#buddy-staged", Static).update(
-                        f"{result.title} reviewed. Apply to install; Cancel discards it."
+                        f"{result.title} reviewed. Apply to install. Before Apply, "
+                        "Cancel discards this staged review without installing it."
                     )
             else:
                 await self._create_character(

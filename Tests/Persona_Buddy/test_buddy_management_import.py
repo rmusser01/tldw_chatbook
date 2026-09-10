@@ -85,6 +85,10 @@ async def test_equivalent_retry_paths_reuse_installed_buddy_after_save_failure(
             expected_revision=0,
             imports=cached_imports,
         )
+    assert "Buddy was installed" in str(failed.value)
+    assert "previous settings" in str(failed.value)
+    assert "Retry Apply" in str(failed.value)
+    assert "reopen" in str(failed.value)
     installed = manager.library.list_buddies()
     assert len(installed) == 1
     assert manager.controller.current_preferences() == previous
@@ -234,8 +238,9 @@ async def test_changed_archive_is_not_reported_as_storage_failure(imports, monke
         return review
 
     monkeypatch.setattr(manager.library, "review_archive", replace_after_review)
-    with pytest.raises(ValueError, match="changed during import"):
+    with pytest.raises(ValueError, match="changed during import") as failed:
         await manager.apply_choice(BuddyManagementChoice(import_path=str(archive)))
+    assert "fresh review" in str(failed.value)
     assert manager.controller.current_preferences() == previous
     assert manager.library.list_buddies() == ()
 
@@ -340,3 +345,32 @@ async def test_reviewed_petdex_apply_publishes_once_and_rejects_stale(imports):
         ).identity.persona_id
         is None
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure", "recovery"),
+    [
+        (ValueError("buddy_source_changed"), "fresh review"),
+        (OSError("private/profile/pets/demo"), "profile storage"),
+    ],
+)
+async def test_staged_petdex_publication_errors_are_actionable_and_path_free(
+    imports, monkeypatch, failure, recovery
+):
+    manager, archive, previous = imports
+    review = manager.library.review_archive(archive)
+
+    def fail_publish(_review):
+        raise failure
+
+    monkeypatch.setattr(manager.library, "publish_review", fail_publish)
+    with pytest.raises(ValueError) as failed:
+        await manager.apply_choice(BuddyManagementChoice(), staged_review=review)
+
+    message = str(failed.value)
+    assert recovery in message
+    assert "buddy_source_changed" not in message
+    assert "private/profile" not in message
+    assert manager.controller.current_preferences() == previous
+    assert manager.library.list_buddies() == ()

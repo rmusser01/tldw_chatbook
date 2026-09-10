@@ -347,7 +347,9 @@ class PersonasLibraryPane(Vertical):
         elif mode == "lore":
             import_button.tooltip = "Import a world book (JSON)."
         else:
-            import_button.tooltip = "Import a character card or create a character from a Buddy archive."
+            import_button.tooltip = (
+                "Import a character card or create a character from a Buddy archive."
+            )
         self.query_one("#personas-library-duplicate", Button).display = mode in (
             "characters",
             "dictionaries",

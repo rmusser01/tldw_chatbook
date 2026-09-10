@@ -11,11 +11,14 @@ implementation exists on `codex/buddy-import-design` but was never shipped. This
 plan integrates that implementation; historical verification is not evidence for
 the combined code.
 
-ADR required: no new architectural decision for restoration.
-ADR paths: existing ADR-074, playback ADR-144 and Petdex ADR-145 on the source branch.
-Reason: implement already approved contracts; reconcile the two colliding ADR IDs
-against cached refs before publication. An independent-management entry point must
-extend the existing ownership ADR explicitly before its implementation.
+ADR required: yes for the independent-management destination and partial-Apply
+contract; no new decision for the restored playback/conversion/Petdex implementation.
+ADR paths: existing ADR-074, ADR-139, playback ADR-144 and Petdex ADR-145, plus
+supplemental ADR-146 for independent Buddy publication and character entry points.
+Reason: implement the approved contracts and record the new destination without
+rewriting Accepted ADR-139/145. ADR-146 partially supersedes only ADR-145's
+saved-Persona-only restriction; saved Persona authoring and the source/HTTPS trust
+decisions remain in force while the independent destination adds its recovery order.
 
 ## Global Constraints
 
@@ -70,9 +73,11 @@ identity; no third-party artifact binaries committed.
 
 ## Task 2: Finish independent Buddy installation and conversion journeys
 
-Tracked by TASK-32238. Read that task and amended ADR139 before implementation.
-ADR required: amend existing ADR139; retain ADR074 conversion, ADR144 playback
-and ADR145 Petdex trust contracts. No schema or runtime ownership change.
+Tracked by TASK-32238. Read that task and supplemental ADR146 before implementation.
+ADR required: ADR146 supplements existing ADR139 and partially supersedes only
+ADR145's saved-Persona-only destination restriction; retain saved Persona authoring,
+ADR074 conversion, ADR144 playback and ADR145 source/HTTPS trust contracts.
+No schema or runtime ownership change.
 
 Work only in this worktree. Keep existing Persona authoring and archive character
 routes working. Root owns live downloaded-pet qualification and tldw-stuff changes.
@@ -83,9 +88,12 @@ routes working. Root owns live downloaded-pet qualification and tldw-stuff chang
    The second operates on the selected installed independent Buddy.
 2. Reuse BuddyLibrary.review_archive/publish_review for independent publication.
    Petdex review stages content for management Apply; cancelling the review or
-   management form must not publish a Buddy or change preferences. Keep temporary
-   bytes/source guards owned and released on all exit paths. Preserve notices,
-   unspecified licenses and source mapping provenance. No executable source text.
+   management form before Apply must not publish a Buddy or change preferences.
+   Publication precedes settings persistence, so a partial Apply leaves the installed
+   Buddy durable and the previous settings selected; retry the same form or reopen and
+   verify the installed Buddy before importing again. Keep temporary bytes/source
+   guards owned and released on all exit paths. Preserve notices, unspecified licenses
+   and source mapping provenance. No executable source text.
 3. Extend the saved snapshot boundary to read a real independent Buddy owner with
    its revision/version guard, preserving existing Persona snapshot callers. Reuse
    BuddyCharacterReviewDialog and existing character publication. Explicit Create

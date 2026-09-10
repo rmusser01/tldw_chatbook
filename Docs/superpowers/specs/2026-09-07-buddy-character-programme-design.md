@@ -121,10 +121,16 @@ for combined-code evidence.
 ## Independent management integration (TASK-32238)
 
 Console Buddy management is the normal entry for Petdex review and selected-Buddy
-character creation, under amended ADR139. Petdex review prepares unpublished native
-bytes through the existing importer. Apply publishes an independent owner, while
-cancel discards staging without changing preferences. Original source checks and
-exact profile/destination authority remain active through publication.
+character creation under supplemental ADR146, which retains ADR139's independent
+ownership and partially supersedes only ADR145's saved-Persona-only destination
+restriction. Saved Persona authoring and ADR145's source/HTTPS trust remain in force.
+Petdex review prepares
+unpublished native bytes through the existing importer. Cancel before Apply discards
+staging without changing preferences. Apply publishes an independent owner before
+settings persistence; if the latter fails, the installed Buddy remains durable while
+previous settings remain selected. Retry the same form, or reopen and verify the
+installed Buddy before importing again. Original source checks and exact
+profile/destination authority remain active through publication.
 
 Character review pins the installed Buddy owner revision, immutable version and
 verified asset bytes through the shared saved snapshot API. Persona callers remain

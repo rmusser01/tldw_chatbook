@@ -155,7 +155,9 @@ If import fails, the dialog keeps your entered path and previous Buddy selection
 A missing-file message means to check the download location. An invalid-pack
 message means to download the archive again. An installation error means the
 archive was read, but profile storage could not be updated; check its permissions
-and free space before retrying.
+and free space before retrying. If the Buddy was installed but settings could not be
+saved, the previous settings remain selected. Retry Apply in the same form, or reopen
+management and verify the installed Buddy before importing again.
 
 ## Use your own Persona Visual pack
 
@@ -171,9 +173,12 @@ for the surrounding editor and import/export workflow.
 Open **Console → composer menu → Buddy & Persona Management → Import from Petdex**.
 No Persona is required. Review the URL or local package, source credits, terms and
 state mappings, then choose **Use draft**. Back in management, **Apply** installs
-one independent Buddy. Cancelling the review or management discards the staged
-import and preserves settings. Selecting another installed Buddy or entering a
-native pack path replaces the staged Petdex choice.
+one independent Buddy. Cancelling the review or management before **Apply** discards
+the staged import and preserves settings. If artwork installs but settings cannot be
+saved, the installed Buddy remains and the previous settings stay selected. Retry
+**Apply** in that form, or reopen management and verify the installed Buddy before
+importing again. Selecting another installed Buddy or entering a native pack path
+replaces the staged Petdex choice.
 
 Persona authoring also supports this review. In a saved active local Persona's **Persona Visual** editor, save or cancel any
 pending edits and choose **Petdex…**. Paste a public `petdex.dev/pets/...` URL or
@@ -199,9 +204,12 @@ a static preview is shown with an explanation, while the imported native timelin
 retains its animation.
 
 After reviewing terms and mappings, choose **Use draft**, then **Apply** in management
-or **Save Pack** in the Persona editor to publish it. Cancelling or merely previewing leaves the saved
-Buddy unchanged. If the source files or selected Persona change during review,
-start a fresh review. A saved import uses local copies and works offline.
+or **Save Pack** in the Persona editor to publish it. Cancelling before **Apply** or
+**Save Pack**, or merely previewing, leaves saved artwork unchanged. After a partial
+**Apply**, the published Buddy remains installed even if settings retain their prior
+values. Retry the same form, or reopen and verify that Buddy before importing again.
+If the source files or selected Persona change during review, start a fresh review.
+A saved import uses local copies and works offline.
 
 Use **Export saved pack…** to download a `.tldw-persona-vpack` with the original
 images and carried notices. Reimport it using **Import Pack…**. When an Actor Pack

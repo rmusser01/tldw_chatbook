@@ -290,6 +290,7 @@ async def test_petdex_staging_is_discarded_on_cancel_and_character_uses_selected
         modal.query_one("#buddy-petdex", Button).press()
         await pilot.pause()
         assert modal.staged_review is review
+        assert "Before Apply" in str(modal.query_one("#buddy-staged").render())
         assert modal.query_one("#buddy-character", Button).disabled
         await pilot.press("escape")
         assert modal.staged_review is None

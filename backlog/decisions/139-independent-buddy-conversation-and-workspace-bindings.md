@@ -98,24 +98,3 @@ copies own new pack/version rows and private file copies. Legacy selection migra
 uses a unique source key, publishes first, and writes preferences before changing the
 selected owner; failed attempts keep the old selection. Built-in and import records
 preserve public artwork notices, and unknown license statements remain null.
-
-## Petdex and character management entry points (TASK-32238)
-
-Console Buddy management may stage a reviewed Petdex source without selecting or
-creating a Persona. Petdex's existing bounded review produces native archive data;
-the independent Buddy library retains its existing validation/publication authority.
-Apply publishes staged artwork. Cancelling either review or management publishes
-nothing and changes no preferences. Temporary source bytes and revalidation guards
-belong to that management operation and are cleaned on cancellation or completion.
-
-Create character reads a saved independent Buddy snapshot with the exact Buddy
-owner, revision and immutable pack version. Existing Persona snapshot callers remain
-supported. The ordinary character review and guarded publication create a separate,
-editable local character retaining artwork attribution and expressions. It does not
-apply any staged follow-target or Persona settings. The explicit character creation
-action is durable even if the surrounding management form is later cancelled.
-
-Source changes and profile/destination changes invalidate pending work. No fabricated
-Persona identifier, hidden Persona, parallel importer or second character renderer
-is introduced. ADR074, ADR144 and ADR145 retain the conversion, motion and Petdex
-trust contracts. These entry points extend existing ownership without a migration.

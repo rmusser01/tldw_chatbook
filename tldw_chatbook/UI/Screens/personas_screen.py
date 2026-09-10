@@ -568,7 +568,9 @@ def _character_import_filters() -> Any:
     return Filters(
         (
             "Character Cards",
-            lambda p: p.suffix.lower() in (".json", ".png", ".webp", ".tldw-persona-vpack"),
+            lambda p: (
+                p.suffix.lower() in (".json", ".png", ".webp", ".tldw-persona-vpack")
+            ),
         ),
         ("Buddy Packs", lambda p: p.suffix.lower() == ".tldw-persona-vpack"),
         ("JSON Files", lambda p: p.suffix.lower() == ".json"),
@@ -9282,7 +9284,10 @@ class PersonasScreen(BaseAppScreen):
                 raise cancellation
 
     async def _import_persona_visual_from_path(
-        self, path: str, *, source_guard: Callable[[], bool] | None = None,
+        self,
+        path: str,
+        *,
+        source_guard: Callable[[], bool] | None = None,
         destination_guard: Callable[[], bool] | None = None,
     ) -> bool:
         state = self._persona_visual_authoring
@@ -9370,8 +9375,10 @@ class PersonasScreen(BaseAppScreen):
                 )
                 cancellation = cancellation or checked.cancellation
                 if (
-                    checked.error is not None or checked.value is not True
-                    or cancellation is not None or event.is_set()
+                    checked.error is not None
+                    or checked.value is not True
+                    or cancellation is not None
+                    or event.is_set()
                     or not self._persona_visual_snapshot_is_current(state.snapshot)
                     or (destination_guard is not None and not destination_guard())
                 ):
@@ -9792,8 +9799,10 @@ class PersonasScreen(BaseAppScreen):
 
         self._io_dialog_active = True
         self.run_worker(
-            review_petdex_import(self), group="personas-petdex",
-            exclusive=True, exit_on_error=False,
+            review_petdex_import(self),
+            group="personas-petdex",
+            exclusive=True,
+            exit_on_error=False,
         )
 
     @on(PersonaVisualExportRequested)
@@ -9807,8 +9816,10 @@ class PersonasScreen(BaseAppScreen):
 
         self._io_dialog_active = True
         self.run_worker(
-            export_native_buddy(self), group="personas-native-export",
-            exclusive=True, exit_on_error=False,
+            export_native_buddy(self),
+            group="personas-native-export",
+            exclusive=True,
+            exit_on_error=False,
         )
 
     @on(PersonaVisualImportRequested)
@@ -13220,7 +13231,8 @@ class PersonasScreen(BaseAppScreen):
 
                     if not buddy_import_guard():
                         self._notify(
-                            "Destination changed. Start a fresh Buddy import.", "warning"
+                            "Destination changed. Start a fresh Buddy import.",
+                            "warning",
                         )
                         return
                     await review_buddy_character(

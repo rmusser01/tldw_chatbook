@@ -64,6 +64,51 @@ def _review_buddy_import(library: Any, archive_path: str) -> Any:
         ) from exc
 
 
+def _buddy_publication_error(exc: Exception, *, staged: bool) -> ValueError:
+    """Translate publication failures into path-free, route-specific recovery."""
+    if isinstance(exc, ValueError) and str(exc) in {
+        "buddy_source_changed",
+        "persona_visual_authority_changed",
+    }:
+        if staged:
+            return ValueError(
+                "The Petdex source changed before installation. Start a fresh review."
+            )
+        return ValueError(
+            "The Buddy pack changed during import. Finish downloading it, then "
+            "retry Apply to start a fresh review."
+        )
+    subject = "The reviewed Buddy" if staged else "The Buddy pack"
+    return ValueError(
+        f"{subject} could not be installed. Check profile storage permissions and "
+        "free space, then retry."
+    )
+
+
+def _settings_save_error(*, imported: bool, restored: bool) -> ValueError:
+    """Describe settings recovery after optional artwork publication."""
+    if imported and restored:
+        return ValueError(
+            "Buddy was installed. Could not save Buddy settings. Your previous "
+            "settings were retained. Retry Apply in this form, or reopen Buddy "
+            "management to verify the installed Buddy before importing again."
+        )
+    if imported:
+        return ValueError(
+            "Buddy was installed, but settings changed elsewhere while saving. "
+            "Reopen Buddy management to verify the installed Buddy and current "
+            "settings before importing again."
+        )
+    if restored:
+        return ValueError(
+            "Could not save Buddy settings. Your previous settings are retained; retry."
+        )
+    return ValueError(
+        "Buddy settings changed elsewhere while saving. Cancel and reopen to review "
+        "the current selection."
+    )
+
+
 class BuddyManagementCoordinator:
     """Own staged-management application and scope; never own Console execution."""
 
@@ -726,9 +771,11 @@ class BuddyManagementCoordinator:
             else:
                 assignment = None
             selected_id = choice.buddy_id
+            imported_artwork = False
             if staged_review is not None and not choice.import_path:
                 from tldw_chatbook.Petdex.review import drain_thread
 
+                imported_artwork = True
                 key = "review:" + staged_review.source_sha256
                 selected_id = imports.get(key) if imports is not None else None
                 if selected_id is None:
@@ -742,7 +789,12 @@ class BuddyManagementCoordinator:
                             )
                         ),
                     )
-                    record = await drain_thread(self.library.publish_review, guarded)
+                    try:
+                        record = await drain_thread(
+                            self.library.publish_review, guarded
+                        )
+                    except Exception as exc:
+                        raise _buddy_publication_error(exc, staged=True) from exc
                     selected_id = record.id
                     if imports is not None:
                         imports[key] = selected_id
@@ -755,6 +807,7 @@ class BuddyManagementCoordinator:
                     validate_buddy_import_path,
                 )
 
+                imported_artwork = True
                 archive_path = await asyncio.to_thread(
                     validate_buddy_import_path, choice.import_path
                 )
@@ -782,16 +835,7 @@ class BuddyManagementCoordinator:
                             self.library.publish_review, guarded
                         )
                     except Exception as exc:
-                        if isinstance(exc, ValueError) and str(exc) in {
-                            "buddy_source_changed",
-                            "persona_visual_authority_changed",
-                        }:
-                            raise ValueError(
-                                "The pack changed during import. Finish downloading it, then retry."
-                            ) from exc
-                        raise ValueError(
-                            "The pack was read but could not be installed. Check profile storage permissions and free space, then retry."
-                        ) from exc
+                        raise _buddy_publication_error(exc, staged=False) from exc
                     selected_id = record.id
                     if imports is not None:
                         imports[archive_path] = selected_id
@@ -839,8 +883,8 @@ class BuddyManagementCoordinator:
                 )
             except Exception as exc:
                 restored = controller.rollback_preferences_revision(revision, previous)
-                error = ValueError(
-                    "Could not save Buddy settings. Check profile storage and retry."
+                error = _settings_save_error(
+                    imported=imported_artwork, restored=restored
                 )
                 if restored:
                     error.buddy_retry_revision = (
@@ -849,10 +893,8 @@ class BuddyManagementCoordinator:
                 raise error from exc
             if not saved:
                 restored = controller.rollback_preferences_revision(revision, previous)
-                error = ValueError(
-                    "Could not save Buddy settings. Your previous settings are retained; retry."
-                    if restored
-                    else "Buddy settings changed elsewhere while saving. Cancel and reopen to review the current selection."
+                error = _settings_save_error(
+                    imported=imported_artwork, restored=restored
                 )
                 if restored:
                     error.buddy_retry_revision = (

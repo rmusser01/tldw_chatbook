@@ -25,6 +25,7 @@ MAX_METADATA_BYTES = 2 * 1024 * 1024
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
 MAX_PACKAGE_BYTES = 32 * 1024 * 1024
 MAX_MEMBERS = 128
+_READ_CHUNK_BYTES = 64 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,7 +269,7 @@ def _read_fd(fd: int, cap: int) -> tuple[bytes, tuple]:
         raise _invalid()
     chunks, total = [], 0
     while True:
-        data = os.read(fd, min(65536, cap + 1 - total))
+        data = os.read(fd, min(_READ_CHUNK_BYTES, cap + 1 - total))
         if not data:
             break
         chunks.append(data)
@@ -280,7 +281,23 @@ def _read_fd(fd: int, cap: int) -> tuple[bytes, tuple]:
     return b"".join(chunks), _identity(before)
 
 
+def _supports_secure_descriptor_walk() -> bool:
+    """Return whether this runtime supports the complete no-follow walk."""
+    return (
+        os.name == "posix"
+        and getattr(os, "O_NOFOLLOW", 0) > 0
+        and getattr(os, "O_DIRECTORY", 0) > 0
+        and getattr(os, "O_NONBLOCK", 0) > 0
+        and os.open in getattr(os, "supports_dir_fd", ())
+        and os.stat in getattr(os, "supports_dir_fd", ())
+        and os.stat in getattr(os, "supports_follow_symlinks", ())
+        and os.scandir in getattr(os, "supports_fd", ())
+    )
+
+
 def _read_path(path: Path, cap: int) -> tuple[bytes, tuple]:
+    if not _supports_secure_descriptor_walk():
+        return _read_path_fallback(path, cap)
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         return _read_fd(fd, cap)
@@ -290,6 +307,8 @@ def _read_path(path: Path, cap: int) -> tuple[bytes, tuple]:
 
 def _folder_file(root: Path, name: str, cap: int) -> tuple[bytes, tuple]:
     parts = _relative(name).split("/")
+    if not _supports_secure_descriptor_walk():
+        return _read_path_fallback(root.joinpath(*parts), cap)
     fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         for part in parts[:-1]:
@@ -305,6 +324,68 @@ def _folder_file(root: Path, name: str, cap: int) -> tuple[bytes, tuple]:
             return _read_fd(child, cap)
         finally:
             os.close(child)
+    finally:
+        os.close(fd)
+
+
+def _fallback_directories(path: Path) -> tuple[Path, ...]:
+    parent = path.parent
+    return (*reversed(parent.parents), parent)
+
+
+def _snapshot_directories(
+    directories: tuple[Path, ...],
+) -> tuple[tuple[Path, tuple], ...]:
+    snapshot = []
+    for directory in directories:
+        info = os.lstat(directory)
+        if not stat.S_ISDIR(info.st_mode):
+            raise _invalid()
+        snapshot.append((directory, _identity(info)))
+    return tuple(snapshot)
+
+
+def _verify_directory_snapshot(snapshot: tuple[tuple[Path, tuple], ...]) -> None:
+    for directory, identity in snapshot:
+        info = os.lstat(directory)
+        if not stat.S_ISDIR(info.st_mode) or _identity(info) != identity:
+            raise ValueError("petdex_source_stale")
+
+
+def _verify_fallback_leaf(path: Path, expected: tuple, opened: os.stat_result) -> None:
+    named = os.lstat(path)
+    if (
+        not stat.S_ISREG(opened.st_mode)
+        or not stat.S_ISREG(named.st_mode)
+        or _identity(opened) != expected
+        or _identity(named) != expected
+    ):
+        raise ValueError("petdex_source_stale")
+
+
+def _read_path_fallback(path: Path, cap: int) -> tuple[bytes, tuple]:
+    """Read a regular file with lstat/open/recheck on limited runtimes."""
+    snapshot = _snapshot_directories(_fallback_directories(path))
+    before = os.lstat(path)
+    expected = _identity(before)
+    if not stat.S_ISREG(before.st_mode) or not 0 <= before.st_size <= cap:
+        raise _invalid()
+    _verify_directory_snapshot(snapshot)
+
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    nonblock = getattr(os, "O_NONBLOCK", 0)
+    if isinstance(nonblock, int) and nonblock > 0:
+        flags |= nonblock
+    fd = os.open(path, flags)
+    try:
+        _verify_fallback_leaf(path, expected, os.fstat(fd))
+        _verify_directory_snapshot(snapshot)
+        data, opened_identity = _read_fd(fd, cap)
+        if opened_identity != expected:
+            raise ValueError("petdex_source_stale")
+        _verify_fallback_leaf(path, expected, os.fstat(fd))
+        _verify_directory_snapshot(snapshot)
+        return data, expected
     finally:
         os.close(fd)
 
@@ -331,6 +412,8 @@ def _notice(name: str) -> bool:
 
 def _folder_inventory(root: Path) -> dict[str, tuple]:
     """Pin a bounded tree without following links, including nested notices."""
+    if not _supports_secure_descriptor_walk():
+        return _folder_inventory_fallback(root)
     entries = {}
     total_bytes = 0
 
@@ -370,6 +453,45 @@ def _folder_inventory(root: Path) -> dict[str, tuple]:
         visit(fd, "", 0)
     finally:
         os.close(fd)
+    return entries
+
+
+def _folder_inventory_fallback(root: Path) -> dict[str, tuple]:
+    """Pin a bounded tree using path checks when descriptor walks are absent."""
+    entries = {}
+    total_bytes = 0
+    root_snapshot = _snapshot_directories((*reversed(root.parents), root))
+
+    def visit(directory: Path, prefix: str, depth: int) -> None:
+        nonlocal total_bytes
+        if depth > 16:
+            raise _invalid()
+        before = os.lstat(directory)
+        if not stat.S_ISDIR(before.st_mode):
+            raise _invalid()
+        with os.scandir(directory) as children:
+            for child in children:
+                if len(entries) >= MAX_MEMBERS:
+                    raise _invalid()
+                name = _relative(prefix + child.name)
+                child_path = directory / child.name
+                info = os.lstat(child_path)
+                is_directory = stat.S_ISDIR(info.st_mode)
+                if not is_directory and not stat.S_ISREG(info.st_mode):
+                    raise _invalid()
+                entries[name] = (_identity(info), is_directory)
+                if is_directory:
+                    visit(child_path, name + "/", depth + 1)
+                else:
+                    total_bytes += info.st_size
+                    if total_bytes > MAX_PACKAGE_BYTES:
+                        raise _invalid()
+        after = os.lstat(directory)
+        if not stat.S_ISDIR(after.st_mode) or _identity(after) != _identity(before):
+            raise ValueError("petdex_source_stale")
+
+    visit(root, "", 0)
+    _verify_directory_snapshot(root_snapshot)
     return entries
 
 

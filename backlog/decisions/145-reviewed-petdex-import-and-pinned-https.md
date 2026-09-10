@@ -3,6 +3,10 @@
 Status: Accepted
 Date: 2026-09-07
 Task: TASK-32031
+Partially superseded: 2026-09-10 by
+[ADR-146](146-independent-buddy-petdex-publication-and-character-creation.md),
+only for the saved-Persona-only destination restriction; saved Persona authoring
+and all source, transport, review and attribution decisions remain in force
 
 ## Decision
 
