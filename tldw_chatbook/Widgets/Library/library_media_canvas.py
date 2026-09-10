@@ -56,6 +56,9 @@ from tldw_chatbook.UI.destination_recovery import (
     load_failure_callout,
 )
 from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
+from tldw_chatbook.Widgets.Library.library_choice_strip import (
+    LibraryChoiceOptionList,
+)
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
     library_row_button,
@@ -1225,7 +1228,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 options.append(option)
                 if value == self.canvas.active_type:
                     highlighted = index
-            choices = OptionList(
+            # task-32210: the house `█` cursor on the highlighted option --
+            # the plain OptionList marked it by background alone (1.09:1).
+            choices = LibraryChoiceOptionList(
                 *options,
                 id="library-media-type-choices",
                 compact=True,
@@ -1251,7 +1256,8 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 sort_options.append(option)
                 if value == current_sort:
                     sort_highlighted = index
-            sort_choices = OptionList(
+            # task-32210: same `█` cursor as the type chooser above.
+            sort_choices = LibraryChoiceOptionList(
                 *sort_options,
                 id="library-media-sort-choices",
                 compact=True,
