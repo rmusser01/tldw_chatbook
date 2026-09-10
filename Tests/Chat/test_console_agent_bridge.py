@@ -9913,3 +9913,35 @@ def test_content_stall_surfaces_through_chat_call(tmp_path, monkeypatch):
     assert recorded, "expected the stall boundary handler to fire through chat_call"
     assert recorded[0][1] == "TestProvider"
     wd._SESSION_TRACKERS.clear()
+
+
+# --------------------------------------------------------------------------
+# task-32275: the pre-provider setup phase the rail reads off the bridge.
+# --------------------------------------------------------------------------
+
+
+def test_setup_phase_is_visible_on_the_live_snapshot_until_it_is_ended():
+    """The window between "send accepted" and "provider called" has a state.
+
+    Nothing publishes a step during pre-provider setup, so the rail's
+    snapshot is idle and the assistant row renders blank -- for as long as
+    that setup takes.
+    """
+    bridge = _make_bridge()
+    assert bridge.live_snapshot("c1").status == "idle"
+
+    bridge.begin_setup_phase("c1", now=100.0)
+    marked = bridge.live_snapshot("c1")
+    assert marked.status == "setup"
+    assert marked.setup_started_at == 100.0
+    assert bridge.live_snapshot("other").status == "idle"
+
+    bridge.end_setup_phase("c1")
+    assert bridge.live_snapshot("c1").status == "idle"
+
+
+def test_ending_an_unmarked_setup_phase_is_a_no_op():
+    """A failed send unwinds through the same clear; it must not raise."""
+    bridge = _make_bridge()
+    bridge.end_setup_phase("never-marked")
+    assert bridge.live_snapshot("never-marked").status == "idle"

@@ -41,6 +41,7 @@ from tldw_chatbook.UI.Console_Modules.agent import (
     CONSOLE_TURN_ACTIVITY_ABANDON_ACTION,
     CONSOLE_TURN_ACTIVITY_ABANDON_AFTER_SECONDS,
     CONSOLE_TURN_ACTIVITY_SEPARATOR,
+    CONSOLE_TURN_ACTIVITY_SETUP,
     CONSOLE_TURN_ACTIVITY_THINKING,
     ConsoleAgentController,
     console_turn_activity_abandon_action,
@@ -941,3 +942,56 @@ async def test_the_row_offers_abandon_call_only_while_the_action_is_set():
         await pilot.pause()
         text = _rendered_row_text(transcript, row.id)
         assert "⚙ slow · 7s" in text and CONSOLE_TURN_ACTIVITY_ABANDON_COPY not in text
+
+
+# --------------------------------------------------------------------------
+# task-32275: the fifth state -- pre-provider setup, before any step exists.
+# --------------------------------------------------------------------------
+
+
+def test_pre_provider_setup_names_what_the_send_is_waiting_on():
+    """A run parked in setup must say so, with its own elapsed segment.
+
+    The blank assistant row this replaces is the whole defect: the first
+    send after a restart pays a one-off, lazy pre-provider setup cost
+    (tool catalogs plus the Personal Context profile-tool bootstrap) with
+    nothing on screen naming it.
+    """
+    snapshot = AgentLiveSnapshot(status="setup", setup_started_at=100.0)
+    assert (
+        console_turn_activity_text(snapshot, now=103.0)
+        == f"{CONSOLE_TURN_ACTIVITY_SETUP}{CONSOLE_TURN_ACTIVITY_SEPARATOR}3s"
+    )
+
+
+def test_setup_with_no_start_time_still_names_the_state():
+    """No usable base -> the state alone, never an invented duration."""
+    snapshot = AgentLiveSnapshot(status="setup")
+    text = console_turn_activity_text(snapshot, now=103.0)
+    assert text == CONSOLE_TURN_ACTIVITY_SETUP
+    assert CONSOLE_TURN_ACTIVITY_SEPARATOR not in text
+
+
+def test_setup_gives_way_to_the_running_states():
+    """Once the provider call starts, the ordinary states own the line."""
+    running = _snapshot()
+    assert console_turn_activity_text(running, now=1.0) == CONSOLE_GENERATING_PLACEHOLDER
+    assert console_turn_activity_text(AgentLiveSnapshot(), now=1.0) == ""
+
+
+@pytest.mark.asyncio
+async def test_the_setup_line_reaches_the_rendered_assistant_row():
+    """The state is not merely computable -- it paints into the row."""
+    app = _ActivityHarness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        text = await _paint(
+            transcript,
+            [_user(), _in_flight_assistant()],
+            console_turn_activity_text(
+                AgentLiveSnapshot(status="setup", setup_started_at=100.0), now=104.0
+            ),
+        )
+        await pilot.pause()
+        assert CONSOLE_TURN_ACTIVITY_SETUP in text, text
+        assert "4s" in text, text

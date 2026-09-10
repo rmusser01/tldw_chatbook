@@ -2452,3 +2452,27 @@ mounted overlay test proves hidden time is excluded.
 
 **What to do.** Pair mounted-state assertions with actual screen pixels. Check
 same-screen overlays as well as screen-stack visibility when gating animation.
+
+## A scratch `HOME` turns the OS keychain from slow into an infinite block
+
+**TASK-32275, 2026-09-10.** The critique reported "first agent send after a
+restart stalls ~70 s" and named the built-in MCP server spawn as the suspect.
+Timing marks between "console agent reply start" and "Routing to endpoint"
+cleared MCP outright — catalog composition was 15 ms — and pointed at the lazy
+Personal Context bootstrap. Under the scratch `HOME` recipe the same send was
+still waiting after **six minutes**, and `sample <pid> 2` (no root needed,
+unlike `py-spy dump`) put 1686 of 1686 samples in `SecItemAdd` →
+`makeLoginAuthUI` → `AuthorizationCopyRights`: the macOS Keychain
+authorization UI, waiting for a dialog nobody would ever answer, because the
+redirected `HOME` has no login keychain. On a real profile the same call is
+merely slow (3.7 s measured cold, 70 s–3.5 min reported).
+
+**What to do.** Two things. First, when the log narrows a stall to a range but
+not to a call, take a native stack sample before adding more log lines —
+`sample <pid> 2 -f out.txt` works on your own processes without root and named
+the frame in one shot. Second, treat an unbounded wait under a scratch `HOME`
+as the *worst case* of a real defect, not as an artifact to dismiss: it
+reproduced on demand what two observers had only seen intermittently, and it
+is the case a timeout has to survive. (Companion to the TASK-31450 entry
+above: a scratch profile does not merely de-authenticate keychain-backed
+tooling, it can make it hang.)

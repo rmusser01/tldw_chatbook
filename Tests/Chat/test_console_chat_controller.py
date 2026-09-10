@@ -11142,3 +11142,79 @@ async def test_leading_reference_draft_still_gets_audit_row(monkeypatch):
     rows = store.messages_for_session(store.active_session_id)
     system_rows = [m for m in rows if m.role.value == "system" and "@-references" in m.content]
     assert system_rows, "leading-@ draft lost its audit row"
+
+
+# --------------------------------------------------------------------------
+# task-32275: pre-provider setup is bounded and visible.
+# --------------------------------------------------------------------------
+
+
+def test_personal_context_bootstrap_cannot_hold_the_send_open(monkeypatch):
+    """A wedged lazy bootstrap must give up, not stall the first send.
+
+    Reproduces the real trace: the app-owned Personal Context service is
+    built lazily on the FIRST agent send, and its constructor talks to the
+    OS credential store, which can block indefinitely (macOS Keychain
+    authorization UI). ``personalization never blocks chat`` was enforced
+    only against exceptions, so a hang sailed straight through it.
+    """
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    released = threading.Event()
+    entered = threading.Event()
+
+    def never_returns():
+        entered.set()
+        released.wait(30)
+        return object()
+
+    controller.app = SimpleNamespace(get_personal_context_service=never_returns)
+    monkeypatch.setattr(
+        controller_module, "CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS", 0.05
+    )
+    loop = asyncio.new_event_loop()
+    try:
+        started = time.monotonic()
+        resolved = loop.run_until_complete(controller._personal_context_service())
+        elapsed = time.monotonic() - started
+    finally:
+        released.set()
+        loop.close()
+    assert entered.is_set()
+    assert resolved is None
+    assert elapsed < 5.0, elapsed
+
+
+def test_personal_context_bootstrap_returns_its_service_within_budget():
+    """The bound is a ceiling, not a delay: a healthy bootstrap is unchanged."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    service = object()
+    controller.app = SimpleNamespace(get_personal_context_service=lambda: service)
+    assert asyncio.run(controller._personal_context_service()) is service
+
+
+def test_pre_provider_setup_phase_marks_and_clears_the_bridge():
+    """The bracket the send runs its setup inside marks, then always clears."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    bridge = SimpleNamespace(marked=[], cleared=[])
+    bridge.begin_setup_phase = lambda cid, **_kw: bridge.marked.append(cid)
+    bridge.end_setup_phase = lambda cid: bridge.cleared.append(cid)
+    controller._agent_bridge = bridge
+
+    async def _happy():
+        async with controller._pre_provider_setup_phase("c1"):
+            assert bridge.marked == ["c1"]
+            assert bridge.cleared == []
+
+    asyncio.run(_happy())
+    assert bridge.cleared == ["c1"]
+
+    async def _raising():
+        async with controller._pre_provider_setup_phase("c2"):
+            raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(_raising())
+    assert bridge.cleared == ["c1", "c2"]

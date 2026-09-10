@@ -250,6 +250,13 @@ CONSOLE_TURN_ACTIVITY_TOOL_GLYPH = "⚙"
 #: emitted AFTER the round returns, carrying its text), so this is derived
 #: from "the last primary step is not a tool call", not from an event.
 CONSOLE_TURN_ACTIVITY_THINKING = "Thinking…"
+#: task-32275: the turn-activity line's PRE-PROVIDER state. The send has
+#: been accepted but the first provider call has not happened yet, because
+#: the run is still composing this turn's tool surface (MCP catalog, local
+#: tools, and the lazily-bootstrapped Personal Context profile tools).
+#: There is no step to name -- there is no run yet -- so this state comes
+#: from the bridge's own setup mark, not from ``steps``.
+CONSOLE_TURN_ACTIVITY_SETUP = "Connecting tools…"
 #: Separator between the state and its elapsed segment.
 CONSOLE_TURN_ACTIVITY_SEPARATOR = " · "
 #: task-31386: a primary tool call that has run at least this long offers
@@ -264,6 +271,7 @@ __all__ = [
     "CONSOLE_TURN_ACTIVITY_ABANDON_ACTION",
     "CONSOLE_TURN_ACTIVITY_ABANDON_AFTER_SECONDS",
     "CONSOLE_TURN_ACTIVITY_SEPARATOR",
+    "CONSOLE_TURN_ACTIVITY_SETUP",
     "CONSOLE_TURN_ACTIVITY_THINKING",
     "CONSOLE_TURN_ACTIVITY_TOOL_GLYPH",
     "console_turn_activity_text",
@@ -386,16 +394,23 @@ def console_turn_activity_text(
     ``format_agent_step_marker``, which is deliberately shared by the live
     and resume paths so both render byte-identical text.)
 
-    The four states, derived from the primary agent's most recent step:
+    The five states. All but the first are derived from the primary
+    agent's most recent step:
 
     ===========================  ==========================================
     situation                    line
     ===========================  ==========================================
+    pre-provider setup           ``Connecting tools… · <elapsed>``
     a tool is running            ``⚙ <tool> · <elapsed>``
     between tools / after one    ``Thinking… · <elapsed>``
     running, no primary step     ``Generating…`` (today's copy, unchanged)
     turn ended (any non-running) ``""`` -- the caller renders nothing
     ===========================  ==========================================
+
+    task-32275: the ``setup`` state is the window between "send accepted"
+    and "provider called", which the first send of a process pays in full
+    (tool catalogs plus the lazy Personal Context bootstrap) and which
+    used to render as a blank assistant row for its whole duration.
 
     Sub-agent steps are skipped, not merely deprioritised: a child's work
     belongs to the Agent rail's fleet rows, never to the primary assistant
@@ -429,6 +444,21 @@ def console_turn_activity_text(
     Returns:
         The line to render, or ``""`` when nothing is live.
     """
+    if getattr(snapshot, "status", "idle") == "setup":
+        # No steps exist yet -- the run has not started -- so the elapsed
+        # segment times from the setup mark, or is omitted when there is
+        # none (`_format_fleet_elapsed`'s "no usable base" rule).
+        started_at = getattr(snapshot, "setup_started_at", None)
+        elapsed = (
+            _format_fleet_elapsed(max(0.0, now - started_at))
+            if started_at is not None
+            else ""
+        )
+        return (
+            f"{CONSOLE_TURN_ACTIVITY_SETUP}{CONSOLE_TURN_ACTIVITY_SEPARATOR}{elapsed}"
+            if elapsed
+            else CONSOLE_TURN_ACTIVITY_SETUP
+        )
     if getattr(snapshot, "status", "idle") != "running":
         return ""
     step = next(
