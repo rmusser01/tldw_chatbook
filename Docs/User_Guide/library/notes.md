@@ -445,6 +445,13 @@ action is to pick one:
   skips, filesystem effects, and deletion-like effects before **Activate
   reviewed root** is enabled.
 
+Both folder pickers remember where you were. Each reopens at the directory it
+last picked in *that* flow, so Import once and Keep a folder synced never move
+each other's starting point, and neither borrows the Library ingest browser's.
+The first use of either — or a remembered folder that has since been moved or
+deleted — opens at your home directory instead. **Folder files** keeps its own
+separate memory, see [File notes](file-notes.md).
+
 If files or notes change after checking, activation is refused as stale and the
 nearest valid action is **Check again**. Conflicts and deletion choices are not
 silently settled by a global winner policy. Server setup is visibly disabled
@@ -504,14 +511,16 @@ existing-or-new destination path such as `Research / Interviews`. The
 destination is only a proposal during checking; no folder or note is created
 yet.
 
-The folder picker's **Folder path** field can be typed into directly: press
-**Enter** to browse into the typed path, or click **Select folder** to use it
-immediately without pressing Enter first — either way, whatever the field
-currently holds is what gets picked, not merely the directory being browsed.
-An invalid path shows an inline reason and leaves the dialog open. Once a
-folder is picked, the confirmation line shows its full path (elided in the
-middle for long paths, keeping the folder name itself visible), not just its
-name.
+The picker — from **Add another file**, from a folder choice, and from
+**Change selection** — reopens at the directory Import once last picked, or at
+your home directory the first time. Its **Folder path** field can be typed into
+directly: press **Enter** to browse into the typed path, or click **Select
+folder** to use it immediately without pressing Enter first — either way,
+whatever the field currently holds is what gets picked, not merely the
+directory being browsed. An invalid path shows an inline reason and leaves the
+dialog open. Once a folder is picked, the confirmation line shows its full path
+(elided in the middle for long paths, keeping the folder name itself visible),
+not just its name.
 
 Choose **Check selection** to build a read-only review. Each source is one
 line — path · what will happen · where it lands — with its **Skip** and
@@ -663,7 +672,16 @@ automatically. Global navigation keys live in the [guide index](../index.md).
 ## Related settings & docs
 
 - Lasting root paths, bindings, operations, and recovery state live in the
-  private device sync store, not ordinary `config.toml` settings.
+  private device sync store, not ordinary `config.toml` settings. The one
+  exception is where each folder picker reopens, immediately below — that is
+  an ordinary `config.toml` setting.
+- **config.toml `[library.notes_import] last_directory`** and
+  **`[library.notes_sync] last_directory`** — the directory the **Import
+  once** and **Keep a folder synced** pickers respectively reopen at; each is
+  written whenever a selection is made in that flow. Separate keys, so neither
+  flow moves the other's starting point; **Folder files** has its own
+  `[file_notes] browse`. A key naming a folder that no longer exists is
+  ignored and the picker opens at your home directory.
 - [Lasting Notes folder sync](../../Features/notes_bidirectional_sync.md) —
   runtime, cutover, ownership, and recovery details.
 - [File notes](file-notes.md) — the **Folder files** side of the source strip.
