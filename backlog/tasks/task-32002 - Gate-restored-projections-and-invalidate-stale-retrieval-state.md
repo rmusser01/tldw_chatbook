@@ -4,7 +4,7 @@ title: Gate restored projections and invalidate stale retrieval state
 status: In Progress
 assignee: []
 created_date: 2026-09-07 23:58
-updated_date: 2026-09-10 21:00
+updated_date: 2026-09-10 21:20
 labels:
 - backup-recovery
 dependencies:
@@ -51,7 +51,6 @@ Finite collection client lifetime slice ready for review: three source-local fin
 
 Review correction: replace close logger.exception with fixed sanitized warning. Syntheticsecret close-error red3 then targeted compatibilitygreen6; no exceptioncontents in capturedlogs. Exact collection_indexes diagnostic inventory rowonly updated via existing scan_source/digest API:8calls5c9579976f10a76c75f4, TASK494 stillpending. Scoped literal/noexception guard passes. Globalguard1failure due20otherownerrows and existingtopology/aggregate drift, detailed /private/tmp/chroma-diagnostic-drift.json; no blanketupdate. Report appended; nostaging/commit.
 Root final review of finite collection client cleanup: independent test_chroma_collection_lifetimes.py run 15 passed in13.21s including sanitized close errors (/private/tmp/chatbook-chroma-root-final.log); scoped production Bandit0, new tests Ruffclean, diffcheckclean. Accepted narrow public-close finally behavior and exact pending diagnostic owner row; source missing-close/failed-close remains explicitly unqualified. No resident/projection activation completion claim. Preparing scoped commit only.
-<!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Design references
 
 - [Approved specification](../../Docs/superpowers/specs/2026-09-07-complete-local-backup-restore-design.md)
@@ -65,3 +64,9 @@ ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
 Reason: direct implementation of the approved recovery ownership, archive, and lifecycle contract; reuse ADR-126.
 
 Before implementation, move this task to In Progress and copy its linked task steps into an Implementation Plan section. Keep implementation notes and completion evidence for after the work is finished. Do not mark criteria complete from this planning document.
+
+Authorized next bounded prerequisite before edits: source-local finite RAG definition producer settlement for exact delete_user_profile, ensure_imported_profile, SettingsScreen._persist_library_rag_save sequences, composed before global storage pause. Read-only observable active experiment and alternate manager/results source refusals; no duplicate native write admission, Chroma/model/serialization repair, or capture-marker removal. Small private TDD fixtures and scoped static/census checks; no staging or commits.
+
+RAG definition producer prerequisite ready for review: source-local synchronous cohort wraps exact delete/import/Settings profile+config sequences; RuntimeMaintenance closes/drains before draftprobe/globalpause. Read-only activeexperiment/alternateknownmanager/results/unknowninjection refusal preservesbytes. Behavioral3sequence reds then15new+runtime pass11.84s; finalaffectedprobe5pass7.11s. ExistingUI/config7pass1fail86errors allknown raw_source_selection_changed fixture boundary, unchanged. Ruff110to110/newmodule-test0; Bandit1to1/newmodule0; no new diagnostic/nativewriter census rows. Report /private/tmp/chatbook-rag-definition-settlement-report.md. No Chroma, markerremoval, staging, commits or TaskDone.
+Root review of finite definition settlement: no actionable findings within explicit3source-method acceptance boundary. Independent test_rag_definition_settlement.py + test_runtime_maintenance.py15passed12.72s (/private/tmp/chatbook-rag-settlement-root.log), preserving underlyingprofile/config outcomes and nativeacceptedwork throughcancellation; no extra native/storagewrapper. Source unsavedprobe onlyloadedexactmanager/service references and boundconfigcache; activeexperiment/unknown/alternate sources refuse without mutations. Agent originalscopeRuff110->110/Bandit1->1, newmodule/testclean; no diagnostic/census additions. Ready scopedcommit. EarlierqueuedUI action enrollment and unobservableuncachedmanager finalcoverage remain explicit prerequisites beforeComplete; no definition/projection marker removed.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

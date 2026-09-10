@@ -8,6 +8,8 @@ import time
 from dataclasses import dataclass
 
 from .bootstrap import RecoveryRequired
+from .rag_definition_participant import participant as definition_participant
+from .rag_definition_participant import retained_issues
 
 
 @dataclass(frozen=True)
@@ -210,7 +212,7 @@ class RuntimeMaintenance:
         from .unsaved_editors import probe_unsaved_editors
 
         self._check()
-        return probe_unsaved_editors(
+        return retained_issues(self.app) + probe_unsaved_editors(
             console_runtime=self.app.console_runtime,
             editors=_authoring_owners(tuple(self.app.screen_stack)),
             screen_state_store=self.app.screen_state_store,
@@ -224,6 +226,17 @@ class RuntimeMaintenance:
         app = self.app
         await _settle_stage(
             [_app_hook(app, "_screen_navigation")], self.closed, deadline
+        )
+        await _settle_stage(
+            [
+                _bind(
+                    definition_participant,
+                    "Backup_Recovery.rag_definition_participant",
+                    "DefinitionParticipant",
+                )
+            ],
+            self.closed,
+            deadline,
         )
         if self.unsaved_editors():
             raise RecoveryRequired("needs_user_save_discard")

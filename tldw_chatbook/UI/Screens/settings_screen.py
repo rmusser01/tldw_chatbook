@@ -175,6 +175,7 @@ from .provider_model_resolution import (
     resolve_effective_provider_model,
 )
 from .settings_config_adapter import SettingsConfigAdapter, redact_secret_text
+from tldw_chatbook.Backup_Recovery.rag_definition_participant import definition_operation
 from .settings_context_memory import (
     CONTEXT_MEMORY_CONFIG_KEYS,
     SUMMARY_PROMPT_ID,
@@ -22200,6 +22201,7 @@ class SettingsScreen(BaseAppScreen):
         sections = build_library_rag_save_sections(self._app_config_mapping(), values)
         self._settings_save_library_rag_worker(values, index_will_change, sections)
 
+    @definition_operation
     def _persist_library_rag_save(
         self,
         values: SettingsLibraryRagDefaults,

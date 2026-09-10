@@ -12,6 +12,8 @@ from typing import Optional
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery.rag_definition_participant import definition_operation
+
 from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig, get_profile_manager
 # Both imported as module seams: tests monkeypatch `ad._active_profile_id` and
 # `ad.set_active_profile` directly (unqualified name lookup at call time),
@@ -593,6 +595,7 @@ def rename_user_profile(profile_id: str, new_name: str) -> tuple[bool, str]:
         return False, str(e)
 
 
+@definition_operation
 def delete_user_profile(profile_id: str) -> tuple[bool, str]:
     """Delete a user profile. (False, reason) for a builtin id or on failure.
 

@@ -15,6 +15,8 @@ from typing import Optional, Union
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery.rag_definition_participant import definition_operation
+
 from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
 from .config import RAGConfig, _normalized_type_setting, validate_chroma_persist_directory
 from ..config_profiles import get_profile_manager, ProfileConfig, _slugify
@@ -437,6 +439,7 @@ def _merge_legacy_query_time_keys(config: RAGConfig) -> dict:
     return legacy
 
 
+@definition_operation
 def ensure_imported_profile() -> Optional[str]:
     """On first run, capture the currently-resolved RAG config into a writable
     'Imported settings' profile and set it active -- but ONLY for a user
