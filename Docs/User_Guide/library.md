@@ -221,11 +221,11 @@ replaced it.
     instead of a plain count;
   - a **Details** section, collapsed by default (see below). Section
     headers toggle open (**▾**) and closed (**▸**). **Chunking Lab** and
-    **Try selected text** live inside it, under **Actions** — see the
-    control table below for what they do. When the rail is too short to
-    show everything at once, its last line reads "▾ scroll for more"
-    (hover it for the keyboard route: **F6** moves focus into the rail).
-    The line disappears as soon as the whole rail fits.
+    **Try selected text** live inside it — see the control table below.
+    When the rail is too short to show everything at once, its last line
+    reads "▾ scroll for more" (hover it for the keyboard route: **F6**
+    moves focus into the rail). The line disappears as soon as the whole
+    rail fits.
 - **Canvas** (the right pane) — there are no tabs here: the canvas swaps
   to match whichever rail row is selected. Before you pick one, a populated
   profile sees the returning landing described above. Import… and New note

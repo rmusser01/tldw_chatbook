@@ -414,7 +414,6 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
     #: on, and live it never appeared at all.
     _fold_cue_visible: bool = False
 
-
     def __init__(
         self,
         shell: LibraryShellState,

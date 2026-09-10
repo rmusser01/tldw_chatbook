@@ -708,6 +708,12 @@ _ANALYZE_AUTO_SKIP_REASON = "already analyzed"
 # the person looking at the row: nothing happened to it.
 _TRASH_PERMANENT_DELETE_FAILURE_COPY = "Could not delete this media item permanently."
 _TRASH_RESTORE_FAILURE_COPY = "Could not restore this media item."
+#: task-32230: how a blocked workspace item's type reads inside the Handoff
+#: row's remedy ("Link it from the <noun>'s header"). Only the types whose
+#: raw ``item_type`` does not already read as a countable noun need an
+#: entry -- "note" and "conversation" are fine as they come; "media" is not
+#: ("the media's header"). Anything absent falls through unchanged.
+_LIBRARY_HANDOFF_ITEM_NOUNS = {"media": "media item"}
 #
 # _INGEST_OPTIONS_CACHE_ATTR, _read_library_ingest_options_from_config, and
 # _library_ingest_options_for (just above) STAY here rather than moving to
@@ -13193,7 +13199,17 @@ class LibraryScreen(BaseAppScreen):
             # Linking resolves it, and "Link to workspace" lives on the
             # item's own reader header (task-32056).
             item_types = {row.item_type for row in blocked}
-            noun = next(iter(item_types)) if len(item_types) == 1 else "item"
+            # `item_type` is one of {"note", "media", "conversation"}
+            # (``_library_workspace_item_type``). "note" and "conversation"
+            # read as nouns already; "media" does not -- "the media's
+            # header" is the one clumsy string this expression can produce.
+            noun = (
+                _LIBRARY_HANDOFF_ITEM_NOUNS.get(
+                    next(iter(item_types)), next(iter(item_types))
+                )
+                if len(item_types) == 1
+                else "item"
+            )
             pronoun = "it" if len(blocked) == 1 else "them"
             remedy = f"Link {pronoun} from the {noun}'s header"
         else:
@@ -14320,12 +14336,13 @@ class LibraryScreen(BaseAppScreen):
     ) -> tuple[str, ...]:
         """Build the Status group's Details disclosure lines for the rail.
 
-        Returns up to three plain-text values: the source value (rendered
+        Returns two plain-text values, or five: the source value (rendered
         by the rail with a dimmed "Source" label), the local source counts
         (or a lookup-error/recovery block in place of the counts when the
-        local source snapshot failed to load), and -- only when the
-        DBStatusManager has cached them on the app -- the local DB file
-        sizes (F-014: telemetry relocated out of the app footer; omitted
+        local source snapshot failed to load), and then -- only when the
+        DBStatusManager has cached them on the app -- ONE VALUE PER local DB
+        file (task-32230: the rail gives each its own row so none wraps
+        mid-value; F-014: telemetry relocated out of the app footer, omitted
         entirely until first computed, never an "N/A" triplet).
         """
         runtime_value = (
@@ -14342,9 +14359,9 @@ class LibraryScreen(BaseAppScreen):
                 f"Media {counts.get('media', 0)} · "
                 f"Conversations {counts.get('conversations', 0)}"
             )
-        return (runtime_value, counts_or_error, *self._library_db_sizes_line())
+        return (runtime_value, counts_or_error, *self._library_db_sizes_lines())
 
-    def _library_db_sizes_line(self) -> tuple[str, ...]:
+    def _library_db_sizes_lines(self) -> tuple[str, ...]:
         """Format the Details DB-size values from the app-level cache.
 
         Single source for the sizes' format, shared by the rail's compose
@@ -14403,7 +14420,7 @@ class LibraryScreen(BaseAppScreen):
         # list ``LibraryRail`` composes -- updating the rows that are there
         # and mounting the ones that are not, each after its predecessor.
         previous = anchors[0]
-        for row_id, rendered in library_db_size_rows(self._library_db_sizes_line()):
+        for row_id, rendered in library_db_size_rows(self._library_db_sizes_lines()):
             existing = list(self.query(f"#{row_id}"))
             if existing:
                 existing[0].update(rendered)

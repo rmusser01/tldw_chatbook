@@ -12,7 +12,10 @@ from __future__ import annotations
 import pytest
 from textual.widgets import Input, Static
 
+from tldw_chatbook.Library.library_rail_state import LibraryRailPreferences
+from tldw_chatbook.Library.library_shell_state import LibraryShellState
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.Widgets.Library.library_rail import LibraryRail
 from tldw_chatbook.Workspaces.display_state import (
     LibraryWorkspaceDepthState,
     LibraryWorkspaceSourceRow,
@@ -322,3 +325,66 @@ async def test_the_rail_says_when_details_runs_past_the_fold(size, expected) -> 
                 rail.region,
             )
             assert "scroll for more" in _painted(host, cue.region)
+
+
+# --- task-32219 AC#2: the two fold-cue defects only the live app showed ----
+#
+# Both of these were found by running the app, not by this suite, and the
+# harness settles correctly either way -- so without these two pins, deleting
+# the production code that fixes them leaves every other test in this file
+# green. That is exactly the shape of fix that gets "simplified" away later.
+
+
+def _bare_rail() -> LibraryRail:
+    """A LibraryRail with no app behind it -- enough for the pure paths."""
+    return LibraryRail(
+        LibraryShellState(
+            header_line="Library | Test",
+            sections=(),
+            details_lines=("Local", "Notes 0 · Media 0 · Conversations 0"),
+            selected_row_id="",
+            canvas_kind="empty",
+            canvas_target="",
+            canvas_empty_copy="",
+        ),
+        LibraryRailPreferences(details_open=True),
+    )
+
+
+def test_a_recomposed_fold_cue_keeps_the_visibility_the_rail_decided() -> None:
+    """The rail recomposes on every count/evidence/route change. A cue that
+    rebuilt itself hidden each time was reset faster than the post-layout
+    measurement could turn it on, and live it never appeared at all -- so the
+    decision has to be seeded from the RAIL, not defaulted on the widget."""
+    rail = _bare_rail()
+    assert rail._fold_cue_visible is False
+    assert rail._build_fold_cue().display is False
+
+    rail._fold_cue_visible = True
+    assert rail._build_fold_cue().display is True, (
+        "a recompose must carry the visibility the last measurement decided"
+    )
+
+
+def test_the_fold_measurement_is_deferred_past_the_layout_that_triggered_it() -> None:
+    """``max_scroll_y`` reports the PREVIOUS layout inside ``on_mount`` and
+    inside the ``virtual_size`` watcher, so measuring inline reads zero
+    overflow for a rail that is about to overflow. The schedule must hand
+    ``_sync_fold_cue`` to ``call_after_refresh``, never call it itself."""
+    rail = _bare_rail()
+    deferred: list[object] = []
+    measured: list[int] = []
+    rail.call_after_refresh = deferred.append  # type: ignore[method-assign]
+    rail._sync_fold_cue = lambda: measured.append(1)  # type: ignore[method-assign]
+
+    rail._running = True  # `is_running` gates the schedule
+    rail._schedule_fold_cue_sync()
+
+    assert measured == [], "the fold must not be measured inline"
+    assert deferred == [rail._sync_fold_cue], deferred
+
+    # A rail that is not running schedules nothing at all.
+    deferred.clear()
+    rail._running = False
+    rail._schedule_fold_cue_sync()
+    assert deferred == []

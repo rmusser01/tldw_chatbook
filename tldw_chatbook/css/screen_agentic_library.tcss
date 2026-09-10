@@ -1312,8 +1312,12 @@ with stray left-edge border fragments), and padding 0 1 so the full
    `dock: bottom` is load-bearing -- a cue that scrolls with the content is
    only ever on screen once you have scrolled to the bottom, where there is
    nothing left to announce (proven live at 235x52 with the first,
-   un-docked version). Docked means it also paints OVER the last content
-   line, so it carries the rail's own opaque background. */
+   un-docked version). Docked means the row is RESERVED out of the
+   scrollable viewport (`textual/_arrange.py` shrinks the layout region by
+   the dock spacing and grows `scroll_spacing` by it) -- which is exactly
+   why `_sync_fold_cue` discounts its own row when deciding whether the
+   rail still overflows. Nothing becomes unreachable; it costs one notch
+   of scroll. The background keeps the row opaque against the panel. */
 #library-rail-fold-cue {
     dock: bottom;
     height: 1;
