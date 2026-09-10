@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import PurePath
 
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from typing import Any, Sequence
 
 from tldw_chatbook.Workspaces.conversation_browser_state import (
@@ -1510,7 +1510,7 @@ def _outcome_group_key(row: IngestQueueRow) -> tuple[Any, ...]:
 def group_ingest_queue_rows(
     rows: Sequence[IngestQueueRow],
     *,
-    expanded: "Mapping[str, Any] | set[str] | frozenset[str] | tuple[str, ...]" = (),
+    expanded: Collection[str] = (),
 ) -> tuple[IngestOutcomeGroup, ...]:
     """Collapse contiguous runs of identical settled outcomes (task-32231).
 
