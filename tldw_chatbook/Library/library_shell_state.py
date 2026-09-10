@@ -321,6 +321,11 @@ class LibraryShellInput:
     skills_known: bool = True
     collections_count: int | None = None
     collections_known: bool = True
+    #: task-32103: True when the count read FAILED or timed out. The row
+    #: paints "(—)" instead of nothing, so a broken read is not mistaken for
+    #: a source whose count is off by design (Search / RAG). The Details
+    #: block carries the deadline sentence that explains it.
+    collections_count_unavailable: bool = False
     runtime_source: str = "local"
     server_label: str | None = None
     details_lines: tuple[str, ...] = ()
@@ -452,6 +457,7 @@ def build_library_shell_state(
             target_id="collections",
             count=state.collections_count,
             count_known=state.collections_known,
+            count_display=" (—)" if state.collections_count_unavailable else "",
             subtitle="saved captures",
             # Collections' authority-qualified capture count is fetched lazily
             # on first canvas
