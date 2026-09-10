@@ -388,3 +388,17 @@ def test_the_fold_measurement_is_deferred_past_the_layout_that_triggered_it() ->
     rail._running = False
     rail._schedule_fold_cue_sync()
     assert deferred == []
+
+
+def test_the_handoff_remedy_names_each_item_type_readably() -> None:
+    """The remedy interpolates the blocked row's own `item_type`, and only
+    some of those read as nouns: "note" and "conversation" do, "media" does
+    not ("the media's header"). `_LIBRARY_HANDOFF_ITEM_NOUNS` holds that one
+    exception, so it needs the case that would otherwise regress silently."""
+    for item_type, expected_noun in (("media", "media item"), ("note", "note")):
+        state = _depth_state(
+            "Console/RAG handoff: 0 eligible, 1 blocked",
+            [_blocked_source_row(item_type=item_type, item_id=f"{item_type}-a")],
+        )
+        label = LibraryScreen._workspace_handoff_summary_label(None, state)
+        assert label.endswith(f"Link it from the {expected_noun}'s header"), label

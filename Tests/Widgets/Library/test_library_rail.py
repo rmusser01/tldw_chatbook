@@ -726,13 +726,16 @@ async def test_search_rag_query_input_gets_the_same_click_select_all_fix():
 async def test_a_collections_count_failure_never_evicts_the_db_sizes_row(
     widget_pilot,
 ) -> None:
-    """task-32103 AC#3 (fix round 2): the failure sentence needs a slot of its own.
+    """task-32103 AC#3 (fix round 2): the failure sentence must not be its own entry.
 
-    ``details_lines`` is a positional three-slot contract -- Source, body,
-    DB sizes -- and nothing renders a fourth entry. The Collections failure
-    sentence was appended as one, so it landed in the DB-sizes slot: the
-    rail painted "DB sizes · Collections count unavailable (waited 5 s) …"
-    and the real "Prompts … · Chats/Notes … · Media …" line vanished.
+    ``details_lines`` is positional: Source, then the counts body, then --
+    since task-32230 -- everything from index 2 onward is a DB size, one
+    entry per source. So a failure sentence appended as its own entry is
+    rendered AS a size; folding it into the counts value is what keeps each
+    size on its own row. (Before task-32230 the sizes shared a single slot,
+    and the appended sentence evicted them outright: the rail painted
+    "DB sizes · Collections count unavailable (waited 5 s) …" and the real
+    "Prompts … · Chats/Notes … · Media …" line vanished.)
 
     Driven through the SCREEN's own ``_library_details_lines`` and the
     rail's shipped compose, because the defect is the shape the screen
