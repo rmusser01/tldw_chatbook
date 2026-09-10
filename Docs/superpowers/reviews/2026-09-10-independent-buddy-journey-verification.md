@@ -36,9 +36,11 @@ No downloaded pet art or user profile is committed.
   collection probe skipped.
 - Adjacent Persona Petdex review, character conversion and animation checks:
   **56 passed**.
-- The separate real-archive application/restart journey: **1 passed**, 25.82 seconds.
-- Eight touched Python files pass Ruff check and format; all ten CSS outputs
-  reproduce from source.
+- The separate real-archive application/restart journey: **1 passed**, 33.96 seconds
+  on `4cc1a450c74a416595a871362535371c56cc1c1e`, including dev `e6cb464239`.
+- Current application-shell, CSS-integrity and boot-budget checks: **30 passed**.
+- Eight touched Python files pass Ruff check and format; all eleven current CSS
+  outputs reproduce from source, including the newly integrated Watchlists sheet.
 
 The earlier scratch-harness failures were corrected in the harness: an offscreen
 avatar intentionally pauses, the visual repository returns an `assets` collection,
