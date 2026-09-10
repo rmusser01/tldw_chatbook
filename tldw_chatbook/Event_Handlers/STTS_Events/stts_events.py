@@ -3,10 +3,12 @@
 #
 # Imports
 import asyncio
+import time
 from collections.abc import Callable, Coroutine, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Dict, NamedTuple, Optional
@@ -623,10 +625,40 @@ class STTSAudioBookGenerateEvent(Message):
 # Event Handler Mixin
 
 
+def _maintenance_entry(function):
+    """Retain admitted generation/settings through their publication tail."""
+    @wraps(function)
+    async def call(self, *args, **kwargs):
+        task = asyncio.current_task()
+        depth = self._maintenance_calls.get(task, 0)
+        if self._maintenance_paused and not (depth or task in self._active_tasks):
+            if function.__name__ == "handle_settings_save":
+                event = args[0] if args else kwargs["event"]
+                try:
+                    self._reply_settings_save(event, persisted=False, provider_statuses={}, failure_phase="before_replace")
+                finally:
+                    event._abandon_publication_lease()
+                return
+            if function.__name__ in {"handle_playground_generate", "handle_audiobook_generate", "initialize_stts"}:
+                return
+            raise RuntimeError("Speech Studio is paused for maintenance")
+        self._maintenance_calls[task] = depth + 1
+        try:
+            return await function(self, *args, **kwargs)
+        finally:
+            if depth:
+                self._maintenance_calls[task] = depth
+            else:
+                self._maintenance_calls.pop(task, None)
+    return call
+
+
 class STTSEventHandler:
     """Event handler for S/TT/S functionality"""
 
     def __init__(self, app=None):
+        self._maintenance_paused = False
+        self._maintenance_calls: dict[asyncio.Task, int] = {}
         self.app = app  # Reference to the main app
         self.provider_test_evidence = process_provider_test_evidence_store(
             app if app is not None else self
@@ -647,6 +679,34 @@ class STTSEventHandler:
         self._sample_generation_facts: dict[str, _SampleGenerationFacts] = {}
         self._next_default_activation_token = 1
         self._default_activation_intents: dict[str, _DefaultActivationIntent] = {}
+
+    def maintenance_close_admission(self) -> None:
+        """Fence new Studio work without retiring current results or leases."""
+        self._maintenance_paused = True
+
+    @property
+    def maintenance_ready(self) -> bool:
+        """Include publication observers and outstanding artifact consumers."""
+        return not (
+            self._maintenance_calls or self._active_tasks or self._is_generating
+            or self._playground_file_leases
+            or (self._generation_task is not None and not self._generation_task.done())
+        )
+
+    async def maintenance_drain(self, deadline: float) -> bool:
+        """Wait for accepted work and ordinary lease release without cleanup."""
+        if not self._maintenance_paused:
+            raise RuntimeError("stts_handler_maintenance_not_paused")
+        while not self.maintenance_ready:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(remaining, 0.02))
+        return True
+
+    def maintenance_resume(self) -> None:
+        """Reopen Studio intake after shared service admission resumes."""
+        self._maintenance_paused = False
 
     def _capture_sample_evidence_candidate(
         self,
@@ -834,6 +894,7 @@ class STTSEventHandler:
             )
             return False
 
+    @_maintenance_entry
     async def initialize_stts(self) -> None:
         """Initialize S/TT/S service"""
         try:
@@ -894,6 +955,8 @@ class STTSEventHandler:
         event: STTSPlaygroundGenerateEvent,
     ) -> None:
         """Start and retain exactly one handler-owned Playground task."""
+        if self._maintenance_paused:
+            return
         if self._cleanup_task is not None:
             logger.debug("Ignoring TTS generation after STTS cleanup started")
             return
@@ -955,6 +1018,8 @@ class STTSEventHandler:
 
     def lease_playground_artifact(self, artifact: STTSGeneratedAudio) -> bool:
         """Pin a handler-owned artifact across a deferred UI action."""
+        if self._maintenance_paused:
+            return False
         path = Path(artifact.path)
         operation_files = self._playground_operation_files.get(
             artifact.operation_id,
@@ -998,6 +1063,8 @@ class STTSEventHandler:
 
     def lease_playground_result(self, operation_id: str, path: Path) -> bool:
         """Lease the exact current handler artifact by sanitized identity."""
+        if self._maintenance_paused:
+            return False
 
         artifact = self._current_playground_artifact
         if (
@@ -1029,6 +1096,7 @@ class STTSEventHandler:
             return
         self._delete_operation_files(operation_id)
 
+    @_maintenance_entry
     async def save_current_playground_profile(
         self,
         operation_id: str,
@@ -1500,6 +1568,7 @@ class STTSEventHandler:
             "wav": "audio/wav",
         }.get(audio_format, "application/octet-stream")
 
+    @_maintenance_entry
     async def handle_playground_generate(
         self, event: STTSPlaygroundGenerateEvent
     ) -> None:
@@ -1834,6 +1903,7 @@ class STTSEventHandler:
             return "TTS is not configured; open STTS Settings"
         return "Unexpected TTS generation failure; retry"
 
+    @_maintenance_entry
     async def handle_settings_save(self, event: STTSSettingsSaveEvent) -> None:
         """Handle settings save"""
         try:
@@ -2133,6 +2203,7 @@ class STTSEventHandler:
         except Exception:
             logger.debug("TTS settings requester result delivery failed")
 
+    @_maintenance_entry
     async def commit_voice_setup_default(
         self,
         preferences: TTSPreferencesSnapshot,
@@ -2263,6 +2334,9 @@ class STTSEventHandler:
         publication: TTSSettingsPublication,
     ) -> None:
         """Post every provider-scoped handoff that definitively applied."""
+        post = self.app.post_message
+        if callable(getattr(type(self.app), "_post_speech_delivery", None)):
+            post = self.app._post_speech_delivery
         posted_provider_ids: set[str] = set()
         global_revision = publication.generation if publication.published else None
         for provider_id, status in publication.provider_statuses.items():
@@ -2271,7 +2345,7 @@ class STTSEventHandler:
             revision = publication.provider_revisions.get(provider_id)
             if revision is None:
                 continue
-            self.app.post_message(
+            post(
                 STTSProviderConfigurationChanged(
                     provider_id,
                     revision,
@@ -2297,7 +2371,7 @@ class STTSEventHandler:
                 return
         if type(revision) is not int or revision < 0:
             return
-        self.app.post_message(
+        post(
             STTSProviderConfigurationChanged(
                 provider_id,
                 revision,
@@ -2577,6 +2651,7 @@ class STTSEventHandler:
                     pass
             await process.wait()
 
+    @_maintenance_entry
     async def handle_audiobook_generate(
         self, event: STTSAudioBookGenerateEvent
     ) -> None:
@@ -2766,7 +2841,12 @@ class STTSEventHandler:
 
     def _start_event_task(self, coroutine: Coroutine[Any, Any, None]) -> None:
         """Start and retain an event task until it finishes."""
-        if self._cleanup_task is not None:
+        caller = asyncio.current_task()
+        if self._cleanup_task is not None or (
+            self._maintenance_paused
+            and caller not in self._maintenance_calls
+            and caller not in self._active_tasks
+        ):
             coroutine.close()
             logger.debug("Ignoring STTS event after cleanup started")
             return
@@ -2830,6 +2910,12 @@ class STTSEventHandler:
 
     def on_stts_settings_save_event(self, event: STTSSettingsSaveEvent) -> None:
         """Handle settings save event"""
+        if self._maintenance_paused:
+            try:
+                self._reply_settings_save(event, persisted=False, provider_statuses={}, failure_phase="before_replace")
+            finally:
+                event._abandon_publication_lease()
+            return
         self._start_event_task(self.handle_settings_save(event))
 
     def on_stts_provider_configuration_changed(

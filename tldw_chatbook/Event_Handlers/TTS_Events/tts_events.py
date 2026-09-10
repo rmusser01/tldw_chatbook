@@ -8,7 +8,7 @@ import re
 import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from functools import partial
+from functools import partial, wraps
 from typing import Dict, Literal, Optional, TypeVar
 from pathlib import Path
 from datetime import datetime
@@ -559,6 +559,33 @@ class CostTracker:
 # TTS Event Handler Mixin
 
 
+def _maintenance_entry(kind="request"):
+    """Retain direct entry/preflight and permit accepted task continuations."""
+    def decorate(function):
+        @wraps(function)
+        async def call(self, *args, **kwargs):
+            task = asyncio.current_task()
+            depth = self._maintenance_calls.get(task, 0)
+            event = args[0] if args else kwargs.get("event")
+            allowed_stop = kind == "release" or (kind == "playback" and event is not None and event.action in {"stop", "pause"})
+            if self._maintenance_paused and not (depth or task in self._active_tasks or allowed_stop):
+                if kind == "utterance":
+                    kwargs["on_finished"](False)
+                elif callable(getattr(event, "report_outcome", None)):
+                    event.report_outcome(False)
+                return
+            self._maintenance_calls[task] = depth + 1
+            try:
+                return await function(self, *args, **kwargs)
+            finally:
+                if depth:
+                    self._maintenance_calls[task] = depth
+                else:
+                    self._maintenance_calls.pop(task, None)
+        return call
+    return decorate
+
+
 class TTSEventHandler:
     """
     Mixin class for handling TTS events.
@@ -581,6 +608,8 @@ class TTSEventHandler:
         profile_service_loader: Callable[[], Awaitable[object | None]] | None = None,
         default_profile_id_reader: Callable[[], object | None] | None = None,
     ):
+        self._maintenance_paused = False
+        self._maintenance_calls: dict[asyncio.Task, int] = {}
         self._tts_service = None
         self._profile_service_loader = profile_service_loader
         # Task-4 (slice 3): reads the persisted `[app_tts] default_profile_id`
@@ -666,6 +695,41 @@ class TTSEventHandler:
         self._active_tasks_lock = asyncio.Lock()  # Lock for active tasks set
         self._last_cooldown_cleanup = 0.0  # Track last cleanup time
 
+    def maintenance_close_admission(self) -> None:
+        """Refuse new speech while current generation and playback settle."""
+        self._maintenance_paused = True
+
+    @property
+    def maintenance_ready(self) -> bool:
+        """Account for native artifact work and future cleanup mutations."""
+        return not (
+            self._maintenance_calls or self._active_tasks
+            or self._retained_tts_io_tasks or self._retained_tts_cleanup_tasks
+            or self._pending_legacy_cleanup_timers or self._artifact_cleanup_retry
+            or self._active_file_playback_task or self._active_stream_playback_owner
+            or self._legacy_handoff_stop_events
+        )
+
+    async def maintenance_drain(self, deadline: float) -> bool:
+        """Wait for ordinary completion without stopping playback."""
+        if not self._maintenance_paused:
+            raise RuntimeError("tts_handler_maintenance_not_paused")
+        while not self.maintenance_ready:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(remaining, 0.02))
+        return True
+
+    def maintenance_resume(self) -> None:
+        """Reopen speech requests after service admission resumes."""
+        self._maintenance_paused = False
+
+    def _retain_active_task(self, task: asyncio.Task) -> None:
+        self._active_tasks.add(task)
+        task.add_done_callback(self._active_tasks.discard)
+
+    @_maintenance_entry("request")
     async def initialize_tts(self) -> None:
         """Initialize TTS service"""
         try:
@@ -708,7 +772,11 @@ class TTSEventHandler:
         try:
             app = getattr(self, "app", None)
             if app is not None and hasattr(app, "post_message"):
-                result = app.post_message(message)
+                delivery = getattr(type(app), "_post_speech_delivery", None)
+                if type(message) is TTSCompleteEvent and callable(delivery):
+                    result = delivery(app, message)
+                else:
+                    result = app.post_message(message)
             else:
                 post_message = getattr(self, "post_message", None)
                 if not callable(post_message):
@@ -720,6 +788,7 @@ class TTSEventHandler:
         except Exception:
             return False
 
+    @_maintenance_entry("request")
     async def handle_tts_request(
         self,
         event: TTSRequestEvent | TTSMessageSpeechRequestEvent,
@@ -864,6 +933,7 @@ class TTSEventHandler:
             playback_lifecycle=event.playback_lifecycle,
         )
 
+    @_maintenance_entry("utterance")
     async def speak_utterance(
         self,
         text: str,
@@ -974,6 +1044,7 @@ class TTSEventHandler:
         finally:
             fire(False)
 
+    @_maintenance_entry("request")
     async def handle_tts_global_override_decision(
         self,
         event: TTSGlobalOverrideDecisionEvent,
@@ -1202,6 +1273,7 @@ class TTSEventHandler:
             profile_service=default_profile_service,
         )
 
+    @_maintenance_entry("request")
     async def resolve_console_speech_destination(
         self,
         assistant_kind: str | None,
@@ -1551,7 +1623,7 @@ class TTSEventHandler:
             task.add_done_callback(clear_owner)
             await self._add_active_task(task)
         else:
-            asyncio.create_task(self._add_active_task(task))
+            self._retain_active_task(task)
 
     async def _cancel_console_generation(
         self,
@@ -3113,6 +3185,7 @@ class TTSEventHandler:
             async with self._audio_files_lock:
                 self._artifact_cleanup_retry.discard(artifact_path)
 
+    @_maintenance_entry("release")
     async def discard_stale_console_completion(
         self,
         message_id: str,
@@ -3211,6 +3284,21 @@ class TTSEventHandler:
             return "TTS is not configured; open STTS Settings"
         return "Unexpected TTS generation failure; retry"
 
+    async def _await_legacy_playback(self, audio_file: Path) -> None:
+        """Observe normal player completion without stopping or deleting audio."""
+        from tldw_chatbook.TTS.audio_player import PlaybackState, get_audio_player
+
+        player = get_audio_player()
+        while True:
+            current, state = await self._run_blocking_tts_io(
+                lambda: (player.get_current_file(), player.get_state())
+            )
+            if current != audio_file or state not in {
+                PlaybackState.PLAYING, PlaybackState.PAUSED,
+            }:
+                return
+            await asyncio.sleep(0.05)
+
     async def _run_owned_file_playback(
         self,
         message_id: str,
@@ -3229,14 +3317,14 @@ class TTSEventHandler:
             loop.call_soon_threadsafe(lifecycle.report, "playing")
 
         try:
-            finished = await asyncio.to_thread(
+            finished = await self._run_blocking_tts_io(partial(
                 _play_legacy_clip_and_await_completion,
                 get_audio_player(),
                 audio_file,
                 timeout_seconds=_LEGACY_PLAYBACK_POLL_MAX_SECONDS,
                 stop_requested=stop_requested,
                 on_started=report_started,
-            )
+            ))
             await asyncio.sleep(0)
             if stop_requested.is_set():
                 lifecycle.report_terminal("stopped")
@@ -3268,6 +3356,7 @@ class TTSEventHandler:
                 artifact_owner=lifecycle,
             )
 
+    @_maintenance_entry("playback")
     async def handle_tts_playback(self, event: TTSPlaybackEvent) -> None:
         """Handle TTS playback control"""
         logger.info(
@@ -3556,13 +3645,10 @@ class TTSEventHandler:
                 async with self._audio_files_lock:
                     self._last_played = (event.message_id or "adhoc", audio_file)
                 # Schedule cleanup after playback
-                asyncio.create_task(
-                    self._cleanup_audio_file(
-                        event.message_id,
-                        delay=5.0,
-                        artifact_owner=None,
-                    )
-                )
+                self._schedule_legacy_playback_cleanup(event.message_id)
+                self._retain_active_task(asyncio.create_task(
+                    self._await_legacy_playback(audio_file)
+                ))
             else:
                 logger.warning(f"Audio file not found for message {event.message_id}")
 
@@ -3708,31 +3794,39 @@ class TTSEventHandler:
 
     def on_tts_request_event(self, event: TTSRequestEvent) -> None:
         """Handle TTS request event"""
+        if self._maintenance_paused:
+            if callable(getattr(event, "report_outcome", None)):
+                event.report_outcome(False)
+            return
         task = asyncio.create_task(self.handle_tts_request(event))
         # Use create_task to add task safely
-        asyncio.create_task(self._add_active_task(task))
+        self._retain_active_task(task)
 
     def on_tts_message_speech_request_event(
         self,
         event: TTSMessageSpeechRequestEvent,
     ) -> None:
         """Handle one trusted Console message speech request event."""
+        if self._maintenance_paused:
+            if callable(getattr(event, "report_outcome", None)):
+                event.report_outcome(False)
+            return
         task = asyncio.create_task(self.handle_tts_request(event))
-        asyncio.create_task(self._add_active_task(task))
+        self._retain_active_task(task)
 
     def on_tts_playback_event(self, event: TTSPlaybackEvent) -> None:
         """Handle TTS playback event"""
+        if self._maintenance_paused and event.action not in {"stop", "pause"}:
+            if callable(getattr(event, "report_outcome", None)):
+                event.report_outcome(False)
+            return
         task = asyncio.create_task(self.handle_tts_playback(event))
         # Use create_task to add task safely
-        asyncio.create_task(self._add_active_task(task))
+        self._retain_active_task(task)
 
     async def _add_active_task(self, task: asyncio.Task) -> None:
         """Add task to active tasks set with lock"""
-        async with self._active_tasks_lock:
-            self._active_tasks.add(task)
-            task.add_done_callback(
-                lambda t: asyncio.create_task(self._remove_active_task(t))
-            )
+        self._retain_active_task(task)
 
     async def _remove_active_task(self, task: asyncio.Task) -> None:
         """Remove task from active tasks set with lock"""
