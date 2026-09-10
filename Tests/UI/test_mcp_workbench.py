@@ -6827,20 +6827,34 @@ class _FakeLocalServiceWithInventory:
     `agent:builtin` section this task adds, letting a test assert the two
     render as genuinely distinct groups rather than merely both existing."""
 
+    def __init__(self, tool_names: tuple[str, ...] = ("search_web",)) -> None:
+        self._tool_names = tool_names
+
     def get_inventory(self):
-        return {"tools": [{"name": "search_web", "description": "Search the web."}]}
+        return {
+            "tools": [
+                {"name": name, "description": f"{name} description."}
+                for name in self._tool_names
+            ]
+        }
 
 
 class BuiltinDistinctHubService(PermissionsHubService):
-    def __init__(self, store_path: Path) -> None:
+    def __init__(
+        self, store_path: Path, inventory_names: tuple[str, ...] = ("search_web",)
+    ) -> None:
         super().__init__(store_path)
-        self.local_service = _FakeLocalServiceWithInventory()
+        self.local_service = _FakeLocalServiceWithInventory(inventory_names)
 
 
 class BuiltinDistinctApp(ConsolidatedCSSApp):
-    def __init__(self, store_path: Path) -> None:
+    def __init__(
+        self, store_path: Path, inventory_names: tuple[str, ...] = ("search_web",)
+    ) -> None:
         super().__init__()
-        self.unified_mcp_service = BuiltinDistinctHubService(store_path)
+        self.unified_mcp_service = BuiltinDistinctHubService(
+            store_path, inventory_names
+        )
 
     def compose(self) -> ComposeResult:
         yield MCPWorkbench(app_instance=self, id="mcp-workbench")
@@ -6876,6 +6890,102 @@ async def test_builtin_section_is_distinct_from_the_builtin_mcp_server(tmp_path)
         # Neither tool list bleeds into the other's row-key namespace.
         assert "builtin:tldw_chatbook::calculator" not in row_keys
         assert "agent:builtin::search_web" not in row_keys
+
+
+@pytest.mark.asyncio
+async def test_builtin_server_inventory_renders_tools_mode_rows(tmp_path):
+    """task-32283 AC#1 (Tools mode): the built-in MCP *server*'s own
+    inventory reaches `#mcp-tools-table` as rows under its own
+    `tldw_chatbook` server label, keyed in the `builtin:tldw_chatbook`
+    namespace, each with a resolved State cell.
+
+    `MCPWorkbench._collect_hub_tools()` and
+    `MCPToolProvider._compose_catalog()` read the SAME seam
+    (`service.local_service.get_inventory()` -> `builtin_tools_from_
+    inventory()`), so a tool the Console just raised an approval card for
+    is always pre-configurable in the hub. Nothing else covered the hub
+    half of that seam at the TABLE level.
+    """
+    app = BuiltinDistinctApp(
+        tmp_path / "mcp_permissions.json",
+        inventory_names=("list_characters", "search_notes"),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        table = app.query_one("#mcp-tools-table", DataTable)
+        rows = {}
+        for index in range(table.row_count):
+            key = table.coordinate_to_cell_key((index, 0))[0].value
+            cells = table.get_row_at(index)
+            # Columns are Tool, State, Server (then Tags only when some
+            # tool in the catalog carries one, then Schema).
+            rows[key] = (cells[0].plain, cells[1].plain, cells[2].plain)
+
+        assert rows["builtin:tldw_chatbook::list_characters"] == (
+            "list_characters",
+            "Ask",
+            "tldw_chatbook",
+        )
+        assert rows["builtin:tldw_chatbook::search_notes"] == (
+            "search_notes",
+            "Ask",
+            "tldw_chatbook",
+        )
+
+
+@pytest.mark.asyncio
+async def test_space_cycle_on_builtin_server_tool_row_round_trips_through_store(
+    tmp_path,
+):
+    """task-32283 AC#2: cycling a built-in-*server* row writes the
+    `builtin:tldw_chatbook` / `list_characters` key -- the exact key the
+    Console's own permission resolution reads for that tool -- and the
+    resolved state the hub re-renders from changes with it."""
+    app = BuiltinDistinctApp(
+        tmp_path / "mcp_permissions.json",
+        inventory_names=("list_characters", "search_notes"),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        row = _perm_row_keys(app).index("builtin:tldw_chatbook::list_characters")
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=row)
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        payload = app.unified_mcp_service.permission_store.load()
+        entry = payload["profiles"]["default"]["servers"]["builtin:tldw_chatbook"][
+            "tools"
+        ]["list_characters"]
+        assert entry["state"] == "allow"
+
+        # Resolving that same key (what the next Console approval round
+        # does) returns the new state, not just the row's rendered label.
+        tool = next(
+            t
+            for t in workbench._last_hub_tools
+            if t.server_key == "builtin:tldw_chatbook" and t.name == "list_characters"
+        )
+        resolved = app.unified_mcp_service.effective_tool_states([tool])
+        assert resolved[("builtin:tldw_chatbook", "list_characters")].state == "allow"
+
+        assert _perm_table_texts(app, row) == ["  list_characters", "Allow •"]
+        # The sibling built-in tool is untouched by the single-row cycle.
+        sibling = _perm_row_keys(app).index("builtin:tldw_chatbook::search_notes")
+        assert _perm_table_texts(app, sibling) == ["  search_notes", "Ask"]
 
 
 @pytest.mark.asyncio
