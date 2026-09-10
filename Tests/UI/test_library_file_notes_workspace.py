@@ -1557,7 +1557,7 @@ async def test_notes_authority_switch_restores_visible_focus_and_typing_owner(
         assert screen.focused is database_editor
         assert screen.focused.visible
         assert not workspace.display
-        assert screen.query_one("#library-notes-reader-shell").display
+        assert screen.query_one(".library-notes-route").display
         folder_before_database_type = folder_editor.text
         await pilot.press("x")
         assert database_editor.text == "database retainedx"
@@ -1577,7 +1577,7 @@ async def test_notes_authority_switch_restores_visible_focus_and_typing_owner(
         assert screen.focused is folder_editor
         assert screen.focused.visible
         assert workspace.display
-        assert not screen.query_one("#library-notes-reader-shell").display
+        assert not screen.query_one(".library-notes-route").display
         database_before_folder_type = database_editor.text
         await pilot.press("y")
         assert folder_editor.text == f"{folder_before_database_type}y"

@@ -19,6 +19,7 @@ from typing import Any, Literal, Mapping
 
 from .library_rail_width import (
     LIBRARY_CUSTOM_MAX_WIDTH,
+    LIBRARY_DEFAULT_EXTRA_WIDTH,
     LIBRARY_EMERGENCY_WIDTH,
     LIBRARY_MIN_WIDTH,
     LIBRARY_REFERENCE_WIDTH,
@@ -27,7 +28,8 @@ from .library_rail_width import (
 
 LIBRARY_TARGET_WIDTH = LIBRARY_REFERENCE_WIDTH
 LIBRARY_MAX_WIDTH = LIBRARY_CUSTOM_MAX_WIDTH
-ITEMS_TARGET_WIDTH = 40
+ITEMS_TARGET_WIDTH = 50
+ITEMS_DEFAULT_EXTRA_WIDTH = 10
 ITEMS_MIN_WIDTH = 32
 ITEMS_MAX_WIDTH = 72
 READER_COMFORT_WIDTH = 44
@@ -80,15 +82,12 @@ class AdaptiveReaderLayoutProfile:
         grip_width: Width of EACH of the two pane grips -- both what a grip
             paints and what the resolver holds back for it, so the two can
             never disagree (the resolved layout carries this width to the
-            shell). Defaults to ``PANE_GRIP_WIDTH`` (5). Media passes 1: its
-            two five-column grips left ten dead columns around the Items pane
-            (task-31633 AC#2), and task-31951 opted Conversations, Skills and
-            Collections in for the same reason. A grip narrower than four
-            cells paints the one-cell guillemet instead of the ``<---`` run.
+            shell). Every Library destination uses ``PANE_GRIP_WIDTH`` (5):
+            the full-height controls are deliberately wide pointer targets.
     """
 
     list_min_width: int = 32
-    list_target_width: int = 40
+    list_target_width: int = ITEMS_TARGET_WIDTH
     list_comfort_width: int = 56
     list_max_width: int = 72
     work_min_width: int = 44
@@ -280,6 +279,7 @@ def resolve_adaptive_reader_layout(
         if preferences.custom_widths_enabled
         else project_default_library_width(width)
     )
+    explicit_priority = priority
     if priority is None and previous is not None:
         inherited = previous.priority_pane
         if (
@@ -292,6 +292,20 @@ def resolve_adaptive_reader_layout(
 
     grip_width = 2 * profile.grip_width
     work_min_width = max(profile.work_min_width, 0)
+    # The added default space is preferred, not a new collapse threshold.
+    # Keep the established narrow layout before allocating the extra cells.
+    # Explicit custom widths retain their existing exact-width policy.
+    library_fit_width = requested_library_width
+    items_fit_width = preferences.items_width
+    if not preferences.custom_widths_enabled:
+        library_fit_width -= LIBRARY_DEFAULT_EXTRA_WIDTH
+        items_fit_width = min(
+            preferences.items_width,
+            max(
+                profile.list_min_width,
+                preferences.items_width - ITEMS_DEFAULT_EXTRA_WIDTH,
+            ),
+        )
     library_open = preferences.library_open
     items_open = preferences.items_open
     if priority is not None:
@@ -302,8 +316,8 @@ def resolve_adaptive_reader_layout(
 
         full_width = (
             grip_width
-            + (requested_library_width if library_open else 0)
-            + (preferences.items_width if items_open else 0)
+            + (library_fit_width if library_open else 0)
+            + (items_fit_width if items_open else 0)
             + work_min_width
         )
         if width < full_width:
@@ -347,8 +361,8 @@ def resolve_adaptive_reader_layout(
     def required_width(open_library: bool, open_items: bool) -> int:
         return (
             grip_width
-            + (requested_library_width if open_library else 0)
-            + (preferences.items_width if open_items else 0)
+            + (library_fit_width if open_library else 0)
+            + (items_fit_width if open_items else 0)
             + work_min_width
         )
 
@@ -362,12 +376,14 @@ def resolve_adaptive_reader_layout(
         if (
             library_open
             and not previous.library_open
+            and explicit_priority != "library"
             and width < nominal_width + LAYOUT_HYSTERESIS_WIDTH
         ):
             library_open = False
         if (
             items_open
             and not previous.items_open
+            and explicit_priority != "items"
             and width
             < required_width(library_open, items_open) + LAYOUT_HYSTERESIS_WIDTH
         ):
@@ -416,8 +432,17 @@ def resolve_adaptive_reader_layout(
             grip_width=profile.grip_width,
         )
 
-    library_width = requested_library_width if library_open else 0
-    items_width = preferences.items_width if items_open else 0
+    library_width = library_fit_width if library_open else 0
+    items_width = items_fit_width if items_open else 0
+    spare_width = max(
+        width - grip_width - library_width - items_width - work_min_width, 0
+    )
+    if library_open:
+        extra = min(requested_library_width - library_width, spare_width)
+        library_width += extra
+        spare_width -= extra
+    if items_open:
+        items_width += min(preferences.items_width - items_width, spare_width)
     if items_open and not library_open:
         # task-31953: this clamp is deliberately NOT gated on
         # `custom_widths_enabled` -- with the Library pane gone a typed 32

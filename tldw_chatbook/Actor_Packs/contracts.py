@@ -16,6 +16,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from tldw_chatbook.Character_Chat.artwork_attribution import (
+    ARTWORK_FEATURE,
+    ARTWORK_MEMBER,
+    CONVERSION_FEATURE,
+    MAX_ARTWORK_BYTES,
+    decode_artwork_attribution,
+)
+
 
 ACTOR_PACK_SCHEMA = "tldw.actor-pack/v1"
 ACTOR_PAYLOAD_SCHEMA = "tldw.actor/v1"
@@ -61,7 +69,12 @@ _ACTOR_KEYS = frozenset({"kind", "portable_uuid", "payload", "portrait"})
 _SECTION_KEYS = frozenset({"kind", "manifest"})
 _FILE_KEYS = frozenset({"path", "bytes", "sha256"})
 _KNOWN_REQUIRED_FEATURES = frozenset(
-    {"shared-visual-identity/v1", "persona-runtime/sprite-frames-v1"}
+    {
+        "shared-visual-identity/v1",
+        "persona-runtime/sprite-frames-v1",
+        ARTWORK_FEATURE,
+        CONVERSION_FEATURE,
+    }
 )
 _CHARACTER_FIELDS = frozenset(
     {
@@ -336,6 +349,19 @@ def _validate_actor_pack_document(
     for section in document.sections:
         if section.manifest_path not in supplied:
             raise ActorPackValidationError("actor_pack_section_invalid")
+    if ARTWORK_MEMBER in supplied:
+        try:
+            visual = json.loads(supplied["shared-visual-identity/manifest.json"])
+            decode_artwork_attribution(
+                supplied[ARTWORK_MEMBER],
+                {
+                    asset["expression_key"]: asset["sha256"]
+                    for asset in visual["assets"]
+                },
+                required_features=manifest["required_features"],
+            )
+        except (KeyError, TypeError, ValueError, RecursionError):
+            raise ActorPackValidationError("actor_pack_section_invalid") from None
     return document
 
 
@@ -372,6 +398,16 @@ def _validate_actor_pack_manifest(manifest: Mapping[str, Any]) -> ActorPackDocum
 
     sections = _sections(manifest.get("sections"), actor_kind)
     inventory = _inventory(manifest.get("files"))
+    artwork = next((item for item in inventory if item.path == ARTWORK_MEMBER), None)
+    if (artwork is not None) != (ARTWORK_FEATURE in required_features):
+        raise ActorPackValidationError("actor_pack_feature_unsupported")
+    if CONVERSION_FEATURE in required_features and artwork is None:
+        raise ActorPackValidationError("actor_pack_feature_unsupported")
+    if artwork is not None and (
+        artwork.byte_count > MAX_ARTWORK_BYTES
+        or not any(section.kind == "shared-visual-identity" for section in sections)
+    ):
+        raise ActorPackValidationError("actor_pack_section_invalid")
     if sum(item.byte_count for item in inventory) > MAX_TOTAL_BYTES:
         raise ActorPackValidationError("actor_pack_inventory_invalid")
 

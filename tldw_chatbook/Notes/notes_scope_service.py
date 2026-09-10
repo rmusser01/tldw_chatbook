@@ -1937,6 +1937,87 @@ class NotesScopeService:
             )
         raise ValueError("Workspace notes require a selected workspace context.")
 
+    async def list_deleted_notes(
+        self,
+        *,
+        scope: ScopeType | str,
+        limit: int = 20,
+        offset: int = 0,
+        user_id: Optional[str] = None,
+    ) -> Mapping[str, Any]:
+        """Page the soft-deleted notes the Library Trash view restores from.
+
+        Local-only for the same reason ``restore_note`` is: the Trash view is
+        backed by the local ChaChaNotes tombstone contract, and no server or
+        workspace backend exposes a deleted-notes seam. Runtime policy treats
+        the read as an ordinary local ``list``.
+
+        Args:
+            scope: Note scope; only ``local_note`` is supported.
+            limit: Maximum rows in the returned page.
+            offset: Rows to skip before the page.
+            user_id: Local Notes user identity.
+
+        Returns:
+            ``{"items": [...], "total": int}`` -- each item carries the note
+            id, title, deletion timestamp and its tombstone ``version``.
+
+        Raises:
+            ValueError: If the scope is not local or ``user_id`` is missing.
+        """
+        normalized_scope = self._normalize_scope(scope)
+        self._enforce_policy(self._note_action_id(normalized_scope, "list"))
+        if normalized_scope is not ScopeType.LOCAL_NOTE:
+            raise ValueError(
+                "Deleted notes are only listed for local notes."
+            )
+        return await asyncio.to_thread(
+            self.local_notes_service.list_deleted_notes,
+            self._require_user_id(user_id),
+            limit,
+            offset,
+        )
+
+    async def list_note_backlinks(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: str,
+        user_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List the notes whose body links to ``note_id`` (task-32145).
+
+        Args:
+            scope: The note scope to read; only ``ScopeType.LOCAL_NOTE``
+                carries the ``note://`` link form the Obsidian importer
+                writes.
+            note_id: The linked-to note.
+            user_id: The local user whose database to read.
+            limit: Maximum rows to return.
+
+        Returns:
+            ``{"id", "title"}`` rows for the linking notes, ordered by title.
+
+        Raises:
+            ValueError: If the scope is not local -- the same refusal
+                ``list_deleted_notes`` gives, and for the same reason. An
+                empty list would reach Info as "(0) — no notes link here
+                yet", which asserts something this service never checked;
+                raising lands in the caller's ``failed`` path, where the
+                header honestly reads "couldn't check".
+        """
+        normalized_scope = self._normalize_scope(scope)
+        self._enforce_policy(self._note_action_id(normalized_scope, "list"))
+        if normalized_scope is not ScopeType.LOCAL_NOTE:
+            raise ValueError("Backlinks are only listed for local notes.")
+        return await asyncio.to_thread(
+            self.local_notes_service.get_notes_linking_to,
+            self._require_user_id(user_id),
+            note_id,
+            limit,
+        )
+
     async def count_notes(
         self,
         *,

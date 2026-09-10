@@ -1,0 +1,114 @@
+{
+  "initial_ci_head": "a8eb9cea42c041b1ee3297242a46228ff9171d44",
+  "dev": "c4a7b1911f14181faa471eb1ea209cfdeed98226",
+  "windows_gguf": {
+    "outcome": "passed",
+    "tests": 35,
+    "run": 34304689045,
+    "job": 102318822445
+  },
+  "fast_lane_failure": {
+    "tests_passed": 754,
+    "tests_failed": 1,
+    "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_preview_escape_revokes_nonce_through_mounted_binding",
+    "error": "KeyError: text-area--gutter",
+    "run": 34304689048,
+    "job": 102318822301
+  },
+  "derived_artifacts_failure": "The Fast Lane prerequisite gate failed; all six artifact checks still ran and passed.",
+  "mcp_unbatched_reproduction": [
+    {
+      "attached": false,
+      "component_style_keys": [],
+      "in_visible_compositor": true,
+      "geometry": "(Region(x=87, y=10, width=33, height=8), Region(x=87, y=7, width=33, height=11))",
+      "theme_present": true,
+      "batch_count": 0,
+      "layout_required": false,
+      "focused": "DataTable(id='mcp-tools-table')",
+      "component_classes": [
+        "text-area--cursor",
+        "text-area--cursor-gutter",
+        "text-area--cursor-line",
+        "text-area--gutter",
+        "text-area--matching-bracket",
+        "text-area--placeholder",
+        "text-area--selection",
+        "text-area--suggestion"
+      ],
+      "render_outcome": "KeyError",
+      "render_error": "\"No 'text-area--gutter' key in COMPONENT_CLASSES\""
+    }
+  ],
+  "mcp_batched_comparison": [
+    {
+      "attached": false,
+      "component_style_keys": [],
+      "in_visible_compositor": true,
+      "geometry": "(Region(x=87, y=10, width=33, height=8), Region(x=87, y=7, width=33, height=11))",
+      "theme_present": true,
+      "batch_count": 1,
+      "layout_required": false,
+      "focused": "DataTable(id='mcp-tools-table')",
+      "component_classes": [
+        "text-area--cursor",
+        "text-area--cursor-gutter",
+        "text-area--cursor-line",
+        "text-area--gutter",
+        "text-area--matching-bracket",
+        "text-area--placeholder",
+        "text-area--selection",
+        "text-area--suggestion"
+      ],
+      "render_outcome": "success"
+    }
+  ],
+  "tts_source_hashes_unchanged_by_rebase": true,
+  "mcp_source_matches_old_and_latest_dev": true,
+  "mcp_repair": {
+    "baseline": "66ec19d1623055f4dee7a43b61cafbea819f9ef7",
+    "sha256": {
+      "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "a5983bd78731999216f52e17ed435121bf91bc648bfda3f4d718d3a412e13642",
+      "Tests/UI/test_mcp_workbench.py": "35fc2aa87bf035dc32885d96eb34620031511b9e1e8da037893a245986cf88ea"
+    },
+    "red": "task32114-red.log: 1 failed, exact missing text-area--gutter KeyError at explicit timer outcome assertion",
+    "green": "task32114-green-final.log: 2 passed in 3.25s",
+    "lifecycle": "task32114-lifecycle.log: 26 passed, 308 deselected in 29.76s",
+    "format": "task32114-format.log: 2 files already formatted",
+    "ruff": "task32114-ruff-baseline-comparison.json: same 13 pre-existing findings, no new finding",
+    "diff_check": "passed",
+    "cleanup": "All test subprocesses exited; run_test contexts closed; no audio/inference; no commits or changes outside the two assigned source files. Parent-owned untracked task file preserved.",
+    "scope": "Batch only awaited Test Tool panel removal, preserving synchronous preview clear and revocation posting before batch. New test uses actual Escape binding, delegates real Widget teardown, requests public editor refresh to invalidate cached styles, invokes actual Screen timer, asserts exactly one successful timer outcome, nonce revoked, panel absent, detached editor absent after normal repaint.",
+    "risk": "Regression deliberately targets Textual 8 private lifecycle/compositor APIs; framework upgrades may require adapting the observer. Production uses public App.batch_update API.",
+    "lifecycle_command": "PYTHONDONTWRITEBYTECODE=1 python -m pytest -p no:cacheprovider Tests/UI/test_mcp_workbench.py -k 'test_test_tool and (preview or unmount or cancellation or reopen or active_watcher)' -q"
+  },
+  "independent_mcp_review": "No actionable findings; scoped awaited batch retains nonce ordering, releases on cancellation, and regression checks normal post-close repaint.",
+  "earlier_rebased_head": "66ec19d1623055f4dee7a43b61cafbea819f9ef7",
+  "rebased_source_head_before_documentation_amendment": "865ce0e48cbb8d6b291c706792617be5d8084106",
+  "diagnostic_guard": {
+    "command": "python scripts/check_persistent_diagnostic_inventory.py --diff",
+    "outcome": "passed",
+    "python": "3.12.11",
+    "summary": {
+      "owner_files": 592,
+      "path_privacy_candidate_calls": 710,
+      "persistent_sink_files": 12,
+      "task_31551_calls": 55,
+      "task_492_calls": 1348,
+      "task_494_calls": 7667
+    },
+    "review": "Retained the added redacted Library count failure diagnostic from latest dev and the reviewed Kokoro deletions; no new sink."
+  },
+  "measured_tts_sources_match_final_wheel": true,
+  "mcp_sources_match_test_receipt": true,
+  "user_configuration_unchanged": true,
+  "derived_artifacts_passed_steps": [
+    "Generated stylesheets reproduce from their sources",
+    "Profile-owned path census matches its approved exceptions",
+    "Production diagnostic inventory matches the source tree",
+    "Backlog task IDs are unique",
+    "ChaChaNotes table allowlist covers every migrated table",
+    "Every database index has a query-plan decision on record"
+  ],
+  "scope": "Historical MCP and Library rebase qualification through dev c4a7b1911f14181faa471eb1ea209cfdeed98226, before Buddy dev 733f7a628c064005d27bed8bbcf53aae01b5dd45. Source-match statements below refer only to that earlier integration."
+}

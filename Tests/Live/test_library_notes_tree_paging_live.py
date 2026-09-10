@@ -480,7 +480,7 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
             for size in SIZES:
                 await pilot.resize_terminal(*size)
                 await pilot.pause()
-                shell = screen.query_one("#library-notes-reader-shell")
+                shell = screen.query_one(".library-notes-route")
                 if not shell.effective_layout.items_open:
                     shell.items_grip.press()
                     await _wait_for_condition(

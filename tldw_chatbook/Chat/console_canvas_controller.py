@@ -13,7 +13,11 @@ from uuid import uuid4
 
 from loguru import logger
 
-from tldw_chatbook.Canvas.compilation import CanvasCompilation
+from tldw_chatbook.Canvas.compilation import (
+    CanvasCompilation,
+    PreparedCanvasDocument,
+    prepare_canvas_document,
+)
 from tldw_chatbook.Canvas.limits import (
     MAX_TEMPORARY_SOURCE_BYTES_PER_SESSION,
     CanvasLimitError,
@@ -22,16 +26,17 @@ from tldw_chatbook.Canvas.limits import (
     sha256_utf8,
 )
 from tldw_chatbook.Canvas.models import (
+    CanvasCompiledPlan,
     CanvasConflictResult,
     CanvasListItem,
     CanvasMutationResult,
     CanvasOrigin,
     CanvasQuotaUsage,
     CanvasReadResult,
-    CanvasRenderPlan,
     CanvasRevisionInfo,
     CanvasScope,
 )
+from tldw_chatbook.Canvas.profiles import ProfileSnapshot, load_profile_snapshot
 from tldw_chatbook.Canvas.repository import (
     CanvasImportBatch,
     CanvasImportDocument,
@@ -50,12 +55,23 @@ _MAX_RETAINED_CLOSED_RUNS = 256
 
 
 def compile_canvas_document(
-    source: str, *, limits: CanvasLimits | None = None
-) -> CanvasRenderPlan:
+    source: str,
+    *,
+    limits: CanvasLimits | None = None,
+    snapshot: ProfileSnapshot | None = None,
+    parent_profile: str | None = None,
+) -> CanvasCompiledPlan:
     """Compile on first use while preserving this module's patch seam."""
 
     from tldw_chatbook.Canvas.compiler import compile_canvas_document as compile_source
 
+    if snapshot is not None:
+        return prepare_canvas_document(
+            source,
+            operation="create" if parent_profile is None else "update",
+            parent_profile=parent_profile,
+            snapshot=snapshot,
+        )
     return compile_source(source, limits=limits)
 
 
@@ -279,6 +295,16 @@ class CanvasRunCoordinator:
         self.controller = controller
         self._run_owner = owner
 
+    @property
+    def profile_snapshot(self) -> ProfileSnapshot:
+        """Return the controller's exact process-lifetime profile snapshot.
+
+        Returns:
+            The immutable profile snapshot retained by the owning controller.
+        """
+
+        return self.controller.profile_snapshot
+
     def is_scope_current(self, scope: CanvasScope) -> bool:
         return self.controller.is_scope_current(scope, _run_owner=self._run_owner)
 
@@ -323,8 +349,19 @@ class ConsoleCanvasController:
         *,
         durable_service: object | None = None,
         repository_limits: CanvasRepositoryLimits | None = None,
+        profile_snapshot: ProfileSnapshot | None = None,
     ) -> None:
+        service_snapshot = getattr(durable_service, "profile_snapshot", None)
+        if (
+            profile_snapshot is not None
+            and service_snapshot is not None
+            and profile_snapshot is not service_snapshot
+        ):
+            raise ValueError("canvas_profile_snapshot_mismatch")
         self._durable_service = durable_service
+        self.profile_snapshot = (
+            profile_snapshot or service_snapshot or load_profile_snapshot()
+        )
         self._repository_limits = repository_limits or CanvasRepositoryLimits()
         self._runs: dict[str, _RunStage] = {}
         self._assistant_runs: dict[str, str] = {}
@@ -557,7 +594,7 @@ class ConsoleCanvasController:
         preflight = self._create_canvas(scope, **arguments, _run_owner=_run_owner)
         if not isinstance(preflight, CanvasRunOwner):
             return preflight
-        plan = self.compilation.run(lambda: compile_canvas_document(html))
+        plan = self.compilation.run(lambda: self.prepare_import(html, temporary=True))
         return self._create_canvas(scope, **arguments, _run_owner=preflight, _plan=plan)
 
     def _create_canvas(
@@ -568,7 +605,7 @@ class ConsoleCanvasController:
         title: str,
         html: str,
         _run_owner: CanvasRunOwner | None = None,
-        _plan: CanvasRenderPlan | None = None,
+        _plan: PreparedCanvasDocument | None = None,
     ) -> CanvasMutationResult | CanvasRunOwner:
         with self._lock:
             stage = self._require_scope(scope, _run_owner)
@@ -580,14 +617,16 @@ class ConsoleCanvasController:
                 raise RuntimeError("canvas_scope_unavailable")
             if _plan is None:
                 return stage.run_owner
-            plan = _plan
+            plan = _plan.validate(
+                html, parent_profile=None, snapshot=self.profile_snapshot
+            )
             now = datetime.now(UTC).isoformat()
             info = CanvasRevisionInfo(
                 canvas_id=str(uuid4()),
                 revision_id=str(uuid4()),
                 parent_revision_id=None,
                 title=title,
-                runtime_profile="canvas-v1",
+                runtime_profile=plan.runtime_profile,
                 content_sha256=plan.source_identity.sha256,
                 source_bytes=plan.source_identity.source_bytes,
                 sequence=1,
@@ -607,7 +646,8 @@ class ConsoleCanvasController:
         title: str,
         html: str,
         temporary: bool,
-        _prepared_plan: CanvasRenderPlan | None = None,
+        _prepared_plan: CanvasCompiledPlan | None = None,
+        _preparation: PreparedCanvasDocument | None = None,
         _expected_owner: Any = ...,
     ) -> CanvasMutationResult:
         """Create a user-opened Canvas through the shared staging authority."""
@@ -617,13 +657,19 @@ class ConsoleCanvasController:
             if _expected_owner is ...
             else _expected_owner
         )
-        plan = (
+        preparation = (
             self.compilation.run(lambda: self.prepare_import(html, temporary=temporary))
-            if _prepared_plan is None
-            else _prepared_plan
+            if _preparation is None
+            else _preparation
         )
         with self._lock:
             self.validate_interactive_owner(scope, owner, temporary=temporary)
+            plan = preparation.validate(
+                html,
+                parent_profile=None,
+                snapshot=self.profile_snapshot,
+                offered=_prepared_plan,
+            )
             if not temporary:
                 self._admit_candidate(
                     scope,
@@ -639,12 +685,11 @@ class ConsoleCanvasController:
                     source=html,
                     origin_message_id=origin_message_id,
                     origin_turn_id=origin_turn_id,
-                    _prepared_plan=plan,
+                    _preparation=preparation,
                 )
                 return CanvasMutationResult(
                     created.revision, created.compatibility_issues
                 )
-            self._validate_import_plan(html, plan)
             self._admit_candidate(
                 scope,
                 temporary=True,
@@ -661,7 +706,7 @@ class ConsoleCanvasController:
                 revision_id=str(uuid4()),
                 parent_revision_id=None,
                 title=title,
-                runtime_profile="canvas-v1",
+                runtime_profile=plan.runtime_profile,
                 content_sha256=plan.source_identity.sha256,
                 source_bytes=plan.source_identity.source_bytes,
                 sequence=1,
@@ -684,7 +729,8 @@ class ConsoleCanvasController:
         expected_parent_revision_id: str,
         html: str,
         temporary: bool,
-        _prepared_plan: CanvasRenderPlan | None = None,
+        _prepared_plan: CanvasCompiledPlan | None = None,
+        _preparation: PreparedCanvasDocument | None = None,
         _expected_owner: Any = ...,
     ) -> CanvasMutationResult | CanvasConflictResult:
         """Append a user import replacement through durable or staged history."""
@@ -694,13 +740,31 @@ class ConsoleCanvasController:
             if _expected_owner is ...
             else _expected_owner
         )
-        plan = (
-            self.compilation.run(lambda: self.prepare_import(html, temporary=temporary))
-            if _prepared_plan is None
-            else _prepared_plan
+        selected = replace(
+            scope,
+            selected_canvas_id=canvas_id,
+            selected_revision_id=expected_parent_revision_id,
+        )
+        parent = self.read_session_canvas(
+            selected, canvas_id, temporary=temporary
+        ).revision
+        preparation = (
+            self.compilation.run(
+                lambda: self.prepare_import(
+                    html, temporary=temporary, parent_profile=parent.runtime_profile
+                )
+            )
+            if _preparation is None
+            else _preparation
         )
         with self._lock:
             self.validate_interactive_owner(scope, owner, temporary=temporary)
+            plan = preparation.validate(
+                html,
+                parent_profile=parent.runtime_profile,
+                snapshot=self.profile_snapshot,
+                offered=_prepared_plan,
+            )
             selected = replace(
                 scope,
                 selected_canvas_id=canvas_id,
@@ -722,7 +786,7 @@ class ConsoleCanvasController:
                     source=html,
                     origin_message_id=origin_message_id,
                     origin_turn_id=origin_turn_id,
-                    _prepared_plan=plan,
+                    _preparation=preparation,
                 )
             current = self.read_session_canvas(selected, canvas_id, temporary=True)
             if current.revision.revision_id != expected_parent_revision_id:
@@ -735,7 +799,11 @@ class ConsoleCanvasController:
                     current.revision.sequence,
                     current.revision.origin,
                 )
-            self._validate_import_plan(html, plan)
+            preparation.validate(
+                html,
+                parent_profile=current.revision.runtime_profile,
+                snapshot=self.profile_snapshot,
+            )
             self._admit_candidate(
                 scope,
                 temporary=True,
@@ -751,7 +819,7 @@ class ConsoleCanvasController:
                 revision_id=str(uuid4()),
                 parent_revision_id=current.revision.revision_id,
                 title=current.revision.title,
-                runtime_profile=current.revision.runtime_profile,
+                runtime_profile=plan.runtime_profile,
                 content_sha256=plan.source_identity.sha256,
                 source_bytes=plan.source_identity.source_bytes,
                 sequence=self._temporary_max_sequence(scope, canvas_id) + 1,
@@ -820,20 +888,18 @@ class ConsoleCanvasController:
             ):
                 raise RuntimeError("canvas_scope_unavailable")
 
-    @staticmethod
-    def _validate_import_plan(source: str, plan: Any) -> None:
-        if (
-            not isinstance(plan, CanvasRenderPlan)
-            or plan.runtime_profile != "canvas-v1"
-        ):
-            raise CanvasLimitError("invalid prepared Canvas plan")
-        plan.source_identity.verify_source(source)
-
-    def prepare_import(self, source: str, *, temporary: bool) -> CanvasRenderPlan:
+    def prepare_import(
+        self, source: str, *, temporary: bool, parent_profile: str | None = None
+    ) -> PreparedCanvasDocument:
         """Compile pure input on the caller's admitted worker, preserving service errors."""
         if not temporary:
-            return self._service_call("_compile", source)
-        return compile_canvas_document(source)
+            return self._service_call("_prepare", source, parent_profile=parent_profile)
+        plan = compile_canvas_document(
+            source, snapshot=self.profile_snapshot, parent_profile=parent_profile
+        )
+        return PreparedCanvasDocument.capture(
+            plan, source, parent_profile=parent_profile, snapshot=self.profile_snapshot
+        )
 
     def interactive_rename_canvas(
         self,
@@ -1021,7 +1087,12 @@ class ConsoleCanvasController:
         preflight = self._update_canvas(scope, **arguments, _run_owner=_run_owner)
         if not isinstance(preflight, CanvasRunOwner):
             return preflight
-        plan = self.compilation.run(lambda: compile_canvas_document(html))
+        parent = self.read_canvas(scope, canvas_id, _run_owner=preflight).revision
+        plan = self.compilation.run(
+            lambda: self.prepare_import(
+                html, temporary=True, parent_profile=parent.runtime_profile
+            )
+        )
         return self._update_canvas(scope, **arguments, _run_owner=preflight, _plan=plan)
 
     def _update_canvas(
@@ -1033,7 +1104,7 @@ class ConsoleCanvasController:
         expected_parent_revision_id: str,
         html: str,
         _run_owner: CanvasRunOwner | None = None,
-        _plan: CanvasRenderPlan | None = None,
+        _plan: PreparedCanvasDocument | None = None,
     ) -> CanvasMutationResult | CanvasConflictResult | CanvasRunOwner:
         with self._lock:
             stage = self._require_scope(scope, _run_owner)
@@ -1087,13 +1158,17 @@ class ConsoleCanvasController:
                     )
             if _plan is None:
                 return stage.run_owner
-            plan = _plan
+            plan = _plan.validate(
+                html,
+                parent_profile=parent.runtime_profile,
+                snapshot=self.profile_snapshot,
+            )
             info = CanvasRevisionInfo(
                 canvas_id=canvas_id,
                 revision_id=str(uuid4()),
                 parent_revision_id=parent.revision_id,
                 title=parent.title,
-                runtime_profile=parent.runtime_profile,
+                runtime_profile=plan.runtime_profile,
                 content_sha256=plan.source_identity.sha256,
                 source_bytes=plan.source_identity.source_bytes,
                 sequence=self._next_sequence(stage, canvas_id, parent),

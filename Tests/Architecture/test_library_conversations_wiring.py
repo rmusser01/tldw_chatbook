@@ -147,7 +147,7 @@ def test_screen_delegates_reader_handlers() -> None:
 
 #: Every method Task 8 moved into `LibraryConversationsController` (the
 #: browse cluster: list/paging, row selection/multiselect, export, filter,
-#: empty/retry states, and the "Use in Console"/"Use as source" handoff),
+#: empty/retry states, and the "Use in Console" handoff),
 #: under its original `LibraryScreen` name. Same shape as
 #: `_READER_CLUSTER_METHOD_NAMES` above -- one full-cluster ownership test
 #: plus one full-cluster delegator test, both driven off this one
@@ -221,7 +221,9 @@ _BROWSE_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "_validate_library_conversation_locator",
     "_open_selected_conversation_handoff",
     "open_selected_conversation_in_console",
-    "use_selected_conversation_as_source",
+    # (task-32101) ``use_selected_conversation_as_source`` was here until its
+    # button id turned out to have no compose site anywhere; the handler and
+    # its screen delegator are deleted, so the cluster is 39 names.
 )
 
 #: Task 9 cleanup: same shape as `_READER_CLUSTER_SCREEN_DELEGATOR_PRUNED`
@@ -247,7 +249,7 @@ _BROWSE_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
 
 @pytest.mark.unit
 def test_browse_controller_owns_its_cluster() -> None:
-    """Every one of the 40 browse-cluster names is a callable on the controller.
+    """Every one of the 39 browse-cluster names is a callable on the controller.
 
     Mirrors `test_reader_controller_owns_its_cluster` above, for
     `LibraryConversationsController` (task 8) instead of
@@ -269,12 +271,12 @@ def test_browse_controller_owns_its_cluster() -> None:
 
 @pytest.mark.unit
 def test_screen_delegates_browse_handlers() -> None:
-    """Every one of the 40 browse-cluster names is a one-line screen delegator
+    """Every one of the 39 browse-cluster names is a one-line screen delegator
     that forwards to the SAME-NAMED controller method.
 
-    Mirrors `test_screen_delegates_reader_handlers` above (61 delegators
-    total across both clusters in this series: 21 reader + 40 browse). Five
-    of the 40 names are `@staticmethod`/`@classmethod` on `LibraryScreen`
+    Mirrors `test_screen_delegates_reader_handlers` above (60 delegators
+    total across both clusters in this series: 21 reader + 39 browse). Five
+    of the 39 names are `@staticmethod`/`@classmethod` on `LibraryScreen`
     (`_normalize_library_conversation_page`,
     `_validate_library_conversation_locator`, plus the three `@classmethod`
     label helpers `_conversation_message_count_label`,

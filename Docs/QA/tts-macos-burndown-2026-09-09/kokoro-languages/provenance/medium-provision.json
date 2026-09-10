@@ -1,0 +1,21 @@
+{
+  "repo": "Systran/faster-whisper-medium",
+  "revision": "08e178d48790749d25932bbc082711ddcfdfbc4f",
+  "started_at": 1788939439.574511,
+  "path": "/private/tmp/tts-macos-burndown/languages/whisper-medium/08e178d48790749d25932bbc082711ddcfdfbc4f",
+  "completed_at": 1788939665.518801,
+  "files": {
+    "config.json": {
+      "sha256": "3622a2ddc41ec0e0fd4e68c13c6830f03b90c38d89aaad184de02c8c642cf807",
+      "bytes": 2257
+    },
+    "model.bin": {
+      "sha256": "9b45e1009dcc4ab601eff815b61d80e60ce3fd8c74c1a14f4a282258286b51ae",
+      "bytes": 1527906378
+    },
+    "tokenizer.json": {
+      "sha256": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+      "bytes": 2203239
+    }
+  }
+}

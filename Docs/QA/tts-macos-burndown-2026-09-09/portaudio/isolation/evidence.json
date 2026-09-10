@@ -1,0 +1,21 @@
+{
+  "status": "passed",
+  "profile_isolation": {
+    "paths": {
+      "config": "/private/tmp/tts-macos-burndown/portaudio/runs/isolation-preflight-02/private/config/config.toml",
+      "data": "/private/tmp/tts-macos-burndown/portaudio/runs/isolation-preflight-02/private/data/portaudio_controls",
+      "chachanotes_db": "/private/tmp/tts-macos-burndown/portaudio/runs/isolation-preflight-02/private/db/chachanotes.db",
+      "tts_profiles_db": "/private/tmp/tts-macos-burndown/portaudio/runs/isolation-preflight-02/private/data/portaudio_controls/tldw_chatbook_tts_profiles.db",
+      "chat_dictionaries": "/private/tmp/tts-macos-burndown/portaudio/runs/isolation-preflight-02/private/data/portaudio_controls/chat_dicts",
+      "prompts_db": "/private/tmp/tts-macos-burndown/portaudio/runs/isolation-preflight-02/private/db/prompts.db",
+      "media_db": "/private/tmp/tts-macos-burndown/portaudio/runs/isolation-preflight-02/private/db/media.db"
+    },
+    "config_sha256": "b041ffd0efc1c69e74539343a69fca67611861bd31968ac880a9f2ab0f722fbb",
+    "forbidden_imports": [],
+    "default_profile_audit_guard": "active through worker exit",
+    "denied_accesses": []
+  },
+  "models_initialized": 0,
+  "audio_initialized": false,
+  "pid": 28218
+}

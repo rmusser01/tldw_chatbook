@@ -162,17 +162,67 @@ def test_notes_list_keeps_sixty_columns_beside_an_open_note() -> None:
     assert layout.items_width >= min(int(WIDE[0] * 0.4), 60)
 
 
-def test_notes_list_keeps_its_share_beside_an_open_note_when_compact() -> None:
-    """The same floor holds at 100 columns, where 40% is the smaller number."""
+#: The narrowest Notes shell that still holds a list beside an open note:
+#: two five-cell grips (Notes keeps the default grip, unlike Media), the
+#: list target and the profile's 48-cell work floor. It was 98 while that
+#: target was 40, then 108 once the phase-C graduation raised the target to
+#: 50 -- and it is 98 again: task-32200 (PR #2559) makes an automatic layout
+#: surrender the ADDED preferred cells before it hides a pane that still
+#: fits, so the raised target no longer costs ten columns of two-pane range.
+_NOTES_TWO_PANE_MIN_WIDTH = 98
+
+
+def test_notes_list_keeps_its_share_beside_an_open_note_when_narrow() -> None:
+    """The same floor holds at the narrowest width that fits two panes."""
     layout = resolve_adaptive_reader_layout(
-        COMPACT[0],
+        _NOTES_TWO_PANE_MIN_WIDTH,
         AdaptiveReaderLayoutPreferences(),
         LIBRARY_NOTES_READER_PROFILE,
         reader_has_item=True,
     )
 
     assert layout.items_open is True
-    assert layout.items_width >= min(int(COMPACT[0] * 0.4), 60)
+    assert layout.items_width >= min(int(_NOTES_TWO_PANE_MIN_WIDTH * 0.4), 60)
+
+
+def test_notes_list_closes_rather_than_starving_below_the_two_pane_width() -> None:
+    """A column short of the floor, the list closes instead of shrinking.
+
+    Recorded rather than asserted as a wish: a starved 32-cell list beside a
+    48-cell editor is the shape task-32127 set out to remove, so the honest
+    narrow answer is one pane and a grip to reopen the other.
+
+    The floor itself moved (108 -> 98) under task-32200: an automatic layout
+    now yields the added preferred cells rather than hiding a list that
+    still fits. That widened the two-pane range; it did not soften the rule,
+    so the boundary is pinned from BOTH sides here -- closed at the floor
+    minus one, and never starved anywhere at or above it.
+    """
+    layout = resolve_adaptive_reader_layout(
+        _NOTES_TWO_PANE_MIN_WIDTH - 1,
+        AdaptiveReaderLayoutPreferences(),
+        LIBRARY_NOTES_READER_PROFILE,
+        reader_has_item=True,
+    )
+
+    assert layout.items_open is False
+    assert layout.items_width == 0
+
+    starved = [
+        (width, open_layout.items_width)
+        for width in range(_NOTES_TWO_PANE_MIN_WIDTH, 4 * _NOTES_TWO_PANE_MIN_WIDTH)
+        for open_layout in (
+            resolve_adaptive_reader_layout(
+                width,
+                AdaptiveReaderLayoutPreferences(),
+                LIBRARY_NOTES_READER_PROFILE,
+                reader_has_item=True,
+            ),
+        )
+        if not open_layout.items_open
+        or open_layout.items_width < LIBRARY_NOTES_READER_PROFILE.list_min_width
+    ]
+    assert starved == []
 
 
 def _layout_screen_fake(*, width: int, view: str):
@@ -516,6 +566,10 @@ async def test_undo_delete_returns_the_row_to_the_tree_projection(
     fake._restore_library_notes_focus_identity = lambda *_a, **_k: None
     fake._focus_library_note_control = lambda *_a, **_k: None
     fake._library_notes_restore_guard_is_current = lambda *_a, **_k: True
+    # task-32144: the restore seam now also reloads the Trash snapshot (the
+    # note has left the tombstones), so both entry points -- this Undo and the
+    # Trash view's own Restore -- keep that count truthful.
+    fake._refresh_library_notes_trash = lambda: None
     fake._source_record_id = LibraryScreen._source_record_id
     fake._append_library_note_source_record = MethodType(
         LibraryNotesController._append_library_note_source_record, fake

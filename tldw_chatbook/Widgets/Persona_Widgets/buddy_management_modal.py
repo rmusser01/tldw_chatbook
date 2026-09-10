@@ -112,6 +112,8 @@ class BuddyManagementModal(
         artwork_page: Callable[[int], Any] | None = None,
         artwork_page_size: int = 100,
         selected_buddy: tuple[str, str] | None = None,
+        import_petdex: Callable[..., Any] | None = None,
+        create_character: Callable[..., Any] | None = None,
     ) -> None:
         super().__init__()
         self._buddies = buddies
@@ -127,6 +129,10 @@ class BuddyManagementModal(
         self._preview_generation = 0
         self._apply_callback = apply
         self._applying = False
+        self._import_petdex = import_petdex
+        self._create_character = create_character
+        self.staged_review = None
+        self._reviewing = False
 
     def compose(self) -> ComposeResult:
         initial = self._initial
@@ -176,6 +182,15 @@ class BuddyManagementModal(
                     allow_blank=False,
                     id="buddy-artwork",
                 )
+                if self._import_petdex is not None:
+                    yield Button("Import from Petdex", id="buddy-petdex")
+                    yield Static(
+                        "", id="buddy-staged", classes="buddy-help", markup=False
+                    )
+                if self._create_character is not None:
+                    yield Button(
+                        "Create character", id="buddy-character", disabled=True
+                    )
                 if self._artwork_page is not None:
                     with Horizontal(id="buddy-artwork-pages"):
                         yield Button(
@@ -249,7 +264,7 @@ class BuddyManagementModal(
                     )
                     yield Input(
                         value=initial.import_path,
-                        placeholder="Path to pack; installed when you Apply",
+                        placeholder="Absolute path or ~/Downloads/pack.tldw-persona-vpack",
                         id="buddy-import",
                     )
                     yield Static("", id="buddy-import-error", markup=False)
@@ -278,7 +293,77 @@ class BuddyManagementModal(
     def on_mount(self) -> None:
         super().on_mount()
         self._sync_persona_controls()
+        self._sync_character_control()
         self.query_one("#buddy-enabled").focus()
+
+    @on(Select.Changed, "#buddy-artwork")
+    @on(Input.Changed, "#buddy-import")
+    def _artwork_changed(self) -> None:
+        if not self.is_mounted:
+            return
+        if (
+            self.query_one("#buddy-artwork", Select).value != _NO_ARTWORK
+            or self.query_one("#buddy-import", Input).value
+        ):
+            self.staged_review = None
+            if self._import_petdex is not None:
+                self.query_one("#buddy-staged", Static).update("")
+        self._sync_character_control()
+
+    def _sync_character_control(self) -> None:
+        if self._create_character is not None:
+            self.query_one("#buddy-character", Button).disabled = bool(
+                self._reviewing
+                or self.staged_review is not None
+                or self.query_one("#buddy-import", Input).value
+                or self.query_one("#buddy-artwork", Select).value == _NO_ARTWORK
+            )
+
+    @on(Button.Pressed, "#buddy-petdex")
+    @on(Button.Pressed, "#buddy-character")
+    def _review_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if not self._reviewing and not self._applying:
+            self._reviewing = True
+            self.run_worker(
+                self._review(event.button.id),
+                group="buddy-management-review",
+                exclusive=True,
+            )
+
+    async def _review(self, action: str) -> None:
+        self.query_one("#buddy-apply", Button).disabled = True
+        self.query_one("#buddy-management-body").disabled = True
+        try:
+            if action == "buddy-petdex":
+                result = await self._import_petdex(self)
+                if result is not None and self.is_mounted:
+                    self.query_one("#buddy-artwork", Select).value = _NO_ARTWORK
+                    self.query_one("#buddy-import", Input).value = ""
+                    self.staged_review = result
+                    self.query_one("#buddy-staged", Static).update(
+                        f"{result.title} reviewed. Apply to install. Before Apply, "
+                        "Cancel discards this staged review without installing it."
+                    )
+            else:
+                await self._create_character(
+                    self, str(self.query_one("#buddy-artwork", Select).value)
+                )
+        except (ValueError, OSError, RuntimeError):
+            if self.is_mounted and self.query("#buddy-form-error"):
+                self.query_one("#buddy-form-error", Static).update(
+                    "Source or profile changed, or review failed. Start a fresh review."
+                )
+        finally:
+            self._reviewing = False
+            if self.is_mounted and self.query("#buddy-management-body"):
+                self.query_one("#buddy-management-body").disabled = False
+                self.query_one("#buddy-apply", Button).disabled = False
+                self._sync_character_control()
+
+    def on_unmount(self) -> None:
+        super().on_unmount()
+        self.staged_review = None
 
     def _target(self) -> BuddyTargetChoice | None:
         key = self.query_one("#buddy-follow", Select).value
@@ -483,7 +568,12 @@ class BuddyManagementModal(
         available = {key for _, key in self._buddies}
         if self._selected_buddy is not None:
             available.add(self._selected_buddy[1])
-        if enabled and artwork not in available and not archive:
+        if (
+            enabled
+            and artwork not in available
+            and not archive
+            and self.staged_review is None
+        ):
             raise ValueError(
                 "Choose artwork or enter a Buddy pack path before enabling it."
             )

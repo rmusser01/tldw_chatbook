@@ -1,0 +1,181 @@
+{
+  "curated_utc": "2026-09-09T07:57:59.753952+00:00",
+  "copies": [
+    {
+      "path": "runs/controls-01/evidence.json",
+      "original_path": "/private/tmp/tts-macos-burndown/portaudio/runs/controls-01/evidence.json",
+      "sha256": "a3ad4c70a2e3f3b5b71e541966676ad587a895094697276f5a4e8f2a83c6b441",
+      "bytes": 11926
+    },
+    {
+      "path": "runs/controls-01/controller.json",
+      "original_path": "/private/tmp/tts-macos-burndown/portaudio/runs/controls-01/controller.json",
+      "sha256": "32cdab248e0a77bff3abf1081e5725a6b1e7087c9dc251c739eb441bd61fb5c8",
+      "bytes": 1425
+    },
+    {
+      "path": "runs/controls-01/ownership-release.json",
+      "original_path": "/private/tmp/tts-macos-burndown/portaudio/runs/controls-01/ownership-release.json",
+      "sha256": "36ab9a52435f2eb571efaafb8791008c1ce03e9de89d0b995e94f02151c8b8db",
+      "bytes": 834
+    },
+    {
+      "path": "runs/controls-02/evidence.json",
+      "original_path": "/private/tmp/tts-macos-burndown/portaudio/runs/controls-02/evidence.json",
+      "sha256": "782aab2d5a413895882dbcd5832335666761b73dde09502caeb1c30a8226a942",
+      "bytes": 13405
+    },
+    {
+      "path": "runs/controls-02/controller.json",
+      "original_path": "/private/tmp/tts-macos-burndown/portaudio/runs/controls-02/controller.json",
+      "sha256": "d3aa568504e4e86246d61993a9b77eb265e5bb4cca65684c9df60c23cffcee1d",
+      "bytes": 1943
+    },
+    {
+      "path": "runs/controls-02/ownership-release.json",
+      "original_path": "/private/tmp/tts-macos-burndown/portaudio/runs/controls-02/ownership-release.json",
+      "sha256": "4a2c6db301ee598e6e6ab5053d3f65e8116fbbc483e15443aa0e0d553d4b8534",
+      "bytes": 870
+    },
+    {
+      "path": "isolation/evidence.json",
+      "original_path": "/private/tmp/tts-macos-burndown/portaudio/runs/isolation-preflight-02/evidence.json",
+      "sha256": "1f5fd85b80b0ab7280b9f0bc13c2cb836dca6da9d0f5a82d5c68412a71939371",
+      "bytes": 1245
+    },
+    {
+      "path": "isolation/controller.json",
+      "original_path": "/private/tmp/tts-macos-burndown/portaudio/runs/isolation-preflight-02/controller.json",
+      "sha256": "80ec16cb0a3f9580c2a233e7542f3831f2a39390d9497b7b8a33575dc879eed9",
+      "bytes": 1969
+    },
+    {
+      "path": "provenance/build-receipt.json",
+      "original_path": "/private/tmp/tts-macos-burndown/portaudio/build-receipt.json",
+      "sha256": "3386734bf6750d941ffea298d887d234abdc3dbb0ca2704e21b410c46c89171c",
+      "bytes": 1612
+    },
+    {
+      "path": "provenance/controls-preparation.json",
+      "original_path": "/private/tmp/tts-macos-burndown/portaudio/controls-preparation.json",
+      "sha256": "7aa87b30d895b290a55c205bb94eb3807015c701cd9673be1665484542032079",
+      "bytes": 1049
+    },
+    {
+      "path": "provenance/controls-02-preparation.json",
+      "original_path": "/private/tmp/tts-macos-burndown/portaudio/controls-02-preparation.json",
+      "sha256": "a611169c22d62cb966fca7a1c7291abc04f433763d74bdc318386ba0c8241a65",
+      "bytes": 2477
+    },
+    {
+      "path": "provenance/upstream-status.json",
+      "original_path": "/private/tmp/tts-macos-burndown/portaudio/upstream-status.json",
+      "sha256": "95844c14a9aa55f33df844f8917a65dd0f9ece7f38038bc96ae19f236e192349",
+      "bytes": 755
+    },
+    {
+      "path": "recipes/controls-01.py.txt",
+      "original_path": "/private/tmp/tts-macos-burndown/portaudio/runs/controls-01/qualify_sink_controls.py",
+      "sha256": "e414c9703a9d83c530c061bc714349b5ba817651edbd3663e6ab1b7d7d7c3445",
+      "bytes": 14182
+    },
+    {
+      "path": "recipes/controls-02.py.txt",
+      "original_path": "/private/tmp/tts-macos-burndown/portaudio/qualify_sink_controls.py",
+      "sha256": "5c5961280119cbaab65e32f82d48a22f8536e2a3844c2ef312e41ccccaa823d5",
+      "bytes": 18386
+    },
+    {
+      "path": "upstream/1175.patch",
+      "original_path": "/private/tmp/tts-macos-burndown/portaudio/upstream-1175.patch",
+      "sha256": "455c144307169628d633149bee938425d081b341a2cf198905f7ae994bc3d953",
+      "bytes": 9518
+    },
+    {
+      "path": "upstream/LICENSE.txt",
+      "original_path": "/private/tmp/tts-macos-burndown/portaudio/source/LICENSE.txt",
+      "sha256": "ec52a1952d701f94e5135719a47376da4ee0b4a0201f1cafb49f61db6480ac3d",
+      "bytes": 3524
+    }
+  ],
+  "raw_artifacts_not_copied": [
+    {
+      "path": "/private/tmp/tts-macos-burndown/portaudio/prefix/lib/libportaudio.2.dylib",
+      "sha256": "48d9fcaff582ff65c8a51d67570bf69ce900d51278841d563e19b7ef73746586",
+      "bytes": 121784
+    },
+    {
+      "path": "/private/tmp/tts-macos-burndown/portaudio/build-0.log",
+      "sha256": "83482bc3c084ae04e5662051b839abe48133d81ca920de4e1545a453b3ffa569",
+      "bytes": 987
+    },
+    {
+      "path": "/private/tmp/tts-macos-burndown/portaudio/build-1.log",
+      "sha256": "780c097e8a513993db7c6e232dc6c489b4c91ffe7ade5537d5fa8751b7ad1267",
+      "bytes": 11003
+    },
+    {
+      "path": "/private/tmp/tts-macos-burndown/portaudio/build-2.log",
+      "sha256": "20459681de1948764bae8635a35ccf067a110f23e4c4de744cdbb429217881e1",
+      "bytes": 1220
+    },
+    {
+      "path": "/private/tmp/tts-macos-burndown/portaudio/runs/controls-01/stdout.log",
+      "sha256": "ee4505d8373f1fd860d6c80b9e166bf466612d263e1b2b51b562a25459e8effc",
+      "bytes": 1138
+    },
+    {
+      "path": "/private/tmp/tts-macos-burndown/portaudio/runs/controls-01/stderr.log",
+      "sha256": "0529358ccb6a60430b0bc28a1d082ee9da2b8090567d2ea307a8d2cbd926a411",
+      "bytes": 4608
+    },
+    {
+      "path": "/private/tmp/tts-macos-burndown/portaudio/runs/controls-02/stdout.log",
+      "sha256": "ee4505d8373f1fd860d6c80b9e166bf466612d263e1b2b51b562a25459e8effc",
+      "bytes": 1138
+    },
+    {
+      "path": "/private/tmp/tts-macos-burndown/portaudio/runs/controls-02/stderr.log",
+      "sha256": "b1e12a6c205ee623ce56820d1908044d1e88c0730b9a4f04212d7aab6586f11a",
+      "bytes": 4700
+    },
+    {
+      "path": "/private/tmp/tts-macos-burndown/portaudio/runs/isolation-preflight-02/stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "/private/tmp/tts-macos-burndown/portaudio/runs/isolation-preflight-02/stderr.log",
+      "sha256": "95ae49fc2abcf2637e26b4c9f96e4ff69d26747e23d0e8d8c67c67f3f4735858",
+      "bytes": 3761
+    },
+    {
+      "path": "/private/tmp/tts-macos-burndown/higgs/live-wav-01/audio/console-warmup.wav",
+      "sha256": "43cdbf8f3d4d449c99513a7f3247dc88b95b9a223420b80a4cc6cb5646305cd4",
+      "bytes": 234284
+    },
+    {
+      "path": "/private/tmp/tts-macos-burndown/higgs/live-wav-02/audio/console-warmup.wav",
+      "sha256": "9b7f62bcf0390eeb4fa659e38f4f7f633217417d82f1a16463f258fcb648a46a",
+      "bytes": 195884
+    },
+    {
+      "path": "/private/tmp/tts-macos-burndown/higgs/live-wav-01/worker-sample.txt",
+      "sha256": "ac171ec5138a76fbe9c8a44b409ff5fa8c03aa3c3f397a3409f8f3c55efc55de",
+      "bytes": 123181
+    },
+    {
+      "path": "/private/tmp/tts-macos-burndown/higgs/live-wav-02/worker-sample.txt",
+      "sha256": "269958303f8279efb6a72a037bf2a3bc74ffa5255abad0d906490c32f9ea993e",
+      "bytes": 123181
+    }
+  ],
+  "curation_script": {
+    "path": "/private/tmp/tts-macos-burndown/portaudio/curate_qa.py",
+    "sha256": "7c2799099b3e1b62e7a0c75bf5acce4ef4743a6f63badd500670edd4ed14cad5"
+  },
+  "application_worktree": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown",
+  "application_head_at_curation": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+  "audio_models_binaries_private_profiles_source_archives_copied": false,
+  "receipt_policy": "Copies are byte-identical. summaries and README are derived; original failed/isolation-limited records are not rewritten."
+}

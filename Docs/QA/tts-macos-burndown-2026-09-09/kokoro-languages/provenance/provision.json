@@ -1,0 +1,93 @@
+{
+  "kokoro_revision": "f3ff3571791e39611d31c381e3a41a3af07b4987",
+  "asr_revision": "536b0662742c02347bc0e980a01041f333bce120",
+  "asr_dir": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+  "model_dir": "/private/tmp/tts-macos-burndown/languages/kokoro-model",
+  "japanese_dictionary": "/private/tmp/tts-macos-burndown/languages/open_jtalk_dic_utf_8-1.11",
+  "files": [
+    {
+      "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/ef_dora.pt",
+      "path": "/private/tmp/tts-macos-burndown/languages/kokoro-model/voices/ef_dora.pt",
+      "sha256": "d9d69b0f8a2b87a345f269d89639f89dfbd1a6c9da0c498ae36dd34afcf35530",
+      "bytes": 523420,
+      "seconds": 0.7940242290496826
+    },
+    {
+      "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/ff_siwis.pt",
+      "path": "/private/tmp/tts-macos-burndown/languages/kokoro-model/voices/ff_siwis.pt",
+      "sha256": "8073bf2d2c4b9543a90f2f0fd2144de4ed157e2d4b79ddeb0d5123066171fbc9",
+      "bytes": 523425,
+      "seconds": 0.7663838863372803
+    },
+    {
+      "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/hf_alpha.pt",
+      "path": "/private/tmp/tts-macos-burndown/languages/kokoro-model/voices/hf_alpha.pt",
+      "sha256": "06906fe05746d13a79c5c01e21fd7233b05027221a933c9ada650f5aafc8f044",
+      "bytes": 523425,
+      "seconds": 0.79374098777771
+    },
+    {
+      "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/if_sara.pt",
+      "path": "/private/tmp/tts-macos-burndown/languages/kokoro-model/voices/if_sara.pt",
+      "sha256": "6c0b253b955fe32f1a1a86006aebe83d050ea95afd0e7be15182f087deedbf55",
+      "bytes": 523425,
+      "seconds": 0.7958528995513916
+    },
+    {
+      "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/pf_dora.pt",
+      "path": "/private/tmp/tts-macos-burndown/languages/kokoro-model/voices/pf_dora.pt",
+      "sha256": "07e4ff987c5d5a8c3995efd15cc4f0db7c4c15e881b198d8ab7f67ecf51f5eb7",
+      "bytes": 523425,
+      "seconds": 0.7284600734710693
+    },
+    {
+      "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/jf_alpha.pt",
+      "path": "/private/tmp/tts-macos-burndown/languages/kokoro-model/voices/jf_alpha.pt",
+      "sha256": "1bf4c9dc69e45ee46183b071f4db766349aac5592acbcfeaf051018048a5d787",
+      "bytes": 523425,
+      "seconds": 0.7028791904449463
+    },
+    {
+      "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/f3ff3571791e39611d31c381e3a41a3af07b4987/voices/zf_xiaobei.pt",
+      "path": "/private/tmp/tts-macos-burndown/languages/kokoro-model/voices/zf_xiaobei.pt",
+      "sha256": "9b76be63dab4f4f96962030acc0126a9aee9728608fbbe115e2b58a2bd504df6",
+      "bytes": 523435,
+      "seconds": 0.7027080059051514
+    },
+    {
+      "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/config.json",
+      "path": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120/config.json",
+      "sha256": "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828",
+      "bytes": 2370,
+      "seconds": 0.23566508293151855
+    },
+    {
+      "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/model.bin",
+      "path": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120/model.bin",
+      "sha256": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671",
+      "bytes": 483546902,
+      "seconds": 53.003539085388184
+    },
+    {
+      "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/tokenizer.json",
+      "path": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120/tokenizer.json",
+      "sha256": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+      "bytes": 2203239,
+      "seconds": 0.8288040161132812
+    },
+    {
+      "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/vocabulary.txt",
+      "path": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120/vocabulary.txt",
+      "sha256": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
+      "bytes": 459861,
+      "seconds": 0.43851280212402344
+    },
+    {
+      "url": "https://github.com/r9y9/open_jtalk/releases/download/v1.11.1/open_jtalk_dic_utf_8-1.11.tar.gz",
+      "path": "/private/tmp/tts-macos-burndown/languages/open_jtalk_dic_utf_8-1.11.tar.gz",
+      "sha256": "fe6ba0e43542cef98339abdffd903e062008ea170b04e7e2a35da805902f382a",
+      "bytes": 23646843,
+      "seconds": 60.493102073669434
+    }
+  ]
+}

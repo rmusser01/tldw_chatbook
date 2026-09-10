@@ -13,6 +13,7 @@ from tldw_chatbook.Library.library_export_state import (
     DESTINATION_PLACEHOLDER_COPY,
     EXPORT_BUTTON_COPY,
     EXPORT_HEADER_COPY,
+    EXPORT_RETRY_BUTTON_COPY,
     MEDIA_QUALITY_OPTIONS,
     LibraryExportFormState,
     export_button_tooltip,
@@ -53,8 +54,12 @@ def apply_library_export_submit_gate(
         None.
     """
     submit_button.disabled = not state.export_enabled
+    # task-32232 AC#3: after a failed run the same button IS the retry --
+    # say so, rather than leaving "Export bundle (.zip)" to be re-pressed
+    # on faith (the ingest queue's "Retry this batch" grammar).
     submit_button.label = library_disabled_action_label(
-        EXPORT_BUTTON_COPY, submit_button.disabled
+        EXPORT_RETRY_BUTTON_COPY if state.error_line else EXPORT_BUTTON_COPY,
+        submit_button.disabled,
     )
     # task-2858 AC#3 (LIB-11): F-018 -- the tooltip always explains either
     # what pressing Export will do or the SAME blocker ``disabled``

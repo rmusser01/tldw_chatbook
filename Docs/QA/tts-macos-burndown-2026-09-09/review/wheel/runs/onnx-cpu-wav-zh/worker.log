@@ -1,0 +1,18 @@
+/private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/joblib/_multiprocessing_helpers.py:44: UserWarning: [Errno 28] No space left on device.  joblib will operate in serial mode
+  warnings.warn("%s.  joblib will operate in serial mode" % (e,))
+/private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/jieba/__init__.py:44: SyntaxWarning: invalid escape sequence '\.'
+  re_han_default = re.compile("([\u4E00-\u9FD5a-zA-Z0-9+#&\._%\-]+)", re.U)
+/private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/jieba/__init__.py:46: SyntaxWarning: invalid escape sequence '\s'
+  re_skip_default = re.compile("(\r\n|\s)", re.U)
+/private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/jieba/finalseg/__init__.py:78: SyntaxWarning: invalid escape sequence '\.'
+  re_skip = re.compile("([a-zA-Z0-9]+(?:\.\d+)?%?)")
+Building prefix dict from the default dictionary ...
+DEBUG:jieba:Building prefix dict from the default dictionary ...
+Loading model from cache /var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/jieba.cache
+DEBUG:jieba:Loading model from cache /var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/jieba.cache
+Loading model cost 0.248 seconds.
+DEBUG:jieba:Loading model cost 0.248 seconds.
+Prefix dict has been built successfully.
+DEBUG:jieba:Prefix dict has been built successfully.
+PHASE speech-lab
+PHASE console-warmup

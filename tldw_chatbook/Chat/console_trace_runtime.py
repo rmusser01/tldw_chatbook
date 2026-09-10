@@ -572,10 +572,28 @@ class ConsoleTraceBoundaryFactory:
                             if assistant_revision_id is None
                             else (None, ())
                         )
+                        closed_assistant_id, closed_followups = (
+                            self.service.closed_turn_chain(
+                                cursor,
+                                conversation_id=conversation_id,
+                                previous_turn_id=origin.turn_id,
+                                current_turn_id=turn_id,
+                                preceding_descriptors=provenance.messages_payload[
+                                    :active_descriptor_index
+                                ],
+                            )
+                            if discarded_assistant_id is None
+                            else (None, ())
+                        )
+                        if closed_assistant_id is not None:
+                            # A later untraced answer belongs to its own saved
+                            # turn, never to the older captured tool response.
+                            assistant_revision_id = None
                         if (
                             assistant_revision_id is not None
                             or source_revision_id is not None
                             or discarded_assistant_id is not None
+                            or closed_assistant_id is not None
                         ):
                             completed_tool_turn = CompletedToolTurnWitness(
                                 origin.call_id,
@@ -585,6 +603,8 @@ class ConsoleTraceBoundaryFactory:
                                 source_revision_id=source_revision_id,
                                 discarded_assistant_message_id=discarded_assistant_id,
                                 discarded_followups=discarded_followups,
+                                closed_assistant_message_id=closed_assistant_id,
+                                closed_followups=closed_followups,
                                 project_context_count=(
                                     len(provenance.messages_payload)
                                     - active_descriptor_index

@@ -1,0 +1,39 @@
+diff --git a/Tests/UI/test_speech_playground_pane_lifecycle.py b/Tests/UI/test_speech_playground_pane_lifecycle.py
+index ca44b9b29c..62ba96be4c 100644
+--- a/Tests/UI/test_speech_playground_pane_lifecycle.py
++++ b/Tests/UI/test_speech_playground_pane_lifecycle.py
+@@ -3784,7 +3784,7 @@ async def test_legacy_control_state_is_restored_after_audio_cpp_switch(
+             "professional_female",
+             "Professional Female",
+         ),
+-        ("alltalk", "alltalk", "AllTalk TTS", "female_01.wav", "Female 01"),
++        ("alltalk", "alltalk", "AllTalk TTS", "alloy", "Alloy"),
+     ),
+ )
+ async def test_legacy_provider_defaults_and_labels_are_preserved(
+diff --git a/tldw_chatbook/TTS/backends/kokoro.py b/tldw_chatbook/TTS/backends/kokoro.py
+index fe9f4c991a..2661fc9146 100644
+--- a/tldw_chatbook/TTS/backends/kokoro.py
++++ b/tldw_chatbook/TTS/backends/kokoro.py
+@@ -648,7 +648,7 @@ class KokoroTTSBackend(LocalTTSBackend):
+                 code="dependency_missing",
+                 message=(
+                     "Kokoro PyTorch needs 'tldw_chatbook[local_tts]' on Python "
+-                    "3.11 or 3.12; select ONNX on Python 3.13+."
++                    "3.12; select ONNX on Python 3.13+."
+                 ),
+                 retryable=False,
+                 operation_id="kokoro_pytorch",
+diff --git a/tldw_chatbook/TTS/kokoro_pytorch.py b/tldw_chatbook/TTS/kokoro_pytorch.py
+index 25cb8da007..e70cc5cadf 100644
+--- a/tldw_chatbook/TTS/kokoro_pytorch.py
++++ b/tldw_chatbook/TTS/kokoro_pytorch.py
+@@ -62,7 +62,7 @@ def require_runtime() -> tuple[Any, Any]:
+             code="dependency_missing",
+             message=(
+                 "Kokoro PyTorch requires the optional kokoro runtime. "
+-                "On Python 3.11 or 3.12, install 'tldw_chatbook[local_tts]'. "
++                "On Python 3.12, install 'tldw_chatbook[local_tts]'. "
+                 "Python 3.13+ is not supported by kokoro 0.9.4; select ONNX instead."
+             ),
+             retryable=False,

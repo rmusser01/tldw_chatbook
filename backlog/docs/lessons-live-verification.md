@@ -1,5 +1,38 @@
 # Lessons: verifying against the real thing
 
+## A healthy local model does not prove capture or tool outcomes (TASK-32194–32197)
+
+**2026-09-09.** The llama.cpp server answered uncaptured messages while captured
+tool runs failed: visible planning text before a valid tool fence disagreed with
+the trace classifier. Saved COMPLETE provider calls still belonged to a FAILED,
+empty assistant response, so a successful uncaptured follow-up did not establish
+that the next captured send could recover. Reproduce through the real Console
+controller, inspect both call and assistant closure, and test a cold captured
+successor after the uncaptured turn.
+
+The same investigation received HTTP 202 from DuckDuckGo containing a challenge
+form. The backend reported no matches, and other backend error strings became
+successful ToolResults. Check the actual backend response and structured outcome
+through the provider/runtime boundary. Vary retry arguments in the regression:
+an identical-call loop test alone misses repeated execution failures.
+
+## Check the target platform's exact interpreter build before pinning CI
+
+**TASK-32160 Task14, 2026-09-08.** A fresh macOS ARM64 evidence job pinned the
+local Python3.12.11 version to keep qualification comparable. The job passed
+checkout, then setup-python failed before any lock control or product test:
+GitHub's manifest contained 3.12.11 only for Linux, not Darwin. The same manifest
+listed 3.12.10 for Darwin ARM64/x64. Fifteen local workflow-contract tests and a
+scoped review validated the intended pin, not external build availability.
+[Run34292597991](https://github.com/rmusser01/tldw_chatbook/actions/runs/34292597991)
+had zero artifacts because setup failed before runtime metadata was written.
+
+**What to do.** Before dispatch, check the official installer manifest for the
+exact version/platform/architecture tuple. A local install or a release version
+does not establish hosted-installer availability. Preserve setup logs when
+runtime evidence cannot be created; do not relabel unrun cases as test failures
+or passes. A different patch pin qualifies that build, not the original one.
+
 ## A mount-started worker may run before is_mounted becomes true
 
 **TASK-31645 post-merge UAT, 2026-09-05.** Normal real-terminal Library entry
@@ -1252,6 +1285,29 @@ provenance probe was not in the run as unproven. The same shape applies
 to any machine with several checkouts sharing one venv — which, on this
 repo, is every machine.
 
+**Recurrence — TASK-32160, 2026-09-08.** The shared environment's
+`tldw_profile_core` editable `.pth` and `direct_url.json` still pointed at the
+removed `task-26042-workspace-files-read-only` checkout. The main Canvas
+qualification selection and five actual-child nodes failed collection; a
+26-file continuation passed 1,483 cases but included 22 subprocess performance
+failures from the missing package. Pointing the parent at the current local
+package source passed 26 interop tests and 22 performance checks, but nine
+subprocess guards rebuilt `PYTHONPATH` and remained blocked. Parent import
+success therefore did not qualify the children. The stale target was diagnosed
+by reading installation metadata and checking that exact path, without importing
+the app or modifying the shared environment. Preserve these setup failures and
+label source-path diagnostics; do not silently rewrite nested gates or install
+into a shared environment as part of read-only qualification.
+
+After explicit user approval, this incident was repaired by building the same
+local package version as a non-editable wheel from an archived commit and
+installing with `--no-index --no-deps`. The wheel and old metadata were retained;
+261 distribution names/versions stayed unchanged, and an unrelated-cwd isolated
+import resolved from the venv. The five exact Canvas nodes then passed without
+an override. The previously blocked startup guard exposed a real 979/972 budget
+failure (973/972 on the pre-correction archive): repairing setup enables the
+measurement, not an assumption that the measured behavior will pass.
+
 ## A DB append is invisible to a live Console *and* to the next mount — the STORE is what the transcript and the payload are built from (task-15860, Task 0 probe P1)
 
 **What happened.** Two of the three designs for headless wake rested on
@@ -2296,3 +2352,136 @@ the assertion while the app is effectively dead to the keyboard.
 **Incident.** Driving the app under tmux with `python -m tldw_chatbook.app 2>log` to catch tracebacks left a blank pane with a live process: Textual renders to stderr here, so the redirect took the UI with it. The pass cost a full relaunch.
 
 **Rule.** Never redirect stderr when driving the TUI; read loguru's file sink (or `[logging]` in the scratch config) for tracebacks instead. A fresh scratch profile's first-run wizard also does not reliably take Escape (PR O, same day) — set `[first_run] setup_completed = true` in the scratch config before the first launch.
+
+## Pass the existing browser path explicitly in private archives (TASK-32160, 2026-09-08)
+
+**Incident.** SQLite closeout Task16 verified an installed Chromium binary but
+the first Canvas benchmark sample in /private/tmp still failed before browser
+launch. Tests/conftest.py correctly replaced the home directory for privacy;
+canvas_live_harness.py's fallback also walked the archive's ancestors, which
+no longer included the developer's home. An executable existing on disk was
+not evidence that the isolated invocation could resolve it. The fail-stop
+series ended with one failed sample and no valid timing.
+
+**What to do.** For archive-based Canvas runs, pass the harness's existing
+TLDW_CANVAS_CHROMIUM_EXECUTABLE override explicitly in both compared arms and
+record the binary hash. Keep test-state isolation; do not restore the real home
+or install another browser to work around a missing invocation parameter.
+
+## Observe each native segment when validating speech cancellation
+
+**TASK-32148 / TASK-32150 / TASK-32162, 2026-09-09.** Kokoro cancellation had
+passing outer-worker ownership tests. A real CPU run observing unchanged
+`KModel.forward` calls showed that Stop joined the active segment but the retained
+pipeline started another segment before returning. Separately, the actual
+kokoro-onnx 0.6.1 producer cancelled its executor future while its native thread
+continued running. Async task completion alone established neither native
+completion nor cooperative stopping between segments.
+
+Record entry and exit around the actual delegated model calls, issue Stop while
+one is active, and assert that ownership lasts through its exit and no later
+segment begins. Then send and play a successor through the same service. Keep
+native joining and between-segment cancellation as separate assertions.
+
+The new mounted Lab harness also initially omitted `STTS_Window`'s
+`_seed_axis_defaults`, producing a false voice-default failure. Reproduce the
+owner's normal initialization before diagnosing a child pane; manually setting
+selectors cannot establish that saved defaults work.
+
+## Complete audio and empty model-owner counts do not prove sink shutdown
+
+**TASK-32151 / TASK-32165, 2026-09-09.** Two real Higgs CPU runs generated
+complete speech with exact full-content transcripts. The Console device callback
+rendered the expected PCM, the sink reported a terminal state, and tracked model
+owners reached zero. Nevertheless, `SinkDrained` never arrived and the process
+stalled at exit. Native samples showed the sink notify thread and CoreAudio IO
+thread in the inverse locks described by [PortAudio #1174](https://github.com/PortAudio/portaudio/issues/1174).
+Changing sounddevice from 0.5.5 to 0.5.6 did not fix it; the newer environment
+loaded the same bundled PortAudio binary as the passing Kokoro environment.
+
+Require terminal sink-event delivery, actual stream/notify completion and a
+clean worker exit in addition to generated audio and model-owner counters.
+Resolve the loaded native library path and hash when comparing environments;
+the Python package version alone does not identify the native implementation.
+
+## Wheel identity includes deleted files, and dependency checks can open profiles
+
+**PR #2545, TTS qualification, 2026-09-09.** After rebasing onto the Library
+reader split, setuptools reused an ignored `build/lib` copy of the deleted
+`library_media_reader_shell.py`. The wheel built and installed successfully,
+but complete source/wheel file-set comparison rejected the extra module. A
+controller launched despite that failed prerequisite; its successful playback
+was retained as excluded evidence. Archiving the owned build directory and
+rebuilding produced an exact 2,275-file source/wheel/install match, followed by
+a fresh serial playback run with an explicit identity gate.
+
+In the same review, routing standalone ASR discovery through `optional_deps`
+imported application configuration outside pytest. A private temporary profile
+must be selected before that lookup, then removed and the environment restored.
+The final five real ASR runs used a profile-access audit with a denied-open
+positive control, and the real user configuration hash remained unchanged.
+
+Check complete file sets as well as hashes, and make failed prerequisite checks
+stop dependent controllers. Qualify standalone dependency discovery outside the
+test suite's profile fixtures; a missing-dependency guard can itself initialize
+configuration before model loading begins. Receipts are retained in
+`Docs/QA/tts-macos-burndown-2026-09-09/review/`.
+
+## Discard recovery must survive a completed uncaptured turn
+
+PR #2561 review (2026-09-09) reproduced a missing combination after the
+failed-empty recovery repair: interrupt a captured tool run, explicitly Discard,
+complete a Capture Off send, then turn capture back on. All four project-on/off
+and warm/cold cases blocked because the closed-history proof lost the original
+discarded owner's RESPONSE_STARTED allowance. Direct Discard recovery and failed
+empty recovery each passed separately. Re-reading the durable original Discard
+marker at final binding repaired the mixed sequence without changing prior trace
+records. Mutation controls changing only that marker to failed still reject.
+Test transitions between recovery modes, not just each mode in isolation.
+
+## A mounted avatar can be hidden behind a same-screen setup overlay
+
+**TASK-32023, 2026-09-07.** Internal frame-pixel assertions passed, but the first
+three Console screenshots were identical: the setup overlay covered the rail.
+Textual's `is_on_screen` reported that the underlying avatar had a layout region;
+it did not prove that its pixels were the topmost visible content. Entering a
+conversation through the real store removed setup guidance, and the captured SVGs
+then contained red/blue/red avatar pixels for Dynamic frame one, frame two, and
+Static respectively. Playback now checks the topmost widget at its center and a
+mounted overlay test proves hidden time is excluded.
+
+**What to do.** Pair mounted-state assertions with actual screen pixels. Check
+same-screen overlays as well as screen-stack visibility when gating animation.
+
+## A fixture vault in the scratchpad or the profile dir cannot be lasting-synced
+
+**Library ▸ Notes critiques, 2026-09-09 and 2026-09-10.** Two consecutive live
+reviews put their 71-file Obsidian vault fixture where every other fixture in
+this repo goes: inside the isolated scratch profile's config directory, under
+`/private/tmp/claude-501/...`. Both times "Keep a folder synced" failed at
+`Check changes` for every assessor on every folder, and both times it was
+written up as a product P0 — the second run graded heuristic 9 (Error
+Recovery) at 1/40 largely on it.
+
+Bisecting the second one found the harness in the loop twice. A vault inside
+the profile's own config directory trips
+`notes_sync_coordinator.private_path_overlap` by design. And everything under
+`/private/tmp` on macOS carries group `wheel`, while
+`notes_sync_filesystem.py:191-192` admits a file only when
+`owner_group == os.getegid()` — so all 60 fixture files returned
+`unsupported_metadata` and the root failed `root_discovery_incomplete`. The
+same vault copied to `$HOME/vault-fixture` was admitted in **0.19 s**.
+
+The product defects were real and are filed (task-32243: the named refusal is
+destroyed by a secondary crash, the failed root leaks for the session, the
+controller substitutes a blaming string and logs nothing; task-32244: the
+primary-group check itself). But their *incidence* was pure harness: the
+critique could not distinguish "this feature is broken for everyone" from
+"this feature refuses my fixture", and reported the stronger claim for two
+runs.
+
+Put fixture trees for any feature that inspects filesystem ownership,
+permissions or path containment under `$HOME`, outside the config directory the
+profile itself uses — and when a whole journey fails at step one for every
+assessor, check whether the harness is inside the feature's own exclusion rules
+before grading it.

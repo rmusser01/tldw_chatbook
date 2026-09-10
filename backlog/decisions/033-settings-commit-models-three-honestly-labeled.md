@@ -15,3 +15,32 @@
   - Converge to two models by removing guarded TOML: rejected — Advanced Config serves recovery and power-user scenarios the form UI cannot express; its validation gate + `.bak` already mitigate the risk.
 - Consequences: the three models are the documented contract; code comments at `settings_screen.py` (`STAGED_SAVE_BEHAVIOR_COPY` / `INSTANT_APPLY_BEHAVIOR_COPY`, task-1341) are the normative labeling mechanism; reviews of new Settings fields must state which model the field follows and why; future critique passes should score consistency on *label truthfulness per control*, not on model count.
 - Links: re-critique snapshot above ("Questions to Consider" #1); ADR-031 (footer/copy honesty posture this extends); task-1341 (staged-vs-instant labeling implementation); task-1372 (this decision).
+
+## Guarded raw draft recovery (TASK-32190, 2026-09-09)
+
+Advanced Config owns an in-memory text draft and the exact file/profile snapshot
+from which it was loaded. Category and destination navigation retain that draft,
+including empty or invalid text; no raw body is stored in durable UI metadata.
+The existing memory-only screen-state store retains the live raw-editor session
+so destination recreation observes in-flight results. Its workers belong to the
+app, and mounted views attach/detach callbacks with ownership checks. Initial
+file reads run off the UI thread. Before applying asynchronous results, the
+controller captures editor input whose change event has not yet been delivered.
+Its dirty marker and banner name the raw editor's own Validate/Save/Revert path.
+Validation remains tied to the current text revision. Revert and Load Backup
+confirm before replacing unsaved work; a delayed worker cannot replace newer
+edits or update another category's shared status.
+
+Raw saves compare the original serialized file and effective profile identity
+under the existing config owner's write lock. If either changed, saving is
+blocked with recovery guidance and the draft is retained. The owner returns the
+post-write snapshot from that same lock, preserving encryption, revision-owned
+sections and atomic backup/replacement. This extends the existing owner contract,
+not a new persistence path. A successful write clears only its submitted draft;
+later edits remain unsaved. Revert reloads the current file after confirmation.
+
+An unconditional overwrite after navigation is rejected because preserving a
+draft makes intervening guided edits common. Automatic merging of arbitrary
+raw TOML is also rejected: the editor cannot infer the user's intended changes
+across comments, section deletion, encryption and revision-owned tables. Users
+retain their draft to copy or compare and explicitly reload before reapplying.

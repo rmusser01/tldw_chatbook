@@ -1,0 +1,86 @@
+"""Bounded serial ASR for the completed candidate tuples; no model download/audio."""
+from __future__ import annotations
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+from datetime import UTC, datetime
+
+ROOT = Path('/private/tmp/tts-macos-burndown')
+REPO = Path('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown')
+PYTHON = ROOT / 'runtime-python312/bin/python'
+VERIFIER = REPO / 'scripts/verify_live_tts_content.py'
+SMALL = ROOT / 'languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120'
+BASE = Path('/private/tmp/tts-macos-live-validation/recognizer-cache/models--Systran--faster-whisper-base.en/snapshots/3d3d5dee26484f91867d81cb899cfcf72b96be6c')
+REPORT = ROOT / 'higgs/candidate-content-controller.json'
+
+def save(value):
+    REPORT.write_text(json.dumps(value, indent=2) + '\n')
+
+def main():
+    if REPORT.exists():
+        raise RuntimeError('Keep the original content-controller evidence')
+    run = ROOT / 'alltalk/live-wav-p226-01'
+    evidence_path = run / 'evidence.json'
+    evidence = json.loads(evidence_path.read_text())
+    if not evidence.get('cleanup_joined') or evidence['status'] != 'runtime_passed_content_pending':
+        raise RuntimeError('AllTalk runtime is not settled')
+    pids = [evidence['pid']] + [p['playback']['pid'] for p in evidence['phases'] if p.get('playback', {}).get('pid')] + [p['pid'] for p in evidence['server_runs']]
+    processes = []
+    for pid in pids:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            absent = True
+        else:
+            absent = False
+        processes.append({'pid': pid, 'absent': absent})
+    release = {'checked_utc': datetime.now(UTC).isoformat(), 'supervisor_exec_session': 23424, 'supervisor_exit_code': 0, 'worker_exit_code': 0, 'exit_code_basis': 'The task-local supervisor returns the actual child process.wait() code; the exec session completed with code 0.', 'forced_exit': False, 'server_exit_codes': [p['exit_code'] for p in evidence['server_runs']], 'processes': processes, 'all_recorded_processes_absent': all(p['absent'] for p in processes), 'evidence_sha256': hashlib.sha256(evidence_path.read_bytes()).hexdigest(), 'source_unchanged': evidence['source_unchanged'], 'cleanup_joined': evidence['cleanup_joined']}
+    (run / 'ownership-release.json').write_text(json.dumps(release, indent=2) + '\n')
+    if not release['all_recorded_processes_absent']:
+        raise RuntimeError('An AllTalk process remains active')
+    higgs_release = json.loads((ROOT / 'higgs/live-wav-portaudio-02/ownership-release.json').read_text())
+    if not higgs_release['all_recorded_processes_absent'] or higgs_release['worker_exit_code']:
+        raise RuntimeError('Higgs runtime is not settled')
+    report = {'started_utc': datetime.now(UTC).isoformat(), 'controller_pid': os.getpid(), 'verifier_path': str(VERIFIER), 'verifier_sha256': hashlib.sha256(VERIFIER.read_bytes()).hexdigest(), 'scope': 'Every successful clip, original fixed text and lexical mismatches preserved; serial local-only ASR, no TTS/server/audio concurrent.', 'runs': []}
+    save(report)
+    cases = [('higgs/live-wav-portaudio-02', SMALL, 'content.json'), ('alltalk/live-wav-p226-01', SMALL, 'content.json'), ('alltalk/live-wav-p226-01', BASE, 'content-base-en.json')]
+    for relative, model, output in cases:
+        folder = ROOT / relative
+        target = folder / output
+        if target.exists():
+            raise RuntimeError('Do not replace an existing content receipt')
+        cache = folder / 'asr-cache'
+        cache.mkdir(mode=0o700, exist_ok=True)
+        env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1', 'HF_HUB_OFFLINE': '1', 'TRANSFORMERS_OFFLINE': '1', 'HF_HOME': str(cache / 'hf'), 'XDG_CACHE_HOME': str(cache), 'OMP_NUM_THREADS': '6', 'MKL_NUM_THREADS': '6'}
+        command = [str(PYTHON), '-B', str(VERIFIER), '--evidence', str(folder / 'evidence.json'), '--model', str(model), '--language', 'en', '--output', str(target)]
+        row = {'run': relative, 'output': output, 'command': command, 'started_at': time.monotonic(), 'timeout_seconds': 300, 'forced_exit': False}
+        report['runs'].append(row)
+        with (folder / (output + '.log')).open('w') as log:
+            process = subprocess.Popen(command, env=env, stdout=log, stderr=subprocess.STDOUT)
+            row['pid'] = process.pid
+            save(report)
+            print(f'ASR {relative}/{output}: PID {process.pid}', flush=True)
+            try:
+                process.wait(timeout=300)
+            except subprocess.TimeoutExpired:
+                row['forced_exit'] = True
+                process.kill()
+                process.wait()
+            row.update(exit_code=process.returncode, ended_at=time.monotonic(), joined=True)
+        if target.exists():
+            content = json.loads(target.read_text())
+            row.update(status=content['status'], exact=sum(c['normalized_exact'] for c in content['clips']), clip_count=len(content['clips']), output_sha256=hashlib.sha256(target.read_bytes()).hexdigest())
+        save(report)
+        print(json.dumps(row, indent=2), flush=True)
+        if row['forced_exit'] or process.returncode not in (0, 1) or not target.exists():
+            raise RuntimeError('ASR did not complete a content receipt')
+    report.update(ended_utc=datetime.now(UTC).isoformat(), all_asr_processes_joined=True, status='completed_with_preserved_content_outcomes')
+    save(report)
+    return 0
+
+if __name__ == '__main__':
+    sys.exit(main())

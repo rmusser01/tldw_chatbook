@@ -13,7 +13,7 @@ from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsoleTransactionWriter,
 )
 
-from .compiler import compile_canvas_document
+from .compilation import PreparedCanvasDocument, prepare_canvas_document
 from .limits import (
     MAX_TEMPORARY_SOURCE_BYTES_PER_SESSION,
     CanvasLimitError,
@@ -24,11 +24,12 @@ from .limits import (
     validate_utf8_text,
 )
 from .models import (
+    CanvasCompiledPlan,
     CanvasMutationResult,
     CanvasOrigin,
-    CanvasRenderPlan,
     CanvasRevisionInfo,
 )
+from .profiles import ProfileSnapshot, load_profile_snapshot
 
 
 class CanvasStagingError(RuntimeError):
@@ -47,7 +48,7 @@ class StagedCanvasRead:
 
     revision: CanvasRevisionInfo
     source: str = field(repr=False)
-    render_plan: CanvasRenderPlan = field(repr=False)
+    render_plan: CanvasCompiledPlan = field(repr=False)
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -63,7 +64,7 @@ class CanvasStagingOwner:
 class _StagedRevision:
     info: CanvasRevisionInfo
     source: str = field(repr=False)
-    render_plan: CanvasRenderPlan = field(repr=False)
+    render_plan: CanvasCompiledPlan = field(repr=False)
     actor_kind: str
     created_at: str
 
@@ -189,13 +190,15 @@ class CanvasStagingStore:
     def __init__(
         self,
         *,
-        compiler: Callable[[str], CanvasRenderPlan] = compile_canvas_document,
+        compiler: Callable[[str], CanvasCompiledPlan] | None = None,
+        profile_snapshot: ProfileSnapshot | None = None,
         repository_limits: CanvasRepositoryLimits | None = None,
         max_staged_source_bytes: int = MAX_TEMPORARY_SOURCE_BYTES_PER_SESSION,
     ) -> None:
-        if not callable(compiler):
+        if compiler is not None and not callable(compiler):
             raise TypeError("compiler must be callable")
         self._compiler = compiler
+        self.profile_snapshot = profile_snapshot or load_profile_snapshot()
         self._limits = repository_limits or CanvasRepositoryLimits()
         if not isinstance(self._limits, CanvasRepositoryLimits):
             raise TypeError("repository_limits must be CanvasRepositoryLimits")
@@ -281,6 +284,7 @@ class CanvasStagingStore:
                 sequence=1,
                 origin_message_id=origin_message_id,
                 run_id=run_id,
+                runtime_profile=plan.runtime_profile,
             )
             result = CanvasMutationResult(
                 revision=info,
@@ -330,7 +334,7 @@ class CanvasStagingStore:
                 return replay
             parent = self._parent(state, canvas_id, expected_parent_revision_id)
             self._require_revision_capacity(state, canvas_id)
-            plan = self._compile(source)
+            plan = self._compile(source, parent_profile=parent.info.runtime_profile)
             source_bytes = plan.source_identity.source_bytes
             self._require_session_capacity(state, source_bytes)
             return self._append(
@@ -543,7 +547,7 @@ class CanvasStagingStore:
         parent: _StagedRevision,
         title: str,
         source: str,
-        plan: CanvasRenderPlan,
+        plan: CanvasCompiledPlan,
         actor_kind: str,
         origin_message_id: str,
     ) -> CanvasMutationResult:
@@ -561,6 +565,7 @@ class CanvasStagingStore:
             sequence=sequence,
             origin_message_id=origin_message_id,
             run_id=run_id,
+            runtime_profile=plan.runtime_profile,
         )
         result = CanvasMutationResult(
             revision=info,
@@ -646,13 +651,25 @@ class CanvasStagingStore:
             if owner.session_id in self._promotion_leases:
                 raise CanvasStagingError("promotion_in_flight")
 
-    def _compile(self, source: str) -> CanvasRenderPlan:
+    def _compile(self, source: str, *, parent_profile: str | None = None):
         source_bytes = self._source_bytes(source)
         try:
-            plan = self._compiler(source)
-            if not isinstance(plan, CanvasRenderPlan):
-                raise TypeError("invalid render plan")
-            plan.source_identity.verify_source(source)
+            plan = (
+                self._compiler(source)
+                if self._compiler is not None
+                else prepare_canvas_document(
+                    source,
+                    operation="create" if parent_profile is None else "update",
+                    parent_profile=parent_profile,
+                    snapshot=self.profile_snapshot,
+                )
+            )
+            PreparedCanvasDocument.capture(
+                plan,
+                source,
+                parent_profile=parent_profile,
+                snapshot=self.profile_snapshot,
+            )
             if plan.source_identity.source_bytes != source_bytes:
                 raise CanvasStagingError("source_identity_mismatch")
             if (
@@ -724,6 +741,7 @@ class CanvasStagingStore:
         sequence: int,
         origin_message_id: str,
         run_id: str,
+        runtime_profile: str,
     ) -> CanvasRevisionInfo:
         CanvasStagingStore._id(origin_message_id, "origin_message_id")
         return CanvasRevisionInfo(
@@ -731,7 +749,7 @@ class CanvasStagingStore:
             revision_id=revision_id,
             parent_revision_id=parent_revision_id,
             title=title,
-            runtime_profile="canvas-v1",
+            runtime_profile=runtime_profile,
             content_sha256=sha256_utf8(source),
             source_bytes=source_bytes,
             sequence=sequence,

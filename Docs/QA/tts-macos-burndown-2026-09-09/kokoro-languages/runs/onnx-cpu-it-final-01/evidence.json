@@ -1,0 +1,317 @@
+{
+  "schema_version": 1,
+  "status": "runtime_passed_content_pending",
+  "pid": 24061,
+  "started_utc": "2026-09-09T07:38:29.031237+00:00",
+  "phases": [
+    {
+      "id": "speech-lab",
+      "expected_text": "La bussola argentata apre questa risposta. Al centro si trova un frutteto tranquillo. La risposta termina con un alba dorata.",
+      "language": "it",
+      "content_anchors": [],
+      "started_at": 2175615.662541166,
+      "native_calls": [
+        {
+          "request_id": "speech-lab",
+          "class": "onnxruntime.capi.onnxruntime_inference_collection.InferenceSession",
+          "execution_providers": [
+            "CPUExecutionProvider"
+          ],
+          "model_path": "/private/tmp/kokoro-playback-validation/models/kokoro-v1.0.onnx",
+          "speed_input": [
+            1.0
+          ],
+          "enter_at": 2175617.729633916,
+          "thread_id": 6143029248,
+          "exit_at": 2175618.789167291
+        }
+      ],
+      "states": [],
+      "outcomes": [],
+      "sink_events": [],
+      "devices": [],
+      "outcome": "success",
+      "request": {
+        "model_id": "kokoro",
+        "voice_id": "if_sara",
+        "speed": 1.0
+      },
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-it-final-01/audio/speech-lab.wav",
+        "sha256": "25daa5469758144148746acd9717b07b3d8d4191d223515f8a38714086bc83ad",
+        "pcm_sha256": "83012e3352297b6fb67fb75910b2899790d35c4d6d4482c7f4acabe5320709d7",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 181760,
+        "seconds": 7.573333333333333,
+        "rms": 0.18045189404384177,
+        "peak": 0.99542236328125
+      },
+      "playback": {
+        "kind": "file",
+        "pid": 24080,
+        "player": "afplay",
+        "started_at": 2175619.02721375,
+        "exit_code": 0,
+        "elapsed_seconds": 8.647862208075821
+      },
+      "settled_at": 2175627.675155833,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2175627.675158166,
+        "threads": 3,
+        "rss_bytes": 1122533376,
+        "peak_rss_bytes": 1122582528,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    },
+    {
+      "id": "console-warmup",
+      "expected_text": "La bussola argentata apre questa risposta. Al centro si trova un frutteto tranquillo. La risposta termina con un alba dorata.",
+      "language": "it",
+      "content_anchors": [],
+      "started_at": 2175627.697379375,
+      "native_calls": [
+        {
+          "request_id": "console-warmup",
+          "class": "onnxruntime.capi.onnxruntime_inference_collection.InferenceSession",
+          "execution_providers": [
+            "CPUExecutionProvider"
+          ],
+          "model_path": "/private/tmp/kokoro-playback-validation/models/kokoro-v1.0.onnx",
+          "speed_input": [
+            1.0
+          ],
+          "enter_at": 2175627.703919375,
+          "thread_id": 6159855616,
+          "exit_at": 2175628.91293575
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "sink_events": [
+        {
+          "event": "SinkStarted",
+          "at": 2175628.969806208
+        },
+        {
+          "event": "SinkDrained",
+          "at": 2175636.641513083
+        }
+      ],
+      "devices": [
+        {
+          "frames": 181920,
+          "audible_frames": 180630,
+          "callbacks": 379,
+          "sample_rate": 24000,
+          "sha256": "6cd8244e3c61f478aeaacc65022772ead7ca19133db2dcd1b63f20c27698c829"
+        }
+      ],
+      "outcome": "success",
+      "message_id": "db50efd8-edb4-4e63-a5ae-87336849f5b8",
+      "destination_fingerprint": "sha256:0ae16e4458a31707946e0a45d5a0aedb2a93b0f827836afd43dfcc777a923005",
+      "disposition": "speak",
+      "playback": {
+        "kind": "sink",
+        "outcome": "success",
+        "elapsed_seconds": 7.618434166070074,
+        "drained": true,
+        "device_frames": 181920
+      },
+      "source_bytes": 363564,
+      "source_sha256": "25daa5469758144148746acd9717b07b3d8d4191d223515f8a38714086bc83ad",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-it-final-01/audio/console-warmup.wav",
+        "sha256": "25daa5469758144148746acd9717b07b3d8d4191d223515f8a38714086bc83ad",
+        "pcm_sha256": "83012e3352297b6fb67fb75910b2899790d35c4d6d4482c7f4acabe5320709d7",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 181760,
+        "seconds": 7.573333333333333,
+        "rms": 0.18045189404384177,
+        "peak": 0.99542236328125
+      },
+      "settled_at": 2175636.644212291,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2175636.644212625,
+        "threads": 3,
+        "rss_bytes": 1313931264,
+        "peak_rss_bytes": 1313964032,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    }
+  ],
+  "arguments": {
+    "engine": "onnx",
+    "device": "cpu",
+    "model": "/private/tmp/kokoro-playback-validation/models/kokoro-v1.0.onnx",
+    "voice": "if_sara",
+    "voice_dir": null,
+    "voices": "/private/tmp/kokoro-playback-validation/models/voices-v1.0.bin",
+    "language": "it",
+    "format": "wav",
+    "speed": 1.0,
+    "text_file": "/private/tmp/tts-macos-burndown/languages/text-it.txt",
+    "cancel_text_file": null,
+    "scenarios": "playback",
+    "repeats": 1,
+    "phase_timeout": 300,
+    "cleanup_timeout": 60,
+    "run_timeout": 1800,
+    "expected_package_root": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook",
+    "output": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-it-final-01",
+    "play_audio": true,
+    "worker": true
+  },
+  "python": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+  "executable": "/private/tmp/tts-macos-burndown/runtime-python312/bin/python",
+  "platform": "darwin",
+  "scope": "Mounted Speech pane and trusted Console handler, real models/codecs/device; no full-shell or acoustic loopback claim.",
+  "imported_package_root": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook",
+  "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+  "assets": {
+    "/private/tmp/kokoro-playback-validation/models/kokoro-v1.0.onnx": "7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5",
+    "/private/tmp/kokoro-playback-validation/models/voices-v1.0.bin": "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d"
+  },
+  "source_revision_if_git": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+  "versions": {
+    "tldw_chatbook": "0.2.0",
+    "textual": "8.2.8",
+    "numpy": "2.5.3",
+    "sounddevice": "0.5.6",
+    "soundfile": "0.14.0",
+    "kokoro": "0.9.4",
+    "kokoro-onnx": "0.6.1",
+    "torch": "2.14.0",
+    "onnxruntime": "1.29.0",
+    "misaki": "0.9.4",
+    "spacy": "3.8.16",
+    "en-core-web-sm": "3.8.0"
+  },
+  "output_device": {
+    "name": "MacBook Pro Speakers",
+    "index": 1,
+    "hostapi": 0,
+    "max_input_channels": 0,
+    "max_output_channels": 2,
+    "default_low_input_latency": 0.01,
+    "default_low_output_latency": 0.017958333333333333,
+    "default_high_input_latency": 0.1,
+    "default_high_output_latency": 0.027291666666666665,
+    "default_samplerate": 48000.0
+  },
+  "memory_before_model": {
+    "at": 2175615.44954,
+    "threads": 2,
+    "rss_bytes": 226443264,
+    "peak_rss_bytes": 226443264
+  },
+  "runtime_files": {
+    "onnxruntime.capi.onnxruntime_pybind11_state": {
+      "path": "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/onnxruntime/capi/onnxruntime_pybind11_state.so",
+      "sha256": "01adaf3590b50c5f10ce59b6844b6b33cb45142b6b3fc9a2fb2094d8645e873e"
+    }
+  },
+  "backend_assets": [
+    {
+      "model": "/private/tmp/kokoro-playback-validation/models/kokoro-v1.0.onnx",
+      "engine": "onnx"
+    }
+  ],
+  "cleanup_errors": [],
+  "final_resources": {
+    "generation_owner": 0,
+    "stream_owner": 0,
+    "file_owner": 0,
+    "active_tasks": 0,
+    "retained_io": 0,
+    "retained_cleanup": 0,
+    "admitted_operations": 0,
+    "responses": 0,
+    "leases": 0,
+    "backend_tasks": 0,
+    "native_calls": 0,
+    "player_processes": 0
+  },
+  "notices": [
+    {
+      "message": "TTS generation complete!",
+      "severity": "information"
+    },
+    {
+      "message": "Playback complete",
+      "severity": "information"
+    }
+  ],
+  "completions": [
+    {
+      "message_id": "db50efd8-edb4-4e63-a5ae-87336849f5b8",
+      "error": null
+    }
+  ],
+  "memory_after_cleanup": {
+    "at": 2175636.680702083,
+    "threads": 2,
+    "rss_bytes": 1308917760,
+    "peak_rss_bytes": 1314340864,
+    "mps_allocated_bytes": 0,
+    "mps_driver_bytes": 458752
+  },
+  "source_unchanged": true,
+  "cleanup_joined": true,
+  "ended_utc": "2026-09-09T07:38:52.533760+00:00",
+  "packaging": {
+    "original_path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-it-final-01/evidence.json",
+    "original_sha256": "18006a72a4b660b769de584c20fe6965e842097a9832cc8db0305652a4379b62",
+    "source_map_references": {
+      "source_hashes": {
+        "path": "../../../kokoro-english/provenance/source-hashes.json",
+        "overrides": {},
+        "remove": [],
+        "file_count": 2253,
+        "canonical_sha256": "7038b5b7779d66c6fe66a15eafb0204de2fcca2d0cd41c437f33ce17290bd188"
+      },
+      "source_hashes_after": {
+        "path": "../../../kokoro-english/provenance/source-hashes.json",
+        "overrides": {},
+        "remove": [],
+        "file_count": 2253,
+        "canonical_sha256": "7038b5b7779d66c6fe66a15eafb0204de2fcca2d0cd41c437f33ce17290bd188"
+      }
+    },
+    "transformation": "Only source_hashes/source_hashes_after are factored; all other original JSON values are retained."
+  }
+}

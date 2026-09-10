@@ -1,0 +1,105 @@
+{
+  "evidence_path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-pt-br-final-01/evidence.json",
+  "evidence_sha256": "5cd828bf11163093a7916df71657eb8830b792344904936a6e820eb649004832",
+  "model": "/private/tmp/tts-macos-burndown/languages/whisper-medium/08e178d48790749d25932bbc082711ddcfdfbc4f",
+  "model_files": {
+    ".cache/huggingface/.gitignore": "684888c0ebb17f374298b65ee2807526c066094c701bcc7ebbe1c1095f494fc1",
+    ".cache/huggingface/CACHEDIR.TAG": "f6572428f6d5e1575e73a1502895a8731f10757dfbb634909c6e154b849af91d",
+    ".cache/huggingface/download/config.json.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".cache/huggingface/download/config.json.metadata": "a5d998737bfe2b0e3720420f06c2ea711472825872fec041981f1e7e9b13bf1f",
+    ".cache/huggingface/download/model.bin.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".cache/huggingface/download/model.bin.metadata": "f553377cd4b61d243eb20da9659f12fb636492c37ef70978199a3b6d955945b9",
+    ".cache/huggingface/download/tokenizer.json.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".cache/huggingface/download/tokenizer.json.metadata": "9ac3d8779385e5f69080a0b4566c0d6672143460e69f29c3baed80786b64834f",
+    ".cache/huggingface/download/vocabulary.txt.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".cache/huggingface/download/vocabulary.txt.metadata": "5592e32cdad946be797011a244888042a7bab1448773071be3739f944e4d8929",
+    ".cache/huggingface/trees/08e178d48790749d25932bbc082711ddcfdfbc4f.json": "f3ba946b63c74c1d66bb0efda7d1a0cfd58be3bd24672d89f827fcde69d8159b",
+    "config.json": "3622a2ddc41ec0e0fd4e68c13c6830f03b90c38d89aaad184de02c8c642cf807",
+    "model.bin": "9b45e1009dcc4ab601eff815b61d80e60ce3fd8c74c1a14f4a282258286b51ae",
+    "tokenizer.json": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+    "vocabulary.txt": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913"
+  },
+  "runtime": {
+    "faster-whisper": "1.2.1",
+    "ctranslate2": "4.8.2"
+  },
+  "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+  "device": "cpu",
+  "compute_type": "int8",
+  "success_audio_count": 2,
+  "clips": [
+    {
+      "transcript": "A bússola prateada abre esta resposta. No meio existe um pomar tranquilo. A resposta termina com um amanhecer dourado.",
+      "expected_text": "A bússola prateada abre esta resposta. No meio existe um pomar tranquilo. A resposta termina com um amanhecer dourado.",
+      "anchors": [
+        "bússola prateada",
+        "pomar tranquilo",
+        "amanhecer dourado"
+      ],
+      "anchor_positions": [
+        1,
+        46,
+        81
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "speech-lab",
+      "audio_sha256": "c151f439edbae1c40ac1d8f9cf7b7a1afab3547e1f618a9ed004c691e176e6b3",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 2.52,
+          "text": " A bússola prateada abre esta resposta."
+        },
+        {
+          "start": 2.52,
+          "end": 4.5600000000000005,
+          "text": " No meio existe um pomar tranquilo."
+        },
+        {
+          "start": 4.5600000000000005,
+          "end": 7.04,
+          "text": " A resposta termina com um amanhecer dourado."
+        }
+      ],
+      "detected_language": "pt"
+    },
+    {
+      "transcript": "A bússola prateada abre esta resposta. No meio existe um pomar tranquilo. A resposta termina com um amanhecer dourado.",
+      "expected_text": "A bússola prateada abre esta resposta. No meio existe um pomar tranquilo. A resposta termina com um amanhecer dourado.",
+      "anchors": [
+        "bússola prateada",
+        "pomar tranquilo",
+        "amanhecer dourado"
+      ],
+      "anchor_positions": [
+        1,
+        46,
+        81
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "console-warmup",
+      "audio_sha256": "47135b18adfd54538004b7d1004a4c3624d5005dfddb68286bccc11e2f160ee8",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 2.52,
+          "text": " A bússola prateada abre esta resposta."
+        },
+        {
+          "start": 2.52,
+          "end": 4.5600000000000005,
+          "text": " No meio existe um pomar tranquilo."
+        },
+        {
+          "start": 4.5600000000000005,
+          "end": 7.04,
+          "text": " A resposta termina com um amanhecer dourado."
+        }
+      ],
+      "detected_language": "pt"
+    }
+  ],
+  "status": "content_passed"
+}

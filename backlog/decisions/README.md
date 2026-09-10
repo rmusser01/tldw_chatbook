@@ -103,8 +103,14 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-117](117-vllm-lab-console-readiness-and-profiles.md) | Accepted | Treat vLLM setup as a generation-fenced launch-or-connect workflow with verified Console adoption and device-local non-secret launch profiles. |
 | [ADR-118](118-chunking-lab-local-execution-and-recovery.md) | Accepted | Keep Chunking Lab local-first, with faithful full-recipe previews, immutable A/B results, conflict-safe catalog saves, and private recoverable session checkpoints. |
 | [ADR-122](122-bundled-pixel-migu-character-and-buddy.md) | Accepted | Include pixel-migu as optional fresh-profile character and Buddy content using existing ownership and runtime boundaries. |
+| [ADR-124](124-canvas-mermaid-subset-and-immutable-runtime-profiles.md) | Accepted | Add an offline Mermaid syntax subset inside Canvas's existing zero-egress runtime, with immutable packaged profiles, security-first refusal and independent save/preview status. |
+| [ADR-125](125-lock-safe-private-sqlite-validation.md) | Accepted | Isolate live SQLite privacy/proof descriptors in bounded helpers while preserving private storage, WAL locks and metadata-only TTS startup. |
 | [ADR-127](127-fresh-install-private-data-root-recovery.md) | Accepted | Select durable home-level private storage for fresh installs blocked by shared default ancestors. |
 | [ADR-139](139-independent-buddy-conversation-and-workspace-bindings.md) | Accepted | Give one Buddy independent artwork ownership, explicit conversation/workspace binding, and directed interaction while retaining Console execution authority. |
+| [ADR-140](140-official-kokoro-pytorch-runtime.md) | Accepted | Use the official optional Kokoro PyTorch runtime with scoped MPS Fourier fallback and preserve existing TTS settings and lifecycle owners. |
+| [ADR-144](144-character-expression-playback.md) | Accepted | Present Dynamic or Static Console character expressions with bounded preparation and visibility-aware playback. |
+| [ADR-145](145-reviewed-petdex-import-and-pinned-https.md) | Accepted; destination partially superseded by ADR-146 | Import reviewed Petdex artwork with pinned HTTPS and preserved native notices. |
+| [ADR-146](146-independent-buddy-petdex-publication-and-character-creation.md) | Accepted | Publish reviewed Petdex artwork to an independent Buddy and create durable characters through guarded management entry points. |
 
 ## Historical Decision Material
 

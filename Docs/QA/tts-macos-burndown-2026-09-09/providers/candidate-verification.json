@@ -1,0 +1,25 @@
+{
+  "runtime_semantic_round_trips": [
+    {
+      "path": "higgs/runs/live-wav-portaudio-01/evidence.json",
+      "semantic_round_trip_equal": true,
+      "source_maps": 1
+    },
+    {
+      "path": "higgs/runs/live-wav-portaudio-02/evidence.json",
+      "semantic_round_trip_equal": true,
+      "source_maps": 2
+    },
+    {
+      "path": "alltalk/runs/live-wav-p226-01/evidence.json",
+      "semantic_round_trip_equal": true,
+      "source_maps": 2
+    }
+  ],
+  "all_round_trips_equal": true,
+  "copied_hashes_equal": true,
+  "artifact_count": 26,
+  "packaged_artifact_bytes": 143343,
+  "runner_matches_higgs_receipt": true,
+  "runner_matches_alltalk_receipt": true
+}

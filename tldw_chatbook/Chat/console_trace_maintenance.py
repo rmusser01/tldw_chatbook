@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
+import json
+import shutil
+import sqlite3
+import time
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
-import json
 from pathlib import Path
-import shutil
-import sqlite3
-import time
 from types import MappingProxyType
 
 from tldw_chatbook.Chat.console_trace_legacy import (
@@ -19,9 +19,11 @@ from tldw_chatbook.Chat.console_trace_legacy import (
 )
 from tldw_chatbook.Chat.console_trace_models import new_opaque_id
 from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import (
+    CharactersRAGDB,
+    _install_canvas_revision_payload_validator,
+)
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
-
 
 LEGACY_MIGRATION_NAME = "legacy_exchange_normalization"
 MAX_LEGACY_BATCH_ROWS = 100
@@ -489,16 +491,24 @@ class PhysicalTraceCompactor:
 
     def _open_maintenance_connection(self) -> sqlite3.Connection:
         connection = connect_private_sqlite(
-            "db.chachanotes.primary",
+            "chat.trace_maintenance",
             self.db.db_path_str,
             must_exist=True,
             check_same_thread=False,
             timeout=15,
         )
-        connection.row_factory = sqlite3.Row
-        connection.isolation_level = None
-        connection.execute("PRAGMA foreign_keys = ON")
-        return connection
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.isolation_level = None
+            connection.execute("PRAGMA foreign_keys = ON")
+            _install_canvas_revision_payload_validator(connection)
+            return connection
+        except BaseException:
+            try:
+                connection.close()
+            except BaseException:  # noqa: BLE001, S110 - preserve setup failure
+                pass
+            raise
 
     def _allocated_metrics(
         self, connection: sqlite3.Connection

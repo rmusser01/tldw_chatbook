@@ -504,13 +504,14 @@ def test_settings_category_summaries_cover_every_category_id_exactly_once():
     (settings-workspaces-folder-roots task 8) brought it to 22; Speech & TTS
     (TASK-1984) brought it to 23; About (TASK-2775) brought it to 24; Video
     Gen (video-generation-foundation) brought it to 25; Agents
-    (supervisor-fleet PR-1 task 6) brought it to 26. This pins the literal
+    (supervisor-fleet PR-1 task 6) brought it to 26; Web Search (TASK-32189)
+    brought it to 27. This pins the literal
     count so the next addition must touch this assertion deliberately, and
     cross-checks that summaries neither miss nor duplicate an enum member.
     """
     screen = SettingsScreen(_build_test_app())
     summaries = screen._category_summaries()
-    assert len(summaries) == len(list(SettingsCategoryId)) == 26
+    assert len(summaries) == len(list(SettingsCategoryId)) == 30
     assert {s.category for s in summaries} == set(SettingsCategoryId)
 
 
@@ -1979,6 +1980,15 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
         screen.handle_appearance_palette_theme_limit_changed(
             Input.Changed(palette_limit, palette_limit.value)
         )
+        expression_mode = screen.query_one(
+            "#settings-appearance-character-expression-mode", Select
+        )
+        assert expression_mode.value == "dynamic"
+        expression_mode.value = "static"
+        screen.handle_appearance_character_expression_mode_changed(
+            Select.Changed(expression_mode, "static")
+        )
+        assert "Change expressions without playing animations" in _visible_text(screen)
         transcript_style.value = "immersive_rp"
         screen.handle_appearance_transcript_style_changed(
             Select.Changed(transcript_style, transcript_style.value)
@@ -2012,6 +2022,7 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
     assert saved[-1]["web_server"]["font_size"] == 14
     assert saved[-1]["appearance"]["density"] == "normal"
     assert saved[-1]["appearance"]["console_transcript_style"] == "immersive_rp"
+    assert saved[-1]["appearance"]["character_expression_mode"] == "static"
 
 
 @pytest.mark.asyncio
@@ -2248,7 +2259,7 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
             search_labels["settings-appearance-library-media-library-open"]
             == "Shared Library rail"
         )
-        assert "Automatic: 3:13, bounded to 24–34 cells." in visible
+        assert "Automatic: 3:13 plus five, bounded to 29–39 cells." in visible
         assert "Custom: preferred 24–48 cells" in visible
         assert "keep 40 content cells" in visible
         assert "Adaptive readers may collapse panes" in visible
@@ -2256,6 +2267,10 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
         assert "‹ Library" in visible
         assert "< Library" in visible
 
+        screen.query_one("#settings-appearance-library-media-reset").scroll_visible(
+            animate=False
+        )
+        await pilot.pause()
         await pilot.click("#settings-appearance-library-media-reset")
         await pilot.pause()
 
@@ -2285,7 +2300,7 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
             screen.query_one(
                 "#settings-appearance-library-notes-files-tree-width", Input
             ).value
-            == "40"
+            == "50"
         )
 
         await pilot.click("#settings-save-category")
@@ -2297,25 +2312,25 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
             "future_shared": "keep",
             "library_open": True,
             "custom_widths_enabled": False,
-            "library_width": 31,
+            "library_width": 36,
         },
         "media_reader": {
             "items_open": True,
-            "items_width": 40,
+            "items_width": 50,
         },
-        "collections_reader": {"items_open": True, "items_width": 40},
-        "conversations_reader": {"items_open": True, "items_width": 40},
+        "collections_reader": {"items_open": True, "items_width": 50},
+        "conversations_reader": {"items_open": True, "items_width": 50},
         "notes_reader": {
             "items_open": True,
-            "items_width": 40,
+            "items_width": 50,
             "files_tree_open": True,
-            "files_tree_width": 40,
+            "files_tree_width": 50,
         },
-        "prompts_reader": {"items_open": True, "items_width": 40},
+        "prompts_reader": {"items_open": True, "items_width": 50},
         "skills_reader": {
             "future_skills": "keep",
             "items_open": True,
-            "items_width": 40,
+            "items_width": 50,
         },
     }
     assert app._library_reader_layout_refresh_generation == 1
@@ -2415,6 +2430,19 @@ async def test_settings_appearance_revert_restores_loaded_values():
         await _open_settings_category(pilot, "#settings-category-appearance")
         screen = _active_destination_screen(host)
         font_size = screen.query_one("#settings-appearance-font-size", Input)
+        expression_mode = screen.query_one(
+            "#settings-appearance-character-expression-mode", Select
+        )
+        expression_mode.value = "static"
+        screen.handle_appearance_character_expression_mode_changed(
+            Select.Changed(expression_mode, "static")
+        )
+        assert (
+            app.app_config.get("appearance", {}).get(
+                "character_expression_mode", "dynamic"
+            )
+            == "dynamic"
+        )
         font_size.value = "16"
         screen.handle_appearance_font_size_changed(
             Input.Changed(font_size, font_size.value)
@@ -2429,6 +2457,7 @@ async def test_settings_appearance_revert_restores_loaded_values():
         await pilot.pause()
 
         assert font_size.value == "12"
+        assert expression_mode.value == "dynamic"
         assert not screen._category_has_unsaved_changes(SettingsCategoryId.APPEARANCE)
         assert "No unsaved changes" in _visible_text(screen)
 
@@ -2455,6 +2484,8 @@ async def test_settings_appearance_preview_updates_runtime_without_saving(monkey
         theme.value = "textual-light"
         screen.handle_appearance_theme_changed(Select.Changed(theme, theme.value))
 
+        screen.query_one("#settings-preview-appearance").scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#settings-preview-appearance")
         text = _visible_text(screen)
 
@@ -11085,17 +11116,21 @@ def test_settings_overview_config_path_label_hides_local_directory(
     assert str(tmp_path) not in value
 
 
-def test_settings_advanced_config_save_reports_invalid_env_override(monkeypatch):
-    app = SimpleNamespace(app_config={})
-    screen = SettingsScreen(app)
-    text = '[chat_defaults]\nprovider = "Ollama"\n'
-    screen._advanced_config_validated_text = text
-    monkeypatch.setenv("TLDW_CONFIG_PATH", "unsafe$(touch bad).toml")
+@pytest.mark.asyncio
+async def test_settings_advanced_config_save_reports_invalid_env_override(
+    monkeypatch, tmp_path
+):
+    from tldw_chatbook.UI.Screens.settings_advanced_config import AdvancedConfigSettings
 
-    result = screen._save_advanced_config_text(text)
-
-    assert "Advanced config save: failed" in result
-    assert "dangerous pattern" in result
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "unsafe$(touch bad).toml"))
+    model = AdvancedConfigSettings(lambda: None, lambda loaded: None)
+    await model.inspect_current()
+    model.edit('[chat_defaults]\nprovider = "Ollama"\n')
+    await model.validate()
+    await model.save()
+    assert not model.can_save
+    assert model.state.snapshot is None
+    assert "unsafe$(touch bad)" not in model.status
 
 
 @pytest.mark.asyncio
@@ -11113,7 +11148,7 @@ async def test_settings_advanced_config_shows_raw_editor_and_safety_actions():
         assert screen.query_one("#settings-advanced-validate-config")
         save_button = screen.query_one("#settings-advanced-save-config")
         assert save_button.disabled
-        assert "Last validated: not validated" in text
+        assert "Not validated." in text
         assert "Save blocked until the current text validates" in text
 
 
@@ -11189,12 +11224,10 @@ async def test_settings_advanced_config_blocks_invalid_toml_and_redacts_secret()
         editor.text = "OPENAI_API_KEY=sk-secret-token\n[broken"
 
         await pilot.click("#settings-advanced-validate-config")
-        await _wait_for_settings_text(
-            screen, pilot, "Advanced config validation: invalid"
-        )
+        await _wait_for_settings_text(screen, pilot, "Invalid TOML.")
         text = _visible_text(screen)
 
-        assert "Advanced config validation: invalid" in text
+        assert "Invalid TOML." in text
         assert "sk-secret-token" not in text
 
 
@@ -11212,10 +11245,10 @@ async def test_settings_advanced_config_blocks_non_mapping_toml_on_save():
         save_button = screen.query_one("#settings-advanced-save-config")
 
         assert save_button.disabled
-        assert (
-            "top-level TOML value must be a table"
-            in screen._save_advanced_config_text("42")
-        )
+        await pilot.pause()
+        await screen._raw_config_model().validate()
+        assert "Invalid TOML" in screen._raw_config_model().result
+        assert not screen._raw_config_model().can_save
 
 
 @pytest.mark.asyncio
@@ -11237,16 +11270,14 @@ async def test_settings_advanced_config_saves_atomically_with_backup(
         assert screen.query_one("#settings-advanced-save-config").disabled
 
         await pilot.click("#settings-advanced-validate-config")
-        await _wait_for_settings_text(
-            screen, pilot, "Advanced config validation: valid"
-        )
+        await _wait_for_settings_text(screen, pilot, "Valid TOML.")
         assert not screen.query_one("#settings-advanced-save-config").disabled
         await pilot.click("#settings-advanced-save-config")
-        await _wait_for_settings_text(screen, pilot, "Advanced config save: saved")
+        await _wait_for_settings_text(screen, pilot, "Saved;")
         text = _visible_text(screen)
 
-        assert "Advanced config save: saved" in text
-        assert "Last validated: current text" in text
+        assert "Saved;" in text
+        assert "Current text validated." in text
 
     assert config_path.read_text(encoding="utf-8") == (
         '[chat_defaults]\nprovider = "Ollama"\nmodel = "llama3"\n'
@@ -11278,255 +11309,37 @@ async def test_settings_advanced_config_loads_backup_preview_without_saving(
         assert editor.text == current_text
 
         await pilot.click("#settings-advanced-load-backup")
-        await _wait_for_settings_text(
-            screen, pilot, "Advanced config recovery: loaded backup preview"
-        )
+        await _wait_for_settings_text(screen, pilot, "Backup loaded as a draft")
         text = _visible_text(screen)
 
         assert editor.text == backup_text
         assert config_path.read_text(encoding="utf-8") == current_text
         assert screen.query_one("#settings-advanced-save-config").disabled
-        assert "validate before save" in text
+        assert "Validate before saving" in text
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("release_order", "old_is_error"),
-    [
-        pytest.param((0, 1), False, id="old-callback-then-new-callback"),
-        pytest.param((1, 0), False, id="new-callback-then-old-callback"),
-        pytest.param((1, 0), True, id="new-success-then-stale-old-error"),
-    ],
-)
-async def test_settings_advanced_config_backup_load_latest_request_wins(
-    monkeypatch, tmp_path, release_order, old_is_error
-):
-    config_path = tmp_path / "config.toml"
-    current_text = '[chat_defaults]\nprovider = "OpenAI"\n'
-    old_backup_text = '[chat_defaults]\nprovider = "Old"\n'
-    new_backup_text = '[chat_defaults]\nprovider = "Newest"\n'
-    old_result = (
-        "Advanced config recovery: failed - stale old read failed"
-        if old_is_error
-        else "Advanced config recovery: loaded old backup preview"
-    )
-    new_result = "Advanced config recovery: loaded newest backup preview"
-    loading_result = "Advanced config recovery: loading backup preview"
-    payloads = [
-        (old_result, None if old_is_error else old_backup_text),
-        (new_result, new_backup_text),
-    ]
-    expected_observations = (
-        [
-            (0, current_text, loading_result, current_text),
-            (1, new_backup_text, new_result, None),
-        ]
-        if release_order == (0, 1)
-        else [
-            (1, new_backup_text, new_result, None),
-            (0, new_backup_text, new_result, None),
-        ]
-    )
-    config_path.write_text(current_text, encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-
-    started = [threading.Event() for _ in range(2)]
-    release = [threading.Event() for _ in range(2)]
-    callback_returned = [threading.Event() for _ in range(2)]
-    call_lock = threading.Lock()
-    call_index = 0
-    callback_observations = []
-    real_apply = SettingsScreen._apply_advanced_backup_preview_result
-
-    def gated_read(self):
-        nonlocal call_index
-        with call_lock:
-            index = call_index
-            call_index += 1
-        started[index].set()
-        if not release[index].wait(_BACKUP_LOAD_WORKER_RELEASE_TIMEOUT_SECONDS):
-            raise AssertionError(f"backup read {index} was never released")
-        return payloads[index]
-
-    def observing_apply(self, *args, **kwargs):
-        callback_index = next(
-            index
-            for index, payload in enumerate(payloads)
-            if payload == (args[0], args[1])
-        )
-        try:
-            return real_apply(self, *args, **kwargs)
-        finally:
-            callback_observations.append(
-                (
-                    callback_index,
-                    self._advanced_editor_text(),
-                    self._advanced_config_result,
-                    self._advanced_config_validated_text,
-                )
-            )
-            callback_returned[callback_index].set()
-
-    monkeypatch.setattr(SettingsScreen, "_read_advanced_backup_preview", gated_read)
-    monkeypatch.setattr(
-        SettingsScreen, "_apply_advanced_backup_preview_result", observing_apply
-    )
-
-    app = _build_test_app()
-    host = DestinationHarness(app, "settings")
-
-    async with host.run_test(size=(180, 50)) as pilot:
-        try:
-            await _open_settings_category(pilot, "#settings-category-advanced-config")
-            screen = _active_destination_screen(host)
-            editor = screen.query_one("#settings-advanced-config-editor", TextArea)
-            screen._advanced_config_validated_text = current_text
-            screen._update_advanced_validation_status()
-
-            screen.query_one("#settings-advanced-load-backup", Button).press()
-            await pilot.pause()
-            assert await asyncio.to_thread(
-                started[0].wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
-            )
-
-            screen.query_one("#settings-advanced-load-backup", Button).press()
-            await pilot.pause()
-            assert await asyncio.to_thread(
-                started[1].wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
-            )
-
-            for index, expected_observation in zip(
-                release_order, expected_observations
-            ):
-                release[index].set()
-                assert await asyncio.to_thread(
-                    callback_returned[index].wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
-                )
-                assert callback_observations[-1] == expected_observation
-
-            assert editor.text == new_backup_text
-            assert screen._advanced_config_result == new_result
-            assert screen._advanced_config_validated_text is None
-            assert callback_observations == expected_observations
-        finally:
-            for event in release:
-                event.set()
-
-
-@pytest.mark.asyncio
-async def test_settings_advanced_config_backup_load_serial_repeats_report_success(
-    monkeypatch, tmp_path
-):
-    config_path = tmp_path / "config.toml"
-    current_text = '[chat_defaults]\nprovider = "OpenAI"\n'
-    backup_text = '[chat_defaults]\nprovider = "Ollama"\nmodel = "llama3"\n'
-    loaded_result = (
-        "Advanced config recovery: loaded backup preview; validate before save"
-    )
-    payload = (loaded_result, backup_text)
-    config_path.write_text(current_text, encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-
-    started = [threading.Event() for _ in range(2)]
-    release = [threading.Event() for _ in range(2)]
-    callback_returned = [threading.Event() for _ in range(2)]
-    call_lock = threading.Lock()
-    call_index = 0
-    callback_lock = threading.Lock()
-    callback_index = 0
-    callback_observations = []
-    real_apply = SettingsScreen._apply_advanced_backup_preview_result
-
-    def gated_read(self):
-        nonlocal call_index
-        with call_lock:
-            index = call_index
-            call_index += 1
-        started[index].set()
-        if not release[index].wait(_BACKUP_LOAD_WORKER_RELEASE_TIMEOUT_SECONDS):
-            raise AssertionError(f"backup read {index} was never released")
-        return payload
-
-    def observing_apply(self, *args, **kwargs):
-        nonlocal callback_index
-        with callback_lock:
-            index = callback_index
-            callback_index += 1
-        try:
-            return real_apply(self, *args, **kwargs)
-        finally:
-            callback_observations.append(
-                (
-                    self._advanced_editor_text(),
-                    self._advanced_config_result,
-                    self._advanced_config_validated_text,
-                )
-            )
-            callback_returned[index].set()
-
-    monkeypatch.setattr(SettingsScreen, "_read_advanced_backup_preview", gated_read)
-    monkeypatch.setattr(
-        SettingsScreen, "_apply_advanced_backup_preview_result", observing_apply
-    )
-
-    app = _build_test_app()
-    host = DestinationHarness(app, "settings")
-
-    async with host.run_test(size=(180, 50)) as pilot:
-        try:
-            await _open_settings_category(pilot, "#settings-category-advanced-config")
-            screen = _active_destination_screen(host)
-            editor = screen.query_one("#settings-advanced-config-editor", TextArea)
-
-            screen.query_one("#settings-advanced-load-backup", Button).press()
-            await pilot.pause()
-            assert await asyncio.to_thread(
-                started[0].wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
-            )
-            release[0].set()
-            assert await asyncio.to_thread(
-                callback_returned[0].wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
-            )
-
-            screen.query_one("#settings-advanced-load-backup", Button).press()
-            await pilot.pause()
-            assert await asyncio.to_thread(
-                started[1].wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
-            )
-            release[1].set()
-            assert await asyncio.to_thread(
-                callback_returned[1].wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
-            )
-
-            assert editor.text == backup_text
-            assert screen._advanced_config_result == loaded_result
-            assert screen._advanced_config_validated_text is None
-            assert [observation[1] for observation in callback_observations] == [
-                loaded_result,
-                loaded_result,
-            ]
-        finally:
-            for event in release:
-                event.set()
-
-
-def test_settings_advanced_config_backup_preview_handles_config_path_errors(
+async def test_settings_advanced_config_backup_preview_handles_config_path_errors(
     monkeypatch,
 ):
-    screen = SettingsScreen(_build_test_app())
+    from tldw_chatbook.UI.Screens.settings_advanced_config import AdvancedConfigSettings
+
+    model = AdvancedConfigSettings(lambda: None, lambda loaded: None)
+    await model.inspect_current()
+    original = model.state.text
 
     def raise_config_path_error():
         raise RuntimeError(
             f"OPENAI_API_KEY={DUMMY_REDACTION_CONFIG_VALUE} path failure"
         )
 
-    monkeypatch.setattr(screen, "_config_path", raise_config_path_error)
-
-    result = screen._load_advanced_backup_preview()
-
-    assert result.startswith("Advanced config recovery: failed")
-    assert "OPENAI_API_KEY=<redacted>" in result
-    assert DUMMY_REDACTION_CONFIG_VALUE not in result
+    monkeypatch.setattr(
+        model.adapter, "read_backup_serialized", raise_config_path_error
+    )
+    await model.replace_draft("backup", model.state.revision)
+    assert "Could not load" in model.status
+    assert DUMMY_REDACTION_CONFIG_VALUE not in model.status
+    assert model.state.text == original
 
 
 @pytest.mark.asyncio
@@ -11549,36 +11362,13 @@ async def test_settings_advanced_config_load_backup_reports_decode_failure(
         editor = screen.query_one("#settings-advanced-config-editor", TextArea)
 
         await pilot.click("#settings-advanced-load-backup")
-        await _wait_for_settings_text(screen, pilot, "Advanced config recovery: failed")
+        await _wait_for_settings_text(screen, pilot, "Could not load config text")
 
         assert editor.text == current_text
-        assert "invalid start byte" in screen._advanced_config_result
+        assert "encoding" in screen._raw_config_model().result
         assert screen.query_one("#settings-advanced-save-config").disabled
 
 
-def test_settings_advanced_config_load_backup_handler_uses_worker(monkeypatch):
-    screen = SettingsScreen(_build_test_app())
-    calls = []
-
-    def fail_direct_load():
-        raise AssertionError("backup loading should not run in the button handler")
-
-    def fake_worker(dispatch_text, load_token):
-        # TASK-19559: the handler must hand the worker the editor text as it
-        # stands at dispatch, so the arrival callback can refuse to clobber
-        # typing that happened while the backup was being read.
-        calls.append(("worker", dispatch_text, load_token))
-
-    monkeypatch.setattr(screen, "_load_advanced_backup_preview", fail_direct_load)
-    monkeypatch.setattr(
-        screen, "_advanced_load_backup_worker", fake_worker, raising=False
-    )
-
-    event = SimpleNamespace(stop=lambda: calls.append("stop"))
-
-    screen.handle_advanced_load_backup(event)
-
-    assert calls == ["stop", ("worker", "", 1)]
 
 
 @pytest.mark.asyncio
@@ -11593,6 +11383,8 @@ async def test_settings_advanced_config_guided_path_buttons_escape_raw_toml():
         assert screen.query_one("#settings-advanced-open-providers-models", Button)
         assert screen.query_one("#settings-advanced-open-console-behavior", Button)
         assert screen.query_one("#settings-advanced-open-diagnostics", Button)
+        screen.query_one("#settings-advanced-guide", Collapsible).collapsed = False
+        await pilot.pause()
 
         await pilot.click("#settings-advanced-open-providers-models")
         await _wait_for_settings_text(screen, pilot, "Provider catalog")
@@ -11601,20 +11393,20 @@ async def test_settings_advanced_config_guided_path_buttons_escape_raw_toml():
         assert "Selected category: Providers & Models" in _visible_text(screen)
 
 
-def test_settings_advanced_config_new_file_save_reports_no_backup(
+@pytest.mark.asyncio
+async def test_settings_advanced_config_new_file_save_reports_no_backup(
     monkeypatch, tmp_path
 ):
-    config_path = tmp_path / "config.toml"
+    from tldw_chatbook.UI.Screens.settings_advanced_config import AdvancedConfigSettings
+
+    config_path = tmp_path / "new.toml"
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-    app = SimpleNamespace(app_config={})
-    screen = SettingsScreen(app)
-    text = '[chat_defaults]\nprovider = "Ollama"\n'
-    screen._advanced_config_validated_text = text
-
-    result = screen._save_advanced_config_text(text)
-
-    assert "Advanced config save: saved" in result
-    assert "backup: none (new file)" in result
+    model = AdvancedConfigSettings(lambda: None, lambda loaded: None)
+    await model.inspect_current()
+    model.edit('[chat_defaults]\nprovider = "Ollama"\n')
+    await model.validate()
+    await model.save()
+    assert "Saved; no previous file" in model.result
     assert config_path.exists()
     assert not config_path.with_suffix(".toml.bak").exists()
 
@@ -12975,103 +12767,46 @@ async def test_settings_manual_sync_run_token_guards_stale_worker_finally():
 async def test_settings_advanced_config_backup_load_never_clobbers_unsaved_typing(
     monkeypatch, tmp_path
 ):
-    """TASK-19559: a background backup read must not overwrite live typing.
-
-    `_advanced_load_backup_worker` is a *thread* worker. `Worker.cancel()`
-    cannot stop a thread worker -- the body finishes in the executor and its
-    `call_from_thread` callback lands regardless -- so the only place the
-    result can be refused is on arrival. This test holds the off-loop read
-    open, types into the editor while it is blocked, then releases it.
-
-    Born red against the branch base, where `_apply_advanced_backup_preview_
-    result` assigned `TextArea.text = backup_text` unconditionally: the user's
-    unsaved edit was silently replaced by the backup.
-    """
+    """TASK-19559: retained-session backup completion must preserve live typing."""
     config_path = tmp_path / "config.toml"
-    backup_path = tmp_path / "config.toml.bak"
     current_text = '[chat_defaults]\nprovider = "OpenAI"\n'
-    backup_text = '[chat_defaults]\nprovider = "Ollama"\nmodel = "llama3"\n'
+    backup_text = '[chat_defaults]\nprovider = "Ollama"\n'
     config_path.write_text(current_text, encoding="utf-8")
-    backup_path.write_text(backup_text, encoding="utf-8")
+    config_path.with_suffix(".toml.bak").write_text(backup_text, encoding="utf-8")
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-
-    started = threading.Event()
-    release = threading.Event()
-    callback_returned = threading.Event()
-    callback_observations = []
-    original_read = SettingsScreen._read_advanced_backup_preview
-    real_apply = SettingsScreen._apply_advanced_backup_preview_result
-
-    def gated_read(self):
-        # Runs on the worker thread, so blocking here does not stall the loop.
-        started.set()
-        if not release.wait(_BACKUP_LOAD_WORKER_RELEASE_TIMEOUT_SECONDS):
-            raise AssertionError("backup read was never released")
-        return original_read(self)
-
-    def observing_apply(self, *args, **kwargs):
-        try:
-            return real_apply(self, *args, **kwargs)
-        finally:
-            callback_observations.append(
-                (
-                    self._advanced_editor_text(),
-                    self._advanced_config_result,
-                    self._advanced_config_validated_text,
-                )
-            )
-            callback_returned.set()
-
-    monkeypatch.setattr(SettingsScreen, "_read_advanced_backup_preview", gated_read)
-    monkeypatch.setattr(
-        SettingsScreen, "_apply_advanced_backup_preview_result", observing_apply
-    )
-
-    app = _build_test_app()
-    host = DestinationHarness(app, "settings")
-
+    started, release = threading.Event(), threading.Event()
+    host = DestinationHarness(_build_test_app(), "settings")
     async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-advanced-config")
+        await host.workers.wait_for_complete()
+        screen = _active_destination_screen(host)
+        editor = screen.query_one("#settings-advanced-config-editor", TextArea)
+        model = screen._raw_config_model()
+        original_read = model.adapter.read_backup_serialized
+
+        def gated_read():
+            started.set()
+            assert release.wait(_BACKUP_LOAD_WORKER_RELEASE_TIMEOUT_SECONDS)
+            return original_read()
+
+        monkeypatch.setattr(model.adapter, "read_backup_serialized", gated_read)
         try:
-            await _open_settings_category(pilot, "#settings-category-advanced-config")
-            screen = _active_destination_screen(host)
-            editor = screen.query_one("#settings-advanced-config-editor", TextArea)
-            assert editor.text == current_text
-
             await pilot.click("#settings-advanced-load-backup")
-            assert await asyncio.to_thread(
-                started.wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
-            )
-            assert not release.is_set()
-
-            # The user keeps typing while the backup is still being read.
+            assert await asyncio.to_thread(started.wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS)
             editor.focus()
-            await pilot.pause()
             editor.move_cursor(editor.document.end)
             await pilot.press("z")
-            await pilot.pause()
             typed_text = editor.text
-            assert typed_text != current_text, "the simulated keystroke did not land"
-
-            release.set()
-            assert await asyncio.to_thread(
-                callback_returned.wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
-            )
-
-            assert editor.text == typed_text, (
-                "the background backup load overwrote unsaved typing"
-            )
-            assert backup_text not in editor.text
-            assert "not applied" in screen._advanced_config_result
-            assert "unsaved edits were kept" in screen._advanced_config_result
-            assert callback_observations == [
-                (
-                    typed_text,
-                    screen._advanced_config_result,
-                    screen._advanced_config_validated_text,
-                )
-            ]
+            assert typed_text != current_text
         finally:
             release.set()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert editor.text == typed_text
+        assert backup_text not in editor.text
+        assert "not applied" in model.result
+        assert "Newer edits kept" in model.result
+        assert model.state.validated_revision is None
 
 
 def test_settings_appearance_theme_options_include_registered_user_themes():

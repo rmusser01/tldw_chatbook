@@ -1,0 +1,74 @@
+{
+  "evidence_path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-it-final-01/evidence.json",
+  "evidence_sha256": "e49a8c7acfd7acaa96aa7d386fcc7ac72ed020bbfa02ddfe37af10c293336519",
+  "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+  "model_files": {
+    "config.json": "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828",
+    "model.bin": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671",
+    "tokenizer.json": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+    "vocabulary.txt": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913"
+  },
+  "runtime": {
+    "faster-whisper": "1.2.1",
+    "ctranslate2": "4.8.2"
+  },
+  "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+  "device": "cpu",
+  "compute_type": "int8",
+  "success_audio_count": 2,
+  "clips": [
+    {
+      "transcript": "La bussola argentata apre questa risposta. Al centro si trova un frutteto tranquillo, la risposta termina con un'alba dorata.",
+      "expected_text": "La bussola argentata apre questa risposta. Al centro si trova un frutteto tranquillo. La risposta termina con un alba dorata.",
+      "anchors": [
+        "bussola argentata",
+        "frutteto tranquillo",
+        "alba dorata"
+      ],
+      "anchor_positions": [
+        2,
+        53,
+        93
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "speech-lab",
+      "audio_sha256": "e3a34231ccffb61098aef724397c719e5af587904554079a5a81cb65eb312b9b",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 8.0,
+          "text": " La bussola argentata apre questa risposta. Al centro si trova un frutteto tranquillo, la risposta termina con un'alba dorata."
+        }
+      ],
+      "detected_language": "it"
+    },
+    {
+      "transcript": "La bussola argentata apre questa risposta. Al centro si trova un frutteto tranquillo, la risposta termina con un'alba dorata.",
+      "expected_text": "La bussola argentata apre questa risposta. Al centro si trova un frutteto tranquillo. La risposta termina con un alba dorata.",
+      "anchors": [
+        "bussola argentata",
+        "frutteto tranquillo",
+        "alba dorata"
+      ],
+      "anchor_positions": [
+        2,
+        53,
+        93
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "console-warmup",
+      "audio_sha256": "eab0feb74d56246c27550b8c0d63c74354f7bb9c27e7bb4d4b30894b65184494",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 8.0,
+          "text": " La bussola argentata apre questa risposta. Al centro si trova un frutteto tranquillo, la risposta termina con un'alba dorata."
+        }
+      ],
+      "detected_language": "it"
+    }
+  ],
+  "status": "content_passed"
+}

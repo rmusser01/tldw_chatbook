@@ -23,8 +23,8 @@ def check_requirements():
     }
     
     # Check Python version
-    if sys.version_info < (3, 11):
-        print("ERROR: Python 3.11+ is required")
+    if sys.version_info < (3, 12):
+        print("ERROR: Python 3.12+ is required")
         return False
     
     # Check Nuitka

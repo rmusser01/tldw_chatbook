@@ -1,0 +1,581 @@
+{
+  "platform": "macOS ARM64",
+  "base_revision": "df254584d076eaeaf15670eca364a53a62b25d29",
+  "wheel": {
+    "wheel_sha256": "d0edef43e3b9690fe036fa2a9f9291c36e7f7a8f7b705e62084ff14e8fc3e430",
+    "source_hashes": {
+      "tldw_chatbook/TTS/kokoro_pytorch.py": "596c443a425510cf20b42a9db239681abb479aec9fc31817d1dcc6a0fab7fe0e",
+      "tldw_chatbook/TTS/backends/kokoro.py": "d47cec3cffc99e20d084f406b878cb5a3b301dad8559ba8aa8866f0c69682d30",
+      "tldw_chatbook/TTS/legacy_bridge.py": "0807c0dbefba1fac2b0db7136ca76fb5aedbd1cf07b44fa5c159cbd959e4cd9e",
+      "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py": "e98462614c9a18c3b1d8c8f199a9bc5cb9f4168cdfc811e1aebe4118dd79ca4a"
+    },
+    "installed_environments": [
+      "fresh-python312",
+      "fresh-python313"
+    ]
+  },
+  "automated_checks": {
+    "passed": 340,
+    "skipped": 1,
+    "skip_reason": "optional kokoro-onnx absent from the targeted PyTorch test environment",
+    "full_suite_run": false,
+    "diagnostic_inventory": "no drift",
+    "ruff": {
+      "tldw_chatbook/TTS/backends/kokoro.py": {
+        "before": 52,
+        "after": 52,
+        "added": []
+      },
+      "Tests/UI/test_llm_gguf_source_modes.py": {
+        "before": 10,
+        "after": 10,
+        "added": []
+      },
+      "Tests/TTS/test_kokoro_download_hardening.py": {
+        "before": 6,
+        "after": 6,
+        "added": []
+      }
+    }
+  },
+  "user_config_unchanged": true,
+  "runs": [
+    {
+      "run": "kokoro-mps-wav-review-final",
+      "evidence_sha256": "765019ab05a11889b8a57863dd16eb963f6cbbaf62ddb3be785be39fbe467577",
+      "provider": "kokoro",
+      "device": "mps",
+      "format": "wav",
+      "output_device": {
+        "name": "MacBook Pro Speakers",
+        "index": 1,
+        "hostapi": 0,
+        "max_input_channels": 0,
+        "max_output_channels": 2,
+        "default_low_input_latency": 0.01,
+        "default_low_output_latency": 0.017958333333333333,
+        "default_high_input_latency": 0.1,
+        "default_high_output_latency": 0.027291666666666665,
+        "default_samplerate": 48000.0
+      },
+      "speech_lab": [
+        {
+          "path": "/private/tmp/tts-runtime-recovery-validation/runs/kokoro-mps-wav-review-final/artifacts/speech-lab-automatic.wav",
+          "sample_rate": 24000,
+          "channels": 1,
+          "frames": 154800,
+          "seconds": 6.45,
+          "rms": 0.0494814535104703,
+          "peak": 0.370697021484375,
+          "sha256": "b7cae3f33059e34c6101787f8f401967f504a4dfdcab85218d070ece060e8059",
+          "generation_seconds": 2.7517167502082884,
+          "model_id": "kokoro",
+          "request_voice_id": "af_heart",
+          "request_speed": 1.0,
+          "expected_text": "Speech Lab playback validation. This sentence was generated locally using the real model.",
+          "playback_elapsed_seconds": 7.34631733270362,
+          "player": "afplay",
+          "player_exit_code": 0,
+          "transcript": "Speech lab playback validation. This sentence was generated locally using the real model.",
+          "complete_content": true,
+          "required_content": [
+            "speech lab",
+            "generated locally",
+            "real model"
+          ]
+        }
+      ],
+      "console": [
+        {
+          "expected_text": "Speak replies is enabled. This first reply uses the local model and the real audio device.",
+          "disposition": "speak",
+          "outcomes": [],
+          "lifecycle": [
+            "playing",
+            "stopped"
+          ],
+          "outcome": "success",
+          "elapsed_seconds": 6.8712135828100145,
+          "audio": {
+            "path": "/private/tmp/tts-runtime-recovery-validation/runs/kokoro-mps-wav-review-final/artifacts/console-1.wav",
+            "sample_rate": 24000,
+            "channels": 1,
+            "frames": 164400,
+            "seconds": 6.85,
+            "rms": 0.04828947527214564,
+            "peak": 0.437652587890625,
+            "sha256": "7aece97ca799d9675b7d097b928f13500e62e3ea6a960718a08ece7613b3d3c4"
+          },
+          "transcript": "Speak Replies is enabled. This first reply uses the local model and the real audio device.",
+          "complete_content": true,
+          "required_content": [
+            "speak replies",
+            "first reply",
+            "real audio device"
+          ]
+        },
+        {
+          "expected_text": "This second reply confirms that repeated speech generation and playback complete successfully.",
+          "disposition": "speak",
+          "outcomes": [],
+          "lifecycle": [
+            "playing",
+            "stopped"
+          ],
+          "outcome": "success",
+          "elapsed_seconds": 6.098524124827236,
+          "audio": {
+            "path": "/private/tmp/tts-runtime-recovery-validation/runs/kokoro-mps-wav-review-final/artifacts/console-2.wav",
+            "sample_rate": 24000,
+            "channels": 1,
+            "frames": 146400,
+            "seconds": 6.1,
+            "rms": 0.04930048565152353,
+            "peak": 0.364837646484375,
+            "sha256": "abaaebd9030d4439fd62a77387e365b033192537797340daff4e72d8eb7d0b91"
+          },
+          "transcript": "This second reply confirms that repeated speech generation and playback completes successfully.",
+          "complete_content": true,
+          "required_content": [
+            "second reply",
+            "repeated speech generation",
+            "playback complete successfully"
+          ]
+        }
+      ],
+      "source_root": "/private/tmp/tts-runtime-recovery-validation/fresh-python312/lib/python3.12/site-packages",
+      "versions": {
+        "kokoro": "0.9.4",
+        "torch": "2.14.0",
+        "transformers": "5.16.1",
+        "misaki": "0.9.4",
+        "en-core-web-sm": "3.8.0"
+      },
+      "voice": "af_heart",
+      "speed": 1.0,
+      "runtime": "official Kokoro PyTorch",
+      "sink_events": [
+        "SinkStarted",
+        "SinkDrained",
+        "SinkStarted",
+        "SinkDrained"
+      ],
+      "official_forward_calls": [
+        {
+          "device": "mps:0",
+          "class": "kokoro.model.KModel",
+          "speed": 1.0,
+          "fourier_module": "_CpuSTFT"
+        },
+        {
+          "device": "mps:0",
+          "class": "kokoro.model.KModel",
+          "speed": 1.0,
+          "fourier_module": "_CpuSTFT"
+        },
+        {
+          "device": "mps:0",
+          "class": "kokoro.model.KModel",
+          "speed": 1.0,
+          "fourier_module": "_CpuSTFT"
+        }
+      ],
+      "source_hashes": {
+        "TTS/kokoro_pytorch.py": "596c443a425510cf20b42a9db239681abb479aec9fc31817d1dcc6a0fab7fe0e",
+        "TTS/backends/kokoro.py": "d47cec3cffc99e20d084f406b878cb5a3b301dad8559ba8aa8866f0c69682d30",
+        "TTS/TTS_Backends.py": "b10fd7e745e65fd036213725307c6ba3cef3943c77d977c0be784727460382f0",
+        "TTS/legacy_bridge.py": "0807c0dbefba1fac2b0db7136ca76fb5aedbd1cf07b44fa5c159cbd959e4cd9e",
+        "Event_Handlers/TTS_Events/tts_events.py": "e98462614c9a18c3b1d8c8f199a9bc5cb9f4168cdfc811e1aebe4118dd79ca4a",
+        "Event_Handlers/STTS_Events/stts_events.py": "4d493e16c750cad04b0bd74d53253d7f23551aff4f63e856ead32272297c8955"
+      },
+      "source_hashes_after": {
+        "TTS/kokoro_pytorch.py": "596c443a425510cf20b42a9db239681abb479aec9fc31817d1dcc6a0fab7fe0e",
+        "TTS/backends/kokoro.py": "d47cec3cffc99e20d084f406b878cb5a3b301dad8559ba8aa8866f0c69682d30",
+        "TTS/TTS_Backends.py": "b10fd7e745e65fd036213725307c6ba3cef3943c77d977c0be784727460382f0",
+        "TTS/legacy_bridge.py": "0807c0dbefba1fac2b0db7136ca76fb5aedbd1cf07b44fa5c159cbd959e4cd9e",
+        "Event_Handlers/TTS_Events/tts_events.py": "e98462614c9a18c3b1d8c8f199a9bc5cb9f4168cdfc811e1aebe4118dd79ca4a",
+        "Event_Handlers/STTS_Events/stts_events.py": "4d493e16c750cad04b0bd74d53253d7f23551aff4f63e856ead32272297c8955"
+      },
+      "source_unchanged": true,
+      "cleanup_joined": true,
+      "notices": [
+        "TTS generation complete!"
+      ],
+      "content_verifier": {
+        "engine": "faster-whisper",
+        "model": "/private/tmp/tts-macos-live-validation/recognizer-cache/models--Systran--faster-whisper-base.en/snapshots/3d3d5dee26484f91867d81cb899cfcf72b96be6c",
+        "device": "cpu",
+        "compute_type": "int8",
+        "normalizations": [
+          "case/punctuation",
+          "SpeechLab spacing",
+          "playback complete/completes verb agreement"
+        ]
+      }
+    },
+    {
+      "run": "kokoro-cpu-mp3-review-final",
+      "evidence_sha256": "4f0862068606559bedd95296a5e6a59424b76df855b37651729be45e3e101b27",
+      "provider": "kokoro",
+      "device": "cpu",
+      "format": "mp3",
+      "output_device": {
+        "name": "MacBook Pro Speakers",
+        "index": 1,
+        "hostapi": 0,
+        "max_input_channels": 0,
+        "max_output_channels": 2,
+        "default_low_input_latency": 0.01,
+        "default_low_output_latency": 0.017958333333333333,
+        "default_high_input_latency": 0.1,
+        "default_high_output_latency": 0.027291666666666665,
+        "default_samplerate": 48000.0
+      },
+      "speech_lab": [
+        {
+          "path": "/private/tmp/tts-runtime-recovery-validation/runs/kokoro-cpu-mp3-review-final/artifacts/speech-lab-automatic.mp3",
+          "sample_rate": 24000,
+          "channels": 1,
+          "frames": 124200,
+          "seconds": 5.175,
+          "rms": 0.05822658083345801,
+          "peak": 0.52101069688797,
+          "sha256": "7332c81f56f33cc7e0e02db28c3533492fd5fa093ea9170a16639a2f80daa870",
+          "generation_seconds": 2.231079083867371,
+          "model_id": "kokoro",
+          "request_voice_id": "bf_emma",
+          "request_speed": 1.25,
+          "expected_text": "Speech Lab playback validation. This sentence was generated locally using the real model.",
+          "playback_elapsed_seconds": 6.3134947079233825,
+          "player": "afplay",
+          "player_exit_code": 0,
+          "transcript": "Speech Lab playback validation. This sentence was generated locally using the real model.",
+          "complete_content": true,
+          "required_content": [
+            "speech lab",
+            "generated locally",
+            "real model"
+          ]
+        }
+      ],
+      "console": [
+        {
+          "expected_text": "Speak replies is enabled. This first reply uses the local model and the real audio device.",
+          "disposition": "speak",
+          "outcomes": [],
+          "lifecycle": [
+            "playing",
+            "stopped"
+          ],
+          "outcome": "success",
+          "elapsed_seconds": 6.58258754061535,
+          "player": "afplay",
+          "player_exit_code": 0,
+          "audio": {
+            "path": "/private/tmp/tts-runtime-recovery-validation/runs/kokoro-cpu-mp3-review-final/artifacts/console-1.mp3",
+            "sample_rate": 24000,
+            "channels": 1,
+            "frames": 134400,
+            "seconds": 5.6,
+            "rms": 0.05632050842105321,
+            "peak": 0.4807572066783905,
+            "sha256": "48b54c67360ec278c8fb440c95b580e5027023ff1756db0b9a85d8ef8e3b93bf"
+          },
+          "transcript": "Speak Replies is enabled. This first reply uses the local model and the real audio device.",
+          "complete_content": true,
+          "required_content": [
+            "speak replies",
+            "first reply",
+            "real audio device"
+          ]
+        },
+        {
+          "expected_text": "This second reply confirms that repeated speech generation and playback complete successfully.",
+          "disposition": "speak",
+          "outcomes": [],
+          "lifecycle": [
+            "playing",
+            "stopped"
+          ],
+          "outcome": "success",
+          "elapsed_seconds": 6.086101875174791,
+          "player": "afplay",
+          "player_exit_code": 0,
+          "audio": {
+            "path": "/private/tmp/tts-runtime-recovery-validation/runs/kokoro-cpu-mp3-review-final/artifacts/console-2.mp3",
+            "sample_rate": 24000,
+            "channels": 1,
+            "frames": 120000,
+            "seconds": 5.0,
+            "rms": 0.055901255468351126,
+            "peak": 0.4721074402332306,
+            "sha256": "296eaeaa2ac79cc82f8392ed8b613ae9ed64e6e329cdeed66058553b8a775d98"
+          },
+          "transcript": "The second reply confirms that repeated speech generation and playback completes successfully.",
+          "complete_content": true,
+          "required_content": [
+            "second reply",
+            "repeated speech generation",
+            "playback complete successfully"
+          ]
+        }
+      ],
+      "source_root": "/private/tmp/tts-runtime-recovery-validation/fresh-python312/lib/python3.12/site-packages",
+      "versions": {
+        "kokoro": "0.9.4",
+        "torch": "2.14.0",
+        "transformers": "5.16.1",
+        "misaki": "0.9.4",
+        "en-core-web-sm": "3.8.0"
+      },
+      "voice": "bf_emma",
+      "speed": 1.25,
+      "runtime": "official Kokoro PyTorch",
+      "sink_events": [],
+      "official_forward_calls": [
+        {
+          "device": "cpu",
+          "class": "kokoro.model.KModel",
+          "speed": 1.25,
+          "fourier_module": "TorchSTFT"
+        },
+        {
+          "device": "cpu",
+          "class": "kokoro.model.KModel",
+          "speed": 1.25,
+          "fourier_module": "TorchSTFT"
+        },
+        {
+          "device": "cpu",
+          "class": "kokoro.model.KModel",
+          "speed": 1.25,
+          "fourier_module": "TorchSTFT"
+        }
+      ],
+      "source_hashes": {
+        "TTS/kokoro_pytorch.py": "596c443a425510cf20b42a9db239681abb479aec9fc31817d1dcc6a0fab7fe0e",
+        "TTS/backends/kokoro.py": "d47cec3cffc99e20d084f406b878cb5a3b301dad8559ba8aa8866f0c69682d30",
+        "TTS/TTS_Backends.py": "b10fd7e745e65fd036213725307c6ba3cef3943c77d977c0be784727460382f0",
+        "TTS/legacy_bridge.py": "0807c0dbefba1fac2b0db7136ca76fb5aedbd1cf07b44fa5c159cbd959e4cd9e",
+        "Event_Handlers/TTS_Events/tts_events.py": "e98462614c9a18c3b1d8c8f199a9bc5cb9f4168cdfc811e1aebe4118dd79ca4a",
+        "Event_Handlers/STTS_Events/stts_events.py": "4d493e16c750cad04b0bd74d53253d7f23551aff4f63e856ead32272297c8955"
+      },
+      "source_hashes_after": {
+        "TTS/kokoro_pytorch.py": "596c443a425510cf20b42a9db239681abb479aec9fc31817d1dcc6a0fab7fe0e",
+        "TTS/backends/kokoro.py": "d47cec3cffc99e20d084f406b878cb5a3b301dad8559ba8aa8866f0c69682d30",
+        "TTS/TTS_Backends.py": "b10fd7e745e65fd036213725307c6ba3cef3943c77d977c0be784727460382f0",
+        "TTS/legacy_bridge.py": "0807c0dbefba1fac2b0db7136ca76fb5aedbd1cf07b44fa5c159cbd959e4cd9e",
+        "Event_Handlers/TTS_Events/tts_events.py": "e98462614c9a18c3b1d8c8f199a9bc5cb9f4168cdfc811e1aebe4118dd79ca4a",
+        "Event_Handlers/STTS_Events/stts_events.py": "4d493e16c750cad04b0bd74d53253d7f23551aff4f63e856ead32272297c8955"
+      },
+      "source_unchanged": true,
+      "cleanup_joined": true,
+      "notices": [
+        "TTS generation complete!"
+      ],
+      "content_verifier": {
+        "engine": "faster-whisper",
+        "model": "/private/tmp/tts-macos-live-validation/recognizer-cache/models--Systran--faster-whisper-base.en/snapshots/3d3d5dee26484f91867d81cb899cfcf72b96be6c",
+        "device": "cpu",
+        "compute_type": "int8",
+        "normalizations": [
+          "case/punctuation",
+          "SpeechLab spacing",
+          "playback complete/completes verb agreement"
+        ]
+      }
+    },
+    {
+      "run": "kokoro-onnx-cpu-wav-review-final",
+      "evidence_sha256": "f84595670283c7c2b50da4e1b119d115fc689689562f87cb7a8225c2d02b4359",
+      "provider": "kokoro",
+      "device": "cpu",
+      "format": "wav",
+      "output_device": {
+        "name": "MacBook Pro Speakers",
+        "index": 1,
+        "hostapi": 0,
+        "max_input_channels": 0,
+        "max_output_channels": 2,
+        "default_low_input_latency": 0.01,
+        "default_low_output_latency": 0.017958333333333333,
+        "default_high_input_latency": 0.1,
+        "default_high_output_latency": 0.027291666666666665,
+        "default_samplerate": 48000.0
+      },
+      "speech_lab": [
+        {
+          "path": "/private/tmp/tts-runtime-recovery-validation/runs/kokoro-onnx-cpu-wav-review-final/artifacts/speech-lab-automatic.wav",
+          "sample_rate": 24000,
+          "channels": 1,
+          "frames": 146432,
+          "seconds": 6.101333333333334,
+          "rms": 0.07482773310142625,
+          "peak": 0.681549072265625,
+          "sha256": "3648ea92dcb7ddbd9f3d45603ebc658e822fa9b381eaad7008bf1c35325d5c57",
+          "generation_seconds": 1.7452326668426394,
+          "model_id": "kokoro",
+          "request_voice_id": "af_alloy",
+          "request_speed": 1.0,
+          "expected_text": "Speech Lab playback validation. This sentence was generated locally using the real model.",
+          "playback_elapsed_seconds": 7.162828874774277,
+          "player": "afplay",
+          "player_exit_code": 0,
+          "transcript": "Speech Lab playback validation. This sentence was generated locally using the real model.",
+          "complete_content": true,
+          "required_content": [
+            "speech lab",
+            "generated locally",
+            "real model"
+          ]
+        }
+      ],
+      "console": [
+        {
+          "expected_text": "Speak replies is enabled. This first reply uses the local model and the real audio device.",
+          "disposition": "speak",
+          "outcomes": [],
+          "lifecycle": [
+            "playing",
+            "stopped"
+          ],
+          "outcome": "success",
+          "elapsed_seconds": 6.37208995828405,
+          "audio": {
+            "path": "/private/tmp/tts-runtime-recovery-validation/runs/kokoro-onnx-cpu-wav-review-final/artifacts/console-1.wav",
+            "sample_rate": 24000,
+            "channels": 1,
+            "frames": 152064,
+            "seconds": 6.336,
+            "rms": 0.07376361689679181,
+            "peak": 0.56915283203125,
+            "sha256": "5955c1beed8d8ff783b9bdedf2bf21cd721c01db794710253a98d0cc192c11fa"
+          },
+          "transcript": "Speak replies is enabled. This first reply uses the local model and the real audio device.",
+          "complete_content": true,
+          "required_content": [
+            "speak replies",
+            "first reply",
+            "real audio device"
+          ]
+        },
+        {
+          "expected_text": "This second reply confirms that repeated speech generation and playback complete successfully.",
+          "disposition": "speak",
+          "outcomes": [],
+          "lifecycle": [
+            "playing",
+            "stopped"
+          ],
+          "outcome": "success",
+          "elapsed_seconds": 5.748369917273521,
+          "audio": {
+            "path": "/private/tmp/tts-runtime-recovery-validation/runs/kokoro-onnx-cpu-wav-review-final/artifacts/console-2.wav",
+            "sample_rate": 24000,
+            "channels": 1,
+            "frames": 137216,
+            "seconds": 5.717333333333333,
+            "rms": 0.07596659660069643,
+            "peak": 0.50445556640625,
+            "sha256": "1e1801da517e38394f5c4a269cadfb5ae500a70ec326615de672b016225eb95e"
+          },
+          "transcript": "This second reply confirms that repeated speech generation and playback complete successfully.",
+          "complete_content": true,
+          "required_content": [
+            "second reply",
+            "repeated speech generation",
+            "playback complete successfully"
+          ]
+        }
+      ],
+      "source_root": "/private/tmp/tts-runtime-recovery-validation/fresh-python313/lib/python3.13/site-packages",
+      "versions": {
+        "kokoro-onnx": "0.6.1",
+        "onnxruntime": "1.29.0",
+        "audioop-lts": "0.2.2",
+        "torch": "2.14.0",
+        "transformers": "5.16.1"
+      },
+      "voice": "af_heart",
+      "speed": 1.0,
+      "runtime": "Kokoro ONNX on Python 3.13",
+      "sink_events": [
+        "SinkStarted",
+        "SinkDrained",
+        "SinkStarted",
+        "SinkDrained"
+      ],
+      "official_forward_calls": [
+        {
+          "class": "kokoro_onnx.Kokoro",
+          "speed": 1.0,
+          "voice": "af_alloy",
+          "chunks": 1
+        },
+        {
+          "class": "kokoro_onnx.Kokoro",
+          "speed": 1.0,
+          "voice": "af_heart",
+          "chunks": 1
+        },
+        {
+          "class": "kokoro_onnx.Kokoro",
+          "speed": 1.0,
+          "voice": "af_heart",
+          "chunks": 1
+        }
+      ],
+      "source_hashes": {
+        "TTS/kokoro_pytorch.py": "596c443a425510cf20b42a9db239681abb479aec9fc31817d1dcc6a0fab7fe0e",
+        "TTS/backends/kokoro.py": "d47cec3cffc99e20d084f406b878cb5a3b301dad8559ba8aa8866f0c69682d30",
+        "TTS/TTS_Backends.py": "b10fd7e745e65fd036213725307c6ba3cef3943c77d977c0be784727460382f0",
+        "TTS/legacy_bridge.py": "0807c0dbefba1fac2b0db7136ca76fb5aedbd1cf07b44fa5c159cbd959e4cd9e",
+        "Event_Handlers/TTS_Events/tts_events.py": "e98462614c9a18c3b1d8c8f199a9bc5cb9f4168cdfc811e1aebe4118dd79ca4a",
+        "Event_Handlers/STTS_Events/stts_events.py": "4d493e16c750cad04b0bd74d53253d7f23551aff4f63e856ead32272297c8955"
+      },
+      "source_hashes_after": {
+        "TTS/kokoro_pytorch.py": "596c443a425510cf20b42a9db239681abb479aec9fc31817d1dcc6a0fab7fe0e",
+        "TTS/backends/kokoro.py": "d47cec3cffc99e20d084f406b878cb5a3b301dad8559ba8aa8866f0c69682d30",
+        "TTS/TTS_Backends.py": "b10fd7e745e65fd036213725307c6ba3cef3943c77d977c0be784727460382f0",
+        "TTS/legacy_bridge.py": "0807c0dbefba1fac2b0db7136ca76fb5aedbd1cf07b44fa5c159cbd959e4cd9e",
+        "Event_Handlers/TTS_Events/tts_events.py": "e98462614c9a18c3b1d8c8f199a9bc5cb9f4168cdfc811e1aebe4118dd79ca4a",
+        "Event_Handlers/STTS_Events/stts_events.py": "4d493e16c750cad04b0bd74d53253d7f23551aff4f63e856ead32272297c8955"
+      },
+      "source_unchanged": true,
+      "cleanup_joined": true,
+      "notices": [
+        "TTS generation complete!"
+      ],
+      "content_verifier": {
+        "engine": "faster-whisper",
+        "model": "/private/tmp/tts-macos-live-validation/recognizer-cache/models--Systran--faster-whisper-base.en/snapshots/3d3d5dee26484f91867d81cb899cfcf72b96be6c",
+        "device": "cpu",
+        "compute_type": "int8",
+        "normalizations": [
+          "case/punctuation",
+          "SpeechLab spacing",
+          "playback complete/completes verb agreement"
+        ]
+      }
+    }
+  ],
+  "python313_installed_smoke": {
+    "python": "3.13.6 (main, Aug 14 2025, 16:07:26) [Clang 20.1.4 ]",
+    "module_path": "/private/tmp/tts-runtime-recovery-validation/fresh-python313/lib/python3.13/site-packages/tldw_chatbook/__init__.py",
+    "kokoro_installed": false,
+    "checks": [
+      [
+        "Kokoro PyTorch requires the optional kokoro runtime. On Python 3.11 or 3.12, install 'tldw_chatbook[local_tts]'. Python 3.13+ is not supported by kokoro 0.9.4; select ONNX instead.",
+        "Kokoro PyTorch needs 'tldw_chatbook[local_tts]' on Python 3.11 or 3.12; select ONNX on Python 3.13+"
+      ],
+      [
+        "Kokoro PyTorch requires the optional kokoro runtime. On Python 3.11 or 3.12, install 'tldw_chatbook[local_tts]'. Python 3.13+ is not supported by kokoro 0.9.4; select ONNX instead.",
+        "Kokoro PyTorch needs 'tldw_chatbook[local_tts]' on Python 3.11 or 3.12; select ONNX on Python 3.13+"
+      ]
+    ],
+    "cleanup_joined": true
+  },
+  "source_hashes_match_qualified_revision": true,
+  "qualified_source_revision": "637ba7c2da4a2176efcb7d2c3ff99d2f8690485d",
+  "scope": "Historical pre-Buddy playback qualification. Measured TTS sources match the stated qualified revision; later Buddy integration changes the shared handler and requires separate qualification."
+}

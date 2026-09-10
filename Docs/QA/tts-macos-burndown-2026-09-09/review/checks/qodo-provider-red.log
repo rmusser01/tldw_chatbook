@@ -1,0 +1,93 @@
+FF...FF                                                                  [100%]
+=================================== FAILURES ===================================
+______________ test_shipped_alltalk_default_is_an_endpoint_alias _______________
+Tests/TTS/test_local_provider_contracts.py:250: in test_shipped_alltalk_default_is_an_endpoint_alias
+    assert config['app_tts']['ALLTALK_TTS_VOICE_DEFAULT'] == 'alloy'
+           ^^^^^^^^^^^^^^^^^
+E   KeyError: 'app_tts'
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 07:03:36.494 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-09-09 07:03:36.509 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available
+2026-09-09 07:03:36.520 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-09-09 07:03:36.521 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+_ test_alltalk_inherited_default_and_explicit_voice_are_distinct[config0-alloy] _
+Tests/TTS/test_local_provider_contracts.py:272: in test_alltalk_inherited_default_and_explicit_voice_are_distinct
+    assert submitted == [expected, 'female_01.wav']
+E   AssertionError: assert ['female_01.w...emale_01.wav'] == ['alloy', 'female_01.wav']
+E     
+E     At index 0 diff: 'female_01.wav' != 'alloy'
+E     Use -v to get more diff
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 07:03:36.530 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6027 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35770/test_alltalk_inherited_default0/test_data/config/config.toml
+2026-09-09 07:03:36.531 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6051 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35770/test_alltalk_inherited_default0/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-09 07:03:36.531 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6060 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35770/test_alltalk_inherited_default0/test_data/config/config.toml
+2026-09-09 07:03:36.532 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6125 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-09 07:03:36.532 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-09 07:03:36.566 | INFO     | tldw_chatbook.TTS.backends.alltalk:__init__:80 - AllTalk backend configured (provider=alltalk)
+2026-09-09 07:03:36.567 | INFO     | tldw_chatbook.TTS.backends.alltalk:generate_speech_stream:185 - AllTalk generation started (provider=alltalk)
+2026-09-09 07:03:36.568 | INFO     | tldw_chatbook.TTS.backends.alltalk:generate_speech_stream:218 - AllTalk generation completed (provider=alltalk)
+2026-09-09 07:03:36.568 | INFO     | tldw_chatbook.TTS.backends.alltalk:generate_speech_stream:185 - AllTalk generation started (provider=alltalk)
+2026-09-09 07:03:36.569 | INFO     | tldw_chatbook.TTS.backends.alltalk:generate_speech_stream:218 - AllTalk generation completed (provider=alltalk)
+______ test_settings_default_picker_accepts_all_official_language_voices _______
+Tests/UI/test_speech_kokoro_defaults.py:134: in test_settings_default_picker_accepts_all_official_language_voices
+    selector.value = voice
+    ^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/textual/reactive.py:374: in __set__
+    self._set(obj, value)
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/textual/reactive.py:340: in _set
+    value = private_validate_function(value)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/textual/widgets/_select.py:594: in _validate_value
+    raise InvalidSelectValueError(
+E   textual.widgets._select.InvalidSelectValueError: Illegal select value 'ef_dora'.
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 07:03:37.054 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-09-09 07:03:37.745 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+2026-09-09 07:03:37.765 | INFO     | tldw_chatbook.config:_load_settings_uncached:1841 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook
+2026-09-09 07:03:37.766 | INFO     | tldw_chatbook.config:_load_settings_uncached:1844 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook
+2026-09-09 07:03:37.767 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6027 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35770/test_settings_default_picker_a0/test_data/config/config.toml
+2026-09-09 07:03:37.767 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6051 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35770/test_settings_default_picker_a0/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-09 07:03:37.768 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6060 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35770/test_settings_default_picker_a0/test_data/config/config.toml
+2026-09-09 07:03:37.768 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6125 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-09 07:03:37.769 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-09 07:03:37.770 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1867 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-09-09 07:03:37.771 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2172 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-09-09 07:03:37.773 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3386 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35770/test_settings_default_picker_a0/test_data/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-09-09 07:03:37.773 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3396 - load_settings: Configuration cached for future use
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 07:03:37.794 | INFO     | tldw_chatbook.UI.Speech.speech_settings_mixin:_update_default_voice_options:522 - Setting up Kokoro voices for provider: kokoro
+___ test_alltalk_historical_default_inherits_without_rewriting_saved_config ____
+Tests/TTS/test_studio_preferences.py:854: in test_alltalk_historical_default_inherits_without_rewriting_saved_config
+    assert loaded.snapshot.selection.voice_mode == 'inherit'
+E   AssertionError: assert None == 'inherit'
+E    +  where None = StudioTTSSelectionOverrides(provider_id=None, model_mode=None, model_id=None, voice_mode=None, voice_id=None, response_format=None, speed=None).voice_mode
+E    +    where StudioTTSSelectionOverrides(provider_id=None, model_mode=None, model_id=None, voice_mode=None, voice_id=None, response_format=None, speed=None) = StudioTTSPreferencesSnapshot(schema_version=1, revision=0, auto_play=False, selection=StudioTTSSelectionOverrides(prov...e, model_id=None, voice_mode=None, voice_id=None, response_format=None, speed=None), provider_options=mappingproxy({})).selection
+E    +      where StudioTTSPreferencesSnapshot(schema_version=1, revision=0, auto_play=False, selection=StudioTTSSelectionOverrides(prov...e, model_id=None, voice_mode=None, voice_id=None, response_format=None, speed=None), provider_options=mappingproxy({})) = StudioTTSLoadResult(snapshot=StudioTTSPreferencesSnapshot(schema_version=1, revision=0, auto_play=False, selection=Stu...format=None, speed=None), provider_options=mappingproxy({})), state=<StudioTTSLoadState.MISSING: 'missing'>, issues=()).snapshot
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 07:03:37.953 | INFO     | tldw_chatbook.config:_load_settings_uncached:1841 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook
+2026-09-09 07:03:37.954 | INFO     | tldw_chatbook.config:_load_settings_uncached:1844 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook
+2026-09-09 07:03:37.954 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6027 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35770/test_alltalk_historical_defaul0/config.toml
+2026-09-09 07:03:37.955 | INFO     | tldw_chatbook.config:_report_config_path_posture:476 - Hardened the effective config file to the private posture.
+2026-09-09 07:03:37.956 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6043 - Successfully loaded and merged CLI config from /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35770/test_alltalk_historical_defaul0/config.toml
+2026-09-09 07:03:37.956 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6125 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'app_tts']
+2026-09-09 07:03:37.956 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-09 07:03:37.957 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1867 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-09-09 07:03:37.957 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2172 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-09-09 07:03:37.959 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3386 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35770/test_alltalk_historical_defaul0/test_data/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-09-09 07:03:37.960 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3396 - load_settings: Configuration cached for future use
+=============================== warnings summary ===============================
+../../../../../../../private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydub/utils.py:14
+  /private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydub/utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+1.15s setup    Tests/UI/test_speech_kokoro_defaults.py::test_settings_default_picker_accepts_all_official_language_voices
+
+(20 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/TTS/test_local_provider_contracts.py::test_shipped_alltalk_default_is_an_endpoint_alias
+FAILED Tests/TTS/test_local_provider_contracts.py::test_alltalk_inherited_default_and_explicit_voice_are_distinct[config0-alloy]
+FAILED Tests/UI/test_speech_kokoro_defaults.py::test_settings_default_picker_accepts_all_official_language_voices
+FAILED Tests/TTS/test_studio_preferences.py::test_alltalk_historical_default_inherits_without_rewriting_saved_config
+4 failed, 3 passed, 83 deselected, 1 warning in 3.26s

@@ -1,0 +1,113 @@
+{
+  "recorded_utc": "2026-09-09T06:30:37.337195+00:00",
+  "status": "ready_for_exclusive_inference_slot",
+  "scope": "Headless Linux ARM production Kokoro backend inference and complete WAV decoding. No Lab, Console, physical playback, device drain or acoustic loopback claim.",
+  "model_session_initialized": false,
+  "inference_executed": false,
+  "physical_playback_qualified": false,
+  "image_tag": "tldw-task32153-onnx-arm64:20260909",
+  "image_id": "sha256:c758cd09229cf4e17bb799063d5213f784b37d74ea8e2e312c9b438ac3fec08b",
+  "image_repo_digests": [
+    "tldw-task32153-onnx-arm64@sha256:c758cd09229cf4e17bb799063d5213f784b37d74ea8e2e312c9b438ac3fec08b"
+  ],
+  "image_platform": "linux/arm64",
+  "image_inspect_size_bytes": 399144269,
+  "base_index_digest": "sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b603332063cb5c6e32bd220c3e6e",
+  "base_arm64_manifest_digest": "sha256:ae8c3b6bb3d02ffffa2bee0bed8c7c99b9478bd042ff4d79a5bbd6eb10398864",
+  "source_root": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown",
+  "source_revision_at_preflight": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+  "model_path": "/private/tmp/kokoro-playback-validation/models/kokoro-v1.0.onnx",
+  "voices_path": "/private/tmp/kokoro-playback-validation/models/voices-v1.0.bin",
+  "assets_sha256": {
+    "/assets/kokoro.onnx": "7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5",
+    "/assets/voices.bin": "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d"
+  },
+  "python": "3.13.15 (main, Aug 31 2026, 23:46:42) [GCC 12.2.0]",
+  "versions": {
+    "kokoro-onnx": "0.6.1",
+    "onnxruntime": "1.29.0",
+    "numpy": "2.5.3",
+    "soundfile": "0.14.0",
+    "pydub": "0.25.1",
+    "av": "18.1.0"
+  },
+  "torch_present": false,
+  "dev_snd_present": false,
+  "ready_preflight_evidence": "/private/tmp/tts-macos-burndown/linux/evidence/linux-import-ready/evidence.json",
+  "ready_preflight_sha256": "addff8690e8460ac7c6f35fa5dd953233385aeeda60c06064c1bea2516e9ef65",
+  "files_sha256": {
+    "Dockerfile": "0c67c8e4adaeffa98b41a37f1f2cc4c88929b9696b273e843aceca7ca4bd8ed6",
+    "requirements.in": "aa21225a855f3892f1cb448364ac876d53880a09b9b66e8435ca1d4a923d34ca",
+    ".dockerignore": "44247e217d39c63b23c13f5ab8d4e1059da7edf4ba138d0f80363e1c793b6d24",
+    "launch.py": "dee9a006d9d369b2f0b6948ffd1f95f65a720b722f68e05d5854f7ddd458273c",
+    "validate_linux_onnx.py": "c3149dbd2b7360186c48d0895acd876a3e5b7835501f4909de2d99e601c9d6ac",
+    "build.log": "d7ed0fda6d3f2a9597e35c4bcbd2e9069beb796a12283513a61932a56d1482ed",
+    "image-inspect.json": "9c53dc65d0072226b00967180e4c9fa63665df5e2831bb92cdf415d1540dbfe7",
+    "pip-freeze.txt": "1b97429f8c094e2004d4b55915518f0a1e99cc9deadf0bae2c130ab5015f2be6",
+    "dpkg-packages.txt": "0bfcb6316626b7ebf6448ccfcaed864fec8e8843fa6ea39aef4368a288780059",
+    "preflight.log": "0ab85920f7e9a4a9795cff148b629971198290e18a34cb6f44fcce5588a3b2c7",
+    "preflight-diagnostic.log": "ea5c573b7aa0a47dea054fa9974f2ef1dbdc4510600e011ea1934d894205e09e",
+    "preflight-ready.log": "6fbc3c502b32fc69abb18672d1165e42b22720663c65d7c3739d87bd36e8e99e",
+    "launcher-safety-check.txt": "f7134b56397833598dd45195bc6553bdf15933239170aa769542028ff0589f83",
+    "credential-negative-control.txt": "da50f08c9cbe2b04c53d937145b1796e0b5a7d86241858fd89221f5a8dce1df5"
+  },
+  "unrelated_containers_before": [
+    {
+      "Command": "\"docker-entrypoint.sh postgres\"",
+      "CreatedAt": "2026-08-22 07:53:44 -0700 PDT",
+      "ID": "1275d55568b50d5860eb2827dce1964fa90bd982aa954a75be2158bd41a67345",
+      "Image": "postgres:18",
+      "Labels": "desktop.docker.io/ports.scheme=v2,desktop.docker.io/ports/5432/tcp=:5432",
+      "LocalVolumes": "1",
+      "Mounts": "702dfacc93f0f03421bbae6518ed17f5575c0f0661798297f9eeb129f8b58f96",
+      "Names": "tldw_postgres_test",
+      "Networks": "bridge",
+      "Platform": {
+        "architecture": "arm64",
+        "os": "linux",
+        "variant": "v8"
+      },
+      "Ports": "0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp",
+      "RunningFor": "2 weeks ago",
+      "Size": "20.5kB (virtual 505MB)",
+      "State": "running",
+      "Status": "Up 39 hours"
+    }
+  ],
+  "containers_after_preflight": [
+    {
+      "Command": "\"docker-entrypoint.sh postgres\"",
+      "CreatedAt": "2026-08-22 07:53:44 -0700 PDT",
+      "ID": "1275d55568b50d5860eb2827dce1964fa90bd982aa954a75be2158bd41a67345",
+      "Image": "postgres:18",
+      "Labels": "desktop.docker.io/ports.scheme=v2,desktop.docker.io/ports/5432/tcp=:5432",
+      "LocalVolumes": "1",
+      "Mounts": "702dfacc93f0f03421bbae6518ed17f5575c0f0661798297f9eeb129f8b58f96",
+      "Names": "tldw_postgres_test",
+      "Networks": "bridge",
+      "Platform": {
+        "architecture": "arm64",
+        "os": "linux",
+        "variant": "v8"
+      },
+      "Ports": "0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp",
+      "RunningFor": "2 weeks ago",
+      "Size": "20.5kB (virtual 505MB)",
+      "State": "running",
+      "Status": "Up 39 hours"
+    }
+  ],
+  "preflight_guard_correction": "Two failed import-only probes retained. Guard originally matched TIKTOKEN_CACHE_DIR and TOKENIZERS_PARALLELISM created by application imports. It now checks inherited container environment before imports; synthetic credential negative control and offline import preflight pass.",
+  "nonfatal_observations": [
+    "ORT import emits unknown CPU vendor warning in the ARM VM",
+    "Build warns that PYTHON_BASE has no default; this build supplied the pinned digest explicitly"
+  ],
+  "pending_live_argv": [
+    "/private/tmp/tts-runtime-recovery-validation/kokoro-venv/bin/python",
+    "-B",
+    "/private/tmp/tts-macos-burndown/linux/launch.py",
+    "--run-inference",
+    "--name",
+    "linux-onnx-live"
+  ]
+}
