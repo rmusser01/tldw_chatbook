@@ -1173,6 +1173,7 @@ operational activation stay explicit dependencies. See [core qualification](back
 | tldw_chatbook/DB/recovery_core.py | _CoreAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-admission-and-core-recovery |
 | tldw_chatbook/DB/recovery_core.py | _CoreAdapter.validate_dependencies | connect_private_sqlite | 2 | generic_boundary | native-admission-and-core-recovery |
 
+| tldw_chatbook/Backup_Recovery/activation.py | _flush_existing | open | 1 | generic_boundary | backup_activation_records |
 | tldw_chatbook/Backup_Recovery/admission.py | Admission._create_lock | open | 1 | unsupported | backup_control |
 | tldw_chatbook/Backup_Recovery/admission.py | Admission._open | open | 1 | unsupported | backup_control |
 | tldw_chatbook/Backup_Recovery/admission.py | Admission._write_new_record | open | 1 | unsupported | backup_control |
