@@ -983,7 +983,15 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         self._schedule_fold_cue_sync()
 
     def on_resize(self, event: Resize) -> None:
-        """Re-decide the below-the-fold cue whenever the rail changes size."""
+        """Re-decide the below-the-fold cue whenever the rail changes size.
+
+        Args:
+            event: Textual's resize event for this rail. Its ``size`` is
+                deliberately NOT read -- the decision needs ``max_scroll_y``
+                from the layout this resize is about to produce, not the
+                one it reports, so the handler only reschedules the
+                measurement (see ``_schedule_fold_cue_sync``).
+        """
         self._schedule_fold_cue_sync()
 
     def watch_virtual_size(self) -> None:

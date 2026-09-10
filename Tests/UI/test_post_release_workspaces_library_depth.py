@@ -152,11 +152,13 @@ async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cr
         handoff_row = screen.query_one("#library-workspaces-handoff", Static)
         # task-32230 AC#2: the "●" glyph named neither the blocker nor the
         # remedy. The two blocked rows here (a note and a conversation, both
-        # in Workspace B) share one reason code and differ in type, so the
-        # row says "in another workspace" and points at the item's header.
+        # in Workspace B) share one reason code, so the row can say "in
+        # another workspace"; they differ in TYPE, and only the conversation
+        # reader has a "Link to workspace" header button (PR #2581 review),
+        # so the remedy is the one both of them actually support.
         assert handoff_row.renderable.plain == (
             "Handoff · 2 eligible · 2 blocked · in another workspace · "
-            "Link them from the item's header"
+            "Copy or link them into this workspace"
         )
         assert "Collections: browse and organize; staging is read-only" not in visible
         assert "Import/Export: copy or reference sources" not in visible

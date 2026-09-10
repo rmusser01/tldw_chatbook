@@ -714,12 +714,6 @@ _ANALYZE_AUTO_SKIP_REASON = "already analyzed"
 # the person looking at the row: nothing happened to it.
 _TRASH_PERMANENT_DELETE_FAILURE_COPY = "Could not delete this media item permanently."
 _TRASH_RESTORE_FAILURE_COPY = "Could not restore this media item."
-#: task-32230: how a blocked workspace item's type reads inside the Handoff
-#: row's remedy ("Link it from the <noun>'s header"). Only the types whose
-#: raw ``item_type`` does not already read as a countable noun need an
-#: entry -- "note" and "conversation" are fine as they come; "media" is not
-#: ("the media's header"). Anything absent falls through unchanged.
-_LIBRARY_HANDOFF_ITEM_NOUNS = {"media": "media item"}
 #
 # _INGEST_OPTIONS_CACHE_ATTR, _read_library_ingest_options_from_config, and
 # _library_ingest_options_for (just above) STAY here rather than moving to
@@ -13242,36 +13236,42 @@ class LibraryScreen(BaseAppScreen):
         )
         if not blocked:
             return label
-        reason_codes = {row.reason_code for row in blocked}
+        # The reason and the remedy answer different questions, so they are
+        # decided separately (PR #2581 review): one shared reason code does
+        # not imply one shared item type, and neither implies that the
+        # control the remedy names exists.
+        labels = {
+            linkable_ineligibility_label(row.reason_code) for row in blocked
+        }
+        every_block_is_linkable = "" not in labels
+        # A set whose rows disagree cannot borrow one row's label for all of
+        # them -- `not_in_active_workspace` and `cross_workspace` are both
+        # link-resolvable but say different things -- so it falls back to
+        # the aggregate rather than mis-describing the others.
         reason = (
-            linkable_ineligibility_label(next(iter(reason_codes)))
-            if len(reason_codes) == 1
-            else ""
-        )
-        if reason:
-            # Linking resolves it, and "Link to workspace" lives on the
-            # item's own reader header (task-32056).
-            item_types = {row.item_type for row in blocked}
-            # `item_type` is one of {"note", "media", "conversation"}
-            # (``_library_workspace_item_type``). "note" and "conversation"
-            # read as nouns already; "media" does not -- "the media's
-            # header" is the one clumsy string this expression can produce.
-            noun = (
-                _LIBRARY_HANDOFF_ITEM_NOUNS.get(
-                    next(iter(item_types)), next(iter(item_types))
-                )
-                if len(item_types) == 1
-                else "item"
-            )
-            pronoun = "it" if len(blocked) == 1 else "them"
-            remedy = f"Link {pronoun} from the {noun}'s header"
-        else:
-            # Not link-resolvable (or a mixed set): the rule wrote its own
-            # recovery sentence, which is already a next step.
-            reason = LIBRARY_GENERIC_WORKSPACE_BLOCK
+            labels.pop() if len(labels) == 1 else ""
+        ) or LIBRARY_GENERIC_WORKSPACE_BLOCK
+        item_types = {row.item_type for row in blocked}
+        pronoun = "it" if len(blocked) == 1 else "them"
+        if not every_block_is_linkable:
+            # Linking cannot resolve at least one of these; the rule wrote
+            # its own recovery sentence, which is already a next step.
             remedy = blocked[0].recovery_copy.strip().rstrip(".") or (
                 "Open the item to see why"
             )
+        elif item_types == {"conversation"}:
+            # "Link to workspace" is a real button, and task-32056 put it on
+            # the conversation reader's header -- the ONLY reader in the repo
+            # that builds one. Naming a header for a blocked note or media
+            # item sent the reader to press something that is not there.
+            remedy = f"Link {pronoun} from the conversation's header"
+        else:
+            # Linkable, but no single control to name: the house wording for
+            # this state, the same one `#library-use-in-console`'s tooltip
+            # carries ("Copy or link blocked Library sources into the active
+            # workspace"), minus the workspace id the per-row recovery
+            # sentence would drag into a 34-cell rail row.
+            remedy = f"Copy or link {pronoun} into this workspace"
         head = label[: match.start()].rstrip().rstrip(",")
         return f"{head} · {match.group(0)} · {reason} · {remedy}"
 

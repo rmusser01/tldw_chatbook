@@ -13,7 +13,11 @@ import pytest
 from textual.widgets import Input, Static
 
 from tldw_chatbook.Library.library_rail_state import LibraryRailPreferences
+from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
 from tldw_chatbook.Library.library_shell_state import LibraryShellState
+from tldw_chatbook.UI.Library_Modules.library_rag_search_controller import (
+    LibraryRagSearchController,
+)
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_rail import LibraryRail
 from tldw_chatbook.Workspaces.display_state import (
@@ -287,7 +291,7 @@ def test_the_handoff_row_generalises_across_a_mixed_blocked_set() -> None:
     )
     assert LibraryScreen._workspace_handoff_summary_label(None, state) == (
         "2 eligible · 2 blocked · in another workspace · "
-        "Link them from the item's header"
+        "Copy or link them into this workspace"
     )
 
 
@@ -390,15 +394,100 @@ def test_the_fold_measurement_is_deferred_past_the_layout_that_triggered_it() ->
     assert deferred == []
 
 
-def test_the_handoff_remedy_names_each_item_type_readably() -> None:
-    """The remedy interpolates the blocked row's own `item_type`, and only
-    some of those read as nouns: "note" and "conversation" do, "media" does
-    not ("the media's header"). `_LIBRARY_HANDOFF_ITEM_NOUNS` holds that one
-    exception, so it needs the case that would otherwise regress silently."""
-    for item_type, expected_noun in (("media", "media item"), ("note", "note")):
+def test_only_a_conversation_block_is_sent_to_a_reader_header() -> None:
+    """PR #2581 review (Qodo 3): "Link it from the <type>'s header" named a
+    control that exists on exactly one reader. `library_conversation_reader`
+    is the only widget in the repo that builds a "Link to workspace" button,
+    so a blocked note or media item was told to press something that is not
+    there. Those get the remedy their UI actually supports."""
+    for item_type in ("note", "media"):
         state = _depth_state(
             "Console/RAG handoff: 0 eligible, 1 blocked",
             [_blocked_source_row(item_type=item_type, item_id=f"{item_type}-a")],
         )
         label = LibraryScreen._workspace_handoff_summary_label(None, state)
-        assert label.endswith(f"Link it from the {expected_noun}'s header"), label
+        assert "header" not in label, label
+        assert label.endswith("Copy or link it into this workspace"), label
+
+    conversation = _depth_state(
+        "Console/RAG handoff: 0 eligible, 1 blocked",
+        [_blocked_source_row(item_type="conversation")],
+    )
+    assert LibraryScreen._workspace_handoff_summary_label(
+        None, conversation
+    ).endswith("Link it from the conversation's header")
+
+
+def test_a_mixed_but_wholly_linkable_block_keeps_a_linking_remedy() -> None:
+    """PR #2581 review (Qodo 4): `not_in_active_workspace` and
+    `cross_workspace` are BOTH link-resolvable, but a set holding one of
+    each fell into the non-linkable fallback and printed the first row's
+    singular recovery sentence as the remedy for all of them."""
+    state = _depth_state(
+        "Console/RAG handoff: 0 eligible, 2 blocked",
+        [
+            _blocked_source_row(
+                item_id="chat-a", reason_code="not_in_active_workspace"
+            ),
+            _blocked_source_row(item_id="chat-b", reason_code="cross_workspace"),
+        ],
+    )
+    label = LibraryScreen._workspace_handoff_summary_label(None, state)
+    # The reason cannot claim either single code for the whole set, but the
+    # remedy is still the real one: every row here can be linked.
+    assert label == (
+        "0 eligible · 2 blocked · blocked for this workspace · "
+        "Link them from the conversation's header"
+    ), label
+    assert "Copy or link this conversation into workspace" not in label
+
+
+# --- task-32226: the guard as a pure state transition -----------------------
+
+
+class _RecordingSearchState:
+    """The two fields `handle_library_search_changed` may write."""
+
+    def __init__(self) -> None:
+        self.query = "submitted"
+
+
+def _search_controller(selected_row_id: str) -> LibraryRagSearchController:
+    """A controller wired to nothing but the two seams the handler reads."""
+    controller = object.__new__(LibraryRagSearchController)
+    state = _RecordingSearchState()
+    controller._rag_search_state_accessor = lambda: state
+    controller._library_selected_row_id_accessor = lambda: selected_row_id
+    mirrored: list[tuple[str, str]] = []
+    # The controller exposes its injected seams as read-only properties over
+    # `<name>_fn`, so the injection point is the backing attribute.
+    controller._patch_sibling_library_search_input_fn = (
+        lambda selector, value: mirrored.append((selector, value))
+    )
+    controller.mirrored = mirrored  # type: ignore[attr-defined]
+    controller.state = state  # type: ignore[attr-defined]
+    return controller
+
+
+def test_the_rail_search_guard_is_a_pure_state_transition() -> None:
+    """PR #2581 review (Qodo 1): the off-canvas guard had only production-
+    harness coverage, so a defect in the state rule could not be told apart
+    from navigation or composition. Driven here with no app at all."""
+    stopped: list[bool] = []
+
+    class _Event:
+        value = "draft"
+
+        def stop(self) -> None:
+            stopped.append(True)
+
+    off_row = _search_controller("browse-media")
+    off_row.handle_library_search_changed(_Event())
+    assert stopped == [True], "the event is always consumed"
+    assert off_row.state.query == "submitted", "off-row keystrokes stay local"
+    assert off_row.mirrored == [], "and never reach the Search/RAG box"
+
+    on_row = _search_controller(LIBRARY_ROW_BROWSE_SEARCH)
+    on_row.handle_library_search_changed(_Event())
+    assert on_row.state.query == "draft", "on the Search/RAG row they commit"
+    assert on_row.mirrored == [("#library-rag-query-input", "draft")]
