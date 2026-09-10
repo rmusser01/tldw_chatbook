@@ -6,12 +6,12 @@ There is no cleanup, catalog fallback, config parsing, or native qualification h
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 import hashlib
 import json
 import os
-from pathlib import Path
 import stat
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Callable
 
 from ..Utils.private_paths import _open_verified_parent
@@ -131,13 +131,38 @@ def _overlap(left: Path, right: Path) -> bool:
         return False
 
 
-def _records(root: Path) -> tuple[list[dict], list[dict]]:
+def _activation_witness(record: object) -> None:
+    """Validate local generation evidence without importing execution owners."""
+    if (
+        type(record) is not dict
+        or set(record)
+        != {"operation_id", "generation", "owners", "namespaces", "store_root"}
+        or any(
+            type(record[key]) is not str
+            or not 0 < len(record[key]) <= 256
+            or "\0" in record[key]
+            for key in ("operation_id", "generation")
+        )
+        or not _strings(record["owners"])
+        or any(len(owner) > 256 for owner in record["owners"])
+        or record["owners"] != sorted(record["owners"])
+        or not _strings(record["namespaces"])
+        or record["namespaces"] != sorted(record["namespaces"])
+        or not _paths([record["store_root"]])
+    ):
+        raise ValueError("invalid_activation_witness")
+
+
+def _control_records(
+    root: Path, *, activation: bool = True
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Read independent fixed evidence; incomplete paired writes remain fenced."""
     try:
         if stat.S_ISLNK(root.lstat().st_mode):
             raise ValueError("bootstrap_linked")
     except FileNotFoundError:
-        return [], []
-    pending, profiles = [], []
+        return [], [], []
+    pending, profiles, activations = [], [], []
     with pinned_directory(root) as parent:
         info = os.fstat(parent)
         if info.st_uid != os.geteuid() or info.st_mode & 0o077:
@@ -148,8 +173,35 @@ def _records(root: Path) -> tuple[list[dict], list[dict]]:
         for name in names:
             if name in ("admission", "unbound-owner"):
                 continue
+            if name.startswith("activation-") and not name.startswith(
+                "activation-update-"
+            ):
+                digest = name.removeprefix("activation-").removesuffix(".json")
+                if (
+                    len(digest) != 64
+                    or any(c not in "0123456789abcdef" for c in digest)
+                    or not name.endswith(".json")
+                ):
+                    raise ValueError("unknown_activation_record")
+                if not activation:
+                    # Fixed activation-only evidence cannot authorize execution
+                    # here. Its unavailability must still allow safe inspection.
+                    continue
             record = _read(parent, name)
-            if name.startswith("pending-"):
+            if name.startswith("activation-update-"):
+                # This is explicit write-intent evidence, never a record to skip
+                # or repair on reads. Even a damaged intent requires recovery.
+                raise ValueError("activation_update_pending")
+            if name.startswith("activation-"):
+                if (
+                    set(record) != {"version", "selector", "activation"}
+                    or not _paths([record["selector"]])
+                    or name != "activation-" + _key(record["selector"]) + ".json"
+                ):
+                    raise ValueError("invalid_activation_association")
+                _activation_witness(record["activation"])
+                activations.append(record)
+            elif name.startswith("pending-"):
                 if (
                     set(record)
                     != {
@@ -170,7 +222,7 @@ def _records(root: Path) -> tuple[list[dict], list[dict]]:
                 pending.append(record)
             elif name.startswith("profile-"):
                 if (
-                    set(record)
+                    set(record) - {"activation"}
                     != {"version", "selector", "fingerprint", "namespaces", "roots"}
                     or not _paths([record["selector"]])
                     or not _strings(record["namespaces"])
@@ -181,9 +233,19 @@ def _records(root: Path) -> tuple[list[dict], list[dict]]:
                     or name != "profile-" + _key(record["selector"]) + ".json"
                 ):
                     raise ValueError("invalid_profile")
+                if activation and "activation" in record:
+                    _activation_witness(record["activation"])
+                    if record["activation"]["namespaces"] != record["namespaces"]:
+                        raise ValueError("invalid_profile_activation_scope")
                 profiles.append(record)
             else:
                 raise ValueError("unknown_record")
+    return pending, profiles, activations
+
+
+def _records(root: Path) -> tuple[list[dict], list[dict]]:
+    """Read content admission, leaving activation validation to its read gate."""
+    pending, profiles, _ = _control_records(root, activation=False)
     return pending, profiles
 
 

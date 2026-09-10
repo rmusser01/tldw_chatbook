@@ -2,23 +2,32 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+import json
 import os
+from contextlib import contextmanager
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .admission import Admission, AdmissionTimeout, fcntl
 from .bootstrap import (
+    RecoveryRequired,
+    _activation_witness,
     _binding,
+    _control_records,
     _fingerprint,
     _key,
     _overlap,
+    _read,
     _records,
     _registry,
-    RecoveryRequired,
 )
-from .native_files import create_private_directory, flush_directory, pinned_directory
+from .native_files import (
+    create_private_directory,
+    flush_directory,
+    pinned_directory,
+    publish_new,
+)
 from .profile_paths import lexical_path
 from .qualification import qualified_for
 
@@ -41,6 +50,13 @@ class _Profile(BaseModel):
     fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     namespaces: list[str] = Field(min_length=1, max_length=4096)
     roots: list[str] = Field(min_length=1, max_length=4096)
+    activation: dict | None = None
+
+    @field_validator("activation")
+    @classmethod
+    def _validate_activation(cls, value):
+        _activation_witness(value)
+        return value
 
 
 @contextmanager
@@ -245,5 +261,219 @@ def bind_profile(
         _write(
             bootstrap_root,
             "profile-" + _key(str(selected)) + ".json",
-            validated.model_dump_json().encode(),
+            validated.model_dump_json(exclude_none=True).encode(),
         )
+
+
+def _activation_record_identity(parent, name, expected):
+    """Capture only the exact checked record or verified absence."""
+    try:
+        identity = os.stat(name, dir_fd=parent, follow_symlinks=False)
+    except FileNotFoundError:
+        if expected is not None:
+            raise ValueError("activation_record_changed") from None
+        return None
+    if (
+        expected is None
+        or _read(parent, name) != expected
+        or os.stat(name, dir_fd=parent, follow_symlinks=False) != identity
+    ):
+        raise ValueError("activation_record_changed")
+    return identity
+
+
+def _publish_activation_record(root, parent, name, before, after, temporary, identity):
+    """Replace only the checked captured record, retaining failed-write evidence."""
+    if _activation_record_identity(parent, name, before) != identity:
+        raise ValueError("activation_record_changed")
+    Admission._write_new_record(parent, temporary, json.dumps(after).encode())
+    if before is None:
+        info = os.fstat(parent)
+        publish_new(
+            root / temporary,
+            root / name,
+            parent_identities=((info.st_dev, info.st_ino),) * 2,
+        )
+    else:
+        if (
+            _read(parent, name) != before
+            or os.stat(name, dir_fd=parent, follow_symlinks=False) != identity
+        ):
+            raise ValueError("activation_record_changed")
+        os.replace(temporary, name, src_dir_fd=parent, dst_dir_fd=parent)
+        flush_directory(parent)
+    if _read(parent, name) != after:
+        raise ValueError("activation_publication_changed")
+
+
+def _bind_activation(
+    bootstrap_root, operation_id, config_selector, generation, owners, session
+):
+    """Install paired generation evidence while exact native maintenance is held.
+
+    No namespace remap, enrollment refresh, journal commit or fence clearance is
+    performed here. The pending operation and an explicit before/after intent
+    retain ambiguous writes for the eventual recovery executor.
+    """
+    from .activation import ActivationStore, _identifier, _private
+    from .journal import Journal
+    from .storage_admission import MaintenanceSession, _contains_owned_path
+
+    if type(session) is not MaintenanceSession:
+        raise ValueError("maintenance_session_required")
+    MaintenanceSession._check(session)
+    root = lexical_path(bootstrap_root)
+    selected = lexical_path(config_selector)
+    if lexical_path(session._control) != root / "admission":
+        raise ValueError("conflicting_admission_authority")
+    with pinned_directory(session._control) as parent:
+        info = os.fstat(parent)
+        if (info.st_dev, info.st_ino) != session._control_identity:
+            raise ValueError("activation_authority_changed")
+    pending, profiles, associations = _control_records(root)
+    operation = next((p for p in pending if p["operation_id"] == operation_id), None)
+    if (
+        operation is None
+        or str(selected) not in operation["selectors"]
+        or not set(operation["namespaces"]) <= set(session._names)
+    ):
+        raise ValueError("activation_pending_scope_mismatch")
+    registry = _registry(root)
+    names = operation["namespaces"]
+    previous = next((p for p in profiles if p["selector"] == str(selected)), None)
+    if previous is not None:
+        names = previous["namespaces"]
+    if (
+        registry is None
+        or not set(names) <= set(operation["namespaces"])
+        or any(n not in registry for n in names)
+    ):
+        raise ValueError("activation_profile_scope_mismatch")
+    roots = sorted({p for n in names for p in registry[n]["roots"]})
+    if previous is not None and previous["roots"] != roots:
+        raise ValueError("activation_profile_mapping_changed")
+    if not any(_contains_owned_path(Path(p), selected) for p in roots) or any(
+        not any(_contains_owned_path(r, Path(p)) for r in session._roots) for p in roots
+    ):
+        raise ValueError("activation_profile_outside_maintenance")
+    control = Path(operation["control_root"])
+    if any(
+        _overlap(Path(p), r) for p in roots + [str(selected)] for r in (root, control)
+    ):
+        raise ValueError("activation_control_overlaps_profile")
+    with _private(control):
+        pass
+    allowed, reason = qualified_for("admission", root)
+    if not allowed:
+        raise ValueError(reason)
+    if type(owners) is not tuple or not owners or len(owners) > 4096:
+        raise ValueError("activation_owners_invalid")
+    witness = {
+        "operation_id": _identifier(operation_id),
+        "generation": _identifier(generation),
+        "owners": sorted({_identifier(owner) for owner in owners}),
+        "namespaces": sorted(names),
+        "store_root": str(control / "activation"),
+    }
+    _activation_witness(witness)
+    prior_association = next(
+        (a for a in associations if a["selector"] == str(selected)), None
+    )
+    old_witness = previous.get("activation") if previous else None
+    if old_witness != (prior_association["activation"] if prior_association else None):
+        raise ValueError("activation_pair_inconsistent")
+    if old_witness and (
+        old_witness["operation_id"] == operation_id
+        and old_witness != witness
+        or old_witness["operation_id"] != operation_id
+        and old_witness["generation"] == generation
+    ):
+        raise ValueError("activation_generation_conflict")
+    store = ActivationStore(control / "activation")
+    if store._generation(generation).exists() and not any(
+        a["activation"] == witness for a in associations
+    ):
+        raise ValueError("activation_generation_already_used")
+    profile = _Profile(
+        selector=str(selected),
+        fingerprint=_fingerprint(selected),
+        namespaces=list(names),
+        roots=roots,
+        activation=witness,
+    ).model_dump(exclude_none=True)
+    association = {"version": 1, "selector": str(selected), "activation": witness}
+    key = _key(str(selected))
+    profile_name, association_name = (
+        "profile-" + key + ".json",
+        "activation-" + key + ".json",
+    )
+    with _private(root) as parent:
+        root_info = os.fstat(parent)
+        identities = {
+            name: _activation_record_identity(parent, name, record)
+            for name, record in (
+                (profile_name, previous),
+                (association_name, prior_association),
+            )
+        }
+    store.require(generation, tuple(witness["owners"]))
+    with _private(root) as parent:
+        MaintenanceSession._check(session)
+        info = os.fstat(parent)
+        if (info.st_dev, info.st_ino) != (root_info.st_dev, root_info.st_ino):
+            raise ValueError("activation_authority_changed")
+        for name, record in (
+            (profile_name, previous),
+            (association_name, prior_association),
+        ):
+            if _activation_record_identity(parent, name, record) != identities[name]:
+                raise ValueError("activation_record_changed")
+        if _read(parent, "pending-" + _key(operation_id) + ".json") != operation:
+            raise ValueError("activation_pending_changed")
+        if previous == profile and prior_association == association:
+            for name, record in (
+                (profile_name, profile),
+                (association_name, association),
+            ):
+                Journal._flush_record(parent, name, record)
+            flush_directory(parent)
+            return store.root
+        intent_name = "activation-update-" + key + ".json"
+        intent = {
+            "version": 1,
+            "operation_id": operation_id,
+            "selector": str(selected),
+            "before": [previous, prior_association],
+            "after": [profile, association],
+        }
+        encoded = json.dumps(intent).encode()
+        if len(encoded) > 1048576:
+            raise ValueError("activation_update_too_large")
+        Admission._write_new_record(parent, intent_name, encoded)
+        flush_directory(parent)
+        for index, (name, before, after) in enumerate(
+            (
+                (association_name, prior_association, association),
+                (profile_name, previous, profile),
+            )
+        ):
+            _publish_activation_record(
+                root,
+                parent,
+                name,
+                before,
+                after,
+                f"activation-stage-{key}-{index}.json",
+                identities[name],
+            )
+        if (
+            _read(parent, profile_name) != profile
+            or _read(parent, association_name) != association
+            or _read(parent, intent_name) != intent
+            or _read(parent, "pending-" + _key(operation_id) + ".json") != operation
+        ):
+            raise ValueError("activation_publication_changed")
+        MaintenanceSession._check(session)
+        os.unlink(intent_name, dir_fd=parent)
+        flush_directory(parent)
+    return store.root

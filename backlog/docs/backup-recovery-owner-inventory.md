@@ -1188,6 +1188,8 @@ operational activation stay explicit dependencies. See [core qualification](back
 | tldw_chatbook/Backup_Recovery/admission.py | Admission._write_new_record | write | 1 | unsupported | backup_control |
 | tldw_chatbook/Backup_Recovery/admission.py | Admission._write | os.replace | 1 | unsupported | backup_control |
 | tldw_chatbook/Backup_Recovery/admission.py | Admission._write | os.unlink | 1 | unsupported | backup_control |
+| tldw_chatbook/Backup_Recovery/control_records.py | _publish_activation_record | os.replace | 1 | generic_boundary | backup_control |
+| tldw_chatbook/Backup_Recovery/control_records.py | _bind_activation | os.unlink | 1 | generic_boundary | backup_control |
 | tldw_chatbook/DB/private_sqlite.py | _connect_registered_sqlite | connect | 1 | generic_boundary | generic |
 | tldw_chatbook/DB/private_sqlite.py | _open_artifact_fd | open | 1 | generic_boundary | generic |
 | tldw_chatbook/DB/private_sqlite.py | _prepare_windows_artifact | open | 1 | generic_boundary | generic |

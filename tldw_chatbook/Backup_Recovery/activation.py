@@ -9,11 +9,123 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from . import bootstrap
 from .admission import Admission, fcntl
 from .bootstrap import _read
 from .native_files import create_private_directory, flush_directory, pinned_directory
 from .profile_paths import lexical_path
 from .qualification import qualified_for
+
+
+def bind_activation(
+    bootstrap_root: Path,
+    operation_id: str,
+    config_selector: Path,
+    generation: str,
+    owners: tuple[str, ...],
+    *,
+    session=None,
+) -> Path:
+    """Associate local requirements under live matching maintenance and pending intent.
+
+    Success proves paired durability only. The executor still owns installed
+    validation, journal progression and fence completion.
+
+    Initial profiles inherit the complete affected pending footprint, excluding
+    guards held only by maintenance. For narrower multi-profile isolation, the
+    executor must register separate affected scopes/pending records. Existing
+    profiles retain their exact enrolled namespace/root mapping.
+    """
+    from .control_records import _bind_activation
+
+    return _bind_activation(
+        bootstrap_root, operation_id, config_selector, generation, owners, session
+    )
+
+
+def activation_permission(
+    owner: str,
+    *,
+    config_selector: Path | None = None,
+    bootstrap_root: Path | None = None,
+    namespaces: tuple[str, ...] | None = None,
+) -> bool:
+    """Read paired history before config fingerprint fallback, without repair.
+
+    Consumers supply their actual admitted namespaces from the retained storage
+    admission hold, not UI or archive labels. With ``namespaces=None`` this checks
+    only the selected profile and overlapping recorded roots; it cannot infer a
+    separate shared store used by an unbound selector. Such consumers must pass
+    the namespace group actually held by their storage admission.
+    Intact ordinary authority with neither witness retains legacy behavior; loss
+    of every independent local history record is outside this local guarantee.
+    """
+    try:
+        _identifier(owner)
+        selected = lexical_path(config_selector or bootstrap.effective_config_path())
+        root = lexical_path(bootstrap_root or bootstrap.default_bootstrap_root())
+        if not bootstrap.startup_permission(selected, root)[0]:
+            return False
+        _, profiles, associations = bootstrap._control_records(root)
+        registry = bootstrap._registry(root)
+        names = set()
+        if namespaces is not None:
+            names.update(Admission._names(namespaces))
+            if registry is None or not names <= registry.keys():
+                return False
+        selected_profile = next(
+            (p for p in profiles if p["selector"] == str(selected)), None
+        )
+        if selected_profile:
+            names.update(selected_profile["namespaces"])
+        candidates = {
+            record["selector"]
+            for record in profiles + associations
+            if record["selector"] == str(selected)
+            or names.intersection(record.get("activation", {}).get("namespaces", []))
+            or any(
+                bootstrap._overlap(selected, Path(p)) for p in record.get("roots", [])
+            )
+        }
+        seen = {}
+        for selector in candidates:
+            profile = next((p for p in profiles if p["selector"] == selector), None)
+            association = next(
+                (a for a in associations if a["selector"] == selector), None
+            )
+            witness = profile.get("activation") if profile else None
+            if witness is None and association is None:
+                continue
+            if association is None or witness != association["activation"]:
+                return False
+            if registry is None or any(
+                n not in registry for n in witness["namespaces"]
+            ):
+                return False
+            roots = sorted(
+                {p for n in witness["namespaces"] for p in registry[n]["roots"]}
+            )
+            if roots != profile["roots"]:
+                return False
+            for namespace in witness["namespaces"]:
+                if namespace in seen and seen[namespace] != witness:
+                    return False
+                seen[namespace] = witness
+            store = ActivationStore(Path(witness["store_root"]))
+            with (
+                _private(store.root),
+                _private(store._generation(witness["generation"])) as parent,
+            ):
+                if (
+                    store._required(parent, witness["generation"]).owners
+                    != witness["owners"]
+                ):
+                    return False
+            if not store.allowed(witness["generation"], owner):
+                return False
+        return True
+    except (OSError, ValueError, TypeError, KeyError, RuntimeError, AttributeError):
+        return False
 
 
 class _Requirement(BaseModel):
