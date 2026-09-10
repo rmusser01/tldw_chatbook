@@ -674,23 +674,32 @@ async def test_every_click_on_a_conversation_row_toggles_it_in_select_mode():
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-conversations").press()
         await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
+        before_toggle = screen.query_one("#library-conversation-row-0", Button)
         screen.query_one("#library-conversations-select-toggle", Button).press()
         await _wait_for_condition(
             pilot,
             lambda: screen._conversations_state.select_mode,
             message="Conversations select mode did not open.",
         )
+
         # task-32199: select mode recomposes the list, so the state flag flips
-        # a frame before the rebuilt rows are laid out -- reading `.region`
-        # straight after it measured 0x0 and the click offsets below were
-        # nonsense.
+        # a frame before the rebuilt rows exist and are laid out -- reading
+        # `.region` straight after it measured 0x0 and the click offsets below
+        # were nonsense. Waiting on width alone is not enough (PR #2567
+        # review): the OLD row is still mounted and already laid out for part
+        # of that window, and it does not even sit where its replacement does
+        # -- measured y=12 before the toggle, y=13 after, because select mode
+        # inserts its count line above the list. Clicking the stale
+        # coordinates would hit the wrong row. Wait for the replacement
+        # instance, then for its layout.
+        def _select_mode_row_ready() -> bool:
+            rebuilt = screen.query_one("#library-conversation-row-0", Button)
+            return rebuilt is not before_toggle and rebuilt.region.width > 0
+
         await _wait_for_condition(
             pilot,
-            lambda: screen.query_one(
-                "#library-conversation-row-0", Button
-            ).region.width
-            > 0,
-            message="Conversation rows were never laid out in select mode.",
+            _select_mode_row_ready,
+            message="Conversation rows were never rebuilt and laid out in select mode.",
         )
 
         row = screen.query_one("#library-conversation-row-0", Button)
