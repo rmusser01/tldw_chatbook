@@ -469,6 +469,7 @@ from ...Library.library_ingest_state import (
     active_ingest_start_confirm_line,
     build_ingest_forecast,
     format_ingest_progress_line,
+    group_ingest_queue_rows,
     ingest_progress_action_signature,
     library_ingest_retry_available,
     library_ingest_retry_label,
@@ -2547,6 +2548,26 @@ class LibraryIngestController:
         )
         if job_id is None:
             return
+        self._dismiss_library_ingest_job(job_id)
+        # (task-2100) In place: the registry listener already updated the
+        # queue; a trailing full recompose here yanked the scroll off the
+        # queue the user was working in.
+        self._update_library_ingest_dynamic_regions()
+
+    def _dismiss_library_ingest_job(self, job_id: str) -> None:
+        """Dismiss one failed job and record it in the session ledger.
+
+        Split out of ``handle_library_ingest_dismiss`` for task-32231 so
+        "Dismiss all" reuses the exact same per-job path (ledger record
+        included) rather than a parallel bulk implementation.
+
+        Args:
+            job_id: The failed job to dismiss. A stale or wrong-state id is
+                a safe no-op.
+
+        Returns:
+            None.
+        """
         registry = self._library_ingest_registry()
         dismiss = getattr(registry, "dismiss", None)
         if callable(dismiss):
@@ -2565,10 +2586,6 @@ class LibraryIngestController:
                         *self._library_ingest_recent_ledger,
                     ][:10]
         self._library_ingest_expanded_details.discard(job_id)
-        # (task-2100) In place: the registry listener already updated the
-        # queue; a trailing full recompose here yanked the scroll off the
-        # queue the user was working in.
-        self._update_library_ingest_dynamic_regions()
 
     def _refocus_library_ingest_control(
         self, control_id: str | None, update: Callable[[], object]
@@ -2593,7 +2610,14 @@ class LibraryIngestController:
           the way the Reader's More disclosure does
           (``test_more_toggle_leaves_focus_on_the_more_button``): the
           non-structural branch replaces the Button object, so the
-          pre-update focus is on a widget that no longer exists.
+          pre-update focus is on a widget that no longer exists. That
+          follow-up rides the QUEUE PANEL's own post-recompose hook, not
+          ``call_after_refresh``: the panel recomposes on its own message
+          pump, and the screen's hook has no ordering against it. Measured
+          live before this half landed -- clicking "Hide details" and
+          typing immediately put the characters in ``Keywords (optional)``,
+          the exact reported symptom, while the pilot below passed either
+          way because ``Button.press()`` settles the pump on its way out.
 
         A vanished id degrades silently -- the row may have been dismissed
         or finished between the press and the repaint.
@@ -2617,8 +2641,26 @@ class LibraryIngestController:
             self.set_focus(widget, scroll_visible=False)
 
         _focus_now()
+        try:
+            panel = self.query_one(LibraryIngestQueuePanel)
+        except (NoMatches, QueryError):
+            panel = None
+        if panel is not None:
+            # Parks focus at None for the duration of the rebuild and
+            # restores the same id afterwards, on the panel's OWN hook. The
+            # parking is the half that matters live: without it the prune
+            # re-picks a focus target itself, and anything typed in that
+            # window went into "Keywords (optional)" (measured -- "kk"
+            # typed 100ms after a click landed in the field).
+            panel.preserve_same_id_focus_after_recompose()
         update()
-        self.call_after_refresh(_focus_now)
+        if panel is None or not getattr(panel, "_recompose_required", False):
+            # Nothing was handed to the panel's pump (the structural branch
+            # recomposed the whole screen, or the repaint was a no-op), so
+            # the screen's own hook IS the right ordering -- and re-land
+            # focus now, since the parking above expects a rebuild.
+            _focus_now()
+            self.call_after_refresh(_focus_now)
 
     @on(Button.Pressed, ".library-ingest-details")
     def _on_ingest_job_details(self, event: Button.Pressed) -> None:
@@ -2645,6 +2687,108 @@ class LibraryIngestController:
         self._refocus_library_ingest_control(
             event.button.id, self._update_library_ingest_dynamic_regions
         )
+
+    def _library_ingest_outcome_group(self, button_id: str | None, prefix: str):
+        """Resolve the outcome group one group-action button addresses.
+
+        (task-32231) Re-derived from the CURRENT queue rows rather than from
+        a snapshot taken at render time -- same reasoning as the per-row
+        actions resolving their job by id: the registry mutates between a
+        render and a click, and a group is only ever a view of the rows it
+        currently leads.
+
+        Args:
+            button_id: The pressed Button's id.
+            prefix: The id prefix to strip to recover the group key.
+
+        Returns:
+            The matching group, or ``None`` when the press is stale.
+        """
+        key = self._ingest_job_id_from_button(button_id, prefix)
+        if key is None:
+            return None
+        state = self._build_library_ingest_state()
+        for group in group_ingest_queue_rows(state.queue_rows):
+            if group.key == key:
+                return group
+        return None
+
+    @on(Button.Pressed, ".library-ingest-group-expand")
+    def handle_library_ingest_group_expand(self, event: Button.Pressed) -> None:
+        """Reveal or re-hide the members of a collapsed outcome group.
+
+        Args:
+            event: Press from a "Show the N files" row action.
+        """
+        event.stop()
+        key = self._ingest_job_id_from_button(
+            event.button.id, "library-ingest-group-expand-"
+        )
+        if key is None:
+            return
+        try:
+            panel = self.query_one(LibraryIngestQueuePanel)
+        except (NoMatches, QueryError):
+            return
+        if key in panel.expanded_groups:
+            panel.expanded_groups.discard(key)
+        else:
+            panel.expanded_groups.add(key)
+        # task-32216: the toggle keeps focus on itself, exactly like the
+        # per-row Show details next to it.
+        self._refocus_library_ingest_control(
+            event.button.id, self._update_library_ingest_dynamic_regions
+        )
+
+    @on(Button.Pressed, ".library-ingest-group-retry")
+    def handle_library_ingest_group_retry(self, event: Button.Pressed) -> None:
+        """Requeue every member of one failed outcome group.
+
+        Reuses the shared per-job retry seam once per member rather than
+        inventing a bulk registry call, so a member the app declines to
+        requeue is declined exactly as it would be on its own row.
+
+        Args:
+            event: Press from a "Retry all" row action.
+        """
+        event.stop()
+        group = self._library_ingest_outcome_group(
+            event.button.id, "library-ingest-group-retry-"
+        )
+        if group is None:
+            return
+        retry = getattr(self.app_instance, "retry_library_ingest_job", None)
+        if callable(retry):
+            for row in group.members:
+                retry(row.job_id)
+        self._update_library_ingest_dynamic_regions()
+
+    @on(Button.Pressed, ".library-ingest-group-dismiss")
+    def handle_library_ingest_group_dismiss(self, event: Button.Pressed) -> None:
+        """Dismiss every member of one settled outcome group.
+
+        Delegates to the single-row handler once per member so the ledger
+        bookkeeping (task-2140's durable dismissed record) and the expanded-
+        details cleanup happen exactly as they do for one row.
+
+        Args:
+            event: Press from a "Dismiss all" row action.
+        """
+        event.stop()
+        group = self._library_ingest_outcome_group(
+            event.button.id, "library-ingest-group-dismiss-"
+        )
+        if group is None:
+            return
+        try:
+            panel = self.query_one(LibraryIngestQueuePanel)
+        except (NoMatches, QueryError):
+            pass
+        else:
+            panel.expanded_groups.discard(group.key)
+        for row in group.members:
+            self._dismiss_library_ingest_job(row.job_id)
+        self._update_library_ingest_dynamic_regions()
 
     @on(Button.Pressed, "#library-ingest-clear-finished")
     def handle_library_ingest_clear_finished(self, event: Button.Pressed) -> None:
