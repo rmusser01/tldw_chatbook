@@ -889,9 +889,19 @@ _last_logged_query_recovery = ""
 
 
 def _log_query_recovery_record(recovery_copy: str) -> None:
-    """Record the structured blocker the panel no longer paints (task-32236)."""
+    """Record the structured blocker the panel no longer paints (task-32236).
+
+    Args:
+        recovery_copy: The structured record for the CURRENT gate state, or
+            `""` when the gate is not in full recovery -- which is also how
+            the dedupe is released, so a blocker that clears and returns is
+            logged again (Qodo #5).
+    """
     global _last_logged_query_recovery
-    if not recovery_copy or recovery_copy == _last_logged_query_recovery:
+    if not recovery_copy:
+        _last_logged_query_recovery = ""
+        return
+    if recovery_copy == _last_logged_query_recovery:
         return
     _last_logged_query_recovery = recovery_copy
     # `recovery_copy` is Rich-markup escaped for the `Static` it used to be
@@ -982,14 +992,18 @@ def library_rag_query_status_children(state: LibraryRagPanelState) -> list[Widge
     )
     quiet_line.styles.height = 1
     children: list[Widget] = [quiet_line]
-    if library_rag_query_shows_full_recovery(query_state):
+    shows_full_recovery = library_rag_query_shows_full_recovery(query_state)
+    _log_query_recovery_record(
+        query_state.recovery_copy if shows_full_recovery else ""
+    )
+    if shows_full_recovery:
         reason = query_state.run_action.disabled_reason
         # task-32236: the reason alone, in the Media reader's "reason ·
         # next step" grammar. The "Blocked | " prefix restated the state
         # the callout's own styling already carries, and the Why / Next /
         # Recovery / Owner block below it restated the reason twice more
-        # -- once in TOML. That record now goes to the log instead.
-        _log_query_recovery_record(query_state.recovery_copy)
+        # -- once in TOML. That record now goes to the log instead (above,
+        # so a build that is NOT blocked releases the dedupe).
         children.append(
             Static(
                 reason,

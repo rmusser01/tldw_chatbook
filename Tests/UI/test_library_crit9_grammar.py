@@ -403,3 +403,59 @@ async def test_a_missing_provider_key_paints_one_line_and_no_owner_block(
         painted = _painted(host, panel.region)
         for banned in ("Owner:", "Recovery:", "Why:", "OPENAI_API_KEY", "api_settings"):
             assert banned not in painted, painted
+
+
+def test_a_blocker_that_clears_and_returns_is_logged_again() -> None:
+    """Qodo #5: the dedupe must not outlive the blocker it deduped.
+
+    The builder runs on every keystroke, so one blocker must log once --
+    but a blocker that goes away and comes back is a NEW occurrence and
+    has to reach the log, or a user who fixes and re-breaks their provider
+    leaves no trace of the second break.
+    """
+    from loguru import logger
+
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library import library_search_rag_panel as panel
+
+    previously_logged = panel._last_logged_query_recovery
+    panel._last_logged_query_recovery = ""
+    ready = LibraryRagPanelState.from_values(source_counts={"notes": 1}, query="")
+    records: list[str] = []
+    sink = logger.add(lambda message: records.append(message), level="INFO")
+    try:
+        panel.library_rag_query_status_children(_blocked_state())
+        panel.library_rag_query_status_children(ready)  # the blocker clears
+        panel.library_rag_query_status_children(_blocked_state())  # and returns
+    finally:
+        logger.remove(sink)
+        panel._last_logged_query_recovery = previously_logged
+
+    assert len(records) == 2, records
+
+
+@pytest.mark.asyncio
+async def test_the_file_name_field_keeps_the_inherited_input_keys(tmp_path) -> None:
+    """Qodo #3: a subclass BINDINGS list replaces only the keys it names.
+
+    Textual merges `BINDINGS` per key across the MRO, so `FileNameInput`'s
+    one `ctrl+a` row cannot take cursor movement or deletion away from the
+    field. Pinned because the claim is easy to assert and impossible to
+    eyeball.
+    """
+    app = _picker_app(tmp_path)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        field = await _open_picker(app, pilot)
+        field.focus()
+        await pilot.pause()
+        field.value = ""
+        await pilot.press("r", "e", "p", "o", "r", "t")
+        await pilot.press("left", "left")
+        await pilot.press("backspace")
+        await pilot.pause()
+        assert field.value == "reprt", field.value
+        await pilot.press("home")
+        assert field.cursor_position == 0
+        await pilot.press("end")
+        assert field.cursor_position == len("reprt")

@@ -1202,6 +1202,11 @@ class LibraryRagQueryState:
         for exactly this blocker. It asks the state, like its two siblings
         above, rather than comparing the rendered callout text -- the copy
         is free to change without the action following it around.
+
+        Returns:
+            `True` when the run action is blocked because no analysis
+            provider can be called, `False` for every other state --
+            including every other blocker and the ready state.
         """
         return self.run_action.disabled_reason == LIBRARY_RAG_NO_PROVIDER_BLOCKED_REASON
 
