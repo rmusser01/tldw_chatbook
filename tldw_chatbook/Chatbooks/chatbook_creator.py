@@ -122,6 +122,48 @@ class PromptChatbookExportError(RuntimeError):
         )
 
 
+class ChatbookExportEmptyError(RuntimeError):
+    """Every selected item failed to collect -- refuse to write the archive.
+
+    task-32232: ``create_chatbook`` raises this instead of packaging a
+    bundle holding only a README and ``content_items: []`` while reporting
+    success (the Library's selected-media export did exactly that for
+    every canonical ``local:media:<n>`` id).
+
+    Attributes:
+        requested: How many selected items the run started with.
+    """
+
+    def __init__(self, requested: int) -> None:
+        """Build the error for a selection that collected nothing.
+
+        Args:
+            requested: How many items the run had selected -- every one of
+                which failed to collect. Always >= 1: the guard that raises
+                this never fires for an empty selection.
+        """
+        self.requested = requested
+        super().__init__(
+            f"Export produced no content: none of the {requested} selected "
+            "items could be collected."
+        )
+
+
+#: The content types ``create_chatbook`` actually collects. ``EMBEDDING``/
+#: ``EVALUATION`` have no collector, so a selection naming one must not
+#: count towards the "asked for N, collected 0" guard below.
+_COLLECTED_CONTENT_TYPES = frozenset(
+    {
+        ContentType.CONVERSATION,
+        ContentType.NOTE,
+        ContentType.CHARACTER,
+        ContentType.MEDIA,
+        ContentType.PROMPT,
+        ContentType.KEPT_BRIEFING,
+    }
+)
+
+
 class ChatbookCreator:
     """Service for creating chatbooks from database content."""
 
@@ -393,6 +435,28 @@ class ChatbookCreator:
                 f"ChatbookCreator.create_chatbook: Final stats - conversations={manifest.total_conversations}, notes={manifest.total_notes}, characters={manifest.total_characters}, media={manifest.total_media_items}, prompts={manifest.total_prompts}, kept_briefings={manifest.total_kept_briefings}"
             )
 
+            # task-32232: refuse to write a bundle that carries NOTHING the
+            # caller selected. Every collector logs-and-continues per item
+            # (a deleted row, an unparseable id, a serialization failure),
+            # so a whole selection could fail and still produce a
+            # README-plus-empty-manifest archive the caller reported as a
+            # success -- the data-loss shape this guard closes. A PARTIAL
+            # collection still succeeds (the archive genuinely holds
+            # content); only "asked for N, collected 0" fails.
+            #
+            # Selected media counts as requested even when ``include_media``
+            # is False (PR #2568 review): ``ChatbookCreationWindow`` lets a
+            # user select only media with "Include media files" unchecked,
+            # and skipping the collector under that flag is not a reason to
+            # call the resulting empty archive a success.
+            requested_items = sum(
+                len(ids)
+                for content_type, ids in content_selections.items()
+                if content_type in _COLLECTED_CONTENT_TYPES
+            )
+            if requested_items and not manifest.content_items:
+                raise ChatbookExportEmptyError(requested_items)
+
             exported_conversation_ids = tuple(
                 str(conversation["id"]) for conversation in content.conversations
             )
@@ -488,6 +552,25 @@ class ChatbookCreator:
                     "cancelled": True,
                     "missing_dependencies": list(self.missing_dependencies),
                     "auto_included": list(self.auto_included_characters),
+                },
+            )
+        except ChatbookExportEmptyError as exc:
+            # task-32232: the caller renders its own copy for this one --
+            # ``dependency_info["empty_export_requested"]`` carries the
+            # selection size so the UI can say how many items were asked
+            # for without re-deriving it from a message string.
+            logger.error(
+                "ChatbookCreator.create_chatbook: refused to write an empty "
+                "archive ({} items selected, 0 collected)",
+                exc.requested,
+            )
+            return (
+                False,
+                str(exc),
+                {
+                    "missing_dependencies": list(self.missing_dependencies),
+                    "auto_included": list(self.auto_included_characters),
+                    "empty_export_requested": exc.requested,
                 },
             )
         except PromptChatbookExportError as exc:
