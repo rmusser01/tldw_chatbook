@@ -176,6 +176,7 @@ from .provider_model_resolution import (
 )
 from .settings_config_adapter import SettingsConfigAdapter, redact_secret_text
 from tldw_chatbook.Backup_Recovery.rag_definition_participant import definition_operation
+from .settings_rag_definition_actions import QueuedDefinitionAction
 from .settings_context_memory import (
     CONTEXT_MEMORY_CONFIG_KEYS,
     SUMMARY_PROMPT_ID,
@@ -19712,39 +19713,58 @@ class SettingsScreen(BaseAppScreen):
         # or save worker (save) completes. "cancel"/None deliberately does
         # NOT clear it here -- the user chose to keep browsing/editing
         # exactly as they left it.
-        if result == "discard":
-            self._rag_preview_profile_id = None
-            self._sync_rag_editor_display()
-            self._settings_drafts.pop(SettingsCategoryId.LIBRARY_RAG, None)
-            self._sync_library_rag_widgets()
-            self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
-            self._dispatch_rag_set_active(profile_id)
-        elif result == "save":
-            self._rag_preview_profile_id = None
-            self._sync_rag_editor_display()
-            self._rag_profile_pending_activate = profile_id
-            self.action_settings_save_category(allow_text_entry_focus=True)
+        if result not in {"save", "discard"}:
+            return
+        action = QueuedDefinitionAction()
+
+        def finish():
+            if result == "discard":
+                self._rag_preview_profile_id = None
+                self._sync_rag_editor_display()
+                self._settings_drafts.pop(SettingsCategoryId.LIBRARY_RAG, None)
+                self._sync_library_rag_widgets()
+                self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
+                self._dispatch_rag_set_active(profile_id, _definition_action=action)
+            elif result == "save":
+                self._rag_preview_profile_id = None
+                self._sync_rag_editor_display()
+                self._rag_profile_pending_activate = profile_id
+                self.action_settings_save_category(
+                    allow_text_entry_focus=True, _definition_action=action
+                )
+
+        action.execute(finish)
         # "cancel"/None (Escape): leave the draft, active profile, and any
         # in-progress preview untouched.
 
-    def _dispatch_rag_set_active(self, profile_id: str) -> None:
+    def _dispatch_rag_set_active(
+        self, profile_id: str, *, _definition_action=None
+    ) -> None:
+        action = QueuedDefinitionAction(parent=_definition_action)
+        action.enqueue(self._rag_set_active_worker, profile_id)
         self._library_rag_profile_result = "Setting active profile..."
         self._set_static_text(
             "#settings-library-rag-profile-result", self._library_rag_profile_result
         )
-        self._rag_set_active_worker(profile_id)
 
     @work(exclusive=True, thread=True, group="settings-rag-set-active")
-    def _rag_set_active_worker(self, profile_id: str) -> None:
-        ok, reason = activate_profile(profile_id)
-        # Task 4 (SP3): fetch the newly-active profile's index status in the
-        # SAME off-thread hop that flips the pointer -- both touch the
-        # profile/config store off the UI thread already, so this reuses that
-        # trip instead of a second worker round-trip right after. `None` on
-        # failure (nothing to report) preserves the pre-task-4 2-arg call
-        # shape for `_rag_after_set_active`'s "no warning known" branch.
-        new_status = fetch_index_status() if ok else None
-        self.app.call_from_thread(self._rag_after_set_active, ok, reason, new_status)
+    def _rag_set_active_worker(
+        self, profile_id: str, *, _definition_action=None
+    ) -> None:
+        action = _definition_action or QueuedDefinitionAction()
+
+        def execute():
+            ok, reason = activate_profile(profile_id)
+            # Task 4 (SP3): fetch the newly-active profile's index status in the
+            # SAME off-thread hop that flips the pointer -- both touch the
+            # profile/config store off the UI thread already, so this reuses that
+            # trip instead of a second worker round-trip right after. `None` on
+            # failure (nothing to report) preserves the pre-task-4 2-arg call
+            # shape for `_rag_after_set_active`'s "no warning known" branch.
+            new_status = fetch_index_status() if ok else None
+            action.deliver(self.app, self._rag_after_set_active, ok, reason, new_status)
+
+        action.execute(execute)
 
     def _rag_after_set_active(
         self,
@@ -19929,25 +19949,31 @@ class SettingsScreen(BaseAppScreen):
     def _dispatch_rag_profile_action(
         self, action: str, profile_id: str, arg: str
     ) -> None:
+        queued = QueuedDefinitionAction()
+        queued.enqueue(self._rag_profile_action_worker, action, profile_id, arg)
         self._library_rag_profile_result = f"{action.capitalize()} profile..."
         self._set_static_text(
             "#settings-library-rag-profile-result", self._library_rag_profile_result
         )
-        self._rag_profile_action_worker(action, profile_id, arg)
 
     @work(exclusive=True, thread=True, group="settings-rag-profile-crud")
     def _rag_profile_action_worker(
-        self, action: str, profile_id: str, arg: str
+        self, action: str, profile_id: str, arg: str, *, _definition_action=None
     ) -> None:
-        if action == "clone":
-            ok, result = clone_profile_as(profile_id, arg)
-        elif action == "rename":
-            ok, result = rename_user_profile(profile_id, arg)
-        elif action == "delete":
-            ok, result = delete_user_profile(profile_id)
-        else:
-            ok, result = False, "unknown-action"
-        self.app.call_from_thread(self._rag_after_profile_action, action, ok, result)
+        queued = _definition_action or QueuedDefinitionAction()
+
+        def execute():
+            if action == "clone":
+                ok, result = clone_profile_as(profile_id, arg)
+            elif action == "rename":
+                ok, result = rename_user_profile(profile_id, arg)
+            elif action == "delete":
+                ok, result = delete_user_profile(profile_id)
+            else:
+                ok, result = False, "unknown-action"
+            queued.deliver(self.app, self._rag_after_profile_action, action, ok, result)
+
+        queued.execute(execute)
 
     def _rag_after_profile_action(self, action: str, ok: bool, result: str) -> None:
         if ok:
@@ -20764,7 +20790,7 @@ class SettingsScreen(BaseAppScreen):
         self._update_advanced_validation_status()
 
     def action_settings_save_category(
-        self, *, allow_text_entry_focus: bool = False
+        self, *, allow_text_entry_focus: bool = False, _definition_action=None
     ) -> None:
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
@@ -21279,39 +21305,8 @@ class SettingsScreen(BaseAppScreen):
                     "Return to the active profile to save.", severity="warning"
                 )
                 return
-            # TASK-2 review (Finding 2): a "Save" choice from
-            # RagProfileSwitchConfirmModal arms `_rag_profile_pending_activate`
-            # then calls back in here -- but `_apply_library_rag_save_result`
-            # (the only clearing site) only runs once the save worker
-            # dispatches below. Capture-and-clear up front so EVERY early
-            # return in this branch (no-unsaved-changes, validation failure)
-            # drops the stale pending id instead of leaking it into a later,
-            # unrelated successful save; re-arm it only right before the
-            # worker dispatch that will actually consume it.
-            pending_activate = self._rag_profile_pending_activate
-            self._rag_profile_pending_activate = None
-            if not self._category_has_unsaved_changes(category):
-                self.app.notify("No Settings changes to save.", severity="information")
-                return
-            values = self._library_rag_current_defaults()
-            validation = validate_library_rag_defaults(values)
-            if not validation.valid:
-                self._library_rag_result = validation.message
-                self._set_static_text(
-                    "#settings-library-rag-save-result", self._library_rag_result
-                )
-                self._update_draft_status_widgets(category)
-                self.app.notify(validation.message, severity="error")
-                return
-            # Task 2 (541 v2 UX): gate behind a pre-commit re-index confirm
-            # when this save would re-point the active profile at a fresh,
-            # EMPTY collection while the CURRENT one is actually built (see
-            # _confirm_reindex_then_save's docstring). `pending_activate`
-            # travels through the whole gate/confirm chain as a plain
-            # argument -- `_rag_profile_pending_activate` stays cleared
-            # (from the capture-and-clear above) until the save actually
-            # dispatches, so a Cancel never re-arms it.
-            self._confirm_reindex_then_save(values, pending_activate)
+            action = QueuedDefinitionAction(parent=_definition_action)
+            action.execute(self._save_library_rag_category, action)
             return
 
         if category is SettingsCategoryId.APPEARANCE:
@@ -22044,10 +22039,52 @@ class SettingsScreen(BaseAppScreen):
             dict(section_values),
         )
 
+    def _save_library_rag_category(self, action):
+        """Prepare an accepted RAG save before any pending/draft mutation."""
+        category = SettingsCategoryId.LIBRARY_RAG
+        # TASK-2 review (Finding 2): a "Save" choice from
+        # RagProfileSwitchConfirmModal arms `_rag_profile_pending_activate`
+        # then calls back in here -- but `_apply_library_rag_save_result`
+        # (the only clearing site) only runs once the save worker
+        # dispatches below. Capture-and-clear up front so EVERY early
+        # return in this branch (no-unsaved-changes, validation failure)
+        # drops the stale pending id instead of leaking it into a later,
+        # unrelated successful save; re-arm it only right before the
+        # worker dispatch that will actually consume it.
+        pending_activate = self._rag_profile_pending_activate
+        self._rag_profile_pending_activate = None
+        if not self._category_has_unsaved_changes(category):
+            self.app.notify("No Settings changes to save.", severity="information")
+            return
+        values = self._library_rag_current_defaults()
+        validation = validate_library_rag_defaults(values)
+        if not validation.valid:
+            self._library_rag_result = validation.message
+            self._set_static_text(
+                "#settings-library-rag-save-result", self._library_rag_result
+            )
+            self._update_draft_status_widgets(category)
+            self.app.notify(validation.message, severity="error")
+            return
+        # Task 2 (541 v2 UX): gate behind a pre-commit re-index confirm
+        # when this save would re-point the active profile at a fresh,
+        # EMPTY collection while the CURRENT one is actually built (see
+        # _confirm_reindex_then_save's docstring). `pending_activate`
+        # travels through the whole gate/confirm chain as a plain
+        # argument -- `_rag_profile_pending_activate` stays cleared
+        # (from the capture-and-clear above) until the save actually
+        # dispatches, so a Cancel never re-arms it.
+        self._confirm_reindex_then_save(
+            values, pending_activate, _definition_action=action
+        )
+        return
+
     def _confirm_reindex_then_save(
         self,
         values: SettingsLibraryRagDefaults,
         pending_activate: str | None,
+        *,
+        _definition_action=None,
     ) -> None:
         """Task 2 (541 v2 UX): pre-commit gate for the LIBRARY_RAG save.
 
@@ -22071,11 +22108,15 @@ class SettingsScreen(BaseAppScreen):
         does this dispatch its own off-thread fetch before deciding.
         """
         if not index_change_pending(values):
-            self._dispatch_library_rag_save(values, False, pending_activate)
+            self._dispatch_library_rag_save(
+                values, False, pending_activate, _definition_action=_definition_action
+            )
             return
         cached_status = self._library_rag_index_status_cache
         if cached_status is not None:
-            self._decide_reindex_confirmation(values, pending_activate, cached_status)
+            self._decide_reindex_confirmation(
+                values, pending_activate, cached_status, _definition_action
+            )
             return
         if self._rag_reindex_confirm_in_flight:
             # Debounce (Task 2 review, Important): a status fetch for an
@@ -22086,20 +22127,29 @@ class SettingsScreen(BaseAppScreen):
             # still complete and dispatch save for the FIRST click once it
             # lands.
             return
+        action = QueuedDefinitionAction(
+            parent=_definition_action,
+            on_cancel=self._clear_rag_reindex_confirm_in_flight,
+        )
+        action.enqueue(
+            self._rag_reindex_confirm_status_worker, values, pending_activate
+        )
         self._rag_reindex_confirm_in_flight = True
-        self._rag_reindex_confirm_status_worker(values, pending_activate)
 
     def _decide_reindex_confirmation(
         self,
         values: SettingsLibraryRagDefaults,
         pending_activate: str | None,
         status: Mapping[str, object],
+        _definition_action=None,
     ) -> None:
         """Given a (cached or freshly fetched) index status, either push the
         re-index confirm modal (state == "built") or proceed straight to
         dispatch (absent/empty/unknown -- nothing built to lose)."""
         if str(status.get("state") or "unknown") != "built":
-            self._dispatch_library_rag_save(values, True, pending_activate)
+            self._dispatch_library_rag_save(
+                values, True, pending_activate, _definition_action=_definition_action
+            )
             return
         # task-566: this decision can be reached by a `settings-rag-index-
         # status` worker callback that was already in flight when the user
@@ -22145,14 +22195,17 @@ class SettingsScreen(BaseAppScreen):
         # unconditionally, on BOTH the Confirm and Cancel branches, means
         # this handler can never be the reason a future Save stays
         # debounced.
-        self._rag_reindex_confirm_in_flight = False
         if not confirmed:
+            self._rag_reindex_confirm_in_flight = False
             # Cancel: the draft stays staged (never popped on this path) and
             # `_rag_profile_pending_activate` stays cleared (never re-armed
             # -- see the capture-and-clear comment at the LIBRARY_RAG save
             # branch) -- no save dispatched, nothing lost, nothing leaked.
             return
+        # Confirmation is fresh user input, not a continuation retained while
+        # the modal was open. Refuse it before changing any save state.
         self._dispatch_library_rag_save(values, True, pending_activate)
+        self._rag_reindex_confirm_in_flight = False
 
     def _clear_rag_reindex_confirm_in_flight(self) -> None:
         """Main-thread flip of the in-flight guard -- see
@@ -22164,42 +22217,66 @@ class SettingsScreen(BaseAppScreen):
         self,
         values: SettingsLibraryRagDefaults,
         pending_activate: str | None,
+        *,
+        _definition_action=None,
     ) -> None:
-        try:
-            status = fetch_index_status()
-            self.app.call_from_thread(self._apply_library_rag_index_status, status)
-            self.app.call_from_thread(
-                self._decide_reindex_confirmation, values, pending_activate, status
-            )
-        finally:
-            # Task 2 review (Important): ALWAYS clears the in-flight guard,
-            # even if something above raises -- fetch_index_status() itself
-            # never raises (see its own except-fallback), but this is a
-            # belt-and-suspenders net: without it, a failure here would
-            # leave the flag stuck True forever, silently no-op-ing every
-            # future Save on this category ("Save bricks"). `call_from_thread`
-            # is synchronous from this (background) thread's point of view,
-            # so this runs only AFTER `_decide_reindex_confirmation` above
-            # has already returned -- covers both the direct-dispatch and
-            # the modal-pushed outcome in this one place.
-            self.app.call_from_thread(self._clear_rag_reindex_confirm_in_flight)
+        action = _definition_action or QueuedDefinitionAction()
+
+        def execute():
+            try:
+                status = fetch_index_status()
+                action.deliver(self.app, self._apply_library_rag_index_status, status)
+                action.deliver(
+                    self.app,
+                    self._decide_reindex_confirmation,
+                    values,
+                    pending_activate,
+                    status,
+                    action,
+                )
+            finally:
+                # Task 2 review (Important): ALWAYS clears the in-flight guard,
+                # even if something above raises -- fetch_index_status() itself
+                # never raises (see its own except-fallback), but this is a
+                # belt-and-suspenders net: without it, a failure here would
+                # leave the flag stuck True forever, silently no-op-ing every
+                # future Save on this category ("Save bricks"). `call_from_thread`
+                # is synchronous from this (background) thread's point of view,
+                # so this runs only AFTER `_decide_reindex_confirmation` above
+                # has already returned -- covers both the direct-dispatch and
+                # the modal-pushed outcome in this one place.
+                action.deliver(self.app, self._clear_rag_reindex_confirm_in_flight)
+
+        action.execute(execute)
 
     def _dispatch_library_rag_save(
         self,
         values: SettingsLibraryRagDefaults,
         index_will_change: bool,
         pending_activate: str | None,
+        *,
+        _definition_action=None,
     ) -> None:
+        action = QueuedDefinitionAction(parent=_definition_action)
+        try:
+            sections = build_library_rag_save_sections(
+                self._app_config_mapping(), values
+            )
+            action.enqueue(
+                self._settings_save_library_rag_worker,
+                values,
+                index_will_change,
+                sections,
+                pending_activate,
+            )
+        except BaseException:
+            action.cancel_queued()
+            raise
         self._library_rag_result = "Saving Library/RAG defaults..."
         self._set_static_text(
             "#settings-library-rag-save-result", self._library_rag_result
         )
         self._rag_profile_pending_activate = pending_activate
-        # task-1337: build the [console]/AppRAGSearchConfig sections on the UI
-        # thread (reads the app config mapping); the worker persists them
-        # after the profile write lands.
-        sections = build_library_rag_save_sections(self._app_config_mapping(), values)
-        self._settings_save_library_rag_worker(values, index_will_change, sections)
 
     @definition_operation
     def _persist_library_rag_save(
@@ -22235,13 +22312,17 @@ class SettingsScreen(BaseAppScreen):
         reason: str,
         index_will_change: bool = False,
         applied_sections: Mapping[str, Mapping[str, object]] | None = None,
+        _definition_action=None,
+        pending_activate: str | None = None,
     ) -> None:
         # A "Save" choice from RagProfileSwitchConfirmModal defers the profile
         # switch until this save completes; consumed (and cleared) exactly
         # once here regardless of outcome, so a later unrelated save never
         # replays a stale switch.
-        pending_activate = self._rag_profile_pending_activate
-        self._rag_profile_pending_activate = None
+        if _definition_action is None:
+            pending_activate = self._rag_profile_pending_activate
+        if self._rag_profile_pending_activate == pending_activate:
+            self._rag_profile_pending_activate = None
         if saved:
             if applied_sections is not None:
                 # Keep the in-memory app config in step with the persisted
@@ -22270,7 +22351,9 @@ class SettingsScreen(BaseAppScreen):
                 # The deferred set-active worker fetches its own fresh index
                 # status for the NEW active profile -- refreshing here first
                 # would just be immediately-stale, wasted off-thread work.
-                self._dispatch_rag_set_active(pending_activate)
+                self._dispatch_rag_set_active(
+                    pending_activate, _definition_action=_definition_action
+                )
             else:
                 self._refresh_library_rag_index_status()
             return
@@ -22296,19 +22379,35 @@ class SettingsScreen(BaseAppScreen):
         values: SettingsLibraryRagDefaults,
         index_will_change: bool = False,
         sections: Mapping[str, Mapping[str, object]] | None = None,
+        pending_activate: str | None = None,
+        *,
+        _definition_action=None,
     ) -> None:
-        if sections is None:
-            sections = build_library_rag_save_sections(
-                self._app_config_mapping(), values
+        action = _definition_action or QueuedDefinitionAction()
+        if _definition_action is None:
+            pending_activate = self._rag_profile_pending_activate
+
+        def execute():
+            applied_input = sections
+            if applied_input is None:
+                applied_input = build_library_rag_save_sections(
+                    self._app_config_mapping(), values
+                )
+            saved, reason, applied = self._persist_library_rag_save(
+                values, applied_input
             )
-        saved, reason, applied = self._persist_library_rag_save(values, sections)
-        self.app.call_from_thread(
-            self._apply_library_rag_save_result,
-            saved,
-            reason,
-            index_will_change,
-            applied,
-        )
+            action.deliver(
+                self.app,
+                self._apply_library_rag_save_result,
+                saved,
+                reason,
+                index_will_change,
+                applied,
+                action,
+                pending_activate,
+            )
+
+        action.execute(execute)
 
     def _apply_storage_save_result(
         self,

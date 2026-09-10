@@ -3,17 +3,17 @@ id: TASK-32002
 title: Gate restored projections and invalidate stale retrieval state
 status: In Progress
 assignee: []
-created_date: '2026-09-07 23:58'
-updated_date: '2026-09-10 21:45'
+created_date: 2026-09-07 23:58
+updated_date: 2026-09-10 22:44
 labels:
-  - backup-recovery
+- backup-recovery
 dependencies:
-  - task-31978
-  - task-31989
-  - task-31990
-  - task-31991
-  - task-32000
-  - task-32001
+- task-31978
+- task-31989
+- task-31990
+- task-31991
+- task-32000
+- task-32001
 ---
 
 ## Description
@@ -37,7 +37,6 @@ Original component04 Task19 only. Start with pure RAG definitions/persistent-roo
 
 ## Implementation Notes
 
-<!-- SECTION:NOTES:BEGIN -->
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Started original Task19 discovery/capture sub-slice because missing rag.definitions/rag.projections currently block all complete inventory even with absent RAG stores. Restore quarantine/readiness still depends on original Tasks17/18 and is not claimed complete.
 Inert factory and exact RAG indexing SQLite adapter implemented without importing RAG runtime or vector engines; original RAG package startup remains unchanged. Existing core borrower/transaction/close seams, literal v0 schema, source-preserving native snapshot and exact main-thread idle close verified. Definition/projection files remain explicitly unsupported until actual writer/engine qualification. Focused existing/new25 passed, latest discovery8/indexing6 passed; review caught and fixed auto env fallback. Root public factory integration then exposed semantic misuse of shared_group; removing those labels rather than weakening physical identity checks. Remaining Task19 runtime/projection readiness contracts are not complete. Source report /private/tmp/chatbook-rag-discovery-report.md.
@@ -80,9 +79,12 @@ Manager/experiment prerequisite independent review approved for spec compliance 
 Approved bounded default RAG definitions adapter qualification: existing 16MiB raw copy/read and credential format policies, actual public preview/capture private tests for default profiles/legacy/pipelines/experiments, synthetic credentials and unchanged sources. No engine/manager construction for discovery; no projection or queued UI edits. Final live readiness conditional on queued UI settlement proof.
 Queued Settings continuation increment BLOCKED by automatic approval review at first participant token patch; exact reason: production patch introduces continuation tokens permitting descendants after maintenance closure and transcript lacks explicit user authorization for this security-sensitive scope. Patch NOT applied; participant unchanged; no retry/alternatewrite/indirectexecution. Four actual paused Settings dispatch behavioral reds established4failed11.33s (/private/tmp/settings-rag-dispatch-red.log), but queue tests have no green qualification. Root instructed safe parking: own partial47line Settings delta saved /private/tmp/settings-rag-queued-partial.patch then reversed, leaving normal Settings unchanged. New source-local helper+test remain untracked inert review artifacts; token proposal recorded non-applicable /private/tmp/settings-rag-token-proposal.patch. Report /private/tmp/chatbook-settings-rag-queued-blocked-report.md. Explicit user approval required before resubmitting this continuation boundary; root will request it. Do not finalize or claim definition lifetime qualification.
 Final safe parking per root: own new helper and tests moved out of feature tree into /private/tmp/chatbook-settings-rag-queued-proposal/ with partial Settings patch, non-applicable rejected token design and README original paths/approval-dependent restore instructions. settings_screen.py/participant.py and those new paths have clean scoped git status. No knowingly failing proposed queue tests remain in repo. Blocked report updated; no activation/TTS edits or retry.
-<!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 Default-definition adapter prerequisite paused per root: separate queued-token descendant-admission production patch rejected by automatic approval review, awaiting explicit authorization. No rag_inventory production edit applied. New actual public capture tests preserved as red review artifact (2failed2deselected1.21s: known definitions unsupported in preview); later assertions unqualified. Ruff adapter+newtest clean, newtest formatted, adapter Bandit0 baseline, no census delta. Report /private/tmp/chatbook-rag-definition-capture-report.md. No marker removal/global enablement/bypass.
 
 Per root, parked own pending test outside repo at /private/tmp/chatbook-rag-definition-capture-proposal/test_rag_definition_capture.py and removed only its new repo file. Production remains unchanged; no red tests left in repo from this slice. Red/static evidence and minimum adapter proposal retained in /private/tmp/chatbook-rag-definition-capture-report.md; resumption requires approved queued UI lifetime qualification.
-<!-- SECTION:NOTES:END -->
+User explicitly approved both previously blocked original-plan changes on this turn: durable bootstrap/profile activation association keeping restored automation inactive until owner review, and process-local accepted RAG-save continuations during closed new intake. Resume the concrete paired-witness and queued-continuation proposals through normal tools/review. This approval resolves the prior automatic-review authorization blocks; no scope expansion, push, merge or real-profile restore is authorized.
+Resuming the original default RAG-definition capture adapter increment alongside the explicitly approved queued-settlement implementation. Existing manager/experiment coverage is committed. Limit adapter to known default definition paths, 16 MiB raw copy/validation, installed credential policy and preserved relative metadata; unknown paths remain unsupported. Restore parked public fixed-selector tests and prove actual native capture/credential/source preservation. Final enabling/commit requires queued lifecycle review to pass; no new cold-only product restriction, engine construction or projection support claim.
+Queued Settings continuation slice frozen for review after explicit user approval resolved the earlier authorization block. Four files: rag_definition_participant.py token increment, new UI/Screens/settings_rag_definition_actions.py, Settings RAG dispatch/worker/result integration, new test_settings_rag_definition_actions.py. Final named cohort 38 passed in 42.22s (17 new real Textual/fixed-selector Settings cases + existing definition/manager/runtime controls); behavioral reds include paused dispatch and Save-category/profile-switch pre-dispatch mutation boundaries. Full Ruff participant/helper/tests clean; Settings 81 baseline→81 current no normalized additions, fatal subset/format/diff pass. Bandit 1 LOW unchanged; exact source-owner census delta empty. Report /private/tmp/chatbook-settings-rag-queued-report.md; isolated diff /private/tmp/chatbook-settings-rag-queued-review.diff. No adapter/runtime/activation eligibility claim, commit, or finalization; awaiting independent review.
+Both original-plan RAG increments independently APPROVED: accepted queued Settings save/CRUD/activation/confirmation chains (38 focused tests) and default definition capture (68 affected tests,4 final tightened public cases). Actual save/category/profile-switch admission now precedes pending/preview/draft mutations; queued cancellation retires only before native entry and running native/UI descendants remain counted. Known profile/pipeline/experiment files use existing16MiB raw reader and credential policy with source metadata preserved; unknown formats remain explicit unsupported. No new production Ruff/Bandit findings and no census delta. Evidence: /private/tmp/chatbook-settings-rag-queued-report.md, /private/tmp/chatbook-settings-rag-queued-independent-review.md, /private/tmp/chatbook-rag-capture-approved-report.md, /private/tmp/chatbook-rag-capture-independent-review.md. Task remains In Progress: resident projection capture/readiness and final recovery integration are still outstanding.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

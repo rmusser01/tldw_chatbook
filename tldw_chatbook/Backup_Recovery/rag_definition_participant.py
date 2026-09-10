@@ -4,10 +4,47 @@ import asyncio
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from functools import wraps
 
 from .bootstrap import RecoveryRequired
 from .profile_paths import effective_config_path, lexical_path, user_data_dir
+
+
+class _DefinitionToken:
+    """Explicit accepted continuation, retained through every entered scope."""
+
+    def __init__(self, owner):
+        self._owner = owner
+        self._scopes = 0
+        self._closing = False
+
+    @contextmanager
+    def scope(self):
+        owner = self._owner
+        with owner._condition:
+            if self not in owner._tokens or self._closing:
+                raise RecoveryRequired("rag_definition_action_inactive")
+            self._scopes += 1
+        previous = getattr(owner._local, "accepted", False)
+        owner._local.accepted = True
+        try:
+            yield
+        finally:
+            owner._local.accepted = previous
+            with owner._condition:
+                self._scopes -= 1
+                if self._closing:
+                    self.close()
+
+    def close(self):
+        owner = self._owner
+        with owner._condition:
+            self._closing = True
+            if self in owner._tokens and not self._scopes:
+                owner._tokens.remove(self)
+                owner._active -= 1
+                owner._condition.notify_all()
 
 
 class DefinitionParticipant:
@@ -17,8 +54,26 @@ class DefinitionParticipant:
         self._condition = threading.Condition()
         self._local = threading.local()
         self._active = 0
+        self._tokens = set()
         self._experiment_transitions = 0
         self._closed = False
+
+    def reserve(self, parent=None):
+        """Admit root work or an explicit still-live accepted descendant."""
+        with self._condition:
+            if parent is not None:
+                if (
+                    type(parent) is not _DefinitionToken
+                    or parent not in self._tokens
+                    or parent._closing
+                ):
+                    raise RecoveryRequired("rag_definition_action_inactive")
+            elif self._closed:
+                raise RecoveryRequired("rag_definition_operations_paused")
+            token = _DefinitionToken(self)
+            self._tokens.add(token)
+            self._active += 1
+            return token
 
     def operation(self, function):
         @wraps(function)

@@ -1,4 +1,4 @@
-"""Inert RAG selector discovery; nonempty stores remain unqualified.
+"""Inert RAG definitions and selector discovery; projections remain unqualified.
 
 Never construct a profile manager or vector client here: both may migrate sources.
 Original Task19 separately owns engine capture and restored retrieval readiness.
@@ -7,7 +7,7 @@ Original Task19 separately owns engine capture and restored retrieval readiness.
 import hashlib
 import json
 import os
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from tldw_chatbook.Backup_Recovery.models import (
     StorageItem,
@@ -80,23 +80,36 @@ def _engine(value):
     return None if selected == "auto" else selected
 
 
+@dataclass(frozen=True)
 class _Definitions(_RawDeclaration):
-    def validate(self, candidate):
-        return ("rag_definition_capture_unqualified",)
+    max_bytes: int = 16 * 1024**2
 
     def discover(self, config):
-        root = user_data_dir(config) / "rag_profiles"
-        profiles = _pending(
-            _absent(config, self.owner_id, root) or self._tree(config, root),
-        )
-        pipeline = discovery_context(config).config_path.parent / "rag_pipelines.toml"
-        return profiles + _pending(
-            _absent(config, self.owner_id, pipeline)
-            or (self._item(config, pipeline, "pipelines"),),
-        )
+        from .credentials import _rag_definition_kind
 
-    def capture(self, item, destination, cancel):
-        raise ValueError("rag_definition_capture_unqualified")
+        root = user_data_dir(config) / "rag_profiles"
+        profiles = _absent(config, self.owner_id, root) or self._tree(config, root)
+        pipeline = discovery_context(config).config_path.parent / "rag_pipelines.toml"
+        pipeline_entries = _absent(config, self.owner_id, pipeline)
+        if pipeline_entries is None:
+            item = self._item(config, pipeline, "pipelines")
+            if item.metadata is not None:
+                item = replace(
+                    item,
+                    metadata=replace(item.metadata, relative_path=pipeline.name),
+                )
+            pipeline_entries = (item,)
+        entries = profiles + pipeline_entries
+        return tuple(
+            replace(item, status="unsupported")
+            if item.status == "included"
+            and (
+                item.metadata is None
+                or _rag_definition_kind(item.metadata.relative_path) is None
+            )
+            else item
+            for item in entries
+        )
 
 
 class _Projections(_RawDeclaration):

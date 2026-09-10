@@ -71,7 +71,7 @@ def test_retained_profile_path_is_found_without_migration(config, tmp_path):
     ) == ["renamed.json"]
     definitions = adapters()["rag.definitions"].discover(config)
     row = next(item for item in definitions if item.path == profile)
-    assert row.status == "unsupported" and row.shared_group is None
+    assert row.status == "included" and row.shared_group is None
     assert row.metadata.relative_path == "renamed.json"
 
 
@@ -175,7 +175,7 @@ def test_public_discovery_preserves_real_rag_file_identities(
             if item.path is not None and item.path.suffix == ".json"
         ]
         assert len(files) == 2
-        assert all(item.status == "unsupported" for item in files)
+        assert all(item.status == "included" for item in files)
         assert len({item.logical_id for item in files}) == 2
     else:
         assert rows and all(item.status == "unused" for item in rows)
