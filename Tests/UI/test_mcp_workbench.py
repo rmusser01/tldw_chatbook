@@ -6989,6 +6989,92 @@ async def test_space_cycle_on_builtin_server_tool_row_round_trips_through_store(
 
 
 @pytest.mark.asyncio
+async def test_permissions_matrix_puts_the_selected_servers_group_first(tmp_path):
+    """task-32283 fix round: the rail's selected server leads the matrix,
+    directly under the pinned Global default row.
+
+    The flat `(server_label, key)` server sort put `tldw_chatbook` behind
+    every other server, so selecting the built-in server in the rail and
+    opening Permissions showed another server's rows for the whole first
+    screen -- the contradiction (footer summarising `tldw_chatbook`, rows
+    describing something else) that got this filed as a missing-inventory
+    bug. Non-selected servers keep their existing relative order.
+    """
+    app = BuiltinDistinctApp(
+        tmp_path / "mcp_permissions.json",
+        inventory_names=("list_characters",),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        def server_order() -> list[str]:
+            return [
+                row.server_key
+                for row in app.query_one(MCPPermissionsMode)._all_rows
+                if row.kind == "server"
+            ]
+
+        unselected = server_order()
+        assert unselected.index("local:docs") < unselected.index(
+            "builtin:tldw_chatbook"
+        )
+
+        workbench._selected_server_key = "builtin:tldw_chatbook"
+        await workbench._sync_children()
+        await pilot.pause()
+
+        selected = server_order()
+        assert selected[0] == "builtin:tldw_chatbook"
+        # The first data row after the pinned global row is that group's
+        # server-default row.
+        assert _perm_row_keys(app)[1] == "__server__::builtin:tldw_chatbook"
+        # Every other server keeps the order it already had.
+        assert [k for k in selected if k != "builtin:tldw_chatbook"] == [
+            k for k in unselected if k != "builtin:tldw_chatbook"
+        ]
+
+
+@pytest.mark.asyncio
+async def test_open_tool_catalog_scopes_the_tools_filter_to_that_server(tmp_path):
+    """task-32283 fix round: the Servers-mode inspector's "Open tool
+    catalog" drill lands in Tools mode already scoped to the server the
+    inspector was showing. It used to only switch modes, so drilling from
+    the built-in server's row showed an unfiltered catalog whose first
+    screenful was some other server."""
+    app = BuiltinDistinctApp(
+        tmp_path / "mcp_permissions.json",
+        inventory_names=("list_characters", "search_notes"),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+
+        workbench.post_message(
+            MCPInspector.HubActionRequested(
+                HubAction.OPEN_TOOL_CATALOG, "builtin:tldw_chatbook"
+            )
+        )
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench.active_mode == "tools"
+        canvas = app.query_one(MCPToolsMode)
+        assert (
+            canvas.query_one("#mcp-tools-filter-server", Select).value
+            == "builtin:tldw_chatbook"
+        )
+        table = app.query_one("#mcp-tools-table", DataTable)
+        assert {
+            table.coordinate_to_cell_key((i, 0))[0].value.split("::")[0]
+            for i in range(table.row_count)
+        } == {"builtin:tldw_chatbook"}
+
+
+@pytest.mark.asyncio
 async def test_stored_deny_for_builtin_renders_off_with_tool_override_marker(tmp_path):
     store_path = tmp_path / "mcp_permissions.json"
     MCPPermissionStore(store_path).set_tool_state(

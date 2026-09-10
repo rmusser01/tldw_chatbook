@@ -195,6 +195,11 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         self._states: dict[tuple[str, str], EffectiveToolState] = {}
         self._filter_text: str = ""
         self._filter_server_key: str | None = None
+        # task-32283: the RAIL's selected server (not the filter Select --
+        # that one is `_filter_server_key`). Its group is ordered first in
+        # `_apply_filter()` so drilling into a server whose label sorts
+        # late can't leave its rows below the fold.
+        self._selected_server_key: str | None = None
         self._empty_diagnosis: tuple[str, str] | None = None
         self._empty_action_key: str | None = None
         # UX batch item 11: whether ANY tool in the current (unfiltered)
@@ -277,6 +282,7 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         *,
         empty_diagnosis: tuple[str, str] | None = None,
         states: dict[tuple[str, str], EffectiveToolState] | None = None,
+        selected_server_key: str | None = None,
     ) -> None:
         """Rebuild the catalog from a fresh `HubTool` list.
 
@@ -298,11 +304,32 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
                 tool absent from this dict (or `states=None` entirely, e.g.
                 a service without the Phase 4 permission seams yet) renders
                 "—" rather than guessing a default.
+            selected_server_key: task-32283 -- the RAIL's currently selected
+                server. Its group is ordered first (see `_apply_filter()`);
+                `None` ("All servers") keeps the plain label order.
         """
         self._tools = list(tools)
         self._states = dict(states) if states else {}
+        self._selected_server_key = selected_server_key
         self._empty_diagnosis = empty_diagnosis
         self._has_tags = any(tool.tags for tool in self._tools)
+        await self._rebuild_server_select()
+        self._apply_filter()
+
+    async def focus_server(self, server_key: str | None) -> None:
+        """Scope the catalog to one server, as the filter Select would.
+
+        task-32283: the Servers-mode inspector's "Open tool catalog" drill
+        lands here, so the tools of the server the user drilled from are
+        the whole visible table rather than a screenful of some other
+        server's. A `server_key` with no tools in the current catalog falls
+        back to "All servers" (`_rebuild_server_select()`'s own dangling-
+        filter guard).
+
+        Args:
+            server_key: The server to scope to, or `None` for all servers.
+        """
+        self._filter_server_key = server_key
         await self._rebuild_server_select()
         self._apply_filter()
 
@@ -486,7 +513,18 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         filtered = filter_tools(
             self._tools, server_key=self._filter_server_key, text=self._filter_text
         )
-        ordered = sorted(filtered, key=lambda tool: (tool.server_label, tool.name))
+        # task-32283: the rail-selected server's group leads, then the
+        # existing `(server_label, name)` order. With no selection the
+        # first term is constant and the order is exactly what it was.
+        selected = self._selected_server_key
+        ordered = sorted(
+            filtered,
+            key=lambda tool: (
+                tool.server_key != selected,
+                tool.server_label,
+                tool.name,
+            ),
+        )
         table = self.query_one("#mcp-tools-table", DataTable)
         # UX batch item 11: the Tags column tuple is decided by
         # `self._has_tags` (the FULL unfiltered catalog, set once per

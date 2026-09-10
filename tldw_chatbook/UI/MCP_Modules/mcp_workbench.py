@@ -1624,7 +1624,15 @@ class MCPWorkbench(Container):
             workspace_root=workspace_root,
             visible=self._source == "local",
         )
-        await canvas.update_tools(tools, empty_diagnosis=diagnosis, states=states)
+        await canvas.update_tools(
+            tools,
+            empty_diagnosis=diagnosis,
+            states=states,
+            # task-32283: the rail's selected server leads the table, so a
+            # server whose label sorts late (`tldw_chatbook`) is never left
+            # below the fold behind every other server's rows.
+            selected_server_key=self._selected_server_key,
+        )
 
     @staticmethod
     def _local_tools_config_values() -> tuple[bool, str]:
@@ -2787,8 +2795,13 @@ class MCPWorkbench(Container):
             tools_by_server.setdefault(tool.server_key, []).append(tool)
             labels_by_key.setdefault(tool.server_key, tool.server_label)
 
+        # task-32283: the rail-selected server's group leads the matrix,
+        # then the existing `(server_label, key)` order. With no selection
+        # the first term is constant and the order is exactly what it was.
+        selected_key = self._selected_server_key
         for server_key in sorted(
-            tools_by_server, key=lambda key: (labels_by_key[key], key)
+            tools_by_server,
+            key=lambda key: (key != selected_key, labels_by_key[key], key),
         ):
             server_label = labels_by_key[server_key]
             server_entry = servers_payload.get(server_key)
@@ -3497,6 +3510,14 @@ class MCPWorkbench(Container):
             self.set_mode("servers")
         elif event.action is HubAction.OPEN_TOOL_CATALOG:
             self.set_mode("tools")
+            # task-32283: land on the server the inspector was showing, not
+            # on an unfiltered catalog whose first screenful is some other
+            # server. `focus_server()` falls back to "All servers" when that
+            # server has no tools in the current catalog.
+            if event.server_key:
+                await self._mount_deferred_canvases()
+                if self.query(MCPToolsMode):
+                    await self.query_one(MCPToolsMode).focus_server(event.server_key)
         elif event.action is HubAction.OPEN_AUDIT:
             self.set_mode("audit")
         elif (

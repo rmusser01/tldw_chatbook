@@ -915,3 +915,43 @@ async def test_state_column_cells_carry_semantic_color_by_effective_state():
             table.get_cell_at((rows_by_tool["unresolved"], 1)).style
             == state_text("—", "muted").style
         )
+
+
+@pytest.mark.asyncio
+async def test_selected_server_group_sorts_first_in_the_catalog():
+    """task-32283: the rail-selected server leads the table.
+
+    Without this the flat `(server_label, name)` sort buries a server whose
+    label sorts late -- `tldw_chatbook`, the built-in MCP server -- under
+    every other server's rows, which is why a live reviewer concluded the
+    built-in inventory read "yields nothing". Servers other than the
+    selected one keep their existing relative order, and no selection keeps
+    today's order exactly.
+    """
+    tools = [
+        _tool(server_key="local:aaa", server_label="Aaa workspace", name="fs_read"),
+        _tool(server_key="local:aaa", server_label="Aaa workspace", name="fs_write"),
+        _tool(
+            server_key="builtin:tldw_chatbook",
+            server_label="tldw_chatbook",
+            name="list_characters",
+            source="builtin",
+        ),
+    ]
+    app = ToolsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPToolsMode)
+
+        await canvas.update_tools(tools)
+        await pilot.pause()
+        table = app.query_one("#mcp-tools-table", DataTable)
+        assert [
+            _row_texts(table, i)[0] for i in range(table.row_count)
+        ] == ["fs_read", "fs_write", "list_characters"]
+
+        await canvas.update_tools(tools, selected_server_key="builtin:tldw_chatbook")
+        await pilot.pause()
+        table = app.query_one("#mcp-tools-table", DataTable)
+        assert [
+            _row_texts(table, i)[0] for i in range(table.row_count)
+        ] == ["list_characters", "fs_read", "fs_write"]
