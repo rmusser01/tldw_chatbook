@@ -30,7 +30,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
+import math
 import re
+import time
 from typing import Any, Mapping, Sequence
 
 from rich.markup import escape
@@ -39,6 +41,7 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.message import Message
+from textual.timer import Timer
 from textual.widgets import Button, Select, Static, TextArea
 
 from tldw_chatbook.MCP.redaction import redact_mapping
@@ -242,26 +245,42 @@ _PATH_PRECHECK_SUFFIX = " -- path outside allowed folders; will fail even if app
 NEEDS_DECISION_PREFIX = "needs decision · "
 
 
+def _coerce_timeout_total(timeout_seconds: float | None) -> int:
+    """Return `timeout_seconds` as a whole-second count, or 0 when unarmed.
+
+    Shared by `format_approval_deadline` (render) and `ChatApprovalCard.
+    set_batch`/`_render_deadline` (arm and tick) so both agree on what
+    counts as "no deadline" (non-numeric, None, or <= 0) and use `ceil`
+    rather than truncation -- a countdown armed for 90s must still read
+    "1:30" the instant it is armed, not "1:29" from the microseconds of
+    call overhead between capturing `time.monotonic()` and this render.
+    """
+    try:
+        value = float(timeout_seconds or 0)
+    except (TypeError, ValueError):
+        return 0
+    return math.ceil(value) if value > 0 else 0
+
+
 def format_approval_deadline(timeout_seconds: float | None) -> str:
     """Return the countdown copy for an armed approval deadline.
 
     TASK-1844: `set_batch` accepted `timeout_seconds` and never read it,
     while its own docstring claimed the value was "surfaced on the card".
     The controller arms a 120s auto-deny, so a clock the user could not see
-    was making the decision for them.
+    was making the decision for them. TASK-32288: the card now re-renders
+    this every second from a locally tracked deadline -- see
+    `ChatApprovalCard._render_deadline`.
 
     Args:
-        timeout_seconds: The round's approval timeout, or None/0 when no
-            deadline is armed.
+        timeout_seconds: The round's approval timeout (or remaining
+            seconds, mid-countdown), or None/0 when no deadline is armed.
 
     Returns:
         "Auto-denies in M:SS", or "" when nothing is armed -- say nothing
         rather than invent a number.
     """
-    try:
-        total = int(timeout_seconds or 0)
-    except (TypeError, ValueError):
-        return ""
+    total = _coerce_timeout_total(timeout_seconds)
     if total <= 0:
         return ""
     return f"Auto-denies in {total // 60}:{total % 60:02d}"
@@ -683,6 +702,17 @@ class ChatApprovalCard(Container):
         #: carriage on ``set_batch``, patchable in place via ``set_summary``
         #: for a matching round), re-rendered by ``_render_summary_line``.
         self._batch_summary: str | None = None
+        #: TASK-32288: the current round's absolute deadline, a LOCAL
+        #: `time.monotonic()` timestamp captured once in `set_batch` -- this
+        #: card has no access to the controller's own auto-deny clock (see
+        #: the module docstring), so it counts down its own copy instead.
+        #: `None` while no deadline is armed.
+        self._deadline_at: float | None = None
+        #: TASK-32288: the interval driving `_tick_deadline`, or `None` when
+        #: no deadline is armed / the card is hidden -- `_stop_deadline_
+        #: timer` is the only place that clears it, so a batch clear or
+        #: re-arm can never leave a previous round's interval running.
+        self._deadline_timer: Timer | None = None
         # task-17500: the initial hide is CONSTRUCTION state, never deferred
         # mount work. This used to live in `on_mount` (`self.display =
         # False` plus a `call_after_refresh(_hide_batch_body)` for the batch
@@ -812,14 +842,22 @@ class ChatApprovalCard(Container):
         # ADR-090 (task 5): stash the payload-carried summary so any remount
         # re-renders it (a live `set_summary` patch is for THIS mount only).
         self._batch_summary = format_context_line(summary) if summary else None
-        # TASK-1844: actually surface the deadline the docstring promised.
+        # TASK-1844/32288: surface the deadline AND keep it ticking -- see
+        # `_render_deadline`'s docstring for why the remaining time is a
+        # LOCAL `time.monotonic()` computation rather than a read-back of
+        # the controller's own auto-deny clock. Every call that reaches
+        # here (the unchanged-round guard above already returned for a mere
+        # re-sync) is either a genuinely new/changed round or a clear, so
+        # re-arming unconditionally is correct.
         try:
-            deadline = self.query_one("#approval-deadline", Static)
-            text = format_approval_deadline(timeout_seconds)
-            deadline.update(text)
-            deadline.display = bool(text)
+            deadline_static = self.query_one("#approval-deadline", Static)
         except NoMatches:
-            pass
+            deadline_static = None
+        if deadline_static is not None:
+            self._stop_deadline_timer()
+            total = _coerce_timeout_total(timeout_seconds) if calls else 0
+            self._deadline_at = time.monotonic() + total if total > 0 else None
+            self._render_deadline(deadline_static)
         self._render_summary_line()
         if not calls:
             self.display = False
@@ -1076,6 +1114,50 @@ class ChatApprovalCard(Container):
         rows_container.remove_children()
         if rows:
             rows_container.mount(*rows)
+
+    def _render_deadline(self, label: Static) -> None:
+        """Render the countdown and keep it ticking while a deadline is armed.
+
+        TASK-32288: re-renders `label` from `self._deadline_at` (this card's
+        own local monotonic deadline -- never a value read back from the
+        controller's clock), then arms a one-shot-per-round 1s interval to
+        call itself again via `_tick_deadline`. Idempotent: called once from
+        `set_batch` to arm/paint immediately, and once a second thereafter
+        by the interval it starts.
+
+        Args:
+            label: The `#approval-deadline` Static.
+        """
+        if self._deadline_at is None:
+            self._stop_deadline_timer()
+            label.update("")
+            label.display = False
+            return
+        remaining = max(0.0, self._deadline_at - time.monotonic())
+        text = format_approval_deadline(remaining)
+        label.update(text)
+        label.display = bool(text)
+        if not text:
+            # Reached (or already past) zero: stop, don't arm another tick.
+            self._deadline_at = None
+            self._stop_deadline_timer()
+        elif self._deadline_timer is None:
+            self._deadline_timer = self.set_interval(1.0, self._tick_deadline)
+
+    def _tick_deadline(self) -> None:
+        """One second of the armed countdown -- re-render, or stop if gone."""
+        try:
+            label = self.query_one("#approval-deadline", Static)
+        except NoMatches:
+            self._stop_deadline_timer()
+            return
+        self._render_deadline(label)
+
+    def _stop_deadline_timer(self) -> None:
+        """Stop this round's countdown interval, if one is running."""
+        if self._deadline_timer is not None:
+            self._deadline_timer.stop()
+            self._deadline_timer = None
 
     def _update_mounted_single_row(
         self,

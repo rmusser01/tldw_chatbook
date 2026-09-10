@@ -3486,6 +3486,68 @@ async def test_armed_deadline_is_visible_on_the_mounted_card():
         assert not app.query_one("#approval-deadline", Static).display
 
 
+@pytest.mark.asyncio
+async def test_the_deadline_countdown_ticks_and_stops_on_clear_or_timeout():
+    """TASK-32288: with a finite timeout the countdown actually TICKS.
+
+    Before this fix `set_batch` rendered `format_approval_deadline` once and
+    never again -- with `[mcp] approval_timeout_seconds` configured the card
+    showed a frozen "Auto-denies in 2:00" for the whole window, silently
+    lying to the user about how much time was left. The controller arms the
+    real auto-deny clock; this card only displays it, computed from a LOCAL
+    `time.monotonic()` deadline captured in `set_batch` (never read back
+    from the controller).
+    """
+    import re
+
+    def _remaining_seconds(text: str) -> int:
+        match = re.fullmatch(r"Auto-denies in (\d+):(\d{2})", text)
+        assert match, text
+        return int(match.group(1)) * 60 + int(match.group(2))
+
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(_sample_calls(), timeout_seconds=90.0, round_id="round-a")
+        await pilot.pause()
+
+        deadline = app.query_one("#approval-deadline", Static)
+        assert _text(deadline) == "Auto-denies in 1:30"
+        assert card._deadline_timer is not None
+
+        await pilot.pause(1.1)
+        ticked_text = _text(deadline)
+        assert ticked_text != "Auto-denies in 1:30"
+        # Ticked down, never back up, never frozen -- allow a little
+        # scheduler slack rather than pinning an exact second.
+        assert 85 <= _remaining_seconds(ticked_text) <= 89, ticked_text
+
+        # A re-sync of the SAME round/phase/calls (the unchanged-round guard
+        # near the top of `set_batch`) must not reset the deadline clock.
+        card.set_batch(_sample_calls(), timeout_seconds=90.0, round_id="round-a")
+        await pilot.pause()
+        assert _text(deadline) != "Auto-denies in 1:30"
+        assert _remaining_seconds(_text(deadline)) <= _remaining_seconds(ticked_text)
+
+        # Clearing the batch stops the timer -- no leaked interval.
+        card.set_batch([], timeout_seconds=90.0)
+        await pilot.pause()
+        assert card._deadline_timer is None
+
+        # timeout_seconds=0/None: nothing shown, no timer armed.
+        card.set_batch(_sample_calls(), timeout_seconds=0, round_id="round-b")
+        await pilot.pause()
+        assert _text(deadline) == ""
+        assert not deadline.display
+        assert card._deadline_timer is None
+
+        # A NEW batch (different round) re-arms the countdown from scratch.
+        card.set_batch(_sample_calls(), timeout_seconds=60.0, round_id="round-new")
+        await pilot.pause()
+        assert _text(deadline) == "Auto-denies in 1:00"
+        assert card._deadline_timer is not None
+
+
 @pytest.mark.unit
 def test_refusing_one_call_does_not_get_overwritten_by_approving_another():
     """A per-call REFUSAL must reach the runtime, not be flattened away.
