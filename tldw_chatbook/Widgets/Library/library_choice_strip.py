@@ -48,14 +48,36 @@ class LibraryChoiceOptionList(OptionList):
         self._paint_choice_cursor()
 
     def watch_highlighted(self, highlighted: int | None) -> None:
+        """Move the cursor with the highlight.
+
+        Args:
+            highlighted: Index of the newly highlighted option, or ``None``
+                when nothing is highlighted. Delegated to the base watcher
+                first (it scrolls and posts ``OptionHighlighted``), then the
+                cursor prefix is repainted onto that option's prompt and
+                stripped from every other.
+        """
         super().watch_highlighted(highlighted)
         self._paint_choice_cursor()
 
     def _paint_choice_cursor(self) -> None:
-        """Keep the cursor on exactly the highlighted option's prompt."""
+        """Keep the cursor on exactly the highlighted option's prompt.
+
+        Each option's ORIGINAL prompt is stashed the first time it is seen
+        and every rewrite is rebuilt from that. Recovering it by stripping
+        the prefix back off instead (the first cut of this) cannot tell the
+        cursor from the same two characters in the data: media types are
+        free text -- a type literally named "All" is already a pinned case
+        -- so a type named ``█ redacted`` lost its first two cells the
+        moment the chooser painted, and the visible option stopped agreeing
+        with the ``choice_value`` behind it.
+        """
         for index in range(self.option_count):
             option = self.get_option_at_index(index)
-            base = str(option.prompt).removeprefix(LIBRARY_CHOICE_CURSOR)
+            base = getattr(option, "_library_choice_base", None)
+            if base is None:
+                base = str(option.prompt)
+                option._library_choice_base = base
             wanted = (
                 f"{LIBRARY_CHOICE_CURSOR}{base}"
                 if index == self.highlighted

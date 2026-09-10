@@ -9,8 +9,15 @@ paint/layout ones that a headless ``query_one`` never sees.
 from __future__ import annotations
 
 import pytest
+from textual.app import App
 from textual.widgets import Button, Input, Static
+from textual.widgets.option_list import Option
 
+from tldw_chatbook.Library.library_shell_state import LIBRARY_CHOICE_ACTIVE_MARKER
+from tldw_chatbook.Widgets.Library.library_choice_strip import (
+    LIBRARY_CHOICE_CURSOR,
+    LibraryChoiceOptionList,
+)
 from tldw_chatbook.Widgets.Library.library_media_canvas import (
     LIBRARY_MEDIA_REVIEW_EMPTY_TOOLTIP,
 )
@@ -250,3 +257,101 @@ async def test_the_chooser_cursor_keeps_the_active_marker_and_the_pick_payload()
             getattr(choices.get_option_at_index(index), "choice_value", "missing")
             for index in range(choices.option_count)
         ] == [None, "audio", "video"]
+
+
+class _ChoiceListApp(App):
+    """The bare widget, no screen: LibraryChoiceOptionList on its own."""
+
+    def __init__(self, labels, active_index):
+        super().__init__()
+        self._labels = labels
+        self._active_index = active_index
+
+    def compose(self):
+        options = []
+        for index, label in enumerate(self._labels):
+            option = Option(
+                f"{LIBRARY_CHOICE_ACTIVE_MARKER} {label}"
+                if index == self._active_index
+                else label,
+                id=f"choice-{index}",
+            )
+            option.choice_value = label
+            options.append(option)
+        chooser = LibraryChoiceOptionList(
+            *options, id="probe-choices", compact=True, markup=False
+        )
+        chooser.highlighted = self._active_index
+        yield chooser
+
+
+def _probe_prompts(app):
+    chooser = app.query_one("#probe-choices", LibraryChoiceOptionList)
+    return chooser, [
+        str(chooser.get_option_at_index(index).prompt)
+        for index in range(chooser.option_count)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_cursor_never_eats_a_label_that_starts_with_the_bar():
+    """Qodo #4: a stored media type may legitimately start with ``█ ``.
+
+    The first implementation recovered each option's base text with
+    ``removeprefix(LIBRARY_CHOICE_CURSOR)``, which cannot tell its own
+    cursor from the same two characters in the label — so a type named
+    ``█ redacted`` lost them the moment the chooser painted, and the
+    visible option stopped agreeing with the ``choice_value`` payload
+    behind it. The facet path accepts any non-empty string (a type
+    literally named "All" is already a pinned case), so this is real data.
+    """
+    labels = ["All types", "█ redacted", "video"]
+    app = _ChoiceListApp(labels, active_index=0)
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        chooser, prompts = _probe_prompts(app)
+        assert prompts == ["█ ✓ All types", "█ redacted", "video"], prompts
+
+        # Onto the bar-named option: it gains a cursor, keeps its name.
+        chooser.highlighted = 1
+        await pilot.pause()
+        _, prompts = _probe_prompts(app)
+        assert prompts == ["✓ All types", "█ █ redacted", "video"], prompts
+
+        # And away again: the name is restored whole, not one prefix short.
+        chooser.highlighted = 2
+        await pilot.pause()
+        _, prompts = _probe_prompts(app)
+        assert prompts == ["✓ All types", "█ redacted", "█ video"], prompts
+        assert [
+            getattr(chooser.get_option_at_index(index), "choice_value", "missing")
+            for index in range(chooser.option_count)
+        ] == labels
+
+
+@pytest.mark.asyncio
+async def test_the_cursor_moves_one_option_at_a_time_off_screen():
+    """Qodo #3: the class's own contract, without a screen around it.
+
+    Exactly one option carries the cursor at any time, it rides in front
+    of the ``✓`` active marker, and every option's ``choice_value``
+    survives the in-place prompt rewrite.
+    """
+    app = _ChoiceListApp(["All types", "audio", "video"], active_index=1)
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        chooser, prompts = _probe_prompts(app)
+        assert prompts == ["All types", "█ ✓ audio", "video"], prompts
+
+        for index, expected in enumerate(
+            (
+                ["█ All types", "✓ audio", "video"],
+                ["All types", "█ ✓ audio", "video"],
+                ["All types", "✓ audio", "█ video"],
+            )
+        ):
+            chooser.highlighted = index
+            await pilot.pause()
+            _, prompts = _probe_prompts(app)
+            assert prompts == expected, (index, prompts)
+            assert sum(p.startswith("█ ") for p in prompts) == 1, prompts
