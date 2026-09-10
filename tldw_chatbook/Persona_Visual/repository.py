@@ -495,6 +495,9 @@ class PersonaVisualRepository:
         manifest_json, validated_manifest, manifest_sha256 = _manifest_json(
             manifest, asset_writes
         )
+        context_json = (
+            None if source_context is None else _source_context_json(source_context)
+        )
         _validate_guard(authority_guard)
         self._require_owned_write_transaction()
 
@@ -511,13 +514,14 @@ class PersonaVisualRepository:
                 if current.identity != expected_identity:
                     raise ValueError("persona_visual_identity_changed")
 
-                context_json = None
-                if source_context is not None:
+                if context_json is not None:
                     existing = self.get_active_persona_pack_for_export(
                         persona_id, buddy_id=buddy_id
                     )
+                    if existing is None or existing.graph.identity != current.identity:
+                        raise ValueError("persona_visual_identity_changed")
                     context_json = _source_context_json(
-                        {**dict(existing.source_context), **dict(source_context)}
+                        {**dict(existing.source_context), **json.loads(context_json)}
                     )
                 source_manifest_json = self._read_identity_snapshot(current.identity)
                 next_number = _db_positive_int(
@@ -1364,6 +1368,11 @@ def _validate_source_context_content(value: object) -> None:
 
             decode_native_artwork(item)
             continue
+        if key == "mapping_source" and (
+            type(item) is not str
+            or re.fullmatch(r"[a-z][a-z0-9_.:-]{0,63}", item) is None
+        ):
+            raise ValueError
         if not isinstance(item, str) or not item:
             raise ValueError
         item.encode("utf-8")

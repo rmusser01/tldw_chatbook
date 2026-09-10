@@ -96,6 +96,11 @@ from ...Library.collections_capture_models import (
     CaptureIdentity,
     CapturePageRequest,
 )
+from ...Library.library_browse_location import (
+    claim_browse_directory,
+    remember_browse_directory,
+    validated_browse_directory,
+)
 from ...Library.library_content_evidence import (
     LibraryContentEvidence,
     LibraryEvidenceStatus,
@@ -1117,6 +1122,11 @@ class LibraryScreen(BaseAppScreen):
         # tries each binding for a key until one's ``check_action`` passes.
         Binding("r", "library_media_trash_restore", "Restore", show=False),
         Binding("x", "library_media_trash_delete", "Delete forever", show=False),
+        # task-32144: the Notes Trash view's own "r". A third consumer of
+        # this key (Media Trash restore and the Ingest canvas's retry are the
+        # other two) -- disjoint contexts, and Textual tries each binding for
+        # a key until one's ``check_action`` passes.
+        Binding("r", "library_notes_trash_restore", "Restore note", show=False),
     ]
 
     #: Footer hint set while the Search/RAG canvas is active — mirrors the
@@ -7768,6 +7778,17 @@ class LibraryScreen(BaseAppScreen):
             return self._notes_footer_tier(
                 (("enter", "run action"), ("esc", "back to notes")),
                 (("enter", "act"), ("esc", "notes")),
+            )
+        if region == "trash":
+            # Only what this view answers: no Enter chip, because entry focus
+            # lands on a Restore button whose action "r" already names.
+            if not (self._notes_state.trash and self._notes_state.trash.rows):
+                return self._notes_footer_tier(
+                    (("esc", "back to notes"),), (("esc", "notes"),)
+                )
+            return self._notes_footer_tier(
+                (("r", "restore note"), ("esc", "back to notes")),
+                (("r", "restore"), ("esc", "notes")),
             )
         if region == "import":
             phase = self._library_note_import_controller.snapshot.phase
@@ -15530,6 +15551,9 @@ class LibraryScreen(BaseAppScreen):
     def _request_library_notes_tree_initial_load(self) -> None:
         """Start one fresh visit by requesting only the two root slices."""
         LibraryScreen._begin_library_notes_tree_visit(self)
+        # task-32144: and the tombstones behind them, so the "Recently
+        # deleted (N)" row is truthful on the visit's first paint.
+        self._refresh_library_notes_trash()
         for kind in ("folders", "placements"):
             LibraryScreen._request_library_notes_tree_slice(
                 self, NotesBranchKey(None, kind)
@@ -23357,6 +23381,18 @@ class LibraryScreen(BaseAppScreen):
                 and getattr(self._media_state, "view", "list") == "trash"
                 and not bool(getattr(trash_state, "mutation_pending", False))
             )
+        if action == "library_notes_trash_restore":
+            # Exactly when a Restore button is on screen to stand for -- the
+            # Notes canvas showing its Trash view, with rows and no mutation
+            # already in flight.
+            trash = self._notes_state.trash
+            return bool(
+                self._library_notes_workflow_active()
+                and self._notes_state.view == "trash"
+                and trash is not None
+                and trash.rows
+                and not self._library_notes_mutation_fenced()
+            )
         if action in {
             "library_media_trash_restore",
             "library_media_trash_delete",
@@ -25415,6 +25451,7 @@ class LibraryScreen(BaseAppScreen):
         async def import_callback(selected_path: Path | None) -> None:
             if selected_path is None:
                 return
+            self._persist_library_note_import_location(selected_path)
             try:
                 self._library_note_import_controller.accept_selected_path(
                     selected_path,
@@ -25428,8 +25465,34 @@ class LibraryScreen(BaseAppScreen):
             FileOpen(
                 title="Import once (files or one folder)",
                 offer_select_folder=True,
+                location=self._library_note_import_browse_location(),
             ),
             import_callback,
+        )
+
+    def _library_note_import_browse_location(self) -> str:
+        """Return where Import once's picker should open (task-32174 AC#1).
+
+        Mirrors ``_library_ingest_browse_location``: prefer the directory a
+        prior Import once selection came from, else home. Keyed
+        independently (``library.notes_import``) from the ingest browser and
+        from the other two Notes pickers -- each context remembers its own
+        last-used directory. The stored value is persisted user state, so it
+        is validated in ``library_browse_location`` before it is used.
+        """
+        remembered = validated_browse_directory(
+            get_cli_setting("library.notes_import", "last_directory", None)
+        )
+        return str(remembered) if remembered is not None else str(Path.home())
+
+    def _persist_library_note_import_location(self, selected_path: Path) -> None:
+        """Off the event loop: remember the picked Import once directory."""
+        generation = claim_browse_directory("library.notes_import", "last_directory")
+        self.run_worker(
+            lambda: remember_browse_directory(
+                "library.notes_import", "last_directory", selected_path, generation
+            ),
+            thread=True,
         )
 
     @on(Button.Pressed, '#library-notes-add-from-files')
@@ -27561,6 +27624,15 @@ class LibraryScreen(BaseAppScreen):
             self._begin_library_note_load(note_id)
         _sync_library_canvas(self, "notes")
 
+    @on(Button.Pressed, ".library-note-backlink")
+    async def handle_library_note_backlink(self, event: Button.Pressed) -> None:
+        """Open the note an Info "Linked from" row names (task-32145).
+
+        Args:
+            event: Press of one ``.library-note-backlink`` row button.
+        """
+        return await self._notes_controller.handle_library_note_backlink(event)
+
     @on(Button.Pressed, '.library-notes-folder-row')
     def handle_library_notes_folder_row(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_notes_folder_row(event)
@@ -28198,6 +28270,9 @@ class LibraryScreen(BaseAppScreen):
                 before=mutation_context,
                 result=True,
             )
+            # task-32144: the note is now a tombstone, so the standing Trash
+            # row has to say so even if the receipt is dismissed unread.
+            self._refresh_library_notes_trash()
 
         finished = self._library_note_session.finish_destructive(
             admission, success=deleted
@@ -28268,6 +28343,61 @@ class LibraryScreen(BaseAppScreen):
 
     async def _undo_library_note_delete(self, receipt: LibraryNoteDeleteReceipt) -> None:
         return await self._notes_controller._undo_library_note_delete(receipt)
+
+    @on(Button.Pressed, '#library-notes-trash-open')
+    def handle_library_notes_trash_open(self, event: Button.Pressed) -> None:
+        """Open the Trash view (task-32144).
+
+        Args:
+            event: Press of the "Recently deleted (N)" row.
+        """
+        return self._notes_controller.handle_library_notes_trash_open(event)
+
+    @on(Button.Pressed, '#library-notes-trash-back')
+    def handle_library_notes_trash_back(self, event: Button.Pressed) -> None:
+        """Leave the Trash view for the notes list (task-32144).
+
+        Args:
+            event: Press of the Trash view's Back action.
+        """
+        return self._notes_controller.handle_library_notes_trash_back(event)
+
+    @on(Button.Pressed, '.library-notes-trash-restore')
+    def handle_library_notes_trash_restore(self, event: Button.Pressed) -> None:
+        """Restore one soft-deleted note (task-32144).
+
+        Args:
+            event: Press of one Trash row's Restore button.
+        """
+        return self._notes_controller.handle_library_notes_trash_restore(event)
+
+    def _leave_library_notes_trash(self) -> None:
+        return self._notes_controller._leave_library_notes_trash()
+
+    def _refresh_library_notes_trash(self) -> None:
+        return self._notes_controller._refresh_library_notes_trash()
+
+    async def _load_library_notes_trash(self) -> None:
+        return await self._notes_controller._load_library_notes_trash()
+
+    def action_library_notes_trash_restore(self) -> None:
+        """Keyboard "r": restore the focused Trash row (task-32144).
+
+        Presses the row's own button rather than re-entering the handler, so
+        there is one implementation of Restore and ``Button.press``'s refusal
+        while disabled stays the second guard behind ``check_action`` -- the
+        same shape ``_press_library_media_trash_action`` uses.
+
+        Focus IS the target: with focus anywhere else (Back, say) the key does
+        nothing rather than restoring whichever row happens to be first. It
+        used to fall back to the top row, which restored a note the user had
+        not pointed at and contradicted both the guide and the footer chip
+        ("restore note" -- the focused one). Entry into the view focuses the
+        first Restore button, so the key is live the moment the view opens.
+        """
+        focused = getattr(self, "focused", None)
+        if focused is not None and focused.has_class("library-notes-trash-restore"):
+            focused.press()
 
     def _notify_library_note_missing_warning(self) -> None:
         return self._notes_controller._notify_library_note_missing_warning()

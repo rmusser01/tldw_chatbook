@@ -264,6 +264,7 @@ from ...Library.library_notes_state import (
     LibraryNoteDeleteReceipt,
     LibraryNotesFocusIdentity,
     LibraryNotesOperationState,
+    LibraryNotesTrashState,
 )
 from ...Library.library_notes_tree_paging import (
     NotesBranchKey,
@@ -461,6 +462,12 @@ class LibraryNotesState:
     # writes serialized instead of letting separate workers race.
     mutation_in_flight: bool = False
     delete_receipt: LibraryNoteDeleteReceipt | None = None
+
+    # task-32144: the standing second safety net behind that receipt -- the
+    # soft-deleted page plus its exact total, reloaded on a fresh Notes visit
+    # and after every delete/restore. ``None`` means "not read yet", which is
+    # what keeps the "Recently deleted (N)" row off a failed read.
+    trash: LibraryNotesTrashState | None = None
     operation_counter: int = 0
     operation: LibraryNotesOperationState | None = None
 
@@ -482,6 +489,20 @@ class LibraryNotesState:
     context: bool = False
     delete_origin_context: bool = False
     delete_origin_preview: bool = False
+
+    #: ``(note_id, title)`` for each note whose body links to the open one
+    #: (task-32145). Loaded by its own worker after the note opens and reset
+    #: by ``_begin_library_note_load``, so it is never another note's list.
+    #: One row over the display cap means "more than the cap", so the header
+    #: can read ``50+`` instead of lying with an exact number.
+    backlinks: tuple[tuple[str, str], ...] = ()
+
+    #: ``"loading"`` until the backlink query answers, then ``"ready"`` (the
+    #: rows above are the whole truth) or ``"failed"`` (it raised, or there
+    #: was no service to ask). Without it an unanswered lookup is
+    #: indistinguishable from a verified zero, and Info claims "no notes
+    #: link here yet" before -- or without ever -- checking.
+    backlinks_status: Literal["loading", "ready", "failed"] = "loading"
 
     # Task 7 owns measured breakpoint transitions. Task 5 consumes this
     # explicit presentation input now so compact/wide utility grouping is
