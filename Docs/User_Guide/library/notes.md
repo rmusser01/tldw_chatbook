@@ -930,8 +930,9 @@ the main keywords field.)*
 *Verified against fix/library-notes-docs — 2026-09-09 (PR #2549 review, at
 the re-merged wave: an unterminated ``` or ~~~ fence now keeps the rest of a
 note as code, so a `[[link]]` after it is neither recorded nor rewritten;
-Obsidian vault detection is stated as POSIX-only, since the Windows
-discovery adapter never reports a vault (task-32178).)*
+Obsidian vault detection was stated as POSIX-only, since the Windows
+discovery adapter never reported a vault — superseded by task-32178 below,
+which taught that adapter to detect one.)*
 
 *Verified against fix/library-notes-r-import — 2026-09-09 (task-32176: the
 group bulk actions say **Skip all on this page** / **Create all on this page**;
