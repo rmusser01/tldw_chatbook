@@ -4,13 +4,20 @@
 # Imports
 import json
 import os
+import threading
 import time
-from typing import Dict, List, Optional, Any
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from ..Backup_Recovery.storage_admission import acquire_storage
+
+_mapping_writes = threading.local()
 
 #
 # 3rd-Party Imports
 from loguru import logger
+
 from ..Metrics.metrics_logger import log_counter, log_histogram
 
 #
@@ -47,7 +54,8 @@ class CustomTokenizerManager:
         self._model_mappings: Dict[str, str] = {}
 
         # Create directory if it doesn't exist
-        os.makedirs(self.tokenizers_dir, exist_ok=True)
+        with acquire_storage(Path(self.tokenizers_dir)):
+            os.makedirs(self.tokenizers_dir, exist_ok=True)
 
         # Load tokenizer mappings if available
         self._load_mappings()
@@ -71,15 +79,34 @@ class CustomTokenizerManager:
                     labels={"error_type": type(e).__name__},
                 )
 
+    @contextmanager
+    def _mapping_write(self):
+        """Keep the existing synchronous mapping write admitted until return."""
+        selected = Path(self.tokenizers_dir).expanduser().absolute() / "mappings.json"
+        previous = getattr(_mapping_writes, "active", None)
+        # add_mapping calls save_mappings synchronously on this same thread.
+        # Reuse its lease so a pause can fence intake without interrupting that
+        # already accepted write between the memory update and publication.
+        if previous == (self, selected):
+            yield
+            return
+        with acquire_storage(selected):
+            _mapping_writes.active = (self, selected)
+            try:
+                yield
+            finally:
+                _mapping_writes.active = previous
+
     def save_mappings(self) -> None:
         """Save current model to tokenizer mappings."""
         mappings_file = os.path.join(self.tokenizers_dir, "mappings.json")
-        try:
-            with open(mappings_file, "w") as f:
-                json.dump(self._model_mappings, f, indent=2)
-            logger.debug("Saved tokenizer mappings")
-        except Exception as e:
-            logger.error(f"Failed to save tokenizer mappings: {e}")
+        with self._mapping_write():
+            try:
+                with open(mappings_file, "w") as f:
+                    json.dump(self._model_mappings, f, indent=2)
+                logger.debug("Saved tokenizer mappings")
+            except Exception as e:
+                logger.error(f"Failed to save tokenizer mappings: {e}")
 
     def add_mapping(self, model_name: str, tokenizer_name: str) -> None:
         """
@@ -89,8 +116,9 @@ class CustomTokenizerManager:
             model_name: The model identifier
             tokenizer_name: The tokenizer file name (without .json)
         """
-        self._model_mappings[model_name] = tokenizer_name
-        self.save_mappings()
+        with self._mapping_write():
+            self._model_mappings[model_name] = tokenizer_name
+            self.save_mappings()
 
     def load_tokenizer(self, name: str) -> Optional[Any]:
         """

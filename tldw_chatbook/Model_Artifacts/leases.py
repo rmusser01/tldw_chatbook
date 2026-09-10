@@ -15,6 +15,8 @@ import portalocker
 
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 
+from .maintenance import lease_lifetime
+
 
 _IDENTITY_SEPARATOR = "\x1f"
 
@@ -48,13 +50,15 @@ def _close_handle(
     *,
     primary_error: BaseException | None,
     failure_message: str,
-) -> None:
+) -> bool:
     try:
         handle.close()
     except Exception as close_error:
         if primary_error is None:
             raise ArtifactLeaseError(failure_message) from close_error
         primary_error.add_note(f"{failure_message}: {close_error!r}")
+        return False
+    return True
 
 
 class ArtifactLeaseError(RuntimeError):
@@ -166,6 +170,8 @@ class ArtifactOperationLease:
         self.check_interval_seconds = check_interval_seconds
         self._cancelled = cancelled
         self._handle: BinaryIO | None = None
+        self._maintenance_lifetime = None
+        self._maintenance_handle_open = False
 
     @property
     def lock_path(self) -> Path:
@@ -211,12 +217,29 @@ class ArtifactOperationLease:
         *,
         allow_initial_attempt: bool,
     ) -> ArtifactOperationLease:
+        if self._handle is not None or self._maintenance_lifetime is not None:
+            raise ArtifactLeaseError("lease is already acquired or close is unresolved")
+        self._maintenance_lifetime = lease_lifetime(self._lock_root)
+        try:
+            return self._acquire_native_until(
+                deadline, allow_initial_attempt=allow_initial_attempt
+            )
+        except BaseException:
+            if not self._maintenance_handle_open:
+                self._maintenance_lifetime.release()
+                self._maintenance_lifetime = None
+            raise
+
+    def _acquire_native_until(
+        self, deadline: float, *, allow_initial_attempt: bool
+    ) -> ArtifactOperationLease:
         if self._handle is not None:
             raise ArtifactLeaseError("lease is already acquired")
 
         try:
             self._lock_root.mkdir(parents=True, exist_ok=True)
             handle = self.lock_path.open("a+b")
+            self._maintenance_handle_open = True
         except OSError as error:
             raise ArtifactLeaseError(
                 f"failed preparing {self.mode.value} lease for {self.key.artifact_id}"
@@ -272,7 +295,7 @@ class ArtifactOperationLease:
                 self._handle = handle
                 return self
         except BaseException as acquisition_error:
-            _close_handle(
+            self._maintenance_handle_open = not _close_handle(
                 handle,
                 primary_error=acquisition_error,
                 failure_message=(
@@ -311,6 +334,9 @@ class ArtifactOperationLease:
                 f"failed closing {self.mode.value} lease for {self.key.artifact_id}"
             ),
         )
+        self._maintenance_handle_open = False
+        self._maintenance_lifetime.release()
+        self._maintenance_lifetime = None
 
     def __enter__(self) -> ArtifactOperationLease:
         """Acquire and return this lease for a context manager.
