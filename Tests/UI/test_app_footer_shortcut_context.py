@@ -424,12 +424,15 @@ async def test_footer_control_reproduces_the_historical_ellipsis_drop():
 
 def _library_landing_shortcuts_with_pane_cycle() -> tuple[tuple[str, str], ...]:
     """Mirrors ``LibraryScreen.LIBRARY_LANDING_SHORTCUTS`` -- the real
-    registration task-2860 was filed against (`/`, `i`, `n`, and the F6
-    pane-cycle hint the reserved-key filter used to silently drop)."""
+    registration task-2860 was filed against (`/`, `i`, ctrl+n, and the F6
+    pane-cycle hint the reserved-key filter used to silently drop). New
+    note's key changed from a bare `n` to ``ctrl+n`` in task-32138 (ctrl+n
+    now works on the landing, matching the Notes canvas's own advertised
+    copy instead of two different keys in two footers)."""
     return (
         ("/", "focus search"),
         ("i", "import content"),
-        ("n", "new note"),
+        ("ctrl+n", "new note"),
         ("F6", "next pane"),
     )
 

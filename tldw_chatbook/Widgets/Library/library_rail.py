@@ -224,12 +224,42 @@ class LibraryRailSearchInput(SelectAllOnFocusingClickInput):
     "/" -- ``SelectAllOnFocusingClickInput`` extends it to the box's first
     click too, so whichever way the user re-enters the box (click or "/"),
     typing replaces rather than appends.
+
+    Opt-in only: pass ``swallow_slash_on_focus=False`` for a box whose
+    CONTENT legitimately contains "/" (fix round 1 Important 4 -- the
+    Notes filter matches folder-style paths like "Work/Q3", so swallowing
+    every "/" it receives while focused made that unable to be typed at
+    all; the rail search box has no such content and keeps the default).
+    Ruling: "/" only ever acts as the focus-accelerator while the box is
+    NOT focused (the screen-level handler already gates that); once
+    focused, a box with the swallow disabled treats "/" like any other
+    character.
     """
+
+    def __init__(
+        self, *args: Any, swallow_slash_on_focus: bool = True, **kwargs: Any
+    ) -> None:
+        """Build the search box, optionally opting out of "/" swallowing.
+
+        Args:
+            *args: Positional arguments forwarded to ``Input.__init__``.
+            swallow_slash_on_focus: When ``True`` (the default rail-search
+                behavior), a focused box intercepts "/" and selects all
+                text instead of typing it, per the class docstring. Pass
+                ``False`` for a box whose content legitimately contains
+                "/" (e.g. the Notes filter), where "/" must type normally
+                once the box already has focus.
+            **kwargs: Keyword arguments forwarded to ``Input.__init__``.
+        """
+        super().__init__(*args, **kwargs)
+        self._swallow_slash_on_focus = swallow_slash_on_focus
 
     async def _on_key(self, event: Key) -> None:
         # Same slash representations the screen-level handler accepts --
         # some platforms/layouts emit key="slash" without character="/".
-        if event.key in {"/", "slash"} or event.character == "/":
+        if self._swallow_slash_on_focus and (
+            event.key in {"/", "slash"} or event.character == "/"
+        ):
             self.select_all()
             event.stop()
             event.prevent_default()
