@@ -315,6 +315,11 @@ its own Use in Console, and not at the bottom of the editor below every
 field. Its own row so the label paints in full even in the narrowest editor
 pane.
 
+That header **scrolls with the editor**: on a long prompt, scroll back to the
+top of the editor to reach it. The action strip that stays put at the bottom
+of the pane is the lifecycle one (**Save changes** / **Discard changes** /
+**More actions**); Use in Console is not in it.
+
 **More actions** expands inline for a saved, clean item. It contains Export…,
 Copy Markdown, Duplicate, Collections, History, and Delete. Press **Escape** to
 close it and return focus to More actions.
@@ -494,3 +499,10 @@ reasons and Previous/Next. Fix round 2: that header row now hides itself along
 with the button, instead of leaving an empty raised strip; and re-entering
 Media at an ordinary width no longer drops a pane priority the user just set
 with a grip.)*
+
+*Verified against fix/library-crit8-riders-a — 2026-09-10 (task-32104: the
+guide now states where "Use in Console" lives and that the editor header
+scrolls, rather than implying it is always on screen. The one-page pager rule
+behind this page's Previous/Next behaviour is now one shared helper across
+Media, Conversations and Prompts, with no change to what any of them
+renders.)*

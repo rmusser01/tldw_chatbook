@@ -147,7 +147,7 @@ def test_skipped_row_never_offers_retry_and_keeps_its_own_reason() -> None:
         error="Unsupported file type: .heic Supported types: .pdf, .txt",
     )
 
-    assert row.line == "○ skipped · photo.heic · Unsupported file type: .heic"
+    assert row.line == "– skipped · photo.heic · Unsupported file type: .heic"
     assert row.can_retry is False
 
 

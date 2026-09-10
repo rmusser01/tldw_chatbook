@@ -11,8 +11,8 @@ from rich.cells import get_character_cell_size
 
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.Workspaces.conversation_browser_state import (
-    _parse_browser_timestamp,
     format_console_relative_age,
+    parse_browser_timestamp,
 )
 
 NOTES_SORT_MODES = ("newest", "oldest", "title")
@@ -745,7 +745,7 @@ def _absolute_local_label(value: str) -> str:
     reformats it into the codebase's established absolute-timestamp
     convention (``strftime("%Y-%m-%d %H:%M")``, e.g. schedules' task_detail.py).
     """
-    parsed = _parse_browser_timestamp(value)
+    parsed = parse_browser_timestamp(value)
     if parsed is None:
         return ""
     return parsed.astimezone().strftime("%Y-%m-%d %H:%M")
