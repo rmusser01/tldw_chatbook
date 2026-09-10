@@ -406,6 +406,20 @@ class ActorPackActivationService:
             )
             if not privacy.verified_private:
                 raise ValueError
+            from tldw_chatbook.Character_Chat.artwork_attribution import (
+                ARTWORK_NAMESPACE,
+                CONVERSION_NAMESPACE,
+                decode_artwork_attribution,
+            )
+
+            artwork = (
+                decode_artwork_attribution(
+                    section.artwork_attribution,
+                    {asset["expression_key"]: asset["sha256"] for asset in raw_assets},
+                )
+                if section.artwork_attribution is not None
+                else {"pack": None, "assets": {}}
+            )
             asset_rows: list[dict[str, Any]] = []
             for index, ((asset, data), raw) in enumerate(
                 zip(section.assets, raw_assets, strict=True), start=1
@@ -428,6 +442,12 @@ class ActorPackActivationService:
                 row["original_expression_key"] = row.pop("original_label")
                 row["source_filename"] = filename
                 row["source_context"] = {"provenance": "actor-pack-import"}
+                attribution = artwork["assets"].get(raw["expression_key"])
+                if attribution is not None:
+                    row["source_context"][ARTWORK_NAMESPACE] = attribution
+                conversion = artwork.get("conversions", {}).get(raw["expression_key"])
+                if conversion is not None:
+                    row["source_context"][CONVERSION_NAMESPACE] = conversion
                 asset_rows.append(row)
             manifest["pack_content_sha256"] = compute_pack_content_sha256(manifest)
             validated = validate_visual_identity_manifest(manifest)
@@ -438,8 +458,11 @@ class ActorPackActivationService:
                 "source_context": {
                     **dict(review.provenance),
                     **{f"license_{key}": value for key, value in review.license},
+                    "profile_pack_id": f"profile-{uuid4().hex}",
                 },
             }
+            if artwork["pack"] is not None:
+                pack["source_context"][ARTWORK_NAMESPACE] = artwork["pack"]
             return _PreparedSharedVisual(pack, manifest, tuple(asset_rows))
         except ActorPackActivationError:
             raise

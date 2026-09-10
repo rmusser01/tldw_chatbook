@@ -27,6 +27,7 @@ from .repository import (
     PersonaVisualAssetRecord,
     PersonaVisualGraph,
     PersonaVisualIdentity,
+    _source_context_json,
 )
 from .validation import validate_persona_visual_manifest
 
@@ -163,6 +164,7 @@ def persona_visual_draft_from_graph(
     graph: PersonaVisualGraph,
     *,
     source_storage_keys: Mapping[str, str],
+    source_context: Mapping[str, str] | None = None,
 ) -> PersonaVisualAuthoringDraft:
     """Snapshot one active graph plus caller-confined materialized source keys."""
 
@@ -191,7 +193,7 @@ def persona_visual_draft_from_graph(
             title=graph.pack.title,
             description=graph.pack.description,
             source_kind=graph.pack.source_kind,
-            source_context=(),
+            source_context=tuple(sorted((source_context or {}).items())),
             manifest_json=_canonical_json(_manifest_document(graph.version.manifest)),
             assets=assets,
         )
@@ -452,6 +454,9 @@ def _validated_draft(value: object) -> PersonaVisualAuthoringDraft:
                 or type(item[1]) is not str
             ):
                 raise ValueError
+        if len(dict(value.source_context)) != len(value.source_context):
+            raise ValueError
+        _source_context_json(dict(value.source_context))
         if type(value.manifest_json) is not str or type(value.assets) is not tuple:
             raise ValueError
         _nonnegative_int(value.revision)
