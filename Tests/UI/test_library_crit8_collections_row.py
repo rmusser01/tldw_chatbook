@@ -726,3 +726,33 @@ async def test_a_wedged_shared_read_is_not_inherited_by_the_next_pass() -> None:
 
     assert started == 2
     assert page.total == 0
+
+
+async def test_an_instant_transport_timeout_does_not_claim_the_deadline() -> None:
+    """task-32103 (fix round 2): the "(waited 5 s)" claim is about the clock.
+
+    Since 3.10 ``socket.timeout is TimeoutError`` and the OSError family
+    raises it for ETIMEDOUT, so classifying the failure by exception type
+    let a transport timeout that fired instantly render the deadline's copy
+    -- the exact false claim fix round 1 removed for other fast failures.
+    """
+    app = _build_test_app()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        async def instant_transport_timeout():
+            raise TimeoutError("timed out")  # what socket/OSError raise
+
+        scope = app.collections_capture_scope_service
+        scope.read_unfiltered_first_page = instant_transport_timeout
+        await screen._read_library_collections_count()
+
+        assert screen._library_collections_count_failure == "error"
+        shell_input = screen._build_library_shell_input()
+        assert shell_input.collections_count_unavailable is True
+        assert not any("waited" in line for line in shell_input.details_lines), (
+            shell_input.details_lines
+        )

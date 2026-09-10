@@ -97,6 +97,19 @@ Four fixes, one of them a shared read.
   it sits below the UI layer that owns the snapshot deadline) makes the next
   caller start its own read instead.
 
+**Fix round 2 (PR #2569 re-review).** The AC#3 sentence was reaching the rail
+in the wrong slot: `details_lines` is a positional three-slot contract (Source /
+body / DB sizes) and nothing renders a fourth entry, so appending the failure
+sentence put it in the DB-sizes slot and evicted the real
+`Prompts … · Chats/Notes … · Media …` line. It now joins the counts value at
+index 1 -- one line changed, no rail change, no new id -- pinned by a test that
+renders the rows through `LibraryRail`'s shipped compose from the screen's own
+`_library_details_lines` output. Also: the "waited 5 s" claim is decided by the
+CLOCK rather than `isinstance(exc, TimeoutError)`, since `socket.timeout is
+TimeoutError` (3.10+) and `wait_for` propagates an inner TimeoutError unchanged,
+so neither the type nor the catch site can tell a transport timeout from the
+deadline.
+
 Also pinned the `shield` property the sharing rests on (a count deadline must
 not cancel the evidence read), which nothing covered.
 

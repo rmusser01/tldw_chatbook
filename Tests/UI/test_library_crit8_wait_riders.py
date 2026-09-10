@@ -161,3 +161,44 @@ async def test_a_settled_wait_never_repaints_on_the_mounted_screen() -> None:
         await asyncio.sleep(0.15)
         await pilot.pause()
         assert repaints == [], "a settled wait still repainted its surface"
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_import_receipt_actually_refreshes_the_sources() -> None:
+    """The other half of the cancelled-import fix, across the boundary.
+
+    (Re-review N3) The unit pin above asserts the OUTCOME carries
+    ``refresh_sources=True``; the mounted test the Qodo #4 decline points at
+    asserts only the status copy. Nothing observed the refresh itself. This
+    drives the publisher the coordinator calls
+    (``_publish_current_screen`` → ``_present_library_skills_import_snapshot``)
+    on a real mounted screen and asserts both refresh legs run -- the rail
+    badge's snapshot and the mounted list's browse.
+    """
+    from Tests.UI.test_library_shell import (
+        LIBRARY_TEST_SIZE,
+        LibraryHarness,
+        _active_library_screen,
+        _build_test_app,
+        _wait_for_library_shell,
+    )
+
+    app = _build_test_app()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen._library_selected_row_id = "browse-skills"
+
+        calls: list[str] = []
+        screen._refresh_local_source_snapshot = lambda: calls.append("snapshot")
+        screen._request_library_skills_browse = lambda *a, **k: calls.append("browse")
+
+        screen._present_library_skills_import_snapshot(refresh_sources=True)
+        assert calls == ["snapshot", "browse"], calls
+
+        # ...and a receipt that promises nothing refreshes nothing.
+        calls.clear()
+        screen._present_library_skills_import_snapshot(refresh_sources=False)
+        assert calls == []

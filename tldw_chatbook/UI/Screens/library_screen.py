@@ -10390,6 +10390,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_collections_count_authority = None
             self._library_collections_count_failure = ""
             return
+        started_at = time.monotonic()
         try:
             # (task-32103) The shared unfiltered page-1 read: the
             # onboarding evidence seam asks the same question in the same
@@ -10414,9 +10415,19 @@ class LibraryScreen(BaseAppScreen):
             self._library_collections_count_authority = authority.key
             # (fix round 1) A read that failed in 20 ms must not tell the
             # user it waited five seconds, so the KIND is recorded, not just
-            # the fact.
+            # the fact. (fix round 2) By the CLOCK, not by the exception
+            # type: since 3.10 ``socket.timeout is TimeoutError`` and the
+            # OSError family raises it for ETIMEDOUT, so an isinstance check
+            # let a transport timeout that fired instantly claim the
+            # deadline's copy -- and ``wait_for`` propagates an inner
+            # TimeoutError unchanged, so catching at that line cannot tell
+            # them apart either. The sentence claims elapsed time, so
+            # elapsed time is what decides it.
             self._library_collections_count_failure = (
-                "timeout" if isinstance(exc, TimeoutError) else "error"
+                "timeout"
+                if time.monotonic() - started_at
+                >= LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS
+                else "error"
             )
             return
         self._library_collections_prefetched_total = page.total
@@ -14430,22 +14441,28 @@ class LibraryScreen(BaseAppScreen):
                 f"Media {counts.get('media', 0)} · "
                 f"Conversations {counts.get('conversations', 0)}"
             )
-        lines = [runtime_value, counts_or_error]
         if collections_count_failure:
             # task-32103: a count read that failed or ran out of deadline is
             # said out loud -- a silently absent number reads exactly like a
             # source whose count is off by design. The caller passes the same
             # gated value the row's "(—)" uses, so the two can never
             # disagree, and only a genuine deadline claims a wait.
+            #
+            # (fix round 2) It joins the COUNTS value rather than becoming a
+            # fourth line: ``details_lines`` is a positional three-slot
+            # contract (Source / body / DB sizes -- see ``LibraryRail.
+            # _compose_details_body_children``), so a fourth entry landed in
+            # the DB-sizes slot and evicted the real sizes line.
             waited = (
                 f" (waited {LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS:g} s)"
                 if collections_count_failure == "timeout"
                 else ""
             )
-            lines.append(
-                f"Collections count unavailable{waited} — "
+            counts_or_error = (
+                f"{counts_or_error} · Collections count unavailable{waited} — "
                 "open Collections to load it."
             )
+        lines = [runtime_value, counts_or_error]
         sizes_line = self._library_db_sizes_line()
         if sizes_line is not None:
             lines.append(sizes_line)
