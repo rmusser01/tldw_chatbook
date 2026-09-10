@@ -8656,6 +8656,47 @@ _CredentialClearModal {
 #settings-advanced-config-card {
     height: 1fr;
     min-height: 0;
+    border: none;
+    padding: 0;
+    margin: 0;
+}
+
+#settings-advanced-config-actions {
+    grid-size: 2;
+    grid-rows: 1;
+    grid-gutter: 0 1;
+    height: 2;
+}
+
+#settings-advanced-config-actions Button {
+    width: 1fr;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    border: none;
+    padding: 0;
+}
+
+#settings-advanced-guide {
+    height: auto;
+    max-height: 8;
+    overflow-y: auto;
+    padding: 0;
+    margin: 0;
+    border: none;
+}
+
+#settings-advanced-guide Button {
+    height: 1;
+    min-height: 1;
+    border: none;
+}
+
+#settings-advanced-config-validation-status,
+#settings-advanced-config-result {
+    height: auto;
+    max-height: 3;
+    overflow-y: auto;
 }
 
 .settings-secondary-card {
@@ -8730,7 +8771,7 @@ _CredentialClearModal {
 
 #settings-advanced-config-editor {
     height: 1fr;
-    min-height: 10;
+    min-height: 5;
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
 }
@@ -8754,6 +8795,47 @@ _CredentialClearModal {
 
 #settings-imagegen-editor {
     height: auto;
+}
+
+/* Web Search shares the Settings detail pane's scrolling document. */
+#settings-web-search-panel,
+#settings-web-search-fields {
+    width: 100%;
+    height: auto;
+}
+
+#settings-web-search-panel Select {
+    width: 100%;
+    margin: 0;
+}
+
+#settings-web-search-panel Button {
+    width: auto;
+    max-width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    border: none;
+    margin: 0 1;
+    padding: 0 1;
+}
+
+#settings-web-search-panel Link {
+    margin: 0 1;
+    height: auto;
+}
+
+#settings-web-search-panel .settings-compact-input {
+    width: 100%;
+}
+
+#settings-web-search-compact-actions {
+    display: none;
+    height: auto;
+}
+
+.settings-workbench-compact #settings-web-search-compact-actions {
+    display: block;
 }
 
 /* Settings > Speech & TTS: the Settings detail pane is the single scroll

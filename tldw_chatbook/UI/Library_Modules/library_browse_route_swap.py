@@ -123,8 +123,11 @@ def build_library_notes_source_strip(
         canvas_kind in LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS
         and screen._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
     )
+    # task-32136: wide Folder files is a MODE of Notes, not a task that
+    # replaces it -- both switches stay (compact is unchanged).
     wide_focused_task = (
         not adaptive_database_notes
+        and not screen._file_notes_active()
         and not screen._notes_state.compact
         and screen._library_notes_focused_task_active()
     )

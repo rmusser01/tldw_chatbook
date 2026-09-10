@@ -84,7 +84,10 @@ from tldw_chatbook.Agents.agent_service import (
     build_first_request_schema_plan,
     build_run_log_request_plan,
 )
-from tldw_chatbook.Agents.agent_runtime import render_tool_protocol
+from tldw_chatbook.Agents.agent_runtime import (
+    render_tool_protocol,
+    split_visible_text_and_tool_call,
+)
 from tldw_chatbook.Agents.project_instruction_resolver import (
     InstructionPromotionSnapshot,
     InstructionSnapshot,
@@ -2546,7 +2549,8 @@ def _agent_artifact_source(message: Mapping[str, Any]) -> TraceProvenanceSource:
     ):
         return TraceProvenanceSource.TOOL_RESULT
     if role == "assistant" and (
-        bool(message.get("tool_calls")) or content.lstrip().startswith("```tool")
+        bool(message.get("tool_calls"))
+        or split_visible_text_and_tool_call(content)[1] is not None
     ):
         return TraceProvenanceSource.TOOL_CALL
     return TraceProvenanceSource.ACTIVE_REQUEST

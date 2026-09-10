@@ -78,7 +78,7 @@ Scope Inspector's buttons lose their "— no changes" suffix.
 
 | Badge | What it means | Categories |
 |---|---|---|
-| **Draft — save with s** | Edits are held as a draft; press **s** (or **Save (s)**) to write them. | Providers & Models, Speech & TTS, Appearance, Console Behavior, Storage, Privacy & Security, [RAG](settings/rag.md) |
+| **Draft — save with s** | Edits are held as a draft; press **s** (or **Save (s)**) to write them. | Providers & Models, Web Search, Speech & TTS, Appearance, Console Behavior, Storage, Privacy & Security, [RAG](settings/rag.md) |
 | **Draft — save/revert below** | Drafted, but the panel has its own **Save** and **Revert**. | Image Gen |
 | **Auto-saved** | Written as you make each change; nothing to save. | Splash Screen |
 | **Applies immediately** | Each action takes effect at once; no draft to save or revert. | Workspaces, [My Profile](settings/personal-context-profile.md) |
@@ -98,7 +98,50 @@ the draft; see that section and Quirks.) A draft that fails
 validation shows "State: Needs correction | \<the problem\>" and Save stays
 blocked; with nothing pending, the buttons read **Save (s) — no changes** and
 **Revert (r) — no changes**. Saving is always local: nothing leaves your machine
-unless you run Manual sync from Overview yourself.
+unless you explicitly run a network action, such as Manual sync from Overview
+or **Test saved settings** in Web Search.
+
+### Web Search: first setup and additional backends
+
+Open **F9 → Web Search** under **Core**, or filter categories by a provider
+name such as Brave, Serper, or SearXNG.
+
+1. Choose **Default search backend**. Basic and deep search use this saved
+   preference; a per-search override remains temporary. Selecting a default
+   also opens that backend's fields.
+2. Enter the required API key, IDs, or SearX instance URL. Saved secrets stay
+   hidden: an empty replacement field keeps the saved key. **Clear local…**
+   stages removal. The source line identifies environment variables, which
+   take precedence over local values and are not removed by Clear.
+3. **Save (s)** writes all staged Web Search changes together. At compact
+   terminal sizes, scroll to **Save all search settings**. While typing in an
+   input, Tab out before using the single-letter shortcut. **Revert (r)** asks
+   before discarding the category's draft. Provider and category switching keep
+   drafts, including masked replacements. Leaving and reopening Settings also
+   preserves **Configure backend** and an in-progress save. Reopen Web Search
+   to see its saved or failed result; a failed write keeps the draft. If the
+   result says **Saved to disk**, restart the app before searching: the file was
+   written, but runtime refresh failed.
+4. Read the local setup status, then choose **Test saved settings**. The test
+   sends **tldw chatbook** to the configured backend and may use API quota. It
+   does not generate an AI answer. Save or revert all Web Search edits before
+   testing. A successful test applies only to that saved setup; edits or
+   navigation invalidate the displayed result. Request retries can extend the
+   test duration. If you leave while a test is running, it finishes in the
+   background and its result is discarded. A second test remains unavailable
+   until the earlier request finishes.
+
+For experienced users, **Configure backend** prepares any of the ten
+integrations without changing the default. Incomplete setups can be saved;
+the page continues to identify missing requirements. No automatic provider
+fallback occurs. A successful save does not prove authentication or quota.
+
+DuckDuckGo needs the `websearch` optional dependencies and no API key.
+SearX/SearXNG needs an instance that permits JSON searches; local and LAN
+endpoints are supported. Bing is retained for legacy configuration but its
+retired API cannot pass setup. Google Custom Search is restricted to existing
+customers, and the current Kagi integration uses its deprecated v0 API. The
+page links to each backend's setup guide and displays these restrictions.
 
 ### The category map
 
@@ -106,6 +149,7 @@ unless you run Manual sync from Overview yourself.
 |---|---|---|---|
 | Core | **Overview** (view) | Readiness, storage, privacy, Console behavior, diagnostics. | Read-only here |
 | Core | **Providers & Models** | Default provider, model, and readiness shared with Console. | Draft — save with s |
+| Core | **Web Search** | Shared basic/deep search default, backend credentials, local setup checks, and explicit saved-settings test. | Draft — save with s |
 | Core | **Speech & TTS** | Application-wide TTS provider, model, voice, format, speed, and per-provider setup. | Draft — save with s (leave prompts) |
 | Interface | **Appearance** | Theme, density, and visual defaults shared with the app shell. | Draft — save with s |
 | Interface | **Theme** | Full theme editor, custom colors, presets, and live preview. | Managed in editor |
@@ -579,17 +623,35 @@ preview, and the shipped default, with **Save**, **Reset to default**, and
 
 ### Expert — Advanced Config
 
-Raw configuration editing, gated: "Raw TOML bypasses guided validation and
-should be used only for expert edits." Five chips at the top — **Providers &
-Models**, **Console Behavior**, **Storage**, **Privacy & Security**,
-**Diagnostics** — jump to the guided page instead, and a status line tracks
-state: "Last validated: not validated" / "current text" / "stale after edits".
+Advanced Config keeps a raw TOML draft while you switch categories or leave
+Settings. Invalid and empty drafts are retained too. The **\*** marker and
+**Unsaved raw TOML** banner show that the draft has not been saved. Drafts live
+only in this running app session; closing the app does not save them.
 
-| Button | What it does |
+Expand **Raw editing guide** for shortcuts to Providers & Models, Console
+Behavior, Storage, Privacy & Security, and Diagnostics. Prefer their guided
+validation when those categories support the setting you need.
+
+| Control | What it does |
 |---|---|
-| **Validate Raw TOML** | Checks the editor text. |
-| **Load Backup** | Loads the backup copy into the editor **without saving it** — a preview you still have to validate. Pressing it authorizes that request to replace the text already in the editor. If you press it again before the earlier read finishes, only the newest request can change the editor, result line, or validation state; older results and errors are ignored. Successful repeats report the ordinary loaded-preview result rather than claiming unsaved edits were kept. If you carry on typing after the newest press, your edits still win: the result line reads "not applied — the editor changed while the backup was loading; unsaved edits were kept". Press **Load Backup** again once you have finished typing. |
-| **Save Raw TOML** | Blocked until the text you are looking at is the exact text that last validated. Writes atomically, keeping a `.bak` backup of the previous file, then reloads. |
+| **Validate Raw TOML** | Checks syntax and the top-level TOML table. It does not test backend credentials or connectivity. |
+| **Save Raw TOML** | Enabled only after the current text validates and the loaded file still matches. Writes atomically, keeps a `.bak` of an existing file, then refreshes runtime configuration. Newer edits made during a save remain unsaved. |
+| **Load Backup** | Loads the backup into the editor without saving it. If you have unsaved work, asks before replacing it. Validate the loaded draft before saving. |
+| **Revert Raw TOML** | Reloads the current file. Asks before discarding unsaved work. The **r** shortcut works outside text entry; **Esc** keeps the draft in the confirmation dialog. |
+
+The validation line reads **Not validated**, **Current text validated**, or
+**Text changed; validate again**. Editing after validation disables Save.
+Background operations retain the draft and finish if you navigate elsewhere.
+Recovery buttons stay unavailable until the current operation finishes.
+
+If guided Settings, another process, or a different config profile changes the
+file while you have a draft, saving is blocked. Copy any edits you want to keep,
+choose **Revert Raw TOML** to load the current file, reapply those edits, then
+validate and save. A failed disk write retains your draft. If the file was saved
+but a later refresh fails, the status says **Saved to disk** and asks you to
+restart. Any newer edits remain unsaved; copy them before restarting. If the
+saved file could not be read back, Save stays blocked until **Revert Raw TOML**
+reloads it; copy any newer edits before reverting too.
 
 ### Domain Defaults — Image Gen
 
@@ -756,12 +818,13 @@ not open an editor.
   provider+model setting outranks them. Rail presentation is different: after a
   successful Save, return to a freshly opened Console screen to see it; no app
   restart is required.
-- **Save Raw TOML is greyed out.** You edited the text after validating it.
-  Press **Validate Raw TOML** again — until you do, the status line says "Last
-  validated: stale after edits".
+- **Save Raw TOML is greyed out.** Validate the current text. If the file changed
+  elsewhere, keep a copy of your draft, then **Revert Raw TOML** to reload before
+  reapplying and validating the edits. Read failures also require a successful reload.
 - **A category still shows "\*" after you left it.** Deliberate: drafts survive
   switching categories and leaving the screen, and no dialog warns you, so the
-  **\*** is the reminder. Go back and press **s** or **r**. (Speech & TTS is
+  **\*** is the reminder. Go back and press **s** or **r**. Advanced Config
+  uses its own **Validate Raw TOML**, **Save Raw TOML**, and **Revert Raw TOML** controls. (Speech & TTS is
   the exception — it never leaves a **\*** behind, because leaving it forces
   the save/discard choice.)
 - **Speech & TTS's State banner promises what the category won't do.** While

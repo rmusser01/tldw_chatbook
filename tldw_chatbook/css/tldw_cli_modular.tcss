@@ -11154,13 +11154,9 @@ SplashScreen.hidden {
 }
 
 /* ===== MODULE: features/_wizards.tcss ===== */
-/* ========================================
- * Wizard Framework Styles
- * ======================================== */
+/* Wizard Framework Styles */
 
-/* ========================================
- * Base Wizard Container
- * ======================================== */
+/* Base Wizard Container */
 
 .wizard-container {
     layout: vertical;
@@ -11182,9 +11178,7 @@ SplashScreen.hidden {
     height: 3;
 }
 
-/* ========================================
- * Progress Indicator
- * ======================================== */
+/* Progress Indicator */
 
 .wizard-progress {
     layout: horizontal;
@@ -11251,9 +11245,7 @@ SplashScreen.hidden {
     background: $success;
 }
 
-/* ========================================
- * Step Container
- * ======================================== */
+/* Step Container */
 
 .wizard-steps-container {
     height: 1fr;
@@ -11281,9 +11273,7 @@ SplashScreen.hidden {
 
 /* Step animations removed - not supported in Textual */
 
-/* ========================================
- * Navigation Bar
- * ======================================== */
+/* Navigation Bar */
 
 .wizard-navigation {
     layout: horizontal;
@@ -11327,9 +11317,7 @@ SplashScreen.hidden {
     opacity: 0.5;
 }
 
-/* ========================================
- * Content Type Selection
- * ======================================== */
+/* Content Type Selection */
 
 
 .content-type-card {
@@ -11369,9 +11357,7 @@ SplashScreen.hidden {
     text-style: bold underline;
 }
 
-/* ========================================
- * Content Selection
- * ======================================== */
+/* Content Selection */
 
 
 .content-search-input {
@@ -11414,9 +11400,7 @@ SplashScreen.hidden {
     padding: 2;
 }
 
-/* ========================================
- * Quick Settings
- * ======================================== */
+/* Quick Settings */
 
 .settings-section {
     margin-bottom: 2;
@@ -11541,9 +11525,7 @@ SplashScreen.hidden {
     margin-bottom: 1;
 }
 
-/* ========================================
- * Processing Step
- * ======================================== */
+/* Processing Step */
 
 
 .progress-text {
@@ -11574,9 +11556,7 @@ SplashScreen.hidden {
 }
 
 
-/* ========================================
- * Validation and Errors
- * ======================================== */
+/* Validation and Errors */
 
 .error-message {
     color: $error;
@@ -11587,24 +11567,18 @@ SplashScreen.hidden {
     text-align: center;
 }
 
-/* ========================================
- * Animations and Transitions
- * ======================================== */
+/* Animations and Transitions */
 
 /* Staggered entrance animations removed - not supported in Textual */
 
 /* Progress bar animation removed - not supported in Textual */
 
 
-/* ========================================
- * Responsive adjustments
- * ======================================== */
+/* Responsive adjustments */
 
 /* Media queries not supported in Textual - using fixed layouts */
 
-/* ========================================
- * Chatbook Creation Wizard Specific Styles
- * ======================================== */
+/* Chatbook Creation Wizard Specific Styles */
 
 /* Basic Info Step */
 BasicInfoStep {
@@ -11804,9 +11778,7 @@ ProgressStep .hidden {
     display: none;
 }
 
-/* ========================================
- * Chatbook Import Wizard Specific Styles
- * ======================================== */
+/* Chatbook Import Wizard Specific Styles */
 
 /* File Selection Step */
 FileSelectionStep {
@@ -12160,9 +12132,7 @@ ImportProgressStep .stat-value {
     text-align: right;
 }
 
-/* ========================================
- * SmartContentTree Styles (used by wizards)
- * ======================================== */
+/* SmartContentTree Styles (used by wizards) */
 
 SmartContentTree {
     layout: vertical;
@@ -12359,19 +12329,9 @@ SmartContentTree Tree > .selected-node {
     margin-top: 1;
 }
 
-/* Design intent #2/#3: a step's internal choice list (Provider's ~27-row
- * catalog; Model's up-to-20 discovered models; Appearance's 20+ themes) must
- * not by itself consume the whole step's visible height and push the rest
- * of the step (the API-key field, Summary-style action rows) out of view.
- * RadioSet is a VerticalScroll (Textual default height: auto, no cap) --
- * capping it here gives it its OWN scrollbar so the step's remaining
- * content stays on screen without any manual scrolling.
- *
- * A five-row minimum keeps the control from collapsing as asynchronous
- * labels/statuses change; the seven-row cap exposes more choices when space
- * is available without letting the catalog displace the key field or footer.
- * At supported narrow sizes the containing .setup-step remains the scroll
- * viewport, while the fixed progress/navigation regions stay on screen. */
+/* Design intent #2/#3: keep choice lists independently scrollable at 5–7 rows
+ * so catalogs cannot displace the key field or footer. The containing step
+ * remains the narrow-screen viewport; progress/navigation stay fixed. */
 .setup-choice-list {
     min-height: 5;
     max-height: 7;
