@@ -1,5 +1,21 @@
 # Lessons: verifying against the real thing
 
+## A healthy local model does not prove capture or tool outcomes (TASK-32194–32197)
+
+**2026-09-09.** The llama.cpp server answered uncaptured messages while captured
+tool runs failed: visible planning text before a valid tool fence disagreed with
+the trace classifier. Saved COMPLETE provider calls still belonged to a FAILED,
+empty assistant response, so a successful uncaptured follow-up did not establish
+that the next captured send could recover. Reproduce through the real Console
+controller, inspect both call and assistant closure, and test a cold captured
+successor after the uncaptured turn.
+
+The same investigation received HTTP 202 from DuckDuckGo containing a challenge
+form. The backend reported no matches, and other backend error strings became
+successful ToolResults. Check the actual backend response and structured outcome
+through the provider/runtime boundary. Vary retry arguments in the regression:
+an identical-call loop test alone misses repeated execution failures.
+
 ## Check the target platform's exact interpreter build before pinning CI
 
 **TASK-32160 Task14, 2026-09-08.** A fresh macOS ARM64 evidence job pinned the
@@ -2410,3 +2426,15 @@ stop dependent controllers. Qualify standalone dependency discovery outside the
 test suite's profile fixtures; a missing-dependency guard can itself initialize
 configuration before model loading begins. Receipts are retained in
 `Docs/QA/tts-macos-burndown-2026-09-09/review/`.
+
+## Discard recovery must survive a completed uncaptured turn
+
+PR #2561 review (2026-09-09) reproduced a missing combination after the
+failed-empty recovery repair: interrupt a captured tool run, explicitly Discard,
+complete a Capture Off send, then turn capture back on. All four project-on/off
+and warm/cold cases blocked because the closed-history proof lost the original
+discarded owner's RESPONSE_STARTED allowance. Direct Discard recovery and failed
+empty recovery each passed separately. Re-reading the durable original Discard
+marker at final binding repaired the mixed sequence without changing prior trace
+records. Mutation controls changing only that marker to failed still reject.
+Test transitions between recovery modes, not just each mode in isolation.

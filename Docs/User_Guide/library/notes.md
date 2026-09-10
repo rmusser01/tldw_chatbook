@@ -72,7 +72,10 @@ editor's own Back control returns to its list.
 ```
 
 - **Source strip** — a "Library notes | Folder files" toggle above the canvas.
-  This page covers the Library notes side; see below for Folder files.
+  This page covers the Library notes side; see below for Folder files. At
+  wide sizes both switches stay on the strip in either mode, so switching
+  back from Folder files is the same control you switched in with. On
+  compact terminals the strip becomes a **‹ Library / Notes** cue instead.
 - **Notes list** — the default view: a "Notes (N)" header, the
   "Filter notes… (Enter)" field, a toolbar (**New** / Select / Add from
   files… / Export, plus the folder and placement actions — two rows on a
@@ -126,9 +129,11 @@ editor's own Back control returns to its list.
 Three different notes worlds meet here, and each surface now says so in
 place: the strip above the canvas switches between two of them.
 **Library notes** (this page) keeps notes inside the Library database.
-**Folder files** swaps the whole canvas for the File Notes
-workspace, which edits plain files under a folder you choose directly and
-has its own Session Git panel — see [File notes](file-notes.md). **Keep a
+**Folder files** is a mode of this same Notes screen: it swaps the work area
+for the File Notes workspace — which edits plain files under a folder you
+choose directly and has its own Session Git panel — while the Library rail
+and the source strip stay where they were. See
+[File notes](file-notes.md). **Keep a
 folder synced** creates a reviewed, lasting relationship between one local
 folder and a managed Library Notes folder. Unlike Folder files, both sides
 remain distinct authorities and every reconciliation is reviewed or recovered
@@ -850,6 +855,11 @@ with reasons, reads frontmatter titles and tags, and links wikilinks resolved
 within the batch. Merged with the import-ux wave above: the Obsidian toggle
 lives in that wave's single review options slot, and an Obsidian skip is
 listed in the receipt's **Skipped (N)** disclosure with its own reason.)*
+
+*Verified against fix/library-notes-file-notes — 2026-09-09 (task-32136:
+Folder files is a mode of Notes — at wide sizes the Library rail and the
+"Library notes | Folder files" strip stay visible inside it, and the strip,
+not the back cue, is the way back.)*
 
 *Verified against fix/library-notes-editor-keys — 2026-09-09 (task-32131: `/`
 no longer types itself into the filter it focuses, and a second `/` while the

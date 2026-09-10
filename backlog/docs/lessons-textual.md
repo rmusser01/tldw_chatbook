@@ -391,6 +391,70 @@ space changing around a capped child.
 
 ---
 
+
+## A screen-owned worker must check the active category before updating shared chrome
+
+**TASK-32189 review, 2026-09-09.** The Web Search controller kept an explicit
+search test alive while the user opened Overview. Its completion correctly
+discarded stale provider evidence, but the generic draft-status callback still
+replaced Overview's State banner with Web Search's banner. The callback updated
+shared status widgets before checking the active category. A mounted test with
+a paused probe reproduced the wrong banner after navigation.
+
+**What to do.** Keep category-specific draft ownership independent of panel
+remounts, but gate shared status/inspector updates on the active category. A
+background completion may refresh its own rail marker. The regression is
+`test_probe_completion_does_not_repaint_another_category` in
+`Tests/UI/test_settings_web_search.py`.
+
+## Raw editor async work needs the live document and a lifetime beyond the screen
+
+**TASK-32190 review, 2026-09-09.** The first raw-draft controller passed its
+model race tests but lost a real typed character when a status refresh ran
+between TextArea's document update and delivery of `TextArea.Changed`. A second
+mounted probe removed Settings during a save: cancelling the screen worker did
+not stop its file-writing thread, but did skip runtime publication to the app
+and leave a copied draft falsely conflicted. Synchronous initial reads also
+acquired the config writer's lock during composition.
+
+**What to do.** Read files in workers, capture the editor document before async
+revision checks, and avoid assigning stale model text during status-only paints.
+Give persistence completion an app-owned worker and retain the live session in
+the existing memory-only navigation store. Rebind view callbacks on restoration
+and detach only callbacks still owned by the outgoing view. The regressions are
+`test_status_refresh_cannot_erase_a_queued_keystroke`,
+`test_save_finishes_after_settings_destination_is_recreated`, and
+`test_initial_config_read_does_not_block_ui_thread` in
+`Tests/UI/test_settings_raw_draft.py`.
+
+**TASK-32191 recurrence, 2026-09-09.** The guided Web Search `Input` controls had
+the same pending-event loss, and copied navigation state lost the selected
+backend and save result. Retaining the live session fixed those failures, but
+review found two event-order traps: a new panel mounted before the old panel's
+unmount and took callback ownership, so ownership-guarded invalidation was
+skipped; and Clear emitted a refresh that captured old pending text and undid
+the clear. Invalidate evidence at the new view boundary as well as teardown,
+and capture input before applying explicit Clear/Revert intent. A real-write
+fault-injection test also exposed false failure wording after a successful
+write followed by reload failure: preserve the committed baseline and report
+the disk-write and runtime-refresh outcomes separately. These regressions live
+in `Tests/UI/test_settings_web_search_lifecycle.py`.
+
+**PR #2562 Qodo review, 2026-09-10.** The guided editor's committed-write
+handling did not cover raw replacement. Six real-file regressions reproduced
+stale baselines or false failure wording when snapshot reads, runtime
+publication, or the Settings refresh callback failed after replacement, with
+and without newer edits. Return the committed snapshot independently of refresh
+success. If the snapshot itself is unavailable, report the successful write
+and require reload before another save; retain newer edits and tell users to
+copy them before restarting. The regression is
+`test_committed_raw_save_survives_refresh_failure` in
+`Tests/UI/test_settings_raw_draft.py`.
+Independent re-review then caught a second use of the missing snapshot: a
+remount treated it as a first load and silently adopted an external edit.
+Two mounted regressions now keep that state blocked across navigation and
+validation until an explicit successful Revert establishes the new baseline.
+
 ## Related
 
 - `lessons-testing-evidence.md` — includes the Pilot-harness traps (detached widget

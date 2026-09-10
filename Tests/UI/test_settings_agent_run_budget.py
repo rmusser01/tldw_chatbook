@@ -204,8 +204,7 @@ def test_seconds_are_rendered_as_a_readable_duration(seconds, expected):
 
 
 def test_the_unlimited_token_budget_says_what_it_costs_you():
-    """0 is legal but removes the only runaway backstop -- the loop
-    detector only catches identical repeated calls."""
+    """Unlimited tokens remove the spending backstop despite loop detection."""
     screen = _Screen({"agent_max_total_tokens": 0})
     field = AGENT_BUDGET_FIELDS_BY_KEY["agent_max_total_tokens"]
     hint = screen._agent_budget_hint(field)
