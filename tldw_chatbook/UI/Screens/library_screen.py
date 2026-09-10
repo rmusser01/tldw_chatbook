@@ -444,6 +444,7 @@ from ...Widgets.Library import (
     library_rag_scope_shows_recovery,
     skill_editor_warning_lines,
 )
+from ...Widgets.Library.library_rail import library_db_size_rows
 from ...Widgets.Library.library_file_notes_events import (
     FileNotesEditableOpened,
     FileNotesIdentityCleared,
@@ -13162,18 +13163,48 @@ class LibraryScreen(BaseAppScreen):
         """Shorten ``state.handoff_label`` for the Workspace group's Handoff row.
 
         Drops the redundant "Console/RAG handoff: " prefix (the "Handoff"
-        row label already says as much) and prefixes a "●" glyph directly
-        before a nonzero blocked count, so this single line carries the
-        signal the retired blocked-state callouts used to repeat three
-        times.
+        row label already says as much). task-32230 AC#2 (critique #9 row
+        29): a nonzero blocked count used to be flagged with a "●" glyph
+        and nothing else -- a colour dot beside a number, naming neither
+        what was blocked nor how to unblock it. The count now carries the
+        rule's own reason and its next step in the house
+        ``reason · next step`` grammar, read off the eligibility decision
+        the state already holds (``LibraryWorkspaceSourceRow.reason_code``).
+        The unblocked case is unchanged and grows no dot.
         """
         label = state.handoff_label
         if label.startswith(LIBRARY_HANDOFF_LABEL_PREFIX):
             label = label[len(LIBRARY_HANDOFF_LABEL_PREFIX) :]
         match = re.search(r"(\d+) blocked", label)
-        if match and int(match.group(1)) > 0:
-            label = f"{label[: match.start()]}● {match.group(0)}{label[match.end() :]}"
-        return label
+        if not match or int(match.group(1)) == 0:
+            return label
+        blocked = tuple(
+            row for row in state.source_rows if not row.active_context_eligible
+        )
+        if not blocked:
+            return label
+        reason_codes = {row.reason_code for row in blocked}
+        reason = (
+            linkable_ineligibility_label(next(iter(reason_codes)))
+            if len(reason_codes) == 1
+            else ""
+        )
+        if reason:
+            # Linking resolves it, and "Link to workspace" lives on the
+            # item's own reader header (task-32056).
+            item_types = {row.item_type for row in blocked}
+            noun = next(iter(item_types)) if len(item_types) == 1 else "item"
+            pronoun = "it" if len(blocked) == 1 else "them"
+            remedy = f"Link {pronoun} from the {noun}'s header"
+        else:
+            # Not link-resolvable (or a mixed set): the rule wrote its own
+            # recovery sentence, which is already a next step.
+            reason = LIBRARY_GENERIC_WORKSPACE_BLOCK
+            remedy = blocked[0].recovery_copy.strip().rstrip(".") or (
+                "Open the item to see why"
+            )
+        head = label[: match.start()].rstrip().rstrip(",")
+        return f"{head} · {match.group(0)} · {reason} · {remedy}"
 
     def _workspaces_detail_rows(
         self,
@@ -14311,35 +14342,33 @@ class LibraryScreen(BaseAppScreen):
                 f"Media {counts.get('media', 0)} · "
                 f"Conversations {counts.get('conversations', 0)}"
             )
-        sizes_line = self._library_db_sizes_line()
-        if sizes_line is not None:
-            return (runtime_value, counts_or_error, sizes_line)
-        return (runtime_value, counts_or_error)
+        return (runtime_value, counts_or_error, *self._library_db_sizes_line())
 
-    def _library_db_sizes_line(self) -> str | None:
-        """Format the Details DB-sizes value from the app-level cache.
+    def _library_db_sizes_line(self) -> tuple[str, ...]:
+        """Format the Details DB-size values from the app-level cache.
 
-        Single source for the sizes line's format, shared by the rail's
-        compose path (via ``_library_details_lines``) and the
-        Details-open refresh patcher
-        (``_refresh_library_details_db_sizes``) -- the recompose-
+        Single source for the sizes' format, shared by the rail's compose
+        path (via ``_library_details_lines``) and the Details-open refresh
+        patcher (``_refresh_library_details_db_sizes``) -- the recompose-
         discipline rule: the in-place updater owns the same conditional
         the compose branch owns.
 
         Returns:
-            The formatted line, or ``None`` while the DBStatusManager has
-            never cached a reading (F-014: never an "N/A" triplet).
+            One ``"<Source> <size>"`` value per database, in render order
+            (task-32230 AC#1: the rail gives each its own row, so none can
+            wrap mid-value); empty while the DBStatusManager has never
+            cached a reading (F-014: never an "N/A" triplet).
         """
         db_sizes = getattr(self.app_instance, "db_sizes_status", None)
         if not isinstance(db_sizes, dict) or not db_sizes:
-            return None
+            return ()
         prompts_size = _unbreakable_size_text(str(db_sizes.get("prompts", "?")))
         chachanotes_size = _unbreakable_size_text(str(db_sizes.get("chachanotes", "?")))
         media_size = _unbreakable_size_text(str(db_sizes.get("media", "?")))
         return (
-            f"Prompts {prompts_size} · "
-            f"Chats/Notes {chachanotes_size} · "
-            f"Media {media_size}"
+            f"Prompts {prompts_size}",
+            f"Chats/Notes {chachanotes_size}",
+            f"Media {media_size}",
         )
 
     async def _refresh_library_details_db_sizes(self) -> None:
@@ -14367,31 +14396,29 @@ class LibraryScreen(BaseAppScreen):
                     "Details-open DB size recompute failed; the disclosure "
                     "keeps its cached reading."
                 )
-        sizes_line = self._library_db_sizes_line()
-        if sizes_line is None:
-            return
-        rendered = library_dim_label_text("DB sizes", sizes_line)
-        existing = list(self.query("#library-details-db-sizes"))
-        if existing:
-            existing[0].update(rendered)
-            return
         anchors = list(self.query("#library-details-body"))
         if not anchors:
             return
-        try:
-            await anchors[0].parent.mount(
-                Static(
-                    rendered,
-                    id="library-details-db-sizes",
-                    classes="library-details-row",
-                ),
-                after=anchors[0],
-            )
-        except Exception:
-            loguru_logger.debug(
-                "Mounting the freshly computed DB-sizes line failed; the "
-                "next rail recompose renders it from the updated cache."
-            )
+        # task-32230: one row per source, so the patcher walks the same row
+        # list ``LibraryRail`` composes -- updating the rows that are there
+        # and mounting the ones that are not, each after its predecessor.
+        previous = anchors[0]
+        for row_id, rendered in library_db_size_rows(self._library_db_sizes_line()):
+            existing = list(self.query(f"#{row_id}"))
+            if existing:
+                existing[0].update(rendered)
+                previous = existing[0]
+                continue
+            row = Static(rendered, id=row_id, classes="library-details-row")
+            try:
+                await previous.parent.mount(row, after=previous)
+            except Exception:
+                loguru_logger.debug(
+                    "Mounting the freshly computed DB-sizes rows failed; the "
+                    "next rail recompose renders them from the updated cache."
+                )
+                return
+            previous = row
 
     def _conversation_reader_list_summary(self) -> str:
         return self._conversation_reader_controller._conversation_reader_list_summary()

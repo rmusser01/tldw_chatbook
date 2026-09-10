@@ -6621,18 +6621,28 @@ async def test_rail_subtitles_drop_cleanly_instead_of_partial_noise_at_100x30():
                 assert first_line.endswith("(2)"), first_line
 
 
-async def _wait_for_details_db_sizes(screen, pilot, needle: str) -> str:
-    """Poll the Details DB-sizes line until ``needle`` renders; return it."""
-    for _ in range(300):
-        widgets = list(screen.query("#library-details-db-sizes"))
-        if widgets and needle in str(widgets[0].render()):
-            return str(widgets[0].render())
-        await pilot.pause(0.01)
-    rendered = (
-        str(screen.query_one("#library-details-db-sizes", Static).render())
-        if list(screen.query("#library-details-db-sizes"))
-        else "<line never mounted>"
+def _details_db_sizes_text(screen) -> str:
+    """The Details DB-size block as one string.
+
+    task-32230: the three sizes take a row each (joined on one line they
+    wrapped mid-value at the rail's 22-cell column), so the block is read
+    across every ``#library-details-db-sizes*`` row rather than out of one.
+    """
+    return " ".join(
+        str(widget.render())
+        for widget in screen.query(".library-details-row")
+        if str(widget.id or "").startswith("library-details-db-sizes")
     )
+
+
+async def _wait_for_details_db_sizes(screen, pilot, needle: str) -> str:
+    """Poll the Details DB-sizes block until ``needle`` renders; return it."""
+    for _ in range(300):
+        rendered = _details_db_sizes_text(screen)
+        if needle in rendered:
+            return rendered
+        await pilot.pause(0.01)
+    rendered = _details_db_sizes_text(screen) or "<line never mounted>"
     raise AssertionError(
         f"Details DB-sizes line never showed {needle!r}; last render: {rendered!r}"
     )

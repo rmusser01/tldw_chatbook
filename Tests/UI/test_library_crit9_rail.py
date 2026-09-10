@@ -13,6 +13,10 @@ import pytest
 from textual.widgets import Input, Static
 
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.Workspaces.display_state import (
+    LibraryWorkspaceDepthState,
+    LibraryWorkspaceSourceRow,
+)
 from Tests.UI.test_library_shell import (
     LibraryProductionCSSHarness,
     _active_library_screen,
@@ -130,3 +134,155 @@ async def test_unsubmitted_rail_text_never_seeds_the_rag_query_box() -> None:
         query_box = await _wait_for_selector(screen, pilot, "#library-rag-query-input")
         assert query_box.value == "", query_box.value
         assert screen._rag_search_state.query == "", screen._rag_search_state.query
+
+
+# --- task-32230 AC#1: one DB source per Details line -----------------------
+
+
+@pytest.mark.asyncio
+async def test_details_db_sizes_render_one_source_per_line() -> None:
+    """AC#1: at the compact rail WIDTH each DB size occupies exactly one
+    painted row, so no value is split across lines. The terminal is tall so
+    the Details group sits above the rail's fold -- the wrap this pins is a
+    width problem, and a clipped row paints nothing to read."""
+    host = _library_host()
+    sizes = {"prompts": "180.0 KB", "chachanotes": "1.1 MB", "media": "508.0 KB"}
+    host.app_instance.db_sizes_status = dict(sizes)
+
+    class _StubManager:
+        """Keep the seeded reading; the real manager stats a fixture profile."""
+
+        async def update_db_sizes(self) -> None:
+            host.app_instance.db_sizes_status = dict(sizes)
+
+    host.app_instance.db_status_manager = _StubManager()
+
+    async with host.run_test(size=(100, 60)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen._set_library_rail_section("details", True)
+        await _wait_for_selector(screen, pilot, "#library-details-db-sizes")
+        await pilot.pause()
+
+        rows = [
+            widget
+            for widget in screen.query(".library-details-row")
+            if str(widget.id or "").startswith("library-details-db-sizes")
+        ]
+        assert [widget.id for widget in rows] == [
+            "library-details-db-sizes-label",
+            "library-details-db-sizes",
+            "library-details-db-sizes-1",
+            "library-details-db-sizes-2",
+        ]
+        painted = "\n".join(_painted(host, widget.region) for widget in rows)
+        for needle in ("DB sizes", "180.0KB", "1.1MB", "508.0KB"):
+            assert needle in painted, (needle, painted)
+        for widget in rows:
+            assert widget.region.height == 1, (widget.id, widget.region, painted)
+
+
+# --- task-32230 AC#2: the Handoff row names the blocker and the remedy -----
+
+
+def _blocked_source_row(**overrides) -> LibraryWorkspaceSourceRow:
+    values = {
+        "item_type": "conversation",
+        "item_id": "chat-a",
+        "title": "Alpha planning",
+        "workspace_ids": (),
+        "workspace_label": "Unscoped",
+        "visible": True,
+        "active_context_eligible": False,
+        "authority_label": "",
+        "context_label": "",
+        "recovery_copy": (
+            "Copy or link this conversation into workspace w-1 before using "
+            "it in Console."
+        ),
+        "reason_code": "not_in_active_workspace",
+    }
+    values.update(overrides)
+    return LibraryWorkspaceSourceRow(**values)
+
+
+def _depth_state(handoff_label: str, rows) -> LibraryWorkspaceDepthState:
+    return LibraryWorkspaceDepthState(
+        heading="Workspaces",
+        workspace_label="Workspace: Local Default",
+        workspace_name="Local Default",
+        visibility_label="",
+        handoff_label=handoff_label,
+        context_handoff_enabled=False,
+        context_handoff_tooltip="",
+        source_authority_label="",
+        collections_membership_label="",
+        import_export_label="",
+        source_rows=tuple(rows),
+    )
+
+
+def test_the_handoff_row_names_the_blocker_and_its_remedy() -> None:
+    """AC#2: the count alone was unactionable -- the row now carries the
+    reason and the next step in the house `reason · next step` grammar."""
+    state = _depth_state(
+        "Console/RAG handoff: 0 eligible, 1 blocked", [_blocked_source_row()]
+    )
+    label = LibraryScreen._workspace_handoff_summary_label(None, state)
+    assert (
+        "1 blocked · not in this workspace · Link it from the conversation's header"
+        in label
+    ), label
+    assert label == (
+        "0 eligible · 1 blocked · not in this workspace · "
+        "Link it from the conversation's header"
+    ), label
+    assert "●" not in label, label
+
+
+def test_the_handoff_row_stays_a_bare_count_when_nothing_is_blocked() -> None:
+    """AC#2: the unblocked case keeps its short form and grows no dot."""
+    state = _depth_state("Console/RAG handoff: 0 eligible", [])
+    assert LibraryScreen._workspace_handoff_summary_label(None, state) == "0 eligible"
+
+
+def test_the_handoff_row_falls_back_to_the_rule_s_own_recovery_copy() -> None:
+    """A block linking cannot resolve still names a reason and a next step."""
+    state = _depth_state(
+        "Console/RAG handoff: 0 eligible, 1 blocked",
+        [
+            _blocked_source_row(
+                reason_code="no_active_workspace",
+                recovery_copy=(
+                    "Select an active workspace before using this item in Console."
+                ),
+            )
+        ],
+    )
+    label = LibraryScreen._workspace_handoff_summary_label(None, state)
+    assert label == (
+        "0 eligible · 1 blocked · blocked for this workspace · "
+        "Select an active workspace before using this item in Console"
+    ), label
+
+
+def test_the_handoff_row_generalises_across_a_mixed_blocked_set() -> None:
+    """Two blocked items of different types share one reason: the remedy
+    stays truthful without naming a type it cannot pick."""
+    state = _depth_state(
+        "Console/RAG handoff: 2 eligible, 2 blocked",
+        [
+            _blocked_source_row(
+                item_type="note", item_id="note-cross", reason_code="cross_workspace"
+            ),
+            _blocked_source_row(
+                item_type="conversation",
+                item_id="chat-cross",
+                reason_code="cross_workspace",
+            ),
+        ],
+    )
+    assert LibraryScreen._workspace_handoff_summary_label(None, state) == (
+        "2 eligible · 2 blocked · in another workspace · "
+        "Link them from the item's header"
+    )

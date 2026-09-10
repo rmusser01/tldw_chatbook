@@ -150,7 +150,14 @@ async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cr
         assert not screen.query("#library-workspaces-collections-membership")
         assert not screen.query("#library-workspaces-import-export")
         handoff_row = screen.query_one("#library-workspaces-handoff", Static)
-        assert handoff_row.renderable.plain == "Handoff · 2 eligible, ● 2 blocked"
+        # task-32230 AC#2: the "●" glyph named neither the blocker nor the
+        # remedy. The two blocked rows here (a note and a conversation, both
+        # in Workspace B) share one reason code and differ in type, so the
+        # row says "in another workspace" and points at the item's header.
+        assert handoff_row.renderable.plain == (
+            "Handoff · 2 eligible · 2 blocked · in another workspace · "
+            "Link them from the item's header"
+        )
         assert "Collections: browse and organize; staging is read-only" not in visible
         assert "Import/Export: copy or reference sources" not in visible
         assert (

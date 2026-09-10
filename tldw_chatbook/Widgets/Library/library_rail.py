@@ -67,6 +67,53 @@ def library_dim_label_text(label: str, value: str) -> Text:
     return text
 
 
+#: task-32230: a hanging indent marks each DB-size row as belonging to the
+#: "DB sizes" label above it. Deliberately two cells: at 100 columns the
+#: rail's Details column is 22 cells of content, and the widest real value
+#: ("Chats/Notes 1023.9MB", 20) leaves exactly two to spare.
+LIBRARY_DETAILS_CONTINUATION_PAD = "  "
+
+
+def library_db_size_rows(
+    sizes: Iterable[str],
+) -> tuple[tuple[str, Text], ...]:
+    """Build the Details DB-size rows: one widget id + renderable per source.
+
+    task-32230 AC#1 (critique #9 row 29): the three sizes used to share one
+    ``Static`` joined by "·", which wrapped mid-value at the rail's 22-cell
+    Details column ("Chats/Notes" on one line, its size on the next). A row
+    per source cannot wrap -- but MEASURED, the label cannot ride along on
+    the first of them either: ``"DB sizes · Prompts 180.0KB"`` is 26 cells
+    and wraps in exactly the same place. So the label takes its own row and
+    the values hang under it. ``#library-details-db-sizes`` stays the id of
+    the first VALUE row, which is what every existing pin queries.
+
+    Single source of the id/label rule for the three consumers that must
+    agree: ``LibraryRail`` compose, ``LibraryRail.apply_shell_state``'s
+    in-place patch, and ``LibraryScreen._refresh_library_details_db_sizes``.
+
+    Args:
+        sizes: Already-formatted ``"<Source> <size>"`` values, in order.
+
+    Returns:
+        ``(widget_id, renderable)`` pairs, in render order; empty when
+        there are no sizes to show (F-014: never an "N/A" triplet).
+    """
+    rows: list[tuple[str, Text]] = []
+    for index, size_line in enumerate(sizes):
+        if index == 0:
+            rows.append(("library-details-db-sizes-label", Text("DB sizes", "dim")))
+        rows.append(
+            (
+                "library-details-db-sizes"
+                if index == 0
+                else f"library-details-db-sizes-{index}",
+                Text(f"{LIBRARY_DETAILS_CONTINUATION_PAD}{size_line}"),
+            )
+        )
+    return tuple(rows)
+
+
 def _truncate_row_title(title: str, budget: int = _MAX_LIBRARY_ROW_TITLE) -> str:
     """Return the raw row title capped to ``budget`` cells with "...".
 
@@ -592,10 +639,10 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             self.query_one("#library-details-body", Static).update(
                 details_lines[1] if len(details_lines) > 1 else ""
             )
-            if len(details_lines) > 2 and details_lines[2]:
-                self.query_one("#library-details-db-sizes", Static).update(
-                    library_dim_label_text("DB sizes", details_lines[2])
-                )
+            for row_id, renderable in library_db_size_rows(
+                line for line in details_lines[2:] if line
+            ):
+                self.query_one(f"#{row_id}", Static).update(renderable)
         except NoMatches:
             self.refresh(recompose=True)
 
@@ -850,13 +897,16 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             classes="library-details-row",
             markup=False,
         )
-        if len(details_lines) > 2 and details_lines[2]:
-            # F-014: the DB-size telemetry relocated out of the app
-            # footer lives here -- third Status row, only when the
-            # shell actually carries it (never an "N/A" triplet).
+        # F-014: the DB-size telemetry relocated out of the app footer
+        # lives here -- the Status rows after the counts, only when the
+        # shell actually carries them (never an "N/A" triplet). task-32230:
+        # one row per source, so no value wraps at the rail's width.
+        for row_id, renderable in library_db_size_rows(
+            line for line in details_lines[2:] if line
+        ):
             yield Static(
-                library_dim_label_text("DB sizes", details_lines[2]),
-                id="library-details-db-sizes",
+                renderable,
+                id=row_id,
                 classes="library-details-row",
             )
         if self.workspaces_body_factory is not None:
