@@ -1,10 +1,10 @@
 ---
 id: TASK-32228
 title: Library Conversations footer offers neither 'esc focus rail' nor a '/' hint
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-10 14:56'
-updated_date: '2026-09-10 19:24'
+updated_date: '2026-09-10 20:19'
 labels:
   - library
   - conversations
@@ -22,7 +22,7 @@ The Conversations canvas footer is nearly empty while every sibling list adverti
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The Conversations footer advertises the same list keys as its siblings, and they work
+- [x] #1 The Conversations footer advertises the same list keys as its siblings, and they work
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -36,45 +36,52 @@ The Conversations canvas footer is nearly empty while every sibling list adverti
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Half delivered, half declined on evidence -- AC#1 left UNTICKED.
+Fix round 1: AC#1 delivered per ruling R1.
 
-Delivered. Live at 100x30 the Conversations canvas showed its Filter box, "/"
-focused it, and the footer said only "F6 next pane" while every sibling list
-advertised two or three keys. The "/" chip is gated on
-`reader_layout.items_open`, and the footer is registered from
-`compose_content`, before the shell has resolved its panes: the flag was still
-False when the chip set was decided and nothing revisited it. Fixed at the seam
-task-32225 added -- a pane-visibility change now re-registers the footer
-unconditionally (the message itself is the gate: the shell posts it only when
-an APPLIED visibility flips). One re-registration, two chips fixed. Live after:
-"/ focus filter | F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit"
-(scratchpad crit9/wave/shell/caps/32228-conversations-100-*.txt).
+Two halves. The first was live at 100x30 before this round: the canvas showed
+its Filter box, "/" focused it, and the footer said only "F6 next pane",
+because the "/" chip reads `reader_layout.items_open` and the footer is
+registered from `compose_content`, before the shell resolves its panes. A
+pane-visibility change now re-registers the footer (task-32225's seam).
 
-Declined, and why. The remaining difference from the siblings is the Escape
-chip. Siblings advertise ("esc", "focus rail") unconditionally, including in
-states where the hop moves nothing; Conversations advertises Escape under the
-label it will actually perform ("focus Items", then "focus Library") and omits
-it exactly while the hop would move nothing. That grammar is a deliberate prior
-decision shared with the Media Reader and is pinned by
-Tests/UI/test_library_conversation_reader.py::
-test_conversations_escape_moves_to_nearest_visible_prior_role (asserting
-("esc", "focus Library") is present with focus in the Reader and absent after
-the hop lands). Making this footer literally match its siblings would mean
-restoring the dead-key lie task-31272 removed, and would contradict this wave's
-own copy rule against advertising a key that does nothing.
+The second is the reason the footer looked "nearly empty" in the first place,
+and nobody had traced it: Conversations was the one browse list left out of
+task-2856's entry focus, so arriving put focus outside the reader shell, the
+Escape hop had nowhere to start from, and its chip was correctly withheld. The
+keys were never missing -- the state that makes them live was. Registering
+"library-conversation-row" in `_LIBRARY_LIST_ROW_CLASSES` and
+`_LIBRARY_LIST_ROW_CLASS_BY_ROW_ID` (the row class already existed on the
+buttons) plus the rail-row arm site fixes it, and gives the list the Up/Down
+row traversal its siblings have.
 
-Every key the Conversations footer advertises works, and every key that works
-is advertised -- verified against the on_key handler, which gates "/" on the
-same `items_open` flag the chip does. What is left is a product question the
-implementer should not settle alone: EITHER make the siblings honest (drop
-"esc focus rail" where the hop would not move focus, i.e. adopt the
-Conversations grammar screen-wide) OR give Conversations entry focus on arrival
-the way task-2856 gives it to the other list canvases, which would make its
-Escape chip appear immediately and the footers converge without a lie. The
-second is the smaller change and is recommended; it touches focus contracts
-this branch does not own.
+Two seams had to be honest before that worked, both measured:
+* the arm schedules ONE attempt and relies on `compose_content` re-requesting
+  while armed -- which covers rows arriving on a SCREEN recompose but not on a
+  canvas-level one. It now retries on a coarse poll, bounded on both axes by
+  the arm's own settle window.
+* the empty-list fallback treated `set_focus` as success. A control that is
+  mounted but not yet focusable leaves focus on None, which is exactly the
+  state Conversations arrives in, so only a landing counts now.
 
-Files: tldw_chatbook/UI/Screens/library_screen.py (the pane-visibility footer
-re-registration, shared with task-32225), Tests/UI/test_library_crit9_shell.py,
+Live evidence (235x52, seeded profile,
+caps/32228-conversations-235-entry-focus.txt): the footer reads
+"/ focus filter | F6 next pane | esc focus Library | F1 help · Ctrl+P palette ·
+Ctrl+Q quit" -- three canvas keys, the same count as its siblings -- and Down
+walks the focus bar from "Launch checklist" to "Transformer scaling laws".
+
+The label is "focus Library", not the siblings' "focus rail". On this canvas
+Escape steps back through the visible panes, the grammar it shares with the
+Media Reader and that test_conversations_escape_moves_to_nearest_visible_prior_role
+pins (re-run green). Parity is on the KEYS, which is what AC#1 asks for; the
+alternative -- an unconditional "esc focus rail" -- would restore the dead-key
+lie task-31272 removed.
+
+Known ceiling, recorded in code: the entry-focus arm is a 2-second window, so
+the FIRST visit of a session to Conversations (cold DB) can still miss it and
+land nowhere. The other list canvases share that ceiling (a cold Prompts visit
+lands in its filter rather than row 0). A warm re-entry lands every time.
+
+Files: UI/Library_Modules/screen_constants.py, UI/Screens/library_screen.py,
+Tests/UI/test_library_crit9_shell.py,
 Docs/User_Guide/library/media-and-conversations.md.
 <!-- SECTION:NOTES:END -->

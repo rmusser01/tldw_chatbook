@@ -9691,6 +9691,15 @@ class LibraryScreen(BaseAppScreen):
         any tick whose generation a disarm has already superseded. So this
         cannot outlive a user taking control, and on a genuinely empty list it
         stops at the deadline rather than spinning.
+
+        # ponytail: bounded by LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS (2s), so
+        # a list that takes longer than that to arrive still lands nowhere --
+        # measured live on the seeded profile, where the FIRST visit to
+        # Conversations (cold DB) misses the window and a warm re-entry hits
+        # it. The other list canvases share that ceiling (a cold Prompts visit
+        # lands in its filter rather than row 0). Widen the shared window, or
+        # re-arm from each destination's own "list arrived" seam, if it ever
+        # matters beyond the first visit of a session.
         """
         deadline = self._library_list_entry_focus_deadline
         if (

@@ -3,10 +3,10 @@ id: TASK-32217
 title: >-
   Library canvases: no density rule — landing, Study staging, Prompts, Skills
   and File Notes are ~90% empty while the reader starves its controls
-status: Done
+status: In Progress
 assignee: []
 created_date: '2026-09-10 14:54'
-updated_date: '2026-09-10 19:23'
+updated_date: '2026-09-10 20:19'
 labels:
   - library
   - layout

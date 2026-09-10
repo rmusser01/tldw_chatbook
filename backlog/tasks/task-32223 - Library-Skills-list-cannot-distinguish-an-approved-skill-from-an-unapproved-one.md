@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-09-10 14:55'
-updated_date: '2026-09-10 19:24'
+updated_date: '2026-09-10 20:20'
 labels:
   - library
   - skills
@@ -45,18 +45,17 @@ the canvas appends it to the row label: "✓ code-review · trusted",
 states, not the eight the editor's trust panel carries -- a list row only has
 to answer "can I use this".
 
-Derived from the record's `trust_status` (which every skills service already
-sends alongside `trust_blocked`), with `trust_blocked` as the fallback for an
-absent or unrecognised status, so a service that sends only the flag still
-gets an honest two-state row. Words, not colour, and no new glyph: the canvas
-legend defines none for trust.
+Derived from the record's `trust_status`, with `trust_blocked` as the fallback
+for an absent or unrecognised status. Fix round 1 (review finding 10): that
+fallback no longer says "trusted" in the not-blocked direction. A blocked row
+still reads "needs review"; anything unrecognised keeps the glyph and says no
+word at all, because the glyph is decoration and the word is a claim, and
+over-claiming trust is the wrong direction to fail in.
 
 Live on the seeded profile at 235x52 both rows read "· needs review" (that
 profile has trust unset, so it has no trusted skill to contrast with); the
-two-state contrast is pinned by
-Tests/UI/test_library_crit9_shell.py::test_the_skills_list_shows_each_row_s_trust_state,
-which feeds one "trusted" and one "quarantined_added" record through the real
-screen.
+two-state contrast and the fallback table are pinned in
+Tests/UI/test_library_crit9_shell.py.
 
 Files: tldw_chatbook/Library/library_skills_state.py,
 tldw_chatbook/Widgets/Library/library_skills_canvas.py,
