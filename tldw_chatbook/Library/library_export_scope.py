@@ -217,6 +217,16 @@ def resolve_export_selections(
     return selections
 
 
+def _count_phrase(count: int, singular: str) -> str:
+    """Return "1 note" / "2 notes" -- every export noun pluralises the same way.
+
+    task-32221: only the Prompts branch used to count properly, so a
+    one-note export read "1 notes" (critique #9 row 18). "media" is already
+    plural, so its noun is "media item" rather than a bare "media".
+    """
+    return f"{count} {singular}" if count == 1 else f"{count} {singular}s"
+
+
 def export_scope_label(scope: ExportScope, counts: Mapping[str, int]) -> str:
     """Build the export form's scope summary line.
 
@@ -224,30 +234,30 @@ def export_scope_label(scope: ExportScope, counts: Mapping[str, int]) -> str:
     collections remain outside Chatbook export.
 
     Examples:
-        "Everything: 128 media · 542 conversations · 87 notes · 13 prompts"
+        "Everything: 128 media items · 542 conversations · 87 notes · 13 prompts"
         "Media (type: video) · 12 items"
-        "Media · 12 items"
+        "Media · 1 item"
         "Conversations · 542 items"
         "Notes · 87 items"
     """
     if scope.ids:
-        return f"Selected {scope.kind} · {counts.get(scope.kind, len(scope.ids))} items"
+        selected = counts.get(scope.kind, len(scope.ids))
+        return f"Selected {scope.kind} · {_count_phrase(selected, 'item')}"
     if scope.kind == "everything":
         return (
-            f"Everything: {counts.get('media', 0)} media · "
-            f"{counts.get('conversations', 0)} conversations · "
-            f"{counts.get('notes', 0)} notes · "
-            f"{counts.get('prompts', 0)} prompts"
+            f"Everything: {_count_phrase(counts.get('media', 0), 'media item')} · "
+            f"{_count_phrase(counts.get('conversations', 0), 'conversation')} · "
+            f"{_count_phrase(counts.get('notes', 0), 'note')} · "
+            f"{_count_phrase(counts.get('prompts', 0), 'prompt')}"
         )
     if scope.kind == "media":
         media_type = _effective_media_type(scope)
+        media_phrase = _count_phrase(counts.get("media", 0), "item")
         if media_type is not None:
-            return f"Media (type: {media_type}) · {counts.get('media', 0)} items"
-        return f"Media · {counts.get('media', 0)} items"
+            return f"Media (type: {media_type}) · {media_phrase}"
+        return f"Media · {media_phrase}"
     if scope.kind == "conversations":
-        return f"Conversations · {counts.get('conversations', 0)} items"
+        return f"Conversations · {_count_phrase(counts.get('conversations', 0), 'item')}"
     if scope.kind == "notes":
-        return f"Notes · {counts.get('notes', 0)} items"
-    prompt_count = counts.get("prompts", 0)
-    suffix = "item" if prompt_count == 1 else "items"
-    return f"Prompts · {prompt_count} {suffix}"
+        return f"Notes · {_count_phrase(counts.get('notes', 0), 'item')}"
+    return f"Prompts · {_count_phrase(counts.get('prompts', 0), 'item')}"
