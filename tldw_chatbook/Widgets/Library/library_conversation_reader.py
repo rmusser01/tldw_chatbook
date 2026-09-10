@@ -42,6 +42,49 @@ def _open_console_disabled_tooltip(state: ConversationReaderState) -> str | None
     return "Wait for the complete selected transcript before opening it in Console."
 
 
+def library_conversation_block_sentence(
+    state: ConversationReaderState,
+    *,
+    blocked: str,
+    detail: str = "",
+    link_offered: bool = False,
+) -> str | None:
+    """Return the one sentence that explains a refused Console hand-off.
+
+    (task-32101) The single source for all three surfaces that state the
+    refusal: the disabled action's tooltip, the reason line beneath it, and
+    the ``c`` accelerator's toast. They used to be three separate strings,
+    which is how the line under the button ended up repeating the action
+    name the button already carried and the key ended up saying nothing at
+    all.
+
+    Args:
+        state: The reader state, whose load fence answers first -- while it
+            holds, the workspace block is not the reason the press is
+            unavailable.
+        blocked: The short workspace refusal phrase ("not in this
+            workspace"), or empty when the conversation is eligible.
+        detail: The eligibility rule's own recovery sentence, used for the
+            blocks a link cannot resolve.
+        link_offered: Whether "Link to workspace" is actually on screen; the
+            remedy is only NAMED when it is.
+
+    Returns:
+        The sentence, or ``None`` when the hand-off may run.
+    """
+    load_block = _open_console_disabled_tooltip(state)
+    if load_block:
+        return load_block
+    if not blocked:
+        return None
+    if link_offered:
+        return (
+            f"This conversation is {blocked}. Press 'Link to workspace' "
+            "to add it to the active workspace."
+        )
+    return detail or f"This conversation is {blocked}."
+
+
 class LibraryConversationReader(Vertical):
     """Render one retained Conversations Read/Info pane from pure state."""
 
@@ -100,6 +143,17 @@ class LibraryConversationReader(Vertical):
         """Whether the Console hand-off may run right now."""
         return self.state.loaded_actions_eligible and not self._workspace_block()
 
+    def _open_console_label(self) -> str:
+        """Return the hand-off button label, marked when it is refused.
+
+        (task-32101) The non-colour disabled marker belongs on the control
+        that carries the action name, so the reason line beneath it need not
+        repeat that name to carry the marker.
+        """
+        return library_disabled_action_label(
+            "Open in Console", not self._actions_enabled()
+        )
+
     def _blocked_reason_line(self) -> str:
         """Return the wrapping reason line shown under a blocked action.
 
@@ -107,13 +161,15 @@ class LibraryConversationReader(Vertical):
         which Textual renders on a single truncating line -- at 100x30 the
         Conversations reader pane is ~43 cells and it clipped to "...not in
         this worksp". A ``Static`` wraps, so the copy survives every width.
+
+        (task-32101) It is the refusal SENTENCE, not a second copy of the
+        action name: repeating "○ Open in Console" under the button that
+        already says it read as two controls. The disabled marker moved onto
+        the button label, where the one action name lives.
         """
-        blocked = self._workspace_block()
-        if not blocked:
+        if not self._workspace_block():
             return ""
-        return (
-            f"{library_disabled_action_label('Open in Console', True)} · {blocked}"
-        )
+        return self._open_console_tooltip() or ""
 
     def _open_console_tooltip(self) -> str | None:
         """Return the current reason the hand-off cannot run.
@@ -123,20 +179,16 @@ class LibraryConversationReader(Vertical):
         remedy is only NAMED when it is actually on screen. A block linking
         cannot resolve keeps the eligibility rule's own recovery sentence
         ("Select an active workspace...") instead of pointing at a hidden
-        button.
+        button. (task-32101) The rule itself lives in
+        ``library_conversation_block_sentence``, shared with the screen's
+        ``c`` accelerator so the key cannot say something else.
         """
-        load_block = _open_console_disabled_tooltip(self.state)
-        if load_block:
-            return load_block
-        blocked = self._workspace_block()
-        if not blocked:
-            return None
-        if self._workspace_link_offered():
-            return (
-                f"This conversation is {blocked}. Press 'Link to workspace' "
-                "to add it to the active workspace."
-            )
-        return self._workspace_block_detail() or f"This conversation is {blocked}."
+        return library_conversation_block_sentence(
+            self.state,
+            blocked=self._workspace_block(),
+            detail=self._workspace_block_detail(),
+            link_offered=self._workspace_link_offered(),
+        )
 
     def compose(self) -> ComposeResult:
         """Compose stable controls and the initially available transcript."""
@@ -166,7 +218,7 @@ class LibraryConversationReader(Vertical):
         # verification) -- the exact failure this task exists to close.
         with Vertical(classes="ds-toolbar library-conversation-reader-actions"):
             open_console = Button(
-                "Open in Console",
+                self._open_console_label(),
                 id="library-conversation-open-console",
                 classes="library-canvas-action",
                 compact=True,
@@ -180,7 +232,12 @@ class LibraryConversationReader(Vertical):
                 classes="library-conversation-reader-block-reason",
                 markup=False,
             )
-            blocked_reason.display = bool(self._workspace_block())
+            # (fix round 1) Visibility and content come from ONE predicate:
+            # the line answers the load fence first, so gating display on
+            # the workspace block alone showed "Wait for the selected
+            # conversation to finish loading." under a button that was on
+            # screen for a different reason.
+            blocked_reason.display = bool(self._blocked_reason_line())
             yield blocked_reason
             link = Button(
                 "Link to workspace",
@@ -422,9 +479,10 @@ class LibraryConversationReader(Vertical):
         info_body.display = state.mode == "info"
 
         open_console.disabled = not self._actions_enabled()
+        open_console.label = self._open_console_label()
         open_console.tooltip = self._open_console_tooltip()
         blocked_reason.update(self._blocked_reason_line())
-        blocked_reason.display = bool(self._workspace_block())
+        blocked_reason.display = bool(self._blocked_reason_line())
         link.display = self._workspace_link_offered()
         retry.display = bool(state.error or state.unavailable)
 

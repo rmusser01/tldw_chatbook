@@ -102,7 +102,8 @@ appears under it. Pressing it stops the wait and leaves
 "Import cancelled · check the skills list before retrying." — the import
 itself runs on a worker thread that cannot be interrupted, so it may still
 have landed, which is why the receipt says to check rather than promising
-nothing happened.
+nothing happened. The list behind that receipt is re-read when the cancel
+settles, so what it shows is the state after the run, not before it.
 
 Chatbook inspects a folder or archive before importing it:
 
@@ -440,3 +441,7 @@ claim on this page changed.)*
 *Verified against fix/library-crit8-waits — 2026-09-08 (task-32055: a skill
 import that outlives the patience window offers Cancel and never blocks
 leaving the screen).*
+
+*Verified against fix/library-crit8-riders-a — 2026-09-10 (task-32102: a
+cancelled import refreshes the skills list its own receipt tells you to
+check.)*
