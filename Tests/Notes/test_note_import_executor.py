@@ -160,7 +160,11 @@ def _execution_item(
             ImportAction.CREATE_NEW,
             ImportAction.UPDATE_EXISTING,
         )
-        default_action = ImportAction.CREATE_NEW
+        default_action = (
+            ImportAction.SKIP
+            if resolved_classification is ImportClassification.UNCHANGED_REPEAT
+            else ImportAction.CREATE_NEW
+        )
     return ImportPreviewItem(
         item_id=item_id,
         source=ImportSource(
@@ -3524,28 +3528,52 @@ def test_target_internal_value_errors_are_fatal_and_baseexceptions_escape(
         target.read_note(note_id=_NOTE_ID)
 
 
+#: Leak canary for the fault-translation test below. It asserts against the
+#: FORMATTED TRACEBACK, which embeds absolute source paths, so the marker must
+#: be a token no filesystem path can contain. It used to be the word
+#: "private", and every checkout under a macOS scratch directory failed all
+#: seven cases: `/tmp` resolves to `/private/tmp`, so the test's own frame
+#: path carried the marker. CI passed (paths under `/home/runner/work`), which
+#: is what made it read as a real dev-side red for an hour. Same shape as the
+#: vacuous "console" path audit recorded in AGENTIC_SPLIT_PINNED_TOKENS: never
+#: search a path-bearing string for a word a path can hold.
+_FAULT_DETAIL_CANARY = "zqleakcanary"
+
+
 @pytest.mark.parametrize(
     ("fault", "expected_type"),
     [
         (
-            FolderValidationError("private folder validation detail"),
+            FolderValidationError(f"{_FAULT_DETAIL_CANARY} folder validation detail"),
             ImportTargetPermanentError,
         ),
         (
             FolderCapabilityError(
-                reason_code="private-reason",
-                user_message="private folder capability detail",
+                reason_code=f"{_FAULT_DETAIL_CANARY}-reason",
+                user_message=f"{_FAULT_DETAIL_CANARY} folder capability detail",
             ),
             ImportTargetPermanentError,
         ),
         (
-            CharactersRAGDBError("private database detail"),
+            CharactersRAGDBError(f"{_FAULT_DETAIL_CANARY} database detail"),
             ImportTargetPermanentError,
         ),
-        (sqlite3.OperationalError("private SQL detail"), ImportTargetPermanentError),
-        (sqlite3.IntegrityError("private integrity detail"), ImportTargetConflictError),
-        (FolderCollisionError("private collision detail"), ImportTargetConflictError),
-        (FolderConflictError("private conflict detail"), ImportTargetConflictError),
+        (
+            sqlite3.OperationalError(f"{_FAULT_DETAIL_CANARY} SQL detail"),
+            ImportTargetPermanentError,
+        ),
+        (
+            sqlite3.IntegrityError(f"{_FAULT_DETAIL_CANARY} integrity detail"),
+            ImportTargetConflictError,
+        ),
+        (
+            FolderCollisionError(f"{_FAULT_DETAIL_CANARY} collision detail"),
+            ImportTargetConflictError,
+        ),
+        (
+            FolderConflictError(f"{_FAULT_DETAIL_CANARY} conflict detail"),
+            ImportTargetConflictError,
+        ),
     ],
 )
 def test_target_expected_faults_keep_their_item_level_translation(
@@ -3566,9 +3594,9 @@ def test_target_expected_faults_keep_their_item_level_translation(
 
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
-    assert "private" not in str(caught.value)
-    assert "private" not in repr(caught.value)
-    assert "private" not in "".join(
+    assert _FAULT_DETAIL_CANARY not in str(caught.value)
+    assert _FAULT_DETAIL_CANARY not in repr(caught.value)
+    assert _FAULT_DETAIL_CANARY not in "".join(
         traceback.format_exception(
             type(caught.value), caught.value, caught.value.__traceback__
         )
@@ -4364,3 +4392,44 @@ def test_target_sql_matches_service_metadata_fts_and_sync_conventions(
         ).fetchone()[0]
         == 1
     )
+
+
+def test_update_existing_on_an_unchanged_repeat_updates_without_new_placement(
+    real_executor,
+) -> None:
+    """task-32176: the review lets an unchanged repeat be switched to Update
+    existing, which leaves folder placement alone. The plan still carries the
+    membership the parser proposed, but the receipt ledger only records a
+    membership effect when the plan approved one, so treating every proposed
+    membership as authorized aborted the whole run with no receipt."""
+    executor, target, receipts, _service, _folders, _db = real_executor
+    existing = target.create_note(
+        note_id="unchanged-repeat-update",
+        payload=_payload(content="Same body"),
+    )
+    item = _execution_item(
+        item_id="unchanged-repeat-update",
+        payloads=(_payload(content="Same body"),),
+        action=ImportAction.UPDATE_EXISTING,
+        classification=ImportClassification.UNCHANGED_REPEAT,
+        memberships=(ProposedFolderMembership(0, ("Imported Root",)),),
+        match=ImportMatch(
+            kind=ImportMatchKind.EXACT,
+            note_id=existing.note_id,
+            note_version=existing.version,
+        ),
+        replace_content=True,
+        add_membership=False,
+    )
+    approved = _approved_execution_plan(item)
+
+    receipt = executor.execute(approved)
+
+    assert (receipt.state, receipt.updated, receipt.failed) == (
+        ImportSessionState.COMPLETED,
+        1,
+        0,
+    )
+    durable = receipts.load_session_snapshot(_EXECUTION_APPROVAL_ID)
+    assert durable.items[0].outcome is ImportItemOutcome.UPDATED
+    assert durable.membership_effects == ()

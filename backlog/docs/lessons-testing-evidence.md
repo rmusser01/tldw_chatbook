@@ -13117,3 +13117,32 @@ click targets and gives up only the added default space before collapsing panes.
 controls before treating blank space as removable. Test resize and explicit
 reopening with a selected item as well as an empty reader. Do not turn a new
 collapse boundary into a test expectation without checking the user's workflow.
+
+## Never search a path-bearing string for a marker a path can contain
+
+`test_target_expected_faults_keep_their_item_level_translation` in
+`Tests/Notes/test_note_import_executor.py` proves the import target does not
+leak an underlying exception's detail text into the translated error. It
+asserted the marker word `"private"` was absent from three things: the
+exception's `str`, its `repr`, and the **formatted traceback**.
+
+A formatted traceback embeds absolute source paths. On macOS `/tmp` resolves
+to `/private/tmp`, so every checkout under a session scratch directory carried
+`private` in its own frame paths and all seven parametrized cases failed — in
+the test's own traceback, never in the product. CI passed the whole time,
+because runner paths live under `/home/runner/work`. That asymmetry is what
+made it read as a genuine dev-side red: a reviewer reproduced it on `dev` at
+`04f6ae4eca`, reproduced it again with `origin/dev`'s copies of the source and
+the test, and reasonably reported dev as broken. It cost about an hour.
+
+This is the same shape as the vacuous audit recorded in
+`AGENTIC_SPLIT_PINNED_TOKENS` in `tldw_chatbook/css/build_css.py`: an owner
+audit filtered ABSOLUTE paths for the substring `console`, the worktree
+directory itself was named `console-inspect-burndown`, so every path matched
+and the audit proved nothing.
+
+**What to do.** A leak canary must be a token no environment can supply —
+`_FAULT_DETAIL_CANARY = "zqleakcanary"`, not an English word. And when a
+filter or assertion runs over strings that embed paths, check that it can
+still return a negative in your own working directory before you trust either
+a pass or a fail.
