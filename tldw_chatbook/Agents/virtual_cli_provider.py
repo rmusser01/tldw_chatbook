@@ -38,7 +38,7 @@ from .local_tool_provider import (
     LOCAL_TIMEOUT_REFUSAL,
     RunAdmittedWorkspaceRoot,
 )
-from .mcp_tool_provider import MCPPendingCall
+from .mcp_tool_provider import MCPPendingCall, approval_effects_for_tool
 from .run_context import current_run_id, current_tool_call_id
 from .tool_catalog import redact_root_locator
 
@@ -341,6 +341,7 @@ class VirtualCliProvider:
                 else "ask"
             ),
             call_id=call.call_id or command,
+            effects=approval_effects_for_tool(hub),
         )
 
     def apply_batch_decisions(

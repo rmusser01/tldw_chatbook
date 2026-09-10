@@ -3576,6 +3576,48 @@ def test_review_hook_gates_builtins_with_no_mcp_provider():
     assert verdicts == {"write_thing": "proceed"}
 
 
+def test_review_hook_gives_a_mutating_builtin_the_mutation_effect():
+    """task-32278 AC#3: the card's blast-radius sentence must be right.
+
+    The read-vs-mutation wording keys off `MCPPendingCall.effects`, and this
+    builder passed none -- so `write_file`, whose `risk_tags == ("mutates",)`
+    is exactly what floors it to "ask", rendered "this tool reads local
+    data". Driven through the REAL hook with the REAL tools: a
+    reconstruction of these kwargs would keep passing if the builder stopped
+    supplying them, which is the defect itself.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+    from tldw_chatbook.Tools.file_operation_tools import ReadFileTool, WriteFileTool
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        format_approval_reason,
+    )
+
+    def _row_for(tool) -> MCPPendingCall:
+        asked: dict[str, list[MCPPendingCall]] = {}
+
+        def request_approvals(pending: list[MCPPendingCall]) -> dict[str, str]:
+            asked["pending"] = pending
+            return {p.llm_name: "deny" for p in pending}
+
+        hook = build_tool_review_hook(
+            _FakeBuiltinGate(), _FakeBuiltinProvider(tool), None, request_approvals
+        )
+        hook([_builtin_call(tool.name)], RUN)
+        return asked["pending"][0]
+
+    mutating = _row_for(WriteFileTool())
+    assert mutating.effects == ("mutates_local",)
+    assert format_approval_reason(vars(mutating)) == (
+        "High risk: this tool changes local data and always asks first."
+    )
+
+    reading = _row_for(ReadFileTool())
+    assert reading.effects == ()
+    assert format_approval_reason(vars(reading)) == (
+        "High risk: this tool reads local data and always asks first."
+    )
+
+
 def _file_tool(name: str):
     """A `Tool`-shaped double carrying a REAL file-tool name (read_file/
     list_directory/write_file), so `path_precheck_failed` (looked up by

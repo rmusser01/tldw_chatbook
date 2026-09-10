@@ -384,7 +384,11 @@ from tldw_chatbook.Agents.project_instruction_resolver import (
     ProjectInstructionResolver,
     StartupInstructionCandidate,
 )
-from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvider
+from tldw_chatbook.Agents.mcp_tool_provider import (
+    MCPPendingCall,
+    MCPToolProvider,
+    approval_effects_for_tool,
+)
 from tldw_chatbook.Agents.run_context import current_run_actor, current_run_id
 
 # NOTE (boot budget, ADR-097): `Agents.persona_policy` is imported lazily
@@ -1939,6 +1943,11 @@ def build_tool_review_hook(
                         :TOOL_DESCRIPTION_CAPTURE_CAP
                     ],
                     reason="risk_floored" if state.risk_floored else "ask",
+                    # task-32278: the card's high-risk sentence must say
+                    # "changes" for a mutating built-in, and `effects` is the
+                    # only signal it reads. Derived from the same tags the
+                    # floor above keys on, so the two cannot disagree.
+                    effects=approval_effects_for_tool(tool),
                     options=("approve_once", "approve_session", "deny"),
                     # TASK-1231/F3 AC2: pre-flight the roots check for the
                     # three file tools -- never gates or auto-denies, just

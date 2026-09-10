@@ -1131,9 +1131,7 @@ class ChatApprovalCard(Container):
             effect_widgets[0].update(effect_copy)
         if reason_widgets:
             reason_widgets[0].update(reason_copy)
-        scope_static.update(
-            DECISION_SCOPE_COPY.get(_default_decision_for_row(entry, row_values), "")
-        )
+        scope_static.update(DECISION_SCOPE_COPY.get(str(select.value), ""))
         if context_widgets:
             context_widgets[0].update(
                 f"[dim italic]{CONTEXT_LABEL} {escape(context)}[/dim italic]"

@@ -445,11 +445,13 @@ def _decision_select_width() -> int:
         / "_agentic_terminal.tcss"
     ).read_text()
     # `;`-anchored so the `width: 1fr` in the BuddyConversationModal
-    # override further down the file cannot match as "1".
+    # override further down the file cannot match as "1", and the property
+    # name anchored at a line start so `min-width:`/`max-width:` cannot
+    # stand in for the `width` that actually sizes the closed Select.
     match = re.search(
-        r"(?<![-\w ])\.approval-row-decision\s*\{[^}]*?width:\s*(\d+);",
+        r"(?<![-\w ])\.approval-row-decision\s*\{[^}]*?^\s*width:\s*(\d+);",
         source,
-        re.S,
+        re.S | re.M,
     )
     assert match, "`.approval-row-decision` no longer sets an explicit width"
     return int(match.group(1))
@@ -533,3 +535,39 @@ def test_a_changed_definition_explains_itself_too():
     )
     assert format_approval_reason({"reason": "ask"}) == ""
     assert format_approval_reason({}) == ""
+
+
+@pytest.mark.unit
+def test_a_mutating_tool_is_floored_by_the_same_tag_the_effect_derives_from():
+    """The card's sentence and the reason the row asks share one vocabulary.
+
+    If `HIGH_RISK_TAGS` and the effect derivation ever key on different
+    tags, a floored row can render the wrong blast radius again.
+    """
+    from tldw_chatbook.Agents.mcp_tool_provider import approval_effects_for_tool
+    from tldw_chatbook.MCP.permission_store import HIGH_RISK_TAGS
+    from tldw_chatbook.Tools.file_operation_tools import WriteFileTool
+
+    tool = WriteFileTool()
+    assert set(tool.risk_tags) & HIGH_RISK_TAGS, "write_file is no longer floored"
+    assert approval_effects_for_tool(tool) == ("mutates_local",)
+    # An MCP row's tool is a HubTool, which spells the same vocabulary
+    # `tags` rather than `risk_tags` -- pin the REAL dataclass, since that
+    # attribute-name difference is what the derivation has to bridge.
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+    def _hub(tags):
+        return HubTool(
+            server_key="local:srv",
+            server_label="Srv",
+            source="server",
+            name="write",
+            description="",
+            input_schema=None,
+            tags=tags,
+            stale=False,
+            executable=True,
+        )
+
+    assert approval_effects_for_tool(_hub(("mutates",))) == ("mutates_local",)
+    assert approval_effects_for_tool(_hub(("reads",))) == ()
