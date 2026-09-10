@@ -179,6 +179,20 @@ class ChatConversationScopeService:
             and not inspect.iscoroutinefunction(list_conversations_fn)
             and not self._is_memory_backed(service)
         ):
+            from tldw_chatbook.Chat.chat_conversation_service import (
+                ChatConversationService,
+            )
+            from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+            db = service.db if type(service) is ChatConversationService else None
+            if type(db) is CharactersRAGDB:
+                def list_and_close() -> dict[str, Any]:
+                    try:
+                        return list_conversations_fn(**kwargs)
+                    finally:
+                        db.close_connection()
+
+                return await asyncio.to_thread(list_and_close)
             return await asyncio.to_thread(list_conversations_fn, **kwargs)
         return await self._maybe_await(list_conversations_fn(**kwargs))
 

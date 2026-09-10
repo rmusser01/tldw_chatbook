@@ -221,7 +221,12 @@ def run_retention_for_app(
         if not service.available:
             return None
         runs_db = AgentRunsDB(Path(db_path).parent / "agent_runs.db")
-        return prune_change_history(runs_db, service)
+        try:
+            return prune_change_history(runs_db, service)
+        finally:
+            # This pass constructs and owns this instance; retire its calling-
+            # thread connection before the finite worker returns.
+            runs_db.close()
     except Exception:  # noqa: BLE001 -- maintenance must never crash the app
         logger.opt(exception=True).warning(
             "change_review: retention pass failed"
