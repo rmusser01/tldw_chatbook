@@ -164,9 +164,13 @@ async def test_scheduler_periodically_reloads_queue(db):
 
     with patch.object(loop.queue, "load") as mock_load:
         task = asyncio.create_task(loop.run())
-        await asyncio.sleep(0.01)
-        loop.stop()
-        await asyncio.wait_for(task, timeout=1.0)
+        try:
+            async with asyncio.timeout(2):
+                while mock_load.call_count < 2:
+                    await asyncio.sleep(0.001)
+        finally:
+            loop.stop()
+            await asyncio.wait_for(task, timeout=1.0)
 
     assert mock_load.call_count >= 2
 

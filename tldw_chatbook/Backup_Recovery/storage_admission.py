@@ -510,6 +510,26 @@ class StorageLease:
         self.resource_path = lexical_path(path)
         self.resource_thread = threading.current_thread()
 
+    def execution_scope(self) -> tuple[Path, tuple[str, ...]]:
+        """Return only the namespace group protected by this live native hold."""
+        with _lock:
+            key = self._key
+            hold = _holds.get(key)
+            if (
+                self not in _live_leases
+                or key is None
+                or key[0] != os.getpid()
+                or hold is None
+                or not hold.ready.is_set()
+                or hold.error is not None
+                or hold.stop.is_set()
+            ):
+                raise bootstrap.RecoveryRequired("execution_scope_not_admitted")
+            names = hold.authority._observed_groups.get(hold.names)
+            if not names:
+                raise bootstrap.RecoveryRequired("execution_scope_not_admitted")
+            return Path(key[1]), names
+
     def close(self) -> None:
         retired = None
         with _lock:

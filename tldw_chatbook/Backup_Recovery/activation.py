@@ -128,6 +128,91 @@ def activation_permission(
         return False
 
 
+def _source_scope_admitted(root: Path, names: tuple[str, ...], path: Path) -> bool:
+    """Refuse restored shared sources outside the actual native admitted group.
+
+    Ordinary capture can register sources without enrolling a restored profile;
+    those historical source registrations alone never disable legacy execution.
+    """
+    _, profiles, associations = bootstrap._control_records(root)
+    restored = {
+        name
+        for record in profiles + associations
+        for name in record.get("activation", {}).get("namespaces", [])
+    }
+    uncovered = restored - set(names)
+    if not uncovered:
+        return True
+    registry = bootstrap._registry(root)
+    if registry is None or not uncovered <= registry.keys():
+        return False
+    selected = lexical_path(path)
+    resolved = selected.resolve()
+    try:
+        info = selected.stat()
+        inode = f"inode:{info.st_dev}:{info.st_ino}"
+    except FileNotFoundError:
+        inode = None
+    for name in uncovered:
+        entry = registry[name]
+        if inode is not None and inode in entry["historical"]:
+            return False
+        paths = entry["roots"] + [
+            token[5:] for token in entry["historical"] if token.startswith("path:")
+        ]
+        if any(
+            bootstrap._overlap(candidate, registered)
+            for candidate in (selected, resolved)
+            for p in paths
+            for registered in (Path(p), Path(p).resolve())
+        ):
+            return False
+    return True
+
+
+@contextmanager
+def execution_scope(owners: tuple[str, ...], path: Path | None = None):
+    """Keep actual storage admission through an accepted execution effect.
+
+    A false result permits local inspection only. Callers retain this context
+    inside the real worker/child, not around a cancellable offload waiter.
+    """
+    from .storage_admission import acquire_storage
+
+    lease = None
+    allowed = False
+    try:
+        selected = bootstrap.effective_config_path()
+        lease = acquire_storage(path)
+        root, names = lease.execution_scope()
+        allowed = (
+            selected == bootstrap.effective_config_path()
+            and (path is None or _source_scope_admitted(root, names, path))
+            and all(
+                activation_permission(
+                    owner,
+                    config_selector=selected,
+                    bootstrap_root=root,
+                    namespaces=names,
+                )
+                for owner in owners
+            )
+        )
+    except (OSError, ValueError, TypeError, KeyError, RuntimeError, AttributeError):
+        allowed = False
+    try:
+        yield allowed
+    finally:
+        if lease is not None:
+            lease.close()
+
+
+def execution_allowed(owners: tuple[str, ...], path: Path | None = None) -> bool:
+    """Check before queueing; the eventual worker must retain its own scope."""
+    with execution_scope(owners, path) as allowed:
+        return allowed
+
+
 class _Requirement(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
     version: int = Field(ge=1, le=1)

@@ -7518,6 +7518,15 @@ class TldwCli(
         self.local_watchlists_service.notification_app = self
 
     def _backfill_subscription_items_fts(self) -> None:
+        from tldw_chatbook.Backup_Recovery.activation import execution_scope
+
+        with execution_scope(
+            ("db.subscriptions",), get_subscriptions_db_path()
+        ) as allowed:
+            if allowed:
+                TldwCli._backfill_subscription_items_fts_owned(self)
+
+    def _backfill_subscription_items_fts_owned(self) -> None:
         """Worker body: index subscription_items rows that predate the FTS
         index (task-688). Started from ``on_mount`` via
         ``run_worker(thread=True)`` so a large backlog never blocks app
@@ -10250,11 +10259,14 @@ class TldwCli(
         # (`local_watchlists_service._IN_FLIGHT_URL_CHECKS`) is lock-free on
         # the invariant that every check entrant runs on the app's one event
         # loop. Moving dispatch off-loop needs a lock there.
-        self.scheduler_worker = self.run_worker(
-            self.scheduler_loop.run(),
-            exclusive=True,
-            group="scheduling",
-        )
+        from tldw_chatbook.Backup_Recovery.activation import execution_allowed
+
+        if execution_allowed(("db.scheduled_tasks",), self.scheduler_loop.db.db_path):
+            self.scheduler_worker = self.run_worker(
+                self.scheduler_loop.run(),
+                exclusive=True,
+                group="scheduling",
+            )
 
         # ADR-020: setup owns startup networking until it completes, so a
         # stale configured cloud provider cannot be contacted behind it.
@@ -10265,12 +10277,13 @@ class TldwCli(
         # without any action on their part. thread=True because this does
         # blocking sqlite work; never blocks startup or screen mount since
         # run_worker only schedules it.
-        self.run_worker(
-            self._backfill_subscription_items_fts,
-            thread=True,
-            exclusive=True,
-            group="subscriptions-fts-backfill",
-        )
+        if execution_allowed(("db.subscriptions",), get_subscriptions_db_path()):
+            self.run_worker(
+                self._backfill_subscription_items_fts,
+                thread=True,
+                exclusive=True,
+                group="subscriptions-fts-backfill",
+            )
 
     def _init_model_catalog_disk_store(self) -> "ModelCatalogDiskStore | None":
         """Build the disk-backed model catalog cache for startup (ADR-020).
@@ -10313,6 +10326,13 @@ class TldwCli(
         return store
 
     async def _refresh_model_catalogs(self) -> None:
+        from tldw_chatbook.Backup_Recovery.activation import execution_scope
+
+        with execution_scope(("config",)) as allowed:
+            if allowed:
+                await TldwCli._refresh_model_catalogs_owned(self)
+
+    async def _refresh_model_catalogs_owned(self) -> None:
         """ADR-020 startup auto-refresh; never blocks or crashes startup."""
         try:
             from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import (
@@ -10378,6 +10398,10 @@ class TldwCli(
         the consent question, a modal is shown instead of the refresh; the
         refresh itself is only scheduled from the consent callback.
         """
+        from tldw_chatbook.Backup_Recovery.activation import execution_allowed
+
+        if not execution_allowed(("config",)):
+            return False
         if getattr(self, "_startup_model_catalog_refresh_scheduled", False):
             return False
         if not after_setup_completion and setup_owns_startup_networking(
@@ -11783,7 +11807,22 @@ class TldwCli(
             children = self._speech_initialization_children = {}
         task = children.get(kind)
         if task is None:
-            task = asyncio.create_task(initialize())
+
+            async def admitted_initialize():
+                from tldw_chatbook.Backup_Recovery.activation import execution_scope
+
+                owners = (
+                    "config",
+                    "models.artifacts",
+                    "tts.profile_store",
+                    "tts.voices",
+                )
+                with execution_scope(owners) as allowed:
+                    if not allowed:
+                        return None
+                    return await initialize()
+
+            task = asyncio.create_task(admitted_initialize())
             children[kind] = task
 
             def settled(completed):
@@ -12543,23 +12582,28 @@ class TldwCli(
 
     def schedule_media_cleanup(self) -> None:
         """Schedule periodic media cleanup based on configuration."""
+        from tldw_chatbook.Backup_Recovery.activation import execution_allowed
+
         # TASK-1975: change-review snapshot retention rides the same
         # maintenance path but has its OWN knob ([change_review]
         # retention_days; <=0 disables inside the pass) -- disabling media
         # cleanup must not silently disable snapshot retention.
         try:
-            self._change_review_retention_startup_timer = self.set_timer(
-                DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS + 60,
-                self._perform_change_review_retention,
-            )
-            self._change_review_retention_timer = self.set_interval(
-                24 * 3600, self._perform_change_review_retention
-            )
+            if execution_allowed(("db.agent_runs",)):
+                self._change_review_retention_startup_timer = self.set_timer(
+                    DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS + 60,
+                    self._perform_change_review_retention,
+                )
+                self._change_review_retention_timer = self.set_interval(
+                    24 * 3600, self._perform_change_review_retention
+                )
         except Exception:  # noqa: BLE001 -- maintenance must never block boot
             self.loguru_logger.opt(exception=True).warning(
                 "Could not schedule change-review retention"
             )
         try:
+            if not execution_allowed(("db.media.primary",)):
+                return
             # Get cleanup configuration
             cleanup_config = get_cli_setting("media_cleanup", "enabled", True)
             if not cleanup_config:
@@ -12608,7 +12652,16 @@ class TldwCli(
                 run_retention_for_app,
             )
 
-            await asyncio.to_thread(run_retention_for_app, db_path)
+            def retained_cleanup():
+                from tldw_chatbook.Backup_Recovery.activation import execution_scope
+
+                with execution_scope(
+                    ("db.agent_runs",), Path(db_path).parent / "agent_runs.db"
+                ) as allowed:
+                    if allowed:
+                        run_retention_for_app(db_path)
+
+            await asyncio.to_thread(retained_cleanup)
         except Exception:  # noqa: BLE001 -- retention must never surface to the UI
             self.loguru_logger.opt(exception=True).warning(
                 "Change-review retention pass failed"
@@ -12623,11 +12676,18 @@ class TldwCli(
             db = self.media_db
 
             def run_cleanup_method(method, days):
-                try:
-                    return method(days)
-                finally:
-                    if type(db) is MediaDatabase and not db.is_memory_db:
-                        db.close_connection()
+                from tldw_chatbook.Backup_Recovery.activation import execution_scope
+
+                with execution_scope(
+                    ("db.media.primary",), Path(db.db_path)
+                ) as allowed:
+                    if not allowed:
+                        return None
+                    try:
+                        return method(days)
+                    finally:
+                        if type(db) is MediaDatabase and not db.is_memory_db:
+                            db.close_connection()
 
             # Get cleanup configuration
             cleanup_days = get_cli_setting("media_cleanup", "cleanup_days", 30)
@@ -12664,7 +12724,7 @@ class TldwCli(
                 run_cleanup_method, db.hard_delete_old_media, cleanup_days
             )
 
-            if deleted_count > 0:
+            if deleted_count is not None and deleted_count > 0:
                 self.loguru_logger.info(
                     f"Media cleanup completed: {deleted_count} items permanently deleted"
                 )

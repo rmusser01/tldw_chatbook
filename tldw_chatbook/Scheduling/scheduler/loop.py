@@ -11,6 +11,7 @@ from typing import Any, Callable, Coroutine, Optional
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery.activation import execution_scope
 from tldw_chatbook.Metrics.metrics_logger import log_counter
 from tldw_chatbook.Scheduling.constants import (
     HANDLER_TIMEOUT_SECONDS,
@@ -28,10 +29,17 @@ Handler = Callable[[dict[str, Any]], Coroutine[Any, Any, None]]
 
 def _admitted_dispatch(method):
     """Keep a complete scheduler operation admitted through nested dispatch."""
+
     @wraps(method)
     async def admitted(self, *args, **kwargs):
-        with self._maintenance_operation():
+        with (
+            self._maintenance_operation(),
+            execution_scope(("db.scheduled_tasks",), self.db.db_path) as allowed,
+        ):
+            if not allowed:
+                return False
             return await method(self, *args, **kwargs)
+
     return admitted
 
 
@@ -166,7 +174,12 @@ class SchedulerLoop:
                         databases.add(db)
 
         def load():
-            with ExitStack() as retirement:
+            with (
+                execution_scope(("db.scheduled_tasks",), self.db.db_path) as allowed,
+                ExitStack() as retirement,
+            ):
+                if not allowed:
+                    return
                 for db in databases:
                     retirement.callback(db.close)
                 queue.load()
@@ -255,7 +268,13 @@ class SchedulerLoop:
             if self._maintenance_closed:
                 self._maintenance_open.clear()
                 continue
-            with self._maintenance_operation():
+            with (
+                self._maintenance_operation(),
+                execution_scope(("db.scheduled_tasks",), self.db.db_path) as allowed,
+            ):
+                if not allowed:
+                    self.running = False
+                    return
                 if initial:
                     await self._load_queue()
                     self.report_configuration()

@@ -8,6 +8,7 @@ server identity (``server:<user_id>``).
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
@@ -138,8 +139,11 @@ class SchedulingService:
         if use_server:
             assert self.server_client is not None
             try:
-                response = await self.server_client.create_reminder(**server_payload)
-                return await self._persist_server_reminder_response(response)
+                with self._remote_execution():
+                    response = await self.server_client.create_reminder(
+                        **server_payload
+                    )
+                    return await self._persist_server_reminder_response(response)
             except ServerUnavailableError:
                 logger.warning(
                     f"Server unavailable while creating reminder for {self.owner_id}"
@@ -205,19 +209,20 @@ class SchedulingService:
             assert self.server_client is not None
             server_id = row.get("server_id")
             try:
-                if server_id:
-                    response = await self.server_client.update_reminder(
-                        server_id, **payload
+                with self._remote_execution():
+                    if server_id:
+                        response = await self.server_client.update_reminder(
+                            server_id, **payload
+                        )
+                    else:
+                        merged_task = ReminderTask(**{**row, **payload})
+                        merged_payload = self._server_create_payload(merged_task)
+                        response = await self.server_client.create_reminder(
+                            **merged_payload
+                        )
+                    return await self._persist_server_reminder_response(
+                        response, local_id=task_id
                     )
-                else:
-                    merged_task = ReminderTask(**{**row, **payload})
-                    merged_payload = self._server_create_payload(merged_task)
-                    response = await self.server_client.create_reminder(
-                        **merged_payload
-                    )
-                return await self._persist_server_reminder_response(
-                    response, local_id=task_id
-                )
             except ServerUnavailableError:
                 logger.warning(
                     f"Server unavailable while updating reminder {task_id} for {self.owner_id}"
@@ -271,15 +276,18 @@ class SchedulingService:
             assert self.server_client is not None
             server_id = row.get("server_id")
             try:
-                if server_id:
-                    await self.server_client.delete_reminder(server_id)
-                self.db.delete_reminder_task(task_id)
-                self.db.delete_sync_mapping(task_id, _REMINDER_PRIMITIVE, self.owner_id)
-                self.db.delete_pending_mutation_for_record(
-                    task_id, _REMINDER_PRIMITIVE, self.owner_id
-                )
-                self._notify_queue_changed()
-                return True
+                with self._remote_execution():
+                    if server_id:
+                        await self.server_client.delete_reminder(server_id)
+                    self.db.delete_reminder_task(task_id)
+                    self.db.delete_sync_mapping(
+                        task_id, _REMINDER_PRIMITIVE, self.owner_id
+                    )
+                    self.db.delete_pending_mutation_for_record(
+                        task_id, _REMINDER_PRIMITIVE, self.owner_id
+                    )
+                    self._notify_queue_changed()
+                    return True
             except ServerUnavailableError:
                 logger.warning(
                     f"Server unavailable while deleting reminder {task_id} for {self.owner_id}"
@@ -318,9 +326,14 @@ class SchedulingService:
         stale until the ~30-minute periodic reload -- pulled reminders did
         not dispatch on time and remotely-deleted ones kept firing).
         """
-        target_owner = owner_id if owner_id is not None else self.owner_id
-        await self.sync_engine.sync_now(target_owner)
-        self._notify_queue_changed()
+        from tldw_chatbook.Backup_Recovery.activation import execution_scope
+
+        with execution_scope(("db.scheduled_tasks",), self.db.db_path) as allowed:
+            if not allowed:
+                return
+            target_owner = owner_id if owner_id is not None else self.owner_id
+            await self.sync_engine.sync_now(target_owner)
+            self._notify_queue_changed()
 
     async def run_reminder_now(self, task_id: str, loop: Any = None) -> ReminderTask | None:
         """Dispatch a reminder immediately through the scheduler's own path.
@@ -355,13 +368,28 @@ class SchedulingService:
         if row is None:
             return None
 
-        succeeded = await loop.run_reminder_now(task_id)
-        self._notify_queue_changed()
+        from tldw_chatbook.Backup_Recovery.activation import execution_scope
 
-        row = self.db.get_reminder_task(task_id)
-        if row is None or not succeeded:
-            return None
-        return self._row_to_reminder(row)
+        with execution_scope(("db.scheduled_tasks",), self.db.db_path) as allowed:
+            if not allowed:
+                return None
+            succeeded = await loop.run_reminder_now(task_id)
+            self._notify_queue_changed()
+
+            row = self.db.get_reminder_task(task_id)
+            if row is None or not succeeded:
+                return None
+            return self._row_to_reminder(row)
+
+    @contextmanager
+    def _remote_execution(self):
+        """Keep inactive remote edits on the existing local/pending path."""
+        from tldw_chatbook.Backup_Recovery.activation import execution_scope
+
+        with execution_scope(("db.scheduled_tasks",), self.db.db_path) as allowed:
+            if not allowed:
+                raise ServerUnavailableError("recovery_activation_required")
+            yield
 
     def _use_server(self) -> bool:
         """Return True when server operations should be attempted."""
