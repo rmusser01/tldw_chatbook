@@ -11,7 +11,6 @@ from datetime import datetime, timedelta, timezone
 from types import MethodType, SimpleNamespace
 
 import pytest
-from textual import on
 from textual.widgets import Button
 
 from Tests.UI.app_factory import _build_test_app
@@ -629,27 +628,46 @@ async def test_pressing_a_sort_option_applies_that_sort(monkeypatch) -> None:
     assert synced == ["notes"]
 
 
+def _adopt_screen_on(handler_name: str):
+    """Bind a harness method to whatever ``LibraryScreen.<handler_name>`` is.
+
+    Textual's ``@on`` records ``(message type, parsed selectors)`` on the
+    function object as ``_textual_on``; copying that list across is the whole
+    job, and it keeps the selector strings in exactly one place -- production.
+    """
+    decorations = getattr(getattr(LibraryScreen, handler_name), "_textual_on", None)
+    assert decorations, f"LibraryScreen.{handler_name} carries no @on decoration"
+
+    def decorate(method):
+        method._textual_on = list(decorations)
+        return method
+
+    return decorate
+
+
 class _SortKeyboardApp(_CanvasApp):
     """`_CanvasApp` plus the two Sort routes ``LibraryScreen`` declares.
 
     The canvas composes the real Sort Buttons but has no screen above it to
-    dispatch their presses, so the two ``@on`` selectors the screen binds
-    (``#library-notes-sort`` and ``.library-notes-sort-choice``, see
-    ``library_screen.py``) are re-declared here verbatim and handed the real
-    controller handlers. Everything between the key press and the handler --
-    focus traversal, ``Button.Pressed``, the selector match -- is Textual's
-    own, which is the half a direct handler call cannot reach.
+    dispatch their presses. Re-typing the screen's two selectors here would
+    pin this harness's copy of them rather than production's, so
+    ``_adopt_screen_on`` lifts the real ``@on`` decorations off
+    ``LibraryScreen``'s own methods instead: edit the selector string in
+    ``library_screen.py`` and this test binds the edited one. Everything
+    between the key press and the controller handler -- focus traversal,
+    ``Button.Pressed``, the selector match -- is then Textual's own, which
+    is the half a direct handler call cannot reach.
     """
 
     def __init__(self, *, screen_state, **kwargs) -> None:
         super().__init__(**kwargs)
         self.screen_state = screen_state
 
-    @on(Button.Pressed, "#library-notes-sort")
+    @_adopt_screen_on("handle_library_notes_sort")
     def _open_sort_choices(self, event: Button.Pressed) -> None:
         LibraryNotesController.handle_library_notes_sort(self.screen_state, event)
 
-    @on(Button.Pressed, ".library-notes-sort-choice")
+    @_adopt_screen_on("handle_library_notes_sort_choice")
     def _apply_sort_choice(self, event: Button.Pressed) -> None:
         LibraryNotesController.handle_library_notes_sort_choice(
             self.screen_state, event
@@ -668,6 +686,16 @@ async def test_sort_is_operable_by_keyboard_on_the_flat_list(monkeypatch) -> Non
     path (``library_screen.py`` builds a tree projection only ``if branches``)
     and keyboard completeness was a P1 of the Library critique, so the round
     trip lives here now, on the one harness that still mounts a real Sort.
+
+    What this pins: Textual's focus traversal and press dispatch, through
+    ``LibraryScreen``'s own ``@on`` selectors (adopted, not retyped -- see
+    ``_adopt_screen_on``), into the real controller handlers. Change either
+    selector string in ``library_screen.py`` and this goes red.
+
+    What it does not pin: that ``LibraryScreen`` itself binds those handlers.
+    The screen is too heavy to mount in this file, so the harness App stands
+    in for it; the screen's own method binding is covered where the screen is
+    mounted.
     """
     screen_state = SimpleNamespace(
         _library_notes_mutation_fenced=lambda: False,
