@@ -31,7 +31,6 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Library.library_media_viewer_state import _is_markdown_media
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_media_viewer import RENDERED_VIEW_NOTE
-
 from Tests.UI.test_library_media_side_by_side import (
     _build_media_test_app,
     _open_media_list,
@@ -174,10 +173,21 @@ def test_the_escape_chip_and_the_guide_quote_the_same_words():
     assert LibraryScreen._library_media_escape_label(reader_fake) == "back"
     assert "`esc back`" in guide
 
-    # Every transient sub-state shares the one word.
+    # Every transient sub-state shares the one word -- all four of them.
+    # Qodo on PR #2583: the label checked only `confirming_delete`, while
+    # `action_library_media_viewer_back` closes the metadata-edit and
+    # analysis-edit forms too (its first and third branches), so the footer
+    # promised "focus Items" over a form Escape would merely close. The
+    # LIBRARY_MEDIA_SUBSTATE_BACK_SHORTCUTS docstring already promised all
+    # three sub-states the single word "close" (task-31272).
     more_fake, _calls, _shell, _find = _escape_fake(region="reader", more_open=True)
     assert LibraryScreen._library_media_escape_label(more_fake) == "close"
     assert "`esc close`" in guide
+
+    for sub_state in ("editing", "confirming_delete", "editing_analysis"):
+        sub_fake, _calls, _shell, _find = _escape_fake(region="reader")
+        setattr(sub_fake._media_state, sub_state, True)
+        assert LibraryScreen._library_media_escape_label(sub_fake) == "close", sub_state
 
     # The contradicting claims are gone.
     assert "Escape never leaves the Reader at all" not in guide
