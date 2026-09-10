@@ -559,15 +559,28 @@ def test_notes_footer_states_use_per_key_grammar_and_never_advertise_dead_keys()
             create_running=False,
             sync_active_token=None,
         ),
+        # task-32132 AC#2: the confirming_delete footer branch now names
+        # whichever button is FOCUSED (via _library_focus_enter_label),
+        # not a static "confirm delete" string. No widget has focus in
+        # this fake, so the label falls back to "cancel" -- entry focus
+        # for the real confirmation lands on Cancel too.
+        focused=None,
     )
     from types import MethodType
 
     fake._notes_footer_tier = MethodType(LibraryScreen._notes_footer_tier, fake)
+    fake._library_focus_enter_label = MethodType(
+        LibraryScreen._library_focus_enter_label, fake
+    )
     for name in vars(LibraryScreen):
         if name.startswith("LIBRARY_NOTES_"):
             setattr(fake, name, getattr(LibraryScreen, name))
     shortcuts = LibraryScreen._library_notes_footer_shortcuts(fake)
-    assert shortcuts == (("enter", "confirm delete"), ("esc", "cancel delete"))
+    assert shortcuts == (
+        ("enter", "cancel"),
+        ("tab", "switch button"),
+        ("esc", "cancel"),
+    )
 
     # A running conflict resolution locks every key -> nothing advertised.
     fake._notes_state.confirming_delete = False

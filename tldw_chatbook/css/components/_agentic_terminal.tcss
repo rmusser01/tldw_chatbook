@@ -11508,7 +11508,14 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-x: hidden;
 }
 
+/* task-32142 fix round 1 escalated minor: #library-note-preview-body-title
+   (the Preview title) carries `.destination-section` like Info's
+   Properties/Reuse & Export/Danger headers, but no selector reached it --
+   the class was inert there in both sizes. Grouped into the SAME rule its
+   Info siblings already use, rather than inventing a new style nothing
+   else in this canvas has. */
 #library-shell-grid.library-notes-compact #library-note-context-region .destination-section,
+#library-shell-grid.library-notes-compact #library-note-preview-region .destination-section,
 #library-shell-grid.library-notes-compact #library-note-context-meta,
 #library-shell-grid.library-notes-compact #library-note-context-region > .library-canvas-action {
     height: 1;
