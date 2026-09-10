@@ -648,7 +648,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         tree_deleted_folder_available: bool,
         title_placeholder_only: bool,
         compact: bool,
-        pane_width: int,
+        pane_width: int = 0,
         create_running: bool,
         create_status: str,
         load_state: str,
@@ -677,6 +677,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             title_placeholder_only: Whether the title is placeholder-only.
             compact: Whether compact editor controls are enabled.
             pane_width: Columns the mounted list pane has (see ``__init__``).
+                Defaults to the same ``0`` the constructor uses for "not
+                measured yet", so a caller outside the screen's reader
+                layout gets the conservative toolbar shape rather than a
+                ``TypeError`` (PR #2549 review, finding 6).
             create_running: Whether note creation is in progress.
             create_status: Current note-creation status copy.
             load_state: Current note-loading state identifier.

@@ -100,7 +100,10 @@ MAX_IMPORT_KEYWORD_LENGTH = 512
 MAX_IMPORT_ITEM_ID_LENGTH = 256
 """Absolute length ceiling for opaque preview item identifiers."""
 
-_CODE_SPAN = r"```[\s\S]*?```|~~~[\s\S]*?~~~|``[\s\S]*?``|`[^`\n]*`"
+#: A fence with no closer runs to end of file (CommonMark), so its
+#: alternative ends at ``\Z``; an unpaired inline backtick is literal text and
+#: still needs its closer (PR #2549 review, finding 8).
+_CODE_SPAN = r"```[\s\S]*?(?:```|\Z)|~~~[\s\S]*?(?:~~~|\Z)|``[\s\S]*?``|`[^`\n]*`"
 
 WIKILINK_SCAN = re.compile(
     rf"(?P<code>{_CODE_SPAN})"
@@ -117,14 +120,32 @@ sample text, and rewriting it would corrupt the note.
 
 
 def wikilink_target(match: re.Match[str]) -> str | None:
-    """Return the link target of one scan match, or None for a code span."""
+    """Return the link target of one scan match, or None for a code span.
+
+    Args:
+        match: One ``WIKILINK_SCAN`` match, which is either a code span or a
+            non-embedded ``[[target]]``.
+
+    Returns:
+        The trimmed link target, or ``None`` when the match is a code span or
+        the target is blank.
+    """
     if match.group("code") is not None:
         return None
     return (match.group("target") or "").strip() or None
 
 
 def wikilink_key(target: str) -> str:
-    """Return the comparable form of one link target or vault-relative path."""
+    """Return the comparable form of one link target or vault-relative path.
+
+    Args:
+        target: A link target as the author wrote it, or a vault-relative
+            path to compare one against.
+
+    Returns:
+        The NFC-normalized, case-folded key, without surrounding whitespace
+        or leading/trailing ``/``.
+    """
     return normalize("NFC", target).strip().strip("/").casefold()
 
 

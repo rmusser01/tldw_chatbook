@@ -87,28 +87,22 @@ editor's own Back control returns to its list.
   open the list takes the width the empty work area would otherwise waste,
   so long titles are not truncated on a wide terminal; opening a note hands
   that width back. Its own grip collapses or restores the list without
-  changing the Folder Files tree choice. Renaming a note updates its list
-  row as soon as the note saves — returning to the list shows the new title
-  with no filter re-query needed.
+  changing the Folder Files tree choice. Renaming a note does not repaint its
+  list row live while the note stays open: a Notes refresh that lands while
+  the title field holds focus is skipped rather than queued, so tabbing or
+  clicking to another field does not by itself catch it up. The row shows the
+  new title the next time the canvas refreshes with focus outside the title
+  and body — in practice, that means returning to the list (the note work
+  area's own **‹ Notes** / **‹ Back to list** control, below), which always
+  repaints immediately; no filter re-query is needed once you are back.
 
   The folder tree is ordered by title, which is the order the database pages
   notes in, so it carries no sort control; the sort control belongs to the
-  flat list shown when no folder tree is loaded.
-
-  *Verified against fix/library-uat-31796-31797 — 2026-09-06 (task-31796: the
-  list row no longer keeps the pre-rename "Untitled" title until a filter
-  re-query).*
+  flat list shown before any folder tree has loaded.
 
   In a narrow list pane the toolbar's action groups stack one action per
   line rather than running off the pane edge, so every action stays
   pressable.
-
-  *Verified against fix/library-notes-list — 2026-09-09 (task-32127: the list
-  no longer sits at 38 columns beside an empty work area, and its action
-  groups stack rather than clip in a narrow pane; task-32137: rows
-  carry an age and same-folder duplicate titles name their folder;
-  task-32128: the tree's title order is the database's, so Sort is not
-  offered there).*
 - **Note work area** — opens when you click a note. **Edit** shows the title
   and body, **Preview** renders the Markdown, and **Info** holds keywords,
   dates, version details, copy/export actions, and Delete. Save status and
@@ -327,7 +321,7 @@ both stay closed until you choose to reopen one.
 | Folder selected: "Rename" / "Move" / "Remove" | Act on the selected folder. Same two disabled reasons as **New folder**. |
 | Note selected: "Add to folder" / "Move note" / "Remove placement" | File the selected note into a folder, move its placement, or take it out again. A sync-managed placement is refused with "This placement is managed by sync; change its sync root instead."; a note sitting in the automatic **Unfiled** group cannot have its placement removed ("Unfiled is shown automatically; move the note into a folder."). |
 | "Restore folder" | Appears after a folder removal, to put it back. |
-| "Sort: Newest" | Opens a one-row strip of Newest / Oldest / Title (✓ on the active one) in place of the action row; pick one directly, or press Escape to cancel. |
+| "Sort: Newest" | Opens a one-row strip of Newest / Oldest / Title (✓ on the active one) in place of the action row; pick one directly, or press Escape to cancel. Only offered for the flat list shown before a folder tree has loaded — the folder tree itself (the default view once any folder exists) carries no Sort control, per "The folder tree is ordered by title" above, so this control is not part of ordinary browsing. |
 | "Add from files…" | Choose **Import once** or **Keep a folder synced** before selecting a source. |
 | "Manage sync folders" | Appears only when roots or paused migration candidates exist; opens root status and contextual controls. |
 | "Last import" | Reopens the latest import receipt from this app session after you return to the Notes list. |
@@ -350,7 +344,7 @@ reusable lessons (empty)".
 | **Edit** | Shows the editable title and body. This is the default view when you open a note. |
 | **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. |
 | **Info** | Shows Properties (including comma-separated keywords and note dates/version), Reuse & Export, and Danger sections. |
-| Status line | Shows the word count and autosave state: "N words · saved", "saving…", "changed elsewhere", or "save failed". Created/Modified/version details are under Info → Properties, each with an absolute local timestamp beside its relative age (e.g. "Created 2026-09-08 21:14 · 3m ago"). "Saved" appears once per view, not repeated in Info. |
+| Status line | Shows the autosave state: "Saved", "Saving…", "Unsaved changes", "Conflict — …", "Save failed — …", or "Unavailable — …". It does not carry a word count. Created/Modified/version details are under Info → Properties, each with an absolute local timestamp beside its relative age and the word count (e.g. "Created 2026-09-08 21:14 · 3m ago · Modified … · v1 · 6 words"). "Saved" appears once per view, not repeated in Info. |
 | **Save** | Saves immediately, without waiting for autosave. It remains visible beside the mode controls. |
 | **Use in Console** | Hands the note to the Console as staged context, with the suggested prompt "Use this note as context and help me work with it." It remains visible beside **Save**. |
 | **Copy** (Info) | Copies the note to the clipboard as Markdown — "Note copied to clipboard as markdown!" |
@@ -362,10 +356,6 @@ read takes longer than about three seconds the editor stops waiting and shows
 "Unable to load note — timed out after 3 s. Press Retry." with a **Retry**
 button; **‹ Notes** takes you back to the list, and opening another note still
 works.
-
-*Verified against fix/library-crit8-notes-loader — 2026-09-08 (task-32050:
-opening a stored note no longer stays on "Loading note…" for ever, and a
-stuck load now reaches a failed state with Retry).*
 
 **Autosave** runs about two seconds after you stop typing; the meta line
 flips to "saving…" and back to "saved". If the same note was changed
@@ -566,6 +556,12 @@ it settles. **Last import** reopens the same-session receipt afterward.
 
 If the folder you chose holds an `.obsidian/` directory, the review shows an
 **Obsidian vault** toggle, on by default, and one line saying what it does.
+
+**Not on Windows.** Vault detection runs in the POSIX discovery pass only, so
+on Windows a vault imports as an ordinary folder: no toggle appears, the vault's
+own folders are walked, frontmatter stays in the body and wikilinks stay as
+text. Tracked as task-32178.
+
 With it on:
 
 - `.obsidian/`, `.trash/` and `Templates/` are listed under **Skipped** as one
@@ -656,7 +652,7 @@ automatic-sync setting.
 | Key | Action |
 |---|---|
 | **Ctrl+N** | New note. Works on the Library landing (no row selected yet) as well as inside the Notes workflow — the landing's bare **n** still works too, but the footer advertises Ctrl+N in both places now. |
-| **/** | Focus the note filter ("find note"). Pressed again while the filter already has focus, it re-arms (selects the current text) instead of typing a literal "/" — the same behaviour the rail search box uses. |
+| **/** | Focus the note filter ("find note"), without typing a literal "/" into it. Once the filter has focus, "/" is an ordinary typeable character rather than an accelerator — a second "/" adds a literal slash, since a filter can legitimately target a folder-style path such as "Work/Q3". |
 | **Escape** | Focus the rail |
 | Enter (in "Filter notes… (Enter)") | Apply the filter |
 | ↑ / ↓ (New note view) | Move between **Blank note** and the template rows |
@@ -726,23 +722,26 @@ evidence directory remains for inspection.
   model — that's fixed: your next send now carries a real excerpt of the
   note body, not just its title.
 
-—
+## Verified against
+
 *Verified against c2cbb8081 — 2026-08-04 (PR-T1: "Use in Console"
 delivering the note's real content on send is covered by capture
 round-trip tests, task-2374).*
+
 *Verified against dev @ 6b38a13b8 — 2026-08-07 (task-2858 Task 3, LIB-14:
 "Blank note" no longer leaves a stray "Untitled" row if abandoned
 untouched, and the title shows an "Untitled" placeholder instead of
 literal editable text).*
+
 *Re-stamped against dev @ 4acb17a0b — 2026-08-07 (TASK-2857: "Export…"
 now opens the "Export bundle (.zip)" canvas, not "Export chatbook").*
 
-*Re-verified 2026-08-09 (task-3315): the LIB-14 untouched-blank discard
-and the empty-title → "Untitled" save fallback described above had
-regressed on dev (the notes-adaptive session-coordinator refactor read
-the seeded snapshot title instead of the presented-empty editor, and
-dropped the save-seam fallback); both are restored, and Esc from the
-note editor no longer dead-ends (it routes through the same guarded
+*Re-verified against dev @ 71f15ff76f — 2026-08-09 (task-3315): the LIB-14
+untouched-blank discard and the empty-title → "Untitled" save fallback
+described above had regressed on dev (the notes-adaptive session-coordinator
+refactor read the seeded snapshot title instead of the presented-empty
+editor, and dropped the save-seam fallback); both are restored, and Esc from
+the note editor no longer dead-ends (it routes through the same guarded
 Back seam as the "‹ Back to list" button).*
 
 *Verified against feat/media-ingest-followups — 2026-08-09 (xhigh review
@@ -761,21 +760,32 @@ the branch was unreachable by any exit path. Restored: the check now
 treats that literal seed as blank too, and the fix is proven at every exit
 seam (Back, Escape, rail switch, screen leave), not just the two this
 paragraph's prose already covered).*
+
 *Verified on codex/notes-delete-undo-receipt — 2026-08-11 (TASK-15100:
 confirmed Database Note deletion now leaves a named inline Undo/Dismiss
 receipt; Undo restores the exact soft-deleted row and Notes rail count through
 the version-checked service seam.)*
 
-*Verified 2026-08-21 (TASK-19026): wide Database browsing retains the Library
-rail; database editing and Files use one focused workbench with a guarded
-`‹ Library / Notes` return; exact browse identity and independent scroll
-positions survive return and compact/wide breakpoint crossings.*
+*Verified against dev @ 1bda754fa1 — 2026-08-21 (TASK-19026): wide Database
+browsing retains the Library rail; database editing and Files use one
+focused workbench with a guarded `‹ Library / Notes` return; exact browse
+identity and independent scroll positions survive return and compact/wide
+breakpoint crossings.*
 
-*Agent Lessons folder ownership, exact marker discovery, evidence template,
-foreground approval, subagent draft boundary, credential refusal, and
-untrusted-retrieval contract added for TASK-24309 — 2026-08-30. See
+*Verified against dev @ 38b2704b36 — 2026-08-30 (TASK-24309): Agent Lessons
+folder ownership, exact marker discovery, evidence template, foreground
+approval, subagent draft boundary, credential refusal, and untrusted-retrieval
+contract added. See
 [ADR-105](../../../backlog/decisions/105-portable-notes-organization-and-agent-lessons.md)
 and [ADR-106](../../../backlog/decisions/106-human-reviewed-agent-lesson-promotion.md).*
+
+*Verified against fix/library-uat-31796-31797 — 2026-09-06 (task-31796: the
+list row no longer keeps the pre-rename "Untitled" title until a filter
+re-query. Superseded in mechanism, not outcome, by task-32062/PR #2531
+below: rather than repainting the instant a rename saves, a refresh that
+lands while the title field holds focus is skipped and only replays on the
+next refresh that finds focus outside the field — in practice, on returning
+to the list. See the Notes list description above.)*
 
 *Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32063: the
 work pane no longer restates the list pane's "Library notes · Library
@@ -794,7 +804,12 @@ fresh profile: the list pane survives the first note's Escape.)*
 *Verified against fix/library-crit8-polish-shell — 2026-09-08 (review of
 PR #2531: the keyword boxes get the same protection as the title and body — a
 refresh landing while you type keywords no longer rebuilds the editor or
-rewrites the box from an older snapshot.)*
+rewrites the box from an older snapshot. Fix-round regression caught by the
+scoped re-review, task-32062: the deferred-blur replay this same PR first
+shipped could yank focus back out of a field the reader had deliberately
+moved to, so the mechanism changed from "replay on blur" to "skip and let
+the next out-of-field refresh paint" -- the behavior the rename-propagation
+stamp above now describes.)*
 
 *Verified against fix/library-crit8-docs — 2026-09-08 (task-32073,
 docs-vs-live pass from critique #8; live at 235x52 on a seeded profile):
@@ -812,14 +827,16 @@ rows with a visible cursor, the footer's "enter create note" follows the
 focused control, and Tab no longer leaves the Library screen for the
 navigation bar. Pinned in `Tests/UI/test_library_crit8_keyboard.py`.)*
 
-*Verified against fix/library-notes-onboarding — 2026-09-09 (task-32126:
-the empty-state line previously never rendered once the seeded
-Agent_Lessons folder existed, because the tree projection had a row and
-the "no rows" check never fired; the guide's copy also disagreed with the
-code's. Fixed to render "No notes yet. Create your first note." above the
-tree whenever the library holds zero notes, matching the code copy
-exactly, and to gloss the Agent_Lessons folder row while it does. Pinned
-in `Tests/Widgets/Library/test_library_notes_canvas.py`.)*
+*Verified against fix/library-crit8-notes-loader — 2026-09-08 (task-32050:
+opening a stored note no longer stays on "Loading note…" for ever, and a
+stuck load now reaches a failed state with Retry).*
+
+*Verified against fix/library-notes-file-notes — 2026-09-09 (task-32136:
+Folder files is a mode of Notes — once a folder is linked, the Library rail
+and the "Library notes | Folder files" strip stay visible inside it at wide
+sizes, and the strip, not the back cue, is the way back. The empty state
+shown before any folder is linked is full-width without the rail; see
+[File notes](file-notes.md).)*
 
 *Verified against fix/library-notes-pickers — 2026-09-09 (task-32122: the
 Import once and Keep-synced folder pickers used to commit the directory
@@ -832,6 +849,15 @@ basename. Pinned in `Tests/UI/test_file_open_select_folder.py`,
 `Tests/UI/test_select_directory_typed_path.py`,
 `Tests/UI/test_enhanced_select_directory.py`.)*
 
+*Verified against fix/library-notes-onboarding — 2026-09-09 (task-32126:
+the empty-state line previously never rendered once the seeded
+Agent_Lessons folder existed, because the tree projection had a row and
+the "no rows" check never fired; the guide's copy also disagreed with the
+code's. Fixed to render "No notes yet. Create your first note." above the
+tree whenever the library holds zero notes, matching the code copy
+exactly, and to gloss the Agent_Lessons folder row while it does. Pinned
+in `Tests/Widgets/Library/test_library_notes_canvas.py`.)*
+
 *Verified against fix/library-notes-import-ux — 2026-09-09 (task-32125: the
 chooser shows **Import once** and **Keep a folder synced** together, each under
 its own description, and the header no longer says "Lasting sync" before you
@@ -842,28 +868,20 @@ task-32134: **Change selection** and **Clear** ship beside the selection.
 task-32135: review rows are one line each, grouped, with per-group **Skip all**
 / **Create all**.)*
 
-*Verified against fix/library-notes-import-ux — 2026-09-09 (review of
-task-32130 and task-32135: a note-free structured document is skipped rather
-than failed while a mixed one stays a failure, an automatic skip keeps its own
-reason on the receipt instead of "Skipped by you.", the receipt keeps its
-skipped paths after another selection starts, and the follow-on review choices
-moved onto their own line so nothing is clipped out of reach.)*
-
-*Verified against fix/library-notes-obsidian — 2026-09-09 (task-32129: Import
-once detects an Obsidian vault, skips `.obsidian/`, `.trash/` and `Templates/`
-with reasons, reads frontmatter titles and tags, and links wikilinks resolved
-within the batch. Merged with the import-ux wave above: the Obsidian toggle
-lives in that wave's single review options slot, and an Obsidian skip is
-listed in the receipt's **Skipped (N)** disclosure with its own reason.)*
-
-*Verified against fix/library-notes-file-notes — 2026-09-09 (task-32136:
-Folder files is a mode of Notes — at wide sizes the Library rail and the
-"Library notes | Folder files" strip stay visible inside it, and the strip,
-not the back cue, is the way back.)*
+*Verified against fix/library-notes-list — 2026-09-09 (task-32127: the list
+no longer sits at 38 columns beside an empty work area, and its action
+groups stack rather than clip in a narrow pane; task-32137: rows
+carry an age, and same-folder duplicate titles name their folder;
+task-32128: the tree's title order is the database's, so Sort is not
+offered there; task-32123: the delete receipt's Undo/Dismiss actions are no
+longer composed off the pane; task-32124: Undo returns the row to the
+folder tree, not only the count.)*
 
 *Verified against fix/library-notes-editor-keys — 2026-09-09 (task-32131: `/`
-no longer types itself into the filter it focuses, and a second `/` while the
-filter already has focus re-arms instead of typing a literal slash.
+no longer types itself into the filter it focuses; a same-round controller
+ruling then made a second `/` — once the filter already has focus — an
+ordinary typeable character rather than an accelerator, since a filter can
+legitimately target a folder-style path such as "Work/Q3".
 task-32132: Delete's confirmation now renders in place — Info stays open, Tab
 is trapped between Cancel and Delete, and the footer names the focused
 button. task-32133: a refused Escape now notifies "Can't leave yet — fix the
@@ -876,6 +894,23 @@ the body, Info shows "Saved" once and an absolute timestamp beside each
 relative age, and a delete receipt no longer survives into Add from files or
 Folder files.)*
 
+*Verified against fix/library-notes-obsidian — 2026-09-09 (task-32129: Import
+once detects an Obsidian vault, skips `.obsidian/`, `.trash/` and `Templates/`
+with reasons, reads frontmatter titles and tags, and links wikilinks resolved
+within the batch. Merged with the import-ux wave above: the Obsidian toggle
+lives in that wave's single review options slot, and an Obsidian skip is
+listed in the receipt's **Skipped (N)** disclosure with its own reason.)*
+
+*Verified against fix/library-notes-docs — 2026-09-09 (task-32141: guide
+sweep after the Notes critique wave; 13 claims verified, 5 corrected).*
+
+*Verified against fix/library-notes-import-ux — 2026-09-09 (review of
+task-32130 and task-32135: a note-free structured document is skipped rather
+than failed while a mixed one stays a failure, an automatic skip keeps its own
+reason on the receipt instead of "Skipped by you.", the receipt keeps its
+skipped paths after another selection starts, and the follow-on review choices
+moved onto their own line so nothing is clipped out of reach.)*
+
 *Verified against fix/library-notes-editor-keys — 2026-09-09 (PR #2547
 review round, task-32132/task-32133: "‹ Notes" / "‹ Back to list" is now
 disabled, not just the other Info actions, while a delete confirmation is
@@ -883,3 +918,9 @@ open — pressing it used to silently displace the prompt into Edit; and a
 keyword typed only through Info's Properties field on a fresh blank note
 now clears the "Draft — not saved yet" status once it autosaves, matching
 the main keywords field.)*
+
+*Verified against fix/library-notes-docs — 2026-09-09 (PR #2549 review, at
+the re-merged wave: an unterminated ``` or ~~~ fence now keeps the rest of a
+note as code, so a `[[link]]` after it is neither recorded nor rewritten;
+Obsidian vault detection is stated as POSIX-only, since the Windows
+discovery adapter never reports a vault (task-32178).)*

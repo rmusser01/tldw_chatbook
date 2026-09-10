@@ -9,7 +9,7 @@ import pytest
 
 from tldw_chatbook.Library.library_note_import_state import _effect_summary
 from tldw_chatbook.Notes.note_import_discovery import discover_import_sources
-from tldw_chatbook.Notes.note_import_parsers import parse_import_sources
+from tldw_chatbook.Notes.note_import_parsers import _wikilinks, parse_import_sources
 from tldw_chatbook.Notes.note_import_plan_models import (
     ImportAction,
     ImportBounds,
@@ -334,6 +334,37 @@ def test_links_inside_code_spans_are_never_rewritten(vault: Path) -> None:
 
     assert "`[[README]]`" in rewritten.content
     assert 'x = "[[README]]"' in rewritten.content
+    assert "A real link: [README](note://note-id-1)." in rewritten.content
+
+
+def test_an_unclosed_fence_keeps_the_rest_of_the_note_as_code() -> None:
+    """An opener with no closer is code to end of file, so nothing after it is a link.
+
+    PR #2549 review, finding 8: the scanner recognised a fenced block only
+    when it found the closing delimiter, so a `[[Target]]` after an
+    unfinished ``` opener was recorded as a link and rewritten into literal
+    sample text.
+    """
+    content = "```\nSee [[README]] for the setup.\n"
+
+    assert _wikilinks(content) == ()
+
+    payload = ParsedNotePayload(title="Snippet", content=content, wikilinks=())
+    assert rewrite_wikilinks(payload, {"readme": "note-id-1"}).content == content
+
+
+def test_a_closed_fence_still_ends_at_its_closer() -> None:
+    """The unclosed-fence rule does not swallow links after a finished block."""
+    content = "```\n[[README]]\n```\n\nA real link: [[README]]."
+
+    assert _wikilinks(content) == ("README",)
+
+    payload = ParsedNotePayload(
+        title="Snippet", content=content, wikilinks=("README",)
+    )
+    rewritten = rewrite_wikilinks(payload, {"readme": "note-id-1"})
+
+    assert "```\n[[README]]\n```" in rewritten.content
     assert "A real link: [README](note://note-id-1)." in rewritten.content
 
 

@@ -53,16 +53,22 @@ Using compact **Back to navigator** does not reset it.
   instead.
 - **Library navigation** (left of the workspace) — the same Library rail as
   the rest of the screen, so you can leave for Media, Prompts or Skills
-  without going back through Notes first. Its grip collapses it.
+  without going back through Notes first. Its grip collapses it. Before a
+  folder is linked, the empty state below takes the full canvas width and
+  the rail is not shown; it returns once a folder is linked.
 - **Folder link row** (top) — before setup the status reads "Choose a notes
   folder." with buttons **Details** and **Choose folder…**, and the line
   under it explains the mode: "Folder files edits Markdown files in a folder
   on disk, in place. Nothing is copied into the Library." When
   `[notes] sync_directory` is set, a **Use \<folder\>** button offers that
-  folder directly. Once linked, the status becomes "Linked — \<folder\>"
-  (or "Checking — …" / "Offline — …" when the folder can't be verified) and
-  the button relabels to **Change…**. **Details** opens the read-only "File
-  Notes folder details" dialog.
+  folder directly. Once linked, the status becomes "Linked · Local folder:
+  \<folder\>" (or "Checking · Local folder: …" / "Offline · Local folder: …"
+  when the folder can't be verified) and the button relabels to
+  **Change…**. **Details** opens the read-only "File Notes folder details"
+  dialog. A folder-change reason that is currently owning the row (see
+  "While a folder change runs" below) replaces this summary until you try
+  again; the linked-folder detail stays available in the row's tooltip and
+  in Details throughout.
 - **Folder navigator** (left) — a **New** action, a "File contents…" search
   input, the **Files** tree of everything under the linked folder, and a
   **Search results** tree that appears only while a query is active. Its grip
@@ -329,7 +335,8 @@ not available.
 
 1. **Link a notes folder.** Open **Folder files** (source strip), press
    **Choose folder…**, pick the folder in "Choose File Notes Folder". The
-   status becomes "Linked — \<folder\>" and the **Files** tree fills in.
+   status becomes "Linked · Local folder: \<folder\>" and the **Files** tree
+   fills in.
 2. **Create a file.** Press **New** above the Folder files tree, enter a path
    such as `ideas/today.md` in the **New file path** task, and choose
    **Create**. The file is created on disk and opened; start typing and it
@@ -437,7 +444,8 @@ save shortcut. File edits save automatically.
   \<error\>", search falls back to a slower direct scan, and **Restore** may
   be unavailable.
 
-—
+## Verified against
+
 *Verified against dev @ e3d0d2c9d — 2026-08-07 (TASK-2850: Folder files mode
 stays inside the Library rail/canvas frame instead of replacing the whole
 shell; Escape returns to Library notes)*
@@ -455,14 +463,6 @@ claim on this page changed.)*
 change shows "still working · Cancel" after three seconds, times out after
 30, and never blocks Escape, the back cue or Quit).*
 
-*Verified against fix/library-notes-pickers — 2026-09-09 (task-32122: the
-"Choose File Notes Folder" picker used to commit the directory being
-browsed and silently ignore a typed-but-unsubmitted path when **Select**
-was pressed. It now resolves the **Folder path** field first — Enter still
-browses into it, and Select uses it immediately, with an inline error and
-the picker left open for an invalid path. Pinned in
-`Tests/UI/test_select_directory_typed_path.py`.)*
-
 *Verified against fix/library-notes-file-notes — 2026-09-09 (task-32121: an
 abandoned or timed-out folder change stops its scan, so the next folder still
 links normally; the timeout reason is painted on the folder line and stays
@@ -472,6 +472,19 @@ rail and the source strip at wide sizes; the empty state shown before any
 folder is linked explains the mode and offers the configured
 `[notes] sync_directory` folder, but is a full-width onboarding step without
 the Library rail until you link one.)*
+
+*Verified against fix/library-notes-pickers — 2026-09-09 (task-32122: the
+"Choose File Notes Folder" picker used to commit the directory being
+browsed and silently ignore a typed-but-unsubmitted path when **Select**
+was pressed. It now resolves the **Folder path** field first — Enter still
+browses into it, and Select uses it immediately, with an inline error and
+the picker left open for an invalid path. Pinned in
+`Tests/UI/test_select_directory_typed_path.py`.)*
+
+*Verified against fix/library-notes-docs — 2026-09-09 (task-32141: guide
+sweep after the Notes critique wave; the linked-folder status line reads
+"Linked · Local folder: \<folder\>", not "Linked — \<folder\>"; corrected
+here and in [Database notes](notes.md)).*
 
 *Verified against fix/library-notes-file-notes — 2026-09-09 (task-32121
 review round 2: **Keep waiting** also extends a change queued behind an

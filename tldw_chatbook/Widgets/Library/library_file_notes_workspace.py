@@ -5374,6 +5374,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self,
         service: FileNotesService,
         cancel_event: Event | None,
+        generation: int,
     ) -> ScanResult:
         """Scan a candidate root on a worker thread, cancellably and bounded.
 
@@ -5395,6 +5396,8 @@ class LibraryFileNotesWorkspace(Vertical):
             service: Service bound to the candidate root.
             cancel_event: This attempt's own cancel flag, or None when the
                 caller cannot abandon the scan.
+            generation: The ``_root_generation`` this attempt owns, so its
+                progress reports stop at the attempt that started them.
 
         Returns:
             The candidate root's scan result.
@@ -5417,18 +5420,31 @@ class LibraryFileNotesWorkspace(Vertical):
         try:
             return service.scan(
                 should_cancel=should_cancel,
-                on_progress=self._record_root_scan_progress,
+                on_progress=partial(
+                    self._record_root_scan_progress, generation=generation
+                ),
             )
         finally:
             self._service_lock.release()
 
-    def _record_root_scan_progress(self, entries: int) -> None:
+    def _record_root_scan_progress(self, entries: int, *, generation: int) -> None:
         """Publish the running entry count from the scan thread.
 
         A plain attribute store, deliberately: the busy row reads it on its
         own repaint tick, so no cross-thread call is needed and a stale
-        read is at worst one tick behind.
+        read is at worst one tick behind. It is not a cross-attempt store,
+        though (PR #2549 review, finding 2): an abandoned scan's thread can
+        still be inside its file loop when the next change resets the
+        counter, and its next report would otherwise land on the new
+        attempt's row.
+
+        Args:
+            entries: Entries this scan has seen so far.
+            generation: The ``_root_generation`` the reporting scan was
+                started for. A report from any older attempt is dropped.
         """
+        if generation != self._root_generation:
+            return
         self._root_scan_entries = entries
 
     def _report_root_change_reason(self, reason: str) -> None:
@@ -5532,6 +5548,7 @@ class LibraryFileNotesWorkspace(Vertical):
                     self._scan_for_root,
                     service,
                     cancel_event,
+                    generation,
                 )
             except ScanCancelled:
                 # Abandonment bumps the generation, so a still-current
