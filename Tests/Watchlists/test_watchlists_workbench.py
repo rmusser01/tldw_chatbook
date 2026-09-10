@@ -12,6 +12,8 @@ from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalS
 from textual.widget import Widget
 from textual.widgets import Button, Label, Static
 
+from Tests.UI.consolidated_css import APP_STYLESHEETS
+
 from tldw_chatbook.UI.Watchlists_Modules import (
     watchlists_workbench as workbench_module,
 )
@@ -65,12 +67,7 @@ def _direct_child_ids(widget) -> list[str | None]:
     return [child.id for child in widget.children]
 
 
-_REAL_CSS_PATH = str(
-    Path(__file__).resolve().parents[2]
-    / "tldw_chatbook"
-    / "css"
-    / "tldw_cli_modular.tcss"
-)
+_REAL_CSS_PATH = [str(sheet) for sheet in APP_STYLESHEETS]
 
 
 class _BoundaryGeometryApp(App[None]):
@@ -942,12 +939,7 @@ def _article(item_id: int) -> dict:
 class _ReadGeometryApp(App[None]):
     """Production-CSS harness for Reader-local containment."""
 
-    CSS_PATH = str(
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "tldw_cli_modular.tcss"
-    )
+    CSS_PATH = [str(sheet) for sheet in APP_STYLESHEETS]
 
     def _items_pane(self) -> Vertical:
         pane = ArticleListPane(id="watchlists-items-pane")

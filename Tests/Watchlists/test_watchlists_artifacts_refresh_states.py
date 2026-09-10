@@ -10,7 +10,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.widgets import Button, Collapsible, DataTable, Static
 
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_destination_shells import DestinationHarness
 from tldw_chatbook.UI.Screens import watchlists_collections_screen as screen_module
@@ -44,7 +44,7 @@ COMPLETE_BRIEFING = {
 
 
 class ArtifactsStateHarness(ConsolidatedCSSApp):
-    CSS_PATH = [str(BUNDLED_STYLESHEET)]
+    CSS_PATH = [str(sheet) for sheet in APP_STYLESHEETS]
 
     def __init__(self, *, populated: bool = True) -> None:
         super().__init__()
@@ -97,7 +97,7 @@ class ArtifactsStateHarness(ConsolidatedCSSApp):
 
 
 class ArtifactsScreenHarness(DestinationHarness):
-    CSS_PATH = str(BUNDLED_STYLESHEET)
+    CSS_PATH = [str(sheet) for sheet in APP_STYLESHEETS]
 
 
 class _EventuallyVisibleBriefingsDB:
