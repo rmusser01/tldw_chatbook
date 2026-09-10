@@ -576,9 +576,9 @@ them one by one, with your place and progress saved between visits.
   Reader's own border.
 - **Resume on entry** — opening the media area with a set active loads its
   current item into the Reader automatically, on every entry, so the banner
-  and the open document always agree (in narrower layouts Escape shows the
-  list again until the next entry; the three-pane layout keeps showing it in
-  the Items pane throughout).
+  and the open document always agree. Escape behaves here exactly as it does
+  everywhere else in the Reader — see [Keyboard & commands](#keyboard--commands)
+  for the one rule and the chip that states it.
 - **Walk** — while a set is active the Reader carries a banner naming the
   set, your place, and the open item's own state ("Reviewing: All media — 2
   of 14 · 1 reviewed · ✓ reviewed"), and the footer shows the same place —
@@ -746,15 +746,17 @@ The Media grips accept **Enter**; in Select mode **Space** is reserved for
 toggling the focused row, so the grips take Enter only there. Arrow-key
 traversal moves the Items selection with a short settle delay; **Enter**
 loads immediately.
-**Escape** closes transient Reader state first — the Find bar, the More
-menu, an open type/sort strip, or an armed delete or edit — and then steps
-outward: from the Reader to the loaded **Items row**, from Items to the
-**Media row in the rail**. Neither of those steps lands in a text box.
-In the three-pane layout (verified at 235x52) Escape never leaves the
-Reader at all: the Items pane is already showing the list, so the document
-stays open and `]`/`[` keep working from the row. The rail row is the last
-stop, and the footer drops its `esc` chip there rather than advertise a key
-that does nothing.
+**Escape** closes transient Reader state first — the Find bar, then the More
+strip — and then steps out of the Reader to the Items list; the footer chip
+always names the next step it will take. The chip is the authority, and it
+reads **`esc focus Items`** from the open document and **`esc focus Library`**
+from the Items row; an open type/sort strip or an armed delete or edit is
+transient too, so the chip reads **`esc close`** over any of them. The rail
+row is the last stop, where the footer drops the `esc` chip rather than
+advertise a key that does nothing. No step lands in a text box.
+Stepping out of the Reader moves focus, not the document: in the three-pane
+layout (verified at 235x52) the Items pane is already showing the list, so
+the item keeps painting beside it and `]`/`[` keep working from the row.
 Where the Library pane is collapsed but the Items pane still shows the list
 (verified at 100x30) the "‹ Back" control returns you to the list, and so
 does Escape from the Items row. Between 64 and 88 columns both panes are
@@ -1086,3 +1088,10 @@ the Rendered|Raw decision is the content sniff alone now. The media-type
 allowlist that ran in front of it (plaintext/markdown/obsidian_note/video/
 audio) meant a `document` or `article` whose text started with a heading
 painted its literal `#` under a note saying there was no Markdown to render.)*
+
+*Verified against fix/library-crit9-media-reader — 2026-09-10 (task-32222:
+one Escape rule, quoted from the footer chip itself. The page previously
+claimed two different targets in two places while the chip named a third;
+the chip is pinned by test and the guide was not, so the guide now quotes
+`esc focus Items` / `esc focus Library` / `esc close` and a test asserts the
+quotes are the strings the code produces.)*

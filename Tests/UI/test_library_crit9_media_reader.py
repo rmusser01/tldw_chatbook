@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -150,3 +151,34 @@ async def test_a_document_with_real_markdown_renders_and_drops_the_false_note():
         assert RENDERED_VIEW_NOTE not in _painted(
             host, screen.query_one("#library-media-viewer").region
         )
+
+
+def test_the_escape_chip_and_the_guide_quote_the_same_words():
+    """task-32222 AC#1: one chip text, one guide sentence, one real target.
+
+    The guide claimed two different Escape targets in two places while the
+    chip named a third. The chip is pinned (test_library_media_reader_flow)
+    and the guide was not, so the guide now QUOTES the chip -- and this
+    asserts the quotes are the strings the code actually produces, so the
+    two cannot drift apart again.
+    """
+    guide = _GUIDE.read_text(encoding="utf-8")
+
+    # The plain viewer: focus in the Reader, nothing transient open.
+    reader_fake, _calls, shell, _find = _escape_fake(region="reader")
+    assert LibraryScreen._library_media_escape_label(reader_fake) == "focus Items"
+    assert "`esc focus Items`" in guide
+
+    # One step out: focus in the Items pane, Library still open.
+    reader_fake.focused = SimpleNamespace(ancestors=(shell.items,))
+    assert LibraryScreen._library_media_escape_label(reader_fake) == "focus Library"
+    assert "`esc focus Library`" in guide
+
+    # Every transient sub-state shares the one word.
+    more_fake, _calls, _shell, _find = _escape_fake(region="reader", more_open=True)
+    assert LibraryScreen._library_media_escape_label(more_fake) == "close"
+    assert "`esc close`" in guide
+
+    # The contradicting claims are gone.
+    assert "Escape never leaves the Reader at all" not in guide
+    assert "in narrower layouts Escape shows the list again" not in guide
