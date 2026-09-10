@@ -11490,6 +11490,8 @@ class TldwCli(
         thread.start()
 
     def _schedule_tts_initialization(self) -> None:
+        if not self._speech_initialization_allowed("tts"):
+            return
         if self._tts_handler is not None:
             return
         if self._tts_initialization_task and not self._tts_initialization_task.done():
@@ -11500,6 +11502,8 @@ class TldwCli(
         )
 
     def _schedule_stts_initialization(self) -> None:
+        if not self._speech_initialization_allowed("stts"):
+            return
         if self._stts_handler is not None:
             return
         if self._stts_initialization_task and not self._stts_initialization_task.done():
@@ -11509,7 +11513,101 @@ class TldwCli(
             name="deferred_stts_initialization",
         )
 
+    def _speech_initialization_allowed(self, kind: str) -> bool:
+        if getattr(self, "_speech_initialization_closed", False):
+            return False
+        if not getattr(self, "_speech_initialization_paused", False):
+            return True
+        deferred = getattr(self, "_speech_initialization_deferred", None)
+        if deferred is None:
+            deferred = self._speech_initialization_deferred = set()
+        deferred.add(kind)
+        return False
+
+    def _speech_initialization_close_admission(self) -> None:
+        """Defer new service construction while admitted initialization settles."""
+        self._speech_initialization_paused = True
+
+    async def _speech_initialization_drain(self, deadline: float) -> bool:
+        if not getattr(self, "_speech_initialization_paused", False):
+            raise RuntimeError("speech_initialization_not_paused")
+        while getattr(self, "_speech_initialization_children", {}):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(remaining, 0.01))
+        return True
+
+    def _speech_initialization_resume(self) -> None:
+        """Replay deferred construction only after ordinary storage resumes."""
+        self._speech_initialization_paused = False
+        deferred = getattr(self, "_speech_initialization_deferred", set())
+        self._speech_initialization_deferred = set()
+        if "tts" in deferred:
+            self._schedule_tts_initialization()
+        if "stts" in deferred:
+            self._schedule_stts_initialization()
+
+    async def _settle_speech_initialization(self) -> asyncio.CancelledError | None:
+        """Finish admitted initialization before shutdown cleans its handlers.
+
+        Return waiter cancellation so the existing cleanup phase can preserve
+        it until handler retirement; cancelling a wrapper never detaches its
+        native initializer. Intake must already be terminally closed.
+        """
+        if not getattr(self, "_speech_initialization_closed", False):
+            raise RuntimeError("speech_initialization_not_closed")
+        children = tuple(getattr(self, "_speech_initialization_children", {}).values())
+        if not children:
+            return None
+        completion = asyncio.gather(*children, return_exceptions=True)
+        cancellation = None
+        while not completion.done():
+            try:
+                await asyncio.shield(completion)
+            except asyncio.CancelledError as error:
+                cancellation = cancellation or error
+        completion.result()
+        return cancellation
+
+    async def _run_speech_initialization(self, kind: str, initialize):
+        if not self._speech_initialization_allowed(kind):
+            return None
+        children = getattr(self, "_speech_initialization_children", None)
+        if children is None:
+            children = self._speech_initialization_children = {}
+        task = children.get(kind)
+        if task is None:
+            task = asyncio.create_task(initialize())
+            children[kind] = task
+
+            def settled(completed):
+                if children.get(kind) is completed:
+                    children.pop(kind)
+                if not completed.cancelled():
+                    completed.exception()
+
+            task.add_done_callback(settled)
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # App shutdown may cancel the deferred wrapper. Its existing cleanup
+            # must see the published handler before it retires handler resources.
+            completion = asyncio.gather(task, return_exceptions=True)
+            while not completion.done():
+                try:
+                    await asyncio.shield(completion)
+                except asyncio.CancelledError:
+                    continue
+            completion.result()
+            raise
+
     async def _initialize_tts_service(self):
+        return await self._run_speech_initialization(
+            "tts", self._initialize_tts_service_owned
+        )
+
+    async def _initialize_tts_service_owned(self):
         """Initialize the TTS handler outside the startup critical path."""
 
         phase_start = time.perf_counter()
@@ -11538,6 +11636,11 @@ class TldwCli(
         return self._tts_handler
 
     async def _initialize_stts_service(self):
+        return await self._run_speech_initialization(
+            "stts", self._initialize_stts_service_owned
+        )
+
+    async def _initialize_stts_service_owned(self):
         """Initialize the S/TT/S handler outside the startup critical path."""
 
         phase_start = time.perf_counter()
@@ -11562,6 +11665,8 @@ class TldwCli(
     async def _ensure_tts_handler(self):
         """Return an initialized TTS handler, initializing on first use if needed."""
 
+        if not self._speech_initialization_allowed("tts"):
+            return None
         if self._tts_handler is not None:
             return self._tts_handler
         if self._tts_initialization_task and not self._tts_initialization_task.done():
@@ -11572,6 +11677,8 @@ class TldwCli(
     async def _ensure_stts_handler(self):
         """Return an initialized S/TT/S handler, initializing on first use if needed."""
 
+        if not self._speech_initialization_allowed("stts"):
+            return None
         if self._stts_handler is not None:
             return self._stts_handler
         if self._stts_initialization_task and not self._stts_initialization_task.done():
@@ -11782,6 +11889,8 @@ class TldwCli(
         """Clean up logging resources on application exit."""
         import asyncio
 
+        self._speech_initialization_closed = True
+        speech_cleanup_cancellation = await self._settle_speech_initialization()
         logging.info("--- App Unmounting ---")
         # TASK-1240. Distinguishes a clean exit from a kill: a log whose last
         # line is app_started ended abruptly. Wrapped, and deliberately so:
@@ -11834,7 +11943,7 @@ class TldwCli(
             )
 
         # Stop all background services and threads
-        service_cleanup_primary: BaseException | None = None
+        service_cleanup_primary: BaseException | None = speech_cleanup_cancellation
         try:
             deferred_tasks = [
                 task
