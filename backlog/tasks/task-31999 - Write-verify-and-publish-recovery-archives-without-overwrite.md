@@ -11,7 +11,7 @@ dependencies:
 - task-31985
 - task-31995
 - task-31998
-updated_date: 2026-09-10 19:33
+updated_date: 2026-09-10 19:35
 ---
 
 ## Description
@@ -22,9 +22,9 @@ Deliver the approved local recovery behavior for this independently reviewable s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Archives created by the writer pass the same bounded reader and carry truthful coverage, directory, and credential metadata.
-- [ ] #2 Existing backups/source/control files remain unchanged under races and aliases.
-- [ ] #3 Failures and cancellation never expose incomplete output as a verified archive.
+- [x] #1 Archives created by the writer pass the same bounded reader and carry truthful coverage, directory, and credential metadata.
+- [x] #2 Existing backups/source/control files remain unchanged under races and aliases.
+- [x] #3 Failures and cancellation never expose incomplete output as a verified archive.
 <!-- AC:END -->
 
 ## Implementation Plan

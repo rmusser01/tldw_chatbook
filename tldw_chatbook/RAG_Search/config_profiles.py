@@ -6,6 +6,7 @@ along with utilities for experiment tracking and A/B testing.
 """
 
 import json
+from contextlib import contextmanager, nullcontext
 import os
 import re
 import threading
@@ -20,8 +21,13 @@ from loguru import logger
 from .simplified.config import RAGConfig
 from .reranker import RerankingConfig
 from .parallel_processor import ProcessingConfig
+from ..Backup_Recovery.storage_admission import acquire_storage
+from ..Backup_Recovery.bootstrap import RecoveryRequired
 from ..config import get_user_data_dir
 from ..Metrics.metrics_logger import log_counter, log_histogram
+
+
+_definition_writes = threading.local()
 
 
 def _slugify(name: str) -> str:
@@ -208,7 +214,8 @@ class ConfigProfileManager:
 
     def __init__(self, profiles_dir: Optional[Path] = None):
         self.profiles_dir = profiles_dir or default_rag_profiles_dir()
-        self.profiles_dir.mkdir(parents=True, exist_ok=True)
+        with acquire_storage(self.profiles_dir):
+            self.profiles_dir.mkdir(parents=True, exist_ok=True)
 
         self._profiles: Dict[str, ProfileConfig] = {}
         self._current_experiment: Optional[ExperimentConfig] = None
@@ -604,11 +611,28 @@ class ConfigProfileManager:
             raise ValueError(f"unsafe profile id: {profile_id!r}")
         return self.profiles_dir / f"{profile_id}.json"
 
+    @contextmanager
+    def _definition_write(self, selected: Path | None = None):
+        """Retain one synchronous profile mutation, including its nested writes."""
+        selected = Path(self.profiles_dir if selected is None else selected).expanduser().absolute()
+        previous = getattr(_definition_writes, "active", None)
+        if previous is not None and previous[0] is self:
+            if previous[1] != selected:
+                raise RecoveryRequired("rag_profile_source_changed")
+            yield
+            return
+        with acquire_storage(selected):
+            _definition_writes.active = (self, selected)
+            try:
+                yield
+            finally:
+                _definition_writes.active = previous
+
     def _save_one(self, profile: "ProfileConfig") -> None:
         """Write a single user profile to its own file (never builtins)."""
         if profile.read_only:
             return
-        with open(self._profile_path(profile.id), "w") as f:
+        with self._definition_write(), open(self._profile_path(profile.id), "w") as f:
             json.dump(profile.to_dict(), f, indent=2, default=str)
 
     def _load_custom_profiles(self):
@@ -626,98 +650,99 @@ class ConfigProfileManager:
         the stale file is removed, so a crash between the two steps never
         loses data.
         """
-        self._migrate_legacy_blob()
-        # Materialize + sort the glob into a fixed list up front: the loop
-        # below self-heals by writing/unlinking files under this same
-        # directory, so iterating a live directory scan while mutating it is
-        # unsafe (order becomes filesystem- and implementation-dependent).
-        # A deterministic order alone doesn't prevent a clobber -- see the
-        # disk-occupancy check below -- but it makes behavior reproducible.
-        for path in sorted(self.profiles_dir.glob("*.json")):
-            if path.name in _RESERVED_PROFILE_FILES:
-                continue
-            try:
-                with open(path, "r") as f:
-                    profile = ProfileConfig.from_dict(json.load(f))
-                profile.read_only = False
-
-                # task-626: proportionate validation at the load boundary.
-                # A profile file is untrusted input -- it may be hand-edited,
-                # migrated from an older version, or otherwise corrupted.
-                # RAGConfig.validate() issues (a bad enum value, a negative
-                # top_k, ...) are logged as warnings but never block the load
-                # or drop the profile: a poisoned profile must degrade
-                # gracefully, not take down the whole manager. This is
-                # deliberately NOT the same thing as the structural-parse
-                # failures the enclosing try/except already handles (a
-                # missing/blank name, invalid JSON, an unknown rag_config
-                # sub-key) -- those remain fatal-for-this-file, unchanged.
-                # validate() itself is called defensively so a bug in it can
-                # never turn an otherwise-successfully-parsed profile into a
-                # skipped one.
+        with self._definition_write():
+            self._migrate_legacy_blob()
+            # Materialize + sort the glob into a fixed list up front: the loop
+            # below self-heals by writing/unlinking files under this same
+            # directory, so iterating a live directory scan while mutating it is
+            # unsafe (order becomes filesystem- and implementation-dependent).
+            # A deterministic order alone doesn't prevent a clobber -- see the
+            # disk-occupancy check below -- but it makes behavior reproducible.
+            for path in sorted(self.profiles_dir.glob("*.json")):
+                if path.name in _RESERVED_PROFILE_FILES:
+                    continue
                 try:
-                    validation_issues = profile.rag_config.validate()
-                except Exception as e:
-                    validation_issues = None
-                    logger.warning(f"Could not validate profile {path.name}: {e}")
-                if validation_issues:
-                    for issue in validation_issues:
-                        logger.warning(
-                            f"Profile {path.name} has an invalid rag_config "
-                            f"value: {issue}"
-                        )
+                    with open(path, "r") as f:
+                        profile = ProfileConfig.from_dict(json.load(f))
+                    profile.read_only = False
 
-                desired_id = _slugify(path.stem)
-                canonical_path = self._profile_path(desired_id)
-                if (
-                    desired_id in self._profiles
-                    or (canonical_path != path and canonical_path.exists())
-                    or canonical_path.name in _RESERVED_PROFILE_FILES
-                ):
-                    # Collides with a builtin, an already-loaded profile, OR
-                    # the canonical file for this id belongs to a DIFFERENT,
-                    # not-yet-loaded profile still on disk (e.g. two stems --
-                    # "foo-bar" and "foo_bar" -- that both slugify to
-                    # "foo_bar"). That last case is invisible to a
-                    # memory-only check: since the in-memory dict is only
-                    # partially populated mid-glob, checking just
-                    # `desired_id in self._profiles` would let the self-heal
-                    # below silently overwrite that other file before it's
-                    # ever loaded. Reassign to a unique id, checking disk
-                    # too. Also reassign if the canonical filename is
-                    # reserved (e.g. "custom_profiles.json") -- that name is
-                    # reserved for the legacy blob, and a profile file
-                    # canonicalized onto it would be mistaken for (and
-                    # destroyed as) a legacy blob on the next boot.
-                    old_id = desired_id
-                    desired_id = self._unique_id_reserving_disk(desired_id)
-                    canonical_path = self._profile_path(desired_id)
-                    logger.warning(
-                        f"Profile file {path.name} collided with id "
-                        f"'{old_id}'; reassigned to id '{desired_id}'"
-                    )
-
-                profile.id = desired_id
-                self._profiles[desired_id] = profile
-
-                if canonical_path != path:
-                    # Self-heal: write under the canonical name FIRST, then
-                    # remove the stale/incorrectly-named file.
-                    self._save_one(profile)
+                    # task-626: proportionate validation at the load boundary.
+                    # A profile file is untrusted input -- it may be hand-edited,
+                    # migrated from an older version, or otherwise corrupted.
+                    # RAGConfig.validate() issues (a bad enum value, a negative
+                    # top_k, ...) are logged as warnings but never block the load
+                    # or drop the profile: a poisoned profile must degrade
+                    # gracefully, not take down the whole manager. This is
+                    # deliberately NOT the same thing as the structural-parse
+                    # failures the enclosing try/except already handles (a
+                    # missing/blank name, invalid JSON, an unknown rag_config
+                    # sub-key) -- those remain fatal-for-this-file, unchanged.
+                    # validate() itself is called defensively so a bug in it can
+                    # never turn an otherwise-successfully-parsed profile into a
+                    # skipped one.
                     try:
-                        if path.exists():
-                            path.unlink()
-                    except OSError as e:
+                        validation_issues = profile.rag_config.validate()
+                    except Exception as e:
+                        validation_issues = None
+                        logger.warning(f"Could not validate profile {path.name}: {e}")
+                    if validation_issues:
+                        for issue in validation_issues:
+                            logger.warning(
+                                f"Profile {path.name} has an invalid rag_config "
+                                f"value: {issue}"
+                            )
+
+                    desired_id = _slugify(path.stem)
+                    canonical_path = self._profile_path(desired_id)
+                    if (
+                        desired_id in self._profiles
+                        or (canonical_path != path and canonical_path.exists())
+                        or canonical_path.name in _RESERVED_PROFILE_FILES
+                    ):
+                        # Collides with a builtin, an already-loaded profile, OR
+                        # the canonical file for this id belongs to a DIFFERENT,
+                        # not-yet-loaded profile still on disk (e.g. two stems --
+                        # "foo-bar" and "foo_bar" -- that both slugify to
+                        # "foo_bar"). That last case is invisible to a
+                        # memory-only check: since the in-memory dict is only
+                        # partially populated mid-glob, checking just
+                        # `desired_id in self._profiles` would let the self-heal
+                        # below silently overwrite that other file before it's
+                        # ever loaded. Reassign to a unique id, checking disk
+                        # too. Also reassign if the canonical filename is
+                        # reserved (e.g. "custom_profiles.json") -- that name is
+                        # reserved for the legacy blob, and a profile file
+                        # canonicalized onto it would be mistaken for (and
+                        # destroyed as) a legacy blob on the next boot.
+                        old_id = desired_id
+                        desired_id = self._unique_id_reserving_disk(desired_id)
+                        canonical_path = self._profile_path(desired_id)
                         logger.warning(
-                            f"Failed to remove stale profile file {path}: {e}"
+                            f"Profile file {path.name} collided with id "
+                            f"'{old_id}'; reassigned to id '{desired_id}'"
                         )
-                    logger.warning(
-                        f"Profile file {path.name} did not match its "
-                        f"canonical id '{desired_id}'; self-healed to "
-                        f"{canonical_path.name}"
-                    )
-            except Exception as e:
-                logger.error(f"Failed to load profile {path.name}: {e}")
+
+                    profile.id = desired_id
+                    self._profiles[desired_id] = profile
+
+                    if canonical_path != path:
+                        # Self-heal: write under the canonical name FIRST, then
+                        # remove the stale/incorrectly-named file.
+                        self._save_one(profile)
+                        try:
+                            if path.exists():
+                                path.unlink()
+                        except OSError as e:
+                            logger.warning(
+                                f"Failed to remove stale profile file {path}: {e}"
+                            )
+                        logger.warning(
+                            f"Profile file {path.name} did not match its "
+                            f"canonical id '{desired_id}'; self-healed to "
+                            f"{canonical_path.name}"
+                        )
+                except Exception as e:
+                    logger.error(f"Failed to load profile {path.name}: {e}")
 
     def _migrate_legacy_blob(self):
         """One-time split of the old custom_profiles.json blob into per-file.
@@ -747,50 +772,51 @@ class ConfigProfileManager:
         no write) rather than risk destroying data that isn't actually a
         legacy blob.
         """
-        blob = self.profiles_dir / "custom_profiles.json"
-        if not blob.exists():
-            return
-        try:
-            with open(blob, "r") as f:
-                data = json.load(f)
-        except Exception as e:
-            logger.error(f"Legacy profile blob migration failed to read {blob}: {e}")
-            return
-
-        if not isinstance(data, dict) or "profiles" not in data:
-            logger.warning(
-                f"{blob} does not have the legacy blob shape "
-                f"(dict with a 'profiles' key); leaving it untouched "
-                f"instead of migrating/renaming it."
-            )
-            return
-
-        for pdata in data.get("profiles", []):
+        with self._definition_write():
+            blob = self.profiles_dir / "custom_profiles.json"
+            if not blob.exists():
+                return
             try:
-                profile = ProfileConfig.from_dict(pdata)
-                profile.read_only = False
-                existing = self._profiles.get(profile.id)
-                if existing is not None and existing.read_only:
-                    # Never let a migrated user profile shadow a read-only
-                    # builtin id -- write it to a uniquified file instead.
-                    profile.id = self._unique_id_reserving_disk(profile.id)
-                target = self._profile_path(profile.id)
-                if not target.exists():  # never clobber an existing per-file profile
-                    with open(target, "w") as out:
-                        json.dump(profile.to_dict(), out, indent=2, default=str)
+                with open(blob, "r") as f:
+                    data = json.load(f)
             except Exception as e:
-                entry_name = pdata.get("name", "<unknown>") if isinstance(pdata, dict) else "<unknown>"
-                logger.error(
-                    f"Skipping unmigratable legacy profile entry '{entry_name}': {e}"
-                )
+                logger.error(f"Legacy profile blob migration failed to read {blob}: {e}")
+                return
 
-        try:
-            # os.replace is an atomic overwrite on both POSIX and Windows
-            # (Path.rename raises on Windows if the destination exists).
-            os.replace(str(blob), str(blob.parent / "custom_profiles.json.migrated"))
-            logger.info("Migrated legacy custom_profiles.json to per-file profiles")
-        except OSError as e:
-            logger.error(f"Failed to rename migrated legacy blob {blob}: {e}")
+            if not isinstance(data, dict) or "profiles" not in data:
+                logger.warning(
+                    f"{blob} does not have the legacy blob shape "
+                    f"(dict with a 'profiles' key); leaving it untouched "
+                    f"instead of migrating/renaming it."
+                )
+                return
+
+            for pdata in data.get("profiles", []):
+                try:
+                    profile = ProfileConfig.from_dict(pdata)
+                    profile.read_only = False
+                    existing = self._profiles.get(profile.id)
+                    if existing is not None and existing.read_only:
+                        # Never let a migrated user profile shadow a read-only
+                        # builtin id -- write it to a uniquified file instead.
+                        profile.id = self._unique_id_reserving_disk(profile.id)
+                    target = self._profile_path(profile.id)
+                    if not target.exists():  # never clobber an existing per-file profile
+                        with open(target, "w") as out:
+                            json.dump(profile.to_dict(), out, indent=2, default=str)
+                except Exception as e:
+                    entry_name = pdata.get("name", "<unknown>") if isinstance(pdata, dict) else "<unknown>"
+                    logger.error(
+                        f"Skipping unmigratable legacy profile entry '{entry_name}': {e}"
+                    )
+
+            try:
+                # os.replace is an atomic overwrite on both POSIX and Windows
+                # (Path.rename raises on Windows if the destination exists).
+                os.replace(str(blob), str(blob.parent / "custom_profiles.json.migrated"))
+                logger.info("Migrated legacy custom_profiles.json to per-file profiles")
+            except OSError as e:
+                logger.error(f"Failed to rename migrated legacy blob {blob}: {e}")
 
     def get_profile(self, name: str) -> Optional[ProfileConfig]:
         """Get a configuration profile by name."""
@@ -884,9 +910,10 @@ class ConfigProfileManager:
                 f"Profile '{profile.id}' has an invalid rag_config: "
                 + "; ".join(validation_issues)
             )
-        self._save_one(profile)
-        self._profiles[profile.id] = profile
-        return profile
+        with self._definition_write():
+            self._save_one(profile)
+            self._profiles[profile.id] = profile
+            return profile
 
     def delete_profile(self, profile_id: str) -> bool:
         """Delete a user profile by id, removing both its in-memory entry
@@ -911,11 +938,12 @@ class ConfigProfileManager:
             return False
         if prof.read_only:
             raise ValueError(f"Builtin profile '{profile_id}' cannot be deleted")
-        self._profiles.pop(profile_id, None)
-        path = self._profile_path(profile_id)
-        if path.exists():
-            path.unlink()
-        return True
+        with self._definition_write():
+            self._profiles.pop(profile_id, None)
+            path = self._profile_path(profile_id)
+            if path.exists():
+                path.unlink()
+            return True
 
     def rename_profile(self, profile_id: str, new_name: str) -> "ProfileConfig":
         """Rename a user profile's display name in place.
@@ -943,9 +971,10 @@ class ConfigProfileManager:
             raise ValueError(f"Profile '{profile_id}' not found")
         if prof.read_only:
             raise ValueError(f"Builtin profile '{profile_id}' cannot be renamed")
-        prof.name = new_name  # id + filename stay the same (rename-safe)
-        self._save_one(prof)
-        return prof
+        with self._definition_write():
+            prof.name = new_name  # id + filename stay the same (rename-safe)
+            self._save_one(prof)
+            return prof
 
     def clone_profile(self, source_id: str, new_name: str) -> "ProfileConfig":
         """Clone an existing profile (builtin or user) into a new, writable profile.
@@ -1033,25 +1062,27 @@ class ConfigProfileManager:
 
     def start_experiment(self, config: ExperimentConfig):
         """Start an A/B testing experiment."""
-        self._current_experiment = config
-        self._experiment_results[config.experiment_id] = []
+        selected = config.results_dir or self.profiles_dir / "experiments" / config.experiment_id
+        with self._definition_write(selected):
+            self._current_experiment = config
+            self._experiment_results[config.experiment_id] = []
 
-        if not config.results_dir:
-            config.results_dir = (
-                self.profiles_dir / "experiments" / config.experiment_id
+            if not config.results_dir:
+                config.results_dir = (
+                    self.profiles_dir / "experiments" / config.experiment_id
+                )
+
+            config.results_dir.mkdir(parents=True, exist_ok=True)
+
+            # Save experiment configuration
+            with open(config.results_dir / "config.json", "w") as f:
+                json.dump(asdict(config), f, indent=2)
+
+            logger.info(f"Started experiment: {config.name} (ID: {config.experiment_id})")
+
+            log_counter(
+                "rag_experiment_started", labels={"experiment_id": config.experiment_id}
             )
-
-        config.results_dir.mkdir(parents=True, exist_ok=True)
-
-        # Save experiment configuration
-        with open(config.results_dir / "config.json", "w") as f:
-            json.dump(asdict(config), f, indent=2)
-
-        logger.info(f"Started experiment: {config.name} (ID: {config.experiment_id})")
-
-        log_counter(
-            "rag_experiment_started", labels={"experiment_id": config.experiment_id}
-        )
 
     def select_profile_for_experiment(
         self, user_id: Optional[str] = None
@@ -1176,28 +1207,29 @@ class ConfigProfileManager:
                 "metrics": profile_stats,
             }
 
-        # Save results if configured
-        if self._current_experiment.save_results:
-            results_file = self._current_experiment.results_dir / "results.json"
-            with open(results_file, "w") as f:
-                json.dump(
-                    {
-                        "summary": summary,
-                        "detailed_results": results,
-                        "completed_at": datetime.now().isoformat(),
-                    },
-                    f,
-                    indent=2,
-                )
+        with self._definition_write(self._current_experiment.results_dir) if self._current_experiment.save_results else nullcontext():
+            # Save results if configured
+            if self._current_experiment.save_results:
+                results_file = self._current_experiment.results_dir / "results.json"
+                with open(results_file, "w") as f:
+                    json.dump(
+                        {
+                            "summary": summary,
+                            "detailed_results": results,
+                            "completed_at": datetime.now().isoformat(),
+                        },
+                        f,
+                        indent=2,
+                    )
 
-            logger.info(f"Saved experiment results to {results_file}")
+                logger.info(f"Saved experiment results to {results_file}")
 
-        # Clear experiment
-        self._current_experiment = None
+            # Clear experiment
+            self._current_experiment = None
 
-        log_counter("rag_experiment_completed", labels={"experiment_id": exp_id})
+            log_counter("rag_experiment_completed", labels={"experiment_id": exp_id})
 
-        return summary
+            return summary
 
     def validate_profile(self, profile: ProfileConfig) -> List[str]:
         """

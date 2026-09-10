@@ -13,7 +13,7 @@ dependencies:
 - task-31991
 - task-32000
 - task-32001
-updated_date: 2026-09-10 18:27
+updated_date: 2026-09-10 19:35
 ---
 
 ## Description
@@ -55,4 +55,5 @@ Before implementation, move this task to In Progress and copy its linked task st
 Started original Task19 discovery/capture sub-slice because missing rag.definitions/rag.projections currently block all complete inventory even with absent RAG stores. Restore quarantine/readiness still depends on original Tasks17/18 and is not claimed complete.
 Inert factory and exact RAG indexing SQLite adapter implemented without importing RAG runtime or vector engines; original RAG package startup remains unchanged. Existing core borrower/transaction/close seams, literal v0 schema, source-preserving native snapshot and exact main-thread idle close verified. Definition/projection files remain explicitly unsupported until actual writer/engine qualification. Focused existing/new25 passed, latest discovery8/indexing6 passed; review caught and fixed auto env fallback. Root public factory integration then exposed semantic misuse of shared_group; removing those labels rather than weakening physical identity checks. Remaining Task19 runtime/projection readiness contracts are not complete. Source report /private/tmp/chatbook-rag-discovery-report.md.
 Installed inert RAG factory integrated with public capture. Removed semantic shared_group tags; that field retains physical alias identity only. Actual public discover/classify regression covers absent stores and two retained definition files. Three public capture variants and final combined146-test cohort pass; RAG production Bandit0. Nonempty RAG definitions/Chroma and restored retrieval gates remain explicitly unqualified; Task19 stays In Progress.
+Bounded RAG profile native admission implemented in config_profiles.py. Exact synchronous manager/root scopes cover mkdir, CRUD, loader self-heal, legacy migration and selected experiment output paths, preserving existing mutation/error semantics. Root rerun10 focused passed52.55s, including12 unchanged existing profile test functions in fixed-selector child. Direct existing44-test pytest cohort encountered documented root-fixture selector drift (42fail2pass); ineffective adaptation removed, source guard preserved. Scoped review no findings, report /private/tmp/chatbook-rag-profile-admission-review.md; implementation/source map /private/tmp/chatbook-rag-profile-admission-report.md. Ruff38→38/Bandit2→2, no new findings. No runtime/engine/pipeline/format or pending-marker qualification claimed; remaining original Task19 work is explicit.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
