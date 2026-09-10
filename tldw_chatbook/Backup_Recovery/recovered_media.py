@@ -422,6 +422,87 @@ class _RecoveredAdapter:
     def schema_policy(self):
         return schema_policy()
 
+    def restore_role(self, item):
+        """Classify only installed catalog/generated payload archive topology."""
+        meta = item.metadata
+        if item.owner != self.owner_id or meta is None:
+            raise ValueError("invalid_dependency_context")
+        if (
+            meta.kind == "directory"
+            and meta.parent_id is None
+            and meta.relative_path in {"", "."}
+        ):
+            return "directory"
+        if meta.kind == "file" and meta.relative_path == "catalog.sqlite3":
+            return "sqlite"
+        name = meta.relative_path
+        if (
+            meta.kind == "file"
+            and name.endswith(".payload")
+            and _ASSET_ID.fullmatch(name[:-8])
+        ):
+            return "file"
+        raise ValueError("invalid_recovered_role")
+
+    def validate_restore(self, item, candidate):
+        """Keep opaque payload bytes out of the SQLite inspection route."""
+        from .recovery_files import _RawDeclaration
+
+        role = self.restore_role(item)
+        if role == "sqlite":
+            return self.validate(candidate)
+        if role == "file":
+            return _RawDeclaration(self.owner_id, max_bytes=MAX_PAYLOAD_BYTES).validate(
+                candidate
+            )
+        return ()
+
+    def relocate_restore(self, item, candidate, mapping):
+        """Generated relative locators need no rewrite; validate the exact role."""
+        issues = self.validate_restore(item, candidate)
+        if issues:
+            raise ValueError(issues[0])
+
+    def validate_restore_dependencies(self, item, candidate, candidates, *, topology):
+        """Match ready catalog entries to declared archive-local payload IDs."""
+        from .storage_admission import _digest_recovery_file
+
+        meta = item.metadata
+        if meta is None or topology.get(item.logical_id) != (
+            meta.root_id,
+            meta.parent_id,
+            meta.relative_path,
+            meta.kind,
+        ):
+            return ("invalid_dependency_context",)
+        try:
+            if self.restore_role(item) != "sqlite":
+                return ()
+            issues = self.validate(candidate)
+            if issues:
+                return issues
+            located = {}
+            for key in set(item.dependencies) & candidates.keys() & topology.keys():
+                root, _parent, relative, kind = topology[key]
+                if root == meta.root_id and kind == "file":
+                    located.setdefault(relative, []).append(key)
+            with closing(
+                connect_private_sqlite(
+                    "recovery.recovered_media", candidate, read_only=True
+                )
+            ) as connection:
+                for asset_id, digest, size in connection.execute(
+                    "SELECT asset_id,digest,size FROM assets WHERE state='ready'"
+                ):
+                    keys = located.get(asset_id + ".payload", ())
+                    if len(keys) != 1 or _digest_recovery_file(
+                        self.owner_id, candidates[keys[0]], max_bytes=MAX_PAYLOAD_BYTES
+                    ) != (size, digest):
+                        return ("recovered_payload_missing",)
+            return ()
+        except (OSError, ValueError, RuntimeError, sqlite3.Error):
+            return ("recovered_payload_missing",)
+
     def validate(self, candidate):
         try:
             with closing(
@@ -518,8 +599,12 @@ class _RecoveredAdapter:
                         from .storage_admission import _consume_recovery_file
 
                         size, digest = _consume_recovery_file(
-                            self.owner_id, item.path, max_bytes=MAX_PAYLOAD_BYTES,
-                            collect=False, digest=True, private=True,
+                            self.owner_id,
+                            item.path,
+                            max_bytes=MAX_PAYLOAD_BYTES,
+                            collect=False,
+                            digest=True,
+                            private=True,
                         )
                         valid = (digest, size) == assets[item.path.name]
                     except (OSError, ValueError):
@@ -548,7 +633,10 @@ class _RecoveredAdapter:
             item.logical_id for item in selected if item.path != catalog
         )
         return tuple(
-            replace(item, dependencies=tuple(dict.fromkeys(item.dependencies + dependencies)))
+            replace(
+                item,
+                dependencies=tuple(dict.fromkeys(item.dependencies + dependencies)),
+            )
             if item.path == catalog
             else item
             for item in selected
@@ -655,7 +743,7 @@ def message_image_metadata(root, profile, messages):
         if issues:
             raise ValueError(issues[0])
         for start in range(0, len(messages), 200):
-            batch = messages[start:start + 200]
+            batch = messages[start : start + 200]
             slots = ",".join("?" for _ in batch)
             rows = connection.execute(
                 "SELECT r.message,a.asset_id,a.digest,a.size,a.state,r.media_type "
@@ -666,11 +754,14 @@ def message_image_metadata(root, profile, messages):
             ).fetchall()
             for message, asset, digest, size, state, media_type in rows:
                 status = state if state in {"ready", "deleted"} else "missing"
-                if status == "deleted" and not store._valid_tombstone(connection, asset):
+                if status == "deleted" and not store._valid_tombstone(
+                    connection, asset
+                ):
                     status = "missing"
                 found[message] = (
                     ("missing", None, None, None, None)
-                    if message in found else (status, asset, digest, size, media_type)
+                    if message in found
+                    else (status, asset, digest, size, media_type)
                 )
     return found
 

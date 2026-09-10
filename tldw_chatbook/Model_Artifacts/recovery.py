@@ -1,8 +1,8 @@
 """Inert inventory of the installed managed store and selected dependency closure."""
 
-from dataclasses import replace
-import json
 import hashlib
+import json
+from dataclasses import replace
 from pathlib import Path
 
 from tldw_chatbook.Backup_Recovery.models import (
@@ -30,9 +30,76 @@ def _unique_object(pairs):
 
 
 class _Artifacts(_RawDeclaration):
+    def validate_restore_dependencies(self, item, candidate, candidates, *, topology):
+        """Resolve declared recipe edges in archive topology, never source paths."""
+        from tldw_chatbook.Backup_Recovery.storage_admission import (
+            _digest_recovery_file,
+        )
+
+        meta = item.metadata
+        if (
+            item.owner != self.owner_id
+            or meta is None
+            or topology.get(item.logical_id)
+            != (meta.root_id, meta.parent_id, meta.relative_path, meta.kind)
+        ):
+            return ("invalid_dependency_context",)
+        layout = Path(meta.relative_path).parts
+        if meta.kind != "file" or not layout or layout[-1] != "manifest.json":
+            return ()
+        if len(layout) != 6 or layout[:2] != ("managed", "artifacts"):
+            return ("invalid_dependency_context",)
+        try:
+            descriptor = self._descriptor(candidate)
+            ref = descriptor.reference
+            if layout[2:5] != (ref.artifact_id, ref.revision, ref.variant):
+                return ("model_identity_mismatch",)
+            parts = item.logical_id.split(":")
+            config_key = f"profile:{parts[1]}:config" if len(parts) > 2 else None
+            edges = set(item.dependencies) - {meta.parent_id, config_key}
+            payload_paths = {
+                (Path(meta.relative_path).parent / payload.path).as_posix()
+                for payload in descriptor.files
+            }
+            represented_payload = any(
+                root == meta.root_id and relative in payload_paths and kind == "file"
+                for key, (root, _parent, relative, kind) in topology.items()
+                if key in candidates
+            )
+            if not edges and not represented_payload:
+                return ()  # Baseline inert recipe, with model payloads omitted.
+            located = {}
+            for key in edges & candidates.keys() & topology.keys():
+                root, _parent, relative, kind = topology[key]
+                if root == meta.root_id and kind == "file":
+                    located.setdefault(relative, []).append(key)
+
+            def selected(relative):
+                keys = located.get(relative, ())
+                if len(keys) != 1:
+                    raise ValueError("dependency_unavailable")
+                return candidates[keys[0]]
+
+            for payload in descriptor.files:
+                path = selected(
+                    (Path(meta.relative_path).parent / payload.path).as_posix()
+                )
+                if _digest_recovery_file(
+                    self.owner_id, path, max_bytes=self.max_bytes
+                ) != (payload.size_bytes, payload.sha256):
+                    return ("model_payload_mismatch",)
+            for dependency in descriptor.dependencies:
+                relative = f"managed/artifacts/{dependency.artifact_id}/{dependency.revision}/{dependency.variant}/manifest.json"
+                if self._descriptor(selected(relative)).reference != dependency:
+                    return ("model_dependency_mismatch",)
+            return ()
+        except (OSError, ValueError, RuntimeError, RecursionError):
+            return ("model_dependency_unavailable",)
+
     def _descriptor(self, candidate):
-        from .service import ArtifactDescriptor
         from tldw_chatbook.Backup_Recovery.storage_admission import _read_recovery_file
+
+        from .service import ArtifactDescriptor
 
         raw = json.loads(
             _read_recovery_file(self.owner_id, candidate, max_bytes=16 * 1024**2),

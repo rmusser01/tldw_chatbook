@@ -1,9 +1,9 @@
 """Installed artwork roots and exact retained/current core asset dependencies."""
 
+import sqlite3
 from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
-import sqlite3
 
 from tldw_chatbook.Backup_Recovery.config_adapter import _Definition
 from tldw_chatbook.Backup_Recovery.models import (
@@ -18,9 +18,54 @@ from tldw_chatbook.Utils.path_validation import validate_recovery_relative_path
 
 
 class _Assets(_Definition):
+    def validate_restore_dependencies(self, item, candidate, candidates, *, topology):
+        """Validate a semantic root using archived relative asset relationships."""
+        from tldw_chatbook.Backup_Recovery.storage_admission import (
+            _digest_recovery_file,
+        )
+
+        meta = item.metadata
+        if (
+            item.owner != self.owner_id
+            or meta is None
+            or topology.get(item.logical_id)
+            != (meta.root_id, meta.parent_id, meta.relative_path, meta.kind)
+        ):
+            return ("invalid_dependency_context",)
+        if meta.kind != "directory" or meta.parent_id is not None:
+            return ()  # Root validation covers every referenced descendant.
+        parts = item.logical_id.split(":")
+        if len(parts) != 3 or parts[0] != "profile" or parts[2] != self.owner_id:
+            return ("invalid_dependency_context",)
+        core_key = f"profile:{parts[1]}:db.chachanotes.primary"
+        if core_key not in item.dependencies or core_key not in candidates:
+            return ("dependency_unavailable",)
+        try:
+            located = {}
+            for key in set(item.dependencies) & candidates.keys() & topology.keys():
+                root, _parent, relative, kind = topology[key]
+                if root == meta.root_id and kind == "file":
+                    located.setdefault(relative, []).append(key)
+            for locator, size, digest in self._references(candidates[core_key]):
+                validate_recovery_relative_path(locator)
+                relative = Path(locator)
+                if self.owner_id == "persona.assets":
+                    relative = relative.relative_to(self.leaf)
+                keys = located.get(relative.as_posix(), ())
+                if len(keys) != 1:
+                    return ("dependency_unavailable",)
+                actual = _digest_recovery_file(
+                    self.owner_id, candidates[keys[0]], max_bytes=self.max_bytes
+                )
+                if size is not None and actual != (size, digest):
+                    return ("asset_digest_mismatch",)
+            return ()
+        except (OSError, ValueError, RuntimeError, sqlite3.Error):
+            return ("asset_dependency_unavailable",)
+
     def _references(self, candidate):
-        from tldw_chatbook.DB.recovery_core import core_adapters
         from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+        from tldw_chatbook.DB.recovery_core import core_adapters
 
         core = next(
             a for a in core_adapters() if a.owner_id == "db.chachanotes.primary"

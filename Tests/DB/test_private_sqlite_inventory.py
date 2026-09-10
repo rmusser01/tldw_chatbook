@@ -658,7 +658,9 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # the dead db.search_history owner, formerly C16; every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
-        for number in range(1, 82)
+        # C82 validates recovered-media restore edges against staged catalog
+        # rows and archive-relative payload topology under the existing owner.
+        for number in range(1, 83)
     ]
     assert [row["id"] for row in backup_rows] == [
         f"B{number:02d}" for number in range(1, 38)

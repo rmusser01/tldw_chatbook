@@ -2836,6 +2836,7 @@ Catalog v1, exact source profile/message/slug/type references, operation journal
 | tldw_chatbook/Backup_Recovery/recovered_media.py | _RecoveredAdapter.discover | connect_private_sqlite | 1 | qualified | recovered.media |
 | tldw_chatbook/Backup_Recovery/recovered_media.py | _RecoveredAdapter.validate | connect_private_sqlite | 1 | qualified | recovered.media |
 | tldw_chatbook/Backup_Recovery/recovered_media.py | _RecoveredAdapter.validate_dependencies | connect_private_sqlite | 1 | qualified | recovered.media |
+| tldw_chatbook/Backup_Recovery/recovered_media.py | _RecoveredAdapter.validate_restore_dependencies | connect_private_sqlite | 1 | qualified | recovered.media |
 | tldw_chatbook/Backup_Recovery/recovered_media.py | _read | open_private_binary | 1 | qualified | recovered.media |
 
 ## Original Task19 bounded RAG discovery and indexing SQLite
