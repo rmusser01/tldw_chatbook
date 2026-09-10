@@ -41,12 +41,27 @@ class _Object(_Evidence):
         return value
 
 
+class _Directory(_Evidence):
+    path: str
+    device: int = Field(ge=0)
+    inode: int = Field(ge=0)
+
+    @field_validator("path")
+    @classmethod
+    def absolute_path(cls, value):
+        return _Object.absolute_path(value)
+
+
 class _Artifact(_Evidence):
     logical_id: str = Field(min_length=1, max_length=1024)
-    candidate: _Object
+    candidate: _Object | None
     target: str
     previous: _Object | None
     retained: str | None
+    previous_metadata: _Object | None = None
+    action: Literal["publish", "retire", "container"] = "publish"
+    rollback_requires_owner: bool = False
+    parents: list[_Directory] = Field(default_factory=list, max_length=3)
 
     @field_validator("target", "retained")
     @classmethod
@@ -54,13 +69,43 @@ class _Artifact(_Evidence):
         return _Object.absolute_path(value) if value is not None else value
 
 
+class _PublicationContext(_Evidence):
+    bootstrap_root: str
+    namespaces: list[str] = Field(min_length=1, max_length=4096)
+    selectors: list[str] = Field(min_length=1, max_length=4096)
+    archive_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    plan_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    descriptor: _Object
+
+
+class _CandidateReceipt(_Evidence):
+    stage: _Object
+    descriptor: _Object
+    archive_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    plan_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class _Rollback(_Evidence):
+    ciphertext: _Object
+    sealed_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    coverage: dict[str, str]
+
+
+class _Progress(_Evidence):
+    logical_id: str
+    observed: _Object
+
+
 class _Prepared(_Evidence):
     generation: str = Field(min_length=1, max_length=256)
     mode: Literal["isolated", "replace"]
     artifacts: list[_Artifact] = Field(default_factory=list, max_length=MAX_EVENTS)
+    publication: _PublicationContext | None = None
 
 
-def observe_artifact(path: Path) -> dict:
+def observe_artifact(path: Path, *, metadata: bool = False) -> dict:
     """Read bounded no-follow file/tree identity and bytes for local reconciliation.
 
     Modes are deliberately separate from content identity: native publication
@@ -140,6 +185,8 @@ def observe_artifact(path: Path) -> dict:
                 raise ValueError("artifact_changed")
         else:
             raise ValueError("artifact_unverified")
+        if metadata:
+            rows[0] += (stat.S_IMODE(before.st_mode), before.st_mtime_ns)
         after = os.fstat(fd)
         if identity(before) != identity(after):
             raise ValueError("artifact_changed")
@@ -171,9 +218,9 @@ def observe_artifact(path: Path) -> dict:
     ).model_dump()
 
 
-def _matches(expected: _Object, path: str) -> bool:
+def _matches(expected: _Object, path: str, *, metadata: bool = False) -> bool:
     try:
-        actual = observe_artifact(Path(path))
+        actual = observe_artifact(Path(path), metadata=metadata)
     except (OSError, ValueError, RecursionError):
         return False
     return {
@@ -198,26 +245,61 @@ def _absent(path: str) -> bool:
     return False
 
 
-def _states(prepared: _Prepared) -> dict[str, str]:
+def _states(prepared: _Prepared, *, logical_id: str | None = None) -> dict[str, str]:
     result = {}
     for item in prepared.artifacts:
-        candidate_present = _matches(item.candidate, item.candidate.path)
-        old_present = (
-            _matches(item.previous, item.target)
-            if item.previous
-            else _absent(item.target)
+        if logical_id is not None and item.logical_id != logical_id:
+            continue
+        candidate_present = item.candidate is not None and _matches(
+            item.candidate, item.candidate.path
         )
+        previous = item.previous_metadata or item.previous
+        container_present = False
+        if item.action == "container" and item.candidate is not None:
+            try:
+                with pinned_directory(Path(item.target)) as fd:
+                    info = os.fstat(fd)
+                    children = {
+                        Path(other.target).relative_to(item.target).parts[0]
+                        for other in prepared.artifacts
+                        if Path(item.target) in Path(other.target).parents
+                    }
+                    container_present = (info.st_dev, info.st_ino) == (
+                        item.candidate.device,
+                        item.candidate.inode,
+                    ) and set(os.listdir(fd)) <= children
+            except OSError:
+                pass
+
+        def old_at(
+            path, previous=previous, metadata=item.previous_metadata is not None
+        ):
+            return previous is not None and _matches(previous, path, metadata=metadata)
+
+        old_present = old_at(item.target) if item.previous else _absent(item.target)
         if (
-            candidate_present
+            (candidate_present or item.action == "retire")
             and old_present
             and (item.retained is None or _absent(item.retained))
         ):
             state = "staged"
         elif (
-            _absent(item.candidate.path)
-            and _matches(item.candidate, item.target)
+            (candidate_present or item.action == "retire")
+            and _absent(item.target)
+            and item.retained
+            and old_at(item.retained)
+        ):
+            state = "retired"
+        elif (
+            item.candidate is not None
+            and _absent(item.candidate.path)
             and (
-                _matches(item.previous, item.retained)
+                container_present
+                if item.action == "container"
+                else _matches(item.candidate, item.target)
+            )
+            and (
+                old_at(item.retained)
                 if item.previous and item.retained
                 else item.previous is None
             )
@@ -234,7 +316,14 @@ class _Event(_Evidence):
     operation_id: str
     sequence: int = Field(ge=0, lt=MAX_EVENTS)
     previous: str
-    event: Literal["prepared", "publication_started"]
+    event: Literal[
+        "candidate_staged",
+        "prepared",
+        "rollback_verified",
+        "publication_started",
+        "artifact_retired",
+        "artifact_published",
+    ]
     evidence: dict
 
 
@@ -245,18 +334,39 @@ def _encoded(record: _Event) -> bytes:
 
 
 def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -> dict:
+    events = [record.event for record in prior]
+    lifecycle = [value for value in events if value != "candidate_staged"]
+    prepared_record = next((row for row in prior if row.event == "prepared"), None)
     allowed = (
-        "prepared"
+        {"candidate_staged", "prepared"}
         if not prior
-        else "publication_started"
-        if prior[-1].event == "prepared"
-        else None
+        else (
+            {"prepared"}
+            if events == ["candidate_staged"]
+            else {"rollback_verified", "publication_started"}
+            if lifecycle == ["prepared"]
+            else {"publication_started"}
+            if lifecycle == ["prepared", "rollback_verified"]
+            else {"artifact_retired", "artifact_published"}
+            if "publication_started" in events
+            else set()
+        )
     )
-    if event != allowed:
+    if event not in allowed:
         raise ValueError("journal_transition_invalid")
-    if event == "publication_started" and prior[0].evidence["mode"] == "replace":
+    if (
+        event == "publication_started"
+        and prepared_record.evidence["mode"] == "replace"
+        and "rollback_verified" not in events
+    ):
         raise ValueError("rollback_required")
-    model = _Prepared if event == "prepared" else _Evidence
+    model = {
+        "candidate_staged": _CandidateReceipt,
+        "prepared": _Prepared,
+        "rollback_verified": _Rollback,
+        "artifact_retired": _Progress,
+        "artifact_published": _Progress,
+    }.get(event, _Evidence)
     try:
         validated = model.model_validate(dict(evidence))
         if isinstance(validated, _Prepared):
@@ -266,13 +376,48 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
             ) != len(artifacts):
                 raise ValueError("duplicate_artifact")
             if any(
-                item.candidate.path == item.target
+                (item.candidate is None) != (item.action == "retire")
+                or item.candidate is not None
+                and item.candidate.path == item.target
                 or item.previous
                 and item.previous.path != item.target
                 or (item.previous is None) != (item.retained is None)
                 for item in artifacts
             ):
                 raise ValueError("artifact_mapping_invalid")
+        elif isinstance(validated, _Progress):
+            items = {
+                item.logical_id: item
+                for item in _Prepared.model_validate(prepared_record.evidence).artifacts
+            }
+            item = items.get(validated.logical_id)
+            if item is None or any(
+                row.event == event
+                and row.evidence["logical_id"] == validated.logical_id
+                for row in prior
+                if row.event in {"artifact_retired", "artifact_published"}
+            ):
+                raise ValueError("artifact_progress_invalid")
+            if (
+                event == "artifact_retired"
+                and item.previous is None
+                or event == "artifact_published"
+                and item.candidate is None
+            ):
+                raise ValueError("artifact_progress_invalid")
+            expected = (
+                item.previous_metadata
+                if event == "artifact_retired"
+                else item.candidate
+            )
+            destination = item.retained if event == "artifact_retired" else item.target
+            if (
+                expected is None
+                or validated.observed.path != destination
+                or validated.observed.model_dump(exclude={"path"})
+                != expected.model_dump(exclude={"path"})
+            ):
+                raise ValueError("artifact_progress_invalid")
         return validated.model_dump()
     except (ValidationError, TypeError, ValueError):
         raise ValueError("journal_evidence_invalid") from None
@@ -364,22 +509,105 @@ class Journal:
     def record(self, event: str, evidence: Mapping[str, object]) -> None:
         """Flush one strictly typed exclusive record; failed writes remain evidence."""
         with self._locked(exclusive=True) as parent:
-            records = self._records(parent)
-            validated = _validate(event, evidence, records)
-            record = _Event(
-                operation_id=self.operation_id,
-                sequence=len(records),
-                previous=hashlib.sha256(_encoded(records[-1])).hexdigest()
-                if records
-                else "",
-                event=event,
-                evidence=validated,
+            self._append(parent, event, evidence)
+
+    @staticmethod
+    def _flush_record(parent: int, name: str, expected: dict) -> None:
+        """Reestablish durability of a complete but possibly unflushed record."""
+
+        def identity(info):
+            return (
+                info.st_dev,
+                info.st_ino,
+                info.st_mode,
+                info.st_size,
+                info.st_mtime_ns,
+                info.st_ctime_ns,
             )
-            encoded = _encoded(record)
-            if len(encoded) > 1048576:
-                raise ValueError("journal_record_limit")
-            Admission._write_new_record(parent, f"{len(records):06d}.json", encoded)
-            flush_directory(parent)
+
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        try:
+            before = os.fstat(fd)
+            if _read(parent, name) != expected:
+                raise ValueError("durable_record_changed")
+            named = os.stat(name, dir_fd=parent, follow_symlinks=False)
+            if identity(named) != identity(before):
+                raise ValueError("durable_record_changed")
+            os.fsync(fd)
+            fcntl.fcntl(fd, fcntl.F_FULLFSYNC)
+            if identity(os.fstat(fd)) != identity(before) or identity(
+                os.stat(name, dir_fd=parent, follow_symlinks=False)
+            ) != identity(before):
+                raise ValueError("durable_record_changed")
+        finally:
+            os.close(fd)
+
+    def _flush_records(self, parent: int) -> None:
+        """Revalidate and flush accepted history under the held journal lock."""
+        for row in self._records(parent):
+            self._flush_record(parent, f"{row.sequence:06d}.json", row.model_dump())
+        flush_directory(parent)
+
+    def _append(self, parent: int, event: str, evidence: Mapping[str, object]) -> None:
+        """Append while the caller retains this operation's exclusive lock."""
+        records = self._records(parent)
+        validated = _validate(event, evidence, records)
+        record = _Event(
+            operation_id=self.operation_id,
+            sequence=len(records),
+            previous=hashlib.sha256(_encoded(records[-1])).hexdigest()
+            if records
+            else "",
+            event=event,
+            evidence=validated,
+        )
+        encoded = _encoded(record)
+        if len(encoded) > 1048576:
+            raise ValueError("journal_record_limit")
+        Admission._write_new_record(parent, f"{len(records):06d}.json", encoded)
+        flush_directory(parent)
+
+    def prepare_publication(
+        self, candidate, plan, *, bootstrap_root, namespaces, selectors, generation
+    ):
+        """Bind an explicit local publication context; never infer its scope."""
+        from .publication import _prepare
+
+        _prepare(
+            self, candidate, plan, bootstrap_root, namespaces, selectors, generation
+        )
+
+    def record_candidate(self, stage, plan, archive):
+        """Durably bind successful staging to the independently verified archive."""
+        from .archive_reader import verify_sealed
+        from .publication import _descriptor, _plan_digest
+        from .restore_plan import recheck_targets
+
+        verify_sealed(archive)
+        if plan.archive_digest != archive.digest:
+            raise ValueError("archive_plan_mismatch")
+        with self._locked(exclusive=True) as parent:
+            recheck_targets(plan)
+            _descriptor(stage, plan)
+            self._append(
+                parent,
+                "candidate_staged",
+                {
+                    "stage": observe_artifact(stage),
+                    "descriptor": observe_artifact(stage / "candidate.json"),
+                    "archive_digest": archive.digest,
+                    "manifest_digest": hashlib.sha256(
+                        archive.manifest_bytes
+                    ).hexdigest(),
+                    "plan_digest": _plan_digest(plan),
+                },
+            )
+
+    def verify_rollback(self, path, *, password, work_root, cancel, coverage):
+        """Authenticate exact raw rollback coverage without persisting its secret."""
+        from .publication import _verify_rollback
+
+        _verify_rollback(self, path, password, work_root, cancel, coverage)
 
     def artifact_states(self) -> dict[str, str]:
         """Classify staged/published/uncertain objects without mutating either name."""
@@ -387,15 +615,18 @@ class Journal:
             records = self._records(parent)
             if not records:
                 raise ValueError("journal_preparation_missing")
-            return _states(_Prepared.model_validate(records[0].evidence))
+            prepared = next((row for row in records if row.event == "prepared"), None)
+            if prepared is None:
+                raise ValueError("journal_preparation_missing")
+            return _states(_Prepared.model_validate(prepared.evidence))
 
     def recover(self) -> str:
         """Read local evidence without cleanup, publication, or fence changes."""
         try:
             with self._locked(exclusive=False) as parent:
                 records = self._records(parent)
-                if len(records) == 1 and records[0].event == "prepared":
-                    states = _states(_Prepared.model_validate(records[0].evidence))
+                if records and records[-1].event == "prepared":
+                    states = _states(_Prepared.model_validate(records[-1].evidence))
                     if all(state == "staged" for state in states.values()):
                         return "prepared"
         except (OSError, ValueError, RuntimeError):

@@ -227,10 +227,13 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Backup_Recovery/crypto.py | _open_regular | open | 1 | generic_boundary | generic |
 | tldw_chatbook/Backup_Recovery/crypto.py | _write_all | write | 1 | generic_boundary | generic |
 | tldw_chatbook/Backup_Recovery/inventory.py | discover | open | 1 | generic_boundary | generic |
+| tldw_chatbook/Backup_Recovery/journal.py | Journal._flush_record | open | 1 | generic_boundary | backup_recovery_publication |
 | tldw_chatbook/Backup_Recovery/journal.py | Journal._locked | open | 1 | generic_boundary | backup_recovery_journal |
 | tldw_chatbook/Backup_Recovery/journal.py | observe_artifact | open | 1 | generic_boundary | backup_recovery_journal |
 | tldw_chatbook/Backup_Recovery/journal.py | observe_artifact.read | open | 1 | generic_boundary | backup_recovery_journal |
 | tldw_chatbook/Backup_Recovery/journal.py | observe_artifact.recheck | open | 1 | generic_boundary | backup_recovery_journal |
+| tldw_chatbook/Backup_Recovery/publication.py | _flush_original | open | 1 | generic_boundary | backup_recovery_publication |
+| tldw_chatbook/Backup_Recovery/publication.py | _retire | open | 1 | generic_boundary | backup_recovery_publication |
 | tldw_chatbook/Backup_Recovery/staging.py | _copy | create_private_file | 1 | disposable | backup_restore_staging |
 | tldw_chatbook/Backup_Recovery/staging.py | _copy | write | 1 | disposable | backup_restore_staging |
 | tldw_chatbook/Backup_Recovery/staging.py | stage_restore | ZipFile | 1 | disposable | backup_restore_staging |

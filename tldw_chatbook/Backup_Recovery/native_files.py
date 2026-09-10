@@ -11,9 +11,9 @@ except ImportError:  # Unqualified platforms still expose a capability refusal.
     fcntl = None
 import os
 import stat
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 from .qualification import _qualified_identity, native_identity, qualified_for
 
@@ -128,7 +128,12 @@ def _flush_private_tree(fd: int, device: int) -> None:
     flush_directory(fd)
 
 
-def publish_new(staged: Path, destination: Path) -> None:
+def publish_new(
+    staged: Path,
+    destination: Path,
+    *,
+    parent_identities: tuple[tuple[int, int], tuple[int, int]] | None = None,
+) -> None:
     """Durably move an operation-owned file/directory without replacing any name.
 
     Callers own and freeze staged bytes/tree, and journal intent before calling.
@@ -142,6 +147,13 @@ def publish_new(staged: Path, destination: Path) -> None:
         pinned_directory(staged.parent) as source_parent,
         pinned_directory(destination.parent) as target_parent,
     ):
+        if parent_identities is not None:
+            actual = tuple(
+                (info.st_dev, info.st_ino)
+                for info in (os.fstat(source_parent), os.fstat(target_parent))
+            )
+            if actual != parent_identities:
+                raise OSError("publication_parent_changed")
         allowed, reason = _qualified_identity(
             "publish_new", native_identity(target_parent)
         )
