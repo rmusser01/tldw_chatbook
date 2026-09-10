@@ -1,11 +1,10 @@
 """Mounted Console recovery controls with isolated, real conversation storage."""
 
-from unittest.mock import Mock
-
 import pytest
 from textual.widgets import Button, Input
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_library_conversation_recovery_flow import wait_until
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
@@ -27,6 +26,9 @@ from tldw_chatbook.Widgets.Console.console_workspace_switcher_modal import (
 async def test_console_archive_undo_then_resume_reuses_original_and_full_search(
     size, tmp_path
 ):
+    from tldw_chatbook.config import save_setting_to_cli_config
+
+    save_setting_to_cli_config("splash_screen", "enabled", False)
     app = _build_test_app()
     from tldw_chatbook.Chat.chat_conversation_scope_service import (
         ChatConversationScopeService,
@@ -48,13 +50,33 @@ async def test_console_archive_undo_then_resume_reuses_original_and_full_search(
             "content": "Retained original transcript",
         }
     )
+    unrelated = service.create_conversation(title="Unrelated saved discussion")
+    db.add_message(
+        {"conversation_id": unrelated, "sender": "user", "content": "Different topic"}
+    )
     app.workspace_registry_service.create_workspace(
         workspace_id="named-workspace", name="Named workspace"
     )
     app.workspace_registry_service.set_active_workspace("named-workspace")
-    host = ConsoleHarness(app)
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    host = app
     async with host.run_test(size=size) as pilot:
-        await pilot.pause(0.4)
+        await wait_until(
+            pilot,
+            lambda: (
+                getattr(app, "_initial_screen_pushed", False)
+                and type(app.screen).__name__ != "Screen"
+            ),
+            lambda: (
+                getattr(app, "_initial_screen_pushed", False),
+                type(app.screen).__name__,
+            ),
+        )
+        await app.handle_screen_navigation(NavigateToScreen("chat"))
+        await wait_until(pilot, lambda: isinstance(app.screen, ChatScreen))
         console = host.screen
         app.pending_handoffs.stage(
             HandoffChannel.CONSOLE_CONVERSATION_RESUME,
@@ -69,10 +91,15 @@ async def test_console_archive_undo_then_resume_reuses_original_and_full_search(
             if item.persisted_conversation_id == cid
         )
         assert resumed.workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID
-        await pilot.pause(0.4)
         original = console._ensure_console_chat_store().active_session_id
         await archive_current_conversation(console)
-        await pilot.pause(0.4)
+        await wait_until(
+            pilot,
+            lambda: (
+                isinstance(host.screen, WorkspaceArchiveReceiptModal)
+                and bool(host.screen.query("#workspace-archive-undo"))
+            ),
+        )
         assert service.get_conversation_metadata(cid)["archived"] is True
         assert isinstance(host.screen, WorkspaceArchiveReceiptModal)
         from tldw_chatbook.Chat.conversation_archive_actions import (
@@ -81,8 +108,17 @@ async def test_console_archive_undo_then_resume_reuses_original_and_full_search(
 
         assert "archived" in await conversation_send_refusal(app, cid)
         host.screen.query_one("#workspace-archive-undo", Button).press()
-        await pilot.pause(0.5)
-        assert service.get_conversation_metadata(cid)["archived"] is False
+        await wait_until(
+            pilot,
+            lambda: (
+                service.get_conversation_metadata(cid)["archived"] is False
+                and host.screen is console
+            ),
+            lambda: (
+                service.get_conversation_metadata(cid),
+                type(host.screen).__name__,
+            ),
+        )
         app.pending_handoffs.stage(
             HandoffChannel.CONSOLE_CONVERSATION_RESUME,
             ConsoleConversationResumeIntent(cid),
@@ -96,23 +132,58 @@ async def test_console_archive_undo_then_resume_reuses_original_and_full_search(
             )
             == 1
         )
-        route = Mock()
-        app.open_conversation_archive = route
         await console.action_open_console_session_switcher()
-        await pilot.pause(0.3)
-        host.screen.query_one(
-            "#console-switcher-query", Input
-        ).value = "retained phrase"
-        await pilot.pause(0.3)
+        await wait_until(
+            pilot, lambda: bool(host.screen.query("#console-switcher-query"))
+        )
+        query = "Retained original transcript"
+        assert (
+            query.lower() not in service.get_conversation_metadata(cid)["title"].lower()
+        )
+        host.screen.query_one("#console-switcher-query", Input).value = query
+        await wait_until(
+            pilot, lambda: bool(host.screen.query("#console-switcher-full-search"))
+        )
         host.save_screenshot(
             filename=f"console-search-{size[0]}x{size[1]}.svg", path=str(tmp_path)
         )
         host.screen.query_one("#console-switcher-full-search", Button).press()
-        for _ in range(100):
-            await pilot.pause(0.03)
-            if route.called:
-                break
-        route.assert_called_once_with("retained phrase", "all")
+        await wait_until(
+            pilot,
+            lambda: isinstance(host.screen, LibraryScreen),
+            lambda: type(host.screen).__name__,
+        )
+        library = host.screen
+        await wait_until(
+            pilot,
+            lambda: (
+                library._conversations_state.requested_query == query
+                and not library._conversations_state.loading
+                and library._conversations_state.freshness == "fresh"
+                and bool(library.query("#library-conversations-filter"))
+                and library._conversations_state.reader_state.loaded_actions_eligible
+            ),
+            lambda: (
+                library._conversations_state.requested_query,
+                library._conversations_state.total,
+                library._conversations_state.error,
+                library._library_lookup_error,
+                bool(library.query("#library-conversations-canvas")),
+                library._conversations_state.reader_state,
+            ),
+        )
+        assert library._conversation_recovery().scope == "all"
+        assert library.query_one("#library-conversations-filter", Input).value == query
+        assert library._conversations_state.total == 1
+        assert [row["id"] for row in library._conversations_state.page_records] == [cid]
+        await wait_until(
+            pilot,
+            lambda: library._conversations_state.reader_state.loaded_actions_eligible,
+            lambda: library._conversations_state.reader_state,
+        )
+        reader = library._conversations_state.reader_state
+        assert reader.loaded_id == cid
+        assert "Retained original transcript" in reader.messages[0].text
 
 
 @pytest.mark.asyncio

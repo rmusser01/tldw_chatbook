@@ -13179,6 +13179,14 @@ route does AFTER the selection lands — that post-selection work is where the
 new route will silently differ.
 
 
+PR #2576 reproduced the same evidence gap in Console Full search: an opener
+mock passed even with a query absent from saved text. Following the actual
+application route exposed broad Library source errors replacing a successfully
+fetched conversation canvas. The fixed regression asserts the mounted results
+and original reader content, excludes an unrelated saved chat, and covers the
+source-failure interleave independently. A page-state result alone did not prove
+the user could see or use that result.
+
 ### Archive recovery: canceled workers do not cancel SQLite threads (2026-09-10)
 
 During TASK-32300 and TASK-32274–32276, sequential archive/Undo checks passed but a simultaneous

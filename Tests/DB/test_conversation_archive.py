@@ -482,6 +482,7 @@ def test_trash_includes_chats_archived_before_deletion(db, query, deleted_only):
     db.set_conversations_archived(
         [cid], archived=True, expected_versions={cid: version}
     )
+    assert db.get_conversation_archive_states([cid]) == {cid: True}
     db.soft_delete_conversation(cid, version + 1)
     rows, total, _ = db.search_conversations_page(
         query, include_deleted=not deleted_only, deleted_only=deleted_only

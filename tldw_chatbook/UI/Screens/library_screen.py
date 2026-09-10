@@ -11432,16 +11432,17 @@ class LibraryScreen(BaseAppScreen):
         if shell.canvas_kind == "conversations":
             local_list_surface = True
             expected_selector = "#library-conversations-canvas"
-            if self._library_lookup_error is None:
-                conversations_state = self._build_library_conversations_state()
-                self._adopt_library_conversation_state_selection(
-                    conversations_state.selected_id
-                )
-                sync_kind = "conversations"
-                replacement = LibraryConversationsCanvas(
-                    conversations_state,
-                    id="library-conversations-canvas",
-                )
+            # Conversation paging has its own failure and retry state. A broad
+            # source outage must not replace a successful independent page.
+            conversations_state = self._build_library_conversations_state()
+            self._adopt_library_conversation_state_selection(
+                conversations_state.selected_id
+            )
+            sync_kind = "conversations"
+            replacement = LibraryConversationsCanvas(
+                conversations_state,
+                id="library-conversations-canvas",
+            )
         elif (
             shell.canvas_kind
             in (LIBRARY_CANVAS_KIND_NOTES, LIBRARY_CANVAS_KIND_NOTES_CREATE)
@@ -11497,7 +11498,7 @@ class LibraryScreen(BaseAppScreen):
 
         if (
             local_list_surface
-            and shell.canvas_kind != "skills"
+            and shell.canvas_kind not in {"skills", "conversations"}
             and self._library_lookup_error is not None
         ):
             expected_selector = "#library-canvas-error"

@@ -152,3 +152,30 @@ Fifth-review rebase onto dev `0741f53ea9c28bf709b950eeeacfab2ee3476f8a`
 preserved both independently appended testing lessons. Post-rebase incoming
 Library notes onboarding plus archive reader/recovery tests passed 19 cases;
 all 3671 Backlog records remain unique and Windows-compatible.
+
+### Sixth Qodo review
+
+Three further findings tighten workflow evidence: Settings Restore-as waits for
+actual controls and joint durable/visible completion; Trash checks its archived
+setup before deleting; Console Full search now runs through the real application
+router into Library. The search query matches saved message text but not the
+title, and an unrelated saved conversation must be excluded. The test checks
+All scope, exact original identity and retained message content in the mounted
+reader. The old unmatched query fails at the destination, rather than passing
+an argument-forwarding mock.
+
+This full-route test also exposed a real reconciliation inconsistency: a broad
+Library source failure replaced a successfully fetched conversation canvas with
+a generic source error. Conversation composition already preserves its
+independent fetch/error boundary. Snapshot reconciliation now follows that same
+policy, retaining the broad source status while allowing conversation recovery.
+
+Sixth-review verification: the final Console/DB/Settings run passed 26 cases;
+the earlier seven focused Settings/Trash cases also pass. The deterministic
+cold-entry source-failure regression failed before the fix and passes now; ten
+reader tests and eleven reconciliation tests pass. One existing same-route
+pending-open focus-object assertion fails identically with the original
+reconciler substituted in the same process, so it is recorded as a baseline
+limitation rather than counted as passing. Its data/request ownership assertions
+pass. Baseline evidence: `/private/tmp/archive-v6-library-reconcile-baseline.log`.
+No new Ruff diagnostics; CSS, diagnostic inventory and whitespace checks pass.

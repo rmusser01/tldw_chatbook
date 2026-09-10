@@ -338,9 +338,9 @@ async def test_archived_workspace_card_offers_only_unarchive() -> None:
         await _open_settings_category(pilot, "#settings-category-workspaces")
 
         screen.query_one("#settings-workspaces-show-archived", Checkbox).value = True
-        await pilot.pause(0.3)
+        await _wait_for_selector(screen, pilot, "#settings-workspace-row-ws-archived")
         screen.query_one("#settings-workspace-row-ws-archived", Button).press()
-        await pilot.pause(0.2)
+        await _wait_for_selector(screen, pilot, "#settings-workspace-unarchive")
 
         assert not screen.query("#settings-workspace-rename-input")
         assert not screen.query("#settings-workspace-rename-apply")
@@ -751,18 +751,31 @@ async def test_settings_archived_label_and_restore_name_preserve_active_workspac
         screen = _active_destination_screen(host)
         await _open_settings_category(pilot, "#settings-category-workspaces")
         screen.query_one("#settings-workspaces-show-archived", Checkbox).value = True
-        await pilot.pause(0.3)
+        await _wait_for_selector(screen, pilot, "#settings-workspace-row-old")
         assert "(archived)" in host.export_screenshot()
         screen.query_one("#settings-workspace-row-old", Button).press()
-        await pilot.pause(0.2)
+        await _wait_for_selector(screen, pilot, "#settings-workspace-restore-name")
         screen.query_one("#settings-workspace-restore-name", Input).value = "Recovered"
         screen.query_one("#settings-workspace-unarchive", Button).press()
-        await pilot.pause(0.3)
+        for _ in range(200):
+            restored = registry.get_workspace("old")
+            if (
+                restored is not None
+                and not restored.archived
+                and restored.name == "Recovered"
+                and "Restored Recovered" in _visible_text(screen)
+            ):
+                break
+            await pilot.pause(0.01)
+        else:
+            pytest.fail(
+                "Workspace Restore as did not finish persistence and visible feedback: "
+                f"record={restored!r}; visible={_visible_text(screen)}"
+            )
         assert not registry.get_workspace("old").archived
         assert registry.get_workspace("old").name == "Recovered"
         assert registry.get_active_workspace().workspace_id == active_id
         assert "Restored Recovered" in _visible_text(screen)
-
 
 
 @pytest.mark.asyncio
@@ -777,7 +790,7 @@ async def test_settings_archive_receipt_undo_without_switching() -> None:
         screen = _active_destination_screen(host)
         await _open_settings_category(pilot, "#settings-category-workspaces")
         screen.query_one("#settings-workspace-row-receipt", Button).press()
-        await pilot.pause(0.2)
+        await _wait_for_selector(screen, pilot, "#settings-workspace-archive")
         screen.query_one("#settings-workspace-archive", Button).press()
         for _ in range(200):
             if host.screen is not screen and host.screen.query("#confirm-button"):

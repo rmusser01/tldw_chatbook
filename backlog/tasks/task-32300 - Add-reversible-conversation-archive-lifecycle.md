@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-10 15:33'
-updated_date: '2026-09-10 22:20'
+updated_date: '2026-09-10 22:47'
 labels: []
 dependencies: []
 priority: high
@@ -47,6 +47,7 @@ PR #2576 wave 2: include archived conversations in import conflict and unique-na
 PR #2576 third review: preserve deleted conversation discovery independently of archive scope; prevent failed new mutations from exposing prior Undo; recheck durable state before existing-session Resume; serialize Unicode name checks with restore writes; align workspace-archive action copy and navigation contracts. Add focused regressions and verify affected integrations. ADR required: no new ADR; implements existing ADR147 lifecycle/recovery boundaries.
 PR #2576 fourth review: centralize resume-ID validation; keep memory-backed registry enrichment on its owning thread; verify confirmed close retains real saved history; fence recovery publication by request/revision ownership; check durable state for both warm and cold resume paths; reuse async workspace restore for receipt Undo. Add targeted regressions. ADR required: no new ADR; implement ADR147 ownership and recovery rules.
 PR #2576 fifth review: verify all 17 findings; retain send drafts and completed archive receipts through cancellation; make remaining workspace lifecycle storage asynchronous; fence the late existing-session hydration branch; synchronize retained reader lifecycle metadata and honest Find navigation; repair behavioral test gaps/flaky waits, batching names, and docs. Use bounded independent domain agents plus local integration. ADR required: no new ADR; correct ADR147 close consent wording and implement existing lifecycle/ownership decisions. Targeted checks only.
+PR #2576 sixth review: replace remaining fixed Settings recovery waits with observable predicates, assert actual archived setup before Trash recovery, and exercise Console full-search through the mounted Library destination with matching saved text. ADR required: no; test evidence only under ADR147. Run targeted affected cases.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -68,6 +69,8 @@ PR #2576 third review: fixed Trash archive independence, failed-mutation Undo ow
 PR #2576 fourth review: centralized resume validation, preserved in-memory SQLite ownership, verified confirmed close retains stored history, fenced recovery against newer request revisions, checked both warm/cold lifecycle state, and routed Console receipt Undo through async restore with expected-record checks. Evidence: 99 focused tests, 2 supersession-boundary cases, confirmed-close SQLite test, and 14 mounted lifecycle cases pass; static and diagnostic checks pass. See fourth-review QA section; ADR147 applies.
 
 PR #2576 fifth review: retained committed archive/Undo completion through cancellation, preserved live owning keyboard drafts, made remaining workspace lifecycle storage asynchronous, fenced late Resume and retained reader generations, corrected Find feedback, and strengthened mounted source/import/wait assertions. ADR147 close-consent wording clarified; existing lifecycle design applies. Targeted results and baseline fixture limitations are recorded in Docs/superpowers/qa/console/2026-09-10-archive-recovery.md. New diagnostics were reviewed; scoped Ruff and artifact checks pass. Self-review caught and covered closed-owner cancellation and same-ID reader-generation races.
+
+PR #2576 sixth review: Settings and Trash assertions now prove mounted/durable completion and archived setup. Console Full search boots the real application and reaches matching Library results/original reader in both sizes, excluding an unrelated chat. This exposed and fixed broad-source reconciliation hiding a successful conversation page; a deterministic cold-entry regression pins independent request ownership. Final targeted run: 26 passed; separate source-failure/reader/reconciliation checks and baseline focus limitation are documented in the QA report. Existing ADR147 applies; no new ADR. Scoped lint/artifact checks and self-review complete.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
