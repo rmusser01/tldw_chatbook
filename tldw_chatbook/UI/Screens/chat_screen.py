@@ -15174,6 +15174,35 @@ class ChatScreen(BaseAppScreen):
         active_run_copy = self._console_active_run_copy()
         status_chips.sync_run_chip(bool(active_run_copy), active_run_copy)
 
+    def _console_sync_maintenance_close_admission(self) -> None:
+        """Defer new UI sync passes while an admitted pass finishes naturally."""
+        self._console_sync_maintenance_paused = True
+
+    async def _console_sync_maintenance_drain(self, deadline: float) -> bool:
+        """Observe actual sync completion without cancelling its publication."""
+        if not getattr(self, "_console_sync_maintenance_paused", False):
+            raise RuntimeError("console_sync_maintenance_not_paused")
+        while self._console_sync_in_progress:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(remaining, 0.01))
+        return True
+
+    def _console_sync_maintenance_resume(self) -> None:
+        """Replay a coalesced request after ordinary storage admission resumes."""
+        if not getattr(self, "_console_sync_maintenance_paused", False):
+            return
+        self._console_sync_maintenance_paused = False
+        if self._console_sync_requested and not self._console_sync_in_progress:
+            self._console_sync_requested = False
+            if not _console_screen_is_torn_down(self):
+                self.run_worker(
+                    self._sync_native_console_chat_ui(),
+                    exclusive=True,
+                    group="console-sync",
+                )
+
     async def _sync_native_console_chat_ui(self) -> None:
         """Refresh visible Console-native state after send/stop transitions.
 
@@ -15203,7 +15232,10 @@ class ChatScreen(BaseAppScreen):
             # coalesced request.
             self._console_sync_requested = False
             return
-        if self._console_sync_in_progress:
+        if (
+            getattr(self, "_console_sync_maintenance_paused", False)
+            or self._console_sync_in_progress
+        ):
             self._console_sync_requested = True
             return
         self._console_sync_in_progress = True
@@ -15299,7 +15331,9 @@ class ChatScreen(BaseAppScreen):
         finally:
             self._record_ui_worker_finished("console-sync")
             self._console_sync_in_progress = False
-            if self._console_sync_requested:
+            if self._console_sync_requested and not getattr(
+                self, "_console_sync_maintenance_paused", False
+            ):
                 self._console_sync_requested = False
                 # A dead screen must not re-arm itself: `run_worker` here
                 # runs AFTER Textual's unmount sweep
