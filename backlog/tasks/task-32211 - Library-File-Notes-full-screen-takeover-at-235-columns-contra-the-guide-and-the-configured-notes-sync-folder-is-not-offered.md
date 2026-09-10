@@ -23,6 +23,10 @@ At 235 columns Notes ▸ Folder files replaced the whole Library frame with a fu
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Re-verified on the current dev tip; if still true, the rail stays beside Folder files at 120 columns and wider
-- [ ] #2 When no File Notes root is set but `[notes] sync_directory` is, the pane offers it ('Use your notes sync folder (…, 3 files)') beside 'Choose folder…'
+- [ ] #1 Re-verified on the current dev tip; if still true, the rail stays beside Folder files at 120 columns and wider (the unlinked-folder half is task-32173 / PR #2557, wave 2 of the Notes critique, not yet on dev; close this criterion when it lands)
+- [x] #2 When no File Notes root is set but `[notes] sync_directory` is, the pane offers it ('Use your notes sync folder (…, 3 files)') beside 'Choose folder…' — already shipped by PR #2543 (task-32136, dev 16c72b5b1e): pinned by `Tests/UI/test_library_notes_wave_file_notes.py::test_empty_folder_files_explains_itself_and_offers_the_sync_folder`
 <!-- AC:END -->
+
+## Implementation Notes
+
+Coordination 2026-09-10 with the Library ▸ Notes critique session: AC#2 was fixed by PR #2543 before this task was filed (the critique measured dev 02374bf66a). AC#1's cause is `#file-notes-body` being display-gated, which zeroed the reader shell width and took the rail with it; that is task-32173 / PR #2557 (`test_folder_files_keeps_the_rail_before_a_folder_is_linked` at 235x52). Neither PR pins 120 columns specifically. This task stays open only for the AC#1 re-verification once #2557 lands.
