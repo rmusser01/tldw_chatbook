@@ -1099,8 +1099,8 @@ the chip is pinned by test and the guide was not, so the guide now quotes
 quotes are the strings the code produces.)*
 
 *Verified against fix/library-crit9-media-reader — 2026-09-10 (task-32224:
-the page no longer claims "restore never rewrites the item". Measured
-against a real MediaDatabase: `mark_as_trash` ALREADY stamps `last_modified`
+the page no longer claims a restore leaves the item's modified time alone.
+Measured against a real MediaDatabase: `mark_as_trash` ALREADY stamps `last_modified`
 with the current time, so the re-dating starts at the delete and dropping
 the stamp from `restore_from_trash` alone would change nothing the user
 sees. The behaviour is documented and pinned instead.)*
