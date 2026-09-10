@@ -937,6 +937,45 @@ def test_schema_version_unknown_version_beside_v1_still_raises(tmp_path):
     assert "[1, 3]" in str(exc_info.value)
 
 
+def test_schema_version_empty_table_raises_actionable_error(tmp_path):
+    path = tmp_path / "empty-version-table.db"
+    _seed_schema_version(path, [])
+
+    with pytest.raises(SubscriptionError) as exc_info:
+        SubscriptionsDB(path)
+
+    message = str(exc_info.value)
+    assert str(path) in message
+    assert "[]" in message
+
+
+def test_schema_version_zero_raises_actionable_error(tmp_path):
+    path = tmp_path / "zero-version.db"
+    _seed_schema_version(path, [0])
+
+    with pytest.raises(SubscriptionError) as exc_info:
+        SubscriptionsDB(path)
+
+    assert "[0]" in str(exc_info.value)
+
+
+def test_schema_version_current_plus_newer_unknown_row_normalizes_to_current(tmp_path):
+    """[2, 3]: the current version is present beside a *newer* unknown row
+    (not just older/stale ones) -- the "current version wins" normalization
+    must not care which direction the extra row skews.
+    """
+    path = tmp_path / "current-plus-newer.db"
+    _seed_schema_version(path, [_CURRENT_SCHEMA_VERSION, 3])
+
+    db = SubscriptionsDB(path)
+    try:
+        assert [row[0] for row in db.conn.execute("SELECT version FROM schema_version")] == [
+            _CURRENT_SCHEMA_VERSION
+        ]
+    finally:
+        db.close()
+
+
 def test_reopening_a_freshly_migrated_v1_db_does_not_produce_two_rows(tmp_path):
     """Step 4 trigger attempt (a): a second constructor call immediately
     after the first's v1->v2 migration committed. Documents that this
