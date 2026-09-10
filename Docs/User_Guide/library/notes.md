@@ -408,6 +408,10 @@ Trash browser, so the receipt was the only in-Library recovery action —
 superseded by task-32144: see "Recently deleted" below, which recovers a note
 whose receipt was dismissed.)*
 
+*Verified against fix/library-notes-list — 2026-09-09 (task-32123: the
+receipt's actions are no longer composed off the pane; task-32124: Undo
+returns the row to the folder tree, not only the count).*
+
 ### New note view
 
 "Blank note" drops you straight into the editor with an empty title (shown

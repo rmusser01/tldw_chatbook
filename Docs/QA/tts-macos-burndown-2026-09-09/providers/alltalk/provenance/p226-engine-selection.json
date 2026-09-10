@@ -1,0 +1,19 @@
+{
+  "qualification_tuple": "AllTalk V2 / Coqui VITS VCTK p226 / CPU float32",
+  "source_commit": "f16117e95b540e9bbbd8247b49ca6c6b1350b172",
+  "engine": "vits",
+  "model": "vits - tts_models--en--vctk--vits",
+  "request_voice_alias": "alloy",
+  "selected_native_voice": "p226",
+  "scope": "Explicit task-owned server-process selection only. Retain all p225 results and leave source model_settings.json and Chatbook/global configuration unchanged.",
+  "pinned_source_settings_sha256": "43d68f6a2354cc909446c87764736db8814729d2d14bce03d05564942ee1dd2e",
+  "original_openai_voices": {
+    "alloy": "p225",
+    "echo": "p225",
+    "fable": "p225",
+    "nova": "p225",
+    "onyx": "p225",
+    "shimmer": "p225"
+  },
+  "status": "prepared_not_run"
+}

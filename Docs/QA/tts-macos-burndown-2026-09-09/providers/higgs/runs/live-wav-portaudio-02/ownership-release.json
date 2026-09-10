@@ -1,0 +1,23 @@
+{
+  "checked_utc": "2026-09-09T08:05:40.279078+00:00",
+  "supervisor_exec_session": 78450,
+  "supervisor_exit_code": 0,
+  "worker_exit_code": 0,
+  "exit_code_basis": "The task-local supervisor returns the actual child process.wait() code; the exec session completed with this exit code.",
+  "forced_exit": false,
+  "processes": [
+    {
+      "pid": 31849,
+      "absent": true
+    },
+    {
+      "pid": 32519,
+      "absent": true
+    }
+  ],
+  "all_recorded_processes_absent": true,
+  "evidence_sha256": "2918321ccc1575dbe24fde66b2552c3feceaf0a09ac1e46dcf191bcef98f3a1d",
+  "status": "runtime_passed_content_pending",
+  "source_unchanged": true,
+  "cleanup_joined": true
+}

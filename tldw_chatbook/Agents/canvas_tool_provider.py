@@ -53,7 +53,7 @@ _CANVAS_TOOL_ORDER = (
 CANVAS_TOOL_NAMES = frozenset(_CANVAS_TOOL_ORDER)
 CANVAS_MUTATION_TOOL_NAMES = frozenset({"canvas_create", "canvas_update"})
 _CANVAS_USE_GUIDANCE = (
-    "Canvas V1: use Canvas when a visual, interactive, or iteratively revised "
+    "Canvas: use Canvas when a visual, interactive, or iteratively revised "
     "single-page artifact materially helps."
 )
 _CANVAS_TOOL_GUIDANCE = {
@@ -265,10 +265,53 @@ class _ArgumentError(ValueError):
         super().__init__(code)
 
 
-def build_canvas_runtime_guidance(schemas: Iterable[ToolSchema]) -> str:
+@dataclass(frozen=True)
+class _CanvasAuthoringSchema(ToolSchema):
+    """Provider-owned context only; ordinary schema serialization stays closed."""
+
+    _guides: tuple[tuple[str, str], ...] = field(default=(), repr=False)
+    _creation_profile: str = field(default="", repr=False)
+
+
+def _context_canvas_profiles(messages: Iterable[dict]) -> set[str]:
+    from .history_projection import ProjectionError, project_history_for_protocol
+
+    try:
+        history = project_history_for_protocol(list(messages), native=True)
+    except (ProjectionError, TypeError, ValueError):
+        return set()
+    calls = {}
+    profiles = set()
+    for message in history:
+        if not isinstance(message, dict):
+            continue
+        if message.get("role") == "assistant":
+            for call in message.get("tool_calls") or ():
+                if isinstance(call, dict) and isinstance(call.get("function"), dict):
+                    calls[call.get("id")] = call["function"].get("name")
+        if (
+            message.get("role") != "tool"
+            or calls.get(message.get("tool_call_id")) not in CANVAS_TOOL_NAMES
+        ):
+            continue
+        try:
+            payload = json.loads(message.get("content", ""))
+            profile = payload["canvas"]["runtime_profile"]
+            profiles.add(_validated_profile(profile))
+        except (ValueError, TypeError, KeyError, _ArgumentError):
+            continue
+    return profiles
+
+
+def build_canvas_runtime_guidance(
+    schemas: Iterable[ToolSchema],
+    *,
+    messages: Iterable[dict] = (),
+) -> str:
     """Describe only disclosed Canvas tools, adding V1 APIs for mutations."""
 
     try:
+        schemas = tuple(schemas)
         names = {schema.name for schema in schemas}
     except (AttributeError, TypeError):
         return ""
@@ -285,6 +328,25 @@ def build_canvas_runtime_guidance(schemas: Iterable[ToolSchema]) -> str:
     ]
     if disclosed & CANVAS_MUTATION_TOOL_NAMES:
         sections.append(_CANVAS_AUTHORING_GUIDANCE)
+    owned = next(
+        (schema for schema in schemas if isinstance(schema, _CanvasAuthoringSchema)),
+        None,
+    )
+    if owned is not None:
+        selected = _context_canvas_profiles(messages)
+        if "canvas_create" in disclosed:
+            selected.add(owned._creation_profile)
+        guides = dict(owned._guides)
+        for profile in sorted(selected)[: MAX_CANVASES_PER_CONVERSATION + 1]:
+            sections.append(
+                guides.get(
+                    profile,
+                    (
+                        f"Canvas profile {profile}: source-only; execution unavailable. "
+                        "Preserve source/history and do not substitute another profile."
+                    ),
+                )
+            )
     return " ".join(sections)
 
 
@@ -413,9 +475,31 @@ class CanvasToolProvider:
     def load_schema(self, tool_id: str) -> ToolSchema:
         name = _name_from_id(tool_id)
         try:
-            return _SCHEMAS[name]
+            schema = _SCHEMAS[name]
         except KeyError:
             raise KeyError(f"Unknown Canvas tool id: {tool_id}") from None
+        from tldw_chatbook.Canvas.authoring import canvas_authoring_guide
+        from tldw_chatbook.Canvas.profiles import ProfileSnapshot, resolve_profile
+
+        snapshot = getattr(self._coordinator, "profile_snapshot", None)
+        if not isinstance(snapshot, ProfileSnapshot):
+            return schema
+        creation = resolve_profile(
+            snapshot, operation="create", parent_profile=None, has_diagrams=True
+        )
+        profiles = {record.profile_id for record in snapshot.profiles}
+        profiles.add(creation.profile_id)
+        return _CanvasAuthoringSchema(
+            schema.id,
+            schema.name,
+            schema.description,
+            schema.parameters,
+            tuple(
+                (profile, canvas_authoring_guide(snapshot, profile))
+                for profile in sorted(profiles)
+            ),
+            creation.profile_id,
+        )
 
     def approval_classification_for(
         self, tool_id: str
@@ -631,8 +715,7 @@ def _validated_revision_payload(revision: Any) -> dict[str, object]:
     if revision.parent_revision_id is not None:
         _uuid(revision.parent_revision_id, "operation_failed")
     title = _validated_title(revision.title)
-    if revision.runtime_profile != "canvas-v1":
-        raise _ArgumentError("operation_failed")
+    profile = _validated_profile(revision.runtime_profile)
     _validated_digest(revision.content_sha256)
     if (
         type(revision.source_bytes) is not int
@@ -646,7 +729,7 @@ def _validated_revision_payload(revision: Any) -> dict[str, object]:
         "revision_id": revision.revision_id,
         "parent_revision_id": revision.parent_revision_id,
         "title": title,
-        "runtime_profile": "canvas-v1",
+        "runtime_profile": profile,
         "content_sha256": revision.content_sha256,
         "source_bytes": revision.source_bytes,
         "sequence": revision.sequence,
@@ -927,8 +1010,7 @@ def _project_revision_metadata(
     parent = value["parent_revision_id"]
     if parent is not None:
         parent = _uuid(parent, "operation_failed")
-    if value["runtime_profile"] != "canvas-v1":
-        raise _ArgumentError("operation_failed")
+    profile = _validated_profile(value["runtime_profile"])
     _validated_digest(value["content_sha256"])
     if (
         type(value["source_bytes"]) is not int
@@ -941,7 +1023,7 @@ def _project_revision_metadata(
         "revision_id": _uuid(value["revision_id"], "operation_failed"),
         "parent_revision_id": parent,
         "title": _validated_title(value["title"]),
-        "runtime_profile": "canvas-v1",
+        "runtime_profile": profile,
         "content_sha256": value["content_sha256"],
         "source_bytes": value["source_bytes"],
         "sequence": value["sequence"],
@@ -953,6 +1035,18 @@ def _project_revision_metadata(
                 raise _ArgumentError("operation_failed")
             projected[key] = value[key]
     return projected
+
+
+def _validated_profile(value: object) -> str:
+    from tldw_chatbook.Canvas.archive import (
+        CanvasArchiveValidationError,
+        validate_runtime_profile,
+    )
+
+    try:
+        return validate_runtime_profile(value)
+    except CanvasArchiveValidationError:
+        raise _ArgumentError("operation_failed") from None
 
 
 def _project_origin(value: object) -> dict[str, str]:

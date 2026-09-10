@@ -17,15 +17,19 @@ else:
     import tomllib
 
 from ...config import (
+    ConfigFileSnapshot,
     delete_settings_from_cli_config,
     get_cli_config_path,
     load_cli_config_and_ensure_existence,
     read_cli_config_backup_serialized,
     read_cli_config_serialized,
+    read_cli_config_snapshot,
     replace_cli_config_serialized,
+    replace_cli_config_snapshot,
     save_setting_to_cli_config,
     save_settings_to_cli_config,
 )
+from ...Utils.path_validation import validate_path_simple
 from .settings_config_models import SettingsValidationResult
 
 
@@ -152,9 +156,26 @@ class SettingsConfigAdapter:
 
         return replace_cli_config_serialized(text, create_backup=True)
 
+    def read_snapshot(self) -> ConfigFileSnapshot:
+        """Read raw text and its effective file identity through the config owner."""
+
+        validate_path_simple(self.config_path(), require_exists=False)
+        return read_cli_config_snapshot()
+
+    def replace_snapshot(
+        self,
+        text: str,
+        snapshot: ConfigFileSnapshot,
+    ) -> tuple[dict[str, Any], Path | None, ConfigFileSnapshot]:
+        """Replace raw text only if the editor's exact file baseline still matches."""
+
+        validate_path_simple(self.config_path(), require_exists=False)
+        return replace_cli_config_snapshot(text, snapshot, create_backup=True)
+
     def read_backup_serialized(self) -> str:
         """Read the exact serialized advanced-editor backup."""
 
+        validate_path_simple(self.config_path(), require_exists=False)
         return read_cli_config_backup_serialized()
 
     def save_values(self, section: str, values: Mapping[str, Any]) -> bool:

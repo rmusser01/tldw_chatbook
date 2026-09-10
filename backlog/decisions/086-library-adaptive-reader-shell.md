@@ -31,19 +31,25 @@ through Settings rather than by turning the grips into drag handles.
 
 The default Library width when displayed alongside content is one shared bounded-fractional
 policy. For positive Library-shell content width `W`, it follows the ordinary workbench's 3:13
-Library-to-canvas proportion as `floor((3W + 8) / 16)` (exact halves round upward), clamped to
-24–34 cells. Ordinary destinations retain native Textual fractional allocation; adaptive readers
-project the same policy from `LibraryAdaptiveReaderShell.content_region.width` to the exact cell
-width required by their pure resolver. At the same settled shell width, the two adapters may
-differ by at most one cell. A zero-width pre-layout state remains an all-zero effective sentinel;
-31 is the representative new/reset preference value, not zero-width geometry.
+Library-to-canvas proportion as `floor((3W + 8) / 16) + 5` (exact halves round upward), clamped to
+29–39 cells. Ordinary destinations and adaptive readers project the same policy from their
+settled content width to exact cells. Ordinary destinations compress the result when necessary
+to preserve the 40-cell canvas minimum; adaptive readers retain resolver-owned collapse.
+Adaptive readers treat the added five Library cells and ten Items cells as
+preferred space: they use the preceding bounded rail width and 40-cell Items
+target to decide whether panes fit, then allocate spare space to the Library
+increase followed by the Items increase. This preserves the earlier collapse
+boundaries with the intentionally five-cell controls. Explicit reopening bypasses
+resize hysteresis for the requested pane; custom widths keep their exact policy.
+Destination Items preferences default to 50 cells. A zero-width pre-layout state remains an all-zero effective sentinel;
+36 is the representative new/reset preference value, not zero-width geometry.
 
 The existing custom-width opt-in remains distinct from the default bound. When enabled, an
 explicit 24–48-cell Library width applies to ordinary and adaptive destinations whenever the rail
-is displayed alongside content and responsive layout can fit it. Values above 34 are deliberate
+is displayed alongside content and responsive layout can fit it. Values above 39 are deliberate
 overrides and are not normalized down to the default ceiling. Existing stored 28 values are not
 migrated: they remain dormant while custom mode is off and become active if custom mode is later
-enabled; new/reset preferences use 31. Auto-collapse, extreme-width compression, and ordinary
+enabled; new/reset preferences use 36. Auto-collapse, extreme-width compression, and ordinary
 compact rail-only or canvas-only takeovers remain transient effective states and never rewrite the
 requested width.
 
@@ -54,7 +60,7 @@ preference: for positive co-present content width `W`, its effective width is
 using this ordinary two-pane compression formula.
 
 `LibraryScreen` owns the shared normalized preference snapshot and effective ordinary state.
-`LibraryRail` owns the reversible style transition: bounded `3fr` while alongside content with
+`LibraryRail` owns the reversible style transition: the projected, canvas-safe exact width while alongside content with
 custom mode off, the transiently compressed exact custom result while alongside content with
 custom mode on, fill while rail-only, and hidden under existing collapse/canvas-only contracts.
 Wide recovery restores the applicable bounded or saved custom declaration. Adaptive shells
@@ -134,7 +140,7 @@ recorded as an ADR.
   preference values through compatibility normalization.
 - Library visibility and custom-width opt-in have one shared preference owner; each destination
   list has its own visibility and width keys.
-- Default Library width is bounded fractional (3:13, 24–34); explicit custom widths retain the
+- Default Library width is bounded fractional (3:13 plus five cells, 29–39); explicit custom widths retain the
   existing 24–48 range across ordinary and adaptive destinations.
 - Responsive adaptation never performs data work or writes preferences.
 - Every detail load distinguishes selected and loaded identity and rejects late results using a

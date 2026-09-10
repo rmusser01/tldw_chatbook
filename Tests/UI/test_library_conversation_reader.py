@@ -1991,10 +1991,8 @@ async def test_conversations_geometry_contains_protected_work_and_restore_grips(
         assert shell.work in visible and shell.region.contains_region(shell.work.region)
         for grip in (shell.library_grip, shell.items_grip):
             assert grip in visible
-            # task-31951: one cell, was 5 -- Conversations joined Media on
-            # the one-cell grip, so eight of the ten columns the two grips
-            # used to hold back are back in the panes.
-            assert grip.region.width == 1
+            # Keep the intentionally wide collapse targets on every reader.
+            assert grip.region.width == 5
             assert shell.region.contains_region(grip.region)
             assert grip.can_focus
         for pane, open_ in (

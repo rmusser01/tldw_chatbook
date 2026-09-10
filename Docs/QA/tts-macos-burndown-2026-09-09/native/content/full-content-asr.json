@@ -1,0 +1,126 @@
+{
+  "evidence_path": "/private/tmp/tts-macos-burndown/native/full-content-input.json",
+  "evidence_sha256": "24dbfe52427f6033fc96f523bd0a71ec268fdebbaabfde5b3603fb709c107733",
+  "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+  "model_files": {
+    "config.json": "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828",
+    "model.bin": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671",
+    "tokenizer.json": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+    "vocabulary.txt": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913"
+  },
+  "runtime": {
+    "faster-whisper": "1.2.1",
+    "ctranslate2": "4.8.2"
+  },
+  "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+  "device": "cpu",
+  "compute_type": "int8",
+  "success_audio_count": 4,
+  "clips": [
+    {
+      "transcript": "The recovered server speaks this complete reply. It finishes with the words amber sunrise.",
+      "expected_text": "The recovered server speaks this complete reply. It finishes with the words amber sunrise.",
+      "anchors": [
+        "The recovered server",
+        "this complete reply",
+        "amber sunrise"
+      ],
+      "anchor_positions": [
+        0,
+        24,
+        63
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "cpu-source-0",
+      "audio_sha256": "545bc8dcd1b1813ce5046a19d6dfa55409aa3db7ff118472318d16a925db2bb6",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 6.0,
+          "text": " The recovered server speaks this complete reply. It finishes with the words amber sunrise."
+        }
+      ],
+      "detected_language": "en"
+    },
+    {
+      "transcript": "The recovered server speaks this complete reply. It finishes with the words amber sunrise.",
+      "expected_text": "The recovered server speaks this complete reply. It finishes with the words amber sunrise.",
+      "anchors": [
+        "The recovered server",
+        "this complete reply",
+        "amber sunrise"
+      ],
+      "anchor_positions": [
+        0,
+        24,
+        63
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "cpu-device-0",
+      "audio_sha256": "8986a25971922508f4d24c86e632c7d17f58dd14b14d81658c7af30708b9e7f9",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 6.0,
+          "text": " The recovered server speaks this complete reply. It finishes with the words amber sunrise."
+        }
+      ],
+      "detected_language": "en"
+    },
+    {
+      "transcript": "The recovered server speaks this complete reply. It finishes with the words amber sunrise.",
+      "expected_text": "The recovered server speaks this complete reply. It finishes with the words amber sunrise.",
+      "anchors": [
+        "The recovered server",
+        "this complete reply",
+        "amber sunrise"
+      ],
+      "anchor_positions": [
+        0,
+        24,
+        63
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "metal-source-0",
+      "audio_sha256": "532d14e8c0540059f637dd1e00bd48414eb680d405aa7500ebe2416d81dc34be",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 6.0,
+          "text": " The recovered server speaks this complete reply. It finishes with the words amber sunrise."
+        }
+      ],
+      "detected_language": "en"
+    },
+    {
+      "transcript": "The recovered server speaks this complete reply. It finishes with the words amber sunrise.",
+      "expected_text": "The recovered server speaks this complete reply. It finishes with the words amber sunrise.",
+      "anchors": [
+        "The recovered server",
+        "this complete reply",
+        "amber sunrise"
+      ],
+      "anchor_positions": [
+        0,
+        24,
+        63
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "metal-device-0",
+      "audio_sha256": "885183ce28aed80c93d22aac505699f7684ab2ad2f9bedccd75bf12efe78be34",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 6.0,
+          "text": " The recovered server speaks this complete reply. It finishes with the words amber sunrise."
+        }
+      ],
+      "detected_language": "en"
+    }
+  ],
+  "status": "content_passed"
+}

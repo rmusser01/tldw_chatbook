@@ -1,0 +1,105 @@
+{
+  "algorithm": "sha256",
+  "entries": [
+    {
+      "path": "README.md",
+      "bytes": 6556,
+      "sha256": "ad382ac4d457f5fb7ca5d6c5033fd6847cdd8cdb650903bc93e09c25d9f9b989"
+    },
+    {
+      "path": "isolation/controller.json",
+      "bytes": 1969,
+      "sha256": "80ec16cb0a3f9580c2a233e7542f3831f2a39390d9497b7b8a33575dc879eed9"
+    },
+    {
+      "path": "isolation/evidence.json",
+      "bytes": 1245,
+      "sha256": "1f5fd85b80b0ab7280b9f0bc13c2cb836dca6da9d0f5a82d5c68412a71939371"
+    },
+    {
+      "path": "package-provenance.json",
+      "bytes": 7762,
+      "sha256": "a8db658e94daaa63216bfae5bb8771b2527823649ffd7347f1b4f729700816e6"
+    },
+    {
+      "path": "provenance/build-receipt.json",
+      "bytes": 1612,
+      "sha256": "3386734bf6750d941ffea298d887d234abdc3dbb0ca2704e21b410c46c89171c"
+    },
+    {
+      "path": "provenance/controls-02-preparation.json",
+      "bytes": 2477,
+      "sha256": "a611169c22d62cb966fca7a1c7291abc04f433763d74bdc318386ba0c8241a65"
+    },
+    {
+      "path": "provenance/controls-preparation.json",
+      "bytes": 1049,
+      "sha256": "7aa87b30d895b290a55c205bb94eb3807015c701cd9673be1665484542032079"
+    },
+    {
+      "path": "provenance/upstream-status.json",
+      "bytes": 755,
+      "sha256": "95844c14a9aa55f33df844f8917a65dd0f9ece7f38038bc96ae19f236e192349"
+    },
+    {
+      "path": "recipes/controls-01.py.txt",
+      "bytes": 14182,
+      "sha256": "e414c9703a9d83c530c061bc714349b5ba817651edbd3663e6ab1b7d7d7c3445"
+    },
+    {
+      "path": "recipes/controls-02.py.txt",
+      "bytes": 18386,
+      "sha256": "5c5961280119cbaab65e32f82d48a22f8536e2a3844c2ef312e41ccccaa823d5"
+    },
+    {
+      "path": "runs/controls-01/controller.json",
+      "bytes": 1425,
+      "sha256": "32cdab248e0a77bff3abf1081e5725a6b1e7087c9dc251c739eb441bd61fb5c8"
+    },
+    {
+      "path": "runs/controls-01/evidence.json",
+      "bytes": 11926,
+      "sha256": "a3ad4c70a2e3f3b5b71e541966676ad587a895094697276f5a4e8f2a83c6b441"
+    },
+    {
+      "path": "runs/controls-01/ownership-release.json",
+      "bytes": 834,
+      "sha256": "36ab9a52435f2eb571efaafb8791008c1ce03e9de89d0b995e94f02151c8b8db"
+    },
+    {
+      "path": "runs/controls-02/controller.json",
+      "bytes": 1943,
+      "sha256": "d3aa568504e4e86246d61993a9b77eb265e5bb4cca65684c9df60c23cffcee1d"
+    },
+    {
+      "path": "runs/controls-02/evidence.json",
+      "bytes": 13405,
+      "sha256": "782aab2d5a413895882dbcd5832335666761b73dde09502caeb1c30a8226a942"
+    },
+    {
+      "path": "runs/controls-02/ownership-release.json",
+      "bytes": 870,
+      "sha256": "4a2c6db301ee598e6e6ab5053d3f65e8116fbbc483e15443aa0e0d553d4b8534"
+    },
+    {
+      "path": "summary.json",
+      "bytes": 7787,
+      "sha256": "181946118efb2dfc525c7053315007fe86d8f1ba32584b381311aaf0554f4c54"
+    },
+    {
+      "path": "upstream/1175.patch",
+      "bytes": 9518,
+      "sha256": "455c144307169628d633149bee938425d081b341a2cf198905f7ae994bc3d953"
+    },
+    {
+      "path": "upstream/LICENSE.txt",
+      "bytes": 3524,
+      "sha256": "ec52a1952d701f94e5135719a47376da4ee0b4a0201f1cafb49f61db6480ac3d"
+    },
+    {
+      "path": "verification.json",
+      "bytes": 625,
+      "sha256": "25d40c9f40f9481ea845e0d4c08228a3f534a7519797673320745ec2e9ba2d09"
+    }
+  ]
+}

@@ -1,0 +1,135 @@
+........................................................................ [ 10%]
+...............................................s........................ [ 21%]
+................................s....................................... [ 32%]
+........................................................................ [ 43%]
+........................................................................ [ 54%]
+........................................................................ [ 65%]
+..............................................F......................... [ 76%]
+........................................................................ [ 87%]
+........................................................................ [ 98%]
+.............                                                            [100%]
+=================================== FAILURES ===================================
+_ test_legacy_provider_defaults_and_labels_are_preserved[alltalk-alltalk-AllTalk TTS-female_01.wav-Female 01] _
+
+provider_id = 'alltalk', model_id = 'alltalk', model_label = 'AllTalk TTS'
+voice_id = 'female_01.wav', voice_label = 'Female 01'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        (
+            "provider_id",
+            "model_id",
+            "model_label",
+            "voice_id",
+            "voice_label",
+        ),
+        (
+            ("openai", "tts-1", "TTS-1 (Standard)", "alloy", "Alloy"),
+            (
+                "elevenlabs",
+                "eleven_multilingual_v2",
+                "Eleven Multilingual v2 (Default)",
+                "21m00Tcm4TlvDq8ikWAM",
+                "Rachel",
+            ),
+            ("kokoro", "kokoro", "Kokoro 82M", "af_alloy", "Alloy (US Female)"),
+            (
+                "chatterbox",
+                "chatterbox",
+                "Chatterbox 0.5B",
+                "default",
+                "Default Voice",
+            ),
+            (
+                "higgs",
+                "higgs-audio-v2",
+                "Higgs Audio V2 3B",
+                "professional_female",
+                "Professional Female",
+            ),
+            ("alltalk", "alltalk", "AllTalk TTS", "female_01.wav", "Female 01"),
+        ),
+    )
+    async def test_legacy_provider_defaults_and_labels_are_preserved(
+        audio_cpp_playground: FakeTTSService,
+        provider_id: str,
+        model_id: str,
+        model_label: str,
+        voice_id: str,
+        voice_label: str,
+    ) -> None:
+        del audio_cpp_playground
+        app = _PaneHost()
+    
+        async with app.run_test(size=(180, 70)) as pilot:
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            app.query_one("#tts-provider-select", Select).value = provider_id
+            await _wait_until(
+                pilot,
+                lambda: app.query_one("#tts-model-select", Select).value == model_id,
+            )
+    
+            model_select = app.query_one("#tts-model-select", Select)
+            voice_select = app.query_one("#tts-voice-select", Select)
+            assert model_select.value == model_id
+            assert _label_for_value(model_select, model_id) == model_label
+>           assert voice_select.value == voice_id
+E           AssertionError: assert 'alloy' == 'female_01.wav'
+E             
+E             - female_01.wav
+E             + alloy
+
+Tests/UI/test_speech_playground_pane_lifecycle.py:3814: AssertionError
+----------------------------- Captured stderr call -----------------------------
+2026-09-09 01:25:58.620 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6027 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35593/test_legacy_provider_defaults_5/test_data/config/config.toml
+2026-09-09 01:25:58.621 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6051 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35593/test_legacy_provider_defaults_5/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-09 01:25:58.621 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6060 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35593/test_legacy_provider_defaults_5/test_data/config/config.toml
+2026-09-09 01:25:58.622 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6125 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-09 01:25:58.622 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-09 01:25:58.868 | DEBUG    | tldw_chatbook.UI.Speech.speech_playback_mixin:on_unmount:1289 - Playground cleanup completed
+=============================== warnings summary ===============================
+../../../../../../../private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydub/utils.py:14
+  /private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydub/utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+
+Tests/UI/test_speech_playground_pane.py::test_the_primary_action_is_above_the_fold[size0]
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook/Utils/Splash_Screens/environmental/train_journey.py:31: SyntaxWarning: invalid escape sequence '\ '
+    "  /|___|\  ",
+
+Tests/UI/test_speech_playground_pane.py::test_the_primary_action_is_above_the_fold[size0]
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook/Utils/Splash_Screens/environmental/train_journey.py:32: SyntaxWarning: invalid escape sequence '\ '
+    " /_|_O_|_\ ",
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+2.22s call     Tests/UI/test_speech_playground_completeness.py::test_every_legacy_control_survives_somewhere
+2.21s call     Tests/UI/test_speech_playground_completeness.py::test_the_replaced_containers_are_genuinely_gone
+1.93s call     Tests/UI/test_speech_playground_pane.py::test_the_primary_action_is_above_the_fold[size0]
+1.89s call     Tests/UI/test_speech_playground_pane_lifecycle.py::test_clone_setup_controls_and_status_remain_scroll_reachable[terminal_size0]
+1.80s call     Tests/UI/test_speech_playground_pane.py::test_delivered_result_actions_are_visible_inside_result_and_viewport[size1]
+1.72s call     Tests/UI/test_speech_playground_pane.py::test_delivered_result_actions_are_visible_inside_result_and_viewport[size0]
+1.72s call     Tests/UI/test_speech_playground_pane.py::test_no_control_is_clipped_by_its_container[size0]
+1.72s call     Tests/UI/test_speech_playground_pane.py::test_speech_disclosures_are_compact_when_collapsed
+1.67s call     Tests/UI/test_speech_playground_pane.py::test_no_chip_text_is_truncated[size0]
+1.56s call     Tests/UI/test_speech_playground_pane.py::test_the_axes_and_the_text_input_are_both_present
+1.55s call     Tests/UI/test_speech_playground_pane.py::test_no_chip_text_is_truncated[size1]
+1.53s call     Tests/UI/test_speech_playground_pane_lifecycle.py::test_runtime_diagnostics_are_collapsed_and_interactions_are_passive
+1.50s call     Tests/UI/test_speech_playground_pane.py::test_no_control_is_clipped_by_its_container[size1]
+1.44s call     Tests/UI/test_speech_playground_pane.py::test_the_pane_scrolls_rather_than_clipping_when_stacked
+1.37s call     Tests/UI/test_speech_playground_pane.py::test_the_primary_action_is_above_the_fold[size1]
+1.35s call     Tests/UI/test_speech_playground_pane_lifecycle.py::test_runtime_card_actions_remain_scroll_reachable_at_supported_widths[terminal_size0]
+1.33s call     Tests/UI/test_speech_playground_pane_lifecycle.py::test_clone_setup_controls_and_status_remain_scroll_reachable[terminal_size3]
+1.32s call     Tests/UI/test_speech_playground_pane_lifecycle.py::test_clone_setup_controls_and_status_remain_scroll_reachable[terminal_size2]
+1.30s call     Tests/UI/test_speech_playground_pane_lifecycle.py::test_clone_setup_controls_and_status_remain_scroll_reachable[terminal_size1]
+1.28s call     Tests/UI/test_speech_playground_pane_lifecycle.py::test_clone_setup_controls_and_status_remain_scroll_reachable[terminal_size4]
+1.25s call     Tests/UI/test_speech_settings_panel_scoped_updates.py::test_default_provider_change_rebuilds_only_defaults_and_inspector
+1.19s call     Tests/UI/test_speech_playground_pane_lifecycle.py::test_ready_clone_setup_preserves_editable_text_and_current_result_geometry
+1.18s call     Tests/UI/test_speech_playground_pane_lifecycle.py::test_save_profile_action_is_visible_and_focusable_at_narrow_width
+1.16s call     Tests/UI/test_speech_playground_pane_lifecycle.py::test_runtime_card_actions_remain_scroll_reachable_at_supported_widths[terminal_size1]
+1.07s call     Tests/UI/test_speech_settings_pane.py::test_auto_play_is_an_explicit_studio_only_preference
+=========================== short test summary info ============================
+SKIPPED [1] Tests/TTS/test_kokoro_pytorch_runtime.py:463: Requires real MPS
+SKIPPED [1] Tests/TTS/test_kokoro_validation.py:371: Local Kokoro ONNX model artifacts are unavailable
+FAILED Tests/UI/test_speech_playground_pane_lifecycle.py::test_legacy_provider_defaults_and_labels_are_preserved[alltalk-alltalk-AllTalk TTS-female_01.wav-Female 01]
+1 failed, 658 passed, 2 skipped, 3 warnings in 204.90s (0:03:24)

@@ -1,0 +1,94 @@
+{
+  "evidence_path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-pt-br-final-01/evidence.json",
+  "evidence_sha256": "1158c7446864dd4e338265da2e8f97327eab59152a2806d69e5190fdb2923a1b",
+  "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+  "model_files": {
+    "config.json": "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828",
+    "model.bin": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671",
+    "tokenizer.json": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+    "vocabulary.txt": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913"
+  },
+  "runtime": {
+    "faster-whisper": "1.2.1",
+    "ctranslate2": "4.8.2"
+  },
+  "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+  "device": "cpu",
+  "compute_type": "int8",
+  "success_audio_count": 2,
+  "clips": [
+    {
+      "transcript": "A bússola prateada abre esta resposta. No meio existe um pomar tranquilo. A resposta termina com um amanhecer dourado.",
+      "expected_text": "A bússola prateada abre esta resposta. No meio existe um pomar tranquilo. A resposta termina com um amanhecer dourado.",
+      "anchors": [
+        "bússola prateada",
+        "pomar tranquilo",
+        "amanhecer dourado"
+      ],
+      "anchor_positions": [
+        1,
+        46,
+        81
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "speech-lab",
+      "audio_sha256": "0d0f5c8cb5891bc3aec61212f844c1095813150dc5a47e8e1264a044c181dfaa",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 2.4,
+          "text": " A bússola prateada abre esta resposta."
+        },
+        {
+          "start": 2.4,
+          "end": 4.48,
+          "text": " No meio existe um pomar tranquilo."
+        },
+        {
+          "start": 4.48,
+          "end": 6.84,
+          "text": " A resposta termina com um amanhecer dourado."
+        }
+      ],
+      "detected_language": "pt"
+    },
+    {
+      "transcript": "A bússola prateada abre esta resposta. No meio existe um pomar tranquilo. A resposta termina com um amanhecer dourado.",
+      "expected_text": "A bússola prateada abre esta resposta. No meio existe um pomar tranquilo. A resposta termina com um amanhecer dourado.",
+      "anchors": [
+        "bússola prateada",
+        "pomar tranquilo",
+        "amanhecer dourado"
+      ],
+      "anchor_positions": [
+        1,
+        46,
+        81
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "console-warmup",
+      "audio_sha256": "0d0f5c8cb5891bc3aec61212f844c1095813150dc5a47e8e1264a044c181dfaa",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 2.4,
+          "text": " A bússola prateada abre esta resposta."
+        },
+        {
+          "start": 2.4,
+          "end": 4.48,
+          "text": " No meio existe um pomar tranquilo."
+        },
+        {
+          "start": 4.48,
+          "end": 6.84,
+          "text": " A resposta termina com um amanhecer dourado."
+        }
+      ],
+      "detected_language": "pt"
+    }
+  ],
+  "status": "content_passed"
+}

@@ -59,7 +59,7 @@ PANE_GRIP_WIDTH = 5
 #: Minimum expanded width of each side pane.
 PANE_MINIMUM_WIDTHS: dict[Region, int] = {
     Region.LEFT_RAIL: 24,
-    Region.ITEMS: 32,
+    Region.ITEMS: 42,
     Region.RIGHT_RAIL: 30,
 }
 

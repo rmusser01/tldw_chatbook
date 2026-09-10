@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "status": "failed",
+  "pid": 1,
+  "started_utc": "2026-09-09T07:24:06.097181+00:00",
+  "scope": "Headless Linux ARM production Kokoro backend inference and complete WAV decoding. No Lab, Console, physical playback, device drain or acoustic loopback claim.",
+  "physical_playback_qualified": false,
+  "dev_snd_present": false,
+  "torch_present": false,
+  "environment_names": [
+    "ALL_PROXY",
+    "FTP_PROXY",
+    "GPG_KEY",
+    "HF_HOME",
+    "HF_HUB_DISABLE_PROGRESS_BARS",
+    "HF_HUB_DISABLE_TELEMETRY",
+    "HF_HUB_DISABLE_XET",
+    "HF_HUB_OFFLINE",
+    "HOME",
+    "HOSTNAME",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "KMP_INIT_AT_FORK",
+    "LC_CTYPE",
+    "LOGURU_DIAGNOSE",
+    "MKL_NUM_THREADS",
+    "NO_PROXY",
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "PATH",
+    "PIP_NO_CACHE_DIR",
+    "PYTHONDONTWRITEBYTECODE",
+    "PYTHONPATH",
+    "PYTHONUNBUFFERED",
+    "PYTHON_KEYRING_BACKEND",
+    "PYTHON_SHA256",
+    "PYTHON_VERSION",
+    "TIKTOKEN_CACHE_DIR",
+    "TLDW_CONFIG_PATH",
+    "TOKENIZERS_PARALLELISM",
+    "TORCH_HOME",
+    "TQDM_DISABLE",
+    "TRANSFORMERS_OFFLINE",
+    "TRANSFORMERS_VERBOSITY",
+    "XDG_CACHE_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "all_proxy",
+    "ftp_proxy",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy"
+  ],
+  "inherited_environment_names": [
+    "ALL_PROXY",
+    "FTP_PROXY",
+    "GPG_KEY",
+    "HOME",
+    "HOSTNAME",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "LC_CTYPE",
+    "MKL_NUM_THREADS",
+    "NO_PROXY",
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "PATH",
+    "PIP_NO_CACHE_DIR",
+    "PYTHONDONTWRITEBYTECODE",
+    "PYTHONPATH",
+    "PYTHONUNBUFFERED",
+    "PYTHON_SHA256",
+    "PYTHON_VERSION",
+    "all_proxy",
+    "ftp_proxy",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy"
+  ],
+  "credential_environment_names": [],
+  "python": "3.13.15 (main, Aug 31 2026, 23:46:42) [GCC 12.2.0]",
+  "platform": "Linux-6.12.67-linuxkit-aarch64-with-glibc2.36",
+  "machine": "aarch64",
+  "source_revision_supplied": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+  "imported_package": "/workspace/tldw_chatbook",
+  "source_hashes": {
+    "$ref": "../../provenance/source-hashes.json"
+  },
+  "validator_files": {
+    "/probe/validate_linux_onnx.py": "c3149dbd2b7360186c48d0895acd876a3e5b7835501f4909de2d99e601c9d6ac",
+    "/workspace/scripts/validate_live_tts.py": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2"
+  },
+  "assets": {
+    "/assets/kokoro.onnx": "7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5",
+    "/assets/voices.bin": "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d"
+  },
+  "versions": {
+    "kokoro-onnx": "0.6.1",
+    "onnxruntime": "1.29.0",
+    "numpy": "2.5.3",
+    "soundfile": "0.14.0",
+    "pydub": "0.25.1",
+    "av": "18.1.0"
+  },
+  "runtime_files": {
+    "/usr/local/lib/python3.13/site-packages/kokoro_onnx/__init__.py": "32602bee21b14ed161fdfd3c8b921b267782ad143a49c3ebd256c16c473808f5",
+    "/usr/local/lib/python3.13/site-packages/onnxruntime/__init__.py": "63301d3d4e828419c6520fbd0dd05af7667274c99c38f9592d4c0a9c5161ff55",
+    "/usr/local/lib/python3.13/site-packages/onnxruntime/capi/onnxruntime_pybind11_state.cpython-313-aarch64-linux-gnu.so": "5574a1e5d1dc5bcf1dff1e4ac2d41f8a9cd7db5ad35661c28ba1433897ceb23e"
+  },
+  "available_execution_providers": [
+    "AzureExecutionProvider",
+    "CPUExecutionProvider"
+  ],
+  "phases": [
+    {
+      "id": "linux-warmup",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "outcome": "running",
+      "native_calls": [],
+      "started_at": 143267.772033293
+    }
+  ],
+  "package_lists": {
+    "pip-freeze.txt": "1b97429f8c094e2004d4b55915518f0a1e99cc9deadf0bae2c130ab5015f2be6",
+    "dpkg-packages.txt": "0bfcb6316626b7ebf6448ccfcaed864fec8e8843fa6ea39aef4368a288780059"
+  },
+  "active_execution_providers": [
+    "CPUExecutionProvider"
+  ],
+  "final_resources": {
+    "native_tasks": 0,
+    "onnx_workers": 0,
+    "native_calls": 0
+  },
+  "cleanup_joined": true,
+  "source_hashes_after": {
+    "$ref": "../../provenance/source-hashes.json"
+  },
+  "source_unchanged": true,
+  "failure": {
+    "type": "TTSOperationError",
+    "message": "Kokoro ONNX generation failed.",
+    "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python3.13/site-packages/phonemizer/phonemize.py\", line 57, in _cached_backend\n    backend = _BACKENDS_CACHE.pop(key)\nKeyError: ('espeak', 'en-us', ';:,.!?¡¿—…\"«»“”(){}[]', True, True, False, 'keep-flags', 'ignore', <Logger phonemizer (WARNING)>)\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/workspace/tldw_chatbook/TTS/backends/kokoro.py\", line 733, in run\n    await producer\n  File \"/workspace/tldw_chatbook/TTS/backends/kokoro.py\", line 717, in produce\n    async for chunk in stream:\n    ...<5 lines>...\n        await asyncio.wrap_future(delivery)\n  File \"/usr/local/lib/python3.13/site-packages/kokoro_onnx/__init__.py\", line 365, in create_stream\n    voice, _, batches = self._prepare(\n                        ~~~~~~~~~~~~~^\n        text, voice, speed, lang, is_phonemes, sentence_pause, clause_pause\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/usr/local/lib/python3.13/site-packages/kokoro_onnx/__init__.py\", line 193, in _prepare\n    phonemes = text if is_phonemes else self.tokenizer.phonemize(text, lang)\n                                        ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.13/site-packages/kokoro_onnx/tokenizer.py\", line 85, in phonemize\n    phonemes = phonemizer.phonemize(\n        text, lang, preserve_punctuation=True, with_stress=True\n    )\n  File \"/usr/local/lib/python3.13/site-packages/phonemizer/phonemize.py\", line 244, in phonemize\n    phonemizer = _cached_backend(key, lambda: BACKENDS[backend](\n        language,\n    ...<5 lines>...\n        words_mismatch=words_mismatch,\n        logger=logger))\n  File \"/usr/local/lib/python3.13/site-packages/phonemizer/phonemize.py\", line 59, in _cached_backend\n    backend = factory()\n  File \"/usr/local/lib/python3.13/site-packages/phonemizer/phonemize.py\", line 244, in <lambda>\n    phonemizer = _cached_backend(key, lambda: BACKENDS[backend](\n                                              ~~~~~~~~~~~~~~~~~^\n        language,\n        ^^^^^^^^^\n    ...<5 lines>...\n        words_mismatch=words_mismatch,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n        logger=logger))\n        ^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.13/site-packages/phonemizer/backend/espeak/espeak.py\", line 45, in __init__\n    super().__init__(\n    ~~~~~~~~~~~~~~~~^\n        language, punctuation_marks=punctuation_marks,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n        preserve_punctuation=preserve_punctuation, logger=logger)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.13/site-packages/phonemizer/backend/espeak/base.py\", line 39, in __init__\n    super().__init__(\n    ~~~~~~~~~~~~~~~~^\n        language,\n        ^^^^^^^^^\n        punctuation_marks=punctuation_marks,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n        preserve_punctuation=preserve_punctuation,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n        logger=logger)\n        ^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.13/site-packages/phonemizer/backend/base.py\", line 76, in __init__\n    if not self.is_available():\n           ~~~~~~~~~~~~~~~~~^^\n  File \"/usr/local/lib/python3.13/site-packages/phonemizer/backend/espeak/base.py\", line 87, in is_available\n    EspeakWrapper()\n    ~~~~~~~~~~~~~^^\n  File \"/usr/local/lib/python3.13/site-packages/phonemizer/backend/espeak/wrapper.py\", line 89, in __init__\n    self._espeak = EspeakAPI(self.library(), self.data_path)\n                   ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.13/site-packages/phonemizer/backend/espeak/api.py\", line 87, in __init__\n    self._library = ctypes.cdll.LoadLibrary(str(espeak_copy))\n                    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.13/ctypes/__init__.py\", line 482, in LoadLibrary\n    return self._dlltype(name)\n           ~~~~~~~~~~~~~^^^^^^\n  File \"/usr/local/lib/python3.13/ctypes/__init__.py\", line 361, in __init__\n    self._handle = self._load_library(name, mode, handle, winmode)\n                   ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.13/ctypes/__init__.py\", line 403, in _load_library\n    return _dlopen(name, mode)\nOSError: /tmp/tmpe7yr2w4y/libespeak-ng.so: failed to map segment from shared object\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/probe/validate_linux_onnx.py\", line 233, in main\n    asyncio.run(run())\n    ~~~~~~~~~~~^^^^^^^\n  File \"/usr/local/lib/python3.13/asyncio/runners.py\", line 196, in run\n    return runner.run(main)\n           ~~~~~~~~~~^^^^^^\n  File \"/usr/local/lib/python3.13/asyncio/runners.py\", line 119, in run\n    return self._loop.run_until_complete(task)\n           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^\n  File \"/usr/local/lib/python3.13/asyncio/base_events.py\", line 726, in run_until_complete\n    return future.result()\n           ~~~~~~~~~~~~~^^\n  File \"/probe/validate_linux_onnx.py\", line 188, in run\n    await bounded(asyncio.create_task(consume(warmup)))\n  File \"/probe/validate_linux_onnx.py\", line 163, in bounded\n    return task.result()\n           ~~~~~~~~~~~^^\n  File \"/probe/validate_linux_onnx.py\", line 170, in consume\n    async for chunk in source:\n    ...<2 lines>...\n            raise ValueError(\"Validation audio capture exceeds its bound\")\n  File \"/workspace/tldw_chatbook/TTS/backends/kokoro.py\", line 684, in generate_speech_stream\n    async for chunk in stream:\n        yield chunk\n  File \"/workspace/tldw_chatbook/TTS/backends/kokoro.py\", line 922, in _generate_onnx_stream\n    async for samples, sr in audio_generator:\n    ...<21 lines>...\n        )\n  File \"/workspace/tldw_chatbook/TTS/backends/kokoro.py\", line 780, in _create_onnx_stream\n    await join_retained_task(worker)\n  File \"/workspace/tldw_chatbook/TTS/_async_lifecycle.py\", line 73, in join_retained_task\n    raise task_error\n  File \"/workspace/tldw_chatbook/TTS/_async_lifecycle.py\", line 64, in join_retained_task\n    task.result()\n    ~~~~~~~~~~~^^\ntldw_chatbook.TTS.adapter_types.TTSOperationError: Kokoro ONNX generation failed.\n"
+  },
+  "ended_utc": "2026-09-09T07:24:08.247046+00:00",
+  "packaging": {
+    "original_path": "/private/tmp/tts-macos-burndown/linux/evidence/linux-onnx-live-20260909-01/evidence.json",
+    "original_sha256": "acdddd2758ae57b5c2403a67ed30d31c551923d58bea463c627510ac25fc5c35",
+    "source_manifest_sha256": "4738467d0515a205f79b6243f740f901d515682d0a2e50eec747a495511fad75",
+    "source_hash_fields": [
+      "source_hashes",
+      "source_hashes_after"
+    ]
+  }
+}

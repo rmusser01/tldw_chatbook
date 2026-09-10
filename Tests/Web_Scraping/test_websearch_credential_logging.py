@@ -16,13 +16,13 @@ search engine path (`search_engine` defaults to "google"):
      `response.url`. This fires on exactly the failure modes a user hits
      debugging a bad/expired key (401/403/429/connection failure).
 
-Both are fixed at the point of formatting: vector 1 via an explicit
-ALLOWLIST of safe param keys (`SAFE_GOOGLE_SEARCH_PARAM_KEYS`), vector 2 via
-`Utils.log_sanitizer.sanitize_string`, which carries a dedicated
-`AIza[A-Za-z0-9_-]{35}` pattern for Google API keys. Each test below proves
-the leak is real for the exact runtime value in play (not a hardcoded
-string) as a methodology check, then asserts the actual emitted log
-records never carry it, while the non-credential diagnostic value survives.
+Both are fixed at the point of formatting: parameters use an explicit allowlist
+(`SAFE_GOOGLE_SEARCH_PARAM_KEYS`), while errors now use closed messages and HTTP
+status only (TASK-32188), rather than relying on a credential-shaped regex.
+These tests retain the original realistic key-shaped sentinel and verify useful
+noncredential diagnostics. Arbitrary provider-body leakage is covered in
+`test_search_backend_settings.py`.
+
 """
 
 import logging
@@ -33,14 +33,10 @@ import requests as real_requests
 from loguru import logger as loguru_logger
 
 from tldw_chatbook.Logging_Config import _forward_loguru_to_standard
+from tldw_chatbook import config
 from tldw_chatbook.Web_Scraping import WebSearch_APIs
 
-# Shaped to match log_sanitizer's Google-API-key pattern (AIza + 35 chars)
-# so the redaction path under test actually engages -- an arbitrarily
-# shaped secret would NOT be caught by that specific pattern, which is a
-# real, disclosed limitation of vector 2's fix (see the task's Implementation
-# Notes). Real Google API keys are uniformly AIza-prefixed, so this is the
-# shape that matters for this engine.
+# Retain the realistic Google key shape from the original leak reproduction.
 _SENTINEL_SUFFIX = "TASK19552SENTINELKEYNOTREAL00011234"
 assert len(_SENTINEL_SUFFIX) == 35, len(_SENTINEL_SUFFIX)
 SENTINEL_KEY = "AIza" + _SENTINEL_SUFFIX
@@ -97,7 +93,7 @@ class _HTTPErrorRequests:
 
 
 def _set_key(monkeypatch, key, value):
-    monkeypatch.setitem(WebSearch_APIs.loaded_config_data["search_engines"], key, value)
+    monkeypatch.setitem(config.load_cli_config_and_ensure_existence()["SearchEngines"], key, value)
 
 
 @pytest.fixture

@@ -421,7 +421,10 @@ from ...Widgets.Library import (
     LibraryLandingContinueAction,
     LibraryLandingRecentItem,
     LibraryMediaCanvas,
-    LibraryMediaReaderShell,
+    LIBRARY_BROWSE_READER_SHELL_ID,
+    LIBRARY_BROWSE_ROUTE_MEDIA,
+    LIBRARY_BROWSE_ROUTE_NOTES,
+    LibraryBrowseReaderShell,
     MediaShellResized,
     LibraryMediaTrashCanvas,
     LibraryMediaViewer,
@@ -772,6 +775,7 @@ from ..Library_Modules.screen_constants import (
     LIBRARY_NOTE_LOAD_DEADLINE_SECONDS,
     LIBRARY_NOTE_LOAD_TIMEOUT_COPY,
     LIBRARY_CANVAS_KIND_NOTES,
+    LIBRARY_NOTES_RAIL_ROWS,
     LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS,
     LIBRARY_RAG_ANSWERABLE_RETRIEVAL_STATUSES,
     LIBRARY_STUDY_HANDOFF_MODES,
@@ -4479,11 +4483,7 @@ class LibraryScreen(BaseAppScreen):
         """Return whether the current Library route is owned by Database Notes."""
         return (
             self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
-            and self._library_selected_row_id
-            in {
-                LIBRARY_ROW_BROWSE_NOTES,
-                LIBRARY_ROW_CREATE_NOTE,
-            }
+            and self._library_selected_row_id in LIBRARY_NOTES_RAIL_ROWS
         )
 
     def _library_notes_compact_workflow_active(self) -> bool:
@@ -5310,10 +5310,9 @@ class LibraryScreen(BaseAppScreen):
         if width <= 0:
             return False
         if self.query(
-            "#library-media-reader-shell, "
+            "#library-browse-reader-shell, "
             "#library-collections-reader-shell, "
             "#library-conversations-reader-shell, "
-            "#library-notes-reader-shell, "
             "#library-prompts-reader-shell, "
             "#library-skills-reader-shell"
         ):
@@ -5494,12 +5493,12 @@ class LibraryScreen(BaseAppScreen):
 
     def _library_media_settlement_tree(
         self,
-    ) -> tuple[LibraryMediaReaderShell, Vertical, LibraryMediaRowScroll] | None:
+    ) -> tuple[LibraryBrowseReaderShell, Vertical, LibraryMediaRowScroll] | None:
         """Return the current attached Media shell, Items host, and row owner."""
         try:
             shell = self.query_one(
-                "#library-media-reader-shell",
-                LibraryMediaReaderShell,
+                ".library-media-route",
+                LibraryBrowseReaderShell,
             )
             items_host = self.query_one("#library-canvas", Vertical)
             owner = self.query_one(
@@ -5541,7 +5540,7 @@ class LibraryScreen(BaseAppScreen):
     def _library_media_semantic_row_is_current(self, receipt: _LibraryMediaReturnReceipt, items_host: Vertical) -> bool:
         return self._media_controller._library_media_semantic_row_is_current(receipt, items_host)
 
-    def _library_media_request_matches_current_authority(self, request: _LibraryMediaReturnSettlement, receipt: _LibraryMediaReturnReceipt, tree: tuple[LibraryMediaReaderShell, Vertical, LibraryMediaRowScroll]) -> bool:
+    def _library_media_request_matches_current_authority(self, request: _LibraryMediaReturnSettlement, receipt: _LibraryMediaReturnReceipt, tree: tuple[LibraryBrowseReaderShell, Vertical, LibraryMediaRowScroll]) -> bool:
         return self._media_controller._library_media_request_matches_current_authority(request, receipt, tree)
 
     def _library_media_live_focus_is_allowed(self, focus_anchor: Widget | None, stable_id: str, target: Widget | None=None) -> bool:
@@ -5985,14 +5984,10 @@ class LibraryScreen(BaseAppScreen):
         if row is not None:
             self._media_state.detail = {**detail, "content": row["content"] or ""}
 
-    @on(LibraryMediaRowGeometryChanged)
-    def _handle_library_media_row_geometry_changed(self, event: LibraryMediaRowGeometryChanged) -> None:
-        return self._media_controller._handle_library_media_row_geometry_changed(event)
-
     def _reconcile_library_media_stage_presentation(self) -> bool:
         """Equality-reconcile the mounted Media stage; return whether it changed."""
         try:
-            self.query_one("#library-media-reader-shell", LibraryMediaReaderShell)
+            self.query_one(".library-media-route", LibraryBrowseReaderShell)
             shell_grid = self.query_one("#library-shell-grid", Widget)
         except (NoMatches, QueryError):
             return False
@@ -6029,10 +6024,9 @@ class LibraryScreen(BaseAppScreen):
     def _sync_library_ordinary_rail_width_contract(self) -> None:
         """Apply the settled ordinary rail contract at the existing UI seams."""
         if self.query(
-            "#library-media-reader-shell, "
+            "#library-browse-reader-shell, "
             "#library-collections-reader-shell, "
             "#library-conversations-reader-shell, "
-            "#library-notes-reader-shell, "
             "#library-prompts-reader-shell, "
             "#library-skills-reader-shell"
         ):
@@ -6157,7 +6151,7 @@ class LibraryScreen(BaseAppScreen):
         """Resolve the settled Notes shell and patch it in place."""
         try:
             shell = self.query_one(
-                "#library-notes-reader-shell", LibraryAdaptiveReaderShell
+                ".library-notes-route", LibraryAdaptiveReaderShell
             )
         except (NoMatches, QueryError):
             return
@@ -6598,7 +6592,7 @@ class LibraryScreen(BaseAppScreen):
         """
         try:
             shell = self.query_one(
-                "#library-media-reader-shell", LibraryMediaReaderShell
+                ".library-media-route", LibraryBrowseReaderShell
             )
         except (NoMatches, QueryError):
             return
@@ -6710,7 +6704,7 @@ class LibraryScreen(BaseAppScreen):
         """Resolve the settled Media shell width and patch geometry in place."""
         try:
             shell = self.query_one(
-                "#library-media-reader-shell", LibraryMediaReaderShell
+                ".library-media-route", LibraryBrowseReaderShell
             )
         except (NoMatches, QueryError):
             return
@@ -7194,15 +7188,11 @@ class LibraryScreen(BaseAppScreen):
         elif self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
             self._sync_library_conversation_reader_layout_from_shell()
         elif (
-            self._library_selected_row_id
-            in (LIBRARY_ROW_BROWSE_NOTES, LIBRARY_ROW_CREATE_NOTE)
+            self._library_selected_row_id in LIBRARY_NOTES_RAIL_ROWS
             and self._notes_state.source == LIBRARY_NOTES_SOURCE_FILES
         ):
             self._sync_library_file_notes_reader_layout_from_shell()
-        elif self._library_selected_row_id in (
-            LIBRARY_ROW_BROWSE_NOTES,
-            LIBRARY_ROW_CREATE_NOTE,
-        ):
+        elif self._library_selected_row_id in LIBRARY_NOTES_RAIL_ROWS:
             self._sync_library_notes_reader_layout_from_shell()
             if self._notes_state.work_session_activation_pending:
                 self._activate_database_note_work_session(self._notes_state.selected_note_id)
@@ -7268,7 +7258,7 @@ class LibraryScreen(BaseAppScreen):
         self._apply_library_note_presentation_state()
         self._apply_library_notes_footer_context()
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA and self.query(
-            "#library-media-reader-shell"
+            ".library-media-route"
         ):
             # Media's resolver owns pane visibility and focus settlement;
             # the Notes tuple would otherwise restore focus into hidden Items.
@@ -7461,8 +7451,8 @@ class LibraryScreen(BaseAppScreen):
         self._notes_state.resize_epoch += 1
         self._notes_state.resize_settling = True
         # TASK-22228 (item 7): the Media reader layout leg is scheduled only
-        # while Browse Media owns the canvas -- the one route that mounts
-        # ``#library-media-reader-shell`` (``compose``'s
+        # while Browse Media owns the canvas -- the one route that wears
+        # ``.library-media-route`` on the shared browse shell (``compose``'s
         # ``canvas_kind == "media"`` branch; the same predicate
         # ``_sync_library_media_viewer_state`` gates the viewer on). Anywhere
         # else the scheduled call could only walk the whole Library DOM
@@ -11193,13 +11183,13 @@ class LibraryScreen(BaseAppScreen):
             logger.debug("Library open-surface strip probe failed.", exc_info=True)
             strip_mounted, strip_needed = False, True
         adaptive_shell_selectors = {
-            LIBRARY_CANVAS_KIND_NOTES: "#library-notes-reader-shell",
-            LIBRARY_CANVAS_KIND_NOTES_CREATE: "#library-notes-reader-shell",
+            LIBRARY_CANVAS_KIND_NOTES: ".library-notes-route",
+            LIBRARY_CANVAS_KIND_NOTES_CREATE: ".library-notes-route",
             "prompts": "#library-prompts-reader-shell",
             "skills": "#library-skills-reader-shell",
             "collections": "#library-collections-reader-shell",
             "conversations": "#library-conversations-reader-shell",
-            "media": "#library-media-reader-shell",
+            "media": ".library-media-route",
         }
         destination_reader = adaptive_shell_selectors.get(
             destination_shell.canvas_kind if destination_shell is not None else ""
@@ -13483,56 +13473,15 @@ class LibraryScreen(BaseAppScreen):
             yield install_label
             yield install_progress
         if shell.canvas_kind in LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS:
-            adaptive_database_notes = (
-                shell.canvas_kind
-                in (LIBRARY_CANVAS_KIND_NOTES, LIBRARY_CANVAS_KIND_NOTES_CREATE)
-                and self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
+            # Built by the shared builder the phase-C route swap also uses, so
+            # the strip a targeted switch MOUNTS is the strip a recompose
+            # would have composed -- it is the one structural delta between
+            # the Media and Notes routes.
+            from ..Library_Modules.library_browse_route_swap import (  # noqa: PLC0415 -- lazy: keeps this module out of the pre-import payload the boot ratchet counts (Tests/Performance/test_screen_preimport_payload_budget.py); it is only needed once a Library route is actually rendered
+                build_library_notes_source_strip,
             )
-            # task-32136: wide Folder files is a MODE of Notes, not a task
-            # that replaces it -- both switches stay (compact is unchanged).
-            wide_focused_task = (
-                not adaptive_database_notes
-                and not self._file_notes_active()
-                and not self._notes_state.compact
-                and self._library_notes_focused_task_active()
-            )
-            with Horizontal(id="library-notes-source-strip"):
-                task_return = Button(
-                    "‹ Library / Notes",
-                    id="library-notes-task-return",
-                    compact=True,
-                )
-                task_return.display = wide_focused_task
-                yield task_return
-                database_selected = (
-                    self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
-                )
-                database_source = Button(
-                    "Library notes",
-                    id="library-notes-source-database",
-                    compact=True,
-                )
-                database_source.set_class(database_selected, "-selected")
-                database_source.display = not wide_focused_task
-                yield database_source
-                source_separator = Static(
-                    "|",
-                    id="library-notes-source-separator",
-                    markup=False,
-                )
-                source_separator.display = not wide_focused_task
-                yield source_separator
-                files_selected = (
-                    self._notes_state.source == LIBRARY_NOTES_SOURCE_FILES
-                )
-                files_source = Button(
-                    "Folder files",
-                    id="library-notes-source-files",
-                    compact=True,
-                )
-                files_source.set_class(files_selected, "-selected")
-                files_source.display = not wide_focused_task
-                yield files_source
+
+            yield build_library_notes_source_strip(self, shell.canvas_kind)
         shell_grid = Horizontal(
             id="library-shell-grid", classes="ds-panel destination-workbench"
         )
@@ -13587,15 +13536,13 @@ class LibraryScreen(BaseAppScreen):
                 id="library-note-work-pane",
             )
             with shell_grid:
-                yield LibraryAdaptiveReaderShell(
-                    library=rail,
-                    items=items_host,
-                    work=work,
-                    layout=self._notes_state.reader_layout,
-                    id_prefix="library-notes",
-                    library_label="Library",
-                    items_label="Notes",
-                    id="library-notes-reader-shell",
+                yield LibraryBrowseReaderShell(
+                    rail,
+                    items_host,
+                    work,
+                    self._notes_state.reader_layout,
+                    route=LIBRARY_BROWSE_ROUTE_NOTES,
+                    id=LIBRARY_BROWSE_READER_SHELL_ID,
                 )
             self.call_after_refresh(self._sync_library_notes_reader_layout_from_shell)
             self.call_after_refresh(self._hide_library_adaptive_reader_rail_collapse)
@@ -13902,12 +13849,13 @@ class LibraryScreen(BaseAppScreen):
             )
             reader = self._build_library_media_reader()
             with shell_grid:
-                yield LibraryMediaReaderShell(
+                yield LibraryBrowseReaderShell(
                     rail,
                     items_host,
                     reader,
                     self._media_state.reader_layout,
-                    id="library-media-reader-shell",
+                    route=LIBRARY_BROWSE_ROUTE_MEDIA,
+                    id=LIBRARY_BROWSE_READER_SHELL_ID,
                 )
             self.call_after_refresh(self._sync_library_media_reader_layout_from_shell)
             self.call_after_refresh(self._hide_library_adaptive_reader_rail_collapse)
@@ -14022,6 +13970,7 @@ class LibraryScreen(BaseAppScreen):
                         self._media_state.selected_media_id = media_state.selected_id
                         yield LibraryMediaCanvas(
                             media_state,
+                            actions=self._media_controller,
                             **self._library_media_canvas_presentation(),
                             id="library-media-canvas",
                         )
@@ -15138,18 +15087,6 @@ class LibraryScreen(BaseAppScreen):
 
     def _request_library_media_filter(self, query: str) -> None:
         return self._media_controller._request_library_media_filter(query)
-
-    @on(Input.Changed, '#library-media-filter')
-    def handle_library_media_filter_changed(self, event: Input.Changed) -> None:
-        return self._media_controller.handle_library_media_filter_changed(event)
-
-    @on(Input.Submitted, '#library-media-filter')
-    def handle_library_media_filter_submitted(self, event: Input.Submitted) -> None:
-        return self._media_controller.handle_library_media_filter_submitted(event)
-
-    @on(Button.Pressed, '#library-media-filter-clear')
-    def handle_library_media_filter_clear(self, event: Button.Pressed) -> None:
-        return self._media_controller.handle_library_media_filter_clear(event)
 
     def _load_library_media_list_if_needed(self) -> None:
         return self._media_controller._load_library_media_list_if_needed()
@@ -20084,7 +20021,7 @@ class LibraryScreen(BaseAppScreen):
             retained_switch = False
             try:
                 database_shell = self.query_one(
-                    "#library-notes-reader-shell", LibraryAdaptiveReaderShell
+                    ".library-notes-route", LibraryAdaptiveReaderShell
                 )
             except (NoMatches, QueryError):
                 await self.recompose()
@@ -20190,15 +20127,13 @@ class LibraryScreen(BaseAppScreen):
         await self._select_library_rail_row(row_id)
 
     async def _replace_library_browse_canvas(self, shell: LibraryShellState) -> bool:
-        """Replace a Notes/Media list canvas without rebuilding the shell.
+        """Move to a Media/Notes browse route without rebuilding the screen.
 
-        Notes and Media are the high-frequency browse routes exercised by the
-        adaptive Notes workflow. Their list canvases can be rebuilt in the
-        existing canvas host while the header, rail, and workbench grid retain
-        identity when the destination uses the same contextual chrome already
-        mounted around that host. Crossing the Notes boundary must use the
-        central whole-screen recompose seam so its Database/Files source strip
-        is added or removed with the rest of the route-owned structure.
+        Phase C: the two browse routes share ONE resident
+        ``LibraryBrowseReaderShell``, so the rail, nav bar, footer, screen
+        chrome and both visited canvases survive a switch. The mechanism and
+        its measured numbers live in
+        ``UI/Library_Modules/library_browse_route_swap.py``.
 
         Args:
             shell: Latest normalized Library shell state.
@@ -20207,81 +20142,12 @@ class LibraryScreen(BaseAppScreen):
             True when the targeted update completed; False when the caller
             should use the whole-screen fallback.
         """
+        from ..Library_Modules.library_browse_route_swap import (  # noqa: PLC0415 -- lazy, same reason as the source-strip import in `compose_content`
+            swap_library_browse_route,
+        )
+
         try:
-            media_shell_mounted = bool(self.query("#library-media-reader-shell"))
-            if (shell.canvas_kind == "media") != media_shell_mounted:
-                return False
-            notes_source_strip_mounted = bool(self.query("#library-notes-source-strip"))
-            destination_uses_notes_source_strip = (
-                shell.canvas_kind in LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS
-            )
-            if notes_source_strip_mounted != destination_uses_notes_source_strip:
-                return False
-
-            if shell.canvas_kind == LIBRARY_CANVAS_KIND_NOTES:
-                if (
-                    self._notes_state.view != "list"
-                    or self._notes_state.source != LIBRARY_NOTES_SOURCE_DATABASE
-                ):
-                    return False
-                canvas: Widget = LibraryNotesCanvas(
-                    **self._library_notes_list_canvas_kwargs(),
-                    id="library-notes-canvas",
-                )
-            elif shell.canvas_kind == "media":
-                if self._media_state.view != "list":
-                    return False
-                media_state = self._build_library_media_state()
-                self._media_state.selected_media_id = media_state.selected_id
-                canvas = LibraryMediaCanvas(
-                    media_state,
-                    **self._library_media_canvas_presentation(),
-                    id="library-media-canvas",
-                )
-            else:
-                return False
-
-            header = self.query_one("#library-header-line", Static)
-            rail = self.query_one("#library-rail", LibraryRail)
-            canvas_host = self.query_one("#library-canvas", Vertical)
-            generation = self._library_snapshot_state_generation
-            route_key = self._library_entry_route_key()
-            focus_identity = self._capture_library_entry_focus()
-            if self.is_running:
-                try:
-                    self.app.capture_mouse(None)
-                except Exception:
-                    logger.debug(
-                        "Mouse-capture release before Library route update skipped.",
-                        exc_info=True,
-                    )
-            header.update(self._library_header_line(shell.header_line))
-            rail.apply_selection(
-                shell,
-                lifecycle=self._library_lifecycle,
-                onboarding_all_empty=self._library_onboarding_all_empty,
-            )
-            # Hide the outgoing subtree before detaching it. Textual's
-            # compositor may still hold the previous geometry for one frame;
-            # without this guard a removed TextArea can be asked to render
-            # after its component-style context has already been released.
-            # Detach before mounting because same-route replacements reuse
-            # their stable canvas ID and Textual rejects duplicate siblings.
-            outgoing = tuple(canvas_host.children)
-            for child in outgoing:
-                child.display = False
-            if outgoing:
-                await canvas_host.remove_children(outgoing)
-            await canvas_host.mount(canvas)
-            self._apply_library_notes_stage_visibility()
-            self._apply_library_notes_footer_context()
-            if focus_identity is not None:
-                self._restore_library_entry_focus(
-                    focus_identity,
-                    generation=generation,
-                    route_key=route_key,
-                )
-            return True
+            return await swap_library_browse_route(self, shell)
         except Exception:
             logger.debug(
                 "Targeted Library Notes/Media route update failed; falling back "
@@ -20443,7 +20309,16 @@ class LibraryScreen(BaseAppScreen):
         # later returns to the same visual Notes region. Invalidate the token
         # now so leave→return cannot recreate authority by region equality.
         self._notes_state.operation = None
-        self._supersede_library_notes_navigation()
+        # ``render=`` only when this press STAYS on Notes: phase-C task 2.5
+        # measured this repaint at 21 of a media switch-back's 81 mounts,
+        # rebuilding the canvas the switch is about to hide (it runs before
+        # the destination row is set, so the route-ownership guard still sees
+        # Notes as the owner). Re-entering Notes repaints it for real --
+        # ``_adopt_library_browse_canvas`` syncs every resident canvas it
+        # shows -- so the only thing lost is work nobody could see.
+        self._supersede_library_notes_navigation(
+            render=row_id in LIBRARY_NOTES_RAIL_ROWS
+        )
         if row_id == LIBRARY_ROW_CREATE_NOTE and not self._notes_state.create_running:
             # Create status belongs to one visible Create attempt. Import
             # reuses the persistence seam from Navigator, so its internal
@@ -20467,10 +20342,7 @@ class LibraryScreen(BaseAppScreen):
         self._export_state.origin_row_id = ""
         # task-420: keep the footer's "u" hint in sync with the row gate.
         self._register_footer_shortcuts()
-        self._notes_state.explicit_stage_intent = row_id in {
-            LIBRARY_ROW_BROWSE_NOTES,
-            LIBRARY_ROW_CREATE_NOTE,
-        }
+        self._notes_state.explicit_stage_intent = row_id in LIBRARY_NOTES_RAIL_ROWS
         if self._notes_state.explicit_stage_intent:
             self._notes_state.stage = "notes"
         # A rail-row press is always a fresh entry into a content type, so
@@ -20626,7 +20498,7 @@ class LibraryScreen(BaseAppScreen):
             # "Browse Media" press closed the pane the user had just opened.
             try:
                 media_shell_width = self.query_one(
-                    "#library-media-reader-shell"
+                    f"#{LIBRARY_BROWSE_READER_SHELL_ID}"
                 ).region.width
             except (NoMatches, QueryError):
                 media_shell_width = 0
@@ -20926,14 +20798,6 @@ class LibraryScreen(BaseAppScreen):
             then=lambda: self._focus_library_control("#library-media-type-filter"),
         )
 
-    @on(Button.Pressed, '#library-media-sort')
-    def handle_library_media_sort(self, event: Button.Pressed) -> None:
-        return self._media_controller.handle_library_media_sort(event)
-
-    @on(OptionList.OptionSelected, '#library-media-sort-choices')
-    def handle_library_media_sort_choice(self, event: OptionList.OptionSelected) -> None:
-        return self._media_controller.handle_library_media_sort_choice(event)
-
     @on(Button.Pressed, "#library-media-empty-import")
     async def handle_library_media_empty_import(self, event: Button.Pressed) -> None:
         """Open the existing Library Import destination from a true empty page."""
@@ -20950,18 +20814,6 @@ class LibraryScreen(BaseAppScreen):
             None,
             focus_identity="#library-media-empty-clear-type",
         )
-
-    @on(Button.Pressed, '#library-media-previous')
-    def handle_library_media_previous(self, event: Button.Pressed) -> None:
-        return self._media_controller.handle_library_media_previous(event)
-
-    @on(Button.Pressed, '#library-media-next')
-    def handle_library_media_next(self, event: Button.Pressed) -> None:
-        return self._media_controller.handle_library_media_next(event)
-
-    @on(Button.Pressed, '#library-media-retry')
-    def handle_library_media_retry(self, event: Button.Pressed) -> None:
-        return self._media_controller.handle_library_media_retry(event)
 
     @on(Button.Pressed, ".library-media-row")
     def handle_library_media_row(self, event: Button.Pressed) -> None:
@@ -21161,14 +21013,6 @@ class LibraryScreen(BaseAppScreen):
                 f"Selection discarded ({count} {item_word}).",
                 severity="information",
             )
-
-    @on(Button.Pressed, '#library-media-select-all')
-    def handle_library_media_select_all(self, event: Button.Pressed) -> None:
-        return self._media_controller.handle_library_media_select_all(event)
-
-    @on(Button.Pressed, '#library-media-select-clear')
-    def handle_library_media_select_clear(self, event: Button.Pressed) -> None:
-        return self._media_controller.handle_library_media_select_clear(event)
 
     @on(Button.Pressed, "#library-media-export-selected")
     async def handle_library_media_export_selected(self, event: Button.Pressed) -> None:
@@ -22102,10 +21946,6 @@ class LibraryScreen(BaseAppScreen):
                     claim,
                     focus_identity=f"#library-media-trash-row-{target.page_index}"
                 )
-
-    @on(Button.Pressed, '#library-media-open-viewer')
-    def handle_library_media_open_viewer(self, event: Button.Pressed) -> None:
-        return self._media_controller.handle_library_media_open_viewer(event)
 
     def _open_library_media_viewer(self, media_id: str) -> None:
         return self._media_controller._open_library_media_viewer(media_id)
@@ -23592,10 +23432,10 @@ class LibraryScreen(BaseAppScreen):
             # ``library-adaptive-reader-pane-grip`` is the SHARED base
             # class every destination's shell applies -- matching it
             # swallowed Space on the Notes/Prompts/Skills grips after an
-            # abandoned media selection. ``library-media-pane-grip`` is
-            # what ``LibraryMediaReaderShell`` passes as ``grip_classes``
-            # (both grips get it); the surface guard mirrors the sibling
-            # ``library_media_toggle_select_mode`` branch above.
+            # abandoned media selection. ``library-media-pane-grip`` is what
+            # ``LibraryBrowseReaderShell.apply_route`` puts on both grips
+            # while Media owns the shared shell; the surface guard mirrors
+            # the sibling ``library_media_toggle_select_mode`` branch above.
             if not self._media_state.select_mode:
                 return False
             if self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA:
@@ -27537,10 +27377,6 @@ class LibraryScreen(BaseAppScreen):
     async def handle_library_prompts_export_selected(self, event: Button.Pressed) -> None:
         return await self._prompts_controller.handle_library_prompts_export_selected(event)
 
-    @on(Button.Pressed, '#library-media-export')
-    async def handle_library_media_export(self, event: Button.Pressed) -> None:
-        return await self._media_controller.handle_library_media_export(event)
-
     @on(Button.Pressed, "#library-conversations-export")
     async def handle_library_conversations_export(self, event: Button.Pressed) -> None:
         return await self._conversations_controller.handle_library_conversations_export(event)
@@ -28834,7 +28670,7 @@ class LibraryScreen(BaseAppScreen):
             return
         try:
             shell = self.query_one(
-                "#library-media-reader-shell", LibraryMediaReaderShell
+                ".library-media-route", LibraryBrowseReaderShell
             )
         except (NoMatches, QueryError):
             self._exit_library_media_viewer()
@@ -29358,14 +29194,6 @@ class LibraryScreen(BaseAppScreen):
 
     # -- review-set entry points (task-28242) --------------------------------
 
-    @on(Button.Pressed, '#library-media-review')
-    def handle_library_media_review_these(self, event: Button.Pressed) -> None:
-        return self._media_controller.handle_library_media_review_these(event)
-
-    @on(Button.Pressed, '#library-media-review-selected')
-    def handle_library_media_review_selected(self, event: Button.Pressed) -> None:
-        return self._media_controller.handle_library_media_review_selected(event)
-
     async def _review_these_worker(self) -> None:
         """Page the whole filtered result, then create + open the set.
 
@@ -29585,10 +29413,6 @@ class LibraryScreen(BaseAppScreen):
             notify(message, severity=severity)
 
     # -- review-set picker (task-28243) ---------------------------------------
-
-    @on(Button.Pressed, '#library-media-review-sets')
-    def handle_library_media_review_sets(self, event: Button.Pressed) -> None:
-        return self._media_controller.handle_library_media_review_sets(event)
 
     async def _review_set_picker_worker(self) -> None:
         """List saved sets, await one picker decision, and apply it.
@@ -30042,7 +29866,7 @@ class LibraryScreen(BaseAppScreen):
         if layout is None:
             try:
                 layout = self.query_one(
-                    "#library-media-reader-shell", LibraryMediaReaderShell
+                    ".library-media-route", LibraryBrowseReaderShell
                 ).effective_layout
             except (NoMatches, QueryError):
                 layout = self._media_state.reader_layout
@@ -30073,7 +29897,7 @@ class LibraryScreen(BaseAppScreen):
         focused = self.focused
         try:
             shell = self.query_one(
-                "#library-media-reader-shell", LibraryMediaReaderShell
+                ".library-media-route", LibraryBrowseReaderShell
             )
         except (NoMatches, QueryError):
             return "back"
@@ -32663,7 +32487,7 @@ class LibraryScreen(BaseAppScreen):
             self._begin_library_note_load(record_id, entry_origin=entry_origin)
             if entry_origin:
                 return LibraryEntryReconcileResult.APPLIED
-            if self.query("#library-notes-reader-shell"):
+            if self.query(".library-notes-route"):
                 _sync_library_canvas(self, "notes")
             else:
                 # Crossing into Notes is structural because it installs the

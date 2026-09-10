@@ -1,0 +1,36 @@
+{
+  "command": [
+    "/private/tmp/tts-macos-burndown/higgs/venv/bin/python",
+    "-B",
+    "/private/tmp/tts-macos-burndown/portaudio/qualify_sink_controls.py",
+    "--worker",
+    "--check-isolation",
+    "--output",
+    "/private/tmp/tts-macos-burndown/portaudio/runs/isolation-preflight-02"
+  ],
+  "deadline_seconds": 20,
+  "dyld_library_path": "/private/tmp/tts-macos-burndown/portaudio/prefix/lib",
+  "tldw_config_path": "/private/tmp/tts-macos-burndown/portaudio/runs/isolation-preflight-02/private/config/config.toml",
+  "library_sha256": "48d9fcaff582ff65c8a51d67570bf69ce900d51278841d563e19b7ef73746586",
+  "script_sha256": "5c5961280119cbaab65e32f82d48a22f8536e2a3844c2ef312e41ccccaa823d5",
+  "source_before": {
+    "tldw_chatbook/Audio/streaming_sink.py": "e8015d3521eb46a236fbf472abda8b4b32ce76482a045f18ca08b75b45650365",
+    "tldw_chatbook/Audio/__init__.py": "15b0839936a8e9702419c6b60f036c66db867da3f8a0901c215e282ffd5dd5ae",
+    "tldw_chatbook/Utils/optional_deps.py": "fd240308eff63f8cc6611b0275bb3feb9d3c1565ff33ed1bacf83da54b8e7d03",
+    "tldw_chatbook/config.py": "3711d7a4ad92abc2dedc8c06fc1b9cfdee1b21c910d2e2494b1e6fcb0d900784",
+    "tldw_chatbook/Utils/paths.py": "bd4d83b4f65d0882ed4c030beb972c71879c7fcf0e88bcd152dafe683ce4b0ec"
+  },
+  "models_initialized": 0,
+  "pid": 28218,
+  "exit_code": 0,
+  "elapsed_seconds": 0.662359959,
+  "owned_child_joined": true,
+  "source_after": {
+    "tldw_chatbook/Audio/streaming_sink.py": "e8015d3521eb46a236fbf472abda8b4b32ce76482a045f18ca08b75b45650365",
+    "tldw_chatbook/Audio/__init__.py": "15b0839936a8e9702419c6b60f036c66db867da3f8a0901c215e282ffd5dd5ae",
+    "tldw_chatbook/Utils/optional_deps.py": "fd240308eff63f8cc6611b0275bb3feb9d3c1565ff33ed1bacf83da54b8e7d03",
+    "tldw_chatbook/config.py": "3711d7a4ad92abc2dedc8c06fc1b9cfdee1b21c910d2e2494b1e6fcb0d900784",
+    "tldw_chatbook/Utils/paths.py": "bd4d83b4f65d0882ed4c030beb972c71879c7fcf0e88bcd152dafe683ce4b0ec"
+  },
+  "status": "passed"
+}
