@@ -3462,7 +3462,7 @@ async def test_severity_colour_supplements_glyphs_and_invalid_field_marked() -> 
         # Glyph + word survive alongside the colour (monochrome contract).
         by_id = {row.job_id: row for row in state.queue_rows}
         assert by_id["ingest-job-1"].line.startswith("✗ failed")
-        assert by_id["ingest-job-2"].line.startswith("○ skipped")
+        assert by_id["ingest-job-2"].line.startswith("– skipped")
 
         invalid = pilot.app.query_one("#opt-generic-chunk_size", Input)
         assert invalid.has_class("-ingest-option-invalid"), (

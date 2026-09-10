@@ -187,7 +187,8 @@ keyword: quokkasand…`, the title hit painted `article · 1m`.)*
 - **Disabled actions announce themselves.** While nothing is checked,
   "Export selected"/"Delete selected" read **"○ Export selected"** /
   **"○ Delete selected"** — the leading **○** is the Library's disabled
-  marker (the same ✓/○ pair the ingest toggles use), so the state never
+  marker (the same marker every gated Library action carries — see
+  [State glyphs](../library.md#state-glyphs)), so the state never
   depends on colour alone — and their tooltips say what to do ("Select one
   or more items…"). The same goes for **"○ Select"** when the list is
   empty ("Nothing here to select yet."). Checking the first row flips the
@@ -1120,9 +1121,15 @@ AC#2, media clause: the Analysis tab's actions now sit under the analysis
 text instead of at the pane floor. task-31237's `height: 1fr` fill is
 reversed for this tab only — Read keeps it, because nothing sits under its
 box there. Live at 235x52, 100x30 and 60x24 a 5-line analysis puts "Edit
-analysis" / "○ Regenerate" on the next line; a 120-line analysis scrolls the
-tab on one scrollbar and the wheel carries the reader to the actions at the
-end.)*
+analysis" / "○ Regenerate" on the next line. A longer analysis keeps its own
+text scroll and the tab scrolls the last few rows on top of it, so reading to
+the end of the text and carrying on brings the actions on screen.)*
+
+*Verified against fix/library-crit9-grammar — 2026-09-10, fix round 1
+(task-32235: the disabled marker's description no longer points at the
+"✓/○ pair the ingest toggles use" — those toggles are "☐/☑" now, and "○"
+means a blocked or disabled action and nothing else. The legend lives in
+[State glyphs](../library.md#state-glyphs).)*
 
 *Verified against fix/library-crit8-riders-a — 2026-09-10 (task-32101: the
 blocked hand-off paints the action name once — the disabled marker moved

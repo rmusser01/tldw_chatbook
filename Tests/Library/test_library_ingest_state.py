@@ -2323,8 +2323,8 @@ def test_skipped_jobs_render_neutral_and_count_separately():
         clear_finished_armed=True,
     )
     row = next(r for r in state.queue_rows if r.job_id == "ingest-job-1")
-    assert row.glyph == "○"
-    assert row.line.startswith("○ skipped · photo.xyz")
+    assert row.glyph == "–"
+    assert row.line.startswith("– skipped · photo.xyz")
     assert row.can_retry is False
     assert row.can_dismiss is True
     assert state.queue_counts_line == "This queue: 1 done · 1 skipped"
