@@ -426,7 +426,17 @@ async def test_a_second_open_supersedes_the_older_locator_not_its_own_load(tmp_p
             older_generation = screen._notes_state.navigation_generation
 
             await _click_note_row(pilot, screen, second_id)
-            assert screen._notes_state.navigation_generation > older_generation
+            # The row handler awaits a save flush before it supersedes, so
+            # under host load the bump can be a few frames behind the click.
+            for _ in range(LOCATOR_POLL_ATTEMPTS):
+                if screen._notes_state.navigation_generation > older_generation:
+                    break
+                await pilot.pause(LOCATOR_POLL_INTERVAL)
+            else:
+                pytest.fail(
+                    "the second click never superseded the older locator; "
+                    f"navigation_generation is still {older_generation}"
+                )
             held.set()
 
             for _ in range(LOCATOR_POLL_ATTEMPTS):
