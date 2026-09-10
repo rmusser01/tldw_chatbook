@@ -25,6 +25,7 @@ from pydantic import (
 )
 
 from ..Metrics.metrics_logger import log_counter, log_histogram
+from .reasoning_config import REASONING_HISTORY_MODES
 
 PROVIDER_API_KEY_MAX_LENGTH = 4096
 CONSOLE_DRAFT_MAX_LENGTH = 100_000
@@ -49,6 +50,56 @@ TERMINAL_SESSION_NAME_MIN_DISPLAY_CHARACTERS = 1
 TERMINAL_SESSION_NAME_MAX_DISPLAY_CHARACTERS = 64
 TERMINAL_SESSION_NAME_MAX_CODEPOINTS = 1_024
 _EXTENDED_GRAPHEME_PATTERN = regex.compile(r"\X", regex.VERSION1)
+
+
+class ReasoningHistorySelectorInput(BaseModel):
+    """Strict boundary for a Console reasoning-history selector event.
+
+    Attributes:
+        allow_inherit: Whether the per-target reset choice is accepted.
+        value: Exact selector value received from the UI event.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    allow_inherit: bool = False
+    value: str
+
+    @field_validator("value")
+    @classmethod
+    def _validate_value(cls, value: str, info: ValidationInfo) -> str:
+        allowed = set(REASONING_HISTORY_MODES)
+        if info.data.get("allow_inherit") is True:
+            allowed.add("inherit")
+        if value not in allowed:
+            raise ValueError("invalid reasoning history selector value")
+        return value
+
+
+def validate_reasoning_history_selector(
+    value: object,
+    *,
+    allow_inherit: bool = False,
+) -> str:
+    """Validate one reasoning-history selector value without coercion.
+
+    Args:
+        value: Candidate Textual selector value.
+        allow_inherit: Whether the per-target ``inherit`` choice is accepted.
+
+    Returns:
+        The exact validated selector value.
+
+    Raises:
+        ValueError: If the value has the wrong type or is not an allowed choice.
+    """
+
+    try:
+        return ReasoningHistorySelectorInput.model_validate(
+            {"value": value, "allow_inherit": allow_inherit}
+        ).value
+    except PydanticValidationError:
+        raise ValueError("reasoning history selector value is invalid") from None
 
 
 class VllmDraftInputEvent(BaseModel):

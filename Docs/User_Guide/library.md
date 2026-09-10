@@ -279,6 +279,29 @@ visible stage so its controls remain on-screen. Escape (or the
 
 ## Features & controls
 
+### State glyphs
+
+Every Library canvas uses this one legend — each glyph means exactly one
+thing, so nothing on the screen relies on colour alone:
+
+| Glyph | Meaning | Where |
+|---|---|---|
+| `█` (leading) | the keyboard cursor | focused list rows, focused evidence cards, the chooser cursor |
+| `☐` / `☑` | selection you toggle | select-mode rows, the Search / RAG **Sources** panel, Import type toggles |
+| `✓` / `✗` / `–` | a settled outcome | Import queue rows, receipts (`–` is "never attempted") |
+| `≡` | already in your Library (a duplicate the import matched) | Import queue rows |
+| `⊘` | cancelled on purpose | Import queue rows |
+| `●` (leading a queue row) | still working | Import queue rows (queued, parsing, writing) |
+| `●` (inside a line) | not a state — it marks a count, or samples a colour | the blocked count on the Workspace ▸ Handoff row; a highlight's colour swatch in the Media reader |
+| `▸` / `▾` | disclosure | trailing on a section header, leading on a folder-tree node |
+| `○` | a blocked or disabled action | any greyed action, always beside its reason or tooltip |
+| `✓` (leading, in a chooser) | the active value of a chooser | choice strips, kept toggles ("mode: ✓ Search ⇄ RAG Answer") |
+| `▸ ` (leading, on a rail row) | the destination you are on | the left rail |
+| `⇄` | press to switch between the two options either side of it | mode toggles |
+
+A rail row never expands and a tree node is never a rail row, so the two
+leading `▸` uses cannot collide on one control.
+
 ### Left rail
 
 | Control | What it does |
@@ -291,7 +314,7 @@ visible stage so its controls remain on-screen. Escape (or the
 | **Back to Get started** | Returns an explicitly expanded, still-empty Library to the Get started landing and compact rail, with focus on **Import…**. It is never offered after graduation. |
 | **Search Library…** | Type a query and press Enter: lands on the Search / RAG canvas and runs it (empty submit just opens the canvas) — see [Search & RAG](library/search-and-rag.md). **x** beside the box empties it. The box shows the live query only on the Search / RAG canvas; every other canvas gets an empty box, and returning to Search / RAG restores the query and its results. |
 | **Chunking Lab** / **Try selected text** | Under **Details ▸ Actions**, above the line "Chunking Lab — compare how text is split for search". Opens a full-screen A/B tool; **Escape** there returns to the Library canvas you came from, including from the sample editor. |
-| **▾** / **▸** (section headers) | Open or collapse that rail section. |
+| **▾** / **▸** (section headers) | Open or collapse that rail section — see [State glyphs](#state-glyphs). |
 
 ### Browse rows
 
@@ -679,7 +702,9 @@ global cluster spells the pane key "F6 next pane" to match; value-cycle
 buttons ("type: All", "sort: Newest", "quality: thumbnail", "mode:
 Search") carry a trailing "⇄" with a tooltip listing the full cycle —
 a trailing "▸/▾" is now always a section-header disclosure and a leading
-"▸ " always the selected list row (Collections rows included); the Media
+"▸ " always the selected list row (Collections rows included; narrowed
+by task-32235 — a leading "▸" on a folder-tree node is disclosure, see
+[State glyphs](#state-glyphs)); the Media
 toolbar is a single horizontal row like its siblings; canvas list titles
 render in full instead of the rail's 17-character cut; the landing line
 reads "pick a section" (no "on the left" — at ≤100 columns the shell
@@ -830,6 +855,16 @@ paints on every Library canvas, was undocumented (task-32064).)*
 *Verified against fix/library-crit8-waits — 2026-09-08 (task-32055: Library's
 structural waits report "still working · Cancel" past three seconds and never
 gate Escape, the back cue, the palette or Quit).*
+
+*Verified against fix/library-crit9-grammar — 2026-09-10 (task-32235: one
+meaning per state glyph. "○" had carried three at once — a disabled action,
+an unchecked source toggle and a settled "skipped" outcome; it keeps the
+first (it is the only non-colour cue on tooltip-gated buttons) while
+selection moves to "☐/☑" and the never-attempted outcome to "–". The
+legend is now stated once, under **State glyphs**.
+Fix round 1 adds the Import queue's own `●`/`≡`/`⊘`, and round 2 splits `●`
+by context: leading a queue row it means "still working", inside a line it
+is a count marker or a colour swatch, neither of them a state.)*
 
 *Verified against fix/library-crit9-shell — 2026-09-10 (task-32225: Escape
 returns to the rail below 64 columns on every adaptive-reader destination and

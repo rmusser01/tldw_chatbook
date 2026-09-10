@@ -38,9 +38,9 @@ Top to bottom on the main canvas:
 - **"Sources"** — the scope block: a "Scope: …" summary line (reads "Scope:
   all local sources" when every available source is selected, otherwise the
   selected sources followed by what's off, e.g. "Scope: Notes, Conversations
-  (Media, Prompts off)") and one toggle per source type — ✓/○ **Notes**,
+  (Media, Prompts off)") and one toggle per source type — ☐/☑ **Notes**,
   **Media**, **Conversations**, **Prompts**, each with its count, e.g.
-  "✓ Media (1)".
+  "☑ Media (1)".
 - **"Answer"** (RAG Answer mode only) — the generated answer, its
   citations, or an honest abstention; sits between "Sources" and the
   evidence rows. Nothing renders here in Search mode, or before a RAG
@@ -69,8 +69,9 @@ Type into "Ask or search Library sources" and press Enter or **Run**. The
 gates are gentle: with no query the status line reads "Enter a question or
 search query."; with every source toggled off it reads "Select at least one
 source." Those are quiet nudges, not errors. Real failures are louder — a
-**"Blocked | <reason>"** callout plus a recovery block spelling out Why /
-Next / Recovery / Owner.
+callout carrying the reason and its next step on one line. (The full
+structured record — why, owner, the config-file remedy — goes to the log,
+not the screen.)
 
 The **mode** toggle carries both modes on its label — "mode: ✓ Search ⇄
 RAG Answer" — with ✓ marking the active one; a single press flips to the
@@ -183,7 +184,7 @@ are actually on screen right now.
 
 ### Sources scope
 
-The four toggles decide where the query looks: ✓ is in scope, ○ is
+The four toggles decide where the query looks: ☑ is in scope, ☐ is
 excluded; click to flip. A source whose count is (0) is disabled. If your
 Library is empty, the scope block takes over entirely: "No Library sources
 yet — import media or create notes, then search." with an **"Open Import
@@ -304,13 +305,14 @@ working credential* configured — an endpoint name alone is no longer
 enough to unblock Run. The block names whichever of the two is actually
 missing:
 
-- **No provider chosen at all** — **"Blocked | Select a provider/model
-  before asking for a RAG answer."**, recovery pointer "Console controls".
-- **A provider chosen, but no credential for it** — the block names the
-  key instead, e.g. **"Blocked | The configured provider has no usable API
-  key. Set ANTHROPIC_API_KEY or add api_key under
-  [api_settings.anthropic]."**, owner "LLM provider credential". Telling
-  you to pick a provider here would name a step you already finished.
+- **No provider chosen at all** — **"Select a provider/model before
+  asking for a RAG answer."**
+- **A provider chosen, but no credential for it** — **"No analysis
+  provider is configured · Set one in Settings ▸ Providers & Models."**,
+  with an **"Open Settings ▸ Providers"** button beside it that takes you
+  straight there. This is the same sentence the Media reader's analysis
+  gate uses, so one missing key never produces two different remedies; the
+  env-var / `[api_settings.<provider>]` detail is written to the log.
 
 A key set either the modern way (`[api_settings.<provider>] api_key = …`)
 or the legacy way (`[API] <provider>_api_key = …`) satisfies it — the same
@@ -401,9 +403,8 @@ populate results." A search that runs cleanly but finds nothing is a quiet
 two-line note, not an error: "No evidence matched '\<your query>'." then
 "Try broader terms." (or "Try broader terms or turn on more sources." when
 a real source is still toggled off). A genuine retrieval failure — missing
-dependencies, an empty index, no provider, a policy block — is louder: a
-**"Blocked | \<reason>"** callout plus the full Why / Next / Recovery /
-Owner block described above.
+dependencies, an empty index, no provider, a policy block — is louder: the
+one-line reason callout described above.
 
 In RAG Answer mode, when results land but the semantic query didn't
 actually touch one of your selected sources (or every hit's match is weak),
@@ -475,7 +476,7 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
 1. **Search everything, fast** — type your words into the rail's "Search
    Library…" box and press Enter. You land here with results.
 2. **Narrow the scope to media only** — under "Sources", click **Notes**,
-   **Conversations**, and **Prompts** so they show ○, leaving "✓ Media";
+   **Conversations**, and **Prompts** so they show ☐, leaving "☑ Media";
    run again.
 3. **Open an evidence hit** — press **Open** on its row; you jump straight
    to that item's editor or viewer in Library.
@@ -551,7 +552,7 @@ read "select evidence" everywhere, including in the query box.
   above.
 - **The scope summary line tracks the toggles.** Deselecting a source (e.g.
   turning Media off) updates "Scope: …" to name what's still in scope and
-  what's off — it's a live summary of the ✓/○ toggles below it, not a fixed
+  what's off — it's a live summary of the ☐/☑ toggles below it, not a fixed
   label.
 - **A source toggle also filters the rows you're already looking at.** It
   is not just a setting for the next run — turning a source off hides its
@@ -841,3 +842,11 @@ card's own border, so the cue was colour-alone; **Run** gains the compact
 buttons' focus rails; the footer's Enter hint follows the focused control;
 and Escape leaves the query box. Pinned in
 `Tests/UI/test_library_crit8_keyboard.py`.)*
+
+*Verified against fix/library-crit9-grammar — 2026-09-10 (task-32236 and
+task-32235: a RAG Answer blocked on a missing provider credential now paints
+ONE line — "No analysis provider is configured · Set one in Settings ▸
+Providers & Models." — plus an "Open Settings ▸ Providers" button, instead of
+six lines naming an env var, a TOML table and an "Owner"; the structured
+record moved to the log. The Sources toggles read "☐/☑", not "○/✓".
+Live-verified at 235x52 and 100x30 on a profile with no provider.)*

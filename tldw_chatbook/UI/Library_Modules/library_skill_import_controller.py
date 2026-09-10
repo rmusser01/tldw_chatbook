@@ -760,6 +760,10 @@ class LibrarySkillImportCoordinator:
         return _LibrarySkillImportOutcome(
             "Import cancelled · check the skills list before retrying.",
             retryable=True,
+            # task-32102: the copy sends the user to the skills list
+            # precisely because the import may have landed anyway, so that
+            # list has to be the one AFTER the run, not before it.
+            refresh_sources=True,
         )
 
     @staticmethod

@@ -15,6 +15,10 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
     library_disabled_action_label,
 )
+from tldw_chatbook.Library.library_pager_state import (
+    LibraryPagerDisplay,
+    library_pager_layout,
+)
 from tldw_chatbook.Library.library_conversations_state import (
     LibraryConversationsCanvasState,
 )
@@ -303,45 +307,44 @@ class LibraryConversationsCanvas(
         previous_reason = pager.previous_reason if pager is not None else ""
         next_reason = pager.next_reason if pager is not None else ""
         # task-32067: Media's one-page rule (task-28016 + task-31237), applied
-        # here. A list that fits one page has nowhere to page to, so "Page 1
-        # of 1", the boundary reasons and the two dead "○ Previous ○ Next"
-        # forms are noise; the item range stays and everything returns the
-        # moment a second page exists. A Retry still needs its row.
-        single_page = pager is not None and pager.single_page
-        retry_visible = pager is not None and pager.retry_visible
-        disabled_reasons = (
-            ()
-            if single_page
-            else tuple(
-                dict.fromkeys(
-                    reason
-                    for disabled, reason in (
-                        (previous_disabled, previous_reason),
-                        (next_disabled, next_reason),
-                    )
-                    if disabled and reason
-                )
+        # here -- from the ONE helper that states it (task-32104).
+        layout = library_pager_layout(
+            pager
+            if pager is not None
+            # A state built without a pager projection (hand-built, tests)
+            # carries the same fields flattened onto the canvas and knows
+            # nothing about one-page-ness, so it renders the full pager --
+            # the rule itself still has exactly one implementation.
+            else LibraryPagerDisplay(
+                title_count=None,
+                range_copy=range_copy,
+                page_copy=page_copy,
+                status_copy="",
+                previous_disabled=previous_disabled,
+                next_disabled=next_disabled,
+                previous_reason=previous_reason,
+                next_reason=next_reason,
+                retry_visible=False,
             )
         )
         with Vertical(
             id="library-conversations-pager",
             classes="library-source-pager",
         ):
-            status_parts = (range_copy,) if single_page else (range_copy, page_copy)
             yield Static(
-                " · ".join(copy for copy in status_parts if copy),
+                " · ".join(layout.status_parts),
                 id="library-conversations-page-status",
                 classes="library-source-pager-status",
                 markup=False,
             )
-            if disabled_reasons:
+            if layout.boundary_reasons:
                 yield Static(
-                    " · ".join(disabled_reasons),
+                    " · ".join(layout.boundary_reasons),
                     id="library-conversations-disabled-reason",
                     classes="library-source-pager-status",
                     markup=False,
                 )
-            if single_page and not retry_visible:
+            if layout.controls_hidden:
                 return
             with Horizontal(classes="library-source-pager-controls"):
                 previous = Button(
