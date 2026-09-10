@@ -94,6 +94,79 @@ def _detect_vpack(zf: zipfile.ZipFile) -> str | None:
     return None
 
 
+def _has_native_contract(zf: zipfile.ZipFile, prefix: str) -> bool:
+    """Distinguish native archives from the historical outer-manifest format."""
+    from tldw_chatbook.Persona_Visual.importer import _MAX_JSON_BYTES
+
+    for name in ("manifest.json", "metadata/pack.json", "checksums/sha256.json"):
+        if f"{prefix}{name}" not in zf.namelist():
+            continue
+        info = zf.getinfo(f"{prefix}{name}")
+        if info.file_size > _MAX_JSON_BYTES:
+            return True  # fail at the native bounded parser
+        try:
+            document = json.loads(zf.read(info))
+        except (ValueError, UnicodeError):
+            continue
+        if isinstance(document, dict) and (
+            (name == "checksums/sha256.json" and bool(document))
+            or "schema_version" in document
+            or (
+                isinstance(document.get("pack"), dict)
+                and "visual_manifest" in document["pack"]
+            )
+        ):
+            return True
+    return False
+
+
+def _resolve_native_expression_set(
+    path: Path, *, prefix: str = ""
+) -> ExpressionSetResolution:
+    """Extract native static selections only after complete archive validation."""
+    from tldw_chatbook.Persona_Visual.contracts import resolve_manifest_state
+    from tldw_chatbook.Persona_Visual.snapshot import read_buddy_archive
+    from tldw_chatbook.Persona_Visual.validation import validate_persona_visual_manifest
+
+    snapshot = read_buddy_archive(path.absolute(), prefix=prefix)
+    assets = {asset.metadata.asset_key: asset for asset in snapshot.assets}
+    manifest = validate_persona_visual_manifest(
+        snapshot.manifest_json,
+        {key: (asset.metadata.width, asset.metadata.height) for key, asset in assets.items()},
+    )
+    images: dict[str, bytes] = {}
+    notes = [
+        "Imported static Buddy expressions; use Create character from Buddy for animation review."
+    ]
+    for state in EXPRESSION_STATES:
+        selection = resolve_manifest_state(manifest, state, reduced_motion=True)
+        if selection is None:
+            continue
+        frame = selection.static.frame
+        asset = assets[frame.asset_id]
+        with Image.open(io.BytesIO(asset.data)) as source:
+            source.seek(0)  # Native frames select a raster; never expand nested animation.
+            image = source.convert("RGBA")
+            if frame.region is not None:
+                region = frame.region
+                cropped = image.crop(
+                    (region.x, region.y, region.x + region.width, region.y + region.height)
+                )
+                image.close()
+                image = cropped
+            try:
+                output = io.BytesIO()
+                image.save(output, format="PNG")
+                images[state] = output.getvalue()
+            finally:
+                image.close()
+        if selection.resolved_state != state:
+            notes.append(f"{state} uses the {selection.resolved_state} fallback.")
+    if not snapshot.is_current():
+        raise ValueError("persona_visual_import_stale")
+    return ExpressionSetResolution(images=images, notes=notes)
+
+
 def _candidate_pairs(
     paths: list[Path], start_total: int = 0
 ) -> tuple[list[tuple[str, bytes]], list[tuple[str, str]], list[str], int]:
@@ -167,8 +240,8 @@ def resolve_local_expression_set(paths: list[Path]) -> ExpressionSetResolution:
     """Resolve selected inputs into a validated {state: bytes} set.
 
     Any input that is a persona visual pack (``.tldw-persona-vpack`` or a
-    plain ``.zip`` -- detected by CONTENT via ``_detect_vpack``, never by
-    file extension) is resolved through the targeted vpack extractor;
+    plain ``.zip`` detected by native content) is validated through the native
+    importer. The native suffix also forces validation for damaged packs;
     everything else is batched into the generic stem-mapping path below.
 
     Args:
@@ -193,10 +266,21 @@ def resolve_local_expression_set(paths: list[Path]) -> ExpressionSetResolution:
             if path.is_file() and zipfile.is_zipfile(path):
                 with zipfile.ZipFile(path) as zf:
                     vprefix = _detect_vpack(zf)
-                    if vprefix is not None:
-                        res, total = _resolve_vpack_expression_set(
-                            zf, prefix=vprefix, start_total=total
-                        )
+                    native = (
+                        path.name.lower().endswith(".tldw-persona-vpack")
+                        or _has_native_contract(zf, vprefix or "")
+                    )
+                    if native or vprefix is not None:
+                        if native:
+                            # Native validation owns its larger pack budgets. A
+                            # rejected native source must never reach stem mapping.
+                            res = _resolve_native_expression_set(
+                                path, prefix=vprefix or ""
+                            )
+                        else:
+                            res, total = _resolve_vpack_expression_set(
+                                zf, prefix=vprefix, start_total=total
+                            )
                         for state, data in res.images.items():
                             images.setdefault(state, data)   # first-writer-wins
                         skipped.extend(res.skipped)

@@ -256,3 +256,41 @@ async def test_artwork_paging_retains_selected_label_and_staged_choice():
             for label, _ in modal.query_one("#buddy-artwork", Select)._options
         ]
         assert "[bold]Buddy 3[/bold]" in labels
+
+
+@pytest.mark.asyncio
+async def test_petdex_staging_is_discarded_on_cancel_and_character_uses_selected_owner():
+    from types import SimpleNamespace
+
+    m = modal_module()
+    calls = []
+    review = SimpleNamespace(title="Reviewed pet")
+
+    async def import_petdex(modal):
+        return review
+
+    async def create_character(modal, buddy_id):
+        calls.append(buddy_id)
+
+    app = App()
+    async with app.run_test() as pilot:
+        modal = m.BuddyManagementModal(
+            buddies=(("Installed", "owner"),),
+            import_petdex=import_petdex,
+            create_character=create_character,
+        )
+        app.push_screen(modal)
+        await pilot.pause()
+        assert modal.query_one("#buddy-character", Button).disabled
+        modal.query_one("#buddy-artwork", Select).value = "owner"
+        await pilot.pause()
+        modal.query_one("#buddy-character", Button).press()
+        await pilot.pause()
+        assert calls == ["owner"]
+        modal.query_one("#buddy-petdex", Button).press()
+        await pilot.pause()
+        assert modal.staged_review is review
+        assert "Before Apply" in str(modal.query_one("#buddy-staged").render())
+        assert modal.query_one("#buddy-character", Button).disabled
+        await pilot.press("escape")
+        assert modal.staged_review is None

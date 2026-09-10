@@ -338,6 +338,7 @@ class VisualIdentityCandidate:
     source_context: dict[str, Any]
     assets: tuple[dict[str, Any], ...] = field(repr=False)
     actor_authority: tuple[str, ...] = ()
+    source_license: str = "unspecified"
     _actor_guard: Callable[[], bool] | None = field(default=None, repr=False)
     _replacements: dict[str, tuple[bytes, str]] = field(
         default_factory=dict, init=False, repr=False
@@ -1994,6 +1995,16 @@ def create_visual_identity_candidate(
         raise ValueError("visual_identity_source_context_invalid") from None
     if not isinstance(source_context, dict):
         raise ValueError("visual_identity_source_context_invalid")
+    from .artwork_attribution import artwork_context
+
+    artwork_context(source_context)
+    try:
+        source_manifest = json.loads(graph["version"]["manifest_json"])
+        source_license = source_manifest.get("license", "unspecified")
+        if type(source_license) is not str or not _LICENSE_RE.fullmatch(source_license):
+            raise ValueError
+    except (AttributeError, TypeError, ValueError):
+        raise ValueError("visual_identity_manifest_invalid") from None
     return VisualIdentityCandidate(
         actor_kind=actor_kind,
         actor_id=str(actor_id),
@@ -2008,6 +2019,7 @@ def create_visual_identity_candidate(
         default_expression_key=str(graph["version"]["default_expression_key"]),
         original_default_expression_key=str(graph["version"]["default_expression_key"]),
         source_context=dict(source_context),
+        source_license=source_license,
         assets=tuple(dict(asset) for asset in graph["assets"]),
         actor_authority=actor_authority,
         _actor_guard=actor_guard,
@@ -2300,6 +2312,8 @@ def publish_visual_identity_candidate(
 
             try:
                 if fork_pack:
+                    from .artwork_attribution import artwork_context
+
                     source_context = (
                         {
                             "profile_pack_id": profile_pack_token,
@@ -2312,6 +2326,7 @@ def publish_visual_identity_candidate(
                             "forked_from_version_id": candidate.old_version_id,
                         }
                     )
+                    source_context.update(artwork_context(candidate.source_context))
                     graph = repository.activate_pack(
                         pack={
                             "title": (
@@ -2613,6 +2628,8 @@ def _materialize_visual_identity_candidate(
     profile_pack_token: str,
     user_data_dir: Path,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    from .artwork_attribution import artwork_context
+
     prepared: list[dict[str, Any]] = []
     decoded_pixels = 0
     materialized_bytes = 0
@@ -2640,6 +2657,12 @@ def _materialize_visual_identity_candidate(
             frame_count = source_asset.frame_count
             duration_ms = source_asset.duration_ms
             source_context = {"retained_asset_id": int(stored["id"])}
+            source_context.update(
+                artwork_context(
+                    json.loads(stored["source_context_json"]),
+                    expected_sha256=source_asset.sha256,
+                )
+            )
         else:
             data, replacement_source = replacement
             (
@@ -2694,7 +2717,7 @@ def _materialize_visual_identity_candidate(
         "schema_id": SAMIRA_MANIFEST_SCHEMA_ID,
         "pack_id": f"tldw.profile.{profile_pack_token}",
         "title": candidate.title,
-        "license": SAMIRA_LICENSE,
+        "license": candidate.source_license,
         "default_expression_key": candidate.default_expression_key,
         "source_server_commit": None,
         "pack_content_sha256": "0" * 64,
