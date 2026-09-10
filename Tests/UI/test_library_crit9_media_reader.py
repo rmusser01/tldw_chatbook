@@ -59,6 +59,7 @@ _GUIDE = (
     / "media-and-conversations.md"
 )
 
+
 @pytest.mark.asyncio
 async def test_the_more_strip_paints_every_label_at_the_narrowest_stage():
     """task-32237 AC#1: the 60x24 stage, where the strip wraps to two rows.
