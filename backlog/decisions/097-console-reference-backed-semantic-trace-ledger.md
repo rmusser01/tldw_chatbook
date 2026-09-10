@@ -585,7 +585,7 @@ in-memory witness; it does not store transcript copies or modify historical call
 
 ### Amendment recorded 2026-09-09: closed unanswered runs and untraced follow-ups
 
-TASK-32191 reproduces a request-construction failure after successful tool calls:
+TASK-32197 reproduces a request-construction failure after successful tool calls:
 the individual trace calls settle COMPLETE while the saved assistant settles FAILED
 with an empty semantic envelope and no dispatch checkpoint. That failed owner has
 no pending response to discard. Permit this exact durable closure as an alternative
@@ -602,7 +602,11 @@ no intervening captured calls or active dispatch checkpoints, and the same stric
 sidecar exclusions for the newly admitted closure/history cases. These rows become
 ordinary saved history of the incoming request; do not fabricate captures, outcomes
 or response links for their earlier untraced delivery. Retain the prior explicit
-Discard contract and its existing descriptor representation.
+Discard contract and its existing descriptor representation. When a completed
+uncaptured follow-up requires the closed representation, re-read the original
+owner's durable Discard state at every validation, including final binding, before
+allowing its existing RESPONSE_STARTED evidence. Failed-empty owners still require
+settled response-bearing calls.
 
 Recheck the full closure and chain at final dispatch binding, along with the existing
 attached owner, latest settled call, exact source, unchanged prefix and tail, matching

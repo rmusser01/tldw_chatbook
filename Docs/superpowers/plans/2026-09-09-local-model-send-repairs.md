@@ -8,7 +8,7 @@
 
 The user authorized the diagnosed repairs with “fix it” after reviewing the evidence in this session. Existing planning-provenance design/plan documents are reference material. Implementation is in the current workspace so the editable installation receives the repair; the separate pre-existing planning worktree is untouched.
 
-## Chunk 1: Captured agent tool calls — TASK-32188
+## Chunk 1: Captured agent tool calls — TASK-32194
 
 - Reuse the existing worktree's candidate classifier/test changes, correct the fixture API and use a saved user revision.
 - Prove failure on visible planning text before a tool fence and misclassification of malformed look-alike fences.
@@ -20,7 +20,7 @@ ADR required: no new ADR.
 ADR path: backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md
 Reason: classifier alignment implements the existing exact semantic-provenance contract. Reassess if old-history recovery needs a new proof contract.
 
-## Chunk 2: Honest search failures — TASK-32189
+## Chunk 2: Honest search failures — TASK-32195
 
 - Reproduce DuckDuckGo challenge pages, HTTP errors, missing parser, backend error envelopes and malformed responses.
 - Detect failures at the backend/tool boundary and raise existing LocalToolError so Console and external local-tool consumers receive failed results.
@@ -31,7 +31,7 @@ ADR required: no new ADR.
 ADR path: backlog/decisions/078-structured-agent-tool-outcome-provenance.md; backlog/decisions/032-local-agent-tool-permission-boundary.md
 Reason: repair existing ordinary-failure reporting without changing permission authority or wire schema.
 
-## Chunk 3: Repeated failing calls — TASK-32190
+## Chunk 3: Repeated failing calls — TASK-32196
 
 - Reproduce repeated failures with different arguments in the real pure loop.
 - Stop after three consecutive ordinary failures of the same tool; reset on success or tool switch.
@@ -42,7 +42,7 @@ ADR required: no new ADR.
 ADR path: backlog/decisions/078-structured-agent-tool-outcome-provenance.md
 Reason: bound repeated execution failures using existing outcome facts and loop termination mechanics.
 
-## Chunk 4: Existing failed tool-run history — TASK-32191
+## Chunk 4: Existing failed tool-run history — TASK-32197
 
 - Preserve the four real-controller failures for failed empty replies, with project instructions and uncaptured follow-ups on/off.
 - Extend the existing bounded closure proof to durable failed empty replies and exact saved uncaptured turns; keep historical calls immutable.
@@ -86,11 +86,11 @@ Reason: this proposal contains the four capture and failed-tool-loop repairs
 above, including the error classification required for unavailable searches to
 reach the loop guard. Genuine empty search results remain successful.
 
-The proposal is based on upstream dev `86a8054ed`. Only TASK32188–32191 are
+The original proposal was based on upstream dev `86a8054ed`. Only TASK32194–32197 are
 included. Their plans and acceptance criteria define the implementation scope.
 Final verification targets capture recovery, failed outcomes and retry handling.
 
-Fresh verification of this final proposal: **425 passed, 3 opt-in
+Contributor verification before the maintainer rebase: **425 passed, 3 opt-in
 live-network skips**; 313 unrelated cases were deselected in the search-only
 selection. Commands:
 
@@ -117,3 +117,38 @@ whitespace checks pass. Independent review confirmed that the retained loop
 fix has no dependency on the removed changes. The earlier exploratory baseline
 failures and live-service limitations above remain disclosed; no full-suite
 run was performed.
+
+## Maintainer review after rebase onto dev 26cdfb42ad
+
+The contributor's two commits were combined without changing their final tree,
+then rebased while retaining the newly merged saved search-backend preference and
+per-call provenance. Task IDs collided with merged dev work, so this proposal's
+four tasks are now TASK-32194–32197; TASK-32198 records the inherited CSS guard repair.
+
+Qodo findings addressed: strict Pydantic validation of displayed search fields
+before formatting/caching (16 malformed-field failures reproduced first; null and
+missing text remain supported), full web_search Args/Returns/Raises documentation,
+and Settings copy derived from LOOP_DETECTION_N. Search integration fixtures now
+use a valid non-placeholder Searx URL and expect dev's backend provenance and safe
+error contract. A typed observed challenge retains the specific DuckDuckGo reason.
+
+Similar-issue review reproduced Discard -> successful Capture Off -> Capture On
+blocking for all four project on/off and warm/cold combinations. The original
+owner's durable Discard is re-read at final binding before accepting legacy
+RESPONSE_STARTED evidence; no trace is rewritten. Four additional controls mutate
+only that state to failed after preparation and prove dispatch is still blocked.
+Independent recovery review passed 11 cases; runtime/parser review passed 20.
+
+The inherited 805,669-byte boot CSS census exceeded the unchanged 804,000 limit.
+Comment-only source compaction and regeneration reduce it to 803,696 bytes.
+Removing comments produces byte-identical source and generated stylesheet content.
+All derived-artifact checks pass, including pinned Mermaid assets. Ruff comparison
+against dev reports no introduced findings; changed ranges are formatted.
+
+Verification completed so far: 119 search/backend/provider cases passed, three
+opt-in live skips; 133 agent, shared-backend and CSS cases passed. A broader
+provider/Settings run exposed 18 filesystem scratch-space failures and one Settings
+save-click failure; the same 19 failures reproduce in a disposable clean dev
+checkout (222 passed, 22 deselected). These baseline failures were not hidden by
+changing their assertions. No full suite or live provider check was run during
+the maintainer review.

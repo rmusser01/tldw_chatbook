@@ -7,6 +7,7 @@ import pytest
 
 from Tests.Chat.test_console_project_instruction_traces import _project_console
 from Tests.Chat.test_console_trace_discarded_tool_run import _reload_console
+from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentTraceRequestFactory
 from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
 from tldw_chatbook.Chat.console_trace_redaction import CredentialSanitizer
@@ -595,3 +596,114 @@ async def test_guard_stopped_search_allows_next_capture(
             assert reader.read_calls(prior_user) == original
     finally:
         web_tool_impls._reset_state_for_tests()
+
+
+@pytest.mark.parametrize("project_enabled", [False, True])
+@pytest.mark.parametrize("cold", [False, True])
+@pytest.mark.parametrize("change_discard_at_binding", [False, True])
+async def test_capture_after_discard_then_uncaptured_followup(
+    tmp_path, monkeypatch, project_enabled, cold, change_discard_at_binding
+):
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_args: 100_000)
+    monkeypatch.setattr(
+        agent_service, "catalog_schema_tokens", lambda *_args, **_kwargs: 10_001
+    )
+    async with _project_console(
+        tmp_path, monkeypatch, tools=2, discover_tools=True
+    ) as app:
+        app.store.set_session_project_instruction_state(
+            app.session.id,
+            replace(
+                app.session.project_instruction_state,
+                project_instructions_enabled=project_enabled,
+            ),
+        )
+        prepare = type(app.factory.service).prepare_current_surface_delta
+
+        def reject_third(service, *args, **kwargs):
+            if len(app.http_payloads) == 2:
+                raise ValueError("unsupported_surface_change")
+            return prepare(service, *args, **kwargs)
+
+        with monkeypatch.context() as fault:
+            fault.setattr(
+                type(app.factory.service), "prepare_current_surface_delta", reject_third
+            )
+            first = await app.controller.submit_draft(
+                "Find and load the calculator", session_id=app.session.id
+            )
+        assert first.accepted
+        assert len(app.http_payloads) == 2
+        prior_user = app.store.get_message(first.user_message_id).persisted_message_id
+        reader = ConsoleTraceNativeReader(app.db)
+        with app.db.transaction() as cursor:
+            assert [
+                r[0]
+                for r in cursor.execute(
+                    "SELECT state FROM console_trace_calls WHERE turn_id = ?",
+                    (prior_user,),
+                )
+            ] == ["response_started", "response_started"]
+        original = reader.read_calls(prior_user)
+        _reload_console(app)
+        assert (await app.controller.discard_dispatch_recovery(app.session.id)).accepted
+        _privacy(app, False)
+        followup = await app.controller.submit_draft(
+            "Successful uncaptured followup", session_id=app.session.id
+        )
+        assert followup.accepted
+        assert len(app.http_payloads) == 3, app.reservation_errors
+        assert app.controller.run_state.status.value == "completed"
+        if cold:
+            _reload_console(app)
+        _privacy(app, True)
+        changed = []
+        if change_discard_at_binding:
+            from tldw_chatbook.Chat.console_semantic_revision import (
+                SemanticRevisionCoordinator,
+            )
+
+            validate = type(app.factory.service)._validate_completed_tool_turn
+
+            def change_discard(service, cursor, **kwargs):
+                witness = kwargs["witness"]
+                if (
+                    kwargs.get("reserved_call") is not None
+                    and witness.closed_assistant_message_id
+                ):
+                    assistant_id = witness.closed_assistant_message_id
+                    SemanticRevisionCoordinator(app.db).mutate_message(
+                        cursor,
+                        message_id=assistant_id,
+                        creation_reason="edit",
+                        mutate=lambda inner: inner.execute(
+                            "UPDATE messages SET assistant_generation_state = 'failed' WHERE id = ?",
+                            (assistant_id,),
+                        ),
+                    )
+                    changed.append(assistant_id)
+                if changed:
+                    with pytest.raises(
+                        ValueError, match="^completed_tool_turn_unavailable$"
+                    ):
+                        validate(service, cursor, **kwargs)
+                    raise ValueError("completed_tool_turn_unavailable")
+                return validate(service, cursor, **kwargs)
+
+            monkeypatch.setattr(
+                type(app.factory.service),
+                "_validate_completed_tool_turn",
+                change_discard,
+            )
+        final = await app.controller.submit_draft(
+            "Now captured", session_id=app.session.id
+        )
+        assert final.accepted
+        assert reader.read_calls(prior_user) == original
+        if change_discard_at_binding:
+            assert len(changed) == 1
+            assert len(app.http_payloads) == 3
+            assert app.controller.run_state.status.value == "blocked"
+        else:
+            assert len(app.http_payloads) == 4, app.reservation_errors
+            assert app.controller.run_state.status.value == "completed"

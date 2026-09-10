@@ -3106,7 +3106,19 @@ class ConsoleTraceService:
             )
         if source_after_failure and not unanswered:
             terminal_states.remove(TraceCallState.COMPLETE)
-        if discarded:
+        # Read durable Discard again at final binding. A closed witness may
+        # span completed uncaptured followups and still have a discarded owner.
+        # The full ownership/closure proof below remains mandatory.
+        explicit_discard = discarded or (
+            closed
+            and cursor.execute(
+                "SELECT 1 FROM messages WHERE id = ? "
+                "AND assistant_generation_state = 'discarded'",
+                (witness.closed_assistant_message_id,),
+            ).fetchone()
+            is not None
+        )
+        if explicit_discard:
             # Explicit discard settles the assistant owner separately. A run
             # interrupted during trace construction can leave earlier calls
             # response-bearing but unsettled; do not invent their outcomes.
@@ -3216,6 +3228,7 @@ class ConsoleTraceService:
             or latest_id != terminal.call_id
             or terminal.state not in terminal_states
             or closed
+            and not explicit_discard
             and terminal.response_started_at is None
             or (
                 (restoring_source or unanswered)

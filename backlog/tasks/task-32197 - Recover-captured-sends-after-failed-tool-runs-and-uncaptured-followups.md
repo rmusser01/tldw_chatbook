@@ -1,11 +1,11 @@
 ---
-id: TASK-32191
+id: TASK-32197
 title: Recover captured sends after failed tool runs and uncaptured followups
 status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-09 19:56'
-updated_date: '2026-09-09 20:11'
+updated_date: '2026-09-10 04:25'
 labels: []
 dependencies: []
 priority: high
@@ -37,6 +37,7 @@ Reason: permit exact durable failed-empty closure and bounded untraced saved his
 3. Revalidate closed original owner, every uncaptured followup row, absence of live checkpoints/captured intervening calls, policies and suffix ownership at preparation and final binding.
 4. Test immutable original calls, successor sends, cold recovery and negative ownership/state/value cases.
 5. Run targeted trace tests and independent review; document verified limits.
+5. PR review: reproduce explicit Discard followed by a completed Capture Off send and a Capture On successor; retain the narrowly verified RESPONSE_STARTED allowance for the original discarded owner and verify immutable history plus failed-empty negative controls.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -47,4 +48,5 @@ Recovered captured sends after a durably failed empty tool run, including exact 
 Amended ADR097 before implementation; changed console_trace_runtime.py, console_trace_service.py and console_trace_final_values.py, with one new controller regression module. Basic four cases failed before the fix. GREEN: 95 failed-history/Discard/rendered-system cases, plus four independent RUN_STUCK integrations. Root final standalone recovery module:39 passed; broader final bridge/request/provenance/project/service/runtime/witness selection:611 passed, three cases excluded under two documented pre-existing display-test functions. Real local llama.cpp greeting/calculator/followup capture passed again after combined repair. Independent source/spec review accepted. Owned-source Ruff, scoped formatting and diff checks pass. User guide, main repair plan and live-verification lesson updated.
 
 Validation limits are documented in Docs/superpowers/plans/2026-09-09-local-model-send-repairs.md: existing baseline display/Settings/filesystem tests and an unrelated Mermaid check requiring unavailable pinned Python3.12.11. No full suite, new dependency, schema change, live data mutation or credential change. Private snapshot metadata matches the reproduced failed-empty and mixed untraced chain; complete private-profile replay was not possible without its original workspace/Library environment.
+Maintainer review found and fixed the Discard -> successful Capture Off -> Capture On sequence across project on/off and warm/cold cases. Re-read the durable original Discard marker at every validator invocation, including final binding, while preserving all exact owner/closure checks and immutable old captures. Four mutation controls changing only Discard to failed at final binding remain blocked. Independent review: 11 passed; broader run completed the entire failed-run and discarded-run modules without failure. ADR097 and the incident lesson were updated.
 <!-- SECTION:NOTES:END -->

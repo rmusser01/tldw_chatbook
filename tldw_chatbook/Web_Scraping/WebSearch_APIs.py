@@ -121,8 +121,14 @@ def _search_error_kind(error: Exception) -> str:
     return "request"
 
 
+class _SearchChallengeError(ValueError):
+    """An observed provider challenge, independent of untrusted response text."""
+
+
 def _safe_search_error(error: Exception) -> str:
     """Closed messages keep endpoint URLs, credentials and bodies out of diagnostics."""
+    if isinstance(error, _SearchChallengeError):
+        return "DuckDuckGo returned an anti-bot challenge; automated search is unavailable."
     return {
         "auth": "Authentication failed. Check API key and account permissions.",
         "rate_limit": "Provider rate limit or quota reached. Try again later.",
@@ -3101,7 +3107,7 @@ def search_web_duckduckgo(
         if tree.xpath(
             '//form[@id="challenge-form" or contains(@action, "anomaly.js")]'
         ):
-            raise ValueError(
+            raise _SearchChallengeError(
                 "DuckDuckGo returned an anti-bot challenge; automated search is unavailable."
             )
         if b"No  results." in resp_content:

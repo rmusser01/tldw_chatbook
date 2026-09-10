@@ -483,10 +483,15 @@ def test_yandex_no_results_and_errors_reach_web_tool(monkeypatch, code):
             for _ in range(2):
                 assert web_tool_impls.web_search(
                     "no matches", search_engine="yandex"
-                ) == ("No results found for 'no matches' via 'yandex'.")
+                ) == (
+                    "No results found for 'no matches' via 'yandex'."
+                    "\n\nEngine: yandex (call override)"
+                )
             assert len(fake.calls) == 2
         else:
-            with pytest.raises(LocalToolError, match=f"Yandex API error.*{code}"):
+            with pytest.raises(
+                LocalToolError, match="Search provider returned an invalid response"
+            ):
                 web_tool_impls.web_search("no matches", search_engine="yandex")
     finally:
         web_tool_impls._reset_state_for_tests()
@@ -670,10 +675,10 @@ def test_searx_backend_empty_and_failures_reach_web_tool(monkeypatch, outcome):
     _set_key(
         monkeypatch,
         "searx_search_api_url",
-        "" if outcome == "unconfigured" else "https://searx.example.com/search",
+        "" if outcome == "unconfigured" else "https://search.example.org/search",
     )
     session = _FakeSearxSession(
-        [], status_code=503 if outcome == "http_failure" else 200
+        {"results": []}, status_code=503 if outcome == "http_failure" else 200
     )
     monkeypatch.setattr(WebSearch_APIs, "searx_create_session", lambda: session)
     monkeypatch.setattr(WebSearch_APIs.random, "uniform", lambda a, b: 0.0)
@@ -683,10 +688,13 @@ def test_searx_backend_empty_and_failures_reach_web_tool(monkeypatch, outcome):
             for _ in range(2):
                 assert web_tool_impls.web_search(
                     "no matches", search_engine="searx"
-                ) == ("No results found for 'no matches' via 'searx'.")
+                ) == (
+                    "No results found for 'no matches' via 'searx'."
+                    "\n\nEngine: searx (call override)"
+                )
             assert len(session.calls) == 2  # empty searches are not cached
         else:
-            reason = "status 503" if outcome == "http_failure" else "not set it up"
+            reason = "Search provider returned an invalid response"
             with pytest.raises(LocalToolError, match=reason):
                 web_tool_impls.web_search("no matches", search_engine="searx")
             assert len(session.calls) == (1 if outcome == "http_failure" else 0)

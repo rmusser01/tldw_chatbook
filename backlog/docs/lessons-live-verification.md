@@ -1,6 +1,6 @@
 # Lessons: verifying against the real thing
 
-## A healthy local model does not prove capture or tool outcomes (TASK-32188–32191)
+## A healthy local model does not prove capture or tool outcomes (TASK-32194–32197)
 
 **2026-09-09.** The llama.cpp server answered uncaptured messages while captured
 tool runs failed: visible planning text before a valid tool fence disagreed with
@@ -2426,3 +2426,15 @@ stop dependent controllers. Qualify standalone dependency discovery outside the
 test suite's profile fixtures; a missing-dependency guard can itself initialize
 configuration before model loading begins. Receipts are retained in
 `Docs/QA/tts-macos-burndown-2026-09-09/review/`.
+
+## Discard recovery must survive a completed uncaptured turn
+
+PR #2561 review (2026-09-09) reproduced a missing combination after the
+failed-empty recovery repair: interrupt a captured tool run, explicitly Discard,
+complete a Capture Off send, then turn capture back on. All four project-on/off
+and warm/cold cases blocked because the closed-history proof lost the original
+discarded owner's RESPONSE_STARTED allowance. Direct Discard recovery and failed
+empty recovery each passed separately. Re-reading the durable original Discard
+marker at final binding repaired the mixed sequence without changing prior trace
+records. Mutation controls changing only that marker to failed still reject.
+Test transitions between recovery modes, not just each mode in isolation.

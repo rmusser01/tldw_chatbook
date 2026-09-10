@@ -57,6 +57,7 @@ from tldw_chatbook.UI.focus_ownership import (
 # is imported where it is rendered rather than at module scope -- this
 # module is reached by the screen pre-importer.
 
+from ...Agents.agent_models import LOOP_DETECTION_N
 from ...Chat.Chat_Deps import ChatConfigurationError
 from ...Chat.console_chat_models import CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
 from ...Canvas.limits import CanvasLimits
@@ -1094,7 +1095,7 @@ AGENT_BUDGET_FIELDS: tuple[AgentBudgetField, ...] = (
             "around turn 250. Sub-agents each get this same ceiling rather "
             "than a share of it, so one message's worst case is about 3x "
             "it. 0 = unlimited. Loop detection stops identical repeated "
-            "calls and three consecutive failures from the same tool; "
+            f"calls and {LOOP_DETECTION_N} consecutive failures from the same tool; "
             "successful calls with changing arguments can still loop."
         ),
     ),

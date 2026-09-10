@@ -1449,6 +1449,33 @@ def test_search_error_envelope_and_malformed_not_cached(fetch_env, monkeypatch):
     assert len(calls) == 3  # nothing was cached until the genuine success
 
 
+@pytest.mark.parametrize("field", ["title", "url", "content", "snippet"])
+@pytest.mark.parametrize("value", [{"nested": "not text"}, ["not text"], 123, True])
+def test_search_malformed_text_fields_fail_without_caching(
+    fetch_env, monkeypatch, field, value
+):
+    payload = _search_payload()
+    payload["results"][0][field] = value
+    payloads = iter([payload, _search_payload()])
+    _patch_search(monkeypatch, lambda **kw: next(payloads))
+    with pytest.raises(LocalToolError, match="unexpected response format") as error:
+        web_tool_impls.web_search("recovering", search_engine="bing")
+    assert "Engine: bing (call override)" in str(error.value)
+    assert "R1" in web_tool_impls.web_search("recovering", search_engine="bing")
+
+
+@pytest.mark.parametrize(
+    "item", [{}, {"title": None, "url": None, "content": None, "snippet": None}]
+)
+def test_search_optional_text_fields_keep_fallbacks(fetch_env, monkeypatch, item):
+    _patch_search(
+        monkeypatch, lambda **kw: {"results": [item], "processing_error": None}
+    )
+    output = web_tool_impls.web_search("optional")
+    assert "1. No title" in output
+    assert "No description available" in output
+
+
 def test_search_confirmed_empty_not_cached(fetch_env, monkeypatch):
     """Design doc ruling 1 shape (v): a zero-result response is as often a
     broken parser as a true empty (this repo's tavily/searx history) — it

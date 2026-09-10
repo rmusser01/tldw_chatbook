@@ -1,11 +1,11 @@
 ---
-id: TASK-32188
+id: TASK-32194
 title: Fix capture for planning-prefixed agent tool calls
 status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-09 19:51'
-updated_date: '2026-09-09 20:04'
+updated_date: '2026-09-10 04:25'
 labels: []
 dependencies: []
 priority: high
@@ -41,5 +41,6 @@ Reason: align existing classifiers under the accepted provenance contract.
 <!-- SECTION:NOTES:BEGIN -->
 Capture classifies tool fences with the same shared parser as request partitioning. Planning text and malformed look-alikes preserve exact payloads; native calls are unchanged. Updated bridge and real-controller discovery tests.
 
-RED: six expected classifier/controller failures. GREEN: 21 focused checks; independent review ran 22 including native control. Real LAN llama.cpp captured greeting, calculator 17*19 and following answer passed using disposable databases. Broader trace run: 456 passed, two pre-existing display/redaction failures reproduced with original bridge/runtime modules. Scoped Ruff checks and formatting pass; no new ADR (existing ADR097). Old failed-empty history has its own TASK-32191. Lessons recorded in lessons-live-verification.md.
+RED: six expected classifier/controller failures. GREEN: 21 focused checks; independent review ran 22 including native control. Real LAN llama.cpp captured greeting, calculator 17*19 and following answer passed using disposable databases. Broader trace run: 456 passed, two pre-existing display/redaction failures reproduced with original bridge/runtime modules. Scoped Ruff checks and formatting pass; no new ADR (existing ADR097). Old failed-empty history has its own TASK-32197. Lessons recorded in lessons-live-verification.md.
+Maintainer review: rebased on dev 26cdfb42ad and renumbered to avoid merged task IDs. Independent parser/runtime review passed 20 focused cases; canonical parser usage also matches console_prepared_request. No new lint findings.
 <!-- SECTION:NOTES:END -->
