@@ -68,3 +68,7 @@ Both are viable; the choice is about whether grouping is a product commitment. U
 - `Docs/User_Guide/library/collections.md` -- rewritten; `Docs/User_Guide/library.md` -- child-page description.
 - `Docs/security/production-diagnostic-inventory.json` -- +1 static debug call.
 <!-- SECTION:NOTES:END -->
+
+## Critique #9 evidence (2026-09-10)
+
+Fresh eyes hit the same wall: rail row 'Collections', canvas header 'Quick Capture', empty state 'captures' with a filter blamed that is not set (captures 20/21); the six injected sub-rows are centre-aligned unlike every other rail row. The product decision in AC#1 is now the blocker for three critique findings (register rows 15 and 21 of critique #9).

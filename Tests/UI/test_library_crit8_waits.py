@@ -794,7 +794,9 @@ async def test_a_slow_scan_reports_the_entries_it_has_seen(
     async with _production_workspace_context(workspace, size=(235, 52)) as pilot:
         wait = await _start_blocked_root_change(pilot, workspace, blocked, new_root)
         wait.started_at -= 5.0
-        workspace._record_root_scan_progress(1240)
+        workspace._record_root_scan_progress(
+            1240, generation=workspace._root_generation
+        )
         workspace._update_root_surface()
         await pilot.pause()
 
