@@ -412,6 +412,50 @@ def _planned_output_exclusion(context, declared, data_root):
     )
 
 
+def _fixed_control_exclusion() -> tuple[StorageItem, ...]:
+    """Exclude only the installed fixed authority, never a directory lookalike.
+
+    Discovery does not initialize admission, repair evidence, or follow control
+    locators from configuration/archive data. Damaged local authority remains an
+    explicit blocking item. Actual-session output protection is added separately
+    by capture, with its own logical ID.
+    """
+    from .bootstrap import _control_records, _registry, default_bootstrap_root
+    from .control_records import UNBOUND_NAMESPACE
+
+    root = default_bootstrap_root()
+    try:
+        before = root.lstat()
+    except FileNotFoundError:
+        return ()
+    except OSError:
+        status = "unavailable"
+    else:
+        try:
+            _control_records(root)  # Strict private/no-follow fixed record reader.
+            registry = _registry(root)
+            marker = root / "unbound-owner"
+            after = root.lstat()
+            if (
+                registry is None
+                or UNBOUND_NAMESPACE not in registry
+                or registry[UNBOUND_NAMESPACE]["roots"] != [str(marker)]
+                # Directory reads may update access time; identity/metadata
+                # changes still invalidate this observation.
+                or (after.st_dev, after.st_ino, after.st_ctime_ns)
+                != (before.st_dev, before.st_ino, before.st_ctime_ns)
+            ):
+                raise ValueError("recovery_control_unverified")
+            status = "intentionally_excluded"
+        except (OSError, ValueError, TypeError, KeyError, RuntimeError):
+            status = "unavailable"
+    return (
+        StorageItem(
+            "recovery.control", "recovery.control:fixed-bootstrap", root, status, ()
+        ),
+    )
+
+
 def discover(
     config_paths: tuple[Path, ...], *, selections: DiscoverySelections | None = None
 ) -> Inventory:
@@ -559,6 +603,7 @@ def discover(
             profile_paths.default_base_data_dir(), selected_roots, "profiles"
         )
     )
+    items.extend(_fixed_control_exclusion())
     items.extend(
         _unknown_children(
             profile_paths.default_config_path().parent,
