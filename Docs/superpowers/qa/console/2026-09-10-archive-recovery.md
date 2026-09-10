@@ -147,3 +147,8 @@ contain fixed operation descriptions without user content interpolation.
 
 Final combined Console cancellation, workspace completion and mounted original-ID
 archive/Undo/resume/send run: 34 passed.
+
+Fifth-review rebase onto dev `0741f53ea9c28bf709b950eeeacfab2ee3476f8a`
+preserved both independently appended testing lessons. Post-rebase incoming
+Library notes onboarding plus archive reader/recovery tests passed 19 cases;
+all 3671 Backlog records remain unique and Windows-compatible.
