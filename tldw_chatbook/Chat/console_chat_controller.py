@@ -17,7 +17,7 @@ import contextlib
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import Enum
@@ -748,6 +748,20 @@ ASK_USER_TIMEOUT_ENV_VAR = "TLDW_CONSOLE_ASK_USER_TIMEOUT_SECONDS"
 #: same machine -- generous enough never to fire on a slow-but-working
 #: profile, short enough that a wedged one degrades instead of hanging.
 CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS = 10.0
+#: Set while a Personal Context bootstrap attempt is still running in a
+#: worker thread, and cleared by that thread whichever way it ends.
+#: Expiring the budget above abandons the worker but cannot kill it, and
+#: `TldwCli.get_personal_context_service` holds a module-level lock for the
+#: WHOLE bootstrap -- so a wedged credential store means every later send
+#: would park another `to_thread` worker on that lock, permanently. The
+#: shared default executor has ~22 slots and also carries `run_reply` and
+#: ~1100 other `to_thread` calls, so ~22 sends against an unanswered
+#: keychain prompt would starve every offload in the app (and Python 3.12's
+#: `Runner.close()` then joins that executor for up to 300s on quit).
+#: While this is set the resolver returns `None` without submitting
+#: anything. Self-healing survives: the original worker clears the flag and
+#: caches the service if the OS ever answers.
+_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT = threading.Event()
 #: A9 bounce counters are keyed by run id; a run that only ever bounced has no
 #: end-of-run hook here, so the map is bounded by evicting the oldest run.
 _MAX_TRACKED_QUESTION_BOUNCE_RUNS = 64
@@ -16748,11 +16762,16 @@ class ConsoleChatController:
         yields: the turn runs without profile tools rather than not at all.
         The worker thread is NOT killed (nothing can interrupt a blocking
         syscall); it is abandoned, and will finish and cache its result for
-        a later send if the OS ever answers.
+        a later send if the OS ever answers. Because it is abandoned rather
+        than finished, `_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT` keeps the
+        next send from parking a SECOND worker behind the first on the
+        app's bootstrap lock -- see that flag's comment for why a shared
+        executor makes that fatal rather than merely wasteful.
 
         Returns:
-            The service, or ``None`` when the app owns none, the bootstrap
-            raised, or it outran its budget.
+            The service, or ``None`` when the app owns none, an earlier
+            attempt is still running, the bootstrap raised, or it outran
+            its budget.
         """
 
         getter = getattr(
@@ -16760,9 +16779,19 @@ class ConsoleChatController:
         )
         if not callable(getter):
             return None
+        if _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.is_set():
+            return None
+        _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.set()
+
+        def _bootstrap():
+            try:
+                return getter()
+            finally:
+                _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.clear()
+
         try:
             return await asyncio.wait_for(
-                asyncio.to_thread(getter),
+                asyncio.to_thread(_bootstrap),
                 CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS,
             )
         except (asyncio.TimeoutError, TimeoutError):
@@ -16776,7 +16805,9 @@ class ConsoleChatController:
             return None
 
     @contextlib.asynccontextmanager
-    async def _pre_provider_setup_phase(self, conversation_id: str):
+    async def _pre_provider_setup_phase(
+        self, conversation_id: str
+    ) -> AsyncIterator[None]:
         """Name the pre-provider setup window on the assistant row.
 
         task-32275: between "send accepted" and "provider called" the run

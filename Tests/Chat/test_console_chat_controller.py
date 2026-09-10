@@ -11169,8 +11169,15 @@ def test_personal_context_bootstrap_cannot_hold_the_send_open(monkeypatch):
         return object()
 
     controller.app = SimpleNamespace(get_personal_context_service=never_returns)
+    # The shipped ceiling; the test then patches it so the wedge is quick.
+    assert controller_module.CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS == 10.0
     monkeypatch.setattr(
         controller_module, "CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS", 0.05
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT",
+        threading.Event(),
     )
     loop = asyncio.new_event_loop()
     try:
@@ -11182,15 +11189,107 @@ def test_personal_context_bootstrap_cannot_hold_the_send_open(monkeypatch):
         loop.close()
     assert entered.is_set()
     assert resolved is None
-    assert elapsed < 5.0, elapsed
+    # Under 1s, not merely under the shipped 10s: this must fail if the
+    # patched budget is ever ignored and the real ceiling applies.
+    assert elapsed < 1.0, elapsed
 
 
-def test_personal_context_bootstrap_returns_its_service_within_budget():
+def test_a_wedged_bootstrap_does_not_park_a_second_worker(monkeypatch):
+    """The second send must not queue another thread behind the first.
+
+    Expiring the budget abandons the worker; it does not kill it, and
+    `get_personal_context_service` holds a process-wide lock for the whole
+    bootstrap. Without a guard, send N+1 parks another shared-executor
+    worker on that lock permanently -- and that executor also carries
+    `run_reply` and ~1100 other `to_thread` calls.
+    """
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    released = threading.Event()
+    calls = []
+
+    def never_returns():
+        calls.append(1)
+        released.wait(30)
+        return object()
+
+    controller.app = SimpleNamespace(get_personal_context_service=never_returns)
+    monkeypatch.setattr(
+        controller_module, "CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS", 0.05
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT",
+        threading.Event(),
+    )
+    loop = asyncio.new_event_loop()
+    try:
+        assert loop.run_until_complete(controller._personal_context_service()) is None
+        started = time.monotonic()
+        second = loop.run_until_complete(controller._personal_context_service())
+        second_elapsed = time.monotonic() - started
+    finally:
+        released.set()
+        loop.close()
+    assert second is None
+    # One submission, not two: the wedged worker is still holding the lock.
+    assert calls == [1], calls
+    # And the second send did not even wait out the (patched) budget.
+    assert second_elapsed < 0.01, second_elapsed
+
+
+def test_a_finished_bootstrap_clears_the_in_flight_guard(monkeypatch):
+    """The guard is not a one-way latch -- a healthy attempt reopens it."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    service = object()
+    calls = []
+
+    def getter():
+        calls.append(1)
+        return service
+
+    controller.app = SimpleNamespace(get_personal_context_service=getter)
+    monkeypatch.setattr(
+        controller_module,
+        "_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT",
+        threading.Event(),
+    )
+    assert asyncio.run(controller._personal_context_service()) is service
+    assert asyncio.run(controller._personal_context_service()) is service
+    assert calls == [1, 1]
+    assert not controller_module._PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.is_set()
+
+
+def test_a_raising_bootstrap_clears_the_in_flight_guard(monkeypatch):
+    """A bootstrap that raises must not wedge the guard shut either."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+
+    def boom():
+        raise RuntimeError("no credential store")
+
+    controller.app = SimpleNamespace(get_personal_context_service=boom)
+    monkeypatch.setattr(
+        controller_module,
+        "_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT",
+        threading.Event(),
+    )
+    assert asyncio.run(controller._personal_context_service()) is None
+    assert not controller_module._PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.is_set()
+
+
+def test_personal_context_bootstrap_returns_its_service_within_budget(monkeypatch):
     """The bound is a ceiling, not a delay: a healthy bootstrap is unchanged."""
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     service = object()
     controller.app = SimpleNamespace(get_personal_context_service=lambda: service)
+    monkeypatch.setattr(
+        controller_module,
+        "_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT",
+        threading.Event(),
+    )
     assert asyncio.run(controller._personal_context_service()) is service
 
 
