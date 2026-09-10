@@ -2650,16 +2650,36 @@ class LibraryIngestController:
                 self.set_focus(widget, scroll_visible=False)
                 return
 
-        _focus_now()
         try:
             panel = self.query_one(LibraryIngestQueuePanel)
         except (NoMatches, QueryError):
             panel = None
+
+        def _focus_later() -> None:
+            # (re-review finding B) The mixin's restore stands down when the
+            # user has already moved focus to a different, still-attached
+            # widget -- but it calls whatever is chained behind it
+            # UNCONDITIONALLY, and the screen hook below is just as blind.
+            # So every DEFERRED landing makes that decision itself, or a
+            # toggle re-steals focus from someone who Tabbed away in the
+            # window between the press and the repaint. Reproduced before
+            # this guard: focusing the Keywords field right after the
+            # handler ran ended with focus back on the pressed button.
+            live = panel.app.focused if panel is not None else None
+            if (
+                live is not None
+                and live.parent is not None
+                and getattr(live, "id", None) != control_id
+            ):
+                return
+            _focus_now()
+
+        _focus_now()
         if panel is not None:
             # Chained, not replaced: ``preserve_same_id_focus_after_recompose``
             # calls whatever was already queued after its own restore, so
             # the fallback runs when the captured id is gone.
-            panel.queue_after_recompose(_focus_now)
+            panel.queue_after_recompose(_focus_later)
             # Parks focus at None for the duration of the rebuild and
             # restores the same id afterwards, on the panel's OWN hook. The
             # parking is the half that matters live: without it the prune
@@ -2674,7 +2694,7 @@ class LibraryIngestController:
             # the screen's own hook IS the right ordering -- and re-land
             # focus now, since the parking above expects a rebuild.
             _focus_now()
-            self.call_after_refresh(_focus_now)
+            self.call_after_refresh(_focus_later)
 
     @on(Button.Pressed, ".library-ingest-details")
     def _on_ingest_job_details(self, event: Button.Pressed) -> None:
