@@ -765,7 +765,9 @@ class _SortKeyboardApp(_CanvasApp):
 
 
 @pytest.mark.asyncio
-async def test_sort_is_operable_by_keyboard_on_the_flat_list(monkeypatch) -> None:
+async def test_sort_is_operable_by_keyboard_on_the_flat_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """task-32175 review round 1: Sort's keyboard round trip, re-pinned here.
 
     ``test_library_note_keyboard_capability_matrix[filter_sort]`` used to
@@ -785,6 +787,13 @@ async def test_sort_is_operable_by_keyboard_on_the_flat_list(monkeypatch) -> Non
     The screen is too heavy to mount in this file, so the harness App stands
     in for it; the screen's own method binding is covered where the screen is
     mounted.
+
+    Args:
+        monkeypatch: Replaces the controller's ``_sync_library_canvas`` seam,
+            which needs a whole screen, with a repaint of this canvas from the
+            state the handler just wrote -- the same attribute-set-then-
+            ``refresh(recompose=True)`` that ends ``LibraryNotesCanvas.
+            sync_state``.
     """
     repaged: list[bool] = []
     screen_state = SimpleNamespace(

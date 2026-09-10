@@ -20215,12 +20215,42 @@ class _GatedInteractionLibraryNotesScopeService(StaticLibraryNotesScopeService):
         return await super().restore_note(**kwargs)
 
 
+async def _wait_for_note_row(screen, pilot, note_id: str, *, timeout: float = 30.0):
+    """Await the rendered note row carrying ``note_id`` and return it.
+
+    Rows are named by identity rather than by position everywhere in this
+    suite (task-32175): the folder tree pages in the Sort value's order
+    (task-32172), so row 0 is whichever note that order puts first.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        for candidate in screen.query(".library-notes-row").results(Button):
+            if getattr(candidate, "note_id", None) == note_id:
+                await pilot.pause()
+                return candidate
+        if time.monotonic() >= deadline:
+            break
+        await pilot.pause(0.02)
+    rendered = [
+        getattr(row, "note_id", None)
+        for row in screen.query(".library-notes-row").results(Button)
+    ]
+    raise AssertionError(
+        f"No note row for {note_id!r} within {timeout:.1f}s; rendered: {rendered!r}."
+    )
+
+
 async def _open_note_editor(screen, pilot, note_id_suffix: str = "n-1"):
-    """Drive the shared path to the in-canvas note editor for ``_two_notes()``'s
-    first row, then let the mount-time armed-flag callback settle.
+    """Drive the shared path to the in-canvas note editor for one seeded note.
+
+    Opens the row whose ``note_id`` is ``note_id_suffix`` -- by identity, not
+    by position: the folder tree's order is the Sort value's (task-32172), so
+    "the first row" is not a stable way to name a note. Then lets the
+    mount-time armed-flag callback settle.
     """
     screen.query_one("#library-row-browse-notes").press()
-    row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+    await _wait_for_selector(screen, pilot, ".library-notes-row")
+    row = await _wait_for_note_row(screen, pilot, note_id_suffix)
     row.press()
     await _wait_for_selector(screen, pilot, "#library-note-title")
     await pilot.pause()
@@ -22025,8 +22055,11 @@ async def test_library_shell_opening_missing_note_falls_back_to_list():
         await _wait_for_library_shell(screen, pilot)
 
         screen.query_one("#library-row-browse-notes").press()
-        row_button = await _wait_for_selector(screen, pilot, ".library-notes-row")
-        assert row_button.note_id == "n-1"
+        # By identity: the row that must go stale is n-1's, wherever the
+        # tree's current order renders it (task-32172 made that order the
+        # Sort value's, so a positional pick could capture n-2 and press an
+        # existing note -- never exercising the missing-note fallback).
+        row_button = await _wait_for_note_row(screen, pilot, "n-1")
 
         # Simulate the note vanishing out from under the still-rendered row
         # (deleted elsewhere, or simply a stale/ghost row): the fake's
