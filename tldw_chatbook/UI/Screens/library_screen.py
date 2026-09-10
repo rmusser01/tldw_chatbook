@@ -9585,6 +9585,15 @@ class LibraryScreen(BaseAppScreen):
         them. Complements the unconditional disarm at the top of
         ``on_key`` -- this hook is what also covers mouse clicks, which
         never reach ``on_key`` at all.
+
+        Args:
+            event: The queued descendant-focus event. Its ``widget`` is the
+                newly focused node, evaluated for user focus intent: a
+                genuine one vetoes deferred restores and supersedes a
+                running locator that wants focus (task-32100).
+
+        Returns:
+            None.
         """
         focused = event.widget
         if focused is not self.focused:

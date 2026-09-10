@@ -41,6 +41,11 @@ from tldw_chatbook.UI.Library_Modules.screen_support_types import (
 )
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 
+#: One wait budget for every locator poll below, so the loops cannot drift
+#: apart when it changes (PR #2571 Qodo finding 2).
+LOCATOR_POLL_ATTEMPTS = 200
+LOCATOR_POLL_INTERVAL = 0.02
+
 NOTE_TITLE = "Reading list"
 NOTE_BODY = "- Attention Is All You Need\n"
 
@@ -202,8 +207,8 @@ async def _open_seeded_note_editor(host, pilot):
     """Open ``n-1`` from the seeded (non-database) Notes fixtures."""
     screen = await _open_notes_list(host, pilot)
     await _click_note_row(pilot, screen, "n-1")
-    for _ in range(200):
-        await pilot.pause(0.02)
+    for _ in range(LOCATOR_POLL_ATTEMPTS):
+        await pilot.pause(LOCATOR_POLL_INTERVAL)
         if (
             screen._notes_state.selected_note_id == "n-1"
             and screen._notes_state.view == "editor"
@@ -319,8 +324,8 @@ def _folder_notes_app(tmp_path, titles: tuple[str, ...]):
 
 async def _filter_notes(pilot, screen, query: str) -> None:
     """Reach notes inside a collapsed folder the way a user does."""
-    for _ in range(200):
-        await pilot.pause(0.02)
+    for _ in range(LOCATOR_POLL_ATTEMPTS):
+        await pilot.pause(LOCATOR_POLL_INTERVAL)
         if screen.query("#library-notes-filter"):
             break
     else:
@@ -344,8 +349,8 @@ async def test_opening_a_filtered_note_reveals_its_folder_in_the_tree(tmp_path):
             await _wait_for_library_shell(screen, pilot)
             await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
             await _filter_notes(pilot, screen, "Reading")
-            for _ in range(200):
-                await pilot.pause(0.02)
+            for _ in range(LOCATOR_POLL_ATTEMPTS):
+                await pilot.pause(LOCATOR_POLL_INTERVAL)
                 if note_id in _note_rows(screen):
                     break
             else:
@@ -353,8 +358,8 @@ async def test_opening_a_filtered_note_reveals_its_folder_in_the_tree(tmp_path):
             assert folder.folder_id not in screen._notes_state.tree_expanded_ids
 
             await _click_note_row(pilot, screen, note_id)
-            for _ in range(200):
-                await pilot.pause(0.02)
+            for _ in range(LOCATOR_POLL_ATTEMPTS):
+                await pilot.pause(LOCATOR_POLL_INTERVAL)
                 if (
                     folder.folder_id in screen._notes_state.tree_expanded_ids
                     and not screen._notes_state.navigation_status
@@ -404,16 +409,16 @@ async def test_a_second_open_supersedes_the_older_locator_not_its_own_load(tmp_p
             await _wait_for_library_shell(screen, pilot)
             await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
             await _filter_notes(pilot, screen, "Reading")
-            for _ in range(200):
-                await pilot.pause(0.02)
+            for _ in range(LOCATOR_POLL_ATTEMPTS):
+                await pilot.pause(LOCATOR_POLL_INTERVAL)
                 if {first_id, second_id} <= set(_note_rows(screen)):
                     break
             else:
                 pytest.fail("the filter never surfaced both nested notes")
 
             await _click_note_row(pilot, screen, first_id)
-            for _ in range(200):
-                await pilot.pause(0.02)
+            for _ in range(LOCATOR_POLL_ATTEMPTS):
+                await pilot.pause(LOCATOR_POLL_INTERVAL)
                 if entered.is_set():
                     break
             else:
@@ -424,8 +429,8 @@ async def test_a_second_open_supersedes_the_older_locator_not_its_own_load(tmp_p
             assert screen._notes_state.navigation_generation > older_generation
             held.set()
 
-            for _ in range(200):
-                await pilot.pause(0.02)
+            for _ in range(LOCATOR_POLL_ATTEMPTS):
+                await pilot.pause(LOCATOR_POLL_INTERVAL)
                 editors = screen.query("#library-note-body")
                 if editors and "Reading queue" in editors.first(TextArea).text:
                     break
@@ -439,8 +444,8 @@ async def test_a_second_open_supersedes_the_older_locator_not_its_own_load(tmp_p
             # nothing on its way out. Assert the marked ROW, not a substring
             # of the placement string (PR #2571 review, finding 7).
             expected = placements[second_id]
-            for _ in range(200):
-                await pilot.pause(0.02)
+            for _ in range(LOCATOR_POLL_ATTEMPTS):
+                await pilot.pause(LOCATOR_POLL_INTERVAL)
                 if screen._notes_state.tree_selected_placement_id == expected:
                     break
             else:

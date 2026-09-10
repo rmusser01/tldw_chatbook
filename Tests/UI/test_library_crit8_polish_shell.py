@@ -1205,6 +1205,48 @@ async def test_the_keywords_field_is_its_own_authority_while_focused():
 
 
 @pytest.mark.asyncio
+async def test_overlapping_syncs_mid_edit_keep_the_readers_place():
+    """Two editor-owned syncs in flight must not restore a zero snapshot.
+
+    PR #2571 Qodo finding 4 argued a second sync could capture the
+    recomposed list's temporary zero offset before the first deferred
+    restore ran, then apply that zero. It does not: the capture happens
+    synchronously in ``_sync_library_canvas``, strictly BEFORE
+    ``sync_state`` requests the recompose, and ``call_after_refresh``
+    applies the offset before the next turn can issue another sync. Probed
+    with 0, 1 and 2 pauses between the pair -- all three keep the offset.
+    Pinned here so a change to that ordering fails loudly instead.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_many_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=COMPACT_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_tree_note(screen, pilot)
+        screen.query_one("#library-note-title", Input).focus()
+        await pilot.pause()
+        screen.query_one("#library-notes-list").scroll_to(
+            y=6, animate=False, force=True, immediate=True
+        )
+        await pilot.pause()
+        scrolled = screen.query_one("#library-notes-list").scroll_offset
+        assert scrolled.y > 0
+
+        for pauses in (0, 1, 2):
+            _sync_library_canvas(screen, "notes")
+            for _ in range(pauses):
+                await pilot.pause()
+            _sync_library_canvas(screen, "notes")
+            for _ in range(3):
+                await pilot.pause()
+            assert screen.query_one("#library-notes-list").scroll_offset == scrolled, (
+                f"overlapping syncs with {pauses} pause(s) lost the offset"
+            )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", (COMPACT_TEST_SIZE, WIDE_TEST_SIZE))
 async def test_a_sync_mid_edit_repaints_the_list_pane_and_keeps_its_scroll(size):
     """task-32106 AC#3 + AC#4: the skip is scoped to the work pane instance.

@@ -620,6 +620,35 @@ actually take focus; work that just repaints has no stake in it. Only the real g
 reproduces this — calling the same coroutine directly from a test posts no focus event
 and passes.
 
+## `Screen`'s Tab binding is not `priority`, so a burst types past it — and `pilot.press` can never show you
+
+**task-32106 / PR #2571 review round 1, 2026-09-10.** A live report said typing
+title–Tab–body in one burst appended the body to the title. I could not reproduce it
+and closed the criterion, having disproved a mechanism nobody proposed (Textual's
+parser has no burst-to-`Paste` heuristic — true, and irrelevant). The real mechanism
+is message dispatch: `Screen.BINDINGS`' `Binding("tab", "app.focus_next")` is **not**
+`priority=True`, so `Key(tab)` is *posted* to the focused `Input` and bubbles one
+message-queue hop per ancestor, while the App keeps dequeuing the following keys and
+forwarding each to `self.focused` — still the field the user meant to leave. Stock
+Textual 8, nothing from this repo:
+
+```
+pilot  elapsed=1268.9ms  title='My first note'      body='hello'
+burst  elapsed=   0.2ms  title='My first notehello' body=''
+```
+
+**Two lessons, and the second is the expensive one.** (i) A field that must hand focus
+over mid-sentence needs its own `priority=True` Tab binding — namespaced (`screen.` /
+`app.`), because a bare action resolves against the `Input`, which has no
+`action_focus_next`, and the binding then silently never fires. (ii) `pilot.press` is
+the OPPOSITE of a burst: `App._press_keys` awaits `wait_for_idle(0)` twice plus the
+animator between every key, so the loop fully drains between keystrokes (~200 ms each
+here). Any defect whose trigger is "faster than the event loop" is invisible to it, and
+a test written with it is green by construction. Post the keys yourself with no awaits
+— `ev = events.Key(k, char); ev.set_sender(app); app._driver.send_message(ev)` — then
+one `pause()`. A task that says "1 s gaps behave" is telling you the drained-loop
+harness cannot see it.
+
 ## `run_worker(exclusive=True)` CANCELS the group — it never queues behind it
 
 **schedules-redesign PR-3 Qodo round, 2026-09-03.** The Automations pane's in-place
