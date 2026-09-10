@@ -38,6 +38,7 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
     library_disabled_action_label,
 )
+from tldw_chatbook.Widgets.Library.library_rail import LibraryRailSearchInput
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
     library_row_button,
@@ -123,6 +124,52 @@ def compose_note_row_label(
         The row label, its present parts joined with " · ".
     """
     return " · ".join(part for part in (title, folder_label, age_label) if part)
+
+
+#: Backlink rows Info renders at most (task-32145). The loader asks for one
+#: more than this so an over-cap result can say "50+" rather than claim an
+#: exact 50 that is not the real number.
+LIBRARY_NOTE_BACKLINK_DISPLAY_CAP = 50
+
+
+def library_note_backlink_header(
+    backlinks: tuple[tuple[str, str], ...],
+    status: str = "ready",
+) -> str:
+    """The "Linked from" heading for one note's inbound links.
+
+    Args:
+        backlinks: ``(note_id, title)`` rows, possibly one over the display
+            cap (see ``LIBRARY_NOTE_BACKLINK_DISPLAY_CAP``).
+        status: ``"loading"``, ``"ready"`` or ``"failed"`` -- the count is
+            only claimed once the query has actually answered, so a pending
+            or failed lookup never reads as a verified zero.
+
+    Returns:
+        The heading, which names the count and, when there are none, says
+        so in words rather than leaving a bare ``(0)`` to be read as a
+        failed load.
+    """
+    if status == "loading":
+        return "Linked from — checking…"
+    if status == "failed":
+        return "Linked from — couldn't check"
+    if not backlinks:
+        return "Linked from (0) — no notes link here yet"
+    if len(backlinks) > LIBRARY_NOTE_BACKLINK_DISPLAY_CAP:
+        return f"Linked from ({LIBRARY_NOTE_BACKLINK_DISPLAY_CAP}+)"
+    return f"Linked from ({len(backlinks)})"
+
+
+def _library_note_back_label(compact: bool) -> str:
+    """The single Back wording (task-32139), sized by ``compact``.
+
+    PR #2547 review (Qodo finding 1): compose time and state-apply time
+    each inlined this same ternary; a wording change could update one
+    rendering path and leave the other stale. One function, both callers.
+    """
+    return "‹ Back to list" if compact else "‹ Notes"
+
 
 #: The storage authority every Database Notes surface answers to. Painted once
 #: per screen: the mounted list pane owns it, and a work pane beside it drops
@@ -224,6 +271,11 @@ class LibraryNotePresentationState:
     bulk_read_only: bool = False
     bulk_included: bool = False
     status_channels: NotesStatusChannels | None = None
+    #: ``(note_id, title)`` for each note linking to this one (task-32145).
+    backlinks: tuple[tuple[str, str], ...] = ()
+    #: Whether the backlink query has answered yet -- see
+    #: ``library_note_backlink_header``.
+    backlinks_status: str = "loading"
 
 
 class _LibraryNotesTreePagerButton(Button):
@@ -359,6 +411,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self._tree_pager_focus_id: str | None = None
         self._tree_pager_focus_guard: Callable[[], bool] | None = None
         self._tree_pager_focus_generation = 0
+        #: Which backlink rows the mounted Info panel currently holds, so a
+        #: sync only remounts them when the set actually changed (task-32145).
+        self._rendered_backlinks: tuple[tuple[str, str], ...] = ()
         self._tree_focus_intent_generation: Callable[[], int] | None = None
         self.styles.width = "1fr"
         self.styles.min_width = 40
@@ -636,7 +691,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         tree_deleted_folder_available: bool,
         title_placeholder_only: bool,
         compact: bool,
-        pane_width: int,
+        pane_width: int = 0,
         create_running: bool,
         create_status: str,
         load_state: str,
@@ -665,6 +720,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             title_placeholder_only: Whether the title is placeholder-only.
             compact: Whether compact editor controls are enabled.
             pane_width: Columns the mounted list pane has (see ``__init__``).
+                Defaults to the same ``0`` the constructor uses for "not
+                measured yet", so a caller outside the screen's reader
+                layout gets the conservative toolbar shape rather than a
+                ``TypeError`` (PR #2549 review, finding 6).
             create_running: Whether note creation is in progress.
             create_status: Current note-creation status copy.
             load_state: Current note-loading state identifier.
@@ -843,10 +902,22 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         yield database_purpose
         with Horizontal(id="library-notes-filter-row"):
             yield Static("Filter", id="library-notes-filter-label", markup=False)
-            yield Input(
+            # task-32131: a plain ``Input`` here let a SECOND "/" -- pressed
+            # while the filter already had focus -- insert a literal slash
+            # (Screen.on_key's "/" handling bails as soon as an Input owns
+            # focus, so it never gets a chance to redirect). Reuse the rail
+            # search box's widget instead of re-solving it -- but with
+            # ``swallow_slash_on_focus=False`` (fix round 1 Important 4,
+            # controller ruling): notes filter content can legitimately
+            # contain "/" (folder-style filters like "Work/Q3"), so once
+            # this box has focus "/" must be a plain typeable character,
+            # not an accelerator that swallows it. The screen-level "/"
+            # handler already only fires while this box is NOT focused.
+            yield LibraryRailSearchInput(
                 placeholder="Filter notes… (Enter)",
                 id="library-notes-filter",
                 value=self.filter_value,
+                swallow_slash_on_focus=False,
             )
         select_mode = list_state.select_mode
         # Gate/label off the RENDERED rows, not any total-count field -- only
@@ -1443,6 +1514,34 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 )
 
     @staticmethod
+    def _backlink_buttons(
+        backlinks: tuple[tuple[str, str], ...],
+    ) -> list[Button]:
+        """Build one activatable row per inbound link (task-32145).
+
+        The single renderer for both paths -- compose, and the remount in
+        ``apply_session_state`` for backlinks that arrive after the editor
+        is already on screen (their loader runs after the note opens, and a
+        recompose is deferred while the reader is typing).
+
+        Args:
+            backlinks: ``(note_id, title)`` rows, possibly one over the cap.
+
+        Returns:
+            Row buttons carrying their own ``note_id``, capped for display.
+        """
+        buttons: list[Button] = []
+        for note_id, title in backlinks[:LIBRARY_NOTE_BACKLINK_DISPLAY_CAP]:
+            button = library_row_button(
+                escape_markup(ellipsize_note_title_cells(title, 60) or "Untitled"),
+                classes="library-canvas-action library-note-backlink",
+                compact=True,
+            )
+            button.note_id = note_id
+            buttons.append(button)
+        return buttons
+
+    @staticmethod
     def _set_tree_row_metadata(button: Button, row: LibraryNotesTreeRow) -> None:
         """Attach stable domain identities without encoding them in DOM ids."""
         button.tree_kind = row.kind
@@ -1476,15 +1575,21 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # of rendering the delimiter block as note content.
         from tldw_chatbook.Utils.markdown_parsing import front_matter_parser_factory
 
+        # task-32139: Edit/Preview said "‹ Notes", Info said "‹ Note" (two
+        # wordings for the identical Back action, live-caught at 235x52),
+        # and BOTH said "‹ Notes" on a compact terminal where the guide
+        # documents "‹ Back to list" (60x24). One label now, sized by
+        # ``self.compact`` like the guide's own compact-vs-wide split.
+        back_label = _library_note_back_label(self.compact)
         with Horizontal(id="library-note-heading"):
             yield Button(
-                "‹ Notes",
+                back_label,
                 id="library-note-back",
                 classes="library-canvas-action",
                 compact=True,
             )
             yield Button(
-                "‹ Note",
+                back_label,
                 id="library-note-context-back",
                 classes="library-canvas-action",
                 compact=True,
@@ -1581,6 +1686,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             yield TextArea(content, id="library-note-body")
 
         with VerticalScroll(id="library-note-preview-region", can_focus=True):
+            # task-32142 AC#1: the shared heading row's title Static (above)
+            # sits in a crowded strip with the mode buttons and Back --
+            # easy to miss, and NOT part of the scrolling content, so it
+            # never reads as the document's own title the way Edit's Title
+            # field does. This one renders INSIDE the preview, immediately
+            # above the rendered body, like a document heading.
+            yield Static(
+                ellipsize_note_title_cells(title, 72),
+                id="library-note-preview-body-title",
+                classes="destination-section",
+                markup=False,
+            )
             yield Markdown(
                 content,
                 id="library-note-preview-body",
@@ -1603,6 +1720,26 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     id="library-note-context-keywords",
                 )
             yield Static(metadata_line, id="library-note-context-meta", markup=False)
+            backlinks = (
+                presentation_state.backlinks if presentation_state is not None else ()
+            )
+            self._rendered_backlinks = tuple(backlinks)
+            yield Static(
+                library_note_backlink_header(
+                    self._rendered_backlinks,
+                    presentation_state.backlinks_status
+                    if presentation_state is not None
+                    else "loading",
+                ),
+                id="library-note-context-backlinks-title",
+                markup=False,
+            )
+            backlink_rows = Vertical(id="library-note-context-backlinks")
+            # Auto height or the empty container claims the whole Info
+            # scroll region and pushes Reuse & Export off the pane.
+            backlink_rows.styles.height = "auto"
+            with backlink_rows:
+                yield from self._backlink_buttons(self._rendered_backlinks)
             yield Static("Reuse & Export", classes="destination-section", markup=False)
             legacy_use_in_console = Button(
                 "Use in Console",
@@ -1884,10 +2021,16 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         conflict = state.conflict
         confirming_delete = state.confirming_delete and not conflict
         bulk_read_only = state.bulk_read_only
+        # task-32132: Delete is only reachable from the Info Danger section
+        # (the Edit pane's own Delete lives in ``library-note-wide-
+        # utilities``, permanently hidden below). Confirming used to force
+        # ``show_context`` off unconditionally, snapping the pane to Edit --
+        # "delete this note?" painted 14 rows away, under a body editor the
+        # user never opened. Info stays put while confirming; only Preview
+        # (which never hosts a Delete button) still yields to Edit.
         show_context = (
             state.region == "context"
             and not conflict
-            and not confirming_delete
             and not bulk_read_only
         )
         show_preview = bulk_read_only or (
@@ -1940,6 +2083,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             "#library-note-editor-title",
             "#library-note-preview-title",
             "#library-note-context-title",
+            "#library-note-preview-body-title",
         ):
             widget = self.query_one(selector, Static)
             if self._static_text(widget) != title:
@@ -1970,6 +2114,28 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             widget = self.query_one(selector, Static)
             if self._static_text(widget) != state.metadata_line:
                 widget.update(state.metadata_line)
+        # task-32145: backlinks are loaded by their own worker AFTER the note
+        # opens, so they land on an editor that is already composed -- and a
+        # recompose is deferred for as long as the reader owns a field
+        # (task-32062). Reconciling them here is what makes them appear at
+        # all: switching Edit -> Info is a `display` flip on this same
+        # composition, not a rebuild.
+        backlinks = tuple(state.backlinks)
+        if backlinks != self._rendered_backlinks:
+            self._rendered_backlinks = backlinks
+            container = self.query_one("#library-note-context-backlinks", Vertical)
+            container.remove_children()
+            rows = self._backlink_buttons(backlinks)
+            if rows:
+                container.mount_all(rows)
+        backlink_title = self.query_one(
+            "#library-note-context-backlinks-title", Static
+        )
+        backlink_copy = library_note_backlink_header(
+            backlinks, state.backlinks_status
+        )
+        if self._static_text(backlink_title) != backlink_copy:
+            backlink_title.update(backlink_copy)
         for selector in (
             "#library-note-transfer-status",
             "#library-note-context-transfer-status",
@@ -1981,10 +2147,25 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
         self.apply_compact_presentation(state.compact)
         self.set_class(state.validation, "library-note-validation")
-        self.query_one("#library-note-back").display = (
-            not show_context and not bulk_read_only
-        )
-        self.query_one("#library-note-context-back").display = show_context
+        # task-32139: one Back label, sized by compact -- see the matching
+        # compose-time comment above.
+        back_label = _library_note_back_label(state.compact)
+        back_button = self.query_one("#library-note-back", Button)
+        if str(back_button.label) != back_label:
+            back_button.label = back_label
+        back_button.display = not show_context and not bulk_read_only
+        back_button.disabled = confirming_delete
+        context_back_button = self.query_one("#library-note-context-back", Button)
+        if str(context_back_button.label) != back_label:
+            context_back_button.label = back_label
+        context_back_button.display = show_context
+        # PR #2547 review (Qodo finding 4): Back was left out of the
+        # disabled-selector loops below, so it stayed live behind the
+        # confirmation prompt. A press ran the Back handler, which clears
+        # ``_library_note_context`` without cancelling the pending
+        # admission -- displacing the prompt instead of leaving Info in
+        # place like every other Danger/Reuse & Export action.
+        context_back_button.disabled = confirming_delete
         self.query_one("#library-note-editor-title").display = show_editor
         self.query_one("#library-note-preview-title").display = show_preview
         self.query_one("#library-note-context-title").display = show_context
@@ -1999,7 +2180,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             bulk_status.update(bulk_copy)
         self.query_one("#library-note-editor-region").display = show_editor
         self.query_one("#library-note-preview-region").display = show_preview
-        self.query_one("#library-note-context-status").display = show_context
+        # task-32142 AC#2: this Static repeats the identical text
+        # ``#library-note-status`` (the header-second-row status, visible
+        # in every mode) already shows -- Info printed "Saved" twice, once
+        # in the header and once again immediately above the panel.
+        self.query_one("#library-note-context-status").display = False
         self.query_one("#library-note-context-region").display = show_context
         self.query_one("#library-note-edit", Button).set_class(show_editor, "is-active")
         self.query_one("#library-note-preview", Button).set_class(
@@ -2041,7 +2226,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             "#library-note-context-delete",
         ):
             self.query_one(selector, Button).disabled = (
-                state.destructive_running or bulk_read_only
+                state.destructive_running or bulk_read_only or confirming_delete
             )
         for selector in (
             "#library-note-use-in-console",
@@ -2054,7 +2239,17 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             "#library-note-context-copy",
         ):
             self.query_one(selector, Button).disabled = (
-                state.destructive_running or state.transfer_running or bulk_read_only
+                state.destructive_running
+                or state.transfer_running
+                or bulk_read_only
+                # task-32132 fix round 1 Important 5: Info stays visible
+                # while confirming (this fix's own AC#1), so its Danger/
+                # Reuse & Export buttons -- Delete, Copy, Export, Use in
+                # Console -- were still live behind the confirmation
+                # prompt; a press could navigate away (Use in Console) or
+                # mutate (Copy/Export) with the delete admission still
+                # pending.
+                or confirming_delete
             )
         discard_new = self.query_one("#library-note-discard-new", Button)
         discard_new.display = state.discard_new_note

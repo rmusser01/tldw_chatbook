@@ -1,5 +1,5 @@
 ---
-id: TASK-32184
+id: TASK-32200
 title: Restore Library collapse controls and preserve usable narrow layouts
 status: Done
 assignee:
@@ -45,3 +45,19 @@ Validation: 460 focused layout tests passed; 109 Media/Conversations/Skills inte
 
 Adjacent check: test_more_stays_compact_at_the_narrow_reader_width still fails because Move to trash is clipped. Reproduced unchanged on the original PR branch938a1d8b; it predates this repair and is not hidden by a changed expectation.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+This task previously held id TASK-32184, colliding with the older
+"Library-Notes-adaptive-reader-items_width-mismatch-for-wide-terminals-now-reachable"
+follow-up (created 2026-09-09 17:53, on `fix/library-notes-r-tests`), which
+arrived first. This task was created 2026-09-09 19:35 (add commit db86a39b19
+on `codex/library-layout-repair`, merged to dev as PR #2559). Per the owner
+rule decided 2026-08-21 in TASK-19601 (**the older arrival by
+`created_date` keeps the id regardless of status; the younger task
+renumbers with a provenance note**), it renumbered to TASK-32200. The other
+TASK-32184 holder is the older arrival and keeps the id.
+
+Inbound references moved with it: the two "five-column restoration" notes in
+`Docs/User_Guide/library/media-and-conversations.md` (lines ~151 and ~558),
+which cite this repair. Both surviving references now read TASK-32200.

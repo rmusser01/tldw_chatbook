@@ -11,6 +11,7 @@ from rich.cells import get_character_cell_size
 
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.Workspaces.conversation_browser_state import (
+    _parse_browser_timestamp,
     format_console_relative_age,
 )
 
@@ -654,6 +655,39 @@ def sort_notes_records(
     return sorted(items, key=_updated_raw, reverse=reverse)
 
 
+def _absolute_local_label(value: str) -> str:
+    """Return ``YYYY-MM-DD HH:MM`` in local time, or ``""`` if unparseable.
+
+    task-32142 AC#3: Info's Properties section showed ONLY a relative age
+    ("Created 3m"), which decays into an unverifiable guess the longer a
+    note sits open -- the raw ISO string it comes from must never reach the
+    user (the copy rule against raw timestamps), so this reuses the SAME
+    parsed source ``format_console_relative_age`` already consumes and
+    reformats it into the codebase's established absolute-timestamp
+    convention (``strftime("%Y-%m-%d %H:%M")``, e.g. schedules' task_detail.py).
+    """
+    parsed = _parse_browser_timestamp(value)
+    if parsed is None:
+        return ""
+    return parsed.astimezone().strftime("%Y-%m-%d %H:%M")
+
+
+def _relative_age_with_ago(relative: str) -> str:
+    """Append " ago" to a ``format_console_relative_age`` label -- except
+    its own literal ``"now"`` for under a minute, which reads as "just
+    now" instead of the grammatically broken "now ago" (fix round 1
+    Important 3, live-caught: "Modified 2026-09-08 23:51 · now ago").
+    Every OTHER caller of ``format_console_relative_age`` across the
+    codebase never appends "ago" and is unaffected -- this is scoped to
+    the one new concatenation task-32142 AC#3 introduced.
+    """
+    if not relative:
+        return relative
+    if relative == "now":
+        return "just now"
+    return f"{relative} ago"
+
+
 def _keywords_text(detail: Mapping[str, Any]) -> str:
     keywords = detail.get("keywords")
     if isinstance(keywords, str):
@@ -709,14 +743,18 @@ def build_library_note_editor_state(
     parts: list[str] = []
     created = _text(detail.get("created_at"))
     if created:
-        parts.append(
-            f"Created {format_console_relative_age(created, now=reference_now)}"
+        relative = _relative_age_with_ago(
+            format_console_relative_age(created, now=reference_now)
         )
+        absolute = _absolute_local_label(created)
+        parts.append(f"Created {absolute} · {relative}" if absolute else f"Created {relative}")
     modified = _updated_raw(detail)
     if modified:
-        parts.append(
-            f"Modified {format_console_relative_age(modified, now=reference_now)}"
+        relative = _relative_age_with_ago(
+            format_console_relative_age(modified, now=reference_now)
         )
+        absolute = _absolute_local_label(modified)
+        parts.append(f"Modified {absolute} · {relative}" if absolute else f"Modified {relative}")
     if version is not None:
         parts.append(f"v{version}")
     return LibraryNoteEditorState(

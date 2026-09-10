@@ -577,6 +577,7 @@ from ...Widgets.Library.library_notes_add_from_files_canvas import (
     LibraryNotesAddFromFilesCanvas,
 )
 from ...Widgets.Library.library_notes_canvas import (
+    LIBRARY_NOTE_BACKLINK_DISPLAY_CAP,
     LibraryNotePresentationState,
     resolve_database_note_status_channels,
 )
@@ -1380,6 +1381,21 @@ class LibraryNotesController:
             meta_line=meta_line,
             has_note=True,
         )
+    def _library_note_is_pending_blank(self) -> bool:
+        """Whether the open note is still the untouched blank-GC candidate.
+
+        Mirrors the condition ``_apply_library_note_presentation_state``
+        already uses for ``title_placeholder_only`` -- a note this fresh
+        was created (persisted) as a create-flow side effect, not because
+        the user asked to keep anything, and gets silently deleted again if
+        abandoned untouched (``_gc_pending_blank_note``). "Saved" is
+        technically true and practically dishonest here: nothing the user
+        typed is safe, because nothing has been typed yet.
+        """
+        return bool(
+            self._library_note_pending_blank_gc_id
+            and self._library_note_pending_blank_gc_id == self._selected_note_id
+        )
     def _library_note_status_line(self) -> str:
         """Return the persistent, text-labeled save state for both regions."""
         snapshot = self._library_note_session.snapshot
@@ -1387,6 +1403,11 @@ class LibraryNotesController:
             return "No note open"
         if self._library_note_shortcut_status:
             return self._library_note_shortcut_status
+        # task-32133 AC#2: a blank note this fresh reads "Saved" before a
+        # single character is typed -- true of the empty seed record, but
+        # not of anything the user has asked to keep.
+        if self._library_note_is_pending_blank():
+            return "Draft — not saved yet"
         if self._library_note_autosave_state == "saving" or snapshot.saving:
             return "Saving…"
         if snapshot.in_conflict:
@@ -1418,10 +1439,11 @@ class LibraryNotesController:
                 content_recovery=status_line,
                 safe_next_action=None,
             )
-        elif snapshot.in_conflict or self._library_note_autosave_state in {
-            "error",
-            "validation",
-        }:
+        elif (
+            snapshot.in_conflict
+            or self._library_note_autosave_state in {"error", "validation"}
+            or self._library_note_is_pending_blank()
+        ):
             status_channels = dataclasses.replace(
                 status_channels,
                 content_recovery=status_line,
@@ -1448,6 +1470,8 @@ class LibraryNotesController:
                 snapshot.note_id
             ),
             status_channels=status_channels,
+            backlinks=self._library_notes_backlinks,
+            backlinks_status=self._library_notes_backlinks_status,
         )
     def _library_notes_active_region(
         self,
@@ -1590,10 +1614,7 @@ class LibraryNotesController:
             canvas = self.query_one("#library-note-work-pane", LibraryNoteWorkPane)
         except (NoMatches, QueryError):
             return
-        canvas.title_placeholder_only = bool(
-            self._library_note_pending_blank_gc_id
-            and self._library_note_pending_blank_gc_id == self._selected_note_id
-        )
+        canvas.title_placeholder_only = self._library_note_is_pending_blank()
         self._library_note_presentation_syncing = True
         try:
             canvas.apply_session_state(self._library_note_presentation_state())
@@ -2911,6 +2932,15 @@ class LibraryNotesController:
             # `action_library_note_editor_back` already use (dirty-flush +
             # veto + session-blank GC + list restore) instead of inventing
             # a second exit path.
+            #
+            # task-32133 AC#1: a veto (invalid title, a failed/conflicted
+            # flush, ...) used to return here silently -- live, with a
+            # whitespace-padded title, Escape did nothing and said nothing,
+            # and "Discard new note" had already disappeared, leaving no
+            # visible way out at all. Fix round 1 Important 1: the notify
+            # now lives IN ``_exit_library_note_editor_guarded`` itself (the
+            # shared seam three other callers also use), not duplicated
+            # here -- this call gets it for free.
             await self._exit_library_note_editor_guarded()
             return
         if self._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE:
@@ -3224,6 +3254,8 @@ class LibraryNotesController:
         self._library_note_delete_origin_context = False
         self._library_note_delete_origin_preview = False
         self._library_note_editor_armed = False
+        self._library_notes_backlinks = ()
+        self._library_notes_backlinks_status = "loading"
         self._apply_library_notes_stage_visibility()
         self.run_worker(
             self._refresh_library_note_detail(
@@ -3234,6 +3266,11 @@ class LibraryNotesController:
             group="library_note_detail",
         )
         self.run_worker(
+            self._load_library_note_backlinks(note_id),
+            exclusive=True,
+            group="library_note_backlinks",
+        )
+        self.run_worker(
             self._locate_library_notes_tree_target(
                 note_id=note_id,
                 focus=False,
@@ -3242,6 +3279,73 @@ class LibraryNotesController:
             exclusive=True,
             group="library_notes_locator",
         )
+    async def _load_library_note_backlinks(self, note_id: str) -> None:
+        """Fill Info's "Linked from" list for one opening note (task-32145).
+
+        Its own worker, not part of the detail load: the detail load owns
+        how fast the editor appears, and a bounded containment query over
+        note bodies has no business delaying that. The query itself runs in
+        a thread inside the service seam.
+
+        Args:
+            note_id: The note whose inbound links to list.
+        """
+        if not note_id:
+            return
+        service = getattr(self.app_instance, "notes_scope_service", None)
+        method = getattr(service, "list_note_backlinks", None)
+        rows: Any = ()
+        # A lookup that did not answer must not read as "no notes link here
+        # yet" -- no service to ask and a raising query are both `failed`.
+        status = "ready" if callable(method) else "failed"
+        if callable(method):
+            try:
+                rows = await method(
+                    scope="local_note",
+                    note_id=note_id,
+                    user_id=self._library_notes_user_id(),
+                    limit=LIBRARY_NOTE_BACKLINK_DISPLAY_CAP + 1,
+                )
+            except Exception:  # noqa: BLE001 - one Info panel, never the note
+                logger.opt(exception=True).debug(
+                    "library_note_backlinks_failed", note_id=note_id
+                )
+                rows = ()
+                status = "failed"
+        if note_id != self._selected_note_id or self._library_notes_view != "editor":
+            return
+        self._library_notes_backlinks = tuple(
+            (str(row.get("id") or ""), str(row.get("title") or ""))
+            for row in rows or ()
+            if str(row.get("id") or "")
+        )
+        self._library_notes_backlinks_status = status
+        self._apply_library_note_presentation_state()
+    @on(Button.Pressed, ".library-note-backlink")
+    async def handle_library_note_backlink(self, event: Button.Pressed) -> None:
+        """Open the note an Info "Linked from" row names (task-32145).
+
+        The same flush-then-open contract ``handle_library_notes_row`` uses,
+        minus the list-only concerns (select mode, the row marker, the tree
+        placement): a backlink row is only reachable from an open note's Info
+        panel, where none of those apply.
+
+        Args:
+            event: Press of one ``.library-note-backlink`` row button.
+        """
+        event.stop()
+        note_id = str(getattr(event.button, "note_id", "") or "")
+        if not note_id or self._library_notes_mutation_fenced():
+            return
+        note_flush = await self._flush_library_note_save()
+        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
+            return
+        self._library_notes_notice = ""
+        self._library_note_pending_blank_gc_id = None
+        self._library_note_session_blank_id = None
+        self._library_note_title_user_edited = False
+        self._begin_library_note_load(note_id)
+        _sync_library_canvas(self, "notes")
     @on(LibraryNoteWorkPane.EditorReady)
     def handle_library_note_work_pane_editor_ready(
         self, event: LibraryNoteWorkPane.EditorReady
@@ -3371,6 +3475,12 @@ class LibraryNotesController:
         ):
             return
         if self._library_note_session.mutate(keywords_text=event.value):
+            # PR #2547 review (Qodo finding 5): the sibling wide-keywords
+            # handler above clears this before scheduling autosave; this
+            # handler didn't, so a keyword typed only through Info could
+            # autosave while the status kept claiming "Draft — not saved
+            # yet" (``_library_note_is_pending_blank`` stayed true).
+            self._library_note_pending_blank_gc_id = None
             self._library_note_shortcut_status = ""
             self._schedule_library_note_autosave()
             self._apply_library_note_presentation_state()
@@ -4036,6 +4146,13 @@ class LibraryNotesController:
             self._library_notes_browse_return_receipt = (
                 self._capture_library_notes_browse_return_receipt()
             )
+        # task-32142 AC#4: a delete-undo receipt is scoped to the Database
+        # Notes list session -- it survived a whole Add-from-files/Folder-
+        # files journey in the critique, stale by the time the user got
+        # back to it (its Undo target may no longer even be the visible
+        # list). Leaving the list for another workflow dismisses it, same
+        # as pressing Dismiss would.
+        self._library_note_delete_receipt = None
         self._evacuate_library_notes_authority_focus("database")
         self._supersede_library_notes_navigation()
         # Database Notes and Folder Files are independent retained authorities.
@@ -4426,6 +4543,10 @@ class LibraryNotesController:
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
         self._supersede_library_notes_navigation()
+        # task-32142 AC#4: see the matching comment in
+        # ``_show_library_file_notes`` -- Add from files is the other
+        # workflow the critique caught a stale delete receipt surviving.
+        self._library_note_delete_receipt = None
         self._library_notes_lasting_origin = "setup"
         self._library_notes_view = "lasting_add"
         self._apply_library_notes_footer_context()
@@ -5050,8 +5171,11 @@ class LibraryNotesController:
         self._library_note_delete_origin_context = origin_context
         self._library_note_delete_origin_preview = origin_preview
         self._library_note_confirming_delete = True
-        self._library_note_preview = False
-        self._library_note_context = False
+        # task-32132: Delete is only reachable from Info, and the canvas
+        # keeps Info showing while confirming -- forcing these off used to
+        # snap the pane to Edit out from under the user. Leave the mode
+        # exactly as the user left it; ``_restore_library_note_delete_
+        # origin`` below is then a no-op restore, same as it always was.
         self._apply_library_note_presentation_state()
         self._focus_library_note_control("#library-note-delete-cancel")
     def _focus_library_note_control(self, selector: str) -> None:

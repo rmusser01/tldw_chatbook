@@ -31,6 +31,10 @@ Found by the task-32056 review (PR #2523): nothing composes `#library-conversati
 - [x] #4 The blocked state paints the action name once
 <!-- AC:END -->
 
+## Critique #9 evidence (2026-09-10)
+
+Assessor A read the blocked state as TWO 'Open in Console' controls (a plain button and the `○ Open in Console · not in this workspace` line beneath it) and found the `c` accelerator silent when blocked (captures 54/55). Fold into this task: render one control in the blocked state, and make `c` say the same sentence the control says (a toast) instead of nothing.
+
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->

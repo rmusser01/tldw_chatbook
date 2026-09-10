@@ -176,3 +176,34 @@ async def test_no_configured_sync_folder_offers_no_button(
         assert workspace.query_one("#file-notes-empty-purpose").display
     await workspace.shutdown()
     replica.close()
+
+
+@pytest.mark.asyncio
+async def test_an_abandoned_scan_cannot_overwrite_a_newer_changes_count(
+    tmp_path,
+) -> None:
+    """PR #2549 review, finding 2: a stale worker's count stays out of the row.
+
+    An abandoned scan's thread can still be inside its file loop when the
+    next folder change resets the progress counter. Its next progress
+    report used to land on the new attempt's row.
+    """
+    root = tmp_path / "vault"
+    root.mkdir()
+    (root / "note.md").write_text("note", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=root, replica=replica)
+    async with _production_workspace_context(workspace, size=WIDE):
+        abandoned = workspace._root_generation
+        workspace._root_generation += 1
+        workspace._root_scan_entries = 0
+
+        workspace._record_root_scan_progress(1240, generation=abandoned)
+        assert workspace._root_scan_entries == 0
+
+        workspace._record_root_scan_progress(
+            7, generation=workspace._root_generation
+        )
+        assert workspace._root_scan_entries == 7
+    await workspace.shutdown()
+    replica.close()

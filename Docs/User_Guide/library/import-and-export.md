@@ -142,10 +142,19 @@ used to show regardless of the selected option) (shown only when media is
 in scope), "Choose destination…"
 above "No destination chosen", and the "Export bundle (.zip)" submit
 button. A "Cancel" button appears while an export is running. Once an
-export finishes, a "Last export: <path> · <relative time>" line appears
-above the submit button and stays there — it updates in place after each
-further export and survives switching to another rail row and back, for
-the rest of the session.
+export finishes, a receipt line appears above the submit button and stays
+there — it updates in place after each further export and survives
+switching to another rail row and back, for the rest of the session.
+
+The receipt is read back out of the bundle that was written, not out of
+what you asked for: "✓ exported · 12 items · 348 KB · /path/to/out.zip"
+counts the items the archive's own manifest ended up holding. If a run
+collects nothing at all — every selected item deleted underneath you, say
+— no bundle is written; the form shows "✗ export produced no content · 3
+items were selected" and the submit button becomes "Retry export". (Before
+task-32232 a selected-media export wrote a bundle holding only a README
+and reported success, because Media select mode's ids never reached the
+collector in the form it parses.)
 
 ## Features & controls
 
@@ -248,7 +257,8 @@ destination, or leaving the Import canvas cancels pending consent.
 | "Choose destination…" | Opens "Choose Export Destination". Whatever you pick is normalized to end in `.zip`; if that file already exists, an "Overwrites <name>" note appears (informational — exporting proceeds and replaces it). |
 | "Export bundle (.zip)" | Enabled once counting has finished, the scope is non-empty, and a destination is chosen. "Nothing to export in this scope." appears when the scope is empty; either way, hovering the button always shows a tooltip naming the same reason it's disabled (or "Write the bundle to the chosen destination." once it's ready) — a disabled press can never look like it silently did nothing. |
 | "Cancel" | Visible only while an export is running; stops it. The quiet line above keeps reporting progress throughout ("Exporting (N items)…" at first, then the phase it's on — "Collecting notes…  3/12", "Packaging archive…  5/9 files"), and once the write has run for about three seconds that same line gains " · still working · Cancel" pointing at this button. Pressing it leaves "Cancelling…" until the run reports back. |
-| "Last export: …" | Appears after the first successful export this session; names the exact path written and how long ago, and stays until the next successful export replaces it. |
+| "✓ exported · N items · X KB · path" | Appears after the first successful export this session; the count and size are read back from the written archive's own manifest, so they report what actually landed rather than what was selected. Stays until the next successful export replaces it. (A receipt restored from an earlier session, before those facts were recorded, still shows as "Last export: <path> · <relative time>".) |
+| "✗ export produced no content · N items were selected" | The run collected none of the N items you selected, so no bundle was written at all — nothing on disk to mistake for a real export. The submit button becomes "Retry export". (A single-item selection reads "· 1 item was selected".) |
 
 ## Common tasks
 
@@ -896,3 +906,11 @@ and no Retry even when the parse worker never started; a batch reports ONE
 *Verified against fix/library-crit8-waits — 2026-09-08 (task-32055: the export
 bundle write reports "still working · Cancel" past three seconds, beside the
 Cancel button it already shipped).*
+
+*Verified against fix/library-export-selected-ids — 2026-09-10 (task-32232: a
+selected-media export now contains every selected item — the canonical
+`local:media:<n>` ids select mode carries are coerced once at the scope seam;
+a selection that collects nothing fails with "✗ export produced no content ·
+N items were selected" plus "Retry export" instead of writing an empty
+bundle; the receipt reads "✓ exported · N items · X KB · <path>" back off the
+written archive.)*
