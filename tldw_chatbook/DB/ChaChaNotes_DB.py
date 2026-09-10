@@ -17248,6 +17248,106 @@ UPDATE db_schema_version
         row = cursor.fetchone()
         return int(row["cnt"] if row else 0)
 
+    def list_deleted_notes(
+        self, limit: int = 20, offset: int = 0
+    ) -> Dict[str, Any]:
+        """Page the soft-deleted notes behind the Library Notes Trash view.
+
+        task-32144: the inverse of ``list_notes``' visibility. Both the page
+        and the exact total are read in ONE transaction, matching the Library
+        read seams below, so the "Recently deleted (N)" row can never name a
+        count the list it opens disagrees with. Ordered by ``last_modified``
+        DESC -- ``soft_delete_note`` stamps it -- so the most recent deletion
+        (the one a dismissed receipt just stranded) is the first row.
+        ``rowid DESC`` breaks ties, the same stable secondary key
+        ``list_library_notes_page`` pages by: the timestamp has millisecond
+        precision, and paging without a deterministic tiebreak can repeat or
+        skip a row across pages. True deletion chronology inside one
+        millisecond would need a persisted deletion-order column.
+
+        Args:
+            limit: Maximum rows in the returned page.
+            offset: Rows to skip before the page.
+
+        Returns:
+            ``{"items": [...], "total": int}``; each item carries the id,
+            title, deletion timestamp and the tombstone's own ``version`` --
+            which is exactly what ``restore_note`` expects handed back.
+        """
+        page_size = max(int(limit), 0)
+        skip = max(int(offset), 0)
+        with self.transaction() as conn:
+            total = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS cnt FROM notes WHERE deleted = 1"
+                ).fetchone()["cnt"]
+            )
+            # Raw string ordering, NOT julianday(). `last_modified` is
+            # DATETIME DEFAULT CURRENT_TIMESTAMP, whose space-separated shape
+            # sorts against the ISO `T...Z` shape application writers stamp --
+            # which is why the ACTIVE notes list wraps its date ordering in
+            # `julianday()` (task-32172). Tombstones cannot mix: the ONE
+            # statement that sets `notes.deleted = 1` (`soft_delete_note`)
+            # overwrites `last_modified` with
+            # `_get_current_utc_timestamp_iso()` in the same UPDATE, so every
+            # row this query sees carries the one ISO shape. Do not copy
+            # this to a query over active rows, and do not "fix" it to match
+            # them unless a soft-delete writer starts stamping something else.
+            rows = conn.execute(
+                "SELECT id, title, last_modified, version FROM notes"
+                " WHERE deleted = 1"
+                " ORDER BY last_modified DESC, rowid DESC LIMIT ? OFFSET ?",
+                (page_size, skip),
+            ).fetchall()
+        return {"items": [dict(row) for row in rows], "total": total}
+
+    def get_notes_linking_to(
+        self, note_id: str, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """List notes whose body carries the note link for ``note_id``.
+
+        The note-link form is the one the Obsidian importer writes when a
+        ``[[wikilink]]`` resolves inside the batch:
+        ``[label](note://<note_id>)`` (``note_import_plan_models.
+        rewrite_wikilinks``). Matching the closing parenthesis too is what
+        keeps ``note://abc`` from also matching a link to ``note://abcdef``.
+
+        FTS5 is the wrong index here: its tokenizer splits ``note://<uuid>``
+        into ``note`` plus the id's hex runs, so a MATCH would answer a
+        looser question than "carries this exact link".
+
+        Args:
+            note_id: The linked-to note. Bound as a parameter, with LIKE's
+                own wildcards escaped so an id containing ``%`` or ``_``
+                cannot widen the search.
+            limit: Maximum rows to return.
+
+        Returns:
+            ``{"id", "title"}`` rows for the linking notes, soft-deleted
+            notes and the target itself excluded, ordered by title.
+        """
+        if not note_id:
+            return []
+        escaped = (
+            str(note_id)
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        query = """
+            SELECT id, title
+            FROM notes
+            WHERE deleted = 0
+              AND id != ?
+              AND content LIKE ? ESCAPE '\\'
+            ORDER BY title COLLATE NOCASE, id
+            LIMIT ?
+        """
+        cursor = self.execute_query(
+            query, (note_id, f"%(note://{escaped})%", max(0, int(limit)))
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
     # ============================= Library read seams (task-1337) =========================================
     #
     # Additive, read-only queries backing the local Library agent tools. They

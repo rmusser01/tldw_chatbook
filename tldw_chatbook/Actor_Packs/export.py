@@ -112,6 +112,7 @@ class ActorPackExportSection:
     provenance: str | None
     manifest_bytes: bytes = field(repr=False)
     assets: tuple[ActorPackExportFile, ...] = field(repr=False)
+    artwork_attribution: bytes | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,6 +305,16 @@ class ActorPackExportService:
         except PersonaVisualAssetError:
             raise ActorPackExportError("actor_pack_export_asset_unavailable") from None
         context = dict(export_graph.source_context)
+        if "artwork" in context and any(
+            value for key, value in json.loads(context["artwork"]).items() if key != "version"
+        ):
+            raise ActorPackExportError(
+                "actor_pack_export_native_artwork_requires_native_export",
+                user_message=(
+                    "This Buddy carries artwork credits that Actor Pack export cannot preserve. "
+                    "Use Export Buddy in Persona Visuals to keep the original credits and notices."
+                ),
+            )
         return ActorPackExportSection(
             kind="persona-runtime",
             manifest_path="persona-runtime/manifest.json",
@@ -317,6 +328,10 @@ class ActorPackExportService:
     def _capture_shared_visual(
         self, actor_kind: str, actor_id: int | str
     ) -> ActorPackExportSection | None:
+        from tldw_chatbook.Character_Chat.artwork_attribution import (
+            encode_artwork_attribution,
+        )
+
         # Deferred: see the TASK-21200 note at the top of this module.
         from tldw_chatbook.Character_Chat.visual_identity import (
             compute_pack_content_sha256,
@@ -345,6 +360,20 @@ class ActorPackExportService:
                 parse_constant=_reject_json_constant,
             )
             provenance = _bounded_provenance(context)
+            artwork = encode_artwork_attribution(
+                context,
+                {
+                    row["expression_key"]: (
+                        row["sha256"],
+                        json.loads(
+                            row["source_context_json"],
+                            object_pairs_hook=_unique_object,
+                            parse_constant=_reject_json_constant,
+                        ),
+                    )
+                    for row in rows
+                },
+            )
             raw_manifest = json.loads(version["manifest_json"])
             raw_assets = raw_manifest["assets"]
             if type(raw_assets) is not list or len(raw_assets) != len(manifest.assets):
@@ -407,6 +436,7 @@ class ActorPackExportService:
             provenance=provenance,
             manifest_bytes=manifest_bytes,
             assets=tuple(files),
+            artwork_attribution=artwork,
         )
 
     def _read_candidate(
@@ -453,6 +483,11 @@ class ActorPackExportService:
 def write_actor_pack_archive(snapshot: ActorPackExportSnapshot, sink: BinaryIO) -> str:
     """Write one deterministic Actor Pack and return its archive SHA-256."""
 
+    from tldw_chatbook.Character_Chat.artwork_attribution import (
+        ARTWORK_FEATURE,
+        CONVERSION_FEATURE,
+    )
+
     if type(snapshot) is not ActorPackExportSnapshot:
         raise ActorPackExportError("actor_pack_export_snapshot_invalid")
     try:
@@ -489,6 +524,16 @@ def write_actor_pack_archive(snapshot: ActorPackExportSnapshot, sink: BinaryIO) 
                 for item in inventory
             ],
         }
+        if any(
+            section.artwork_attribution is not None for section in snapshot.sections
+        ):
+            root["required_features"].append(ARTWORK_FEATURE)
+        for section in snapshot.sections:
+            if section.artwork_attribution is not None:
+                carrier = json.loads(section.artwork_attribution)
+                if isinstance(carrier, dict) and carrier.get("version") == 2:
+                    root["required_features"].append(CONVERSION_FEATURE)
+                    break
         root["content_digest"] = actor_pack_content_digest(root)
         validate_actor_pack_document(root, files)
         archive_files = {"actor-pack.json": canonical_json_bytes(root), **files}
@@ -530,6 +575,8 @@ def write_actor_pack_archive(snapshot: ActorPackExportSnapshot, sink: BinaryIO) 
 
 
 def _snapshot_files(snapshot: ActorPackExportSnapshot) -> dict[str, bytes]:
+    from tldw_chatbook.Character_Chat.artwork_attribution import ARTWORK_MEMBER
+
     files = {
         "actor/actor.json": snapshot.actor_payload,
         f"actor/{snapshot.portrait_name}": snapshot.portrait_bytes,
@@ -538,6 +585,10 @@ def _snapshot_files(snapshot: ActorPackExportSnapshot) -> dict[str, bytes]:
         if section.manifest_path in files:
             raise ActorPackExportError("actor_pack_export_snapshot_invalid")
         files[section.manifest_path] = section.manifest_bytes
+        if section.artwork_attribution is not None:
+            if section.kind != "shared-visual-identity" or ARTWORK_MEMBER in files:
+                raise ActorPackExportError("actor_pack_export_snapshot_invalid")
+            files[ARTWORK_MEMBER] = section.artwork_attribution
         for asset in section.assets:
             if asset.path in files:
                 raise ActorPackExportError("actor_pack_export_snapshot_invalid")
