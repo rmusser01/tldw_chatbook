@@ -674,10 +674,10 @@ conversation into a pane headed **"Conversation reader"** with:
 - the transcript itself, one block per message, each headed
   `user` / `assistant` and the message's timestamp.
 
-Two rough edges are known and tracked separately: the status line shows the
+One rough edge is known and tracked separately: the status line shows the
 raw conversation UUID and each message shows a full ISO timestamp rather
-than an age string, and **"Open in Console"** sits below the transcript
-rather than in the reader header.
+than an age string. ("Open in Console" moved into the reader header,
+beside Read/Info, in task-32056.)
 
 Empty state: "No conversations yet. Chat in Console and it appears here."
 There is no create, rename, or delete here — this panel treats your chats
@@ -720,8 +720,10 @@ setting**; it supplies one bundle of **staged context** for the next send.
 
 ### Stage a conversation as Console context
 1. In **Conversations**, click a row, then "Open in Console" in the reader
-   header (beside Read/Info, or press `c`). If it reads "○ Open in Console ·
-   not in this workspace", press "Link to workspace" first.
+   header (beside Read/Info, or press `c`). If the button reads "○ Open in
+   Console" with "This conversation is not in this workspace. Press 'Link to
+   workspace' to add it to the active workspace." beneath it, press "Link to
+   workspace" first.
 2. Console opens with the conversation staged and the prompt "Use this
    conversation as source context for my next question." ready to go — edit
    or replace it, then send.
@@ -847,16 +849,18 @@ Escape's return to the list live at 100x30).*
   an exact Retry action. See [Library prompts](prompts.md).
 - **A conversation outside the active workspace says so on the button.**
   The handoff requires the conversation to be eligible for the active
-  workspace. When it is not, the reader header reads "○ Open in Console ·
-  not in this workspace" (or "· in another workspace") with the action
-  disabled, and a **"Link to workspace"** button beside it performs the
-  remedy. The `c` accelerator refuses in exactly the same cases, so the key
-  never reaches a refusal the button already explains. A block that linking
-  cannot resolve reads "· blocked for this workspace" and offers no link —
-  hovering the disabled action gives that block's own remedy (with no active
-  workspace: "Select an active workspace before using this item in
-  Console."), never a link button that is not on screen. The same gate
-  guards the other "Use in Console" actions.
+  workspace. When it is not, the button dims to "○ Open in Console" and one
+  sentence beneath it states the reason and the remedy — "This conversation
+  is not in this workspace. Press 'Link to workspace' to add it to the
+  active workspace." — with the **"Link to workspace"** button right there
+  to perform it. (The action name is painted once, on the button; the line
+  under it is the explanation, not a second control.) Pressing `c` while it
+  is blocked says that same sentence as a message rather than doing
+  nothing. A block that linking cannot resolve states its own remedy
+  instead and offers no link (with no active workspace: "Select an active
+  workspace before using this item in Console."), never naming a button
+  that is not on screen. The same gate guards the other "Use in Console"
+  actions.
 - **Staging now actually reaches the model.** "Use in Console" (media)
   and "Open in Console" (conversations) used to stage content that
   displayed as attached but never made it into what the model was sent
@@ -1100,3 +1104,9 @@ to paint "2 selected┃ Select all".)*
 these" takes the same `○` marker and reason as "Select" rather than raising a
 toast when pressed, and keyboard focus on a filter miss lands back in the
 filter box instead of on the `type:` chooser.)*
+
+*Verified against fix/library-crit8-riders-a — 2026-09-10 (task-32101: the
+blocked hand-off paints the action name once — the disabled marker moved
+onto the button and the line beneath it carries the refusal sentence — and
+`c` now speaks that same sentence instead of doing nothing; the dead
+"Use as source" handler behind an uncomposed button is deleted.)*

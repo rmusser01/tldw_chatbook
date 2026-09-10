@@ -30,7 +30,10 @@ from tldw_chatbook.Library.meeting_speaker_rename import (  # noqa: F401
     can_rename_meeting_speakers,
     rename_meeting_speaker,
 )
-from tldw_chatbook.Library.library_pager_state import LibraryPagerDisplay
+from tldw_chatbook.Library.library_pager_state import (
+    LibraryPagerDisplay,
+    library_pager_layout,
+)
 from tldw_chatbook.Library.library_media_state import (
     LibraryMediaCanvasState,
     MEDIA_SORT_CHOICES,
@@ -1942,35 +1945,19 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # gate has no callout (its copy is a different event) and keeps its
         # Retry in this strip.
         retry_visible = pager.retry_visible and self.load_failure is None
-        disabled_reasons = (
-            ()
-            if pager.single_page
-            else tuple(
-                dict.fromkeys(
-                    reason
-                    for disabled, reason in (
-                        (pager.previous_disabled, pager.previous_reason),
-                        (pager.next_disabled, pager.next_reason),
-                    )
-                    if disabled and reason
-                )
-            )
-        )
-        status_parts = (
-            (pager.range_copy,)
-            if pager.single_page
-            else (pager.range_copy, pager.page_copy)
-        )
+        # task-32104: the rule itself lives in ``library_pager_layout``,
+        # shared with every other Library pager.
+        layout = library_pager_layout(pager, retry_visible=retry_visible)
         with Vertical(id="library-media-pager", classes="library-source-pager"):
             yield Static(
-                " · ".join(copy for copy in status_parts if copy),
+                " · ".join(layout.status_parts),
                 id="library-media-page-status",
                 classes="library-source-pager-status",
                 markup=False,
             )
-            if disabled_reasons:
+            if layout.boundary_reasons:
                 yield Static(
-                    " · ".join(disabled_reasons),
+                    " · ".join(layout.boundary_reasons),
                     id="library-media-disabled-reason",
                     classes="library-source-pager-status",
                     markup=False,
@@ -1982,8 +1969,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             # stays; the controls return the moment a second page exists.
             # A stale page still needs its Retry here even on one page
             # (task-31632 moved a FAILED fetch's Retry into the callout,
-            # which is why this reads the gated ``retry_visible``).
-            if pager.single_page and not retry_visible:
+            # which is why the layout above reads the gated
+            # ``retry_visible``).
+            if layout.controls_hidden:
                 return
             with Horizontal(classes="library-source-pager-controls"):
                 previous = Button(
