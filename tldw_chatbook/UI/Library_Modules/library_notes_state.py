@@ -483,6 +483,20 @@ class LibraryNotesState:
     delete_origin_context: bool = False
     delete_origin_preview: bool = False
 
+    #: ``(note_id, title)`` for each note whose body links to the open one
+    #: (task-32145). Loaded by its own worker after the note opens and reset
+    #: by ``_begin_library_note_load``, so it is never another note's list.
+    #: One row over the display cap means "more than the cap", so the header
+    #: can read ``50+`` instead of lying with an exact number.
+    backlinks: tuple[tuple[str, str], ...] = ()
+
+    #: ``"loading"`` until the backlink query answers, then ``"ready"`` (the
+    #: rows above are the whole truth) or ``"failed"`` (it raised, or there
+    #: was no service to ask). Without it an unanswered lookup is
+    #: indistinguishable from a verified zero, and Info claims "no notes
+    #: link here yet" before -- or without ever -- checking.
+    backlinks_status: Literal["loading", "ready", "failed"] = "loading"
+
     # Task 7 owns measured breakpoint transitions. Task 5 consumes this
     # explicit presentation input now so compact/wide utility grouping is
     # testable without coupling the canvas to terminal geometry.
