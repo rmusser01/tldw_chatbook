@@ -27,6 +27,7 @@ class Directory(Record):
     parent_id: Identifier | None
     relative_path: str
     metadata: Metadata
+    synthetic: bool = False
 
 
 class Payload(Record):

@@ -94,6 +94,7 @@ def _manifest_for(inventory, staged, aliases, options, issues):
                 "parent_id": None,
                 "relative_path": "",
                 "metadata": {"version": 1, "mode": 0o700, "mtime_ns": 0},
+                "synthetic": True,
             }
             producers[root_id] = {
                 "logical_id": root_id,

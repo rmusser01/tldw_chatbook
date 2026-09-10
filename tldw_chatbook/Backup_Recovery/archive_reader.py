@@ -121,6 +121,11 @@ def _manifest(data: bytes, limits: ArchiveLimits, encrypted: bool) -> ArchiveMan
     if len(records) > limits.members:
         raise ValueError("member_limit")
     directories = {d.logical_id: d for d in doc.directories}
+    if any(
+        directory.synthetic and directory.parent_id is not None
+        for directory in doc.directories
+    ):
+        raise ValueError("invalid_synthetic_root")
     owners = {o.owner_id for o in doc.owners}
     names = set()
     for record in records:

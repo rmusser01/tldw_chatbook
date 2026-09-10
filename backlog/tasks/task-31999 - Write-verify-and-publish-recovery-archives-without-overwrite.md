@@ -11,7 +11,7 @@ dependencies:
 - task-31985
 - task-31995
 - task-31998
-updated_date: 2026-09-10 19:25
+updated_date: 2026-09-10 19:29
 ---
 
 ## Description
@@ -54,4 +54,5 @@ Agreed implementation contract: CaptureResult retains original source paths and 
 Final combined146-test cohort passes including plaintext/native encrypted publication through actual reader verification and existing age helper; no-overwrite/alias/cancel checks retained. Existing offline Go module/build caches used, no network or new credentials. New writer full Ruff/format clean and Bandit0. This verifies the writer slice, not whole backup or replacement readiness.
 Original Task17 integration exposed missing manifest producer metadata: directory/exclusion ownership, dependencies/sharing and file mode/mtime were not serialized. Root will add strict inert ProducerItem records and optional file metadata to the existing archive schema, with current capture always populating them; legacy component archives remain readable but cannot claim verified replacement provenance. Reader checks exact coverage/status/owner/dependency/shared-byte consistency. No archive locator gains destination authority. This is necessary original restore-plan input, not a new recovery feature.
 Added original restore-input metadata: strict inert producer inventory for files/directories/exclusions, dependencies and sharing, plus file mode/mtime. Capture emits synthetic parent/material records explicitly and retains excluded-owner identity without claiming an observed schema. Reader rejects mismatched coverage/status/owner, unknown dependencies, duplicate records, conflicting shared file bytes and coherent archives containing unsupported/unavailable/missing-required producers. Legacy archives remain readable with metadata absent; no local authority inferred. Red metadata4 failed7 passed; integrated reader/writer/capture114 passed47s; final contradiction red then metadata12 passed1.03s. New/changed modules Ruff clean except unchanged reader2→2 baseline; Bandit0. Restore planner consumes producer graph transitively; source/target mappings remain local.
+Task17 retirement integration further distinguishes source directory trees from synthetic archive-only parent containers: Directory.synthetic defaults false, current capture explicitly marks only fabricated roots, and reader rejects synthetic nonroot records. This prevents standalone DB/config restore from treating unrelated target siblings as owned retirement scope. Original regression red then producer/capture39 passed3.57s; scoped Ruff no new findings and Bandit0.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

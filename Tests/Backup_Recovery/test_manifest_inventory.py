@@ -50,6 +50,32 @@ def test_explicit_producer_inventory_and_file_metadata_round_trip():
     assert doc.files[0].metadata.mtime_ns == 123
 
 
+def test_synthetic_container_is_explicit_and_only_allowed_at_root():
+    doc = producer_manifest()
+    doc["directories"][0]["synthetic"] = True
+    assert parse(doc).directories[0].synthetic is True
+    doc["directories"].append(
+        {
+            "logical_id": "child",
+            "root_id": "root",
+            "parent_id": "root",
+            "relative_path": "child",
+            "metadata": {"version": 1, "mode": 0o700, "mtime_ns": 0},
+            "synthetic": True,
+        }
+    )
+    doc["producer_inventory"].append(
+        {
+            "logical_id": "child",
+            "owner_id": "notes",
+            "status": "included_directory",
+            "dependencies": ["root"],
+        }
+    )
+    with pytest.raises(ValueError, match="invalid_synthetic_root"):
+        parse(doc)
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
