@@ -200,6 +200,30 @@ async def test_frame_renderer_failure_keeps_last_valid_frame(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_initial_renderer_failure_releases_prepared_frames(monkeypatch):
+    from tldw_chatbook.UI.Console_Modules import character_avatar_layout
+
+    def fail_render(*_args, **_kwargs):
+        raise ValueError("renderer unavailable")
+
+    monkeypatch.setattr(
+        character_avatar_layout, "render_character_avatar_mosaic", fail_render
+    )
+    before = preparation_bytes()
+    app = AvatarApp()
+    async with app.run_test(size=(40, 16)) as pilot:
+        for _ in range(100):
+            await pilot.pause(0.01)
+            if str(app.avatar.query_one(Static).renderable) == "no avatar":
+                break
+        assert str(app.avatar.query_one(Static).renderable) == "no avatar"
+        assert app.avatar._prepared is None
+        assert app.avatar.current_image is None
+        assert preparation_bytes() == before
+    assert preparation_bytes() == before
+
+
+@pytest.mark.asyncio
 async def test_graphics_widget_updates_image_without_remount():
     pytest.importorskip("textual_image.widget")
     app = AvatarApp()

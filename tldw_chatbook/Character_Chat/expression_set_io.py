@@ -120,13 +120,15 @@ def _has_native_contract(zf: zipfile.ZipFile, prefix: str) -> bool:
     return False
 
 
-def _resolve_native_expression_set(path: Path) -> ExpressionSetResolution:
+def _resolve_native_expression_set(
+    path: Path, *, prefix: str = ""
+) -> ExpressionSetResolution:
     """Extract native static selections only after complete archive validation."""
     from tldw_chatbook.Persona_Visual.contracts import resolve_manifest_state
     from tldw_chatbook.Persona_Visual.snapshot import read_buddy_archive
     from tldw_chatbook.Persona_Visual.validation import validate_persona_visual_manifest
 
-    snapshot = read_buddy_archive(path.absolute())
+    snapshot = read_buddy_archive(path.absolute(), prefix=prefix)
     assets = {asset.metadata.asset_key: asset for asset in snapshot.assets}
     manifest = validate_persona_visual_manifest(
         snapshot.manifest_json,
@@ -272,7 +274,9 @@ def resolve_local_expression_set(paths: list[Path]) -> ExpressionSetResolution:
                         if native:
                             # Native validation owns its larger pack budgets. A
                             # rejected native source must never reach stem mapping.
-                            res = _resolve_native_expression_set(path)
+                            res = _resolve_native_expression_set(
+                                path, prefix=vprefix or ""
+                            )
                         else:
                             res, total = _resolve_vpack_expression_set(
                                 zf, prefix=vprefix, start_total=total

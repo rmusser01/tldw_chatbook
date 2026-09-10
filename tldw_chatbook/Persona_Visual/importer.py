@@ -306,7 +306,11 @@ def _source_identity_current(
 
 def _validated_members(
     archive: zipfile.ZipFile,
+    *,
+    prefix: str = "",
 ) -> dict[str, zipfile.ZipInfo]:
+    if type(prefix) is not str or (prefix and _member_prefix(prefix) != prefix):
+        raise ValueError
     infos = archive.infolist()
     if len(infos) > _MAX_MEMBER_COUNT:
         raise ValueError
@@ -315,6 +319,14 @@ def _validated_members(
     total = 0
     for info in infos:
         raw = getattr(info, "orig_filename", info.filename)
+        if prefix:
+            if raw == prefix:
+                if not info.is_dir():
+                    raise ValueError
+                continue
+            if not raw.startswith(prefix):
+                raise ValueError
+            raw = raw[len(prefix) :]
         if info.is_dir():
             _member_name(raw.removesuffix("/"), directory=True)
             continue
@@ -342,6 +354,25 @@ def _validated_members(
     if not _REQUIRED_MEMBERS.issubset(members):
         raise ValueError
     return members
+
+
+def _member_prefix(value: object) -> str:
+    """Validate one optional shared top-level archive directory."""
+    if (
+        type(value) is not str
+        or not value.endswith("/")
+        or "/" in value[:-1]
+        or "\\" in value
+        or "\x00" in value
+        or not value[:-1]
+        or value[:-1] in {".", ".."}
+        or not value[:-1].isascii()
+        or ":" in value
+        or len(value[:-1].encode()) > 255
+        or value[:-1].rstrip(" .").split(".", 1)[0].upper() in _WINDOWS_DEVICES
+    ):
+        raise ValueError
+    return value
 
 
 def _member_name(value: object, *, directory: bool) -> str:
@@ -584,9 +615,11 @@ def _validate_declarations(
 def _validated_archive(
     archive: zipfile.ZipFile,
     cancelled: Any,
+    *,
+    prefix: str = "",
 ) -> tuple[dict[str, zipfile.ZipInfo], dict[str, Any], tuple[dict[str, Any], ...]]:
     """Shared native declarations/checksum boundary for import and snapshots."""
-    members = _validated_members(archive)
+    members = _validated_members(archive, prefix=prefix)
     outer = _json_member(archive, members, "manifest.json")
     checksums = _checksums(_json_member(archive, members, "checksums/sha256.json"))
     pack = _pack(_json_member(archive, members, "metadata/pack.json"))

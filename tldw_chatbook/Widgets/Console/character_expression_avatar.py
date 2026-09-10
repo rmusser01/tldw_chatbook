@@ -135,6 +135,9 @@ class CharacterExpressionAvatar(Widget):
                 self._last_tick = None
                 self._timer = self.set_interval(1 / 30, self._tick)
         except (ValueError, OSError, ImportError, RuntimeError, MemoryError):
+            if self._prepared is not None:
+                self._prepared.close()
+                self._prepared = None
             if self._current():
                 self._surface.update("no avatar", layout=False)
                 self.tooltip = (

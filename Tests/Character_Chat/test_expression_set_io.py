@@ -577,6 +577,36 @@ def test_dispatch_nested_single_root_extracts(tmp_path):
     assert "thinking" in res.images
 
 
+def test_dispatch_nested_native_archive_keeps_strict_validation(tmp_path):
+    from Tests.Persona_Visual.test_persona_visual_importer import _archive_payloads
+
+    wrapped = tmp_path / "wrapped-native.zip"
+    with zipfile.ZipFile(wrapped, "w") as archive:
+        for name, data in _archive_payloads().items():
+            archive.writestr(f"Downloaded Buddy/{name}", data)
+
+    res = resolve_local_expression_set([wrapped])
+
+    assert set(res.images) == {"idle", "thinking", "speaking", "error"}
+    assert not res.skipped
+
+
+def test_dispatch_nested_native_archive_rejects_checksum_mismatch(tmp_path):
+    from Tests.Persona_Visual.test_persona_visual_importer import _archive_payloads
+
+    payloads = _archive_payloads()
+    payloads["assets/persona_visuals/idle.png"] = _png((90, 80, 70))
+    wrapped = tmp_path / "corrupt-wrapped-native.zip"
+    with zipfile.ZipFile(wrapped, "w") as archive:
+        for name, data in payloads.items():
+            archive.writestr(f"Downloaded Buddy/{name}", data)
+
+    res = resolve_local_expression_set([wrapped])
+
+    assert not res.images
+    assert res.skipped
+
+
 def test_dispatch_two_roots_falls_through(tmp_path):
     # Two top-level roots -> not detected as a pack -> stem mapping (no matches).
     buf = io.BytesIO(simple_vpack({"idle": _png()}, prefix="A/"))

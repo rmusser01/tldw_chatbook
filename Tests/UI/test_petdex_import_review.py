@@ -201,6 +201,66 @@ async def test_manual_v2_requires_explicit_list_and_mapping(monkeypatch):
         await pilot.press("escape")
 
 
+@pytest.mark.asyncio
+async def test_replacement_failure_clears_old_source_but_picker_cancel_preserves_it(
+    monkeypatch,
+):
+    from unittest.mock import AsyncMock
+
+    from textual.widgets import Checkbox, Input, Select, Static
+
+    from tldw_chatbook.Petdex import sources
+    from tldw_chatbook.Widgets.Persona_Widgets.petdex_import_review import (
+        PetdexImportReviewDialog,
+    )
+
+    source = _source()
+    monkeypatch.setattr(sources, "read_local_package", lambda _path: source)
+    dialog = PetdexImportReviewDialog(authority_guard=lambda: True, config={})
+    app = ConsolidatedCSSApp()
+    async with app.run_test(size=(90, 35)) as pilot:
+        await app.push_screen(dialog)
+        dialog.query_one("#petdex-source", Input).value = "first"
+        await dialog._load("petdex-local")
+        await dialog._prepare()
+        prepared = dialog._prepared
+        credits = str(dialog.query_one("#petdex-credits", Static).render())
+        assert dialog.query_one("#petdex-preview")
+
+        monkeypatch.setattr(app, "push_screen_wait", AsyncMock(return_value=None))
+        await dialog._load("petdex-choose")
+        assert dialog.source is source
+        assert dialog._prepared is prepared
+        assert str(dialog.query_one("#petdex-credits", Static).render()) == credits
+        assert dialog.query_one("#petdex-preview")
+
+        def fail_replacement(_path):
+            raise ValueError("replacement is invalid")
+
+        monkeypatch.setattr(sources, "read_local_package", fail_replacement)
+        dialog.query_one("#petdex-source", Input).value = "replacement"
+        await dialog._load("petdex-local")
+
+        assert dialog.source is None
+        assert dialog.inspection is None
+        assert dialog._prepared is None
+        assert dialog._prepared_key is None
+        assert dialog._prepared_states == ()
+        assert str(dialog.query_one("#petdex-credits", Static).render()) == (
+            "No source loaded."
+        )
+        assert not str(dialog.query_one("#petdex-layout", Static).render())
+        assert dialog.query_one("#petdex-states", TextArea).text == "[]"
+        assert dialog.query_one("#petdex-preview-state", Select).value is Select.NULL
+        assert not str(dialog.query_one("#petdex-warnings", Static).render())
+        assert not dialog.query_one("#petdex-reviewed", Checkbox).value
+        assert not dialog.query("#petdex-preview")
+        assert "replacement is invalid" in str(
+            dialog.query_one("#petdex-status", Static).render()
+        )
+        await pilot.press("escape")
+
+
 from Tests.UI.test_personas_persona_visual_authoring import (
     _open_editor,
     _Repository,

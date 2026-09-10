@@ -1,14 +1,14 @@
 ---
 id: TASK-32238
 title: Import Petdex and create characters from independent Buddy management
-status: Done
+status: In Progress
 created_date: 2026-09-10 15:16
 assignee:
 - '@codex'
 labels:
 - buddy
 - petdex
-updated_date: 2026-09-10 18:04
+updated_date: 2026-09-10 18:19
 ---
 
 ## Description
@@ -29,7 +29,7 @@ Make the approved Petdex import and independent character conversion available f
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: yes. ADR path: backlog/decisions/146-independent-buddy-petdex-publication-and-character-creation.md. Reason: ADR-146 supplements Accepted ADR-139 without rewriting it and partially supersedes only ADR-145 saved-Persona-only destination restriction; saved Persona authoring and every source, transport, review and attribution decision remain in force. 1. Reuse the existing Petdex review and BuddyLibrary publication boundaries with capability-safe local file access. 2. Expose independent Buddy publication and selected-Buddy character creation through the existing management form with source/profile/selection guards. 3. Keep cancellation before Apply or Save side-effect free; when publication succeeds before settings persistence fails, retain the installed Buddy and previous settings, then reuse it on retry or direct the user to reopen and verify it before importing again. 4. Preserve publication and character attribution, source snapshots, Dynamic/Static playback and path-free actionable errors. 5. Run only the targeted Petdex, management, conversion, formatting, generated-asset and diagnostic preflight checks; record fresh results and leave the task In Progress for root closeout.
+ADR required: yes. ADR path: backlog/decisions/146-independent-buddy-petdex-publication-and-character-creation.md. Reason: ADR-146 supplements Accepted ADR-139 without rewriting it and partially supersedes only ADR-145 saved-Persona-only destination restriction; saved Persona authoring and every source, transport, review and attribution decision remain in force. 1. Reuse the existing Petdex review and BuddyLibrary publication boundaries with capability-safe local file access. 2. Expose independent Buddy publication and selected-Buddy character creation through the existing management form with source/profile/selection guards. 3. Keep cancellation before Apply or Save side-effect free; when publication succeeds before settings persistence fails, retain the installed Buddy and previous settings, then reuse it on retry or direct the user to reopen and verify it before importing again. 4. Preserve publication and character attribution, source snapshots, Dynamic/Static playback and path-free actionable errors. 5. Run only the targeted Petdex, management, conversion, formatting, generated-asset and diagnostic preflight checks; record fresh results and leave the task In Progress for root closeout. Qodo PR feedback plan: 6. Preserve Petdex descriptions through actual native archive validation; normalize corrupt ZIP decoder failures and use shared non-resolving path admission. 7. Prove the staged retry key is the complete generated archive identity and distinguish different reviewed mappings with real publication. 8. Keep transient avatar decoding retryable and release prepared frame budget after an initial render failure. 9. Honor the established one-folder wrapped native archive contract through the same strict declaration/checksum validation. 10. Clear source-derived Petdex review UI only once replacement loading begins, while preserving it when the picker is cancelled. 11. Complete public Petdex API docstrings and run only combined affected tests plus scoped Ruff/format/diff checks. No new ADR or acceptance criterion is required because these are routine corrections within the existing source, publication, playback and management contracts.
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 

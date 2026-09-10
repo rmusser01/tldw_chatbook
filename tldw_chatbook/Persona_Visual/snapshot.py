@@ -72,12 +72,17 @@ def _validate_manifest(
     )
 
 
-def read_buddy_archive(path: os.PathLike[str] | str) -> BuddySnapshot:
+def read_buddy_archive(
+    path: os.PathLike[str] | str, *, prefix: str = ""
+) -> BuddySnapshot:
     """Read a pinned native archive without staging files or creating a Persona.
 
     Args:
         path: Absolute native archive filename. The source must be a regular,
             singly linked file; no-follow checks reject a symbolic link.
+        prefix: Optional validated shared top-level directory detected by the
+            expression-set compatibility route. Native declarations and checksums
+            remain relative to this directory.
 
     Returns:
         Immutable validated artwork, assets and metadata with a private guard
@@ -103,7 +108,9 @@ def read_buddy_archive(path: os.PathLike[str] | str) -> BuddySnapshot:
                 "persona_visual_import_failed"
             ) from None
         with zipfile.ZipFile(BytesIO(source.data)) as archive:
-            members, pack, records = importer._validated_archive(archive, lambda: False)
+            members, pack, records = importer._validated_archive(
+                archive, lambda: False, prefix=prefix
+            )
             assets = []
             for record in records:
                 data = archive.read(members[record["asset_path"]])

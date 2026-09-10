@@ -348,6 +348,63 @@ async def test_reviewed_petdex_apply_publishes_once_and_rejects_stale(imports):
 
 
 @pytest.mark.asyncio
+async def test_staged_retry_cache_distinguishes_complete_reviewed_archives(
+    imports, monkeypatch, tmp_path
+):
+    from Tests.Petdex.test_conversion import atlas_source
+    from tldw_chatbook import config
+    from tldw_chatbook.Persona_Visual.snapshot import read_buddy_archive
+    from tldw_chatbook.Petdex.conversion import build_petdex_archive
+
+    manager, _archive, previous = imports
+    source = atlas_source()
+    first_path = tmp_path / "first-review.tldw-persona-vpack"
+    second_path = tmp_path / "second-review.tldw-persona-vpack"
+    first_path.write_bytes(build_petdex_archive(source))
+    second_path.write_bytes(
+        build_petdex_archive(
+            source,
+            mappings={
+                "idle": "idle",
+                "thinking": "idle",
+                "error": "idle",
+                "listening": "idle",
+                "speaking": "idle",
+            },
+        )
+    )
+    first = read_buddy_archive(first_path)
+    second = read_buddy_archive(second_path)
+    assert first.source_sha256 != second.source_sha256
+
+    cached_imports = {}
+    monkeypatch.setattr(config, "save_settings_to_cli_config", lambda _: False)
+    with pytest.raises(ValueError) as first_failure:
+        await manager.apply_choice(
+            BuddyManagementChoice(),
+            expected_revision=0,
+            imports=cached_imports,
+            staged_review=first,
+        )
+    with pytest.raises(ValueError):
+        await manager.apply_choice(
+            BuddyManagementChoice(),
+            expected_revision=first_failure.value.buddy_retry_revision,
+            imports=cached_imports,
+            staged_review=second,
+        )
+
+    installed = manager.library.list_buddies()
+    assert len(installed) == 2
+    assert installed[0].id != installed[1].id
+    assert manager.controller.current_preferences() == previous
+    assert set(cached_imports) == {
+        "review:" + first.source_sha256,
+        "review:" + second.source_sha256,
+    }
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("failure", "recovery"),
     [

@@ -498,6 +498,7 @@ class ConsoleCharacterController:
             spec is not None
             and spec.get("animation_bytes")
             and self._active_character_avatar is not None
+            and self._active_character_avatar.get("animation_bytes")
             and self._last_painted_request == request
             and self._active_character_avatar.get("resolution_cache_identity")
             == spec.get("resolution_cache_identity")
@@ -698,6 +699,13 @@ class ConsoleCharacterController:
                     return
         except Exception:  # noqa: BLE001 -- sync-tick avatar decode is fail-soft.
             logger.opt(exception=True).debug("avatar: expression decode failed")
+            if not self._request_is_current(request):
+                return
+            # A transient codec/header failure must not become a stable cache hit.
+            # Clear the tick key so the unchanged identity retries next sync pass.
+            self._last_console_avatar_request_key = None
+            await self._paint(request, spec, name=name, manual_label=manual_label)
+            return
         if not self._request_is_current(request):
             return
         self._console_expression_spec_cache[identity] = spec

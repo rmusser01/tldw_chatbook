@@ -1092,6 +1092,60 @@ async def test_reactive_avatar_never_raises_on_corrupt_expression(
     assert screen._last_console_avatar_scope[1:] == ("speaking", None)
 
 
+@pytest.mark.asyncio
+async def test_transient_animated_header_failure_retries_same_identity(
+    console_screen_with_db, monkeypatch
+):
+    from Tests.UI.test_character_expression_avatar import animation
+
+    _app, screen, db = console_screen_with_db
+    character_id = db.add_character_card({"name": "Animated"})
+    _set_active_console_character(screen, character_id, "Animated")
+    identity_suffix = "pack_version_id=1|asset_id=1|sha256=transient"
+    resolution = replace(
+        _resolution(
+            character_id,
+            requested="thinking",
+            manual=None,
+            source="pack_operational",
+            identity_suffix=identity_suffix,
+            image=animation(),
+        ),
+        content_type="image/gif",
+        is_animated=True,
+    )
+    resolve_calls = []
+
+    def resolve(*_args):
+        resolve_calls.append(None)
+        return resolution
+
+    monkeypatch.setattr(screen._session, "_resolve_visual_identity", resolve)
+    monkeypatch.setattr(
+        character_module,
+        "resolve_console_expression_state",
+        lambda *_args, **_kwargs: "thinking",
+    )
+    real_size = character_module.expression_image_size
+    size_calls = []
+
+    def transient_size(data):
+        size_calls.append(None)
+        if len(size_calls) == 1:
+            raise OSError("transient decoder failure")
+        return real_size(data)
+
+    monkeypatch.setattr(character_module, "expression_image_size", transient_size)
+
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+    assert resolution.cache_identity not in screen._console_expression_spec_cache
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+
+    assert len(size_calls) == 2
+    assert len(resolve_calls) >= 2
+    assert screen._active_character_avatar["animation_bytes"] == resolution.image_bytes
+
+
 @pytest.mark.parametrize(
     ("second_source", "second_identity_suffix"),
     (

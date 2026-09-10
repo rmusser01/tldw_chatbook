@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import zipfile
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 
@@ -42,6 +43,47 @@ def test_archive_snapshot_is_validated_and_pins_exact_source(tmp_path):
         snapshot.title = "changed"
     path.write_bytes(path.read_bytes())
     assert not snapshot.is_current()
+
+
+@pytest.mark.parametrize("prefix", ["./", "../"])
+def test_archive_snapshot_rejects_dot_component_wrapper(tmp_path, prefix):
+    from tldw_chatbook.Persona_Visual.snapshot import read_buddy_archive
+
+    payloads = {f"{prefix}{name}": data for name, data in _archive_payloads().items()}
+    path = _write_archive(tmp_path / "dot-wrapper.zip", payloads)
+
+    with pytest.raises(PersonaVisualImportError):
+        read_buddy_archive(path, prefix=prefix)
+
+
+def test_archive_snapshot_rejects_member_outside_wrapper(tmp_path):
+    from tldw_chatbook.Persona_Visual.snapshot import read_buddy_archive
+
+    payloads = {
+        f"Downloaded Buddy/{name}": data for name, data in _archive_payloads().items()
+    }
+    payloads["outside.txt"] = b"must not be ignored"
+    path = _write_archive(tmp_path / "outside-wrapper.zip", payloads)
+
+    with pytest.raises(PersonaVisualImportError):
+        read_buddy_archive(path, prefix="Downloaded Buddy/")
+
+
+def test_archive_snapshot_rejects_collision_inside_wrapper(tmp_path):
+    from tldw_chatbook.Persona_Visual.snapshot import read_buddy_archive
+
+    payloads = {
+        f"Downloaded Buddy/{name}": data for name, data in _archive_payloads().items()
+    }
+    path = _write_archive(tmp_path / "collision-wrapper.zip", payloads)
+    with zipfile.ZipFile(path, "a") as archive:
+        archive.writestr(
+            "Downloaded Buddy/METADATA/PACK.JSON",
+            _archive_payloads()["metadata/pack.json"],
+        )
+
+    with pytest.raises(PersonaVisualImportError):
+        read_buddy_archive(path, prefix="Downloaded Buddy/")
 
 
 @pytest.mark.parametrize("damage", ["checksum", "undeclared", "traversal", "manifest"])

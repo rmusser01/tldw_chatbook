@@ -8,6 +8,7 @@ import json
 import os
 import stat
 import zipfile
+import zlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -21,6 +22,7 @@ from tldw_chatbook.Character_Chat.artwork_attribution import (
     artwork_context,
 )
 from tldw_chatbook.Utils.filesystem_identity import directory_identity_from_stat
+from tldw_chatbook.Utils.path_validation import validate_path_simple
 
 MAX_METADATA_BYTES = 2 * 1024 * 1024
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
@@ -132,7 +134,25 @@ def source_from_bytes(
     notices: str = "",
     guard: Callable[[], bool] = lambda: True,
 ) -> PetdexSource:
-    """Validate supplied art and metadata without fetching any embedded links."""
+    """Validate supplied art and metadata without fetching embedded links.
+
+    Args:
+        metadata: Bounded UTF-8 Petdex metadata JSON.
+        image: Bounded PNG or WebP sprite-sheet bytes.
+        image_name: Relative filename used by the metadata declaration.
+        registry_entry: Optional bounded registry metadata to reconcile with the
+            package metadata.
+        notices: Optional inert source notice text to retain with attribution.
+        guard: Source-currentness callback checked before returning and retained
+            by the immutable result.
+
+    Returns:
+        A validated, immutable Petdex source with normalized artwork metadata.
+
+    Raises:
+        ValueError: Metadata, image, attribution or source-currentness validation
+            fails.
+    """
     document = read_metadata(metadata)
     registry = dict(registry_entry or {})
     _relative(image_name)
@@ -630,13 +650,32 @@ def _zip_source(path: Path) -> PetdexSource:
 
 
 def read_local_package(path: str | os.PathLike[str]) -> PetdexSource:
-    """Read one folder, pet.json, or ZIP without following package links."""
+    """Read one validated local folder, ``pet.json`` or ZIP package.
+
+    Args:
+        path: User-selected local package path. Shared lexical validation runs
+            without resolving links before the no-follow reader admits it.
+
+    Returns:
+        A bounded immutable Petdex source with a retained freshness guard.
+
+    Raises:
+        ValueError: The path is unsafe, the source is linked or changed, or the
+            package, metadata, image, notice or compressed payload is invalid.
+    """
     try:
-        selected = Path(path).absolute()
+        selected = validate_path_simple(path, probe_existing=False).absolute()
         if selected.is_symlink():
             raise _invalid()
         if selected.name == "pet.json":
             selected = selected.parent
         return _folder_source(selected) if selected.is_dir() else _zip_source(selected)
-    except (OSError, UnicodeError, zipfile.BadZipFile, KeyError, RuntimeError):
+    except (
+        OSError,
+        UnicodeError,
+        zipfile.BadZipFile,
+        zlib.error,
+        KeyError,
+        RuntimeError,
+    ):
         raise _invalid() from None

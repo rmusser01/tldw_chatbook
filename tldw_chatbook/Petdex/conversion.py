@@ -254,12 +254,13 @@ def build_petdex_archive(
         source.image_bytes,
     )
     snapshot = BuddySnapshot(
-        source.title,
-        json.dumps(manifest, sort_keys=True, separators=(",", ":")),
-        (asset,),
-        dict(source.artwork),
-        source.source_sha256,
-        source.is_current,
+        title=source.title,
+        manifest_json=json.dumps(manifest, sort_keys=True, separators=(",", ":")),
+        assets=(asset,),
+        artwork=dict(source.artwork),
+        source_sha256=source.source_sha256,
+        _guard=source.is_current,
+        description=source.description,
     )
     output = build_native_buddy_archive(
         snapshot,

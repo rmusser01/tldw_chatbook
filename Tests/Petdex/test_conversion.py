@@ -15,7 +15,7 @@ from tldw_chatbook.Petdex.conversion import (
 from tldw_chatbook.Petdex.sources import source_from_bytes
 
 
-def atlas_source(version=1, *, states=None, size=None):
+def atlas_source(version=1, *, states=None, size=None, description=None):
     dims = size or (96, 13 * (9 if version == 1 else 11))
     output = io.BytesIO()
     with Image.new("RGBA", dims) as image:
@@ -33,6 +33,8 @@ def atlas_source(version=1, *, states=None, size=None):
         "creator": "Original Artist",
         "license": "MIT",
     }
+    if description is not None:
+        metadata["description"] = description
     if states is not None:
         metadata["states"] = states
     return source_from_bytes(
@@ -67,6 +69,16 @@ def test_classic_mapping_preserves_regions_frame_count_and_exact_total(tmp_path)
     assert len(manifest.state_catalog) == 9
     assert snapshot.artwork["creator"] == "Original Artist"
     assert snapshot.assets[0].data == source.image_bytes
+
+
+def test_generated_native_archive_preserves_petdex_description(tmp_path):
+    from tldw_chatbook.Persona_Visual.snapshot import read_buddy_archive
+
+    source = atlas_source(description="A careful description from Petdex.")
+    path = tmp_path / "described.tldw-persona-vpack"
+    path.write_bytes(build_petdex_archive(source))
+
+    assert read_buddy_archive(path).description == source.description
 
 
 def test_undeclared_v2_requires_explicit_manual_rows():

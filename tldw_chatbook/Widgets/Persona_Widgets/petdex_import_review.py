@@ -200,6 +200,30 @@ class PetdexImportReviewDialog(
             or not self.query_one("#petdex-reviewed", Checkbox).value
         )
 
+    async def _reset_source_display(self) -> None:
+        """Clear display state once a replacement source load is committed."""
+        self.source = None
+        self.inspection = None
+        self._prepared = None
+        self._prepared_key = None
+        self._prepared_states = ()
+        self._preview_generation += 1
+        self.query_one("#petdex-reviewed", Checkbox).value = False
+        self.query_one("#petdex-credits", Static).update("No source loaded.")
+        self.query_one("#petdex-layout", Static).update("")
+        self.query_one("#petdex-states", TextArea).load_text("[]")
+        self._set_state_options(())
+        self.query_one("#petdex-warnings", Static).update("")
+        host = self.query_one("#petdex-preview-host", Container)
+        await host.remove_children()
+        if self._current():
+            await host.mount(
+                Static(
+                    "Prepare preview after reviewing states and mappings.",
+                    classes="petdex-copy",
+                )
+            )
+
     @on(TextArea.Changed)
     @on(Checkbox.Changed)
     def _edited(self, event: Any) -> None:
@@ -249,9 +273,11 @@ class PetdexImportReviewDialog(
                 )
                 if not value or not self._current():
                     return
-            self.source = None
-            self._prepared = None
-            self._preview_generation += 1
+            if not self._current():
+                return
+            await self._reset_source_display()
+            if not self._current():
+                return
             self._status("Reading bounded Petdex source…")
             source = (
                 await drain_thread(

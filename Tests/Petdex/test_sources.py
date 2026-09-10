@@ -4,6 +4,7 @@ import io
 import json
 import os
 import zipfile
+import zlib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -112,6 +113,39 @@ def test_capability_fallback_rejects_linked_sources(tmp_path, monkeypatch, kind)
 
     with pytest.raises(ValueError, match="petdex_source_invalid"):
         read_local_package(link)
+
+
+def test_local_package_uses_shared_path_validation_without_resolving_links(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Petdex import sources
+
+    entry = local_package_entry(tmp_path, "zip")
+    calls = []
+
+    def validate(path, *, probe_existing):
+        calls.append((path, probe_existing))
+        return Path(path)
+
+    monkeypatch.setattr(sources, "validate_path_simple", validate, raising=False)
+
+    assert read_local_package(entry).title == "Demo"
+    assert calls == [(entry, False)]
+
+
+def test_corrupt_deflate_error_is_normalized_at_local_package_boundary(
+    tmp_path, monkeypatch
+):
+    entry = local_package_entry(tmp_path, "zip")
+
+    def corrupt_read(*_args, **_kwargs):
+        raise zlib.error("private deflate decoder detail")
+
+    monkeypatch.setattr(zipfile.ZipExtFile, "read", corrupt_read)
+
+    with pytest.raises(ValueError) as failed:
+        read_local_package(entry)
+    assert str(failed.value) == "petdex_source_invalid"
 
 
 @pytest.mark.parametrize(
