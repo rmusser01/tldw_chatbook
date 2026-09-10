@@ -88,4 +88,13 @@ Files: `Library/library_shell_state.py`, `Library/library_ingest_state.py`
 `Tests/UI/test_library_crit9_grammar.py` (new), `Docs/User_Guide/library.md`
 (new "State glyphs" section), `Docs/User_Guide/library/search-and-rag.md`,
 `Docs/User_Guide/library/import-and-export.md`.
+**Fix round 1.** Two guide defects the review found:
+`Docs/User_Guide/library/media-and-conversations.md:190` described the
+disabled marker as "the same ✓/○ pair the ingest toggles use" -- a pair
+this branch retired -- so it now points at the legend instead (that page
+gets its own stamp); and the legend's "each glyph means exactly one thing"
+claim omitted three glyphs the Import queue paints, so `●` (still
+working), `≡` (already in your Library) and `⊘` (cancelled) are now rows in
+it. The carve-out import at `library_ingest_state.py:325` is relative and
+98 chars instead of 190, still one line.
 <!-- SECTION:NOTES:END -->

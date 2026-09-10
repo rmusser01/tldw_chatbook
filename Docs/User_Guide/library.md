@@ -268,6 +268,9 @@ thing, so nothing on the screen relies on colour alone:
 | `█` (leading) | the keyboard cursor | focused list rows, focused evidence cards, the chooser cursor |
 | `☐` / `☑` | selection you toggle | select-mode rows, the Search / RAG **Sources** panel, Import type toggles |
 | `✓` / `✗` / `–` | a settled outcome | Import queue rows, receipts (`–` is "never attempted") |
+| `≡` | already in your Library (a duplicate the import matched) | Import queue rows |
+| `⊘` | cancelled on purpose | Import queue rows |
+| `●` | still working | Import queue rows (queued, parsing, writing) |
 | `▸` / `▾` | disclosure | trailing on a section header, leading on a folder-tree node |
 | `○` | a blocked or disabled action | any greyed action, always beside its reason or tooltip |
 | `✓` (leading, in a chooser) | the active value of a chooser | choice strips, kept toggles ("mode: ✓ Search ⇄ RAG Answer") |

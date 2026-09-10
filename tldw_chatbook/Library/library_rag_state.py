@@ -1194,6 +1194,17 @@ class LibraryRagQueryState:
         """
         return self.run_action.disabled_reason == _NO_SCOPE_DISABLED_REASON
 
+    @property
+    def blocked_is_no_provider(self) -> bool:
+        """True when the run gate's blocker is a missing analysis provider.
+
+        task-32236: the panel offers an "Open Settings ▸ Providers" action
+        for exactly this blocker. It asks the state, like its two siblings
+        above, rather than comparing the rendered callout text -- the copy
+        is free to change without the action following it around.
+        """
+        return self.run_action.disabled_reason == LIBRARY_RAG_NO_PROVIDER_BLOCKED_REASON
+
     @classmethod
     def from_values(
         cls,

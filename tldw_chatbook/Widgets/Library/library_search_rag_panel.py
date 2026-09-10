@@ -25,7 +25,6 @@ from ...Library.library_rag_answer_service import (
     LibraryRagAnswer,
 )
 from ...Library.library_rag_state import (
-    LIBRARY_RAG_NO_PROVIDER_BLOCKED_REASON,
     LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
     LibraryRagPanelState,
     LibraryRagQueryState,
@@ -895,8 +894,12 @@ def _log_query_recovery_record(recovery_copy: str) -> None:
     if not recovery_copy or recovery_copy == _last_logged_query_recovery:
         return
     _last_logged_query_recovery = recovery_copy
+    # `recovery_copy` is Rich-markup escaped for the `Static` it used to be
+    # painted in; the log is not a markup sink, so "\\[api_settings.openai]"
+    # would reach the diagnostic with a backslash in it (review round 1).
     logger.info(
-        "Library Search/RAG blocked: {}", " | ".join(recovery_copy.splitlines())
+        "Library Search/RAG blocked: {}",
+        " | ".join(recovery_copy.replace("\\[", "[").splitlines()),
     )
 
 
@@ -994,7 +997,7 @@ def library_rag_query_status_children(state: LibraryRagPanelState) -> list[Widge
                 classes="library-rag-callout is-blocked",
             )
         )
-        if reason == LIBRARY_RAG_NO_PROVIDER_BLOCKED_REASON:
+        if query_state.blocked_is_no_provider:
             children.append(
                 Button(
                     "Open Settings ▸ Providers",

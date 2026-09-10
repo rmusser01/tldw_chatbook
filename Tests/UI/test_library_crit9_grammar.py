@@ -21,6 +21,15 @@ from Tests.UI.test_destination_shells import (
 )
 from Tests.UI.test_library_content_hub import _wait_for_library_shell_ready
 
+def _painted(host, region) -> str:
+    """Return what the terminal actually shows inside ``region``."""
+    strips = list(host.screen._compositor.render_strips())
+    return "\n".join(
+        strips[y].crop(region.x, region.right).text
+        for y in range(region.y, min(region.bottom, len(strips)))
+    )
+
+
 _CREDENTIAL_RECOVERY = (
     "Set OPENAI_API_KEY or add api_key under [api_settings.openai]."
 )
@@ -130,11 +139,16 @@ async def test_the_sources_panel_paints_checkboxes_at_both_sizes(size) -> None:
 
         notes = screen.query_one("#library-rag-scope-toggle-notes", Button)
         assert str(notes.label) == "☑ Notes (1)"
+        # Painted, not just the label: at 100 columns the Sources pane is
+        # narrow enough to truncate, and a legend nobody can see is no
+        # legend (review round 1).
+        assert "☑ Notes (1)" in _painted(host, notes.region)
         notes.press()
         await pilot.pause()
         await _wait_for_selector(screen, pilot, "#library-rag-scope-toggle-notes")
         notes = screen.query_one("#library-rag-scope-toggle-notes", Button)
         assert str(notes.label) == "☐ Notes (1)"
+        assert "☐ Notes (1)" in _painted(host, notes.region)
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +208,7 @@ def test_the_structured_record_survives_in_the_log() -> None:
     state = _blocked_state()
     assert "Owner: LLM provider credential." in state.query_state.recovery_copy
 
+    previously_logged = panel._last_logged_query_recovery
     panel._last_logged_query_recovery = ""
     records: list[str] = []
     sink = logger.add(lambda message: records.append(message), level="INFO")
@@ -204,9 +219,14 @@ def test_the_structured_record_survives_in_the_log() -> None:
         panel.library_rag_query_status_children(state)
     finally:
         logger.remove(sink)
+        panel._last_logged_query_recovery = previously_logged
 
     assert any("LLM provider credential" in record for record in records), records
     assert len(records) == logged_once, records
+    # The log is not a Rich-markup sink: the escape the retired `Static`
+    # needed must not reach the diagnostic (review round 1).
+    assert any("[api_settings.openai]" in record for record in records), records
+    assert not any("\\[api_settings" in record for record in records), records
 
 
 def test_a_quiet_gate_still_renders_no_callout_at_all() -> None:
@@ -325,3 +345,61 @@ async def test_ctrl_a_selects_the_whole_file_name(tmp_path) -> None:
         await pilot.press("ctrl+a")
         await pilot.pause()
         assert tuple(field.selection) == (0, len("report.zip"))
+
+
+@pytest.mark.asyncio
+async def test_a_missing_provider_key_paints_one_line_and_no_owner_block(
+    monkeypatch,
+) -> None:
+    """AC#2, on the PAINTED canvas -- not on the builder's return value.
+
+    The panel carries a second `Static` that renders the same
+    `recovery_copy` when a state sets `recovery_selector`. Today the query
+    gate never sets one, so the Owner/Why/Recovery block is genuinely off
+    screen -- but only a painted assertion can notice if that changes.
+    """
+    from tldw_chatbook.Library.library_rag_answer_service import (
+        LibraryRagProviderGate,
+    )
+    from tldw_chatbook.UI.Screens import library_screen as library_screen_module
+
+    monkeypatch.setattr(
+        library_screen_module,
+        "library_rag_answer_provider_gate",
+        lambda: LibraryRagProviderGate(
+            provider=None, credential_recovery=_CREDENTIAL_RECOVERY
+        ),
+    )
+
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService(
+        [{"title": "Research Note", "id": "note-1"}]
+    )
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+        screen.query_one("#library-row-browse-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+
+        # RAG Answer mode is the only one that calls a provider.
+        screen.query_one("#library-rag-mode-toggle", Button).press()
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+        screen.query_one("#library-rag-query-input", Input).value = "anything"
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#library-rag-query-blocked-callout")
+
+        callout = screen.query_one("#library-rag-query-blocked-callout", Static)
+        assert str(callout.renderable) == _BLOCKED_REASON
+        assert _BLOCKED_REASON.split(" · ")[0] in _painted(host, callout.region)
+        assert not screen.query("#library-rag-query-recovery")
+        assert screen.query_one("#library-rag-open-provider-settings", Button)
+
+        panel = screen.query_one("#library-search-rag-panel")
+        painted = _painted(host, panel.region)
+        for banned in ("Owner:", "Recovery:", "Why:", "OPENAI_API_KEY", "api_settings"):
+            assert banned not in painted, painted

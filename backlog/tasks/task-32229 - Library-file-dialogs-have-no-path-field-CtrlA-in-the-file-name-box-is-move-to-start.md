@@ -67,4 +67,11 @@ runs reproduce on unpatched dev and shift names between runs (host under
 load). Live-verified in the export destination picker: typed
 `/Users/macbook-dev/Documents` and `~/Downloads`, breadcrumb followed both;
 Ctrl+A replaced the pre-filled bundle name.
+**Fix round 1.** The new handler's `except Exception` around `query_one`
+is now `except NoMatches`; rooted-ness is tested on the stripped value
+while the RAW value goes to `resolve_typed_directory`, whose docstring
+makes leading/trailing spaces significant (a directory whose name ends in
+a space was unreachable); and the vendored package's own ledger
+(`Third_Party/textual_fspicker/ENHANCEMENTS.md`) gains section 7 covering
+this change and task-32122's label flip, which was also missing.
 <!-- SECTION:NOTES:END -->

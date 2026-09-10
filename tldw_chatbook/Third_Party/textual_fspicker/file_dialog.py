@@ -14,6 +14,7 @@ from pathlib import Path
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.css.query import NoMatches
 from textual.events import Mount
 from textual.widgets import Button, Input, Label, Select
 
@@ -229,17 +230,25 @@ class BaseFileDialog(FileSystemPickerScreen):
         """
         try:
             bar_input = self.query_one(InputBar).query_one(Input)
-        except Exception:
+        except NoMatches:
             return
         if event.input is not bar_input:
             # The screen's hidden Ctrl+L path bar and Ctrl+F search box are
             # `Input`s too -- see `_update_field_label`.
             return
-        value = event.value.strip()
-        if not value.startswith(("~", "/")) and not Path(value).is_absolute():
+        # Rooted-ness is decided on the stripped value; the RAW value is what
+        # the resolver gets. Leading/trailing spaces are significant in a
+        # POSIX directory name and `resolve_typed_directory` documents that
+        # it takes the text exactly as typed (review round 1).
+        typed = event.value.strip()
+        try:
+            rooted = typed.startswith("~") or MakePath.of(typed).is_absolute()
+        except (OSError, ValueError):
+            return
+        if not rooted:
             return
         navigation = self.query_one(DirectoryNavigation)
-        target = resolve_typed_directory(value, navigation.location)
+        target = resolve_typed_directory(event.value, navigation.location)
         if isinstance(target, Path) and target != navigation.location:
             navigation.location = target
 
