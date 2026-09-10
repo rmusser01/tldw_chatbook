@@ -605,6 +605,30 @@ class TestChatbookCreator:
         assert not output_path.exists()
         assert dependency_info["missing_dependencies"] == []
 
+    def test_media_only_selection_with_media_disabled_is_not_a_success(
+        self, chatbook_creator, tmp_path
+    ):
+        """PR #2568 review: ``ChatbookCreationWindow`` lets a user select only
+        media while leaving "Include media files" unchecked. The creator then
+        skips the media collector entirely, so the archive would hold README +
+        an empty manifest -- the exact empty-bundle-reported-as-success shape
+        task-32232 closes. The selection counts as requested regardless of the
+        flag."""
+        output_path = tmp_path / "media_only_flag_off.zip"
+
+        success, message, dependency_info = chatbook_creator.create_chatbook(
+            name="Media Only",
+            description="Media selected, media collection disabled",
+            content_selections={ContentType.MEDIA: ["1", "2"]},
+            output_path=output_path,
+            include_media=False,
+        )
+
+        assert success is False
+        assert "none of the 2 selected items" in message
+        assert dependency_info["empty_export_requested"] == 2
+        assert not output_path.exists()
+
     @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
     def test_create_chatbook_preserves_conversation_citation_artifacts(
         self,

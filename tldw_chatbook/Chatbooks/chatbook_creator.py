@@ -135,6 +135,13 @@ class ChatbookExportEmptyError(RuntimeError):
     """
 
     def __init__(self, requested: int) -> None:
+        """Build the error for a selection that collected nothing.
+
+        Args:
+            requested: How many items the run had selected -- every one of
+                which failed to collect. Always >= 1: the guard that raises
+                this never fires for an empty selection.
+        """
         self.requested = requested
         super().__init__(
             f"Export produced no content: none of the {requested} selected "
@@ -436,11 +443,16 @@ class ChatbookCreator:
             # success -- the data-loss shape this guard closes. A PARTIAL
             # collection still succeeds (the archive genuinely holds
             # content); only "asked for N, collected 0" fails.
+            #
+            # Selected media counts as requested even when ``include_media``
+            # is False (PR #2568 review): ``ChatbookCreationWindow`` lets a
+            # user select only media with "Include media files" unchecked,
+            # and skipping the collector under that flag is not a reason to
+            # call the resulting empty archive a success.
             requested_items = sum(
                 len(ids)
                 for content_type, ids in content_selections.items()
                 if content_type in _COLLECTED_CONTENT_TYPES
-                and (include_media or content_type is not ContentType.MEDIA)
             )
             if requested_items and not manifest.content_items:
                 raise ChatbookExportEmptyError(requested_items)
