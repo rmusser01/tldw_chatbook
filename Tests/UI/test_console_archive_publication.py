@@ -74,13 +74,21 @@ async def test_resume_losing_console_visibility_retains_intent_without_activatio
         HandoffChannel.CONSOLE_CONVERSATION_RESUME, ConsoleConversationResumeIntent("c")
     )
     activated = []
+    hydrated = []
     screen = SimpleNamespace(
-        app_instance=SimpleNamespace(pending_handoffs=handoffs, notify=Mock()),
+        app_instance=SimpleNamespace(
+            pending_handoffs=handoffs,
+            notify=Mock(),
+            local_chat_conversation_service=SimpleNamespace(
+                get_conversation_metadata=lambda cid: {"id": cid, "archived": False}
+            ),
+        ),
         _ensure_console_chat_store=lambda: SimpleNamespace(sessions=list),
     )
     screen.app = SimpleNamespace(screen=screen)
 
     async def hydrate(cid, *, resume_if, **kwargs):
+        hydrated.append(cid)
         screen.app.screen = object()
         if resume_if():
             activated.append(cid)
@@ -90,4 +98,5 @@ async def test_resume_losing_console_visibility_retains_intent_without_activatio
     screen._workspace = SimpleNamespace(_resume_console_workspace_conversation=hydrate)
     await consume_conversation_resume(screen)
     assert activated == []
+    assert hydrated == ["c"]
     assert handoffs.has_pending(HandoffChannel.CONSOLE_CONVERSATION_RESUME)

@@ -175,4 +175,6 @@ class LibraryConversationRecovery:
                 output.append(row)
             return tuple(output)
 
+        if getattr(getattr(registry, "db", None), "is_memory_db", False):
+            return enrich()
         return await asyncio.to_thread(enrich)

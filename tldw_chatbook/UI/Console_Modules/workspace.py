@@ -4170,7 +4170,11 @@ class ConsoleWorkspaceController:
         )
 
     def _restore_console_workspace(
-        self, workspace_id: str, *, rename: bool = False
+        self,
+        workspace_id: str,
+        *,
+        rename: bool = False,
+        expected_record: WorkspaceRecord | None = None,
     ) -> None:
         """Restore asynchronously without changing active workspace or session."""
         from tldw_chatbook.Chat.conversation_archive_actions import storage_call
@@ -4245,6 +4249,13 @@ class ConsoleWorkspaceController:
                 _failed(exc)
                 return
             if not _current():
+                return
+            if expected_record is not None and record != expected_record:
+                self.app_instance.notify(
+                    "Workspace changed since archive. Review it in Show archived before restoring.",
+                    severity="warning",
+                )
+                self._open_console_workspace_switcher(show_archived=True)
                 return
             if record is None or not record.archived:
                 self.app_instance.notify(
@@ -4383,15 +4394,9 @@ class ConsoleWorkspaceController:
             if action == "view":
                 self._open_console_workspace_switcher(show_archived=True)
             elif action == "undo":
-                current = registry_service.get_workspace(workspace_id)
-                if current != archived_record:
-                    self.app_instance.notify(
-                        "Workspace changed since archive. Review it in Show archived before restoring.",
-                        severity="warning",
-                    )
-                    self._open_console_workspace_switcher(show_archived=True)
-                    return
-                self._restore_console_workspace(workspace_id)
+                self._restore_console_workspace(
+                    workspace_id, expected_record=archived_record
+                )
 
         async def _after_archive(confirmed: bool | None) -> None:
             if confirmed and archived_record is not None:

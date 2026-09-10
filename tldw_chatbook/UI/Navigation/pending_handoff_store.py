@@ -59,13 +59,9 @@ class ConsoleConversationResumeIntent:
     conversation_id: str
 
     def __post_init__(self) -> None:
-        if (
-            type(self.conversation_id) is not str
-            or not self.conversation_id
-            or self.conversation_id != self.conversation_id.strip()
-            or len(self.conversation_id) > 256
-        ):
-            raise ValueError("Console conversation identity is invalid")
+        from ...Utils.input_validation import validate_conversation_resume_id
+
+        validate_conversation_resume_id(self.conversation_id)
 
 
 @dataclass(frozen=True, slots=True)

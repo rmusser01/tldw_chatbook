@@ -368,7 +368,9 @@ async def test_existing_resume_rechecks_durable_archive_before_activation(
     await archive.consume_conversation_resume(screen)
     if archived:
         activate.assert_not_called()
-        request.assert_awaited_once_with(app, "chat-a")
+        assert request.await_count == 1
+        assert request.await_args.args == (app, "chat-a")
+        assert callable(request.await_args.kwargs["request_if"])
         assert app.pending_handoffs.claim(channel) is not None
     else:
         activate.assert_awaited_once()
@@ -387,3 +389,62 @@ async def test_initially_active_resume_revalidates_before_staging():
     app.post_message.assert_not_called()
     assert app.pending_handoffs.claim(HandoffChannel.CONSOLE_CONVERSATION_RESUME) is None
     assert "changed" in app.notify.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_cold_resume_checks_archive_before_hydration(monkeypatch):
+    app, _row, workspace = recovery_app()
+    workspace.archived = False
+    screen = SimpleNamespace(app_instance=app)
+    screen.app = SimpleNamespace(screen=screen)
+    screen._ensure_console_chat_store = lambda: SimpleNamespace(sessions=list)
+    hydrate = AsyncMock(return_value=True)
+    screen._workspace = SimpleNamespace(_resume_console_workspace_conversation=hydrate)
+    request = AsyncMock()
+    monkeypatch.setattr(archive, "request_conversation_resume", request)
+    channel = HandoffChannel.CONSOLE_CONVERSATION_RESUME
+    app.pending_handoffs.stage(channel, ConsoleConversationResumeIntent("chat-a"))
+    await archive.consume_conversation_resume(screen)
+    hydrate.assert_not_called()
+    assert request.await_args.args == (app, "chat-a")
+    assert app.pending_handoffs.claim(channel) is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("superseded_at", ["confirmation", "restore"])
+async def test_older_restore_confirmation_cannot_replace_newer_resume(
+    monkeypatch, superseded_at
+):
+    app, _row, workspace = recovery_app()
+    workspace.archived = False
+    screen = SimpleNamespace(app_instance=app)
+    screen.app = SimpleNamespace(screen=screen)
+    screen._ensure_console_chat_store = lambda: SimpleNamespace(
+        sessions=lambda: [
+            SimpleNamespace(id="open", persisted_conversation_id="chat-a")
+        ]
+    )
+    screen._session = SimpleNamespace(_activate_native_console_session=AsyncMock())
+    change = AsyncMock(return_value={"changed": {"chat-a": 5}, "failures": {}})
+    monkeypatch.setattr(archive, "change_conversation_archive", change)
+    channel = HandoffChannel.CONSOLE_CONVERSATION_RESUME
+    app.pending_handoffs.stage(channel, ConsoleConversationResumeIntent("chat-a"))
+    await archive.consume_conversation_resume(screen)
+    if superseded_at == "confirmation":
+        app.pending_handoffs.stage(channel, ConsoleConversationResumeIntent("newer"))
+    else:
+
+        async def finish_old_restore(*args, **kwargs):
+            app.pending_handoffs.stage(
+                channel, ConsoleConversationResumeIntent("newer")
+            )
+            return {"changed": {"chat-a": 5}, "failures": {}}
+
+        change.side_effect = finish_old_restore
+    await confirm_recovery(app)
+    assert app.pending_handoffs.claim(channel).value.conversation_id == "newer"
+    app.post_message.assert_not_called()
+    if superseded_at == "confirmation":
+        change.assert_not_called()
+    else:
+        change.assert_awaited_once()

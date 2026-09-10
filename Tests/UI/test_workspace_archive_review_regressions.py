@@ -398,3 +398,52 @@ async def test_cancelled_recovery_worker_completes_started_storage_write(surface
     else:
         assert settings._settings_workspace_archive_receipt is None
         settings._refresh_settings_workspaces_pane.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_console_receipt_undo_read_failure_has_async_recovery():
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.Workspaces.registry_service import WorkspaceRegistryServiceError
+
+    record = SimpleNamespace(
+        workspace_id="w", active=False, archived=False, name="Workspace"
+    )
+    receipt = SimpleNamespace(
+        workspace_id="w", active=False, archived=True, name="Workspace"
+    )
+    registry = SimpleNamespace(
+        get_workspace=Mock(return_value=record),
+        archive_workspace=Mock(return_value=receipt),
+        unarchive_workspace=Mock(),
+    )
+    controller, tasks = _recovery_host(registry)
+    controller._sync_console_chat_core_state = Mock()
+    controller._sync_native_console_chat_ui = AsyncMock()
+    controller._restore_console_workspace = lambda *a, **kw: (
+        ConsoleWorkspaceController._restore_console_workspace(controller, *a, **kw)
+    )
+    dialogs = []
+
+    def push(modal, **kwargs):
+        dialogs.append((modal, kwargs))
+        done = asyncio.get_running_loop().create_future()
+        done.set_result(None)
+        return done
+
+    controller.push_screen = push
+    ConsoleWorkspaceController._confirm_console_workspace_archive(controller, "w")
+    await dialogs[0][0].confirm_callback()
+    await dialogs[0][1]["callback"](True)
+    registry.get_workspace.side_effect = WorkspaceRegistryServiceError(
+        "storage unavailable"
+    )
+    dialogs[1][1]["callback"]("undo")
+    for task in tasks:
+        await task
+    assert "retry" in controller.app_instance.notify.call_args.args[0].lower()
+    controller._open_console_workspace_switcher.assert_called_once_with(
+        show_archived=True
+    )
+    registry.unarchive_workspace.assert_not_called()

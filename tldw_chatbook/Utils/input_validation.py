@@ -102,6 +102,40 @@ def validate_reasoning_history_selector(
         raise ValueError("reasoning history selector value is invalid") from None
 
 
+class ConversationResumeInput(BaseModel):
+    """Strict exact identity accepted by Console resume navigation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    conversation_id: str = Field(min_length=1, max_length=256)
+
+    @field_validator("conversation_id", mode="before")
+    @classmethod
+    def _exact_identity(cls, value: object) -> str:
+        if type(value) is not str or value != value.strip():
+            raise ValueError("Console conversation identity is invalid")
+        return value
+
+
+def validate_conversation_resume_id(value: object) -> str:
+    """Validate an exact persisted identity without normalizing its spelling.
+
+    Args:
+        value: Conversation identity received at a navigation boundary.
+
+    Returns:
+        The unchanged nonblank identity, at most 256 characters.
+
+    Raises:
+        ValueError: If the type, whitespace or length violates the contract.
+    """
+    try:
+        return ConversationResumeInput.model_validate(
+            {"conversation_id": value}
+        ).conversation_id
+    except PydanticValidationError:
+        raise ValueError("Console conversation identity is invalid") from None
+
+
 class ConversationArchiveScopeInput(BaseModel):
     """Strict shared scope for local conversation lifecycle queries."""
 

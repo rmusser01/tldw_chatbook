@@ -236,7 +236,13 @@ async def test_newer_resume_is_drained_when_staged_during_previous_load():
         return True
 
     screen = SimpleNamespace(
-        app_instance=SimpleNamespace(pending_handoffs=handoffs, notify=Mock()),
+        app_instance=SimpleNamespace(
+            pending_handoffs=handoffs,
+            notify=Mock(),
+            local_chat_conversation_service=SimpleNamespace(
+                get_conversation_metadata=lambda cid: {"id": cid, "archived": False}
+            ),
+        ),
         _ensure_console_chat_store=lambda: SimpleNamespace(sessions=list),
         _session=SimpleNamespace(_activate_native_console_session=AsyncMock()),
         _workspace=SimpleNamespace(_resume_console_workspace_conversation=hydrate),

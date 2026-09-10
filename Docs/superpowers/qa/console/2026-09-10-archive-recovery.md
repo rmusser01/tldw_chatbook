@@ -90,3 +90,9 @@ Evidence: six initial database/receipt/Unicode regression cases failed before fi
 ### Latest-dev Backlog collision
 
 Backlog Guard found two TASK-32273 records after the reasoning-history rebase. Preserved the landed reasoning task and renumbered this PR's unmerged archive lifecycle record to TASK-32300, carrying provenance and updating its plan/ADR references. The other archive records remain TASK-32274–32276. This is task metadata only; no runtime behavior changed.
+
+### Fourth Qodo review
+
+Six further findings are addressed: resume intent IDs use the shared Pydantic boundary without changing their exact spelling policy; in-memory workspace enrichment stays on the SQLite owning thread; the persisted-session close test confirms the action and proves the original SQLite conversation/message remain available. Both warm and cold resume paths reread conversation/workspace lifecycle state. Recovery callbacks carry a revision guard and request token through confirmation and storage completion so an older restore cannot replace or navigate over a newer Resume. Console archive-receipt Undo delegates to the same async, error-handled restore path with an expected-record check.
+
+Evidence: three focused regressions failed before fixes and then passed. The final focused suite passed 99 tests; both confirmation-time and write-completion supersession cases pass (2-case run, including one added case). Confirmed close with real SQLite passed, and 14 mounted Console archive/workspace lifecycle tests passed. Read-error receipt recovery is covered through the actual receipt callback; memory-backed enrichment is tested using WorkspaceDB(":memory:"). Scoped lint/format/whitespace checks pass; persistent diagnostic inventory verifies without regeneration. Existing ADR147 remains the governing design.

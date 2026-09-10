@@ -177,3 +177,28 @@ async def test_reader_discloses_workspace_restore_on_compose_and_sync():
         assert str(button.label) == "Resume conversation"
         reader.sync_state(reader.state, loaded_metadata={"workspace_archived": True})
         assert str(button.label) == "Restore and resume"
+
+
+@pytest.mark.asyncio
+async def test_annotate_supports_memory_workspace_storage():
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.UI.Library_Modules.library_conversation_recovery import (
+        LibraryConversationRecovery,
+    )
+    from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+
+    db = WorkspaceDB(":memory:", client_id="archive-memory")
+    registry = LocalWorkspaceRegistryService(db)
+    registry.create_workspace(workspace_id="w", name="Memory workspace")
+    registry.archive_workspace("w")
+    recovery = LibraryConversationRecovery(
+        SimpleNamespace(
+            app_instance=SimpleNamespace(workspace_registry_service=registry)
+        )
+    )
+    try:
+        rows = await recovery.annotate(({"id": "chat", "workspace_id": "w"},))
+        assert rows[0]["workspace_name"] == "Memory workspace"
+        assert rows[0]["workspace_archived"] is True
+    finally:
+        db.close()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from typing import Any
 
 from loguru import logger
@@ -20,8 +21,26 @@ from ...UI.Navigation.pending_handoff_store import (
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 
 
-async def request_conversation_resume(app: Any, conversation_id: str) -> None:
-    """Restore with explicit scope disclosure, then navigate using a typed ID."""
+async def request_conversation_resume(
+    app: Any, conversation_id: str, *, request_if: Callable[[], bool] | None = None
+) -> None:
+    """Restore with explicit scope disclosure while this request still owns recovery.
+
+    Args:
+        app: Application owning storage, recovery dialogs and pending handoffs.
+        conversation_id: Exact local conversation identity.
+        request_if: Optional revision guard retained by a claimed resume retry.
+    """
+    if request_if is not None and not request_if():
+        return
+    request_token = object()
+    app._console_conversation_resume_request = request_token
+
+    def request_current() -> bool:
+        return app._console_conversation_resume_request is request_token and (
+            request_if is None or request_if()
+        )
+
     intent = None
     try:
         intent = ConsoleConversationResumeIntent(conversation_id)
@@ -35,6 +54,8 @@ async def request_conversation_resume(app: Any, conversation_id: str) -> None:
             "Could not read this conversation. Refresh Library and try Resume again.",
             severity="error",
         )
+        return
+    if not request_current():
         return
     if not row:
         app.notify("This conversation is no longer available.", severity="warning")
@@ -57,7 +78,12 @@ async def request_conversation_resume(app: Any, conversation_id: str) -> None:
         )
         return
 
+    if not request_current():
+        return
+
     async def proceed(replacement_name: str | None = None) -> None:
+        if not request_current():
+            return
         workspace_restored = False
         conversation_restored = False
         try:
@@ -66,6 +92,8 @@ async def request_conversation_resume(app: Any, conversation_id: str) -> None:
             current_row = await storage_call(
                 service, "get_conversation_metadata", conversation_id
             )
+            if not request_current():
+                return
             if (
                 not current_row
                 or current_row.get("version") != row.get("version")
@@ -81,6 +109,8 @@ async def request_conversation_resume(app: Any, conversation_id: str) -> None:
                 current_workspace = await storage_call(
                     registry, "get_workspace", workspace_id
                 )
+                if not request_current():
+                    return
                 if current_workspace is None:
                     app.notify(
                         "This workspace is no longer available. Refresh Library and try Resume again.",
@@ -89,6 +119,8 @@ async def request_conversation_resume(app: Any, conversation_id: str) -> None:
                     return
                 if current_workspace.archived:
                     active_workspaces = await storage_call(registry, "list_workspaces")
+                    if not request_current():
+                        return
                     target_name = replacement_name or current_workspace.name
                     if any(
                         item.name.casefold() == target_name.casefold()
@@ -124,6 +156,8 @@ async def request_conversation_resume(app: Any, conversation_id: str) -> None:
                         name=replacement_name,
                     )
                     workspace_restored = True
+                    if not request_current():
+                        return
             if row.get("archived"):
                 result = await change_conversation_archive(
                     app,
@@ -131,6 +165,8 @@ async def request_conversation_resume(app: Any, conversation_id: str) -> None:
                     archived=False,
                     expected_versions={conversation_id: row["version"]},
                 )
+                if not request_current():
+                    return
                 if conversation_id not in result["changed"]:
                     app.notify(
                         ("Workspace restored. " if workspace_restored else "")
@@ -139,6 +175,8 @@ async def request_conversation_resume(app: Any, conversation_id: str) -> None:
                     )
                     return
                 conversation_restored = True
+            if not request_current():
+                return
             app.pending_handoffs.stage(
                 HandoffChannel.CONSOLE_CONVERSATION_RESUME, intent
             )
@@ -209,47 +247,50 @@ async def consume_conversation_resume(screen: Any) -> None:
             def resume_is_current() -> bool:
                 return screen.app.screen is screen and handoffs.is_current_claim(claim)
 
-            if existing is not None:
-                row = await storage_call(
-                    local_conversation_service(screen.app_instance),
-                    "get_conversation_metadata",
+            row = await storage_call(
+                local_conversation_service(screen.app_instance),
+                "get_conversation_metadata",
+                conversation_id,
+            )
+            if not resume_is_current():
+                handoffs.release(claim)
+                return
+            if not row:
+                handoffs.release(claim)
+                screen.app_instance.notify(
+                    "This conversation is no longer available. Refresh Library.",
+                    severity="warning",
+                )
+                return
+            workspace_id = row.get("workspace_id")
+            registry = getattr(screen.app_instance, "workspace_registry_service", None)
+            workspace = (
+                await storage_call(registry, "get_workspace", workspace_id)
+                if workspace_id and registry is not None
+                else None
+            )
+            if not resume_is_current():
+                handoffs.release(claim)
+                return
+            if row.get("archived") or (workspace and workspace.archived):
+                handoffs.release(claim)
+                await request_conversation_resume(
+                    screen.app_instance,
                     conversation_id,
+                    request_if=lambda: (
+                        handoffs.exact_revision_status(channel, claim.revision)
+                        == "pending"
+                    ),
                 )
-                if not resume_is_current():
-                    handoffs.release(claim)
-                    return
-                if not row:
-                    handoffs.release(claim)
-                    screen.app_instance.notify(
-                        "This conversation is no longer available. Refresh Library.",
-                        severity="warning",
-                    )
-                    return
-                workspace_id = row.get("workspace_id")
-                registry = getattr(
-                    screen.app_instance, "workspace_registry_service", None
+                return
+            if workspace_id and workspace is None:
+                handoffs.release(claim)
+                screen.app_instance.notify(
+                    "This workspace is no longer available. Refresh Library.",
+                    severity="warning",
                 )
-                workspace = (
-                    await storage_call(registry, "get_workspace", workspace_id)
-                    if workspace_id and registry is not None
-                    else None
-                )
-                if not resume_is_current():
-                    handoffs.release(claim)
-                    return
-                if row.get("archived") or (workspace and workspace.archived):
-                    handoffs.release(claim)
-                    await request_conversation_resume(
-                        screen.app_instance, conversation_id
-                    )
-                    return
-                if workspace_id and workspace is None:
-                    handoffs.release(claim)
-                    screen.app_instance.notify(
-                        "This workspace is no longer available. Refresh Library.",
-                        severity="warning",
-                    )
-                    return
+                return
+            if existing is not None:
                 await screen._session._activate_native_console_session(
                     existing.id, activate_if=resume_is_current
                 )
