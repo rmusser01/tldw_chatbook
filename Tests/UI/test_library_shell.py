@@ -35225,15 +35225,22 @@ async def test_background_recompose_restores_focus_on_a_filtered_empty_media_lis
     nothing, and standing the screen-level seam down for it left a
     background recompose inside the settle window with no focused widget.
 
-    task-32213 (critique #9 row 10) changed this page's premise for the
-    better -- the miss page now keeps its toolbar, so
-    ``#library-media-type-filter`` is always composed and the channel
-    always has somewhere to land. What is pinned here is unchanged and is
-    the part that mattered: after a background recompose inside the armed
-    window, SOMETHING attached inside ``#screen-content`` holds focus. The
-    stricter "the channel cannot land at all" leg is pinned by
-    ``test_background_recompose_restores_focus_on_an_empty_conversations_list``
-    directly above, whose empty list composes no row to land on.
+    task-32213 (critique #9 row 10) removed this test's premise: the miss
+    page now keeps its toolbar, so ``#library-media-type-filter`` is
+    always composed and the Media channel always has somewhere to land.
+    What is still pinned here is the part that mattered -- after a
+    background recompose inside the armed window, SOMETHING attached
+    inside ``#screen-content`` holds focus.
+
+    The strict "the Media channel cannot land at all" leg is now
+    UNPINNED. The Conversations sibling directly above does not cover it:
+    that one stands down at ``library_screen.py``'s row-class lookup
+    (Conversations is absent from ``_LIBRARY_LIST_ROW_CLASS_BY_ROW_ID``),
+    a different branch from the media-specific
+    ``_library_media_empty_list_fallback_target() is None`` leg. Re-pinning
+    it needs a Media page that composes no enabled fallback at all -- an
+    empty list with the type or sort chooser OPEN is the remaining one,
+    because the chooser replaces the toolbar row. Tracked as a rider.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())

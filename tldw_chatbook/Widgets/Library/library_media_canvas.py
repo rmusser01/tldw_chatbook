@@ -80,6 +80,13 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 _MEDIA_ROW_COMPACT_HEIGHT = 1
 _MEDIA_ROW_WIDE_HEIGHT = 2
 
+#: task-32213 review, finding 4: the F-018 reason for a "Review these" with
+#: no rows behind it. Reason then next step, on one line, like the rest of
+#: this canvas's disabled tooltips.
+LIBRARY_MEDIA_REVIEW_EMPTY_TOOLTIP = (
+    "Nothing here to review · clear the filter or pick another type."
+)
+
 # task-30043 (critique 2026-09-03 P1): the items pane sits at ~40-44 cols in
 # EVERY real shell layout (3-pane reading shell AND the compact stage), so a
 # single six-button row can never render its labels there -- live capture
@@ -1148,13 +1155,26 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # task-28242: "Review these" pins the WHOLE filtered result as an
         # ordered review set and walks it in the Reader. A list-level
         # action, hidden in select mode like Export/Trash.
+        # task-32213 review, finding 4: with the toolbar now surviving a
+        # 0-result page, "Review these" would paint live next to a
+        # "○ Select" that says there is nothing to select -- and pressing
+        # it only raised a toast ("No media items to review."). A state
+        # that cannot act says so ON the control, in this canvas's own
+        # grammar (the "○" marker plus an F-018 reason), never only in a
+        # toast. Same predicate as ``select_disabled`` below.
+        review_disabled = rendered_count == 0
         review_btn = Button(
-            "Review these",
+            library_disabled_action_label("Review these", review_disabled),
             id="library-media-review",
             classes="library-canvas-action",
             compact=True,
-            tooltip="Review every item in this list, one by one.",
+            tooltip=(
+                LIBRARY_MEDIA_REVIEW_EMPTY_TOOLTIP
+                if review_disabled
+                else "Review every item in this list, one by one."
+            ),
         )
+        review_btn.disabled = review_disabled
         review_btn.display = not select_mode
         # task-31960: "Review these" pins the WHOLE filtered list, exactly
         # like "Export…" -- so it takes the same failed-list gate, in the

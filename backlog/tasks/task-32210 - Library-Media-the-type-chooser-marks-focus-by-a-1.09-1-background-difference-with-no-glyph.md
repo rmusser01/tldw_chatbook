@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-09-10 14:52'
-updated_date: '2026-09-10 17:32'
+updated_date: '2026-09-10 19:23'
 labels:
   - library
   - media
@@ -40,5 +40,5 @@ In the type chooser the focused row is background rgb(30,30,30) against rgb(39,3
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-LibraryChoiceOptionList in tldw_chatbook/Widgets/Library/library_choice_strip.py keeps the house `█ ` cursor on exactly the highlighted option's prompt, on mount and on every highlighted change; both media choosers (#library-media-type-choices, #library-media-sort-choices) now construct it. CSS cannot do this -- option-list--option-highlighted is a Rich style, so it can recolour an option but not add a glyph -- hence the prompt rewrite; Option._set_prompt mutates in place so each option's choice_value payload survives, and the ✓ active marker is untouched (the highlighted active option reads '█ ✓ All types'). Four prompt-reading assertions in Tests/UI/test_library_choice_strips.py moved to the new exact strings. New tests: Tests/UI/test_library_crit9_media_list.py (painted-cell + prompt-set on both choosers, plus a choice_value round-trip). Live: 235x52 and 100x30 on the seeded power profile, the bar following each Down and never on two rows. Files: library_choice_strip.py, library_media_canvas.py, test_library_crit9_media_list.py, test_library_choice_strips.py, Docs/User_Guide/library/media-and-conversations.md.
+LibraryChoiceOptionList in tldw_chatbook/Widgets/Library/library_choice_strip.py keeps the house `█ ` cursor on exactly the highlighted option's prompt, on mount and on every highlighted change; both media choosers (#library-media-type-choices, #library-media-sort-choices) now construct it. CSS cannot do this -- option-list--option-highlighted is a Rich style, so it can recolour an option but not add a glyph -- hence the prompt rewrite; Option._set_prompt mutates in place so each option's choice_value payload survives, and the ✓ active marker is untouched (the highlighted active option reads '█ ✓ All types'). The on_mount override deliberately does NOT call super(): Textual dispatches every on_mount in the MRO subclass-first, so OptionList.on_mount's _update_lines() runs anyway and runs after this paint -- calling it explicitly double-fires it and trips Tests/UI/test_on_mount_mro_convention.py (backlog/docs/lessons-textual.md). Four prompt-reading assertions in Tests/UI/test_library_choice_strips.py moved to the new exact strings. New tests: Tests/UI/test_library_crit9_media_list.py -- the painted-cell leg asserts the bar reaches exactly ONE painted row, at the highlighted index, so absence is pinned in the paint and not only in the prompts. Live: 235x52 and 100x30 on the seeded power profile, the bar following each Down and never on two rows. Files: library_choice_strip.py, library_media_canvas.py, test_library_crit9_media_list.py, test_library_choice_strips.py, Docs/User_Guide/library/media-and-conversations.md.
 <!-- SECTION:NOTES:END -->

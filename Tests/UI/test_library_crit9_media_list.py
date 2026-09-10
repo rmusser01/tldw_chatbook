@@ -11,12 +11,28 @@ from __future__ import annotations
 import pytest
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Widgets.Library.library_media_canvas import (
+    LIBRARY_MEDIA_REVIEW_EMPTY_TOOLTIP,
+)
+
 from Tests.UI.test_library_media_render_fixes import _host, _painted
 from Tests.UI.test_library_media_side_by_side import _open_media_list
 from Tests.UI.test_library_shell import (
     _wait_for_condition,
     _wait_for_selector,
 )
+
+
+def _assert_painted_cursor_row(host, choices, *, expected_row: int) -> None:
+    """The `█` reaches the screen on exactly one row — the highlighted one.
+
+    Both halves in the PAINT, not only in the prompts (32210 AC#2): a
+    prompt-level check cannot see an option row clipped away or a second
+    row picking the glyph up from somewhere else.
+    """
+    lines = _painted(host, choices.region).splitlines()
+    marked = [index for index, line in enumerate(lines) if "█" in line]
+    assert marked == [expected_row], lines
 
 
 @pytest.mark.asyncio
@@ -44,8 +60,7 @@ async def test_the_type_chooser_marks_its_cursor_with_the_house_bar():
         ]
         assert prompts[1].startswith("█ "), prompts
         assert [p for p in prompts if p.startswith("█ ")] == [prompts[1]], prompts
-        painted = _painted(host, choices.region)
-        assert "█" in painted, painted
+        _assert_painted_cursor_row(host, choices, expected_row=1)
 
 
 @pytest.mark.asyncio
@@ -66,8 +81,7 @@ async def test_the_sort_chooser_marks_its_cursor_with_the_house_bar():
         ]
         assert prompts[2].startswith("█ "), prompts
         assert [p for p in prompts if p.startswith("█ ")] == [prompts[2]], prompts
-        painted = _painted(host, choices.region)
-        assert "█" in painted, painted
+        _assert_painted_cursor_row(host, choices, expected_row=2)
 
 
 async def _apply_media_type(screen, pilot, media_type: str):
@@ -130,6 +144,23 @@ async def test_a_zero_result_filter_keeps_the_type_facet_and_names_it():
         # One `#library-media-status`, not two: the fall-through status line
         # below the toolbar is suppressed while this branch owns the copy.
         assert len(screen.query("#library-media-status")) == 1
+        # task-32213 review, finding 3: keeping the toolbar means
+        # `#library-media-type-filter` is now always an enabled fallback on
+        # this page, which would have landed entry focus on the facet the
+        # user did NOT type into. With a query in force the filter Input
+        # leads instead -- the place to retype.
+        assert (
+            screen._library_media_empty_list_fallback_target()
+            is screen.query_one("#library-media-filter", Input)
+        )
+        # Finding 4: no list-wide action may claim it can act on a page
+        # with nothing on it. "Review these" carries the same "○" marker
+        # and reason as "Select"; "Export…" is deliberately still live
+        # (its scope is the type, not the query).
+        review = screen.query_one("#library-media-review", Button)
+        assert review.disabled is True
+        assert str(review.label).startswith("○ ")
+        assert str(review.tooltip) == LIBRARY_MEDIA_REVIEW_EMPTY_TOOLTIP
 
 
 async def _enter_select_mode(screen, pilot):
@@ -141,6 +172,41 @@ async def _enter_select_mode(screen, pilot):
         message="Select mode never armed",
     )
     await pilot.pause()
+
+
+@pytest.mark.parametrize("size", ((100, 30), (60, 24)))
+@pytest.mark.asyncio
+async def test_the_shared_count_margin_never_clips_the_trash_heading(size):
+    """task-32227 review, finding 5: the margin rides a heading too.
+
+    ``library-toolbar-count`` is not only on counters — the Trash canvas
+    puts it on its TITLE ``Static``, the last child of a ``height: 1``,
+    ``overflow: hidden`` row whose budget task-28015 already measured to
+    the cell (it painted "Local Trash · 1 i" at ~38 columns before that
+    fix). A right margin spends one of those columns, so the heading's
+    paint is pinned at both narrow widths.
+
+    Through the REAL screen (`_host`), not the trash canvas harness:
+    ``.library-toolbar-count`` lives in the Library SCREEN sheet, which
+    `ConsolidatedCSSApp` does not register — under that harness the title's
+    computed margin is 0 and this would measure nothing.
+    """
+    host = _host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen.query_one("#library-media-trash-open", Button).press()
+        title = await _wait_for_selector(
+            screen, pilot, "#library-media-trash-title"
+        )
+        await pilot.pause()
+        assert title.styles.margin.right == 1, title.styles.margin
+        # The HEADING row, not the title's own region: the row is
+        # ``overflow: hidden``, so it is the row's paint that loses the
+        # tail when the budget runs out (the title's region happily
+        # reports a width the compositor then clips away).
+        heading = screen.query_one("#library-media-trash-heading")
+        painted = _painted(host, heading.region)
+        assert str(title.renderable) in painted, (painted, title.renderable)
 
 
 @pytest.mark.parametrize("size", ((235, 52), (100, 30)))

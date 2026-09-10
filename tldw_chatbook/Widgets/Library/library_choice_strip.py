@@ -39,10 +39,13 @@ class LibraryChoiceOptionList(OptionList):
     """
 
     def on_mount(self) -> None:
-        # Paint before the parent builds its line cache, so option heights
-        # are measured from the prompts that will actually render.
+        # No ``super().on_mount()`` -- Textual dispatches every ``on_mount``
+        # in the MRO, subclass first, so ``OptionList.on_mount``'s
+        # ``_update_lines()`` still runs, and it runs AFTER this paint.
+        # Calling it here would run it twice (see
+        # ``backlog/docs/lessons-textual.md`` and
+        # ``Tests/UI/test_on_mount_mro_convention.py``).
         self._paint_choice_cursor()
-        super().on_mount()
 
     def watch_highlighted(self, highlighted: int | None) -> None:
         super().watch_highlighted(highlighted)

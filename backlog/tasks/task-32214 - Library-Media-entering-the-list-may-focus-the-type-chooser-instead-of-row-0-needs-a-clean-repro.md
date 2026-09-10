@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-09-10 14:53'
-updated_date: '2026-09-10 17:32'
+updated_date: '2026-09-10 19:22'
 labels:
   - library
   - media
@@ -37,5 +37,5 @@ Assessor B observed: click the rail Media row, `Down` moved nothing, the `type: 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Not reproducible from a clean entry at dev 3315241674 (the plan's brief said e6cb464239; this worktree is off origin/dev at 3315241674). Live capture on the seeded power profile (tmux socket crit9-media-list, 235x52): command palette to Library, then the rail's Media row clicked with the mouse escape sequence only and NO other key. Focus landed on #library-media-row-0 -- 'Old draft — to discard' painted with the █ left-edge bar -- and a single Down moved the bar to row 1 ('Meeting recording 2026-09-05'). The 'type: All types' opener carried no focus frame at any point. Assessor B's repro carried earlier keypresses, which disarm the entry-focus arm (see Tests/UI/test_library_crit8_keyboard.py:210). The pin test_library_shell.py::test_library_media_list_focuses_first_row_and_arrow_keys_move_it holds (re-run green on this branch). No code change. Captures: /private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/92b26568-46c4-4abe-9da5-9676d5282276/scratchpad/crit9/wave/media-list/caps/32214-a-after-rail-click.txt and 32214-b-after-down.txt
+Not reproducible from a clean entry. Captured on `fix/library-crit9-media-list` (base dev 3315241674), not on bare dev: the 32210/32213/32227 changes were already applied, and none of them touches the entry-focus path (they add a prompt prefix, keep the browse toolbar composed, and add one CSS margin). Live on the seeded power profile (tmux socket crit9-media-list, 235x52): command palette to Library, then the rail's Media row clicked with the mouse escape sequence only and NO other key. Focus landed on #library-media-row-0 -- 'Old draft — to discard' painted with the █ left-edge bar -- and a single Down moved the bar to row 1 ('Meeting recording 2026-09-05'). The 'type: All types' opener carried no focus frame at any point. Assessor B's repro carried earlier keypresses, which disarm the entry-focus arm (see Tests/UI/test_library_crit8_keyboard.py:210). The pin test_library_shell.py::test_library_media_list_focuses_first_row_and_arrow_keys_move_it holds (re-run green on this branch, and again in the task review). No code change. Captures: /private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/92b26568-46c4-4abe-9da5-9676d5282276/scratchpad/crit9/wave/media-list/caps/32214-a-after-rail-click.txt and 32214-b-after-down.txt
 <!-- SECTION:NOTES:END -->

@@ -366,12 +366,15 @@ both — a query that misses inside a type — the sentence names both facets:
 "No media of type 'pdf' matched “day2” in titles, content or keywords."
 
 An empty page keeps the toolbar it was filtered with. `type:`, `sort:`,
-"Export…", "Trash", "Select" (disabled, with its reason) and "Review these"
-all stay where they were, so the facet that produced the empty page can be
-read and reset without leaving the canvas. One recovery action rides with
+"Export…", "Trash", "Select" and "Review these" all stay where they were, so
+the facet that produced the empty page can be read and reset without leaving
+the canvas. "Select" and "Review these" carry the `○` marker and a reason
+there — with no rows, neither has anything to act on; "Export…" stays live,
+because it exports the type, not the query. One recovery action rides with
 the sentence: "Show all types" whenever a type is in force, and "Import
 media" only when the source itself is empty — a filter miss never suggests
-importing, because clearing the filter is the honest way back.
+importing, because clearing the filter is the honest way back. Keyboard focus
+lands back in the filter box, which is where you retype.
 
 *Verified against fix/media-wave4-c — 2026-09-04 (task-31274: three seeded
 articles tagged `day2` — a keyword in no title and no body — filtered live in
@@ -1091,3 +1094,9 @@ bar moving with each Down and never on two rows at once. task-32213: a
 a query that misses inside a type names both in the sentence. task-32227: one
 cell now separates the select-strip count from the first action, which used
 to paint "2 selected┃ Select all".)*
+
+*Verified against fix/library-crit9-media-list — 2026-09-10, fix round 1
+(task-32213 review: with the toolbar now surviving a 0-result page, "Review
+these" takes the same `○` marker and reason as "Select" rather than raising a
+toast when pressed, and keyboard focus on a filter miss lands back in the
+filter box instead of on the `type:` chooser.)*
