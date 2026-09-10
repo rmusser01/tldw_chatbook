@@ -1086,3 +1086,65 @@ def test_restore_as_resolves_collision_atomically_without_activation(
     assert restored.name == "Client A recovered" and not restored.archived
     assert not restored.active
     assert service.get_active_workspace().workspace_id == DEFAULT_WORKSPACE_ID
+
+
+@pytest.mark.parametrize("name", ["", "   ", 123, b"replacement"])
+def test_restore_as_rejects_invalid_workspace_names_without_mutation(tmp_path, name):
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="old", name="Original")
+    service.archive_workspace("old")
+    before = service.get_workspace("old")
+    generation = service.mutation_generation
+    with pytest.raises(WorkspaceRegistryServiceError):
+        service.unarchive_workspace("old", name=name)
+    assert service.get_workspace("old") == before
+    assert service.mutation_generation == generation
+
+
+@pytest.mark.parametrize("name", ["  Project α / 東京 🧪  ", "x" * 4096, "Project\nNotes"])
+def test_restore_as_preserves_existing_workspace_name_policy(tmp_path, name):
+    service = build_test_registry(tmp_path)
+    # Creation already defines the supported workspace-name contract.
+    created = service.create_workspace(workspace_id="old", name=name)
+    service.archive_workspace("old")
+    restored = service.unarchive_workspace("old", name=name)
+    assert restored.name == created.name == name.strip()
+
+
+def test_concurrent_restore_rejects_stale_name_and_does_not_publish_success(
+    tmp_path, monkeypatch
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    winner = build_test_registry(tmp_path)
+    winner.create_workspace(workspace_id="old", name="Original")
+    winner.archive_workspace("old")
+    loser = build_test_registry(tmp_path)
+    read_archived = Event()
+    winner_committed = Event()
+    get_workspace = loser.get_workspace
+
+    def pause_after_initial_read(workspace_id):
+        record = get_workspace(workspace_id)
+        if record is not None and record.archived:
+            read_archived.set()
+            assert winner_committed.wait(5)
+        return record
+
+    monkeypatch.setattr(loser, "get_workspace", pause_after_initial_read)
+    generation = loser.mutation_generation
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(loser.unarchive_workspace, "old", name="Losing choice")
+        try:
+            assert read_archived.wait(5)
+            restored = winner.unarchive_workspace("old", name="Winning choice")
+            assert restored.name == "Winning choice"
+        finally:
+            winner_committed.set()
+        with pytest.raises(WorkspaceNotFound):
+            pending.result(timeout=5)
+    assert winner.get_workspace("old").name == "Winning choice"
+    assert loser.mutation_generation == generation
+    winner.db.close()
+    loser.db.close()

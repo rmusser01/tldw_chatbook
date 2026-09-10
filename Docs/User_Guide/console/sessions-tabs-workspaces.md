@@ -497,6 +497,10 @@ readable; restore it before sending again.
 **Use as source** adds the selected conversation as source context; use **Resume**
 when you want to continue its own history.
 
+If recovery stops after restoring the workspace, the error message identifies
+what completed. Choose **Resume** again from Library to retry the remaining
+conversation recovery; the restored workspace stays available.
+
 For several conversations, enter **Select**, choose rows on the current page,
 and use **Archive selected** or **Restore selected**. The receipt reports actual
 changes and any skipped conversations. **Undo** reverses only successful changes;

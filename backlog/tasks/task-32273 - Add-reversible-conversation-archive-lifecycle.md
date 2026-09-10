@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-10 15:33'
-updated_date: '2026-09-10 19:56'
+updated_date: '2026-09-10 20:43'
 labels: []
 dependencies: []
 priority: high
@@ -43,6 +43,7 @@ PR review corrections (2026-09-10):
 6. Bound exact-title lookup pages, strengthen archive-scope forwarding assertions, and adopt the shared scope validator.
 7. Preserve the latest shared sync payload through archive-only version bumps in both trigger and maintenance retention.
 8. Run targeted DB/service checks and self-review before restoring Done status.
+PR #2576 wave 2: include archived conversations in import conflict and unique-name checks; document all public archive-scope arguments; verify focused import/service tests.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -57,4 +58,7 @@ Integrated onto an isolated branch from current dev; original checkout changes a
 PR #2576 backend review corrections: archive-only transitions no longer emit conversation sync updates, while local version increments continue to invalidate obsolete Undo receipts. Conversation retention now advances on emitted sync records, and its explicit sweep uses the latest emitted version, preserving the latest unsent shared payload through archive cycles. Shared payload edits (including mixed archive/content changes), deletion and undelete retain sync behavior. The v71 SQL artifact is now executed transactionally instead of duplicated inline. Exact-title reads expose validated limit/offset with default 100 and cap 1000, and deterministic ordering. Library delegate tests assert all three forwarded archive scopes; DB predicates use the shared strict scope validator. ADR-147 records the sync/version tradeoff.
 
 Verification: 82 targeted DB archive/service tests passed. The retention follow-up passed 39 DB archive/retention cases; two raw hard-delete fixtures fail at the existing semantic-authorization guard, reproduced with unchanged HEAD DB code. Final focused verification passed 9 cases covering exact preservation through repeated archive cycles and explicit maintenance, removal of late obsolete payloads after archive/delete, mixed shared updates, migration rollback, soft-delete privacy, idempotence and writer census. SQL artifact execution, 1005-row title pagination/cap, stale Undo cycles, and all scope forwarding are covered. Ruff passed for modified tests, fatal production lint passed, and git diff --check passed. Self-review completed; no broad migration sweep was run.
+
+PR #2576 wave 2 backend corrections: importer conflict detection and generated-name probes explicitly include archived non-deleted conversations. Real SQLite import tests prove Skip preserves an archived title and Rename avoids both its base title and archived numbered suffix. All public Chat service methods carrying archive_scope now document active/archived/all, defaults, and pre-pagination filtering. Existing ADR-147 applies. Verification: new import cases and existing import/service neighbors passed; no new lint diagnostics or whitespace errors.
+Final integrated review verification and baseline limits are recorded in Docs/superpowers/qa/console/2026-09-10-archive-recovery.md. All modified archive flows pass their targeted tests; the unrelated compact Overview assertion reproduces with the prior Settings implementation. Started-write cancellation preserves storage completion publication. Existing ADR147 applies.
 <!-- SECTION:NOTES:END -->

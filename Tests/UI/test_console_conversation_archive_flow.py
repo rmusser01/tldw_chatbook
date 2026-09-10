@@ -76,7 +76,11 @@ async def test_console_archive_undo_then_resume_reuses_original_and_full_search(
         await pilot.pause(0.4)
         assert service.get_conversation_metadata(cid)["archived"] is True
         assert isinstance(host.screen, WorkspaceArchiveReceiptModal)
-        assert "archived" in console._console_send_blocked_reason()
+        from tldw_chatbook.Chat.conversation_archive_actions import (
+            conversation_send_refusal,
+        )
+
+        assert "archived" in await conversation_send_refusal(app, cid)
         host.screen.query_one("#workspace-archive-undo", Button).press()
         await pilot.pause(0.5)
         assert service.get_conversation_metadata(cid)["archived"] is False
@@ -244,9 +248,14 @@ async def test_restore_resume_then_send_retains_original_history_and_unrelated_d
                 )
                 assert registry.get_workspace("new-workspace").name == "Research"
                 assert resumed.workspace_id == "old-workspace"
+            # A restore by another writer can leave an old archived projection.
+            # The synchronous admission gate must allow the durable send check.
+            app._conversation_archive_states[cid] = True
+            assert console._console_send_blocked_reason() == ""
             await console._submit_console_native_draft(
                 "Continue this original conversation", resumed.id
             )
+            assert app._conversation_archive_states[cid] is False
             assert gateway.sent_messages, (
                 console._console_chat_controller.run_state_for(resumed.id),
                 console._console_send_blocked_reason(),

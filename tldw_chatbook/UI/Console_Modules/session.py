@@ -657,7 +657,7 @@ class ConsoleSessionController:
         focus_composer_if_needed: Callable[..., None],
         invalidate_persisted_rows_cache: Callable[[], None],
         mark_conversation_row_broken: Callable[[str], None],
-        refresh_effective_scope_and_sync: Callable[[Any], Any],
+        refresh_effective_scope_and_sync: Callable[..., Any],
         session_surface_accessor: Callable[[], Any | None],
         switcher_authority_accessor: Callable[[], tuple[str, str]],
         console_runtime_accessor: Callable[[], Any],
@@ -2413,7 +2413,9 @@ class ConsoleSessionController:
                 request.projection_pending = False
         await self._finish_opening_console_chat_fork(store, request)
 
-    async def _activate_native_console_session(self, session_id: str) -> None:
+    async def _activate_native_console_session(
+        self, session_id: str, *, activate_if: Callable[[], bool] | None = None
+    ) -> None:
         """Activate a native Console session through the shared activation sequence.
 
         Set the active workspace, switch the native session, refresh the
@@ -2424,7 +2426,11 @@ class ConsoleSessionController:
 
         Args:
             session_id: Native Console session id to activate.
+            activate_if: Optional current-claim/screen guard checked before
+                activation and after each awaited refresh; absent for tab clicks.
         """
+        if activate_if is not None and not activate_if():
+            return
         controller = self._ensure_console_chat_controller()
         if controller.store.active_session_id != session_id:
             self._hide_console_activity_notice()
@@ -2451,14 +2457,23 @@ class ConsoleSessionController:
             new_session = self._active_native_console_session()
             if new_session is not None:
                 try:
-                    await self._refresh_console_effective_scope_and_sync(new_session)
+                    if activate_if is None:
+                        await self._refresh_console_effective_scope_and_sync(new_session)
+                    else:
+                        await self._refresh_console_effective_scope_and_sync(
+                            new_session, refresh_if=activate_if
+                        )
                 except Exception:
                     logger.opt(exception=True).warning(
                         "Failed to refresh retrieval scope display on session "
                         "activation: {}",
                         session_id,
                     )
+            if activate_if is not None and not activate_if():
+                return
             await self._sync_native_console_chat_ui()
+        if activate_if is not None and not activate_if():
+            return
         self._focus_console_composer_if_needed(force=True)
 
     # -- Tab-strip press handling (wave-4 task 2) ---------------------------

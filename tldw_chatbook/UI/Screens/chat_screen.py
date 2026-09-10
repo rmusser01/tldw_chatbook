@@ -18417,10 +18417,8 @@ class ChatScreen(BaseAppScreen):
             self.app_instance, "_conversation_archive_inflight", ()
         ):
             return "Archive change in progress. Your draft is preserved."
-        if getattr(self.app_instance, "_conversation_archive_states", {}).get(
-            conversation_id
-        ):
-            return "This chat is archived. Open Archived chats to restore and resume."
+        # A cached archive flag may predate a restore by another writer.
+        # The awaited submit boundary checks durable state before any send.
         pending_launch = self._consume_pending_console_launch()
         if pending_launch is not None and _source_mentions_rag(pending_launch.source):
             evidence_state = build_console_evidence_display_state(pending_launch)

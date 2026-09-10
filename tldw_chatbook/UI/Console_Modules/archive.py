@@ -22,12 +22,15 @@ from ...Widgets.confirmation_dialog import ConfirmationDialog
 
 async def request_conversation_resume(app: Any, conversation_id: str) -> None:
     """Restore with explicit scope disclosure, then navigate using a typed ID."""
+    intent = None
     try:
         intent = ConsoleConversationResumeIntent(conversation_id)
         service = local_conversation_service(app)
         row = await storage_call(service, "get_conversation_metadata", conversation_id)
     except Exception:  # noqa: BLE001 - a failed read must not crash the application worker
-        logger.exception("Conversation metadata unavailable")
+        logger.bind(
+            conversation_id=intent.conversation_id if intent else None
+        ).exception("Conversation metadata unavailable")
         app.notify(
             "Could not read this conversation. Refresh Library and try Resume again.",
             severity="error",
@@ -45,7 +48,9 @@ async def request_conversation_resume(app: Any, conversation_id: str) -> None:
             else None
         )
     except Exception:  # noqa: BLE001 - retain recovery state when storage is unavailable
-        logger.exception("Conversation workspace unavailable")
+        logger.bind(
+            conversation_id=conversation_id, workspace_id=workspace_id
+        ).exception("Conversation workspace unavailable")
         app.notify(
             "Could not read this workspace. Refresh Library and try Resume again.",
             severity="error",
@@ -53,12 +58,37 @@ async def request_conversation_resume(app: Any, conversation_id: str) -> None:
         return
 
     async def proceed(replacement_name: str | None = None) -> None:
+        workspace_restored = False
+        conversation_restored = False
         try:
+            # A confirmation (including Restore as) may outlive its metadata.
+            # Refuse a changed identity/scope/version before either store writes.
+            if row.get("archived") or (workspace and workspace.archived):
+                current_row = await storage_call(
+                    service, "get_conversation_metadata", conversation_id
+                )
+                if (
+                    not current_row
+                    or current_row.get("version") != row.get("version")
+                    or current_row.get("workspace_id") != workspace_id
+                    or bool(current_row.get("archived")) != bool(row.get("archived"))
+                ):
+                    app.notify(
+                        "This conversation changed or is no longer available. Refresh Library and try Resume again.",
+                        severity="warning",
+                    )
+                    return
             if workspace and workspace.archived:
                 current_workspace = await storage_call(
                     registry, "get_workspace", workspace_id
                 )
-                if current_workspace and current_workspace.archived:
+                if current_workspace is None:
+                    app.notify(
+                        "This workspace is no longer available. Refresh Library and try Resume again.",
+                        severity="warning",
+                    )
+                    return
+                if current_workspace.archived:
                     active_workspaces = await storage_call(registry, "list_workspaces")
                     target_name = replacement_name or current_workspace.name
                     if any(
@@ -94,6 +124,7 @@ async def request_conversation_resume(app: Any, conversation_id: str) -> None:
                         workspace_id,
                         name=replacement_name,
                     )
+                    workspace_restored = True
             if row.get("archived"):
                 result = await change_conversation_archive(
                     app,
@@ -103,10 +134,12 @@ async def request_conversation_resume(app: Any, conversation_id: str) -> None:
                 )
                 if conversation_id not in result["changed"]:
                     app.notify(
-                        "The conversation changed. Refresh the archive and try again.",
+                        ("Workspace restored. " if workspace_restored else "")
+                        + "The conversation could not be restored. Try Resume again from Library.",
                         severity="warning",
                     )
                     return
+                conversation_restored = True
             app.pending_handoffs.stage(
                 HandoffChannel.CONSOLE_CONVERSATION_RESUME, intent
             )
@@ -114,9 +147,17 @@ async def request_conversation_resume(app: Any, conversation_id: str) -> None:
             from ...UI.Navigation.main_navigation import NavigateToScreen
 
             app.post_message(NavigateToScreen(TAB_CHAT))
-        except Exception as exc:  # noqa: BLE001 - notify and retain recovery state at the UI boundary
-            logger.exception("Conversation recovery failed")
-            app.notify(f"Could not resume conversation: {exc}", severity="error")
+        except Exception:  # noqa: BLE001 - retain completed changes across separate stores
+            logger.bind(
+                conversation_id=conversation_id, workspace_id=workspace_id
+            ).exception("Conversation recovery failed")
+            completed = "Workspace restored. " if workspace_restored else ""
+            if conversation_restored:
+                completed += "Conversation restored. "
+            app.notify(
+                completed + "Resume did not complete. Try Resume again from Library.",
+                severity="error",
+            )
 
     def confirmed(accepted: bool) -> None:
         if accepted:
@@ -153,6 +194,7 @@ async def consume_conversation_resume(screen: Any) -> None:
     while (
         screen.app.screen is screen and (claim := handoffs.claim(channel)) is not None
     ):
+        workspace_id = None
         try:
             conversation_id = claim.value.conversation_id
             store = screen._ensure_console_chat_store()
@@ -164,16 +206,21 @@ async def consume_conversation_resume(screen: Any) -> None:
                 ),
                 None,
             )
+
+            def resume_is_current() -> bool:
+                return screen.app.screen is screen and handoffs.is_current_claim(claim)
+
             if existing is not None:
-                await screen._session._activate_native_console_session(existing.id)
-                result = True
+                workspace_id = getattr(existing, "workspace_id", None)
+                await screen._session._activate_native_console_session(
+                    existing.id, activate_if=resume_is_current
+                )
+                result = True if resume_is_current() else None
             else:
                 result = await screen._workspace._resume_console_workspace_conversation(
                     conversation_id,
                     preserve_persisted_scope=True,
-                    resume_if=lambda: (
-                        screen.app.screen is screen and handoffs.is_current_claim(claim)
-                    ),
+                    resume_if=resume_is_current,
                 )
             superseded = not handoffs.is_current_claim(claim)
             if result is not None or superseded:
@@ -189,7 +236,9 @@ async def consume_conversation_resume(screen: Any) -> None:
             handoffs.release(claim)
             raise
         except Exception:  # noqa: BLE001 - notify and retain recovery state at the UI boundary
-            logger.exception("Conversation resume failed")
+            logger.bind(
+                conversation_id=claim.value.conversation_id, workspace_id=workspace_id
+            ).exception("Conversation resume failed")
             superseded = not handoffs.is_current_claim(claim)
             handoffs.release(claim)
             if not superseded:
@@ -210,6 +259,7 @@ async def archive_current_conversation(screen: Any) -> None:
             severity="information",
         )
         return
+    row = None
     try:
         row = await storage_call(
             local_conversation_service(app),
@@ -258,7 +308,10 @@ async def archive_current_conversation(screen: Any) -> None:
                     screen._workspace._invalidate_console_persisted_rows_cache()
                     await screen._sync_native_console_chat_ui()
                 except Exception:  # noqa: BLE001 - notify and retain recovery state at the UI boundary
-                    logger.exception("Conversation Undo failed")
+                    logger.bind(
+                        conversation_id=conversation_id,
+                        workspace_id=row.get("workspace_id"),
+                    ).exception("Conversation Undo failed")
                     app.notify(
                         "Undo could not complete. Open Archived chats to retry restoration.",
                         severity="error",
@@ -275,5 +328,7 @@ async def archive_current_conversation(screen: Any) -> None:
         screen._workspace._invalidate_console_persisted_rows_cache()
         await screen._sync_native_console_chat_ui()
     except Exception as exc:  # noqa: BLE001 - notify and retain recovery state at the UI boundary
-        logger.exception("Conversation archive failed")
+        logger.bind(conversation_id=conversation_id).exception(
+            "Conversation archive failed"
+        )
         app.notify(f"Could not archive conversation: {exc}", severity="error")

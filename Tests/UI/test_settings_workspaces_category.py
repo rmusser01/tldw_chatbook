@@ -127,7 +127,9 @@ async def test_create_rename_archive_unarchive_flow() -> None:
                 if candidates and candidates[0] is not rename_input:
                     break
                 await pilot.pause(0.01)
-            await _wait_for_selector(screen, pilot, "#settings-workspace-rename-input")
+            else:
+                pytest.fail("Renamed workspace card did not mount a replacement rename input")
+            assert candidates[0] is not rename_input
             assert registry.get_workspace(workspace_id).name == "Client Y"
 
             # Duplicate rename surfaces inline, not as a crash.

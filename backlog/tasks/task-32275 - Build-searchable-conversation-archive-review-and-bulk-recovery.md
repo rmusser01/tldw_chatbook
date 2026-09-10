@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-10 15:35'
-updated_date: '2026-09-10 19:50'
+updated_date: '2026-09-10 20:32'
 labels: []
 dependencies: []
 priority: high
@@ -37,6 +37,7 @@ Inspect Library paging and reader seams; add failing lifecycle/preview tests; im
 Plan: Docs/superpowers/plans/2026-09-10-console-archive-recovery.md
 Spec: Docs/superpowers/specs/2026-09-10-console-archive-recovery-design.md
 Review corrections for PR #2576: verify comments #1, #2, #7, #9 and #13 against current dev; add regressions for every newly added Reader child being absent, separate conversation/workspace lifecycle assertions, and invalid scope boundaries; use portable test artifacts and the shared strict scope validator; document handler contracts; run only the affected tests and compare lint to HEAD. Existing ADR-147 applies; no new storage or UX contract is introduced.
+Wave 2 review: preserve honest partial recovery across the separate workspace/conversation stores using fresh confirmation preflight and explicit retry feedback; fence existing-session activation and handoff settlement against navigation/supersession; attach safe identity context to failures; parameterize recovery record types. Add narrow failing regressions before fixes and document the partial-completion policy in ADR-147.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -50,4 +51,5 @@ Integrated onto an isolated branch from current dev; original checkout changes a
 PR #2576 review corrections: screenshots now use pytest's tmp_path. Reader synchronization resolves all added Find, source, archive and restore children inside the existing incomplete-tree guard, retaining incoming state for recomposition; the missing Find-position regression failed before the fix. Lifecycle tests now exercise all four conversation/workspace archive combinations with exact Active/Archived labels. A strict Pydantic scope validator is shared by Library controls, restored state/navigation and the DB scope parser; invalid values cannot mutate recovery scope. New public event handlers document their event arguments and effects.
 
 Validation: 45 targeted tests passed (49 unrelated cases deselected), including both mounted terminal sizes, eight missing-child cases, the lifecycle matrix, and scope utility/event/recovery boundaries. Compilation and git diff --check pass; compared Ruff findings against HEAD with no new diagnostics in modified production/existing test files. Self-review confirmed every added sync_state child lookup is protected and the prior Reader/source eligibility contracts remain intact. No full suite was run.
+Wave 2 review #3983108358: Library recovery metadata now uses tuple[Mapping[str, Any], ...] at the public annotation seam and worker return, with explicit list/mapping element types and dict[str, Any] for the lifecycle wrapper. Existing Library recovery tests pass as part of the 34-case targeted boundary/Library run; Ruff and compilation pass.
 <!-- SECTION:NOTES:END -->

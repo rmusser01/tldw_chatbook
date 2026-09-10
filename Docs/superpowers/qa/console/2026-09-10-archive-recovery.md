@@ -63,3 +63,18 @@ Rebased onto dev at `98704acc283b2e09229c7b9b475153c372a581db`, retaining the sh
 The rebased core/architecture/pager run passed 86 cases. The mounted UI run passed 79 of 80; its remaining failure was the archive test observing a pushed confirmation screen before its button mounted. The test now waits for that action control. All 17 final handoff tests pass, including button/key dispatch with stale browse state and current-storage deleted-record refusal.
 
 Final compact/wide recovery rerun: 3 passed after waiting for actual actionable controls across both modal mounting and canvas recomposition. Conversation characterization: 3 passed. No unresolved failures remain in the targeted acceptance checks.
+
+
+### Second Qodo review and required CI correction
+
+The next review added fourteen findings. Corrections cover asynchronous workspace reads/writes and retained Undo receipts, failure/retry feedback, concurrent-restore conflict reporting, shared workspace-name validation, archived-name import conflicts, complete public contracts and typed recovery records, contextual recovery diagnostics, confirmation preflight and explicit partial-recovery reporting, and current-screen checks during existing-session Resume.
+
+A durable send-state read now replaces a stale cached archive flag, guarded against a local archive transaction completing during the read. The synchronous admission gate no longer treats a presentation cache as authoritative; archived conversations are still refused by the awaited check before provider work. Mounted restored-conversation workflows verify the original history can continue despite an obsolete cached archived flag.
+
+The required derived-artifact job failed because the new archive index lacked a census entry. Actual production Library count/page queries use `idx_conversations_archive` with no `sqlite_stat1`, verified for Active and Archived on a 128-conversation corpus. The index is now plan-pinned in `scripts/index_plan_pin_census.tsv`.
+
+Diagnostic inventory review used the checker’s statement comparison against its committed inventory baseline: six new structured archive exception calls contain validated conversation/workspace identities only; the workspace changes are constant-text archive-refresh and switcher-failure diagnostics. No content, credentials, filesystem paths or new sink destinations were added. Regenerated the inventory only after that review.
+
+Targeted integration evidence so far: 108 registry/name/import/boundary/Library/index checks passed; 25 Console workflow and shared archive-action checks passed. The latter includes the corrected synchronous/durable admission contract. The earlier historical-migration and raw-delete fixture limitations remain unchanged.
+
+Final second-review verification: 108 core/backend/Library/boundary/query-plan tests and 25 Console/send-action tests passed. The expanded workspace/Settings run passed 46 cases, including both started-write cancellation cases. Its sole failure, `test_compact_overview_keeps_a_painted_recovery_action`, also fails when run with the prior HEAD Settings implementation: it inspects the Theme button inside the hidden compact inspector (zero region). No archive change touches that layout, and experimental test-only waits were reverted. This pre-existing overview assertion is not claimed as passing. Diagnostic inventory regeneration was followed by a successful check (596 owners, 7665 TASK-494 calls); changed-file Ruff diagnostic delta is empty and `git diff --check` passes. Latest fetched dev remains `98704acc283b2e09229c7b9b475153c372a581db`.

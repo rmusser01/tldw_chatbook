@@ -838,6 +838,8 @@ class ChatConversationService:
                 with ``query_terms``.
             query_include_global_scope_by_term: Global-scope matches aligned
                 one-to-one with ``query_terms``.
+            archive_scope: Conversation lifecycle scope: ``active`` (default),
+                ``archived``, or ``all``, applied before counts and pagination.
             include_deleted: Whether soft-deleted conversations are eligible.
             deleted_only: Whether only soft-deleted conversations are eligible.
             state: Optional normalized conversation-state filter.
@@ -930,6 +932,29 @@ class ChatConversationService:
         topic_label: str | None = None,
         character_id: int | None = None,
     ) -> dict[str, Any] | None:
+        """Locate an exact conversation within a filtered local result page.
+
+        Args:
+            conversation_id: Persisted conversation whose page should be located.
+            query: Optional literal search text.
+            limit: Required page size of 20.
+            scope_type: Global, workspace, or all ownership scope.
+            workspace_id: Exact workspace for a workspace-scoped listing.
+            archive_scope: ``active`` (default), ``archived``, or ``all``;
+                lifecycle filtering precedes counts and page location.
+            include_deleted: Whether soft-deleted conversations are eligible.
+            deleted_only: Whether only soft-deleted conversations are eligible.
+            state: Optional conversation workflow state.
+            topic_label: Optional exact topic label.
+            character_id: Optional exact character owner.
+
+        Returns:
+            The matching page and pagination metadata, or None if excluded or missing.
+
+        Raises:
+            ValueError: If limit is not exactly 20.
+            CharactersRAGDBError: If the local query fails or its filters are invalid.
+        """
         if isinstance(limit, bool) or not isinstance(limit, int) or limit != 20:
             raise ValueError("limit must be exactly 20.")
 
@@ -1027,11 +1052,13 @@ class ChatConversationService:
     def list_library_conversations(
         self, *, limit: int = 20, offset: int = 0, archive_scope: str = "active"
     ) -> dict[str, Any]:
-        """Page active local conversations for Library agent tools.
+        """Page local conversations in the selected lifecycle scope for Library tools.
 
         Args:
             limit: Maximum number of conversations to return.
             offset: Number of conversations to skip.
+            archive_scope: ``active`` (default), ``archived``, or ``all``
+                non-deleted conversations; filtering precedes count and pagination.
 
         Returns:
             A bounded page containing items, exact total, offset, and limit.
@@ -1057,12 +1084,14 @@ class ChatConversationService:
         offset: int = 0,
         archive_scope: str = "active",
     ) -> dict[str, Any]:
-        """Search active local conversations for Library agent tools.
+        """Search local conversations in the selected lifecycle scope for Library tools.
 
         Args:
             query: Literal case-insensitive search text.
             limit: Maximum number of conversations to return.
             offset: Number of matching conversations to skip.
+            archive_scope: ``active`` (default), ``archived``, or ``all``
+                non-deleted conversations; filtering precedes count and pagination.
 
         Returns:
             A bounded page with exact total and match evidence.

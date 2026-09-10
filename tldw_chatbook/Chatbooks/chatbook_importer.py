@@ -1219,7 +1219,9 @@ class ChatbookImporter:
                     conv_name = f"[Imported] {conv_name}"
 
                 # Check for existing conversations with same name
-                existing_conversations = db.get_conversation_by_name(conv_name)
+                existing_conversations = db.get_conversation_by_name(
+                    conv_name, archive_scope="all"
+                )
                 logger.info(
                     f"ChatbookImporter._import_conversations: Found {len(existing_conversations) if existing_conversations else 0} existing conversations with name '{conv_name}'"
                 )
@@ -3208,7 +3210,7 @@ class ChatbookImporter:
         while True:
             new_name = f"{base_name} ({counter})"
             # Check if any conversations exist with this name
-            if not db.get_conversation_by_name(new_name):  # Empty list is falsy
+            if not db.get_conversation_by_name(new_name, archive_scope="all"):
                 return new_name
             counter += 1
 

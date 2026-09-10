@@ -130,6 +130,38 @@ def validate_conversation_archive_scope(
         raise ValueError("archive_scope must be active, archived, or all.") from None
 
 
+class WorkspaceNameInput(BaseModel):
+    """WorkspaceRecord-compatible name: strict text, trimmed and nonblank.
+
+    Workspace names are display text, not filesystem paths. Existing workspace
+    policy does not impose a length limit or character blacklist.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, strict=True, str_strip_whitespace=True
+    )
+
+    name: str = Field(min_length=1)
+
+
+def validate_workspace_name(value: object) -> str:
+    """Validate a workspace display name without changing existing naming policy.
+
+    Args:
+        value: Candidate user-facing workspace name.
+
+    Returns:
+        The trimmed, nonblank name.
+
+    Raises:
+        ValueError: If the name is blank or is not text.
+    """
+    try:
+        return WorkspaceNameInput.model_validate({"name": value}).name
+    except PydanticValidationError:
+        raise ValueError("Workspace name must be non-blank text.") from None
+
+
 class VllmDraftInputEvent(BaseModel):
     """Strict lexical boundary for one editable vLLM setup control."""
 

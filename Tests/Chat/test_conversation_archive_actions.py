@@ -104,7 +104,9 @@ async def test_resume_reuses_open_session_and_acknowledges_after_activation():
     )
     screen.app = SimpleNamespace(screen=screen)
     await consume_conversation_resume(screen)
-    activate.assert_awaited_once_with("already-open")
+    activate.assert_awaited_once()
+    assert activate.await_args.args == ("already-open",)
+    assert callable(activate.await_args.kwargs["activate_if"])
     hydrate.assert_not_called()
     assert session.draft == "preserved"
     assert handoffs.claim(HandoffChannel.CONSOLE_CONVERSATION_RESUME) is None
@@ -315,6 +317,50 @@ async def test_cancelled_archive_holds_reservation_until_thread_write_settles():
             if not app._conversation_archive_inflight:
                 break
     assert not app._conversation_archive_inflight
+    assert app._conversation_archive_states == {"c": True}
+
+
+@pytest.mark.asyncio
+async def test_send_reconciles_external_restore_and_preserves_unrelated_cache():
+    from tldw_chatbook.Chat.conversation_archive_actions import (
+        conversation_send_refusal,
+    )
+
+    app = SimpleNamespace(
+        local_chat_conversation_service=SimpleNamespace(
+            get_conversation_archive_states=lambda ids: {"c": False}
+        ),
+        _conversation_archive_states={"c": True, "other": True},
+    )
+    assert await conversation_send_refusal(app, "c") is None
+    assert app._conversation_archive_states == {"c": False, "other": True}
+
+
+@pytest.mark.asyncio
+async def test_send_does_not_publish_read_older_than_completed_archive(monkeypatch):
+    from tldw_chatbook.Chat import conversation_archive_actions as actions
+
+    app = SimpleNamespace(
+        local_chat_conversation_service=SimpleNamespace(
+            set_conversations_archived=lambda *a, **k: {
+                "changed": {"c": 2},
+                "failures": {},
+            }
+        ),
+        _conversation_archive_states={"c": False},
+    )
+    original_call = actions.storage_call
+
+    async def interleaved_read(service, method, *args, **kwargs):
+        if method == "get_conversation_archive_states":
+            await actions.change_conversation_archive(
+                app, ["c"], archived=True, expected_versions={"c": 1}
+            )
+            return {"c": False}
+        return await original_call(service, method, *args, **kwargs)
+
+    monkeypatch.setattr(actions, "storage_call", interleaved_read)
+    assert await actions.conversation_send_refusal(app, "c") is not None
     assert app._conversation_archive_states == {"c": True}
 
 

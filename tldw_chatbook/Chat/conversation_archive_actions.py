@@ -8,6 +8,17 @@ from typing import Any
 
 
 def local_conversation_service(app: Any) -> Any:
+    """Resolve the local service that owns durable conversation archive state.
+
+    Args:
+        app: Application exposing a local service or a scoped service wrapper.
+
+    Returns:
+        The local conversation service, never its remote counterpart.
+
+    Raises:
+        RuntimeError: If local conversation storage is unavailable.
+    """
     service = getattr(app, "local_chat_conversation_service", None)
     if service is None:
         service = getattr(
@@ -19,7 +30,14 @@ def local_conversation_service(app: Any) -> Any:
 
 
 def archive_failure_copy(reason: str) -> str:
-    """Translate storage outcomes into recoverable user-facing explanations."""
+    """Translate storage outcomes into recoverable user-facing explanations.
+
+    Args:
+        reason: Storage failure code or an existing user-facing refusal.
+
+    Returns:
+        Actionable copy for known codes, otherwise the supplied reason.
+    """
     return {
         "already_archived": "Already archived.",
         "already_active": "Already active.",
@@ -30,7 +48,21 @@ def archive_failure_copy(reason: str) -> str:
 
 
 async def storage_call(service: Any, method: str, *args: Any, **kwargs: Any) -> Any:
-    """Keep thread-local in-memory test databases on their owning thread."""
+    """Run storage off-loop, retaining thread-local memory database ownership.
+
+    Args:
+        service: Service owning the storage operation and optional database.
+        method: Name of the service method to invoke.
+        *args: Positional arguments forwarded to that method.
+        **kwargs: Keyword arguments forwarded to that method.
+
+    Returns:
+        The service method's result.
+
+    Raises:
+        AttributeError: If the requested method is unavailable. Exceptions from
+            the storage method propagate to the caller's recovery boundary.
+    """
     call = getattr(service, method)
     if getattr(getattr(service, "db", None), "is_memory_db", False):
         return call(*args, **kwargs)
@@ -107,7 +139,15 @@ def _session_refusal(app: Any, session: Any) -> str | None:
 
 
 def conversation_archive_refusal(app: Any, conversation_id: str) -> str | None:
-    """Explain why archiving would put this open conversation at risk."""
+    """Explain why archiving would put this open conversation at risk.
+
+    Args:
+        app: Application owning the Console runtime and archive reservations.
+        conversation_id: Persisted local conversation identity to check.
+
+    Returns:
+        A refusal for running, queued or unsaved work, otherwise None.
+    """
     capture_console_archive_draft(app)
     store = getattr(getattr(app, "console_runtime", None), "chat_store", None)
     for session in store.sessions() if store is not None else ():
@@ -119,7 +159,15 @@ def conversation_archive_refusal(app: Any, conversation_id: str) -> str | None:
 
 
 def workspace_archive_refusal(app: Any, workspace_id: str) -> str | None:
-    """Apply the same loss checks to every open session in a workspace."""
+    """Apply the same loss checks to every open session in a workspace.
+
+    Args:
+        app: Application owning the Console runtime and retained composers.
+        workspace_id: Workspace whose open sessions must be safe to archive.
+
+    Returns:
+        The first unsafe-session refusal, otherwise None.
+    """
     capture_console_archive_draft(app)
     store = getattr(getattr(app, "console_runtime", None), "chat_store", None)
     for session in store.sessions() if store is not None else ():
@@ -136,8 +184,27 @@ async def change_conversation_archive(
     *,
     archived: bool,
     expected_versions: Mapping[str, int],
-) -> dict[str, dict]:
-    """Change safe targets, retaining exact result versions for a later Undo."""
+) -> dict[str, dict[str, Any]]:
+    """Change safe targets, retaining exact result versions for a later Undo.
+
+    Args:
+        app: Application owning local storage, Console state and reservations.
+        conversation_ids: Persisted identities; duplicate targets are coalesced.
+        archived: True to archive, False to restore.
+        expected_versions: Observed version for each target. Missing or stale
+            versions are reported as per-target failures instead of overwritten.
+
+    Returns:
+        A mapping with ``changed`` (identity to committed optimistic version)
+        and ``failures`` (identity to refusal or storage failure code). Undo must
+        use exactly the returned successful identities and versions.
+
+    Raises:
+        RuntimeError: If local storage is unavailable. Storage exceptions
+            propagate; reservations remain held until the actual operation ends.
+        asyncio.CancelledError: If the caller is cancelled. An already started
+            storage mutation still finishes and publishes its result safely.
+    """
     inflight = getattr(app, "_conversation_archive_inflight", None)
     if inflight is None:
         inflight = app._conversation_archive_inflight = set()
@@ -157,7 +224,7 @@ async def change_conversation_archive(
             safe.append(conversation_id)
     inflight.update(safe)
 
-    async def complete_change() -> dict[str, dict]:
+    async def complete_change() -> dict[str, dict[str, Any]]:
         # Cancellation of a Textual worker cannot cancel a running SQLite
         # thread. This task retains the reservation through the actual commit
         # and publishes the result before accepting any later send.
@@ -181,6 +248,10 @@ async def change_conversation_archive(
             if states is None:
                 states = app._conversation_archive_states = {}
             states.update({key: archived for key in result["changed"]})
+            if result["changed"]:
+                app._conversation_archive_generation = (
+                    getattr(app, "_conversation_archive_generation", 0) + 1
+                )
             return {
                 "changed": result["changed"],
                 "failures": {**failures, **result["failures"]},
@@ -198,19 +269,40 @@ async def change_conversation_archive(
 async def conversation_send_refusal(
     app: Any, conversation_id: str | None
 ) -> str | None:
-    """Recheck durable state before accepting a send from an already open tab."""
+    """Reconcile durable state before accepting a send from an already open tab.
+
+    Args:
+        app: Application owning local storage and archive reservations/cache.
+        conversation_id: Persisted identity, or None for a new unsaved chat.
+
+    Returns:
+        A refusal if archived or if an archive mutation overlaps the read,
+        otherwise None. A current read replaces stale cached lifecycle state.
+
+    Raises:
+        RuntimeError: If local storage is unavailable. Storage exceptions
+            propagate so the send boundary can preserve the draft and report it.
+    """
     if not conversation_id:
         return None
     if conversation_id in getattr(app, "_conversation_archive_inflight", ()):
         return "Wait for the archive change to finish; your draft is preserved."
     service = local_conversation_service(app)
+    generation = getattr(app, "_conversation_archive_generation", 0)
     states = await storage_call(
         service, "get_conversation_archive_states", [conversation_id]
     )
-    if conversation_id in getattr(app, "_conversation_archive_inflight", ()):
+    if conversation_id in getattr(app, "_conversation_archive_inflight", ()) or (
+        generation != getattr(app, "_conversation_archive_generation", 0)
+    ):
         return "Wait for the archive change to finish; your draft is preserved."
-    if states.get(conversation_id) or getattr(
-        app, "_conversation_archive_states", {}
-    ).get(conversation_id):
+    cached = getattr(app, "_conversation_archive_states", None)
+    if cached is None:
+        cached = app._conversation_archive_states = {}
+    if conversation_id in states:
+        cached[conversation_id] = states[conversation_id]
+    else:
+        cached.pop(conversation_id, None)
+    if states.get(conversation_id):
         return "This conversation is archived. Open Archived chats and choose Restore & resume."
     return None

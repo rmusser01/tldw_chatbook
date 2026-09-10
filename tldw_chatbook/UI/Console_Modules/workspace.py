@@ -4092,100 +4092,178 @@ class ConsoleWorkspaceController:
                 "Workspace service is not ready.", severity="warning"
             )
             return
-        try:
-            workspaces = tuple(registry_service.list_workspaces(include_archived=True))
-            active_workspace = registry_service.get_active_workspace()
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Unable to open Console workspace switcher"
-            )
-            self.app_instance.notify(
-                "Workspace registry could not be read.",
-                severity="error",
-            )
-            return
-        if not workspaces:
-            self.app_instance.notify(
-                "Create one with the rail's New button or in Settings > Workspaces.",
-                severity="warning",
-            )
-            return
+        from tldw_chatbook.Chat.conversation_archive_actions import storage_call
 
-        active_workspace_id = (
-            active_workspace.workspace_id if active_workspace is not None else None
-        )
+        request = object()
+        self._console_workspace_switcher_request = request
 
-        def _switch_to(workspace_id: str) -> None:
-            self._switch_console_workspace(workspace_id)
+        def _current() -> bool:
+            return (
+                self._console_workspace_switcher_request is request
+                and self._screen.is_mounted
+                and self._screen.app.screen is self._screen
+            )
 
-        def _apply_workspace_switch(
-            result: tuple[str, str] | None,
-        ) -> None:
-            if not result:
-                return
-            action, workspace_id = result
-            if action == "switch":
-                _switch_to(workspace_id)
-            elif action == "rename":
-                self._open_console_workspace_rename(workspace_id)
-            elif action == "archive":
-                self._confirm_console_workspace_archive(workspace_id)
-            elif action in {"restore", "restore_as"}:
-                self._restore_console_workspace(
-                    workspace_id, rename=action == "restore_as"
+        async def _open() -> None:
+            try:
+                workspaces = tuple(
+                    await storage_call(
+                        registry_service, "list_workspaces", include_archived=True
+                    )
                 )
+                active_workspace = await storage_call(
+                    registry_service, "get_active_workspace"
+                )
+            except Exception:
+                logger.exception("Unable to open Console workspace switcher")
+                if not _current():
+                    return
+                self.app_instance.notify(
+                    "Workspace registry could not be read.",
+                    severity="error",
+                )
+                return
+            if not _current():
+                return
+            if not workspaces:
+                self.app_instance.notify(
+                    "Create one with the rail's New button or in Settings > Workspaces.",
+                    severity="warning",
+                )
+                return
 
-        self.push_screen(
-            ConsoleWorkspaceSwitcherModal(
-                workspaces=workspaces,
-                active_workspace_id=active_workspace_id,
-                show_archived=show_archived,
-            ),
-            callback=_apply_workspace_switch,
+            active_workspace_id = (
+                active_workspace.workspace_id if active_workspace is not None else None
+            )
+
+            def _switch_to(workspace_id: str) -> None:
+                self._switch_console_workspace(workspace_id)
+
+            def _apply_workspace_switch(
+                result: tuple[str, str] | None,
+            ) -> None:
+                if not result:
+                    return
+                action, workspace_id = result
+                if action == "switch":
+                    _switch_to(workspace_id)
+                elif action == "rename":
+                    self._open_console_workspace_rename(workspace_id)
+                elif action == "archive":
+                    self._confirm_console_workspace_archive(workspace_id)
+                elif action in {"restore", "restore_as"}:
+                    self._restore_console_workspace(
+                        workspace_id, rename=action == "restore_as"
+                    )
+
+            self.push_screen(
+                ConsoleWorkspaceSwitcherModal(
+                    workspaces=workspaces,
+                    active_workspace_id=active_workspace_id,
+                    show_archived=show_archived,
+                ),
+                callback=_apply_workspace_switch,
+            )
+
+        self._screen.app.run_worker(
+            _open(), group="console-workspace-switcher", exclusive=True
         )
 
     def _restore_console_workspace(
         self, workspace_id: str, *, rename: bool = False
     ) -> None:
-        """Restore to listings without changing active workspace or session."""
+        """Restore asynchronously without changing active workspace or session."""
+        from tldw_chatbook.Chat.conversation_archive_actions import storage_call
+
         registry = getattr(self.app_instance, "workspace_registry_service", None)
         if registry is None:
             return
-        record = registry.get_workspace(workspace_id)
-        if record is None or not record.archived:
-            self.app_instance.notify(
-                "Workspace is no longer archived.", severity="warning"
-            )
-            return
+        request = object()
+        self._console_workspace_restore_request = request
 
-        def _restore(name: str | None = None) -> None:
-            try:
-                restored = registry.unarchive_workspace(workspace_id, name=name)
-            except WorkspaceRegistryServiceError as exc:
-                self.app_instance.notify(
-                    f"{exc} Use Restore as to choose an available name.",
-                    severity="warning",
-                )
-                self._open_console_workspace_switcher(show_archived=True)
+        def _current() -> bool:
+            return (
+                self._console_workspace_restore_request is request
+                and self._screen.is_mounted
+                and self._screen.app.screen is self._screen
+            )
+
+        def _failed(exc: WorkspaceRegistryServiceError) -> None:
+            if not _current():
                 return
-            self._invalidate_console_persisted_rows_cache()
-            self.run_worker(
-                self._sync_native_console_chat_ui(),
-                exclusive=True,
-                group="console-sync",
-            )
             self.app_instance.notify(
-                f"Restored {restored.name}. Active workspace unchanged; use Switch to open it.",
-                severity="information",
+                f"Could not restore workspace: {exc}. Retry from Show archived; "
+                "use Restore as if the name is in use.",
+                severity="warning",
             )
+            self._open_console_workspace_switcher(show_archived=True)
 
-        if rename:
-            self.push_screen(
-                ConsoleWorkspaceRenameModal(current_name=record.name, restoring=True),
-                callback=lambda name: _restore(name) if name else None,
+        async def _restore(name: str | None = None) -> None:
+            if not _current():
+                return
+
+            async def _complete_restore() -> None:
+                try:
+                    restored = await storage_call(
+                        registry, "unarchive_workspace", workspace_id, name=name
+                    )
+                except WorkspaceRegistryServiceError as exc:
+                    _failed(exc)
+                    return
+                # A committed restore invalidates cached data even if the user left.
+                self._invalidate_console_persisted_rows_cache()
+                if not _current():
+                    return
+                self.run_worker(
+                    self._sync_native_console_chat_ui(),
+                    exclusive=True,
+                    group="console-sync",
+                )
+                self.app_instance.notify(
+                    f"Restored {restored.name}. Active workspace unchanged; use Switch to open it.",
+                    severity="information",
+                )
+
+            # Cancelling the exclusive worker cannot cancel a SQLite write
+            # already executing in a thread or skip its cache publication.
+            operation = asyncio.create_task(_complete_restore())
+            operation.add_done_callback(
+                lambda task: None if task.cancelled() else task.exception()
             )
-        else:
-            _restore()
+            await asyncio.shield(operation)
+
+        def _rename_finished(name: str | None) -> None:
+            if name:
+                self._screen.app.run_worker(
+                    _restore(name), group="console-workspace-restore", exclusive=True
+                )
+
+        async def _prepare() -> None:
+            try:
+                record = await storage_call(registry, "get_workspace", workspace_id)
+            except WorkspaceRegistryServiceError as exc:
+                _failed(exc)
+                return
+            if not _current():
+                return
+            if record is None or not record.archived:
+                self.app_instance.notify(
+                    "Workspace is no longer archived.", severity="warning"
+                )
+                return
+            if rename:
+                self.push_screen(
+                    ConsoleWorkspaceRenameModal(
+                        current_name=record.name, restoring=True
+                    ),
+                    callback=_rename_finished,
+                )
+            else:
+                await _restore()
+
+        self._screen.app.run_worker(
+            _prepare(), group="console-workspace-restore", exclusive=True
+        )
 
     def _open_console_workspace_rename(self, workspace_id: str) -> None:
         """Prompt for and apply a new workspace name (TASK-714)."""

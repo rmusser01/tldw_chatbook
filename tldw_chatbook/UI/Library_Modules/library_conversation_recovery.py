@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any
 
@@ -11,7 +12,7 @@ from ...Utils.input_validation import validate_conversation_archive_scope
 
 async def change_conversation_archive(
     app: Any, ids: tuple[str, ...], **kwargs: Any
-) -> dict:
+) -> dict[str, Any]:
     """Use the shared lifecycle gate (import lazily to avoid UI cycles)."""
     from ...Chat.conversation_archive_actions import (
         change_conversation_archive as change,
@@ -136,14 +137,23 @@ class LibraryConversationRecovery:
             undo=True,
         )
 
-    async def annotate(self, records: tuple) -> tuple:
-        """Read workspace labels away from the UI thread, including retired groups."""
+    async def annotate(
+        self, records: tuple[Mapping[str, Any], ...]
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Read workspace labels away from the UI thread, including retired groups.
+
+        Args:
+            records: Validated conversation metadata mappings from the current page.
+
+        Returns:
+            Metadata mappings enriched with workspace display and archive state.
+        """
         registry = getattr(self.screen.app_instance, "workspace_registry_service", None)
         if registry is None:
             return records
 
-        def enrich() -> tuple:
-            output = []
+        def enrich() -> tuple[Mapping[str, Any], ...]:
+            output: list[Mapping[str, Any]] = []
             workspaces = {}
             for source in records:
                 row = dict(source)
