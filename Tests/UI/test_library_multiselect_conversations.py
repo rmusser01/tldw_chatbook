@@ -288,6 +288,9 @@ def test_conversations_empty_clear_filter_requests_unfiltered_page_one():
     calls = []
     fake = SimpleNamespace(
         _conversations_state=SimpleNamespace(loading=False),
+        # task-32199: the handler branches on the unavailable-browse scope
+        # before it requests a page; ``None`` is the ordinary local scope.
+        _library_unavailable_browse_scope=None,
         _start_library_conversation_page_request=lambda page, query, **kwargs: (
             calls.append((page, query, kwargs))
         ),
@@ -676,6 +679,18 @@ async def test_every_click_on_a_conversation_row_toggles_it_in_select_mode():
             pilot,
             lambda: screen._conversations_state.select_mode,
             message="Conversations select mode did not open.",
+        )
+        # task-32199: select mode recomposes the list, so the state flag flips
+        # a frame before the rebuilt rows are laid out -- reading `.region`
+        # straight after it measured 0x0 and the click offsets below were
+        # nonsense.
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one(
+                "#library-conversation-row-0", Button
+            ).region.width
+            > 0,
+            message="Conversation rows were never laid out in select mode.",
         )
 
         row = screen.query_one("#library-conversation-row-0", Button)
