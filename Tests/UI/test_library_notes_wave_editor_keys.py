@@ -626,7 +626,12 @@ def test_preview_title_css_class_is_no_longer_dead():
 
 @pytest.mark.asyncio
 async def test_info_shows_saved_only_once():
-    """AC#2: Info must not print the same status text twice."""
+    """AC#2: Info must not print the same status text twice.
+
+    task-32177: the duplicate ``#library-note-context-status`` widget this
+    test used to find (only hidden, per task-32142) is now removed
+    entirely rather than just hidden.
+    """
     host = _build_notes_host()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
@@ -640,13 +645,11 @@ async def test_info_shows_saved_only_once():
         await pilot.pause()
 
         status_static = screen.query_one("#library-note-status", Static)
-        context_status_static = screen.query_one(
-            "#library-note-context-status", Static
-        )
         assert str(status_static.renderable) == "Saved"
         assert status_static.display is True
-        assert context_status_static.display is False, (
-            "Info showed 'Saved' a second time, right above the panel"
+        assert not screen.query("#library-note-context-status"), (
+            "The dead duplicate status widget should be removed, not just "
+            "hidden"
         )
 
 
