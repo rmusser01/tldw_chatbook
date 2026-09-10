@@ -30,6 +30,7 @@ _GENERATED_SHEETS = (
     _CSS_ROOT / "screen_agentic_settings.tcss",
     _CSS_ROOT / "screen_feature_evals.tcss",
     _CSS_ROOT / "screen_feature_scheduling.tcss",
+    _CSS_ROOT / "screen_feature_watchlists.tcss",
 )
 
 
@@ -982,6 +983,10 @@ def test_screens_do_not_take_owned_sheets_onto_css_path() -> None:
         ("tldw_chatbook.UI.Screens.scheduling.schedules_workbench", "SchedulesWorkbench"),
         ("tldw_chatbook.UI.Screens.scheduling.workbench_host_screen", "WorkbenchHostScreen"),
         ("tldw_chatbook.UI.Screens.evals_screen", "EvalsScreen"),
+        (
+            "tldw_chatbook.UI.Screens.watchlists_collections_screen",
+            "WatchlistsCollectionsScreen",
+        ),
     ]:
         try:
             screen_cls = getattr(importlib.import_module(screen_module), screen_name)
