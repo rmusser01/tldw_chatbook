@@ -82,3 +82,71 @@ async def test_the_more_strip_paints_every_label_at_the_narrowest_stage():
         painted = _painted(host, actions.region)
         for label in _MORE_ACTION_LABELS:
             assert label in painted, painted
+
+
+def _markdown_document_host() -> LibraryProductionCSSHarness:
+    """Two `document`-typed items; the newest one's text is real Markdown.
+
+    ``document`` is exactly the type the old allowlist excluded, and the
+    content is exactly what the sniff recognises -- the pair the critique
+    reproduced live. The second item keeps the list two rows deep (the
+    shared ``_open_media_list`` waits for ``#library-media-row-1``) and is
+    plain prose, so the same type still resolves both ways by content.
+    """
+    app = _build_media_test_app()
+    items = [
+        {
+            "id": "media-1",
+            "title": "Roadmap Sync Notes",
+            "type": "document",
+            "last_modified": "2026-07-06T10:00:00Z",
+            "author": "Jordan Lee",
+            "keywords": ["roadmap"],
+            "content": "# Roadmap sync\n\nBody.\n",
+            "version": 1,
+        },
+        {
+            "id": "media-2",
+            "title": "Plain Handover Doc",
+            "type": "document",
+            "last_modified": "2026-07-06T08:00:00Z",
+            "author": "Morgan Lee",
+            "keywords": ["handover"],
+            "content": "Plain prose with no markers.\n",
+            "version": 1,
+        },
+    ]
+    _seed_conversations(app, _two_conversations(), media=items)
+    return LibraryProductionCSSHarness(app)
+
+
+def test_the_rendered_view_rule_reads_content_not_the_media_type():
+    """task-32234: the sniff is the whole rule, for every type."""
+    assert _is_markdown_media("document", "# Roadmap sync\n\nBody.\n") is True
+    assert _is_markdown_media("document", "Plain prose with no markers.\n") is False
+    # The types the old allowlist named keep behaving the same way -- the
+    # gate that changed was in front of the sniff, not inside it.
+    assert _is_markdown_media("plaintext", "# Heading\n") is True
+    assert _is_markdown_media("plaintext", "Just a line.\n") is False
+
+
+@pytest.mark.asyncio
+async def test_a_document_with_real_markdown_renders_and_drops_the_false_note():
+    """task-32234 AC#1/#2: a `document` with Markdown renders it.
+
+    The note the Reader used to paint over this item -- "No Markdown
+    formatting to render — showing the stored text" -- was a sentence the
+    user could disprove by reading the hashes underneath it.
+    """
+    host = _markdown_document_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        assert screen.query("#library-media-viewer-content-markdown"), list(
+            screen.query_one("#library-media-viewer-content").children
+        )
+        painted = _painted(host, screen.query_one("#library-media-viewer-content").region)
+        assert "Roadmap sync" in painted and "# Roadmap" not in painted, painted
+        assert RENDERED_VIEW_NOTE not in _painted(
+            host, screen.query_one("#library-media-viewer").region
+        )

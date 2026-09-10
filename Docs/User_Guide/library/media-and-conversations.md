@@ -445,9 +445,11 @@ open mode; no section header repeats it. Body text wraps at a reading measure
 of about 90 columns however wide the terminal is, while the box around it
 still spans the pane.
 
-- **Read** — the complete stored text ("No stored content." when empty). For
-  markdown-flavored media (a `.md`/Obsidian-style item, or a video/audio
-  transcript, whose content has a real heading, table, or fenced code block), a "Rendered (selected) |
+- **Read** — the complete stored text ("No stored content." when empty).
+  Whenever the stored text itself has a real heading, table, or fenced code
+  block — whatever the item's media type, because ingestion files `.md`,
+  `.txt`, `.csv` and `.log` under one type and the type therefore proves
+  nothing — a "Rendered (selected) |
   Raw" toggle appears above the box and defaults to **Rendered** — headings,
   tables, and code render properly instead of showing literal `#`/`##`/`|`
   characters, using the same renderer as Notes' own "Preview". Press
@@ -1078,3 +1080,9 @@ the Reader's More strip paints "Move to trash" in full at 235x52, 100x30 and
 auto-width, and the danger action's 2-cell separation together — at 16 cells
 that separation came out of the button's box and Textual wrapped the label to
 "Move to".)*
+
+*Verified against fix/library-crit9-media-reader — 2026-09-10 (task-32234:
+the Rendered|Raw decision is the content sniff alone now. The media-type
+allowlist that ran in front of it (plaintext/markdown/obsidian_note/video/
+audio) meant a `document` or `article` whose text started with a heading
+painted its literal `#` under a note saying there was no Markdown to render.)*
