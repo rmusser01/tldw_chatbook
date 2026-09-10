@@ -5520,6 +5520,8 @@ class TldwCli(
         self.library_new_profile_admission = first_profile_created_this_session()
         self.console_image_edit_operations = ImageEditOperationRegistry()
         self._console_image_edit_shutdown_task: asyncio.Task[None] | None = None
+        self._backup_maintenance_monitor_task: asyncio.Task[None] | None = None
+        self._backup_maintenance_error: str | None = None
         # task-15860 (headless wake): the Console runtime -- chat store,
         # provider gateway, agent bridge, chat controller -- is constructed
         # by the APP, not by `ChatScreen`, and it OUTLIVES every Console
@@ -8465,6 +8467,39 @@ class TldwCli(
             self._screen_navigation_lock_instance = lock
         return lock
 
+    def _screen_navigation_close_admission(self) -> None:
+        """Fence new route requests without cancelling accepted navigation."""
+        self._screen_navigation_paused = True
+
+    async def _screen_navigation_drain(self, deadline: float) -> bool:
+        """Wait for admitted navigation before taking a screen snapshot."""
+        if not getattr(self, "_screen_navigation_paused", False):
+            raise RuntimeError("screen_navigation_not_paused")
+        while True:
+            setup = getattr(self, "_initial_screen_setup_task", None)
+            pending = (
+                getattr(self, "_screen_navigation_calls", None)
+                or getattr(self, "_pending_flush_tasks", None)
+                or any(not worker.is_finished for worker in getattr(self, "_screen_navigation_workers", ()))
+                or (setup is not None and not setup.done())
+            )
+            mounted = (
+                getattr(self, "_initial_screen_pushed", False) is True
+                and getattr(self, "_ui_ready", False) is True
+            )
+            # A constructed but never-running app has no initial mount to
+            # await. A live app must finish its actual first mount/setup.
+            if not pending and (mounted or not self.is_running):
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(remaining, 0.02))
+
+    def _screen_navigation_resume(self) -> None:
+        """Reopen route requests after maintenance releases its screen view."""
+        self._screen_navigation_paused = False
+
     @on(NavigateToScreen)
     def _dispatch_screen_navigation(self, message: NavigateToScreen) -> None:
         """Kick off ``handle_screen_navigation`` as its own worker (TASK-1230).
@@ -8499,28 +8534,48 @@ class TldwCli(
         before; only real navigation -- dispatched through this handler --
         gains the fix.
         """
-        self.run_worker(
-            self.handle_screen_navigation(message),
+        if getattr(self, "_screen_navigation_paused", False) or getattr(self, "_shutting_down", False):
+            return
+        worker = self.run_worker(
+            self._run_admitted_screen_navigation(message),
             group="screen-navigation",
             exclusive=False,
             exit_on_error=False,
         )
+        self._screen_navigation_workers = {
+            prior for prior in getattr(self, "_screen_navigation_workers", ())
+            if not prior.is_finished
+        }
+        self._screen_navigation_workers.add(worker)
 
     async def handle_screen_navigation(self, message: NavigateToScreen) -> None:
         """Handle navigation to a different screen using switch_screen for better performance."""
-        async with self._screen_navigation_lock():
-            try:
-                await self._handle_screen_navigation_locked(message)
-            except Exception:
-                # task-2720: several steps in the locked body are legitimately
-                # unguarded (target resolution, runtime identity, snapshot
-                # restore, transition admission) and a transient error in any
-                # of them used to fail SILENTLY: no message, nav-bar highlight
-                # stuck on the destination, retry clicks no-opped. Recover the
-                # user-facing state, then re-raise so the worker hook still
-                # writes the `worker_failed` diagnostics line (ADR-029).
-                self._notify_navigation_failure(message.screen_name)
-                raise
+        if getattr(self, "_screen_navigation_paused", False) or getattr(self, "_shutting_down", False):
+            return
+        await self._run_admitted_screen_navigation(message)
+
+    async def _run_admitted_screen_navigation(self, message: NavigateToScreen) -> None:
+        """Complete an accepted route request under the existing FIFO lock."""
+        calls = getattr(self, "_screen_navigation_calls", None)
+        if calls is None:
+            calls = self._screen_navigation_calls = {}
+        task = asyncio.current_task()
+        depth = calls.get(task, 0)
+        calls[task] = depth + 1
+        try:
+            async with self._screen_navigation_lock():
+                try:
+                    await self._handle_screen_navigation_locked(message)
+                except Exception:
+                    # Preserve the existing navigation failure notification and
+                    # worker diagnostics after any failed flush/transition.
+                    self._notify_navigation_failure(message.screen_name)
+                    raise
+        finally:
+            if depth:
+                calls[task] = depth
+            else:
+                calls.pop(task, None)
 
     #: Bound on the dismiss-the-overlays loop below. Each pass removes one
     #: pushed screen, and dismissing one can legitimately reveal another
@@ -8696,14 +8751,11 @@ class TldwCli(
                     # `content_hash` stayed stale, so the next save reported a
                     # spurious conflict.
                     flush_task = asyncio.ensure_future(flush_result)
-                    try:
-                        flush_result = await asyncio.wait_for(
-                            asyncio.shield(flush_task),
-                            timeout=self.NAVIGATION_FLUSH_TIMEOUT_SECONDS,
-                        )
-                    except asyncio.TimeoutError:
-                        self._retain_unfinished_flush(flush_task, screen_name)
-                        raise
+                    self._retain_unfinished_flush(flush_task, screen_name)
+                    flush_result = await asyncio.wait_for(
+                        asyncio.shield(flush_task),
+                        timeout=self.NAVIGATION_FLUSH_TIMEOUT_SECONDS,
+                    )
                 if flush_result is False:
                     logger.info(
                         f"Navigation to {screen_name} vetoed by the outgoing "
@@ -8815,7 +8867,7 @@ class TldwCli(
                 release_navigation()
 
     def _retain_unfinished_flush(self, flush_task: Any, screen_name: str) -> None:
-        """Keep a timed-out flush alive until it finishes on its own.
+        """Keep every accepted flush alive until it finishes on its own.
 
         The navigation wait is shielded, so the flush keeps running after the
         app stops waiting -- but asyncio only holds a weak reference to a
@@ -8841,15 +8893,13 @@ class TldwCli(
             exc = task.exception()
             if exc is not None:
                 logger.warning(
-                    "Screen flush eventually failed after navigation gave up "
-                    "waiting (route=%s, exception_category=%s).",
+                    "Retained screen flush failed (route=%s, exception_category=%s).",
                     screen_name,
                     type(exc).__name__,
                 )
             else:
                 logger.info(
-                    "Screen flush eventually completed after navigation gave "
-                    "up waiting (route=%s).",
+                    "Retained screen flush completed (route=%s).",
                     screen_name,
                 )
 
@@ -9227,6 +9277,11 @@ class TldwCli(
 
     @on(TTSCompleteEvent)
     async def handle_tts_complete_event(self, event: TTSCompleteEvent) -> None:
+        await TldwCli._settle_speech_delivery(
+            self, event, lambda message: TldwCli._deliver_tts_complete_event(self, message)
+        )
+
+    async def _deliver_tts_complete_event(self, event: TTSCompleteEvent) -> None:
         """Handle TTS generation completion."""
         self.loguru_logger.info(f"TTS complete for message {event.message_id}")
         playback_lifecycle = getattr(event, "playback_lifecycle", None)
@@ -9356,12 +9411,13 @@ class TldwCli(
                         # which has no per-message playback control), so
                         # there is nothing for the user to click - play the
                         # generated audio immediately instead of going silent.
-                        accepted = self.post_message(
+                        accepted = TldwCli._post_speech_delivery(
+                            self,
                             TTSPlaybackEvent(
                                 action="play",
                                 message_id=event.message_id,
                                 playback_lifecycle=playback_lifecycle,
-                            )
+                            ),
                         )
                         if accepted is False and playback_lifecycle is not None:
                             playback_lifecycle.report("failed")
@@ -9440,12 +9496,39 @@ class TldwCli(
     @on(TTSPlaybackEvent)
     async def handle_tts_playback_event(self, event: TTSPlaybackEvent) -> None:
         """Handle TTS playback control."""
-        await self.control_tts_playback(event)
+        if (
+            event.action == "play"
+            and getattr(self, "_speech_delivery_paused", False)
+            and event not in getattr(self, "_speech_delivery_pending", set())
+        ):
+            event.report_outcome(False)
+            return
+        await self._settle_speech_delivery(event, self.control_tts_playback)
 
     async def control_tts_playback(self, event: TTSPlaybackEvent) -> None:
         """Run playback control directly and preserve handler callback order."""
         try:
-            handler = await self._ensure_tts_handler()
+            if event.action == "play" and getattr(self, "_speech_delivery_paused", False):
+                if event in getattr(self, "_speech_delivery_pending", set()):
+                    self._defer_speech_playback(event)
+                else:
+                    event.report_outcome(False)
+                return
+            if event.action == "stop":
+                deferred = getattr(self, "_speech_delivery_deferred", [])
+                for pending in tuple(deferred):
+                    if event.message_id is None or pending.message_id == event.message_id:
+                        deferred.remove(pending)
+                        pending.report_outcome(False)
+                        if pending.playback_lifecycle is not None:
+                            pending.playback_lifecycle.report_terminal("stopped")
+            handler = (
+                getattr(self, "_tts_handler", None)
+                if event.action in {"stop", "pause"}
+                else None
+            )
+            if handler is None:
+                handler = await self._ensure_tts_handler()
             if handler:
                 await handler.handle_tts_playback(event)
             else:
@@ -9481,7 +9564,9 @@ class TldwCli(
         self, event: STTSSettingsSaveEvent
     ) -> None:
         """Handle S/TT/S settings save."""
-        handler = await self._ensure_stts_handler()
+        handler = getattr(self, "_stts_handler", None)
+        if handler is None:
+            handler = await self._ensure_stts_handler()
         if handler:
             await handler.handle_settings_save(event)
 
@@ -9491,6 +9576,14 @@ class TldwCli(
         event: STTSProviderConfigurationChanged,
     ) -> None:
         """Forward provider invalidation to the retained STTS handler."""
+        try:
+            TldwCli._deliver_stts_provider_configuration_changed(self, event)
+        finally:
+            getattr(self, "_speech_delivery_pending", set()).discard(event)
+
+    def _deliver_stts_provider_configuration_changed(
+        self, event: STTSProviderConfigurationChanged
+    ) -> None:
         handler = getattr(self, "_stts_handler", None)
         if handler is not None:
             handler.on_stts_provider_configuration_changed(event)
@@ -9937,6 +10030,7 @@ class TldwCli(
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""
         self._bind_tts_service()
+        self._start_backup_maintenance_monitor()
         mount_start = time.perf_counter()
 
         # TASK-1240. Anchors a session in the persistent log; its absence dates
@@ -10115,7 +10209,9 @@ class TldwCli(
         # Only schedule post-mount setup if splash screen is not active
         if not self.splash_screen_active:
             # Schedule setup to run after initial rendering.
-            asyncio.create_task(self._run_no_splash_post_mount_setup())
+            self._initial_screen_setup_task = asyncio.create_task(
+                self._run_no_splash_post_mount_setup()
+            )
 
         # Theme registration
         theme_start = time.perf_counter()
@@ -11524,6 +11620,115 @@ class TldwCli(
         deferred.add(kind)
         return False
 
+    def _start_backup_maintenance_monitor(self) -> None:
+        """Retain the installed live maintenance monitor for this app lifetime."""
+        if getattr(self, "_backup_maintenance_monitor_task", None) is not None:
+            return
+        from .Backup_Recovery.runtime_maintenance import monitor_app
+
+        self._backup_maintenance_monitor_task = asyncio.create_task(
+            monitor_app(self), name="backup-maintenance-monitor"
+        )
+
+    async def _stop_backup_maintenance_monitor(self) -> asyncio.CancelledError | None:
+        """Join native readmission before app shutdown retires ordinary owners."""
+        task = getattr(self, "_backup_maintenance_monitor_task", None)
+        if task is None:
+            return None
+        if not task.done():
+            task.cancel()
+        cancellation = None
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError as error:
+                if not task.done() or asyncio.current_task().cancelling():
+                    cancellation = cancellation or error
+        if not task.cancelled():
+            task.result()
+        self._backup_maintenance_monitor_task = None
+        return cancellation
+
+    def _speech_delivery_close_admission(self) -> None:
+        """Keep accepted notifications; defer playback until producer resume."""
+        self._speech_delivery_paused = True
+
+    async def _speech_delivery_drain(self, deadline: float) -> bool:
+        """Settle queued publication delivery; retained autoplay is transient."""
+        if not getattr(self, "_speech_delivery_paused", False):
+            raise RuntimeError("speech_delivery_not_paused")
+        while getattr(self, "_speech_delivery_pending", set()):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(remaining, 0.01))
+        return True
+
+    def _speech_delivery_resume(self) -> None:
+        """Replay accepted playback after handler and service admission reopen."""
+        self._speech_delivery_paused = False
+        deferred = getattr(self, "_speech_delivery_deferred", [])
+        while deferred:
+            event = deferred[0]
+            accepted = self._post_speech_delivery(event)
+            deferred.pop(0)
+            if accepted is False:
+                event.report_outcome(False)
+                if event.playback_lifecycle is not None:
+                    event.playback_lifecycle.report_terminal("failed")
+
+    def _defer_speech_playback(self, event: TTSPlaybackEvent) -> None:
+        deferred = getattr(self, "_speech_delivery_deferred", None)
+        if deferred is None:
+            deferred = self._speech_delivery_deferred = []
+        if event not in deferred:
+            deferred.append(event)
+
+    def _post_speech_delivery(self, event) -> bool:
+        """Retain only the installed speech completion/notification routes."""
+        if type(event) not in {
+            TTSCompleteEvent, TTSPlaybackEvent, STTSProviderConfigurationChanged
+        }:
+            raise TypeError("unsupported_speech_delivery")
+        if (
+            type(event) is TTSPlaybackEvent
+            and event.action == "play"
+            and getattr(self, "_speech_delivery_paused", False)
+        ):
+            self._defer_speech_playback(event)
+            return True
+        pending = getattr(self, "_speech_delivery_pending", None)
+        if pending is None:
+            pending = self._speech_delivery_pending = set()
+        pending.add(event)
+        try:
+            accepted = self.post_message(event)
+        except BaseException:
+            pending.discard(event)
+            raise
+        if accepted is False:
+            pending.discard(event)
+        return accepted
+
+    async def _settle_speech_delivery(self, event, deliver) -> None:
+        pending = getattr(self, "_speech_delivery_pending", None)
+        if pending is None:
+            pending = self._speech_delivery_pending = set()
+        pending.add(event)
+        completion = asyncio.create_task(deliver(event))
+        cancellation = None
+        try:
+            while not completion.done():
+                try:
+                    await asyncio.shield(completion)
+                except asyncio.CancelledError as error:
+                    cancellation = cancellation or error
+            completion.result()
+        finally:
+            pending.discard(event)
+        if cancellation is not None:
+            raise cancellation
+
     def _speech_initialization_close_admission(self) -> None:
         """Defer new service construction while admitted initialization settles."""
         self._speech_initialization_paused = True
@@ -11889,8 +12094,12 @@ class TldwCli(
         """Clean up logging resources on application exit."""
         import asyncio
 
+        monitor_cleanup_cancellation = await TldwCli._stop_backup_maintenance_monitor(self)
         self._speech_initialization_closed = True
         speech_cleanup_cancellation = await self._settle_speech_initialization()
+        speech_cleanup_cancellation = (
+            monitor_cleanup_cancellation or speech_cleanup_cancellation
+        )
         logging.info("--- App Unmounting ---")
         # TASK-1240. Distinguishes a clean exit from a kill: a log whose last
         # line is app_started ended abruptly. Wrapped, and deliberately so:

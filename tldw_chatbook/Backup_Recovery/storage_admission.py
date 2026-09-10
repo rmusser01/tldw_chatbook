@@ -256,9 +256,8 @@ class _Acquisition:
 class _LocalPause:
     """Private local gate authority, NOT a native maintenance/capture capability.
 
-    Startup retirement is deliberately unavailable until installed runtime
-    composition covers every producer. Neither zero counts nor a source census
-    alone can advance this phase's pause into exclusive maintenance.
+    Startup retirement requires the installed runtime to settle its producers.
+    Neither zero counts nor a source census alone grants native maintenance.
     """
 
     def __init__(self):
@@ -296,16 +295,85 @@ class _LocalPause:
                 _changed.wait(min(remaining, 0.05))
                 _LocalPause._check(self)
 
-    def require_runtime_coverage(self) -> None:
+    def require_runtime_coverage(self, runtime=None) -> None:
         _LocalPause._check(self)
-        raise bootstrap.RecoveryRequired("participant_runtime_coverage_incomplete")
+        from .runtime_maintenance import RuntimeMaintenance
+
+        if type(runtime) is not RuntimeMaintenance:
+            raise bootstrap.RecoveryRequired("participant_runtime_coverage_incomplete")
+        RuntimeMaintenance._require_storage_coverage(runtime, self)
+
+    def retire_startup(self, runtime) -> None:
+        """Yield process enrollment only after the installed app actually drains."""
+        self.require_runtime_coverage(runtime)
+        with _changed:
+            _LocalPause._check(self)
+            key = (os.getpid(), str(bootstrap.default_bootstrap_root()))
+            if getattr(self, "_startup_retired", False) or set(_startups) != {key}:
+                raise bootstrap.RecoveryRequired("runtime_startup_scope_unqualified")
+            lease = _startups[key]
+            hold = _holds.get(lease._key)
+            if hold is None or hold.count != 1 or hold.key != key:
+                raise bootstrap.RecoveryRequired("runtime_native_resources_not_settled")
+            self._startup_source = (
+                key, effective_config_path(), hold.names, hold.authority._identity
+            )
+            _, profiles = bootstrap._records(bootstrap.default_bootstrap_root())
+            previous = next(
+                (r for r in profiles if r["selector"] == str(effective_config_path())),
+                None,
+            )
+            self._startup_roots = (
+                tuple(previous["roots"])
+                if previous is not None
+                and tuple(previous["namespaces"]) == hold.names
+                else None
+            )
+            self._startup_retired = True
+            self._startup_thread = None
+            self._startup_error = None
+            del _startups[key]
+        lease.close()
+
+    async def reacquire_startup(self) -> None:
+        """Re-enroll under the native gate before reopening any ordinary owner."""
+        _LocalPause._check(self)
+        if not getattr(self, "_startup_retired", False):
+            return
+        if self._startup_thread is None:
+            self._startup_thread = threading.Thread(
+                target=_reacquire_paused_startup,
+                args=(self,),
+                name="chatbook-startup-readmission",
+                daemon=True,
+            )
+            self._startup_thread.start()
+        # The caller owns this attempt through completion. Cancellation of an
+        # outer UI waiter must not abandon native re-enrollment or open the gate.
+        cancellation = None
+        while self._startup_thread.is_alive():
+            try:
+                await asyncio.sleep(0.01)
+            except asyncio.CancelledError as error:
+                cancellation = cancellation or error
+        _LocalPause._check(self)
+        if self._startup_error is not None:
+            raise bootstrap.RecoveryRequired("startup_reacquisition_failed") from None
+        with _changed:
+            key = self._startup_source[0]
+            lease = _startups.get(key)
+            if lease is None or lease._key != key or _retiring_holds:
+                raise bootstrap.RecoveryRequired("startup_reacquisition_failed")
+            self._startup_retired = False
+        if cancellation is not None:
+            raise cancellation
 
     def resume(self) -> None:
         global _pause
         with _changed:
             _LocalPause._check(self)
-            # No startup was retired in this phase. Later qualified composition
-            # must reacquire its verified startup before reopening this gate.
+            if getattr(self, "_startup_retired", False):
+                raise bootstrap.RecoveryRequired("startup_reacquisition_required")
             _pause = None
             _changed.notify_all()
 
@@ -325,6 +393,63 @@ def _begin_local_pause() -> _LocalPause:
                 attempt.cancel.set()
         _changed.notify_all()
         return pause
+
+
+class _StartupReacquisition(_Acquisition):
+    """The exact pause-owned readmission thread may acquire startup, nothing else."""
+
+    def __init__(self, pause):
+        self.pause = pause
+        self.pid = os.getpid()
+        self.thread = threading.current_thread()
+        self.task = _task_identity()
+        self.initializing_root = None
+        self.cancel = threading.Event()
+        self.operation = None
+        with _changed:
+            self.check()
+            _pending_acquisitions.add(self)
+
+    def check(self, path=None):
+        if (
+            path is not None
+            or _pause is not self.pause
+            or self.pause._startup_thread is not threading.current_thread()
+            or not self.pause._startup_retired
+            or self.pause._startup_source[0]
+            != (os.getpid(), str(bootstrap.default_bootstrap_root()))
+            or self.pause._startup_source[1] != effective_config_path()
+        ):
+            raise bootstrap.RecoveryRequired("startup_reacquisition_invalid")
+
+
+def _reacquire_paused_startup(pause):
+    attempt = None
+    lease = None
+    try:
+        attempt = _StartupReacquisition(pause)
+        lease = _acquire_storage(None, attempt)
+        with _changed:
+            attempt.check()
+            key, _, names, identity = pause._startup_source
+            hold = _holds.get(lease._key)
+            if (
+                lease._key != key
+                or hold is None
+                or hold.names != names
+                or hold.authority._identity != identity
+                or key in _startups
+            ):
+                raise bootstrap.RecoveryRequired("startup_scope_changed")
+            _startups[key] = lease
+            lease = None
+    except BaseException as error:
+        pause._startup_error = error
+    finally:
+        if lease is not None:
+            lease.close()
+        if attempt is not None:
+            attempt.close()
 
 
 def _local_pause_requested() -> bool:
@@ -436,10 +561,34 @@ def _contains_owned_path(root: Path, selected: Path) -> bool:
     return (info.st_dev, info.st_ino) == (selected_info.st_dev, selected_info.st_ino)
 
 
-def _scope(root: Path, selector: Path, path: Path | None) -> tuple[str, ...]:
+def _scope(
+    root: Path, selector: Path, path: Path | None, *, startup_attempt=None, authority=None
+) -> tuple[str, ...]:
     pending, profiles = bootstrap._records(root)
     registry = bootstrap._registry(root)
     binding = bootstrap._binding(selector, profiles, registry) if profiles else None
+    if type(startup_attempt) is _StartupReacquisition:
+        _StartupReacquisition.check(startup_attempt, path)
+        pause = startup_attempt.pause
+        if (
+            startup_attempt not in _pending_acquisitions
+            or authority is None
+            or authority._identity != pause._startup_source[3]
+        ):
+            raise bootstrap.RecoveryRequired("startup_scope_changed")
+        if pause._startup_roots is not None:
+            previous = next((r for r in profiles if r["selector"] == str(selector)), None)
+            if (
+                previous is None
+                or tuple(previous["namespaces"]) != pause._startup_source[2]
+                or tuple(previous["roots"]) != pause._startup_roots
+            ):
+                raise bootstrap.RecoveryRequired("startup_scope_changed")
+            if binding is None and not pending:
+                # Continue only the retired owner's unchanged mapping. This does
+                # not update persisted enrollment or admit any ordinary caller.
+                snapshot = dict(previous, fingerprint=bootstrap._fingerprint(selector))
+                binding = bootstrap._binding(selector, [snapshot], registry)
     if binding is None and not pending:
         live = _holds.get((os.getpid(), str(root)))
         previous = next((r for r in profiles if r["selector"] == str(selector)), None)
@@ -521,7 +670,10 @@ def _acquire_storage(path: Path | None, attempt: _Acquisition) -> StorageLease:
         authority = admission_authority(root)
     with _lock:
         attempt.check(path)
-        names = _scope(root, selector, lexical_path(path) if path is not None else None)
+        names = _scope(
+            root, selector, lexical_path(path) if path is not None else None,
+            startup_attempt=attempt, authority=authority,
+        )
         key = (os.getpid(), str(root))
         hold = _holds.get(key)
         if hold is not None and names != hold.names:
@@ -547,7 +699,10 @@ def _acquire_storage(path: Path | None, attempt: _Acquisition) -> StorageLease:
             if not allowed:
                 raise bootstrap.RecoveryRequired(reason)
             if (
-                _scope(root, selector, lexical_path(path) if path is not None else None)
+                _scope(
+                    root, selector, lexical_path(path) if path is not None else None,
+                    startup_attempt=attempt, authority=authority,
+                )
                 != names
             ):
                 raise bootstrap.RecoveryRequired("storage_scope_changed")
