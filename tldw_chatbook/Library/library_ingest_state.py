@@ -322,7 +322,7 @@ _GLYPH_DONE = "✓"  # "✓"
 #: import -- the two used to be byte-identical rows.
 _GLYPH_MATCHED = "≡"
 _GLYPH_FAILED = "✗"  # "✗"
-_GLYPH_SKIPPED = "○"  # neutral: never attempted (task-2220)
+from .library_shell_state import LIBRARY_GLYPH_OUTCOME_SKIPPED as _GLYPH_SKIPPED  # "–" task-32235
 _GLYPH_CANCELLED = "⊘"  # "⊘" -- stopped deliberately, not an error
 
 # L4: the marker `local_file_ingestion.py`'s "Unsupported file type" error

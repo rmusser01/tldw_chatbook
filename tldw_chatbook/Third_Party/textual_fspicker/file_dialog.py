@@ -13,15 +13,36 @@ from pathlib import Path
 # Textual imports.
 from textual import on
 from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.css.query import NoMatches
 from textual.events import Mount
 from textual.widgets import Button, Input, Label, Select
 
 ##############################################################################
 # Local imports.
-from .base_dialog import ButtonLabel, FileSystemPickerScreen, InputBar
+from .base_dialog import (
+    ButtonLabel,
+    FileSystemPickerScreen,
+    InputBar,
+    resolve_typed_directory,
+)
 from .parts import DirectoryNavigation, DriveNavigation
 from .path_filters import Filters
 from .path_maker import MakePath
+
+
+##############################################################################
+class FileNameInput(Input):
+    """The input bar's file-name/path field.
+
+    Exists for one binding: Textual's `Input` maps `ctrl+a` to "go to
+    start", so the terminal-standard "select everything I typed" was
+    unreachable in the one field of this dialog a user types a path into
+    (task-32229). A subclass is the only place that binding can win --
+    the focused widget's own bindings beat the screen's.
+    """
+
+    BINDINGS = [Binding("ctrl+a", "select_all", show=False)]
 
 
 ##############################################################################
@@ -138,7 +159,9 @@ class BaseFileDialog(FileSystemPickerScreen):
         yield Label(
             self._field_label_text(self._default_file or ""), id="file-name-label"
         )
-        yield Input(Path(self._default_file or "").name, placeholder="File name")
+        yield FileNameInput(
+            Path(self._default_file or "").name, placeholder="File name or path"
+        )
         if self._filters:
             yield FileFilter(
                 self._filters.selections,
@@ -189,6 +212,45 @@ class BaseFileDialog(FileSystemPickerScreen):
             # set it. See ``_select_folder_click_fill``'s docstring.
             self._select_folder_click_fill = None
         self._refresh_field_label(event.value)
+
+    @on(Input.Changed)
+    def _follow_typed_directory(self, event: Input.Changed) -> None:
+        """Move the listing to a rooted directory path as it is typed.
+
+        task-32229: this dialog made a terminal user click down from
+        ``$HOME``; the only field that took typing was the file name, and
+        it only resolved on Enter. Typing (or pasting) an absolute path --
+        or one under ``~`` -- now walks the tree there straight away.
+
+        Deliberately ROOTED paths only. A relative value is a file name in
+        the directory being browsed, and one of them (a click on a folder
+        row) is pre-filled by ``_select_file`` for "Select folder" to read:
+        chasing those would move the ground under the value the user just
+        picked.
+        """
+        try:
+            bar_input = self.query_one(InputBar).query_one(Input)
+        except NoMatches:
+            return
+        if event.input is not bar_input:
+            # The screen's hidden Ctrl+L path bar and Ctrl+F search box are
+            # `Input`s too -- see `_update_field_label`.
+            return
+        # Rooted-ness is decided on the stripped value; the RAW value is what
+        # the resolver gets. Leading/trailing spaces are significant in a
+        # POSIX directory name and `resolve_typed_directory` documents that
+        # it takes the text exactly as typed (review round 1).
+        typed = event.value.strip()
+        try:
+            rooted = typed.startswith("~") or MakePath.of(typed).is_absolute()
+        except (OSError, ValueError):
+            return
+        if not rooted:
+            return
+        navigation = self.query_one(DirectoryNavigation)
+        target = resolve_typed_directory(event.value, navigation.location)
+        if isinstance(target, Path) and target != navigation.location:
+            navigation.location = target
 
     @on(DirectoryNavigation.Changed)
     def _refresh_field_label_on_navigation(

@@ -1672,6 +1672,10 @@ class LibraryRagSearchController:
             "library-rag-query-quiet-line",
             "library-rag-query-blocked-callout",
             "library-rag-query-recovery",
+            # task-32236: the blocked callout's action. Every id this
+            # builder can mount must be torn down here, or the next
+            # refresh mounts a second one and Textual raises DuplicateIds.
+            "library-rag-open-provider-settings",
         ):
             for widget in list(self.query(f"#{widget_id}")):
                 await widget.remove()
