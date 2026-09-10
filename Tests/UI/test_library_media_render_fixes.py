@@ -3089,6 +3089,12 @@ async def test_media_rows_paint_analysed_only_for_analysed_items(size, items_wid
     one. Both new widths are still far above the 24-cell secondary, so what
     the assertion means is unchanged; the resolver's own contract lives in
     Tests/UI/test_library_adaptive_reader_shell.py.
+
+    Args:
+        size: Terminal dimensions ``(columns, rows)`` the harness runs at.
+        items_width: The Items pane's automatically resolved width at that
+            terminal size -- the exact number, so a resolver change lands
+            here instead of hiding behind a ``>=`` floor.
     """
     host = _review_state_host()
     async with host.run_test(size=size) as pilot:
