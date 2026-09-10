@@ -4103,8 +4103,11 @@ class LibraryNotesController:
     def _sync_library_notes_source_controls(self) -> None:
         """Patch the retained Notes source strip after an in-place switch."""
         database_selected = self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+        # task-32136: mirrors the compose-time rule -- wide Folder files is
+        # a mode of Notes, so its two switches stay on the strip.
         wide_focused_task = (
             not database_selected
+            and not self._file_notes_active()
             and not self._library_notes_compact
             and self._library_notes_focused_task_active()
         )

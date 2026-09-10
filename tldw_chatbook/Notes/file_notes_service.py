@@ -141,6 +141,22 @@ class _ObservedFile:
     mtime_ns: int
 
 
+class ScanCancelled(Exception):
+    """Raised when a caller abandons a scan while it is still walking.
+
+    task-32121: ``scan`` holds the service's operation lock for its whole
+    run, so a scan of an enormous tree (a home directory picked by
+    accident) kept the lock long after the UI had given up on it, and
+    every later folder change queued behind it for the rest of the
+    session. The caller now hands in a cancel check and the walk stops
+    cooperatively -- releasing the lock -- instead of running to the end.
+    """
+
+
+#: How many walked entries pass before ``scan`` reports progress again.
+SCAN_PROGRESS_INTERVAL = 200
+
+
 class FileNotesService:
     """Operate on one canonical notes root while disk remains authoritative."""
 
@@ -205,19 +221,41 @@ class FileNotesService:
             replica.close()
 
     @_serialized
-    def scan(self) -> ScanResult:
+    def scan(
+        self,
+        *,
+        should_cancel: Callable[[], bool] | None = None,
+        on_progress: Callable[[int], None] | None = None,
+    ) -> ScanResult:
         """Scan supported regular files without following symlinks.
+
+        Args:
+            should_cancel: Optional check consulted between directories and
+                between files. When it returns True the scan stops and the
+                operation lock is released instead of being held to the end.
+            on_progress: Optional callback receiving the number of
+                directory entries seen so far, called every
+                :data:`SCAN_PROGRESS_INTERVAL` entries and once at the end
+                of the walk.
 
         Returns:
             Current file entries and any replica warning.
+
+        Raises:
+            ScanCancelled: If ``should_cancel`` returned True mid-scan.
         """
         if not self._root_is_online():
             return ScanResult(status="offline", offline=True)
 
         entries: list[FileNoteEntry] = []
         warning: str | None = None
-        observed, uncertain_paths, _ = self._walk_candidates()
+        observed, uncertain_paths, _ = self._walk_candidates(
+            should_cancel=should_cancel,
+            on_progress=on_progress,
+        )
         for relative_path, observed_file in observed.items():
+            if should_cancel is not None and should_cancel():
+                raise ScanCancelled()
             try:
                 opened = self._load_file(relative_path)
             except (OSError, ValueError):
@@ -1197,10 +1235,18 @@ class FileNotesService:
 
     def _walk_candidates(
         self,
+        *,
+        should_cancel: Callable[[], bool] | None = None,
+        on_progress: Callable[[int], None] | None = None,
     ) -> tuple[dict[str, _ObservedFile], set[str], bool]:
         observed: dict[str, _ObservedFile] = {}
         uncertain_paths: set[str] = set()
         had_walk_error = False
+        # Every entry the walk reports, not just the supported files kept:
+        # a folder picked by accident is mostly things this service ignores,
+        # and a progress count that barely moves is worse than none.
+        seen = 0
+        reported = 0
 
         def collect_error(error: OSError) -> None:
             nonlocal had_walk_error
@@ -1211,6 +1257,14 @@ class FileNotesService:
             followlinks=False,
             onerror=collect_error,
         ):
+            # task-32121: the only place a runaway walk can be stopped --
+            # os.walk itself is uninterruptible inside one directory.
+            if should_cancel is not None and should_cancel():
+                raise ScanCancelled()
+            seen += len(directory_names) + len(file_names)
+            if on_progress is not None and seen - reported >= SCAN_PROGRESS_INTERVAL:
+                reported = seen
+                on_progress(reported)
             current_path = Path(current)
             directory_names[:] = sorted(
                 name
@@ -1218,6 +1272,11 @@ class FileNotesService:
                 if name != ".git" and not _is_symlink(current_path / name)
             )
             for name in sorted(file_names):
+                # A flat folder is ONE walk yield, so the check above never
+                # comes round again: two stats per file is the slow half,
+                # and it runs with the operation lock held (review round 2).
+                if should_cancel is not None and should_cancel():
+                    raise ScanCancelled()
                 path = current_path / name
                 if not self._is_supported(path) or _is_symlink(path):
                     continue
@@ -1234,6 +1293,8 @@ class FileNotesService:
                     size=file_stat.st_size,
                     mtime_ns=file_stat.st_mtime_ns,
                 )
+        if on_progress is not None:
+            on_progress(seen)
         return dict(sorted(observed.items())), uncertain_paths, had_walk_error
 
     def _load_file(self, relative_path: str) -> OpenedFileNote:
