@@ -3,9 +3,10 @@ id: TASK-32229
 title: >-
   Library file dialogs have no path field; Ctrl+A in the file-name box is
   move-to-start
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-10 14:56'
+updated_date: '2026-09-10 19:02'
 labels:
   - library
   - export
@@ -24,5 +25,46 @@ The export destination picker (and Import Browse…, Folder files) makes a termi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A focused path Input above the tree accepts a pasted absolute path (with ~) and jumps the tree to it
+- [x] #1 A focused path Input above the tree accepts a pasted absolute path (with ~) and jumps the tree to it
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. The existing File name Input follows an absolute/~ directory path as it is typed (reusing resolve_typed_directory)
+2. Ctrl+A selects the field instead of moving to start
+3. Tests + docs
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Extended the field that already exists rather than adding a second one:
+`BaseFileDialog`'s "File name" Input (the one `task-32122` taught to
+relabel itself "Folder path:") now navigates the listing as you type. On
+`Input.Changed`, a value that is absolute or starts with `~` goes through
+the same `resolve_typed_directory` "Select folder" already used, and the
+`DirectoryNavigation` location follows it. Relative values are deliberately
+left alone: they are file names, and one of them is the basename
+`_select_file` pre-fills on a click for "Select folder" to read -- chasing
+those would move the ground under the value the user just picked.
+
+Ctrl+A needed a three-line `Input` subclass (`FileNameInput`): Textual maps
+`ctrl+a` to "go to start" on `Input` itself, and the focused widget's own
+bindings beat the screen's, so no screen-level binding can win. The
+placeholder now reads "File name or path" -- the only in-app hint that the
+field takes one.
+
+This is the base class every FileOpen/FileSave in the app shares (Library
+export destination, Import Browse…), which is why the fix belongs there.
+`SelectDirectory` is NOT a `BaseFileDialog` and is untouched.
+
+Tests: 4 in `Tests/UI/test_library_crit9_grammar.py` (absolute path, `~`
+expansion, Ctrl+A, and the negative case that a bare file name does not
+move the tree). Ran the 10 fspicker/dialog suites before and after: 138
+passed with the change; the 2-3 `SelectDirectory` failures seen in some
+runs reproduce on unpatched dev and shift names between runs (host under
+load). Live-verified in the export destination picker: typed
+`/Users/macbook-dev/Documents` and `~/Downloads`, breadcrumb followed both;
+Ctrl+A replaced the pre-filled bundle name.
+<!-- SECTION:NOTES:END -->
