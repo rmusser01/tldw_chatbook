@@ -317,8 +317,11 @@ def format_empty_export_error(requested: int) -> str:
         requested: How many items the failed run had selected.
 
     Returns:
-        e.g. ``"✗ export produced no content · 3 items were selected"``.
+        e.g. ``"✗ export produced no content · 3 items were selected"``
+        (``"· 1 item was selected"`` for a single-item selection).
     """
+    if requested == 1:
+        return "✗ export produced no content · 1 item was selected"
     return f"✗ export produced no content · {requested} items were selected"
 
 
