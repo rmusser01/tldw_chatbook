@@ -159,6 +159,11 @@ LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS = 5.0
 # keyring backend or CI machine while still resolving quickly if a truly
 # idle list somehow never settles.
 LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS = 2.0
+#: task-32228: how often the armed entry focus re-attempts while the list it
+#: wants has no rows mounted yet. A coarse poll on purpose -- the only thing
+#: it is racing is a canvas-level recompose, and every tick is dropped by the
+#: arm's own generation check once the user takes control.
+LIBRARY_LIST_ENTRY_FOCUS_RETRY_SECONDS = 0.05
 LIBRARY_NOTES_AUTOSAVE_SECONDS = 2.0
 LIBRARY_NOTE_CONTENT_MAX_CHARS = 2_000_000
 # The literal title a just-created "Blank note" row is seeded with (LIB-14,
@@ -396,6 +401,11 @@ _LIBRARY_LIST_ROW_CLASSES = (
     # template" heading between them is a ``Static``, which this helper's
     # own class filter already skips.
     "library-notes-create-row",
+    # task-32228 (critique #9 fix round 1): Conversations was the one browse
+    # list left out of both halves of this seam. Its rows are the same
+    # full-width ``library_row_button`` the four above use
+    # (``library_conversations_canvas.py``), so Up/Down now walks them too.
+    "library-conversation-row",
 )
 
 _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID = {
@@ -414,6 +424,10 @@ _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID = {
     # SKILL``).
     LIBRARY_ROW_CREATE_PROMPT: "library-prompt-row",
     LIBRARY_ROW_CREATE_SKILL: "library-skill-row",
+    # task-32228: see above. Arriving with focus on the first row is what
+    # makes this canvas's Escape hop live, and therefore what lets its footer
+    # advertise the key honestly.
+    LIBRARY_ROW_BROWSE_CONVERSATIONS: "library-conversation-row",
 }
 
 

@@ -184,10 +184,17 @@ replaced it.
 
 The destinations with a three-pane reader (Media, Conversations, Notes,
 Prompts, Skills, Collections) close their Library pane at that width too, and
-Escape there does the same thing: it reopens the pane rather than trying to
-move focus into one that is off screen. Above 64 columns a closed Library pane
-is an ordinary collapsed pane one grip away, and Escape keeps its usual
-step-back through the visible panes.
+Escape there does the same thing — **unless the canvas you are on already owns
+Escape**. A surface with its own exit keeps it: a reader with an item open goes
+back to its list, an editor back to its list, an armed delete confirmation
+cancels, and Notes keeps its own Escape throughout. The footer always names
+whichever one is live, so the chip and the key cannot disagree. Above 64
+columns a closed Library pane is an ordinary collapsed pane one grip away, and
+Escape keeps its usual step-back through the visible panes.
+
+At this width the footer has room for one canvas key, and the way back wins it:
+`esc back to Library` replaces the `/` and `F6` hints rather than being dropped
+after them. Both keys still work; widen the terminal to see them named again.
 
 A pane with nothing open gives its columns to its sibling: on Prompts, Skills,
 Collections and Conversations the list widens to fill the canvas while the
@@ -828,3 +835,8 @@ gate Escape, the back cue, the palette or Quit).*
 returns to the rail below 64 columns on every adaptive-reader destination and
 the footer names it; task-32217: an empty work pane hands its columns to the
 list, and the landing hub is capped at 96 cells).*
+
+*Verified against fix/library-crit9-shell — 2026-09-10, fix round 1
+(task-32225: the return chip stands down wherever a canvas owns Escape itself,
+so the footer never names a return the key would not perform; task-32228:
+Conversations arrives with its first row focused like every other browse list).*

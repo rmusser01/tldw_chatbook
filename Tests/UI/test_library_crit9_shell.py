@@ -27,6 +27,8 @@ from Tests.UI.test_library_shell import (
     _active_library_screen,
     _build_test_app,
     _wait_for_condition,
+    _seed_conversations,
+    _two_conversations,
     _wait_for_library_shell,
     _wait_for_selector,
 )
@@ -117,7 +119,7 @@ async def test_a_canvas_with_nothing_open_gives_its_columns_to_the_list(
             f"MEASURED {row_id}: items={items.region.width} work={work.region.width} "
             f"work_min={profile.work_min_width} shell={shell.region.width}"
         )
-        assert work.region.width <= profile.work_min_width + 1, (
+        assert work.region.width == profile.work_min_width, (
             items.region,
             work.region,
         )
@@ -137,7 +139,9 @@ async def test_the_landing_hub_keeps_a_readable_measure_on_a_wide_terminal() -> 
             f"MEASURED landing: landing={landing.region.width} "
             f"canvas={canvas.region.width}"
         )
-        assert landing.region.width <= 96, (landing.region, canvas.region)
+        assert landing.region.width == 96, (landing.region, canvas.region)
+        # A landing collapsed to nothing would satisfy a bare upper bound.
+        assert landing.region.height > 0, landing.region
 
 
 async def test_the_skills_list_shows_each_row_s_trust_state() -> None:
@@ -164,7 +168,14 @@ async def test_the_skills_list_shows_each_row_s_trust_state() -> None:
 
 
 @pytest.mark.parametrize(
-    "row_id", ["browse-media", "browse-prompts", "browse-collections"]
+    "row_id",
+    [
+        "browse-media",
+        "browse-conversations",
+        "browse-prompts",
+        "browse-skills",
+        "browse-collections",
+    ],
 )
 async def test_escape_returns_to_the_library_pane_below_64_columns(
     row_id: str,
@@ -184,10 +195,12 @@ async def test_escape_returns_to_the_library_pane_below_64_columns(
         # Wait for a SETTLED allocation: the first frames carry an all-zero
         # layout whose rail is already hidden, so "the rail is not displayed"
         # alone reports the transition, not the stage.
+        # Settled means the stage AND the key: pressing Escape into a
+        # half-resolved arrival races the entry-focus arm still landing.
         await _wait_for_condition(
             pilot,
-            lambda: bool(screen.query(_LIBRARY_READER_SHELL_SELECTOR))
-            and _narrow_stage_layout(screen) is not None,
+            lambda: _narrow_stage_layout(screen) is not None
+            and screen.check_action("library_narrow_stage_return", ()),
             message="The Library pane never closed at 60 columns.",
         )
         chips = screen._library_footer_shortcuts_for_current_state()
@@ -272,12 +285,14 @@ async def test_the_conversations_footer_advertises_the_filter_key_it_honours() -
     test_conversations_escape_moves_to_nearest_visible_prior_role), and it is
     absent exactly while the hop would move nothing.
     """
-    host = _library_host()
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
     async with host.run_test(size=(100, 30)) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-conversations").press()
-        await _wait_for_selector(screen, pilot, "#library-conversations-filter")
+        await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
         await _wait_for_condition(
             pilot,
             lambda: ("/", "focus filter")
@@ -351,3 +366,63 @@ def test_the_narrow_stage_gate_survives_an_unmeasured_screen() -> None:
 
     fake = SimpleNamespace(size=Size(0, 0))
     assert LibraryScreen._library_narrow_stage_return_active(fake) is False
+
+
+async def test_the_conversations_footer_advertises_escape_on_arrival() -> None:
+    """task-32228 AC#1 (ruling R1): arrive with focus on the list, like siblings.
+
+    The Conversations footer was "nearly empty" next to its siblings for a
+    reason nobody had traced: this was the one browse list that did NOT arm
+    task-2856's entry focus, so on arrival focus sat outside the shell, the
+    Escape hop had nowhere to go from, and its chip was (correctly) withheld.
+    The keys were never missing -- the state that makes them live was.
+
+    The label is "focus Library", not the siblings' "focus rail": on this
+    canvas Escape steps back through the visible panes (Items -> Library), the
+    grammar it shares with the Media Reader and that
+    test_conversations_escape_moves_to_nearest_visible_prior_role pins. Parity
+    is on the keys, which is what the AC asks for.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+    async with host.run_test(size=WIDE_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", "") == "library-conversation-row-0",
+            message=lambda: (
+                "Conversations never took entry focus like its siblings: "
+                f"{screen.focused!r}"
+            ),
+        )
+        chips = screen._library_footer_shortcuts_for_current_state()
+        assert ("/", "focus filter") in chips, chips
+        assert ("esc", "focus Library") in chips, chips
+        assert screen.check_action("library_list_focus_rail", ()) is True
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert getattr(screen.focused, "id", "") == "library-search-input"
+
+
+def test_an_unrecognised_trust_status_never_claims_trust() -> None:
+    """task-32223 fix round 1 (review finding 10): the word is a claim.
+
+    The row's glyph is decoration and may default; the word must not. An
+    unrecognised status on a record that is not blocked now says nothing
+    rather than asserting "trusted".
+    """
+    from tldw_chatbook.Library.library_skills_state import _trust_row_label
+
+    assert _trust_row_label("trusted", blocked=False) == "trusted"
+    assert _trust_row_label("trust_locked", blocked=True) == "locked"
+    assert _trust_row_label("quarantined_added", blocked=True) == "needs review"
+    assert _trust_row_label("trust_uninitialized", blocked=False) == "needs review"
+    # Unknown to us: blocked still says so; not-blocked says nothing.
+    assert _trust_row_label("some_future_status", blocked=True) == "needs review"
+    assert _trust_row_label("some_future_status", blocked=False) == ""
+    assert _trust_row_label("", blocked=False) == ""

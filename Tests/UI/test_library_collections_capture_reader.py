@@ -486,6 +486,11 @@ async def test_real_library_route_mounts_contextual_three_pane_reader_and_both_g
             pilot,
             lambda: (
                 not live_shell().library.display
+                # Exact, like the `== 56` it replaces: with the Library pane
+                # closed and nothing loaded, the Reader keeps its floor and
+                # the list takes every other cell the grips do not reserve.
+                and live_shell().items.region.width
+                == live_shell().effective_layout.items_width
                 and live_shell().items.region.width > 56
                 and live_shell().work.region.width == (
                     LIBRARY_COLLECTIONS_READER_PROFILE.work_min_width

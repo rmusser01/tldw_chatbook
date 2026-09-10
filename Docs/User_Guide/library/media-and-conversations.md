@@ -1077,3 +1077,8 @@ Conversations footer advertises `/ focus filter` whenever the Filter box is on
 screen — it previously offered only `F6 next pane`, because the chip was
 decided before the reader had resolved its panes; task-32217: with nothing
 loaded the conversation list takes the columns the empty Reader was holding).*
+
+*Verified against fix/library-crit9-shell — 2026-09-10, fix round 1
+(task-32228: the Conversations list takes entry focus on arrival like every
+other browse list, so Up/Down walks its rows and the Escape hop -- "focus
+Items", then "focus Library" -- is live and named from the first frame).*

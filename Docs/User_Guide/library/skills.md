@@ -56,7 +56,8 @@ The list canvas, top to bottom:
 - **Rows** — one per skill: **⚠ name** (blocked — needs review before use)
   or **✓ name** (usable), each followed by its trust state in words —
   `· trusted`, `· needs review`, or `· locked` — and a dimmer description
-  line underneath. The words are the row's real signal; the glyph repeats
+  line underneath. A state the app does not recognise shows the glyph with no
+  word rather than claiming a trust it cannot vouch for. The words are the row's real signal; the glyph repeats
   them for scanning, and the canvas legend defines no trust glyph.
 - **Empty state** — "No skills yet — use Create ▸ New skill in the rail,
   or Import skill… above." (a filter with no matches shows "No skills match your

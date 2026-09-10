@@ -14,6 +14,7 @@ from .library_adaptive_reader_shell import (
     AdaptiveReaderShellResized,
     LibraryAdaptiveReaderPaneGrip,
     LibraryAdaptiveReaderShell,
+    LibraryPaneVisibilityChanged,
 )
 from .library_export_canvas import LibraryExportCanvas
 from .library_entry_canvases import (
@@ -30,7 +31,6 @@ from .library_ingest_canvas import (
     LibraryIngestPreflightSummary,
     LibraryIngestQueuePanel,
 )
-from .library_adaptive_reader_shell import LibraryPaneVisibilityChanged
 from .library_media_canvas import LibraryMediaCanvas
 from .library_browse_reader_shell import (
     LIBRARY_BROWSE_READER_SHELL_ID,

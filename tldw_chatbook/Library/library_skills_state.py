@@ -845,15 +845,18 @@ def _trust_row_label(trust_status: str, *, blocked: bool) -> str:
 
     Three states, not eight: the row needs "can I use this" at a glance, and
     the editor's trust panel already carries the per-status detail. An
-    unrecognised or absent status falls back to the blocked flag, which is the
-    only trust field every skills service is guaranteed to send.
+    unrecognised or absent status falls back to the blocked flag -- the only
+    trust field every skills service is guaranteed to send -- and in the
+    not-blocked direction that fallback says NOTHING rather than "trusted".
 
     Args:
         trust_status: The record's ``trust_status``, if it carries one.
         blocked: The record's ``trust_blocked`` flag, already resolved.
 
     Returns:
-        "trusted", "needs review" or "locked".
+        "trusted", "needs review" or "locked" -- or "" when the status is
+        unrecognised and the record is not blocked, so the row falls back to
+        its glyph rather than asserting a trust it cannot vouch for.
     """
     status = trust_status.strip().lower()
     if status == "trusted":
@@ -862,7 +865,11 @@ def _trust_row_label(trust_status: str, *, blocked: bool) -> str:
         return "locked"
     if status.startswith("quarantined_") or status == "trust_uninitialized":
         return "needs review"
-    return "needs review" if blocked else "trusted"
+    # Review finding 10: never claim "trusted" for a status we do not
+    # recognise. A blocked row still says so; anything else keeps the glyph
+    # and says nothing, because the word is a claim and the glyph is only
+    # decoration. Over-claiming trust is the wrong direction to fail in.
+    return "needs review" if blocked else ""
 
 
 def _row(

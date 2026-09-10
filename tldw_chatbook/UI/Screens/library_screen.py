@@ -754,6 +754,7 @@ from ..Library_Modules.screen_constants import (
     LIBRARY_ONBOARDING_EVIDENCE_TIMEOUT_SECONDS,
     LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS,
     LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS,
+    LIBRARY_LIST_ENTRY_FOCUS_RETRY_SECONDS,
     LIBRARY_NOTES_AUTOSAVE_SECONDS,
     LIBRARY_NOTE_CONTENT_MAX_CHARS,
     LIBRARY_NOTE_BLANK_SEED_TITLE,
@@ -9674,6 +9675,38 @@ class LibraryScreen(BaseAppScreen):
                 self._disarm_library_list_entry_focus,
             )
 
+    def _retry_library_list_entry_focus_while_armed(self) -> None:
+        """Re-attempt entry focus once the list's rows have actually mounted.
+
+        task-32228: the arm schedules ONE ``call_after_refresh`` attempt and
+        then relies on ``compose_content`` re-requesting while the flag stays
+        armed. That covers a canvas whose rows arrive on a SCREEN recompose;
+        it does not cover one whose rows arrive on a canvas-level recompose,
+        which is why Conversations landed on nothing (measured: the single
+        attempt ran with zero ``.library-conversation-row`` widgets mounted,
+        the flag was still armed when they appeared, and nothing re-fired).
+
+        Bounded by the arm's own settle window on both axes: the deadline
+        stops the polling, and ``_focus_library_list_entry_if_current`` drops
+        any tick whose generation a disarm has already superseded. So this
+        cannot outlive a user taking control, and on a genuinely empty list it
+        stops at the deadline rather than spinning.
+        """
+        deadline = self._library_list_entry_focus_deadline
+        if (
+            not self._library_pending_list_entry_focus
+            or deadline is None
+            or time.monotonic() >= deadline
+        ):
+            return
+        self.set_timer(
+            LIBRARY_LIST_ENTRY_FOCUS_RETRY_SECONDS,
+            partial(
+                self._focus_library_list_entry_if_current,
+                self._library_list_entry_focus_generation,
+            ),
+        )
+
     def _disarm_library_list_entry_focus(self) -> None:
         """End an entry-focus request's settle window (task-2856 AC1).
 
@@ -9931,6 +9964,8 @@ class LibraryScreen(BaseAppScreen):
                 # ended with nothing focused at all. Same filter-input
                 # answer the two rows above already give.
                 "library-notes-row": "#library-notes-filter",
+                # task-32228: same answer for an empty conversation list.
+                "library-conversation-row": "#library-conversations-filter",
             }.get(row_class)
             if fallback_selector is not None:
                 try:
@@ -9939,13 +9974,22 @@ class LibraryScreen(BaseAppScreen):
                     pass
                 else:
                     self.set_focus(control)
-                    return
+                    # task-32228: only a landing counts as done. A control
+                    # that is mounted but not yet focusable (a canvas still
+                    # composing) leaves focus on None, and returning here made
+                    # that indistinguishable from success -- which is how
+                    # Conversations ended up with nothing focused while its
+                    # rows were mounting.
+                    if self.focused is control:
+                        return
             if row_class == "library-media-row":
                 control = self._library_media_empty_list_fallback_target()
                 if control is not None:
                     self._library_notes_programmatic_focus_target = control
                     self.set_focus(control)
-                    return
+                    if self.focused is control:
+                        return
+            self._retry_library_list_entry_focus_while_armed()
             return
         if (
             row_class == "library-media-row"
@@ -20688,6 +20732,12 @@ class LibraryScreen(BaseAppScreen):
             LIBRARY_ROW_BROWSE_NOTES,
             LIBRARY_ROW_BROWSE_PROMPTS,
             LIBRARY_ROW_BROWSE_SKILLS,
+            # task-32228 (critique #9 fix round 1): Conversations is the fifth.
+            # It was left out, so arriving here put focus outside the reader
+            # shell -- which is why its Escape hop had nowhere to start from
+            # and its footer (correctly) withheld the chip. The keys were never
+            # missing; the state that makes them live was.
+            LIBRARY_ROW_BROWSE_CONVERSATIONS,
         ):
             self._arm_library_list_entry_focus()
         if self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT:
