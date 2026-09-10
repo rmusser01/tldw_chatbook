@@ -38,6 +38,7 @@ from tldw_chatbook.Library.library_export_state import (
     EXPORT_BUTTON_READY_TOOLTIP,
     build_library_export_form_state,
     format_empty_export_error,
+    format_last_export_line,
 )
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_INGEST_EXPORT
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
@@ -457,3 +458,55 @@ async def test_submit_button_offers_retry_after_a_failed_run():
         assert "✗ export produced no content · 2 items were selected" in str(
             error_line.render()
         )
+
+
+def test_restore_state_rejects_impossible_receipt_counts():
+    """PR #2568 review: a foreign/corrupted saved-state dict must not
+    restore impossible artifact facts (a negative item count or byte size),
+    which would render an impossible receipt AND be persisted again by the
+    next ``save_state``. Invalid values degrade to the path-only receipt."""
+    from Tests.UI.app_factory import _build_test_app
+
+    app = _build_test_app()
+    restored = LibraryScreen(app)
+    restored.restore_state(
+        {
+            "library_export_last_path": "/tmp/prior.zip",
+            "library_export_last_at": 12345.0,
+            "library_export_last_items": -3,
+            "library_export_last_bytes": -1024,
+        }
+    )
+
+    assert restored._export_state.last_path == "/tmp/prior.zip"
+    assert restored._export_state.last_items is None
+    assert restored._export_state.last_bytes is None
+    # Nothing impossible is re-persisted, and the receipt falls back to the
+    # path-only line rather than claiming "-3 items".
+    saved = restored.save_state()
+    assert saved["library_export_last_items"] is None
+    assert saved["library_export_last_bytes"] is None
+    assert format_last_export_line(
+        restored._export_state.last_path,
+        restored._export_state.last_at,
+        now=12345.0,
+        item_count=restored._export_state.last_items,
+        size_bytes=restored._export_state.last_bytes,
+    ) == "Last export: /tmp/prior.zip · just now"
+
+
+def test_receipt_copy_is_singular_for_one_item():
+    """A one-item export reads "1 item", and a one-item failed selection
+    reads "1 item was selected" -- the receipts never say "1 items"."""
+    assert (
+        format_last_export_line("/tmp/one.zip", 0.0, now=0.0, item_count=1, size_bytes=2048)
+        == "✓ exported · 1 item · 2 KB · /tmp/one.zip"
+    )
+    assert (
+        format_empty_export_error(1)
+        == "✗ export produced no content · 1 item was selected"
+    )
+    assert (
+        format_empty_export_error(2)
+        == "✗ export produced no content · 2 items were selected"
+    )

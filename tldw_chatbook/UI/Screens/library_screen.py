@@ -9333,14 +9333,21 @@ class LibraryScreen(BaseAppScreen):
             else None
         )
         # task-32232 AC#4: the artifact-read counts ride along, so a
-        # restored session still shows the receipt the run produced (a
-        # missing/foreign value degrades to the path-only receipt).
+        # restored session still shows the receipt the run produced. Only a
+        # POSITIVE integer is accepted (PR #2568 review): a real written
+        # archive always has both, so a negative/zero/foreign value can only
+        # be corruption -- and accepting it would render an impossible
+        # receipt AND re-persist it through the next ``save_state``. An
+        # invalid value degrades to the path-only receipt, which still names
+        # the artifact.
         for key, field in (
             ("library_export_last_items", "last_items"),
             ("library_export_last_bytes", "last_bytes"),
         ):
             value = state.get(key)
-            usable = isinstance(value, int) and not isinstance(value, bool)
+            usable = (
+                isinstance(value, int) and not isinstance(value, bool) and value > 0
+            )
             setattr(self._export_state, field, int(value) if usable else None)
         # task-15459: re-seed from the cache now that ``_selected_
         # conversation_id`` above reflects the RESTORED id, not ``__init__``'s
