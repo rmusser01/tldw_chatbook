@@ -31,6 +31,10 @@ Found by the task-32062 fix rounds (PR #2531): with title + Tab + body typed in 
 - [x] #4 The list scroll offset survives a sync that lands mid-edit at compact widths
 <!-- AC:END -->
 
+## Critique #9 evidence (2026-09-10)
+
+Assessor B: the Notes list does not live-update a note's title while its editor is open (D13). Related to the editor-owned refresh skip this task tracks; include it in the pin.
+
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->

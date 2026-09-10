@@ -433,6 +433,9 @@ class LibraryNotesState:
     # take focus when it lands. A ``focus=False`` locator (the one every note
     # open starts) has no focus stake, so a foreign focus change must not
     # revoke it -- the row click that STARTED it is itself such a change.
+    # Only meaningful while ``navigation_status`` is non-empty: every reader
+    # ANDs the two, and ``_supersede_library_notes_navigation`` clears both
+    # together (PR #2571 review, finding 6).
     navigation_focus_intent: bool = False
     notice: str = ""
     tree_expanded_ids: set[str] = field(default_factory=set)

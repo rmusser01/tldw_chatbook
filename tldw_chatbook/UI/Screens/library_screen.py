@@ -5038,6 +5038,7 @@ class LibraryScreen(BaseAppScreen):
         self._notes_state.pending_focus_waits_for_snapshot = False
         self._notes_state.pending_focus_generation = None
         self._notes_state.navigation_status = ""
+        self._notes_state.navigation_focus_intent = False
         branches = getattr(self._notes_state, "tree_branches", {})
         generations = getattr(self._notes_state, "tree_request_generations", {})
         navigation_requests = getattr(
@@ -9658,10 +9659,21 @@ class LibraryScreen(BaseAppScreen):
                 # Veto every older deferred restore before its next turn can
                 # steal the control the user just chose.
                 self._notes_state.focus_intent_generation += 1
+                # PR #2571 review, finding 4: the supersede below also revokes
+                # a pending focus handoff, and skipping it for a focus=False
+                # locator would leave that handoff armed against a user who
+                # just took focus. That revoke belongs to the focus change,
+                # not to the locator, so it runs either way.
+                self._notes_state.pending_focus_identity = None
+                self._notes_state.pending_focus_waits_for_snapshot = False
+                self._notes_state.pending_focus_generation = None
                 # task-32100: a running locator that would take focus is the
                 # one this focus change overrules. A ``focus=False`` locator
                 # only reveals a row, and the row click that started it lands
                 # here ~20 ms later -- superseding it abandoned every open.
+                # Its status and its in-flight branch requests are its own and
+                # must survive, which is why the rest of the supersede does
+                # not run for it.
                 if (
                     self._notes_state.navigation_status
                     and self._notes_state.navigation_focus_intent

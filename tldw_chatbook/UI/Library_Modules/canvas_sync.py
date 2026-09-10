@@ -470,27 +470,6 @@ def _library_canvas_kind_owns_route(screen: "LibraryScreen", kind: str) -> bool:
     return selected in owners
 
 
-def _library_notes_list_offset(screen: Any) -> tuple[int, int] | None:
-    """The Notes Items pane's own scroll position, or None when unmounted."""
-    listing = screen.query("#library-notes-list")
-    if not listing:
-        return None
-    offset = listing.first(Widget).scroll_offset
-    return (offset.x, offset.y)
-
-
-def _apply_library_notes_list_offset(
-    screen: Any, offset: tuple[int, int]
-) -> None:
-    """Put the Notes Items pane back where the reader left it."""
-    listing = screen.query("#library-notes-list")
-    if not listing:
-        return
-    listing.first(Widget).scroll_to(
-        x=offset[0], y=offset[1], animate=False, force=True, immediate=True
-    )
-
-
 def _sync_library_canvas(
     screen: "LibraryScreen",
     kind: str,
@@ -810,7 +789,21 @@ def _sync_library_canvas(
             # after one sync). Re-apply the offset only. Restoring FOCUS is
             # exactly what the skip exists to prevent, so this path never
             # touches it.
-            list_offset = _library_notes_list_offset(screen)
+            #
+            # Queuing a post-recompose follow-up here is only safe because
+            # ``notes_editor_owned`` is measured on ``#library-note-work-
+            # pane``, a SIBLING of ``#library-notes-canvas`` in the reader
+            # shell -- so the list canvas's own ``editor_has_focus()`` is
+            # False and it does recompose. Move the editor inside the list
+            # canvas and ``sync_state``'s early return applies to it too,
+            # and this callback would fire at some later recompose instead
+            # (PR #2571 review, finding 8).
+            listing = screen._library_notes_scroll_owner("navigator")
+            list_offset = (
+                (listing.scroll_offset.x, listing.scroll_offset.y)
+                if listing is not None
+                else None
+            )
 
             def _restore_list_offset(
                 _offset: tuple[int, int] | None = list_offset,
@@ -822,8 +815,17 @@ def _sync_library_canvas(
                     # Deferred for the same reason the identity restore
                     # defers its own offset: the recomposed rows have no
                     # layout yet, so the container clamps the offset to 0.
-                    screen.call_after_refresh(
-                        _apply_library_notes_list_offset, screen, _offset
+                    screen.call_after_refresh(_apply_offset, _offset)
+
+            def _apply_offset(offset: tuple[int, int]) -> None:
+                owner = screen._library_notes_scroll_owner("navigator")
+                if owner is not None:
+                    owner.scroll_to(
+                        x=offset[0],
+                        y=offset[1],
+                        animate=False,
+                        force=True,
+                        immediate=True,
                     )
 
             if list_offset is not None or then is not None:

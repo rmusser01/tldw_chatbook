@@ -29,6 +29,7 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
 )
+from tldw_chatbook.Notes.note_folder_models import FolderPlacementId
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
@@ -292,10 +293,16 @@ def _folder_notes_app(tmp_path, titles: tuple[str, ...]):
     repository = LocalNoteFolderRepository(db)
     folder = repository.create_folder(name="Research", parent_id=None)
     note_ids = []
+    placements = {}
     for title in titles:
         note_id = db.add_note(title, f"- body of {title}\n")
         assert note_id is not None
-        repository.attach_manual(folder_id=folder.folder_id, note_id=note_id)
+        membership = repository.attach_manual(
+            folder_id=folder.folder_id, note_id=note_id
+        )
+        placements[note_id] = FolderPlacementId.note(
+            folder.folder_id, note_id, membership.membership_id
+        )
         note_ids.append(note_id)
 
     app = _build_test_app()
@@ -307,7 +314,7 @@ def _folder_notes_app(tmp_path, titles: tuple[str, ...]):
         None,
         folder_repository=repository,
     )
-    return app, db, folder, note_ids
+    return app, db, folder, note_ids, placements
 
 
 async def _filter_notes(pilot, screen, query: str) -> None:
@@ -326,7 +333,9 @@ async def _filter_notes(pilot, screen, query: str) -> None:
 
 @pytest.mark.asyncio
 async def test_opening_a_filtered_note_reveals_its_folder_in_the_tree(tmp_path):
-    app, db, folder, (note_id,) = _folder_notes_app(tmp_path, (NOTE_TITLE,))
+    app, db, folder, (note_id,), placements = _folder_notes_app(
+        tmp_path, (NOTE_TITLE,)
+    )
     host = LibraryHarness(app)
 
     try:
@@ -357,7 +366,9 @@ async def test_opening_a_filtered_note_reveals_its_folder_in_the_tree(tmp_path):
                     f"{screen._notes_state.tree_expanded_ids!r}, status is "
                     f"{screen._notes_state.navigation_status!r}"
                 )
-            assert note_id in screen._notes_state.tree_selected_placement_id
+            assert screen._notes_state.tree_selected_placement_id == (
+                placements[note_id]
+            )
     finally:
         db.close_connection()
 
@@ -371,7 +382,7 @@ async def test_a_second_open_supersedes_the_older_locator_not_its_own_load(tmp_p
     raises has to reach the older locator only. The detail load is fenced by
     its own identity, never by the navigation generation (task-32050).
     """
-    app, db, folder, (first_id, second_id) = _folder_notes_app(
+    app, db, folder, (first_id, second_id), placements = _folder_notes_app(
         tmp_path, ("Reading list", "Reading queue")
     )
     service = app.notes_scope_service
@@ -425,16 +436,18 @@ async def test_a_second_open_supersedes_the_older_locator_not_its_own_load(tmp_p
                 )
             assert screen._notes_state.selected_note_id == second_id
             # The newer locator owns the mark; the superseded one wrote
-            # nothing on its way out.
+            # nothing on its way out. Assert the marked ROW, not a substring
+            # of the placement string (PR #2571 review, finding 7).
+            expected = placements[second_id]
             for _ in range(200):
                 await pilot.pause(0.02)
-                if second_id in screen._notes_state.tree_selected_placement_id:
+                if screen._notes_state.tree_selected_placement_id == expected:
                     break
             else:
                 pytest.fail(
                     "the second open never marked its row; placement is "
-                    f"{screen._notes_state.tree_selected_placement_id!r}"
+                    f"{screen._notes_state.tree_selected_placement_id!r}, "
+                    f"expected {expected!r}"
                 )
-            assert first_id not in screen._notes_state.tree_selected_placement_id
     finally:
         db.close_connection()

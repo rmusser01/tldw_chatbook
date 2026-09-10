@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
+from textual import events
 from textual.widgets import Button, Input, Static, TextArea
 
 from tldw_chatbook import config as app_config
@@ -17,9 +18,6 @@ from tldw_chatbook.Library.library_rail_state import LibraryLifecycle
 from tldw_chatbook.UI.Library_Modules.canvas_sync import _sync_library_canvas
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library import LibraryLandingCanvas
-from tldw_chatbook.Widgets.Library.library_notes_canvas import (
-    _NOTE_EDITOR_INPUT_IDS,
-)
 from tldw_chatbook.Widgets.Library.library_note_work_pane import LibraryNoteWorkPane
 from Tests.UI.test_destination_shells import (
     StaticLibraryConversationScopeService,
@@ -1067,17 +1065,31 @@ def _many_notes(count: int = 40) -> list[dict[str, str]]:
     ]
 
 
-@pytest.mark.asyncio
-async def test_a_title_tab_body_burst_lands_the_body_in_the_body_field():
-    """task-32106 AC#1: the reported gesture, as one uninterrupted burst.
+def _burst(app, *keys: str) -> None:
+    """Post keys with NO awaits between them -- a real terminal burst.
 
-    The title, the Tab and the body arrive as one batch of key events, with a
-    Notes refresh landing at the Tab boundary -- the moment the title stops
-    being its own authority and a snapshot could be written over it. Reported
-    live as the body being appended to the title; the guards from task-32062
-    (the recompose skip plus the per-field ``has_focus`` checks) are what keep
-    it apart. Textual 8's parser has no burst-to-Paste heuristic, so the keys
-    themselves stay ordered no matter how fast they arrive.
+    ``pilot.press`` is the opposite of this: ``App._press_keys`` awaits
+    ``wait_for_idle(0)`` twice plus the animator between every key, so the
+    whole event loop drains between keystrokes (measured on this machine:
+    ~200 ms per key). The task itself records that "1 s gaps behave", so a
+    drained loop can never reproduce AC#1 -- PR #2571 review, finding 1.
+    """
+    for key in keys:
+        event = events.Key(key, key if len(key) == 1 else None)
+        event.set_sender(app)
+        app._driver.send_message(event)
+
+
+@pytest.mark.asyncio
+async def test_a_notes_refresh_at_the_tab_boundary_keeps_the_title():
+    """task-32062: a refresh landing as focus leaves the title clobbered it.
+
+    The title stops being its own authority the moment Tab moves focus off
+    it, so a snapshot one keystroke behind could be written over it -- and
+    assigning ``Input.value`` clamps the cursor to the shorter text. The
+    per-field ``has_focus`` guards and the recompose skip are what keep the
+    two fields apart here. (This is NOT the AC#1 burst: ``pilot.press``
+    drains the loop between keys. See the burst test below.)
     """
     gates = _first_note_gates()
     app = _new_fresh_profile_app(gates)
@@ -1092,9 +1104,8 @@ async def test_a_title_tab_body_burst_lands_the_body_in_the_body_field():
 
             await _type(pilot, "My first note")
             _sync_library_canvas(screen, "notes")
-            await pilot.press(
-                "tab", *("space" if c == " " else c for c in "hello from jordan")
-            )
+            await pilot.press("tab")
+            await _type(pilot, "hello from jordan")
             await pilot.pause()
 
             assert screen.query_one("#library-note-title", Input).value == (
@@ -1103,6 +1114,46 @@ async def test_a_title_tab_body_burst_lands_the_body_in_the_body_field():
             assert screen.query_one("#library-note-body", TextArea).text == (
                 "hello from jordan"
             )
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_a_title_tab_body_burst_lands_the_body_in_the_body_field():
+    """task-32106 AC#1: the reported gesture, driven as a REAL burst.
+
+    ``Screen.BINDINGS``' ``Binding("tab", "app.focus_next")`` is not
+    ``priority=True``, so ``Key(tab)`` is posted to the focused ``Input`` and
+    has to bubble a message-queue hop per ancestor up to the Screen -- while
+    the App keeps dequeuing the following keys and forwarding each to
+    ``self.focused``, still the title. Reproduced in stock Textual 8 with
+    nothing from this repo in it (PR #2571 review, finding 1):
+
+        pilot  elapsed=1268.9ms  title='My first note'      body='hello'
+        burst  elapsed=   0.2ms  title='My first notehello' body=''
+
+    The editor's own fields take a priority Tab binding so the App resolves
+    the focus move before it forwards the next key.
+    """
+    gates = _first_note_gates()
+    app = _new_fresh_profile_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(235, 52)) as pilot:
+            screen = _active_library_screen(host)
+            await _open_the_first_note_editor(screen, pilot, gates)
+            screen.query_one("#library-note-title", Input).focus()
+            await pilot.pause()
+
+            _burst(host, *"My first note".replace(" ", "_"), "tab", *"hello")
+            await pilot.pause()
+            await pilot.pause()
+
+            assert screen.query_one("#library-note-title", Input).value == (
+                "My_first_note"
+            )
+            assert screen.query_one("#library-note-body", TextArea).text == "hello"
     finally:
         gates.release_all()
 
@@ -1131,6 +1182,7 @@ async def test_the_keywords_field_is_its_own_authority_while_focused():
         await pilot.pause()
         with keywords.prevent(Input.Changed):
             keywords.value = "retro, half-typed"
+        keywords.cursor_position = len("retro, half")
 
         state = work.presentation_state
         assert state is not None
@@ -1144,10 +1196,12 @@ async def test_the_keywords_field_is_its_own_authority_while_focused():
         work.apply_session_state(stale)
         await pilot.pause()
 
-        assert screen.query_one("#library-note-keywords", Input).value == (
-            "retro, half-typed"
-        )
-        assert "library-note-keywords" in _NOTE_EDITOR_INPUT_IDS
+        applied = screen.query_one("#library-note-keywords", Input)
+        assert applied.value == "retro, half-typed"
+        # The reported symptom was the cursor clamping to the shorter stale
+        # text, so the cursor is the assertion that matters (PR #2571
+        # review, finding 7).
+        assert applied.cursor_position == len("retro, half")
 
 
 @pytest.mark.asyncio

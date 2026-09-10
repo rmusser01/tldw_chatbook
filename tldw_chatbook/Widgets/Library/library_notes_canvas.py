@@ -11,6 +11,7 @@ from typing import Any, Callable, Literal
 from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Markdown, Static, TextArea
 
@@ -154,6 +155,37 @@ _NOTE_EDITOR_INPUT_IDS = frozenset(
         "library-note-context-keywords",
     }
 )
+
+
+class NoteEditorInput(Input):
+    """A note field whose Tab moves focus BEFORE the next key is forwarded.
+
+    task-32106 AC#1: ``Screen.BINDINGS``' ``Binding("tab", "app.focus_next")``
+    is not ``priority=True``, so ``Key(tab)`` is posted to the focused
+    ``Input`` and has to bubble one message-queue hop per ancestor up to the
+    Screen -- while the App keeps dequeuing the following keys and forwarding
+    each to ``self.focused``, which is still this field. Typed fast enough
+    (one terminal read, or a message queue backed up behind a busy Library
+    screen) the body lands in the title. Reproduced in stock Textual 8 with
+    nothing from this repo in it:
+
+        pilot  elapsed=1268.9ms  title='My first note'      body='hello'
+        burst  elapsed=   0.2ms  title='My first notehello' body=''
+
+    A priority binding makes the App resolve the focus move before it
+    forwards the next key. The action is namespaced to the SCREEN so it
+    resolves to ``LibraryScreen.action_focus_next``, which cycles inside
+    ``#screen-content`` (task-32052 AC#3) -- ``app.focus_next`` would walk
+    the nav bar instead, and a bare ``focus_next`` resolves against this
+    ``Input``, which has no such action, so the binding never fires. The
+    body ``TextArea`` deliberately gets no such binding: it owns Tab
+    itself.
+    """
+
+    BINDINGS = [
+        Binding("tab", "screen.focus_next", show=False, priority=True),
+        Binding("shift+tab", "screen.focus_previous", show=False, priority=True),
+    ]
 
 
 @dataclass(frozen=True)
@@ -1606,7 +1638,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         with Vertical(id="library-note-editor-region"):
             with Horizontal(id="library-note-title-row"):
                 yield Static("Title", id="library-note-title-label", markup=False)
-                yield Input(
+                yield NoteEditorInput(
                     value="" if self.title_placeholder_only else title,
                     placeholder="Untitled" if self.title_placeholder_only else "",
                     id="library-note-title",
@@ -1643,7 +1675,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 yield Static(
                     "Keywords", id="library-note-context-keywords-label", markup=False
                 )
-                yield Input(
+                yield NoteEditorInput(
                     value=keywords_text,
                     placeholder="Comma-separated keywords",
                     id="library-note-context-keywords",
@@ -1700,7 +1732,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
         with Vertical(id="library-note-wide-utilities"):
             yield Static("Keywords", id="library-note-keywords-label", markup=False)
-            yield Input(
+            yield NoteEditorInput(
                 value=keywords_text,
                 placeholder="Comma-separated keywords",
                 id="library-note-keywords",
