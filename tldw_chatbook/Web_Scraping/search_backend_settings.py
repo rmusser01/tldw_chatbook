@@ -11,6 +11,17 @@ from urllib.parse import urlsplit
 
 @dataclass(frozen=True)
 class FieldSpec:
+    """Describe one immutable backend setting and its guided editor behavior.
+
+    Attributes:
+        key: Canonical key in the local SearchEngines config table.
+        label: Human-readable field name used by the form and setup diagnostics.
+        secret: Whether saved values are masked and replacement requires input.
+        env_var: Environment variable whose nonempty value overrides local config.
+        placeholder: Example input shown when the editor is empty.
+        required: Whether an effective value is needed before testing the backend.
+    """
+
     key: str
     label: str
     secret: bool = False
@@ -21,6 +32,17 @@ class FieldSpec:
 
 @dataclass(frozen=True)
 class BackendSpec:
+    """Define an immutable search backend's setup and presentation contract.
+
+    Attributes:
+        id: Canonical identifier accepted by search dispatch and saved defaults.
+        label: Display name for selectors and setup messages.
+        description: Short explanation of the service and its requirements.
+        fields: Ordered settings required or offered by the guided editor.
+        docs_url: Provider documentation or account-setup reference.
+        notice: Optional availability, retirement, or billing guidance.
+    """
+
     id: str
     label: str
     description: str
@@ -228,6 +250,14 @@ def setup_issues(backend_id: str, raw: Mapping[str, object]) -> list[str]:
 
 @dataclass(frozen=True)
 class ProbeResult:
+    """Carry a credential-safe outcome from an explicit saved-settings search.
+
+    Attributes:
+        ok: Whether the request completed successfully, including empty results.
+        message: Closed UI status text without provider payloads or credentials.
+        result_count: Number of returned results; zero for failures or empty results.
+    """
+
     ok: bool
     message: str
     result_count: int = 0

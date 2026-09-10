@@ -217,6 +217,136 @@ async def test_save_failure_keeps_raw_work_and_safe_diagnostic(raw_profile):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failure_phase", ["snapshot", "runtime", "view"])
+@pytest.mark.parametrize("newer_edit", [False, True])
+async def test_committed_raw_save_survives_refresh_failure(
+    raw_profile, monkeypatch, failure_phase, newer_edit
+):
+    original_text = raw_profile.read_text()
+    submitted = '[SearchSettings]\nsearch_provider_default = "brave"\n'
+    newer = submitted + "# later edit\n"
+
+    def fail_refresh(*args, **kwargs):
+        raise RuntimeError("synthetic-sensitive-content")
+
+    model = AdvancedConfigSettings(
+        lambda: None, fail_refresh if failure_phase == "view" else lambda loaded: None
+    )
+    await model.inspect_current()
+    model.edit(submitted)
+    await model.validate()
+    if failure_phase == "runtime":
+        monkeypatch.setattr(config, "_publish_runtime_config_unlocked", fail_refresh)
+    elif failure_phase == "snapshot":
+        read = config._try_read_cli_config_serialized_unlocked
+
+        def fail_post_write_read(path):
+            serialized = read(path)
+            if serialized == submitted:
+                fail_refresh()
+            return serialized
+
+        monkeypatch.setattr(
+            config, "_try_read_cli_config_serialized_unlocked", fail_post_write_read
+        )
+
+    replace = model.adapter.replace_snapshot
+    started, release = threading.Event(), threading.Event()
+
+    def replace_then_wait(text, snapshot):
+        try:
+            return replace(text, snapshot)
+        finally:
+            started.set()
+            release.wait(3)
+
+    model.adapter.replace_snapshot = replace_then_wait
+    task = asyncio.create_task(model.save())
+    try:
+        assert await asyncio.to_thread(started.wait, 2)
+        assert raw_profile.read_text() == submitted
+        if newer_edit:
+            model.edit(newer)
+    finally:
+        release.set()
+        await task
+
+    assert raw_profile.with_suffix(".toml.bak").read_text() == original_text
+    assert model.state.baseline_text == submitted
+    assert model.state.text == (newer if newer_edit else submitted)
+    assert model.state.is_dirty is newer_edit
+    assert model.status.startswith("Saved to disk")
+    assert "restart" in model.status.lower()
+    assert "synthetic-sensitive-content" not in model.status
+    if newer_edit:
+        assert not model.can_save
+        assert "Newer edits remain unsaved" in model.status
+    if failure_phase == "snapshot":
+        assert model.state.snapshot is None
+        assert not model.can_save
+        assert "Revert" in model.status
+    else:
+        assert model.state.snapshot.serialized == submitted
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("newer_edit", [False, True])
+async def test_missing_committed_snapshot_requires_explicit_reload_after_navigation(
+    raw_profile, monkeypatch, newer_edit
+):
+    submitted = '[SearchSettings]\nsearch_provider_default = "brave"\n'
+    external = '[SearchSettings]\nsearch_provider_default = "exa"\n'
+    newer = submitted + "# valuable newer edit\n"
+    host = RawSettingsHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(120, 35)) as pilot:
+        await _settle_settings(pilot)
+        await _click_settings_category(pilot, "advanced-config")
+        screen = host.screen
+        model = screen._raw_config_model()
+        screen.query_one(TextArea).text = submitted
+        await model.validate()
+        read = config._try_read_cli_config_serialized_unlocked
+
+        def fail_post_write_read(path):
+            serialized = read(path)
+            if serialized == submitted:
+                raise OSError("synthetic post-write read failure")
+            return serialized
+
+        with monkeypatch.context() as fault:
+            fault.setattr(
+                config, "_try_read_cli_config_serialized_unlocked", fail_post_write_read
+            )
+            await model.save()
+        assert raw_profile.read_text() == submitted
+        assert model.state.snapshot is None
+        if newer_edit:
+            screen.query_one(TextArea).text = newer
+        await _click_settings_category(pilot, "overview")
+        raw_profile.write_text(external)
+        await _click_settings_category(pilot, "advanced-config")
+        await host.workers.wait_for_complete()
+        await model.validate()
+        assert model.state.snapshot is None
+        assert not model.can_save
+        assert screen.query_one("#settings-advanced-save-config").disabled
+        assert "Revert" in model.status
+        await model.save()
+        assert raw_profile.read_text() == external
+        assert screen.query_one(TextArea).text == (newer if newer_edit else submitted)
+
+        await pilot.click("#settings-advanced-revert-config")
+        if isinstance(host.screen, ConfirmationDialog):
+            await pilot.click("#confirm-button")
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert model.state.snapshot.serialized == external
+        assert screen.query_one(TextArea).text == external
+        await model.validate()
+        assert model.can_save
+
+
+@pytest.mark.asyncio
 async def test_revert_cancel_keeps_draft_then_confirm_reloads_latest(raw_profile):
     host = RawSettingsHarness(_build_test_app(), "settings")
     async with host.run_test(size=(180, 50)) as pilot:

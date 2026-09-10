@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-09 23:04'
-updated_date: '2026-09-09 23:38'
+updated_date: '2026-09-10 01:48'
 labels: []
 dependencies: []
 ---
@@ -23,6 +23,7 @@ Raw TOML edits must survive navigation and remain visibly unsaved so expert sear
 - [x] #3 Revert and Load Backup protect unsaved edits with confirmation; stale worker results cannot overwrite newer edits or another category.
 - [x] #4 Returning to or saving a preserved draft detects intervening config edits and does not silently overwrite them.
 - [x] #5 Mounted keyboard/navigation and failure/race tests, compact layout evidence, independent review, and user documentation cover the final behavior.
+- [x] #6 A committed raw save is reported as saved even when snapshot or runtime refresh fails; the exact available snapshot becomes the baseline, newer edits survive, and diagnostics reveal no config contents.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -37,6 +38,8 @@ Raw TOML edits must survive navigation and remain visibly unsaved so expert sear
 ADR required: yes
 ADR path: backlog/decisions/033-settings-commit-models-three-honestly-labeled.md
 Reason: extend the existing guarded-raw-TOML policy with in-memory draft ownership and atomic stale-file checks; ADR-031 supplies destructive-action confirmation. No additional storage or parallel config owner is introduced.
+
+6. PR #2562 Qodo follow-up: reproduce failures after the real disk replacement and in runtime/view refresh, preserve committed state independently of refresh success, and verify newer-edit retention plus safe recovery messages. Existing ADR-033 governs truthful guarded-save outcomes; no new ADR is required.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -50,7 +53,9 @@ The raw controls use a compact two-row grid, expandable guide and editor-owned s
 
 Validation: the expanded targeted run covered 501 cases across raw draft/snapshot tests, config persistence/delete/encryption, the Settings hub, guided Web Search, footer/category navigation, screen-state storage and import provenance. It finished with 500 passed and one stale assertion expecting 26 categories; Web Search deliberately raises the count to 27. Updated that assertion and reran it plus the grouping guard: 2 passed. No product failure remains. Independent re-review separately passed all 34 raw-draft/snapshot tests and found no remaining actionable issues after four async/lifecycle findings were repaired. New modules/tests pass full Ruff and format checks; changed legacy files pass scoped E9/F63/F7/F82 checks and changed-range formatting; CSS build and git diff --check pass. One pre-existing Requests dependency warning remains. No full repository sweep or real provider requests were run.
 
-ADR: extended backlog/decisions/033-settings-commit-models-three-honestly-labeled.md; ADR-031 supplies confirmation and shortcut conventions. The live-session/app-worker detail was refined during independent review to cover destination recreation during a write. Updated Docs/User_Guide/settings.md, the original critique status ledger, .impeccable/surfaces/settings-advanced-config.md, and the incident-based lesson in backlog/docs/lessons-textual.md. New evidence is in .impeccable/review/raw-config/. Changes remain uncommitted in the isolated codex/shared-search-backend-default worktree; no merge or push.
+ADR: extended backlog/decisions/033-settings-commit-models-three-honestly-labeled.md; ADR-031 supplies confirmation and shortcut conventions. The live-session/app-worker detail was refined during independent review to cover destination recreation during a write. Updated Docs/User_Guide/settings.md, the original critique status ledger, .impeccable/surfaces/settings-advanced-config.md, and the incident-based lesson in backlog/docs/lessons-textual.md. New evidence is in .impeccable/review/raw-config/. Implementation is included in PR #2562 against dev.
 
 PR integration: moved onto dev 86a8054edb, preserving current TLS, profile/footer, privacy and config publication behavior. Final evidence and baseline limitations: Docs/superpowers/reviews/2026-09-09-search-settings-pr-integration.md (525 targeted cases passed across two runs, three live cases skipped).
+
+Qodo review follow-up for PR #2562: distinguish a completed disk replacement from snapshot, runtime-publication or Settings-view refresh failure. The config owner preserves the committed snapshot in a credential-safe post-commit exception. The controller adopts the saved baseline, retains newer edits and reports Saved to disk with restart/copy guidance. If the snapshot cannot be read, the existing conflict state blocks Save across navigation until explicit Revert succeeds. Six real-write fault cases and two mounted external-edit/navigation cases failed before their respective fixes. The independent reviewer confirmed the recovery fence repair and reported no remaining findings. Related gate: 201 passed; after the recovery refinement, all 43 raw-draft/snapshot cases passed. Ruff/format, diff hygiene and the derived-artifact preflight passed. Existing Requests warning and dev boot-CSS baseline breach remain; no full sweep or provider request. Existing ADR-033 governs these truthful save outcomes; user guide, surface contract and incident lesson updated.
 <!-- SECTION:NOTES:END -->

@@ -440,6 +440,21 @@ write followed by reload failure: preserve the committed baseline and report
 the disk-write and runtime-refresh outcomes separately. These regressions live
 in `Tests/UI/test_settings_web_search_lifecycle.py`.
 
+**PR #2562 Qodo review, 2026-09-10.** The guided editor's committed-write
+handling did not cover raw replacement. Six real-file regressions reproduced
+stale baselines or false failure wording when snapshot reads, runtime
+publication, or the Settings refresh callback failed after replacement, with
+and without newer edits. Return the committed snapshot independently of refresh
+success. If the snapshot itself is unavailable, report the successful write
+and require reload before another save; retain newer edits and tell users to
+copy them before restarting. The regression is
+`test_committed_raw_save_survives_refresh_failure` in
+`Tests/UI/test_settings_raw_draft.py`.
+Independent re-review then caught a second use of the missing snapshot: a
+remount treated it as a first load and silently adopted an external edit.
+Two mounted regressions now keep that state blocked across navigation and
+validation until an explicit successful Revert establishes the new baseline.
+
 ## Related
 
 - `lessons-testing-evidence.md` — includes the Pilot-harness traps (detached widget

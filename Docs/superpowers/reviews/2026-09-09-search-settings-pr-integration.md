@@ -31,3 +31,24 @@ Existing ADR-012 (provider credentials), ADR-032 (local tool permissions and sha
 - New modules/tests pass full Ruff and formatting; modified legacy Python files pass scoped syntax/undefined-name checks. All 34 changed Settings formatting ranges passed. Backlog filename/frontmatter IDs are unique, CSS generation matches, and diff hygiene passed.
 - Diagnostic inventory matches: 594 owners, 1,351 TASK-492 calls, 55 TASK-31551 calls, 7,650 TASK-494 calls, and 12 sink files. Reviewed the 22 removed and nine added search diagnostics; raw response/URL/error content was replaced with closed classifications. The removed SearX URL log also removes one legacy path-privacy candidate.
 - Mounted 80×24 and 120×35 captures were refreshed on the rebased tree and rasterized; compact guided test controls and raw-draft recovery were inspected.
+
+## Qodo review follow-up
+
+All three findings are addressed: Google-style documentation covers the three
+backend metadata classes and every public guided-settings API, and raw saves
+distinguish a committed file from subsequent refresh failure. A credential-safe
+post-commit exception carries the exact available snapshot and backup. Settings
+adopts that baseline, preserves newer edits, and reports Saved to disk with
+restart/copy guidance. If the snapshot read itself failed, Save remains blocked
+across navigation and validation until explicit Revert establishes a baseline.
+
+Six real-file fault cases reproduced snapshot/runtime/view refresh failures;
+two mounted navigation cases reproduced unsafe adoption of an external edit
+after snapshot loss. Each failed before its corresponding fix. The independent
+reviewer confirmed the recovery-fence repair and found no remaining issues.
+The related search/settings/config gate passed **201 tests**. After the final
+recovery refinement, all **43 raw-draft/snapshot tests** passed. Ruff, formatting,
+diff hygiene and the complete derived-artifact preflight passed. The existing
+Requests warning and `dev` boot-CSS breach remain unchanged; the latter is
+tracked by the separate PR #2560. No additional ADR, full sweep, or live provider
+request was needed.

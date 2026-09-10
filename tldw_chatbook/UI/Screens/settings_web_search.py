@@ -19,6 +19,12 @@ class WebSearchSettings:
     """Keep staged credentials and async results independent of panel remounts."""
 
     def __init__(self, draft: Callable[[], SettingsDraft], changed: Callable[[], None]):
+        """Bind one retained draft and load its saved configuration baseline.
+
+        Args:
+            draft: Factory called once to obtain the session's staged settings.
+            changed: Callback notifying the owning Settings screen of state changes.
+        """
         self._draft = draft()
         self.changed = changed
         self.capture_input: Callable[[], None] | None = None
@@ -36,6 +42,11 @@ class WebSearchSettings:
 
     @property
     def draft(self) -> SettingsDraft:
+        """Return the live staged values retained across disposable panel views.
+
+        Returns:
+            The session-owned mutable draft, including originals for conflict checks.
+        """
         return self._draft
 
     def _saved(self, key: str):
@@ -44,6 +55,11 @@ class WebSearchSettings:
 
     @property
     def default_backend(self) -> str:
+        """Return the staged shared default, falling back to its saved selection.
+
+        Returns:
+            Backend identifier, or APPLICATION_DEFAULT when no local default is set.
+        """
         value = self.draft.values.get(DEFAULT_KEY, self._saved(DEFAULT_KEY))
         return str(value) if value else APPLICATION_DEFAULT
 
@@ -58,6 +74,11 @@ class WebSearchSettings:
             self.capture_input()
 
     def invalidate_test(self) -> None:
+        """Advance the view/settings revision and invalidate any in-flight probe.
+
+        A running request finishes normally, but its old result cannot become the
+        current view's test status. This method does not emit a change notification.
+        """
         self.revision += 1
         self.test_status = (
             "Previous search test is still finishing; its result will be discarded."
@@ -66,6 +87,11 @@ class WebSearchSettings:
         )
 
     def select_backend(self, backend: str) -> None:
+        """Select the backend to edit without changing the shared search default.
+
+        Args:
+            backend: Catalog identifier; unknown or unchanged selections are ignored.
+        """
         if backend in catalog.BACKENDS and backend != self.backend:
             self.backend = backend
             self.invalidate_test()
@@ -81,12 +107,31 @@ class WebSearchSettings:
         self._emit()
 
     def set_default(self, backend: str) -> None:
+        """Stage the shared default and invalidate prior search-test evidence.
+
+        Args:
+            backend: Catalog identifier or APPLICATION_DEFAULT to remove the local
+                preference. Unknown identifiers and edits during saving are ignored.
+        """
         if backend in catalog.BACKENDS or backend == APPLICATION_DEFAULT:
             self._stage(
                 DEFAULT_KEY, None if backend == APPLICATION_DEFAULT else backend
             )
 
     def edit(self, key: str, value: str) -> None:
+        """Stage a field replacement without writing configuration.
+
+        Empty secret input keeps the saved value; explicit deletion uses ``clear``.
+        Other values are trimmed, and empty nonsecret input stages deletion. Edits
+        during saving are ignored.
+
+        Args:
+            key: Canonical field key from the backend catalog.
+            value: Current editor text, including an empty replacement.
+
+        Raises:
+            StopIteration: The key is not a field in the backend catalog.
+        """
         field = next(
             field
             for spec in catalog.BACKENDS.values()
@@ -107,6 +152,13 @@ class WebSearchSettings:
             self._stage(full_key, value.strip() or None)
 
     def clear(self, key: str) -> None:
+        """Capture pending input and stage removal of a local field and its aliases.
+
+        Environment overrides remain effective. No changes are made during saving.
+
+        Args:
+            key: Canonical backend field key to remove on the next Save.
+        """
         self.capture_pending_input()
         self._stage(f"SearchEngines.{key}", None)
         # Delete aliases too: otherwise a legacy key would become effective again.
@@ -115,6 +167,15 @@ class WebSearchSettings:
                 self._stage(f"SearchEngines.{alias}", None)
 
     def input_value(self, field: catalog.FieldSpec) -> str:
+        """Return editable local text while keeping saved credentials masked.
+
+        Args:
+            field: Catalog field whose editor is being rendered.
+
+        Returns:
+            Staged replacement, saved nonsecret value, or empty text for saved secrets.
+            Environment overrides are described separately rather than inserted.
+        """
         key = f"SearchEngines.{field.key}"
         if key in self.draft.values:
             return str(self.draft.values[key] or "")
@@ -124,6 +185,14 @@ class WebSearchSettings:
         return catalog.saved_field_value(field, self.raw)
 
     def field_status(self, field: catalog.FieldSpec) -> str:
+        """Explain a field's effective source and any staged replacement or clear.
+
+        Args:
+            field: Catalog field whose source guidance is being rendered.
+
+        Returns:
+            Credential-safe guidance, including environment precedence when relevant.
+        """
         source = catalog.field_source(field, self.raw)
         key = f"SearchEngines.{field.key}"
         staged = ""
@@ -146,6 +215,12 @@ class WebSearchSettings:
         )
 
     def preview(self) -> dict:
+        """Return a separate local-config preview with all staged changes applied.
+
+        Returns:
+            Deep copy of the saved baseline, including replacements and deletions.
+            It may contain credentials and must not be logged or persisted as UI state.
+        """
         raw = deepcopy(self.raw)
         for key in self.draft.dirty_keys:
             section, field = key.split(".", 1)
@@ -159,6 +234,11 @@ class WebSearchSettings:
 
     @property
     def default_status(self) -> str:
+        """Describe missing setup for the staged shared default without a request.
+
+        Returns:
+            Credential-safe blockers, or empty text when required setup is present.
+        """
         backend = (
             "duckduckgo"
             if self.default_backend == APPLICATION_DEFAULT
@@ -169,6 +249,11 @@ class WebSearchSettings:
 
     @property
     def setup_status(self) -> str:
+        """Describe offline readiness of the backend currently being edited.
+
+        Returns:
+            Credential-safe blockers or confirmation that required settings are present.
+        """
         issues = catalog.setup_issues(self.backend, self.preview())
         if issues:
             return "Setup incomplete: " + " ".join(issues)
@@ -176,6 +261,12 @@ class WebSearchSettings:
 
     @property
     def can_test(self) -> bool:
+        """Return whether an explicit probe can use the current saved setup.
+
+        Returns:
+            True only with complete saved setup, no dirty draft, and no save or test
+            already running. Readiness does not establish network connectivity.
+        """
         return not (
             self.saving
             or self.testing
@@ -184,6 +275,12 @@ class WebSearchSettings:
         )
 
     def revert(self) -> None:
+        """Discard staged values and reload the effective local config baseline.
+
+        Pending input is captured first. Saving blocks the operation; otherwise
+        previous test evidence is invalidated and views are notified of the reload.
+        The caller owns confirmation before discarding unsaved work.
+        """
         self.capture_pending_input()
         if self.saving:
             return
@@ -196,6 +293,14 @@ class WebSearchSettings:
         self._emit()
 
     async def save(self) -> None:
+        """Commit staged fields off the UI thread with per-field conflict checks.
+
+        Pending input joins the submission. Duplicate or clean saves are ignored,
+        and edits are blocked while saving. A committed write clears the draft even
+        if runtime refresh fails; conflicts and pre-write failures retain it.
+        Completion updates ``save_status`` with credential-safe recovery guidance
+        and notifies whichever view is attached to this retained session.
+        """
         self.capture_pending_input()
         if self.saving or not self.draft.is_dirty:
             return
@@ -258,6 +363,13 @@ class WebSearchSettings:
             self._emit()
 
     async def test_saved(self) -> None:
+        """Run one explicit sample query using saved settings off the UI thread.
+
+        Pending input is captured before checking readiness. Dirty, incomplete,
+        saving or already-testing states block the request with status guidance.
+        Editing or switching backends invalidates its result; only the original
+        revision receives the credential-safe completion in ``test_status``.
+        """
         self.capture_pending_input()
         if not self.can_test:
             self.test_status = (

@@ -93,11 +93,20 @@ class AdvancedConfigSettings:
     @property
     def status(self) -> str:
         if self.state.file_changed:
+            if self.state.snapshot is None:
+                return (
+                    f"{self.result} Copy any edits, then Revert to reload the saved "
+                    "file before saving again."
+                ).strip()
             return "Config changed elsewhere. Copy your draft, then Revert to reload before saving."
         return self.result
 
     async def inspect_current(self) -> None:
         """Read off the UI thread, refreshing only a still-current clean view."""
+        if self.state.file_changed and self.state.snapshot is None:
+            # A lost post-commit baseline is not an initial load. Navigation must
+            # not adopt an external edit as authority for the retained draft.
+            return
         initial_load = self._initial_load
         if self.busy and not initial_load:
             return
@@ -178,25 +187,44 @@ class AdvancedConfigSettings:
         self.busy = "Saving…"
         self._emit()
         try:
-            loaded, backup, saved = await asyncio.to_thread(
-                self.adapter.replace_snapshot, text, snapshot
-            )
+            refreshed = True
+            try:
+                loaded, backup, saved = await asyncio.to_thread(
+                    self.adapter.replace_snapshot, text, snapshot
+                )
+            except config.ConfigPostCommitError as error:
+                backup, saved = error.backup_path, error.snapshot
+                refreshed = False
             self._capture_editor()
             self.state.snapshot = saved
             self.state.baseline_text = text
-            if self.state.revision == revision:
+            if saved is None:
+                self.state.validated_revision = None
+                self.state.file_changed = True
+            elif self.state.revision == revision:
                 # Show the representation actually saved, including encryption
                 # and protected-section normalization from the config owner.
                 self._accept_snapshot(saved)
                 self.state.validated_revision = self.state.revision
-            self.applied(loaded)
-            self.result = (
-                "Saved; backup created."
-                if backup
-                else "Saved; no previous file to back up."
-            )
+            if refreshed:
+                try:
+                    self.applied(loaded)
+                except Exception:  # noqa: BLE001 - view refresh cannot undo the write
+                    refreshed = False
+            if refreshed:
+                self.result = (
+                    "Saved; backup created."
+                    if backup
+                    else "Saved; no previous file to back up."
+                )
+            else:
+                self.result = (
+                    "Saved to disk. Restart the app because post-save refresh failed."
+                )
             if self.state.is_dirty:
                 self.result += " Newer edits remain unsaved."
+                if not refreshed:
+                    self.result += " Copy them before restarting."
         except config.ConfigSnapshotConflictError:
             self.state.file_changed = True
         except Exception:  # noqa: BLE001 - closed disk/encryption diagnostic boundary

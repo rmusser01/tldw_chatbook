@@ -32,6 +32,11 @@ provider readiness. Save is disabled until that revision validates. A save clear
 only its submitted text and preserves later edits. Restore keyboard focus after
 an operation only when the user has not moved focus elsewhere.
 
+After a committed write, snapshot/runtime/view refresh errors must say Saved to
+disk with restart guidance. Retain the committed baseline and any newer edits;
+ask users to copy newer work before restarting. If the exact saved snapshot
+could not be read, block Save until an explicit reload establishes a baseline.
+
 Load Backup previews text without saving. Load Backup and Revert ask before
 replacing an unsaved draft, and a later edit supersedes an earlier confirmation.
 The r shortcut is available outside text entry; Esc cancels the discard dialog.

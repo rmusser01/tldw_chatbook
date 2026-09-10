@@ -6787,6 +6787,28 @@ class ConfigSnapshotConflictError(ValueError):
         super().__init__("The config file or profile changed. Reload it before saving.")
 
 
+class ConfigPostCommitError(RuntimeError):
+    """Report a committed raw replacement whose snapshot or runtime refresh failed.
+
+    Attributes:
+        snapshot: Exact committed file snapshot, or None if its read failed.
+        backup_path: Backup created before replacement, if a previous file existed.
+    """
+
+    def __init__(
+        self, snapshot: ConfigFileSnapshot | None, backup_path: Path | None
+    ) -> None:
+        """Retain recovery state without exposing config text or the original error.
+
+        Args:
+            snapshot: Committed snapshot when its post-write read succeeded.
+            backup_path: Existing config's backup, or None when none was created.
+        """
+        super().__init__("Config saved to disk, but post-save refresh failed.")
+        self.snapshot = snapshot
+        self.backup_path = backup_path
+
+
 def read_cli_config_snapshot() -> ConfigFileSnapshot:
     """Read exact serialized config without parsing or creating a missing file."""
 
@@ -6834,7 +6856,11 @@ def replace_cli_config_serialized(
     *,
     create_backup: bool = True,
 ) -> tuple[Dict[str, Any], Path | None]:
-    """Validate and replace raw TOML without downgrading encryption."""
+    """Validate and replace raw TOML without downgrading encryption.
+
+    Raises:
+        ConfigPostCommitError: Replacement succeeded but post-save refresh failed.
+    """
 
     loaded, backup_path, _ = _replace_cli_config_serialized(
         serialized, create_backup=create_backup
@@ -6851,9 +6877,13 @@ def replace_cli_config_snapshot(
     """Replace raw TOML only while its exact file/profile baseline still matches.
 
     The comparison, backup, replacement and returned on-disk snapshot share one
-    write lock. A conflict leaves both config and backup unchanged. Exceptions
-    during runtime publication can still occur after a successful disk write,
-    as with ``replace_cli_config_serialized``.
+    write lock. A conflict leaves both config and backup unchanged.
+
+    Raises:
+        ConfigSnapshotConflictError: The current file or profile no longer matches.
+        ConfigPostCommitError: The file was replaced but its snapshot or runtime
+            refresh failed. The exception carries the committed snapshot when
+            available; callers must not report this as a failed disk write.
     """
 
     if not isinstance(expected_snapshot, ConfigFileSnapshot):
@@ -6908,10 +6938,15 @@ def _replace_cli_config_serialized(
                 config_path=config_path,
             )
         raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
-        loaded = _publish_runtime_config_unlocked(raw_config=raw_written)
-        saved_snapshot = ConfigFileSnapshot(
-            config_path, _try_read_cli_config_serialized_unlocked(config_path)
-        )
+        saved_snapshot = None
+        try:
+            saved_serialized = _try_read_cli_config_serialized_unlocked(config_path)
+            if saved_serialized is None:
+                raise OSError("The committed config snapshot is unavailable.")
+            saved_snapshot = ConfigFileSnapshot(config_path, saved_serialized)
+            loaded = _publish_runtime_config_unlocked(raw_config=raw_written)
+        except Exception:  # Post-commit errors must retain the successful disk outcome.
+            raise ConfigPostCommitError(saved_snapshot, backup_path) from None
         return loaded, backup_path, saved_snapshot
 
 

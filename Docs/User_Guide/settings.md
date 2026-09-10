@@ -647,8 +647,11 @@ Recovery buttons stay unavailable until the current operation finishes.
 If guided Settings, another process, or a different config profile changes the
 file while you have a draft, saving is blocked. Copy any edits you want to keep,
 choose **Revert Raw TOML** to load the current file, reapply those edits, then
-validate and save. A failed save retains your draft; reload to check the disk
-before retrying, since a runtime-refresh failure can follow a successful write.
+validate and save. A failed disk write retains your draft. If the file was saved
+but a later refresh fails, the status says **Saved to disk** and asks you to
+restart. Any newer edits remain unsaved; copy them before restarting. If the
+saved file could not be read back, Save stays blocked until **Revert Raw TOML**
+reloads it; copy any newer edits before reverting too.
 
 ### Domain Defaults — Image Gen
 
