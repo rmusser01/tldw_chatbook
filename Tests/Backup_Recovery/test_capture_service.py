@@ -89,6 +89,13 @@ def test_public_config_capture_and_publication_without_profile_rebinding(
         options["external_roots"] = (external,)
     preview = preview_capture((source,), options=options)
     message = _populate_required_dependencies(preview)
+    audio_history = next(
+        item.path for item in preview.items if item.owner == "audio.history"
+    )
+    audio_history.write_text(
+        '{"items":[{"id":1,"text":"retained speech","content_base64":"YXVkaW8="}]}'
+    )
+    audio_history.chmod(0o600)
     from tldw_chatbook.Backup_Recovery.recovered_media import RecoveredMedia
 
     media = tmp_path / "source-media.bin"
@@ -106,6 +113,11 @@ def test_public_config_capture_and_publication_without_profile_rebinding(
         media, profile=profile, message=message, slug="saved", media_type="image/png"
     )
     preview = preview_capture((source,), options=options)
+    assert not any(
+        item.owner == "audio.history"
+        and item.logical_id.endswith(":participant_pending")
+        for item in preview.items
+    )
     assert not set(preview.issues) - {
         "unsupported",
         "unavailable",
@@ -150,6 +162,12 @@ def test_public_config_capture_and_publication_without_profile_rebinding(
     )
     assert bootstrap._records(root) == ([], [])
     manifest = json.loads(result.manifest_bytes)
+    audio_payload = next(
+        file for file in manifest["files"] if file["owner_id"] == "audio.history"
+    )
+    assert (
+        result.root / audio_payload["payload"]
+    ).read_bytes() == audio_history.read_bytes()
     assert manifest["consistency"] == "partial"
     payload = next(
         file

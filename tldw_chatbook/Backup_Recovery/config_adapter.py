@@ -554,7 +554,6 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
         _Definition(
             "audio.history",
             leaf="tldw_chatbook_audio_history.json",
-            participant_pending=True,
         ),
         _Definition("chat.dictionaries", leaf="chat_dicts", tree=True),
         _Definition(

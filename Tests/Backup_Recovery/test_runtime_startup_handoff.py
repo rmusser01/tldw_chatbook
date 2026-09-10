@@ -21,6 +21,25 @@ from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
 async def main():
     app = TldwCli()
+    audio_tasks = []
+    audio_release = asyncio.Event()
+    if sys.argv[2] == 'audio':
+        from tldw_chatbook.Audio_Services_Interop import local_audio_services_service as audio
+        audio_entered = asyncio.Event()
+        async def generate(**kwargs):
+            audio_entered.set()
+            await audio_release.wait()
+            return b'accepted speech'
+        owner = app.local_audio_services_service
+        owner.tts_audio_generator = generate
+        audio_tasks.append(asyncio.create_task(owner.create_audio_speech({'input':'before capture'})))
+        await audio_entered.wait()
+        async def finish_accepted_audio():
+            while not audio._history_closed:
+                await asyncio.sleep(.001)
+            assert not app.tts_service._maintenance_paused, 'TTS closed before accepted audio finished'
+            audio_release.set()
+        audio_tasks.append(asyncio.create_task(finish_accepted_audio()))
     runtime = RuntimeMaintenance(app)
     app._backup_runtime_maintenance = runtime
     entered, release = threading.Event(), threading.Event()
@@ -28,6 +47,12 @@ async def main():
     worker = None
     try:
         await runtime.settle_producers(time.monotonic()+10)
+        if audio_tasks:
+            results = await asyncio.gather(*audio_tasks)
+            assert results[0]['content'] == b'accepted speech'
+            assert (await owner.list_tts_history())['total'] == 1
+            with __import__('pytest').raises(RuntimeError, match='audio_history_paused_for_maintenance'):
+                await owner.create_audio_speech({'input':'during capture'})
         runtime.retire_local_caches()
         assert runtime.pause.drain(time.monotonic()+1)
         startup = next(iter(storage._startups.values()))
@@ -66,7 +91,12 @@ async def main():
         app.chachanotes_db.get_connection().execute('SELECT 1').fetchone()
         assert not errors
         assert not blocked_attempts()
+        if audio_tasks:
+            assert (await owner.create_audio_speech({'input':'after capture'}))['content'] == b'accepted speech'
     finally:
+        audio_release.set()
+        if audio_tasks:
+            await asyncio.gather(*audio_tasks, return_exceptions=True)
         release.set()
         if worker is not None:
             worker.join(2)
@@ -86,7 +116,7 @@ print('retired and reopened')
 """
 
 
-@pytest.mark.parametrize("outcome", ["resume", "cancel"])
+@pytest.mark.parametrize("outcome", ["resume", "cancel", "audio"])
 def test_actual_app_startup_returns_before_ordinary_admission(tmp_path, outcome):
     _run(tmp_path, "startup", outcome, script=_SCRIPT)
 

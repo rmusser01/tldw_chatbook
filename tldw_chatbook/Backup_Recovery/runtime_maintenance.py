@@ -189,6 +189,7 @@ class RuntimeMaintenance:
                 app.console_image_edit_operations,
                 app.scheduler_loop,
                 app.evaluation_orchestrator,
+                app.local_audio_services_service,
                 app.file_notes_session_owner,
                 app._tts_handler,
                 app._stts_handler,
@@ -245,6 +246,11 @@ class RuntimeMaintenance:
                     app.evaluation_orchestrator,
                     "Evals.eval_orchestrator",
                     "EvaluationOrchestrator",
+                ),
+                _bind(
+                    app.local_audio_services_service,
+                    "Audio_Services_Interop.local_audio_services_service",
+                    "LocalAudioServicesService",
                 ),
                 _bind(
                     app.file_notes_session_owner,
