@@ -195,7 +195,7 @@ def _capture_owned(owner, path, data, staging, material, issues):
         _capture_encrypted(data, relative, material, issues)
 
 
-def _capture_encrypted(data, relative, material, issues):
+def _capture_encrypted(data, relative, material, issues, *, prefix=()):
     def walk(value, location=()):
         if len(location) > 64 or len(material) >= 10000:
             raise ValueError("credential_resource_limit")
@@ -223,7 +223,7 @@ def _capture_encrypted(data, relative, material, issues):
                 issues.append("credential_unlock_required:" + record["id"])
             material.append(record)
 
-    walk(data)
+    walk(data, prefix)
 
 
 def _material(staging):
@@ -521,6 +521,8 @@ def _write(path, data):
 
 
 def _sanitize_url(value):
+    if value is None:
+        return None  # Installed optional RAG endpoint fields serialize as null.
     if not isinstance(value, str):
         raise TypeError("unsupported_credential_format")
     parsed = urlsplit(value)
@@ -792,6 +794,164 @@ def _rewrite_database(staging, path, owner_id, *, export=None):
         destination.unlink(missing_ok=True)
 
 
+def _rag_definition_kind(relative):
+    """Match retained paths emitted by config_profiles and pipeline_loader."""
+    if relative is None:
+        return None
+    path = Path(relative)
+    if len(path.parts) == 1:
+        if path.name == "rag_pipelines.toml":
+            return "pipeline"
+        if path.name in {"custom_profiles.json", "custom_profiles.json.migrated"}:
+            return "legacy"
+        if path.suffix == ".json":
+            return "profile"
+    if (
+        len(path.parts) == 3
+        and path.parts[0] == "experiments"
+        and path.name in {"config.json", "results.json"}
+    ):
+        return "experiment_" + path.stem
+    return None
+
+
+def _rag_definition_valid(kind, data):
+    """Recognize installed serialization shapes without importing RAG runtime.
+
+    Experiment query/metric fields are historical content, not configuration.
+    Their shape is checked here so they can be retained without a secret walk.
+    """
+    if not isinstance(data, dict):
+        return False
+    if kind == "profile":
+        return isinstance(data.get("rag_config"), dict) and all(
+            data.get(key) is None or isinstance(data[key], dict)
+            for key in ("reranking_config", "processing_config")
+        )
+    if kind == "legacy":
+        return isinstance(data.get("profiles"), list) and all(
+            _rag_definition_valid("profile", profile) for profile in data["profiles"]
+        )
+    if kind == "pipeline":
+        return (
+            set(data)
+            <= {
+                "global",
+                "middleware",
+                "pipelines",
+                "ab_tests",
+                "templates",
+                "validation",
+            }
+            and isinstance(data.get("pipelines"), dict)
+            and isinstance(data.get("global", {}), dict)
+            and all(
+                isinstance(data.get(key, {}), dict)
+                for key in ("ab_tests", "templates", "validation")
+            )
+            and all(isinstance(row, dict) for row in data["pipelines"].values())
+            and isinstance(data.get("middleware", {}), dict)
+            and all(
+                isinstance(row, dict) and isinstance(row.get("config", {}), dict)
+                for row in data.get("middleware", {}).values()
+            )
+        )
+    if kind == "experiment_config":
+        strings = ("experiment_id", "name", "description", "control_profile")
+        flags = ("enable_ab_testing", "track_metrics", "save_results")
+        lists = ("test_profiles", "metrics_to_track")
+        return (
+            set(data) == {*strings, *flags, *lists, "traffic_split", "results_dir"}
+            and all(isinstance(data[key], str) for key in strings)
+            and all(type(data[key]) is bool for key in flags)
+            and all(
+                isinstance(data[key], list)
+                and all(isinstance(value, str) for value in data[key])
+                for key in lists
+            )
+            and isinstance(data["traffic_split"], dict)
+            and all(
+                type(value) in (int, float) for value in data["traffic_split"].values()
+            )
+            and (data["results_dir"] is None or isinstance(data["results_dir"], str))
+        )
+    if kind == "experiment_results":
+        summary = data.get("summary")
+        results = data.get("detailed_results")
+        return (
+            set(data) == {"summary", "detailed_results", "completed_at"}
+            and isinstance(data["completed_at"], str)
+            and isinstance(summary, dict)
+            and set(summary) == {"experiment_id", "name", "total_queries", "profiles"}
+            and isinstance(summary["experiment_id"], str)
+            and isinstance(summary["name"], str)
+            and type(summary["total_queries"]) is int
+            and isinstance(summary["profiles"], dict)
+            and all(
+                isinstance(row, dict)
+                and set(row) == {"query_count", "metrics"}
+                and type(row["query_count"]) is int
+                and isinstance(row["metrics"], dict)
+                for row in summary["profiles"].values()
+            )
+            and isinstance(results, list)
+            and all(
+                isinstance(row, dict)
+                and set(row) == {"timestamp", "profile", "query", "metrics"}
+                and type(row["timestamp"]) in (int, float)
+                and isinstance(row["profile"], str)
+                and isinstance(row["query"], str)
+                and isinstance(row["metrics"], dict)
+                for row in results
+            )
+        )
+    return False
+
+
+def _rag_config_sections(kind, data):
+    """Yield only component configuration, with its real document location.
+
+    Profile/pipeline names, descriptions, tags and function identifiers remain
+    inert metadata even when their literal text resembles encrypted values.
+    """
+
+    def fields(row, prefix, names):
+        if not isinstance(row, dict):
+            raise TypeError("unsupported_credential_format")
+        for name in names:
+            if row.get(name) is not None:
+                if not isinstance(row[name], dict):
+                    raise ValueError("unsupported_credential_format")
+                yield row, name, prefix + (name,)
+
+    def steps(rows, prefix):
+        if len(prefix) > 64 or not isinstance(rows, list):
+            raise ValueError("unsupported_credential_format")
+        for index, row in enumerate(rows):
+            location = prefix + (index,)
+            yield from fields(row, location, ("config",))
+            for name in ("functions", "if_true", "if_false"):
+                if name in row:
+                    yield from steps(row[name], location + (name,))
+
+    components = ("rag_config", "reranking_config", "processing_config")
+    if kind == "profile":
+        yield from fields(data, (), components)
+    elif kind == "legacy":
+        for index, profile in enumerate(data["profiles"]):
+            yield from fields(profile, ("profiles", index), components)
+    elif kind == "pipeline":
+        yield from fields(data, (), ("global",))
+        for collection in ("pipelines", "templates"):
+            for name, row in data.get(collection, {}).items():
+                prefix = (collection, name)
+                yield from fields(row, prefix, ("parameters",))
+                if "steps" in row:
+                    yield from steps(row["steps"], prefix + ("steps",))
+        for name, row in data.get("middleware", {}).items():
+            yield from fields(row, ("middleware", name), ("config",))
+
+
 def process_credentials(
     staging: Path,
     inventory: Inventory,
@@ -838,14 +998,8 @@ def process_credentials(
             ):
                 continue
             if item.owner == "rag.definitions":
-                relative = Path(item.metadata.relative_path) if item.metadata else None
-                if (
-                    relative is None
-                    or len(relative.parts) != 1
-                    or relative.suffix != ".json"
-                    or relative.name
-                    in {"custom_profiles.json", "custom_profiles.json.migrated"}
-                ):
+                relative = item.metadata.relative_path if item.metadata else None
+                if _rag_definition_kind(relative) is None:
                     issues.append(
                         "credential_rag_definition_format_unsupported:"
                         + item.logical_id
@@ -873,9 +1027,15 @@ def process_credentials(
                     )
                 continue
             try:
+                rag_kind = (
+                    _rag_definition_kind(item.metadata.relative_path)
+                    if item.owner == "rag.definitions"
+                    else None
+                )
+                is_toml = item.owner in CONFIG_OWNERS or rag_kind == "pipeline"
                 data = (
                     tomllib.loads(_read(path).decode())
-                    if item.owner in CONFIG_OWNERS
+                    if is_toml
                     else json.loads(_read(path))
                 )
             except (ValueError, UnicodeError):
@@ -883,13 +1043,35 @@ def process_credentials(
                     raise
                 issues.append("credential_format_unreadable")
                 continue
-            if item.owner == "rag.definitions" and (
-                not isinstance(data, dict)
-                or not isinstance(data.get("rag_config"), dict)
-            ):
+            if rag_kind and not _rag_definition_valid(rag_kind, data):
                 issues.append(
                     "credential_rag_definition_format_unsupported:" + item.logical_id
                 )
+                continue
+            if rag_kind in {"experiment_config", "experiment_results"}:
+                continue  # Historical content has no installed managed-secret fields.
+            if rag_kind:
+                try:
+                    sections = tuple(_rag_config_sections(rag_kind, data))
+                except (ValueError, TypeError):
+                    issues.append(
+                        "credential_rag_definition_format_unsupported:"
+                        + item.logical_id
+                    )
+                    continue
+                for row, key, prefix in sections:
+                    if mode == "exclude":
+                        row[key] = sanitize_config(row[key])
+                    else:
+                        _capture_encrypted(
+                            row[key],
+                            str(path.relative_to(staging)),
+                            material,
+                            issues,
+                            prefix=prefix,
+                        )
+                if mode == "exclude":
+                    _write(path, toml.dumps(data) if is_toml else json.dumps(data))
                 continue
             if mode == "exclude":
                 if item.owner in CONFIG_OWNERS:
@@ -906,9 +1088,7 @@ def process_credentials(
                 )
                 _write(
                     path,
-                    toml.dumps(sanitized)
-                    if item.owner in CONFIG_OWNERS
-                    else json.dumps(sanitized),
+                    toml.dumps(sanitized) if is_toml else json.dumps(sanitized),
                 )
             else:
                 if item.owner == "mcp.local":
@@ -916,12 +1096,7 @@ def process_credentials(
                         _sanitize_connections(item.owner, data)
                     except (ValueError, TypeError):
                         issues.append("credential_connection_format_unsupported")
-                if item.owner == "rag.definitions":
-                    _capture_encrypted(
-                        data, str(path.relative_to(staging)), material, issues
-                    )
-                else:
-                    _capture_owned(item.owner, path, data, staging, material, issues)
+                _capture_owned(item.owner, path, data, staging, material, issues)
         if mode != "exclude":
             encoded = json.dumps(
                 {"version": 1, "mode": mode, "records": material}, ensure_ascii=False
