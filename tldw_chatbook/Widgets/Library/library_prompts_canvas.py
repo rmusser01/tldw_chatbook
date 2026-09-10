@@ -29,7 +29,10 @@ from tldw_chatbook.Library.library_prompts_state import (
     definition_state_display_label,
     prompt_editor_meta_line,
 )
-from tldw_chatbook.Library.library_pager_state import LibraryPagerDisplay
+from tldw_chatbook.Library.library_pager_state import (
+    LibraryPagerDisplay,
+    library_pager_layout,
+)
 from tldw_chatbook.Library.library_shell_state import (
     library_choice_label,
     library_choice_tooltip,
@@ -1038,38 +1041,21 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
     def _compose_pager(self, pager: LibraryPagerDisplay) -> ComposeResult:
         """Render the controller-derived Prompt pager without recalculation."""
         # task-32067: Media's one-page rule (task-28016 + task-31237), applied
-        # here -- "Page 1 of 1", the boundary reasons and the two dead
-        # "○ Previous ○ Next" forms all say the same nothing under a list that
-        # fits one page. The range stays; everything returns with a page 2.
+        # here too -- from the ONE helper that states it (task-32104).
+        layout = library_pager_layout(pager)
         with Vertical(id="library-prompts-pager"):
-            parts = (
-                (pager.range_copy,)
-                if pager.single_page
-                else (pager.range_copy, pager.page_copy)
-            )
             yield Static(
-                " · ".join(part for part in parts if part),
+                " · ".join(layout.status_parts),
                 id="library-prompts-page-label",
                 markup=False,
             )
-            reasons = (
-                ()
-                if pager.single_page
-                else tuple(
-                    dict.fromkeys(
-                        reason
-                        for reason in (pager.previous_reason, pager.next_reason)
-                        if reason
-                    )
-                )
-            )
             yield Static(
-                " · ".join((pager.status_copy, *reasons)).strip(" ·"),
+                " · ".join((pager.status_copy, *layout.boundary_reasons)).strip(" ·"),
                 id="library-prompts-page-status",
                 classes="destination-purpose",
                 markup=False,
             )
-            if pager.single_page and not pager.retry_visible:
+            if layout.controls_hidden:
                 return
             previous_disabled = pager.previous_disabled or self.mutation_in_flight
             next_disabled = pager.next_disabled or self.mutation_in_flight
