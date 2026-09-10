@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import hashlib
+import json
 import os
 import sqlite3
 import threading
@@ -163,6 +164,85 @@ def test_replace_clear_and_generated_bytes_are_staging_only(
     assert candidate.replaced_expression_keys == ("thinking",)
     assert candidate.cleared_expression_keys == ("custom:speaking",)
     assert not (environment["user_root"] / "visual_identities").exists()
+
+
+def test_profile_fork_preserves_source_terms_and_only_retained_image_credits(
+    publication_environment,
+) -> None:
+    env = publication_environment
+    graph = env["graph"]
+    record = {
+        "version": 1,
+        "creator": "Original artist",
+        "license": "MIT",
+        "source_url": None,
+        "notices": "Original notice\n" * 400,
+    }
+    with env["db"].transaction():
+        env["db"].execute_query(
+            "UPDATE visual_identity_packs SET source_context_json=? WHERE id=?",
+            (
+                json.dumps({"tldw/artwork": record, "local_secret": "private"}),
+                graph["pack"]["id"],
+            ),
+        )
+        env["db"].execute_query(
+            "UPDATE visual_identity_pack_versions SET manifest_json=? WHERE id=?",
+            (json.dumps({"license": "MIT"}), graph["version"]["id"]),
+        )
+        for asset in graph["assets"]:
+            env["db"].execute_query(
+                "UPDATE visual_identity_assets SET source_context_json=? WHERE id=?",
+                (
+                    json.dumps(
+                        {"tldw/artwork": {**record, "output_sha256": asset["sha256"]}}
+                    ),
+                    asset["id"],
+                ),
+            )
+    candidate = create_visual_identity_candidate(
+        env["db"], actor_kind="character", actor_id=env["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((4, 5, 6)), source="upload")
+    publish_visual_identity_candidate(
+        env["db"], candidate, user_data_dir=env["user_root"]
+    )
+    updated = VisualIdentityRepository(env["db"]).get_active_actor_pack(
+        "character", env["actor_id"]
+    )
+    assert updated["pack"]["id"] != graph["pack"]["id"]
+    assert json.loads(updated["version"]["manifest_json"])["license"] == "MIT"
+    context = json.loads(updated["pack"]["source_context_json"])
+    assert context["tldw/artwork"] == record
+    assert "local_secret" not in context
+    for asset in updated["assets"]:
+        context = json.loads(asset["source_context_json"])
+        if asset["expression_key"] == "thinking":
+            assert "tldw/artwork" not in context
+        else:
+            assert context["tldw/artwork"] == {
+                **record,
+                "output_sha256": asset["sha256"],
+            }
+    other = VisualIdentityRepository(env["db"]).get_active_actor_pack(
+        "character", env["other_actor_id"]
+    )
+    assert other["version"]["id"] == graph["version"]["id"]
+
+
+def test_legacy_missing_license_does_not_gain_builtin_terms(publication_environment):
+    env = publication_environment
+    candidate = create_visual_identity_candidate(
+        env["db"], actor_kind="character", actor_id=env["actor_id"]
+    )
+    candidate.stage_clear("thinking")
+    publish_visual_identity_candidate(
+        env["db"], candidate, user_data_dir=env["user_root"]
+    )
+    graph = VisualIdentityRepository(env["db"]).get_active_actor_pack(
+        "character", env["actor_id"]
+    )
+    assert json.loads(graph["version"]["manifest_json"])["license"] == "unspecified"
 
 
 def test_first_builtin_save_forks_once_and_atomically_switches_only_target_actor(

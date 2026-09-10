@@ -85,6 +85,10 @@ async def test_equivalent_retry_paths_reuse_installed_buddy_after_save_failure(
             expected_revision=0,
             imports=cached_imports,
         )
+    assert "Buddy was installed" in str(failed.value)
+    assert "previous settings" in str(failed.value)
+    assert "Retry Apply" in str(failed.value)
+    assert "reopen" in str(failed.value)
     installed = manager.library.list_buddies()
     assert len(installed) == 1
     assert manager.controller.current_preferences() == previous
@@ -234,8 +238,9 @@ async def test_changed_archive_is_not_reported_as_storage_failure(imports, monke
         return review
 
     monkeypatch.setattr(manager.library, "review_archive", replace_after_review)
-    with pytest.raises(ValueError, match="changed during import"):
+    with pytest.raises(ValueError, match="changed during import") as failed:
         await manager.apply_choice(BuddyManagementChoice(import_path=str(archive)))
+    assert "fresh review" in str(failed.value)
     assert manager.controller.current_preferences() == previous
     assert manager.library.list_buddies() == ()
 
@@ -299,3 +304,130 @@ async def test_modal_can_recover_from_a_missing_file_and_import_the_pasted_path(
                 await pilot.pause()
         assert len(manager.library.list_buddies()) == 1
         assert manager.controller.current_preferences().selection != previous.selection
+
+
+def test_saved_independent_snapshot_tracks_owner_revision(imports):
+    from tldw_chatbook.Persona_Visual.snapshot import read_saved_buddy
+
+    manager, archive, _ = imports
+    buddy = manager.library.import_archive(archive)
+    snapshot = read_saved_buddy(
+        manager.library.repository,
+        None,
+        manager.library.profile_root,
+        buddy_id=buddy.id,
+    )
+    assert snapshot.is_current()
+    assert snapshot.assets
+    with manager.library.db.transaction() as cursor:
+        cursor.execute(
+            "UPDATE buddy_profiles SET version=version+1 WHERE id=?", (buddy.id,)
+        )
+    assert not snapshot.is_current()
+
+
+@pytest.mark.asyncio
+async def test_reviewed_petdex_apply_publishes_once_and_rejects_stale(imports):
+    from dataclasses import replace
+
+    manager, archive, previous = imports
+    review = manager.library.review_archive(archive)
+    stale = replace(review, _guard=lambda: False)
+    with pytest.raises(ValueError):
+        await manager.apply_choice(BuddyManagementChoice(), staged_review=stale)
+    assert manager.library.list_buddies() == ()
+    assert manager.controller.current_preferences() == previous
+    await manager.apply_choice(BuddyManagementChoice(), staged_review=review)
+    assert len(manager.library.list_buddies()) == 1
+    assert (
+        manager.library.get_graph(
+            manager.library.list_buddies()[0].id
+        ).identity.persona_id
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_staged_retry_cache_distinguishes_complete_reviewed_archives(
+    imports, monkeypatch, tmp_path
+):
+    from Tests.Petdex.test_conversion import atlas_source
+    from tldw_chatbook import config
+    from tldw_chatbook.Persona_Visual.snapshot import read_buddy_archive
+    from tldw_chatbook.Petdex.conversion import build_petdex_archive
+
+    manager, _archive, previous = imports
+    source = atlas_source()
+    first_path = tmp_path / "first-review.tldw-persona-vpack"
+    second_path = tmp_path / "second-review.tldw-persona-vpack"
+    first_path.write_bytes(build_petdex_archive(source))
+    second_path.write_bytes(
+        build_petdex_archive(
+            source,
+            mappings={
+                "idle": "idle",
+                "thinking": "idle",
+                "error": "idle",
+                "listening": "idle",
+                "speaking": "idle",
+            },
+        )
+    )
+    first = read_buddy_archive(first_path)
+    second = read_buddy_archive(second_path)
+    assert first.source_sha256 != second.source_sha256
+
+    cached_imports = {}
+    monkeypatch.setattr(config, "save_settings_to_cli_config", lambda _: False)
+    with pytest.raises(ValueError) as first_failure:
+        await manager.apply_choice(
+            BuddyManagementChoice(),
+            expected_revision=0,
+            imports=cached_imports,
+            staged_review=first,
+        )
+    with pytest.raises(ValueError):
+        await manager.apply_choice(
+            BuddyManagementChoice(),
+            expected_revision=first_failure.value.buddy_retry_revision,
+            imports=cached_imports,
+            staged_review=second,
+        )
+
+    installed = manager.library.list_buddies()
+    assert len(installed) == 2
+    assert installed[0].id != installed[1].id
+    assert manager.controller.current_preferences() == previous
+    assert set(cached_imports) == {
+        "review:" + first.source_sha256,
+        "review:" + second.source_sha256,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure", "recovery"),
+    [
+        (ValueError("buddy_source_changed"), "fresh review"),
+        (OSError("private/profile/pets/demo"), "profile storage"),
+    ],
+)
+async def test_staged_petdex_publication_errors_are_actionable_and_path_free(
+    imports, monkeypatch, failure, recovery
+):
+    manager, archive, previous = imports
+    review = manager.library.review_archive(archive)
+
+    def fail_publish(_review):
+        raise failure
+
+    monkeypatch.setattr(manager.library, "publish_review", fail_publish)
+    with pytest.raises(ValueError) as failed:
+        await manager.apply_choice(BuddyManagementChoice(), staged_review=review)
+
+    message = str(failed.value)
+    assert recovery in message
+    assert "buddy_source_changed" not in message
+    assert "private/profile" not in message
+    assert manager.controller.current_preferences() == previous
+    assert manager.library.list_buddies() == ()

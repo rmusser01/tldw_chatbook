@@ -721,3 +721,74 @@ async def test_search_rag_query_input_gets_the_same_click_select_all_fix():
     )
 
     assert SelectAllOnFocusingClickInput is RailBase
+
+
+async def test_a_collections_count_failure_never_evicts_the_db_sizes_row(
+    widget_pilot,
+) -> None:
+    """task-32103 AC#3 (fix round 2): the failure sentence needs a slot of its own.
+
+    ``details_lines`` is a positional three-slot contract -- Source, body,
+    DB sizes -- and nothing renders a fourth entry. The Collections failure
+    sentence was appended as one, so it landed in the DB-sizes slot: the
+    rail painted "DB sizes · Collections count unavailable (waited 5 s) …"
+    and the real "Prompts … · Chats/Notes … · Media …" line vanished.
+
+    Driven through the SCREEN's own ``_library_details_lines`` and the
+    rail's shipped compose, because the defect is the shape the screen
+    hands over, not anything the rail does with it.
+    """
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    app.db_sizes_status = {
+        "prompts": "1.0 KB",
+        "chachanotes": "2.0 KB",
+        "media": "3.0 KB",
+    }
+    screen = LibraryScreen(app)
+    details_lines = screen._library_details_lines(
+        "local", None, collections_count_failure="timeout"
+    )
+
+    shell = LibraryShellState(
+        header_line="Library | Test",
+        sections=(),
+        details_lines=details_lines,
+        selected_row_id="",
+        canvas_kind="empty",
+        canvas_target="",
+        canvas_empty_copy="",
+    )
+    async with await widget_pilot(
+        LibraryRail,
+        shell=shell,
+        preferences=LibraryRailPreferences(details_open=True),
+    ) as pilot:
+        await pilot.pause()
+        # task-32230: the sizes take a row EACH now (joined on one line they
+        # wrapped mid-value at the rail's 22-cell column), so the block is
+        # read across every `#library-details-db-sizes*` row. The property
+        # this test pins is unchanged and un-weakened -- all three sizes
+        # present, the failure sentence nowhere among them -- it is only the
+        # number of widgets carrying them that moved.
+        size_rows = [
+            widget
+            for widget in pilot.app.query(".library-details-row")
+            if str(widget.id or "").startswith("library-details-db-sizes")
+        ]
+        assert size_rows, "the DB-sizes block was evicted entirely"
+        sizes = " ".join(str(widget.renderable) for widget in size_rows)
+        body = str(pilot.app.query_one("#library-details-body", Static).renderable)
+
+        # The sizes rows still carry the sizes, and only the sizes. (The
+        # values render with a non-breaking join, "1.0KB" -- see
+        # ``_unbreakable_size_text``.)
+        assert "Prompts" in sizes and "1.0" in sizes
+        assert "Chats/Notes" in sizes and "2.0" in sizes
+        assert "Media" in sizes and "3.0" in sizes
+        assert "Collections count unavailable" not in sizes
+        # ...and the failure sentence is on screen, in the body row.
+        assert "Collections count unavailable (waited 5 s)" in body
+        assert "open Collections to load it." in body

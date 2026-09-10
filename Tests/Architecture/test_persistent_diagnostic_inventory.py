@@ -194,12 +194,20 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         ),
         "Failed to persist the Library ingest backend": (),
         "Failed to persist Library ingest options": (),
-        "Failed to restore a Library note": (),
+        # "Failed to restore a Library note" moved to
+        # UI/Library_Modules/library_notes_controller.py in 9e13f0207c (the
+        # wave-8 notes decomposition); see that owner's entry below.
         # Removed by 5dd1077df6 when generic Collection restore was retired.
     },
-    "tldw_chatbook/UI/Library_Modules/canvas_sync.py": {
-        "canvas sync failed": ("kind",),
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": {
+        "Failed to restore a Library note": (),
     },
+    # "canvas sync failed" was dropped from this registry in 51533602c4
+    # (TASK-32089): that diagnostic now deliberately keeps its traceback
+    # (`logger.opt(exception=True)`) because discarding it left an
+    # AttributeError inside a state builder with no clue, so it is no longer
+    # a metadata-only diagnostic. It is not a persistent sink, and the
+    # inventory manifest still owns it.
     "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": {
         "Failed to load Library conversations page.": (),
     },
@@ -257,12 +265,9 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Console turn context: persona policy rules resolution failed": (
             "type(exc).__name__",
         ),
-        "Console session startup: workspace default persona resolution failed": (
-            "type(exc).__name__",
-        ),
-        "Console session startup: new-session settings selection failed": (
-            "type(exc).__name__",
-        ),
+        # The two "Console session startup: ..." diagnostics were removed by
+        # 11150b849d (independent Buddy management), which retired the
+        # startup persona/settings resolution they reported on.
     },
     "tldw_chatbook/UI/Console_Modules/workspace.py": {
         "Star-toggle cancellation re-sync failed": (),
@@ -3445,6 +3450,7 @@ def test_inventory_excludes_nested_virtualenv_but_keeps_application_sources(
         "persistent_sink_files": 1,
         "task_492_calls": 0,
         "task_494_calls": 1,
+        "task_31551_calls": 0,
         "path_privacy_candidate_calls": 0,
     }
 

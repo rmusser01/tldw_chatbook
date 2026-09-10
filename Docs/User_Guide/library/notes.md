@@ -343,7 +343,8 @@ reusable lessons (empty)".
 | "‹ Notes" / "‹ Back to list" | Returns to the list (your text is already saved — see autosave below). One wording across Edit, Preview, and Info: "‹ Notes" at wide sizes, "‹ Back to list" on a compact terminal. |
 | **Edit** | Shows the editable title and body. This is the default view when you open a note. |
 | **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. |
-| **Info** | Shows Properties (including comma-separated keywords and note dates/version), Reuse & Export, and Danger sections. |
+| **Info** | Shows Properties (including comma-separated keywords, note dates/version, and **Linked from**), Reuse & Export, and Danger sections. |
+| **Linked from (N)** (Info → Properties) | Lists the notes whose bodies link to this one, newest import or not — the `[title](note://…)` links Import once writes for an Obsidian vault's `[[wikilinks]]` (see "Obsidian vaults"). Click an entry to open that note. While the lookup runs the line reads "Linked from — checking…", and "Linked from — couldn't check" if it failed, so a count is only claimed once the answer is in. When nothing points here the line reads "Linked from (0) — no notes link here yet". The list is capped at 50 entries; past that the count reads "50+". Links you type by hand in the body count too, as long as they use the same `note://` form. |
 | Status line | Shows the autosave state: "Saved", "Saving…", "Unsaved changes", "Conflict — …", "Save failed — …", or "Unavailable — …". It does not carry a word count. Created/Modified/version details are under Info → Properties, each with an absolute local timestamp beside its relative age and the word count (e.g. "Created 2026-09-08 21:14 · 3m ago · Modified … · v1 · 6 words"). "Saved" appears once per view, not repeated in Info. |
 | **Save** | Saves immediately, without waiting for autosave. It remains visible beside the mode controls. |
 | **Use in Console** | Hands the note to the Console as staged context, with the suggested prompt "Use this note as context and help me work with it." It remains visible beside **Save**. |
@@ -402,8 +403,10 @@ them, so **Undo** and **Dismiss** stay reachable however narrow the list is.
 **Undo** restores that exact database note and immediately returns its row —
 in its folder, or under Unfiled — along with the Notes rail count, and moves
 the selection to the restored row. **Dismiss** removes only the receipt; the
-note remains deleted. Notes do not currently expose a separate Trash browser,
-so the receipt is the in-Library recovery action.
+note remains deleted. *(This page previously said Notes expose no separate
+Trash browser, so the receipt was the only in-Library recovery action —
+superseded by task-32144: see "Recently deleted" below, which recovers a note
+whose receipt was dismissed.)*
 
 *Verified against fix/library-notes-list — 2026-09-09 (task-32123: the
 receipt's actions are no longer composed off the pane; task-32124: Undo
@@ -448,6 +451,13 @@ action is to pick one:
   changes**. Checking is mutation-free. Review safe actions, attention items,
   skips, filesystem effects, and deletion-like effects before **Activate
   reviewed root** is enabled.
+
+Both folder pickers remember where you were. Each reopens at the directory it
+last picked in *that* flow, so Import once and Keep a folder synced never move
+each other's starting point, and neither borrows the Library ingest browser's.
+The first use of either — or a remembered folder that has since been moved or
+deleted — opens at your home directory instead. **Folder files** keeps its own
+separate memory, see [File notes](file-notes.md).
 
 If files or notes change after checking, activation is refused as stale and the
 nearest valid action is **Check again**. Conflicts and deletion choices are not
@@ -508,14 +518,16 @@ existing-or-new destination path such as `Research / Interviews`. The
 destination is only a proposal during checking; no folder or note is created
 yet.
 
-The folder picker's **Folder path** field can be typed into directly: press
-**Enter** to browse into the typed path, or click **Select folder** to use it
-immediately without pressing Enter first — either way, whatever the field
-currently holds is what gets picked, not merely the directory being browsed.
-An invalid path shows an inline reason and leaves the dialog open. Once a
-folder is picked, the confirmation line shows its full path (elided in the
-middle for long paths, keeping the folder name itself visible), not just its
-name.
+The picker — from **Add another file**, from a folder choice, and from
+**Change selection** — reopens at the directory Import once last picked, or at
+your home directory the first time. Its **Folder path** field can be typed into
+directly: press **Enter** to browse into the typed path, or click **Select
+folder** to use it immediately without pressing Enter first — either way,
+whatever the field currently holds is what gets picked, not merely the
+directory being browsed. An invalid path shows an inline reason and leaves the
+dialog open. Once a folder is picked, the confirmation line shows its full path
+(elided in the middle for long paths, keeping the folder name itself visible),
+not just its name.
 
 Choose **Check selection** to build a read-only review. Each source is one
 line — path · what will happen · where it lands — with its **Skip** and
@@ -647,13 +659,31 @@ automatic-sync setting.
 2. In the Notes list, find the "✓ deleted · \<title\>" receipt.
 3. Click **Undo** to restore the note, or **Dismiss** to leave it deleted.
 
+### Recently deleted
+
+The receipt is the immediate way back, but it is not the only one. Under the
+folder tree, **Recently deleted (N)** counts the notes that have been deleted
+and not yet restored; it is absent while that count is zero.
+
+1. Click **Recently deleted (N)** to open the list, newest deletion first.
+   Each row shows the note's title and how long ago it went.
+2. Click that row's **Restore** — or press **r** on the focused row — to put
+   the note back in its folder (or Unfiled). The rail count and the tree row
+   return exactly as **Undo** returns them; it is the same restore.
+3. Press **Escape** (or **‹ Notes**) to go back to the list.
+
+The view holds the 20 most recent deletions and says so when there are more.
+Nothing here deletes anything for good: the Trash offers **Restore** and no
+permanent delete.
+
 ## Keyboard & commands
 
 | Key | Action |
 |---|---|
 | **Ctrl+N** | New note. Works on the Library landing (no row selected yet) as well as inside the Notes workflow — the landing's bare **n** still works too, but the footer advertises Ctrl+N in both places now. |
 | **/** | Focus the note filter ("find note"), without typing a literal "/" into it. Once the filter has focus, "/" is an ordinary typeable character rather than an accelerator — a second "/" adds a literal slash, since a filter can legitimately target a folder-style path such as "Work/Q3". |
-| **Escape** | Focus the rail |
+| **Escape** | Focus the rail (in **Recently deleted**, go back to the list) |
+| **r** (in **Recently deleted**) | Restore the focused row |
 | Enter (in "Filter notes… (Enter)") | Apply the filter |
 | ↑ / ↓ (New note view) | Move between **Blank note** and the template rows |
 | Enter (New note view) | Create from the focused row |
@@ -667,7 +697,16 @@ automatically. Global navigation keys live in the [guide index](../index.md).
 ## Related settings & docs
 
 - Lasting root paths, bindings, operations, and recovery state live in the
-  private device sync store, not ordinary `config.toml` settings.
+  private device sync store, not ordinary `config.toml` settings. The one
+  exception is where each folder picker reopens, immediately below — that is
+  an ordinary `config.toml` setting.
+- **config.toml `[library.notes_import] last_directory`** and
+  **`[library.notes_sync] last_directory`** — the directory the **Import
+  once** and **Keep a folder synced** pickers respectively reopen at; each is
+  written whenever a selection is made in that flow. Separate keys, so neither
+  flow moves the other's starting point; **Folder files** has its own
+  `[file_notes] browse`. A key naming a folder that no longer exists is
+  ignored and the picker opens at your home directory.
 - [Lasting Notes folder sync](../../Features/notes_bidirectional_sync.md) —
   runtime, cutover, ownership, and recovery details.
 - [File notes](file-notes.md) — the **Folder files** side of the source strip.
@@ -924,3 +963,28 @@ the re-merged wave: an unterminated ``` or ~~~ fence now keeps the rest of a
 note as code, so a `[[link]]` after it is neither recorded nor rewritten;
 Obsidian vault detection is stated as POSIX-only, since the Windows
 discovery adapter never reports a vault (task-32178).)*
+
+*Verified against fix/library-notes-i-trash — 2026-09-09 (task-32144: a
+"Recently deleted (N)" row under the folder tree opens a Trash view of the
+soft-deleted notes, newest first, with a per-row Restore and `r` on the
+focused row. Restore commits through the same seam the delete receipt's Undo
+uses, so the row returns to its folder and the rail count moves identically.
+The view offers no permanent delete.)*
+
+*Verified against fix/library-notes-i-backlinks — 2026-09-09 (task-32145:
+Info → Properties now lists "Linked from (N)" — the notes whose bodies carry
+this note's `note://` link — and each entry opens that note. Checked live on a
+fresh profile after importing the review vault: "Zettelkasten — overview" read
+"Linked from (2)" and listed both linking notes, activating one opened it, and
+an unlinked note read "Linked from (0) — no notes link here yet".)*
+
+*Verified against fix/library-notes-r-pickers — 2026-09-09 (task-32174:
+**Import once**'s and **Keep a folder synced**'s folder pickers each now
+reopen at the directory they were last successfully browsed in, falling
+back to home when nothing is recorded yet, or when the recorded value no
+longer names a real folder — independently of each other and of the Library
+ingest browser's own last-used directory. Stored in
+`config.toml` as `[library.notes_import] last_directory` and
+`[library.notes_sync] last_directory`; Folder files' own picker does the
+same for its `[file_notes] browse` setting, see
+[File notes](file-notes.md).)*

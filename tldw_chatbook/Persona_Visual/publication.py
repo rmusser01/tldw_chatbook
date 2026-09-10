@@ -35,9 +35,6 @@ from .validation import validate_persona_visual_manifest
 _ERROR_PREFIX = "persona_visual_"
 _READ_CHUNK_BYTES = 64 * 1024
 _MANIFEST_LIMIT = 2 * 1024 * 1024
-_SOURCE_CONTEXT_KEYS = frozenset(
-    {"source_id", "provenance", "license", "source_server_commit"}
-)
 _SOURCE_KINDS = frozenset({"imported", "manual"})
 _SUFFIXES = {
     "image/png": ".png",

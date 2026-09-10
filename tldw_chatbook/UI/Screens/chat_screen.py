@@ -4546,6 +4546,15 @@ class ChatScreen(BaseAppScreen):
         if generation <= observed:
             return False
         self._console_appearance_refresh_generation = generation
+        self._character.invalidate_refresh_scope()
+        if self.is_mounted:
+            self.run_worker(
+                self._character._refresh_active_character_avatar_if_scope_changed(
+                    force=True
+                ),
+                group="console-avatar-appearance",
+                exclusive=True,
+            )
         self._last_native_transcript_refresh_key = None
         self._last_native_transcript_session_id = None
         if self.is_mounted:
@@ -12179,6 +12188,16 @@ class ChatScreen(BaseAppScreen):
         message.stop()
         spec = self._active_character_avatar or {}
         pil = spec.get("pil")
+        if pil is None and spec.get("animation_bytes"):
+            from ...Widgets.Console.character_expression_avatar import (
+                CharacterExpressionAvatar,
+            )
+
+            try:
+                current = self.query_one(CharacterExpressionAvatar).current_image
+                pil = current.copy() if current is not None else None
+            except QueryError:
+                return
         if pil is None:
             return
         self.app.push_screen(
@@ -12247,7 +12266,38 @@ class ChatScreen(BaseAppScreen):
                 otherwise the mosaic is rebuilt inline, which is exactly what
                 a viewport that moved mid-render must fall back to.
         """
-        if not spec or (spec.get("pil") is None and spec.get("pixels") is None):
+        if spec and spec.get("animation_bytes") and box != (0, 0):
+            from types import SimpleNamespace
+
+            from ...Widgets.Console.character_expression_avatar import (
+                CharacterExpressionAvatar,
+            )
+
+            width, height = spec["image_size"]
+            resolved_box = fit_character_avatar_cell_box(
+                SimpleNamespace(width=width, height=height),
+                *(box or character_avatar_box(self._character_avatar_available_cols())),
+            )
+            request = self._character._latest_built_request
+            return CharacterExpressionAvatar(
+                spec["animation_bytes"],
+                box=resolved_box,
+                fallback_data=spec.get("animation_fallback_bytes") or b"",
+                animate=bool(spec.get("animate")),
+                is_current=lambda: (
+                    request is not None
+                    and self._character._request_is_current(request)
+                    and self._active_character_avatar is spec
+                ),
+                monochrome=bool(getattr(self.app, "no_color", False)),
+                mode=spec.get("mode", "pixels"),
+                id="console-character-avatar-image",
+            )
+        if not spec or (
+            spec.get("pil") is None
+            and spec.get("pixels") is None
+            and not spec.get("animation_bytes")
+        ):
             if not (spec and spec.get("character_id") is not None):
                 # TASK-23194: with no character set, `#console-character-name`
                 # below already renders "No character in this chat". This
@@ -15651,6 +15701,13 @@ class ChatScreen(BaseAppScreen):
                     ) -> tuple[int, int] | None:
                         spec = self._active_character_avatar or {}
                         image = spec.get("pil")
+                        if image is None and spec.get("image_size"):
+                            from types import SimpleNamespace
+
+                            image = SimpleNamespace(
+                                width=spec["image_size"][0],
+                                height=spec["image_size"][1],
+                            )
                         if image is None:
                             return None
                         return fit_character_avatar_cell_box(

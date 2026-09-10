@@ -2438,3 +2438,50 @@ empty recovery each passed separately. Re-reading the durable original Discard
 marker at final binding repaired the mixed sequence without changing prior trace
 records. Mutation controls changing only that marker to failed still reject.
 Test transitions between recovery modes, not just each mode in isolation.
+
+## A mounted avatar can be hidden behind a same-screen setup overlay
+
+**TASK-32023, 2026-09-07.** Internal frame-pixel assertions passed, but the first
+three Console screenshots were identical: the setup overlay covered the rail.
+Textual's `is_on_screen` reported that the underlying avatar had a layout region;
+it did not prove that its pixels were the topmost visible content. Entering a
+conversation through the real store removed setup guidance, and the captured SVGs
+then contained red/blue/red avatar pixels for Dynamic frame one, frame two, and
+Static respectively. Playback now checks the topmost widget at its center and a
+mounted overlay test proves hidden time is excluded.
+
+**What to do.** Pair mounted-state assertions with actual screen pixels. Check
+same-screen overlays as well as screen-stack visibility when gating animation.
+
+## A fixture vault in the scratchpad or the profile dir cannot be lasting-synced
+
+**Library ▸ Notes critiques, 2026-09-09 and 2026-09-10.** Two consecutive live
+reviews put their 71-file Obsidian vault fixture where every other fixture in
+this repo goes: inside the isolated scratch profile's config directory, under
+`/private/tmp/claude-501/...`. Both times "Keep a folder synced" failed at
+`Check changes` for every assessor on every folder, and both times it was
+written up as a product P0 — the second run graded heuristic 9 (Error
+Recovery) at 1/40 largely on it.
+
+Bisecting the second one found the harness in the loop twice. A vault inside
+the profile's own config directory trips
+`notes_sync_coordinator.private_path_overlap` by design. And everything under
+`/private/tmp` on macOS carries group `wheel`, while
+`notes_sync_filesystem.py:191-192` admits a file only when
+`owner_group == os.getegid()` — so all 60 fixture files returned
+`unsupported_metadata` and the root failed `root_discovery_incomplete`. The
+same vault copied to `$HOME/vault-fixture` was admitted in **0.19 s**.
+
+The product defects were real and are filed (task-32243: the named refusal is
+destroyed by a secondary crash, the failed root leaks for the session, the
+controller substitutes a blaming string and logs nothing; task-32244: the
+primary-group check itself). But their *incidence* was pure harness: the
+critique could not distinguish "this feature is broken for everyone" from
+"this feature refuses my fixture", and reported the stronger claim for two
+runs.
+
+Put fixture trees for any feature that inspects filesystem ownership,
+permissions or path containment under `$HOME`, outside the config directory the
+profile itself uses — and when a whole journey fails at step one for every
+assessor, check whether the harness is inside the feature's own exclusion rules
+before grading it.
