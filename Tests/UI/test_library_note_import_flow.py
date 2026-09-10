@@ -673,8 +673,8 @@ async def test_obsidian_review_defaults_on_shows_skips_and_never_touches_the_vau
             # its trailing period; title, keywords and link count still read
             # out of the same sentence.
             assert (
-                "Library review · keywords project, ux, notes-review, "
-                "lib-review · 3 links" in review
+                "Library review · keywords project, ux, alias: notes-review, "
+                "alias: lib-review · 3 links" in review
             )
 
             toggle.press()

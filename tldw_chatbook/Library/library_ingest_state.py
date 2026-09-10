@@ -10,6 +10,7 @@ booting the TUI, mirroring ``library_notes_sync_state.py``.
 from __future__ import annotations
 
 import errno
+import hashlib
 import math
 import re
 import time
@@ -18,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import PurePath
 
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from typing import Any, Sequence
 
 from tldw_chatbook.Workspaces.conversation_browser_state import (
@@ -322,7 +323,7 @@ _GLYPH_DONE = "✓"  # "✓"
 #: import -- the two used to be byte-identical rows.
 _GLYPH_MATCHED = "≡"
 _GLYPH_FAILED = "✗"  # "✗"
-_GLYPH_SKIPPED = "○"  # neutral: never attempted (task-2220)
+from .library_shell_state import LIBRARY_GLYPH_OUTCOME_SKIPPED as _GLYPH_SKIPPED  # "–" task-32235
 _GLYPH_CANCELLED = "⊘"  # "⊘" -- stopped deliberately, not an error
 
 # L4: the marker `local_file_ingestion.py`'s "Unsupported file type" error
@@ -1430,6 +1431,180 @@ class IngestQueueRow:
     #: gate the action on ``error_detail`` alone, which hid the raw error on
     #: exactly the failures that carry none (a parse pool that never started).
     can_show_details: bool = False
+    #: (Qodo 2 on PR #2577) The submitting batch, mirrored from the job the
+    #: same way ``origin`` is. Part of the outcome-group key: the canvas
+    #: emits only a group's LEADING member's task-2221 batch header, so a
+    #: group spanning two submissions hides the second header and puts a
+    #: per-batch count above a row counting both.
+    batch_id: str | None = None
+    #: (task-32231) The settled row's plain-language cause, WITHOUT the
+    #: basename -- the group key for collapsing identical outcomes. Empty
+    #: for active rows (queued/parsing/writing), which never group because
+    #: their per-file progress is the point.
+    reason: str = ""
+
+
+#: (task-32231) Only SETTLED outcomes collapse. An active row's per-file
+#: progress is the whole point of showing it, so queued/parsing/writing rows
+#: never group however identical their text.
+_GROUPABLE_ROW_STATES = (
+    IngestJobState.FAILED,
+    IngestJobState.SKIPPED,
+    IngestJobState.CANCELLED,
+)
+
+
+@dataclass(frozen=True)
+class IngestOutcomeGroup:
+    """A contiguous run of queue rows sharing one settled outcome.
+
+    (task-32231) A folder import with a single cause painted one identical
+    ``✗ failed`` row per file, each with its own three buttons and no way to
+    clear the lot. A run of them now renders as one row naming the count and
+    the cause, with the members one press away.
+
+    Named apart from ``IngestQueueGroup`` deliberately: that one is
+    task-2221's per-SUBMISSION batch header (one group per Start press,
+    whatever the outcomes), this one is per-OUTCOME within the render order.
+
+    Attributes:
+        glyph: The members' shared state glyph.
+        line: Ready-to-render text -- the member's own line for a group of
+            one, ``"{glyph} {state} · {n} files · {reason}"`` for a run.
+        members: The rows in render order; never empty.
+        expanded: Whether the members are currently revealed underneath.
+    """
+
+    glyph: str
+    line: str
+    members: tuple[IngestQueueRow, ...]
+    expanded: bool = False
+
+    @property
+    def key(self) -> str:
+        """Stable, id-safe handle for the group, derived from its identity.
+
+        (Qodo 5 on PR #2577) Keyed by the LEADING member's job id, a group
+        was re-keyed the moment that member left it -- dismissing the first
+        row of an expanded group changed the key the panel's expansion set
+        holds, so the remaining members collapsed under the user. The key
+        is now the group's own identity (what makes those rows one group),
+        so losing a member cannot change it.
+
+        Hashed because a reason string is not a valid widget id; truncated
+        because these ids only have to be unique among the handful of
+        groups one queue can show at once.
+
+        Returns:
+            A 12-character hex token, stable for as long as the group's
+            state/reason/batch identity is.
+        """
+        return _outcome_group_id(self.members[0])
+
+    @property
+    def can_retry(self) -> bool:
+        """Whether "Retry all" is honest -- true only if EVERY member is.
+
+        Returns:
+            ``True`` when every member row offers Retry on its own, so the
+            bulk action cannot promise more than the rows behind it.
+        """
+        return all(row.can_retry for row in self.members)
+
+    @property
+    def can_dismiss(self) -> bool:
+        """Whether "Dismiss all" is honest -- true only if EVERY member is.
+
+        Returns:
+            ``True`` when every member row offers Dismiss on its own.
+        """
+        return all(row.can_dismiss for row in self.members)
+
+
+def _outcome_group_key(row: IngestQueueRow) -> tuple[Any, ...]:
+    """Group key for one queue row.
+
+    Settled rows sharing a state AND a plain-language reason share a key;
+    everything else gets its own ``job_id``-derived key, which is unique, so
+    it can never join a run.
+    """
+    if row.state in _GROUPABLE_ROW_STATES and row.reason:
+        # (Qodo 2) ...and the submission, so a collapse can never span two
+        # batch headers.
+        return ("outcome", row.state.value, row.reason, row.batch_id or "")
+    return ("row", row.job_id)
+
+
+def _outcome_group_id(row: IngestQueueRow) -> str:
+    """Hash one row's group key into a widget-id-safe token.
+
+    Args:
+        row: Any member of the group -- every member hashes identically,
+            which is the property that survives losing the leading one.
+
+    Returns:
+        12 hex characters.
+    """
+    joined = "\x00".join(_outcome_group_key(row))
+    return hashlib.sha1(joined.encode("utf-8")).hexdigest()[:12]
+
+
+def group_ingest_queue_rows(
+    rows: Sequence[IngestQueueRow],
+    *,
+    expanded: Collection[str] = (),
+) -> tuple[IngestOutcomeGroup, ...]:
+    """Collapse contiguous runs of identical settled outcomes (task-32231).
+
+    Only CONTIGUOUS runs collapse, so the queue is never reordered: a later
+    twin of an earlier failure keeps its own position. A run of one renders
+    exactly what it renders today -- its own line, filename and all.
+
+    Args:
+        rows: The canvas state's queue rows, in render order.
+        expanded: Group keys (leading job ids) whose members are revealed.
+
+    Returns:
+        One group per rendered queue entry, in render order.
+    """
+    groups: list[IngestOutcomeGroup] = []
+    run: list[IngestQueueRow] = []
+    run_key: tuple[Any, ...] | None = None
+
+    def _flush() -> None:
+        if not run:
+            return
+        members = tuple(run)
+        leader = members[0]
+        run.clear()
+        if len(members) == 1:
+            groups.append(
+                IngestOutcomeGroup(
+                    glyph=leader.glyph, line=leader.line, members=members
+                )
+            )
+            return
+        word = leader.state.value if leader.state is not None else ""
+        groups.append(
+            IngestOutcomeGroup(
+                glyph=leader.glyph,
+                line=(
+                    f"{leader.glyph} {word} · {len(members)} files "
+                    f"· {leader.reason}"
+                ),
+                members=members,
+                expanded=_outcome_group_id(leader) in expanded,
+            )
+        )
+
+    for row in rows:
+        key = _outcome_group_key(row)
+        if key != run_key:
+            _flush()
+            run_key = key
+        run.append(row)
+    _flush()
+    return tuple(groups)
 
 
 @dataclass(frozen=True)
@@ -1878,6 +2053,7 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
             source_path=job.source_path,
             progress=job.progress,
             error_detail=job.error_detail,
+            reason=short_error if job.error else "",
         )
 
     if job.state == IngestJobState.SKIPPED:
@@ -1898,6 +2074,7 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
             source_path=job.source_path,
             progress=job.progress,
             error_detail=job.error_detail,
+            reason=short_error if job.error else "",
         )
 
     is_unsupported = (
@@ -1929,6 +2106,7 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
         source_path=job.source_path,
         progress=job.progress,
         error_detail=job.error_detail,
+        reason=reason,
     )
 
 
@@ -2060,6 +2238,7 @@ def _build_queue_row(
         row = replace(
             row,
             origin=job.origin,
+            batch_id=job.batch_id,
             can_cancel=can_cancel,
             can_force_stop=can_force_stop,
             research_owned=bool(job.research_source_operation_id),
@@ -2071,6 +2250,7 @@ def _build_queue_row(
         row = replace(
             row,
             origin=job.origin,
+            batch_id=job.batch_id,
             can_cancel=can_cancel,
             line=f"{row.line}{_SERVER_ROW_SUFFIX}",
             research_owned=bool(job.research_source_operation_id),
