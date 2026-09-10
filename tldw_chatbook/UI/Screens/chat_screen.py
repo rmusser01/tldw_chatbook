@@ -8258,7 +8258,7 @@ class ChatScreen(BaseAppScreen):
                 marshal_to_ui=lambda fn, *args: self.app.call_from_thread(fn, *args),
                 workspace_root_accessor=self._console_environment_root,
                 rail_open_accessor=(
-                    lambda: self.app.screen is self
+                    lambda: self._is_active_console_screen()
                     and self._is_console_widget_displayed("console-right-rail")
                 ),
                 on_snapshot=self._land_console_environment,
@@ -8266,9 +8266,24 @@ class ChatScreen(BaseAppScreen):
             self._console_environment_owner = owner
         return owner
 
+    def _is_active_console_screen(self) -> bool:
+        """True while this screen is the app's active screen.
+
+        task-32297: ``App.screen`` raises ``ScreenStackError`` once the stack
+        is empty (app teardown), and the environment poll timer can fire in
+        that window -- the Perf Guard tour tests hit it three times in one
+        day. An empty stack means "not active", not an error.
+        """
+        from textual.app import ScreenStackError
+
+        try:
+            return self.app.screen is self
+        except ScreenStackError:
+            return False
+
     def _poll_console_environment(self) -> None:
         """Keep hidden-panel ticks cold; preserve the owner's existing cadence."""
-        if self.app.screen is not self:
+        if not self._is_active_console_screen():
             return
         if (
             self._console_environment_owner is not None
