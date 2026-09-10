@@ -96,6 +96,7 @@ from functools import partial
 import asyncio
 import logging
 import threading
+import time
 from typing import Any, Literal, TYPE_CHECKING
 
 from loguru import logger
@@ -354,6 +355,7 @@ class ConsoleStreamingDictationSession:
         self._on_event = on_event
         self._lock = threading.Lock()
         self._segments: list[str] = []
+        self._maintenance_services: list[Any] = []
         #: Finalized commands seen this capture -- inline (`new-paragraph`,
         #: `new-line`) and capture-ending alike. Read by `stop_and_transcribe`
         #: to tell a capture that was only ever spoken commands apart from a
@@ -401,7 +403,26 @@ class ConsoleStreamingDictationSession:
             kwargs.setdefault("max_buffer_bytes", self._max_buffer_bytes)
         if self._on_buffer_limit is not None:
             kwargs.setdefault("on_buffer_limit", self._on_buffer_limit)
-        return self._service_factory(**kwargs)
+        service = self._service_factory(**kwargs)
+        # Custom service factories retain their existing protocol. Only the
+        # installed lazy service owns the bounded-join processor tracked here.
+        if type(service).__module__ == "tldw_chatbook.Audio.dictation_service_lazy":
+            from ...Audio.dictation_service_lazy import LazyLiveDictationService
+
+            if type(service) is LazyLiveDictationService:
+                with self._lock:
+                    self._maintenance_services.append(service)
+        return service
+
+    @property
+    def maintenance_ready(self) -> bool:
+        """Retain installed processors even after the voice owner releases them."""
+        with self._lock:
+            self._maintenance_services = [
+                service for service in self._maintenance_services
+                if not service.maintenance_ready
+            ]
+            return not self._maintenance_services
 
     def _handle_event(self, event: Any, generation: int | None = None) -> None:
         """Record what the screen cannot see, then forward. Never raises.
@@ -807,6 +828,12 @@ class ConsoleDictationController:
                 visible_draft_session_id` -- the session id the mounted
                 composer's draft currently reflects, screen-owned.
         """
+        self._maintenance_paused = False
+        self._maintenance_calls = 0
+        self._maintenance_sessions: set[ConsoleStreamingDictationSession] = set()
+        self._maintenance_native: set[asyncio.Task] = set()
+        self._maintenance_events: set[ConsoleDictationEvent] = set()
+        self._maintenance_lock = threading.Lock()
         self._screen = screen
         self.app_instance = app_instance
         self._composer_accessor = composer_accessor
@@ -835,6 +862,56 @@ class ConsoleDictationController:
         self._console_dictation_partial = ""
         self._console_pending_voice_action: str | None = None
         self._console_dictation_late_discard_ack = False
+
+    def maintenance_close_admission(self) -> None:
+        """Refuse another recording without changing the active capture."""
+        self._maintenance_paused = True
+
+    @property
+    def maintenance_ready(self) -> bool:
+        """Wait for recording/retry state and native/UI publication tails."""
+        if (
+            self._console_dictation_state != "idle"
+            or self._maintenance_calls or self._maintenance_native
+        ):
+            return False
+        session = self._console_dictation_session
+        self._maintenance_sessions = {
+            candidate for candidate in self._maintenance_sessions
+            if not candidate.maintenance_ready
+        }
+        with self._maintenance_lock:
+            pending_events = bool(self._maintenance_events)
+        return not (
+            (session is not None and session.retry_available)
+            or pending_events or self._maintenance_sessions
+        )
+
+    async def maintenance_drain(self, deadline: float) -> bool:
+        """Wait for normal completion; never stop or discard a microphone."""
+        if not self._maintenance_paused:
+            raise RuntimeError("dictation_maintenance_not_paused")
+        while not self.maintenance_ready:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(remaining, 0.02))
+        return True
+
+    def maintenance_resume(self) -> None:
+        """Reopen the existing microphone request route."""
+        self._maintenance_paused = False
+
+    async def _maintenance_native_call(self, function, *args, **kwargs):
+        task = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+        self._maintenance_native.add(task)
+        task.add_done_callback(self._maintenance_native_finished)
+        return await asyncio.shield(task)
+
+    def _maintenance_native_finished(self, task):
+        self._maintenance_native.discard(task)
+        if not task.cancelled():
+            task.exception()
 
     @property
     def is_mounted(self) -> bool:
@@ -986,7 +1063,7 @@ class ConsoleDictationController:
         self._console_dictation_partial = ""
         self._console_dictation_state = "idle"
         if dictation_session is not None:
-            await asyncio.to_thread(dictation_session.discard)
+            await self._maintenance_native_call(dictation_session.discard)
 
     def _set_console_dictation_state(
         self,
@@ -1116,14 +1193,29 @@ class ConsoleDictationController:
             session: The dictation session that emitted the event.
             event: The `console_voice_input` event instance.
         """
+        message = ConsoleDictationEvent(session, event)
+        with self._maintenance_lock:
+            self._maintenance_events.add(message)
         try:
-            self.post_message(ConsoleDictationEvent(session, event))
+            if not self.post_message(message):
+                with self._maintenance_lock:
+                    self._maintenance_events.discard(message)
         except Exception:  # noqa: BLE001 - the audio path must never see this
+            with self._maintenance_lock:
+                self._maintenance_events.discard(message)
             logger.opt(exception=True).debug(
                 "Console dictation event could not be posted"
             )
 
     def _handle_console_dictation_event(self, message: ConsoleDictationEvent) -> None:
+        """Settle the posted event only after its UI mutations return."""
+        try:
+            self._apply_console_dictation_event(message)
+        finally:
+            with self._maintenance_lock:
+                self._maintenance_events.discard(message)
+
+    def _apply_console_dictation_event(self, message: ConsoleDictationEvent) -> None:
         """Apply the streaming events the blocking session port cannot express.
 
         Button state stays owned by `_start_console_dictation` /
@@ -1536,6 +1628,16 @@ class ConsoleDictationController:
 
 
     async def _start_console_dictation(self) -> None:
+        """Retain the admitted worker through its final UI publication."""
+        if self._maintenance_paused and self._console_dictation_state != "starting":
+            return
+        self._maintenance_calls += 1
+        try:
+            await self._start_console_dictation_body()
+        finally:
+            self._maintenance_calls -= 1
+
+    async def _start_console_dictation_body(self) -> None:
         """Open the microphone for the capture the user just asked for.
 
         `session` is captured up front and re-checked after the await, exactly
@@ -1554,8 +1656,10 @@ class ConsoleDictationController:
             self._console_dictation_session or self._create_console_dictation_session()
         )
         self._console_dictation_session = session
+        if type(session) is ConsoleStreamingDictationSession:
+            self._maintenance_sessions.add(session)
         try:
-            await asyncio.to_thread(
+            await self._maintenance_native_call(
                 session.start,
                 on_buffer_limit=partial(
                     self._on_console_dictation_buffer_limit, session
@@ -1573,7 +1677,7 @@ class ConsoleDictationController:
             # Cancelled, failed or unmounted while the model was loading: the
             # capture may have opened a moment ago, so release it rather than
             # leave a live microphone behind an idle button.
-            await asyncio.to_thread(session.discard)
+            await self._maintenance_native_call(session.discard)
             return
         self._set_console_dictation_state("recording")
         self._console_dictation_timer = self.set_timer(
@@ -1679,6 +1783,14 @@ class ConsoleDictationController:
 
 
     async def _stop_console_dictation(self, session: Any) -> None:
+        """Retain the admitted worker through its final UI publication."""
+        self._maintenance_calls += 1
+        try:
+            await self._stop_console_dictation_body(session)
+        finally:
+            self._maintenance_calls -= 1
+
+    async def _stop_console_dictation_body(self, session: Any) -> None:
         """Finish the capture this stop was requested for, and only that one.
 
         The session is captured on the UI thread by
@@ -1703,10 +1815,10 @@ class ConsoleDictationController:
             logger.debug("Console dictation stop skipped; the capture was torn down")
             return
         try:
-            transcript = await asyncio.to_thread(session.stop_and_transcribe)
+            transcript = await self._maintenance_native_call(session.stop_and_transcribe)
         except Exception as exc:
             if not session.retry_available:
-                await asyncio.to_thread(session.discard)
+                await self._maintenance_native_call(session.discard)
                 if self._console_dictation_session is session:
                     self._notify_console_dictation_error(exc)
                 return
@@ -1739,7 +1851,7 @@ class ConsoleDictationController:
                 self._finish_failed_console_dictation(session)
                 return
             try:
-                transcript = await asyncio.to_thread(
+                transcript = await self._maintenance_native_call(
                     session.retry_with_faster_whisper
                 )
             except Exception as retry_exc:
@@ -1852,6 +1964,14 @@ class ConsoleDictationController:
 
 
     async def _discard_console_dictation_session(self, session: Any) -> None:
+        """Retain the admitted worker through its final UI publication."""
+        self._maintenance_calls += 1
+        try:
+            await self._discard_console_dictation_session_body(session)
+        finally:
+            self._maintenance_calls -= 1
+
+    async def _discard_console_dictation_session_body(self, session: Any) -> None:
         """Release a cancelled capture's microphone off the UI thread.
 
         `discard()` is documented as non-blocking (`abandon()` never joins), but
@@ -1864,7 +1984,7 @@ class ConsoleDictationController:
                 -- cancelling must not produce an error the user did not cause.
         """
         try:
-            await asyncio.to_thread(session.discard)
+            await self._maintenance_native_call(session.discard)
         except Exception:  # noqa: BLE001 - cancelling must never raise
             logger.opt(exception=True).debug(
                 "Console dictation could not be cancelled cleanly"
@@ -1948,6 +2068,8 @@ class ConsoleDictationController:
 
 
     def _request_console_dictation_start(self) -> None:
+        if self._maintenance_paused:
+            return
         if self._console_dictation_state != "idle":
             return
         # Re-probe on every activation attempt (TASK-15): refreshes the mic
