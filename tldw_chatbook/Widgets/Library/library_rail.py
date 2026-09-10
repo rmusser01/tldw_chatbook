@@ -407,6 +407,14 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             wiring; rendered inside the collapsed Details section.
     """
 
+    #: task-32219: whether the below-the-fold cue is currently up. Kept on
+    #: the RAIL, not read off the widget, because the rail recomposes on
+    #: every count/evidence/route change -- a cue rebuilt as hidden each
+    #: time was reset faster than the post-layout measurement could turn it
+    #: on, and live it never appeared at all.
+    _fold_cue_visible: bool = False
+
+
     def __init__(
         self,
         shell: LibraryShellState,
@@ -659,6 +667,18 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
                 self.query_one(f"#{row_id}", Static).update(renderable)
         except NoMatches:
             self.refresh(recompose=True)
+        # task-32219: the rail's state is re-applied whenever counts,
+        # evidence or the selected route land, which is the one trigger that
+        # reliably fires AFTER a screen switch has given the rail its real
+        # size -- `on_mount` alone measured too early live (proven on a
+        # profile whose Details section was open from a saved preference:
+        # the rail was visibly clipped with no cue until an unrelated
+        # resize). Harness mounts settle without it; the live app does not.
+        self._schedule_fold_cue_sync()
+
+    def on_show(self) -> None:
+        """Re-decide the fold cue when the rail becomes visible again."""
+        self._schedule_fold_cue_sync()
 
     def apply_selection(
         self,
@@ -907,7 +927,13 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             classes="library-details-row",
         )
         fold_cue.tooltip = LIBRARY_RAIL_FOLD_CUE_TOOLTIP
-        fold_cue.display = False
+        # The rail recomposes often (counts, evidence, route changes), and a
+        # freshly composed cue that always started hidden was reset faster
+        # than the post-layout measurement could turn it on -- live, it
+        # never appeared at all. The decision lives on the rail, not on the
+        # widget, so a recompose carries it and the next measurement only
+        # has to correct it.
+        fold_cue.display = self._fold_cue_visible
         return fold_cue
 
     def _compose_details_body_children(self) -> ComposeResult:
@@ -998,6 +1024,7 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         except NoMatches:
             return
         wanted = (self.max_scroll_y - (1 if cue.display else 0)) > 0
+        self._fold_cue_visible = wanted
         if cue.display != wanted:
             cue.display = wanted
 
