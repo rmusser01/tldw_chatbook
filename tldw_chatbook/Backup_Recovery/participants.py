@@ -39,6 +39,61 @@ def require_participant_coverage(
 _installed_repositories = weakref.WeakSet()
 
 
+def _retire_current_thread_caches(pause) -> None:
+    """Retire installed local caches after producer settlement and local fencing.
+
+    This never qualifies runtime coverage or retires startup admission. Unknown,
+    foreign-thread, borrowed and uncertain handles stay visible to pause.drain().
+    """
+    from . import storage_admission as storage
+
+    if type(pause) is not storage._LocalPause:
+        raise ValueError("local_pause_inactive")
+    storage._LocalPause._check(pause)
+    current = threading.current_thread()
+    closers = {
+        "db.chachanotes.primary": "close_connection",
+        "db.media.primary": "close_connection",
+        "db.prompts.primary": "close_connection",
+        "db.library_collections": "close",
+        "db.library_ingest_jobs": "close",
+        "db.workspaces": "close",
+        "db.agent_runs": "close",
+        "db.subscriptions": "close",
+        "db.evals": "close",
+        "notifications.client": "close",
+        "notes.file_notes": "close",
+    }
+    types = _repository_types()
+    with storage._lock:
+        participants = tuple(_installed_repositories)
+    for participant in participants:
+        repository = participant.repository()
+        with storage._lock:
+            storage._LocalPause._check(pause)
+            if (
+                repository is None
+                or type(repository) not in types
+                or types[type(repository)] != participant.owner_id
+                or participant.owner_id not in closers
+                or repository.is_memory_db
+                or repository.db_path != participant.path
+                or repository._maintenance_participant is not participant
+                or any(
+                    operation.participant is participant
+                    for operation in storage._operations
+                )
+                or not any(
+                    lease.resource_thread is current
+                    for lease in participant.connections.values()
+                )
+            ):
+                continue
+        # Original owner API clears its own cache only after native close. Its
+        # _core_closing check retains transactions and uncertain retirement.
+        getattr(type(repository), closers[participant.owner_id])(repository)
+
+
 class _RepositoryParticipant:
     def __init__(self):
         raise TypeError("repository_participant_is_installed")
