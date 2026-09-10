@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 from tldw_chatbook.Chat.thinking_blocks import (
     THINKING_ENVELOPE_VERSION,
@@ -13,10 +14,10 @@ from tldw_chatbook.Chat.thinking_blocks import (
     normalize_thinking_history_policy,
 )
 
+from .local_reasoning import ReasoningReplayPolicy, supports_local_reasoning
 
 EffectiveThinkingHistoryPolicy = Literal["auto", "include", "exclude", "required"]
 ThinkingReplayDisposition = Literal["displayable", "proprietary", "ignored"]
-_LOCAL_CHAT_TARGETS = frozenset({"llama_cpp", "local_llamacpp", "vllm", "local_vllm"})
 _START_ANCHORED_FORMAT = "start_anchored_think"
 _SERIALIZATION_ERROR = "Thinking history could not be serialized safely."
 
@@ -77,6 +78,7 @@ class ThinkingReplayTarget:
     protocol: str
     disposition: ThinkingReplayDisposition
     round_trip_version: int | None
+    reasoning_replay: ReasoningReplayPolicy | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,9 +114,11 @@ def _claims_local_compatibility(
     block: DisplayableThinkingBlock,
     target: ThinkingReplayTarget,
 ) -> bool:
+    ollama = {"ollama", "local_ollama"}
     return (
-        target.provider in _LOCAL_CHAT_TARGETS
-        and block.provider in _LOCAL_CHAT_TARGETS
+        (target.provider.lower() in ollama) == (block.provider.lower() in ollama)
+        and supports_local_reasoning(target.provider, target.model)
+        and supports_local_reasoning(block.provider, block.model)
         and target.model == block.model
         and target.protocol == block.protocol
         and target.disposition == "displayable"
@@ -159,7 +163,11 @@ def resolve_thinking_history(
         saved,
         continuation_required=continuation_required,
     )
-    if saved == "exclude":
+    if saved == "exclude" or (
+        saved == "auto"
+        and target.reasoning_replay is not None
+        and target.reasoning_replay.mode == "off"
+    ):
         return ResolvedThinkingHistory(saved, effective)
 
     groups: list[ThinkingOwnerGroup] = []
@@ -178,10 +186,18 @@ def resolve_thinking_history(
                 block, target
             ):
                 continue
+            # Saved aggregate tool traces have no exact tool-call owner here.
+            if block.source_format.endswith(":tool_call"):
+                continue
+            structured_field = (
+                "reasoning"
+                if target.provider.lower() in {"ollama", "local_ollama"}
+                else "reasoning_content"
+            )
             safely_serializable = (
                 block.source_format == _START_ANCHORED_FORMAT
                 and _safe_start_anchored_text(block.text)
-            )
+            ) or block.source_format == structured_field
             if not safely_serializable:
                 if saved == "include":
                     raise ThinkingHistorySerializationError(_SERIALIZATION_ERROR)
@@ -193,6 +209,10 @@ def resolve_thinking_history(
                     text=block.text,
                 )
             )
+        if len({block.source_format for block in resolved}) > 1:
+            if saved == "include":
+                raise ThinkingHistorySerializationError(_SERIALIZATION_ERROR)
+            continue
         if resolved:
             groups.append(ThinkingOwnerGroup(sidecar.owner_message_id, tuple(resolved)))
     return ResolvedThinkingHistory(saved, effective, tuple(groups))
@@ -229,3 +249,34 @@ def serialize_start_anchored_thinking(
         parts.append(f"<think>{block.text}</think>")
     parts.append(visible_answer)
     return "\n".join(parts)
+
+
+def serialize_thinking_message(
+    message: Mapping[str, Any],
+    group: ThinkingOwnerGroup,
+) -> dict[str, Any]:
+    """Encode complete canonical blocks without changing a structured answer.
+
+    Args:
+        message: Assistant message whose visible content owns the thinking.
+        group: Compatible complete thinking blocks for that exact owner.
+
+    Returns:
+        A message copy with start-anchored thinking encoded in ``content`` or
+        structured thinking in its declared separate field. Separate-field
+        encoding leaves the visible answer unchanged.
+
+    Raises:
+        ThinkingHistorySerializationError: If the group mixes source encodings,
+            uses an unsupported format, or cannot safely encode start-anchored
+            thinking alongside the supplied answer.
+    """
+    row = dict(message)
+    formats = {block.source_format for block in group.blocks}
+    if formats == {_START_ANCHORED_FORMAT}:
+        row["content"] = serialize_start_anchored_thinking(row.get("content"), group)
+    elif len(formats) == 1 and formats <= {"reasoning_content", "reasoning"}:
+        row[next(iter(formats))] = "\n".join(block.text for block in group.blocks)
+    else:
+        raise ThinkingHistorySerializationError(_SERIALIZATION_ERROR)
+    return row
