@@ -38,7 +38,10 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
-from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+    NEEDS_DECISION_PREFIX,
+    ChatApprovalCard,
+)
 from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 
 from Tests.UI.app_factory import _build_test_app
@@ -631,6 +634,106 @@ async def test_approve_all_and_deny_all_bulk_set_every_row():
         app.query_one("#approval-approve-all", Button).press()
         await pilot.pause()
         assert all(select.value == "approve_once" for select in card._batch_selects)
+
+
+@pytest.mark.asyncio
+async def test_approve_all_leaves_raw_shell_row_on_deny_and_flags_needs_decision():
+    """task-32282: "Approve all" must never move a raw-shell row off its
+    deliberate Deny default. The row's narrowed options legally include
+    ``approve_once`` (a real, explicit per-call choice), so the pre-fix
+    ``_set_all_batch_decisions`` -- which only checked legality, not row
+    identity -- bulk-set it right along with every ordinary MCP row. It
+    must be skipped, and the skip must be visible in TEXT (TASK-1845:
+    colour is never the only carrier of state), not just the CSS class.
+    """
+    calls = [_sample_calls()[0], _raw_shell_call("printf unsafe")]
+
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(calls, timeout_seconds=45.0)
+        await pilot.pause()
+
+        mcp_row, raw_row = list(app.query(".approval-row"))
+        raw_select = raw_row.query_one(".approval-row-decision", Select)
+        assert raw_select.value == "deny"
+        assert not raw_row.has_class("needs-decision")
+
+        app.query_one("#approval-approve-all", Button).press()
+        await pilot.pause()
+
+        mcp_select = mcp_row.query_one(".approval-row-decision", Select)
+        assert mcp_select.value == "approve_once"
+        assert raw_select.value == "deny"  # never moved off the deny default
+        assert raw_row.has_class("needs-decision")
+        header_text = _text(raw_row.query_one(".approval-row-header", Static))
+        assert header_text.startswith(NEEDS_DECISION_PREFIX), header_text
+        # An untouched row (here, the MCP row Approve all DID apply to)
+        # must never pick up the prefix.
+        mcp_header_text = _text(mcp_row.query_one(".approval-row-header", Static))
+        assert not mcp_header_text.startswith(NEEDS_DECISION_PREFIX)
+
+
+@pytest.mark.asyncio
+async def test_changing_raw_shell_select_after_approve_all_clears_needs_decision_prefix():
+    """task-32282: once the user gives the flagged raw-shell row its own
+    explicit decision, both the CSS flag and the header text prefix must
+    clear -- exactly as an ordinary narrowed row already does (see
+    ``test_changing_a_flagged_rows_select_clears_needs_decision``)."""
+    calls = [_sample_calls()[0], _raw_shell_call("printf unsafe")]
+
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(calls, timeout_seconds=45.0)
+        await pilot.pause()
+
+        raw_row = list(app.query(".approval-row"))[1]
+        raw_select = raw_row.query_one(".approval-row-decision", Select)
+        header = raw_row.query_one(".approval-row-header", Static)
+
+        app.query_one("#approval-approve-all", Button).press()
+        await pilot.pause()
+        assert raw_row.has_class("needs-decision")
+        assert _text(header).startswith(NEEDS_DECISION_PREFIX)
+
+        raw_select.post_message(Select.Changed(raw_select, "approve_once"))
+        await pilot.pause()
+
+        assert not raw_row.has_class("needs-decision")
+        assert not _text(header).startswith(NEEDS_DECISION_PREFIX)
+
+
+@pytest.mark.asyncio
+async def test_deny_all_sets_raw_shell_row_to_deny_and_clears_needs_decision_prefix():
+    """task-32282 (c): "Deny all" is legal for a raw-shell row (``deny`` is
+    always one of its options), so it must apply normally -- setting the
+    Select and clearing any stale needs-decision state left by an earlier
+    "Approve all" press."""
+    calls = [_sample_calls()[0], _raw_shell_call("printf unsafe")]
+
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(calls, timeout_seconds=45.0)
+        await pilot.pause()
+
+        mcp_row, raw_row = list(app.query(".approval-row"))
+        raw_select = raw_row.query_one(".approval-row-decision", Select)
+        header = raw_row.query_one(".approval-row-header", Static)
+
+        app.query_one("#approval-approve-all", Button).press()
+        await pilot.pause()
+        assert raw_row.has_class("needs-decision")
+
+        app.query_one("#approval-deny-all", Button).press()
+        await pilot.pause()
+
+        assert raw_select.value == "deny"
+        assert not raw_row.has_class("needs-decision")
+        assert not _text(header).startswith(NEEDS_DECISION_PREFIX)
+        mcp_select = mcp_row.query_one(".approval-row-decision", Select)
+        assert mcp_select.value == "deny"
 
 
 @pytest.mark.asyncio
