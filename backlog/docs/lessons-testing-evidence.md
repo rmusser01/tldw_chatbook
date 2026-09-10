@@ -13117,3 +13117,34 @@ click targets and gives up only the added default space before collapsing panes.
 controls before treating blank space as removable. Test resize and explicit
 reopening with a selected item as well as an empty reader. Do not turn a new
 collapse boundary into a test expectation without checking the user's workflow.
+
+## A navigation pin taken at the message boundary is not a pin on the landing (task-32245, 2026-09-10)
+
+**PR #2538 shipped a new onboarding exit with a green test on a broken
+destination.** The wizard Summary's "Write your first note" posted
+`NavigateToScreen(TAB_LIBRARY, {notes_create: True})`, and
+`test_wizard_exit_route_notes_navigates_to_library_new_note` asserted exactly
+that message against a **mocked receiver**. Both halves of the actual landing
+were broken and neither could be seen from there: focus was parked on nothing
+(so the footer read the bare "esc back to notes" tier and the first `Enter`
+fell through to the app binding and left Library for **Home**), and the Items
+pane sat on "Loading local Library sources…" for the life of the visit — still
+loading at 113 s while the rail already read `Notes (0)`. Three assessors
+reproduced it live; the suite never could.
+
+Both causes were *route divergence*, which is precisely what a message
+assertion cannot see: the destination row's entry-focus arm lived inline in
+`_select_library_rail_row_after_source_admission` (rail/`Ctrl+N` only), and
+`_reconcile_library_entry_state` matched `notes` but not `notes-create`, so the
+placeholder its own `compose_content` mounts for BOTH kinds was never replaced.
+Reaching the same canvas by `Ctrl+N` was correct throughout — the shipped test
+was pinning the one hop where the two routes still agreed.
+
+**What to do.** A test for a new navigation affordance must drive the real
+producer through to the **mounted destination** and assert what the user then
+faces: the focused control, the footer the focus implies, and that every
+loading placeholder has resolved. A mocked receiver is fine for the untrusted-
+payload guards (an incomplete result must not navigate) and nowhere else. When
+a second route to an existing destination is added, first ask what the existing
+route does AFTER the selection lands — that post-selection work is where the
+new route will silently differ.
