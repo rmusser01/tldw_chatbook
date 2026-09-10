@@ -29,12 +29,9 @@ survive that second check as genuinely unreached:
   text, disabled-state) but never actually pressed.
 - ``handle_library_conversations_previous`` -- same: referenced only for
   ``.disabled`` assertions, never pressed.
-- ``use_selected_conversation_as_source`` -- HAD a pin here: the button it
-  was bound to (``#library-conversation-use-source``) had zero compose sites
-  anywhere in ``tldw_chatbook/``, a live finding recorded rather than fixed
-  (out of task-5's scope). task-32101 deleted the handler instead; the pin
-  went with it, replaced by ``test_use_as_source_handler_is_gone`` in
-  ``Tests/UI/test_library_crit8_conversation_handoff.py``.
+- ``use_selected_conversation_as_source`` now has a composed source-reuse action
+  distinct from original-conversation Resume. Archive recovery workflow tests
+  exercise both paths; task-32101's removed alias is not the same behavior.
 
 Every test below drives the screen only through DOM queries/presses and
 public screen attributes, per the recipe's byte-for-byte move discipline,

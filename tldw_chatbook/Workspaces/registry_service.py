@@ -24,6 +24,7 @@ from tldw_chatbook.Chat.rag_scope import (
     serialize_scope,
 )
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+from tldw_chatbook.Utils.input_validation import validate_workspace_name
 from tldw_chatbook.Utils.sensitive_paths import find_root_binding_conflict
 
 from .models import (
@@ -775,33 +776,52 @@ class LocalWorkspaceRegistryService:
             raise WorkspaceRegistryServiceError("Workspace archive failed.")
         return archived
 
-    def unarchive_workspace(self, workspace_id: str) -> WorkspaceRecord:
+    def unarchive_workspace(
+        self, workspace_id: str, *, name: str | None = None
+    ) -> WorkspaceRecord:
         """Restore an archived workspace to listings (spec §2).
 
-        Never auto-activates: the user chooses when to switch.
+        Never auto-activates: the user chooses when to switch. A replacement
+        name resolves name reuse in the same transaction as restoration.
+
+        Args:
+            workspace_id: Archived workspace to restore.
+            name: Optional replacement display name; strict text, trimmed
+                and nonblank.
 
         Raises:
-            WorkspaceNotFound: Unknown or not-archived workspace.
-            WorkspaceRegistryServiceError: Storage failure.
+            WorkspaceNotFound: Unknown, not-archived, or concurrently restored
+                workspace.
+            WorkspaceRegistryServiceError: Invalid name, duplicate name, or
+                storage failure.
         """
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
         record = self.get_workspace(safe_workspace_id)
         if record is None or not record.archived:
             raise WorkspaceNotFound(safe_workspace_id)
+        try:
+            safe_name = validate_workspace_name(record.name if name is None else name)
+        except ValueError as exc:
+            raise WorkspaceRegistryServiceError(str(exc)) from exc
         now = self._now_factory()
         try:
-            with self.db.transaction() as conn:
-                conn.execute(
+            with self.db.transaction(immediate=True) as conn:
+                self._reject_duplicate_name(
+                    safe_name, exclude_workspace_id=safe_workspace_id
+                )
+                cursor = conn.execute(
                     """
                     UPDATE workspace_records
-                    SET archived = 0, updated_at = ?
-                    WHERE workspace_id = ?
+                    SET archived = 0, name = ?, updated_at = ?
+                    WHERE workspace_id = ? AND archived = 1
                     """,
-                    (now, safe_workspace_id),
+                    (safe_name, now, safe_workspace_id),
                 )
+                if cursor.rowcount != 1:
+                    raise WorkspaceNotFound(safe_workspace_id)
         except sqlite3.IntegrityError as exc:
             raise WorkspaceRegistryServiceError(
-                f"A workspace named {record.name} already exists; rename it before unarchiving."
+                f"A workspace named {safe_name} already exists. Choose Restore as with another name."
             ) from exc
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc

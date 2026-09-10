@@ -791,7 +791,7 @@ def test_unarchive_collision_with_live_name_is_explained(tmp_path: Path) -> None
 
     with pytest.raises(WorkspaceRegistryServiceError) as excinfo:
         service.unarchive_workspace("ws-a")
-    assert "rename it before unarchiving" in str(excinfo.value)
+    assert "already exists" in str(excinfo.value)
 
 
 def test_v2_migration_dedupes_and_indexes_existing_duplicates(tmp_path: Path) -> None:
@@ -1068,3 +1068,124 @@ def test_mutation_generation_bumps_on_binding_and_membership_mutators(
     with pytest.raises(WorkspaceRegistryServiceError):
         service.remove_runtime_binding("binding-1")  # already gone
     assert service.mutation_generation == generation
+
+
+def test_restore_as_resolves_collision_atomically_without_activation(
+    tmp_path: Path,
+) -> None:
+    service = build_test_registry(tmp_path)
+    service.ensure_default_workspace()
+    service.create_workspace(workspace_id="old", name="Client A")
+    service.archive_workspace("old")
+    service.create_workspace(workspace_id="new", name="Client A")
+    with pytest.raises(WorkspaceRegistryServiceError):
+        service.unarchive_workspace("old", name="Client A")
+    unchanged = service.get_workspace("old")
+    assert unchanged.archived and unchanged.name == "Client A"
+    restored = service.unarchive_workspace("old", name="Client A recovered")
+    assert restored.name == "Client A recovered" and not restored.archived
+    assert not restored.active
+    assert service.get_active_workspace().workspace_id == DEFAULT_WORKSPACE_ID
+
+
+@pytest.mark.parametrize("name", ["", "   ", 123, b"replacement"])
+def test_restore_as_rejects_invalid_workspace_names_without_mutation(tmp_path, name):
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="old", name="Original")
+    service.archive_workspace("old")
+    before = service.get_workspace("old")
+    generation = service.mutation_generation
+    with pytest.raises(WorkspaceRegistryServiceError):
+        service.unarchive_workspace("old", name=name)
+    assert service.get_workspace("old") == before
+    assert service.mutation_generation == generation
+
+
+@pytest.mark.parametrize("name", ["  Project α / 東京 🧪  ", "x" * 4096, "Project\nNotes"])
+def test_restore_as_preserves_existing_workspace_name_policy(tmp_path, name):
+    service = build_test_registry(tmp_path)
+    # Creation already defines the supported workspace-name contract.
+    created = service.create_workspace(workspace_id="old", name=name)
+    service.archive_workspace("old")
+    restored = service.unarchive_workspace("old", name=name)
+    assert restored.name == created.name == name.strip()
+
+
+def test_concurrent_restore_rejects_stale_name_and_does_not_publish_success(
+    tmp_path, monkeypatch
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    winner = build_test_registry(tmp_path)
+    winner.create_workspace(workspace_id="old", name="Original")
+    winner.archive_workspace("old")
+    loser = build_test_registry(tmp_path)
+    read_archived = Event()
+    winner_committed = Event()
+    get_workspace = loser.get_workspace
+
+    def pause_after_initial_read(workspace_id):
+        record = get_workspace(workspace_id)
+        if record is not None and record.archived:
+            read_archived.set()
+            assert winner_committed.wait(5)
+        return record
+
+    monkeypatch.setattr(loser, "get_workspace", pause_after_initial_read)
+    generation = loser.mutation_generation
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(loser.unarchive_workspace, "old", name="Losing choice")
+        try:
+            assert read_archived.wait(5)
+            restored = winner.unarchive_workspace("old", name="Winning choice")
+            assert restored.name == "Winning choice"
+        finally:
+            winner_committed.set()
+        with pytest.raises(WorkspaceNotFound):
+            pending.result(timeout=5)
+    assert winner.get_workspace("old").name == "Winning choice"
+    assert loser.mutation_generation == generation
+    winner.db.close()
+    loser.db.close()
+
+
+def test_concurrent_unicode_restore_names_remain_unique(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    first = build_test_registry(tmp_path)
+    second = build_test_registry(tmp_path)
+    for cid in ("first", "second"):
+        first.create_workspace(workspace_id=cid, name=cid)
+        first.archive_workspace(cid)
+    ready = Barrier(2)
+    for service in (first, second):
+        original = service.db.transaction
+
+        @contextmanager
+        def synchronized_transaction(*, immediate=False, transaction=original):
+            ready.wait(timeout=5)
+            with transaction(immediate=immediate) as conn:
+                yield conn
+
+        monkeypatch.setattr(service.db, "transaction", synchronized_transaction)
+
+    def restore(service, cid, name):
+        try:
+            return service.unarchive_workspace(cid, name=name)
+        except WorkspaceRegistryServiceError:
+            return None
+        finally:
+            service.db.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        pending = [
+            pool.submit(restore, first, "first", "É"),
+            pool.submit(restore, second, "second", "é"),
+        ]
+        results = [future.result(timeout=8) for future in pending]
+    assert sum(result is not None for result in results) == 1
+    assert len([w for w in first.list_workspaces() if w.name.casefold() == "é"]) == 1
+    first.db.close()
+    second.db.close()
