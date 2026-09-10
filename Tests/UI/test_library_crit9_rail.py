@@ -313,3 +313,12 @@ async def test_the_rail_says_when_details_runs_past_the_fold(size, expected) -> 
         if expected:
             assert "scroll for more" in str(cue.renderable)
             assert cue.region.height == 1, cue.region
+            # The cue has to be ON SCREEN inside the rail to be a cue at
+            # all: the first version sat at the end of the scrollable
+            # content, i.e. below the very fold it was describing (caught
+            # live at 235x52, not by this test's earlier `display` check).
+            assert rail.region.contains_region(cue.region), (
+                cue.region,
+                rail.region,
+            )
+            assert "scroll for more" in _painted(host, cue.region)
