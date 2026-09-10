@@ -677,13 +677,15 @@ async def test_three_row_approval_card_stays_bounded():
         card = await _mounted_batch(app, pilot, 3)
 
         actions = card.query_one("#approval-batch-actions")
-        rows = list(card.query(".approval-row"))
+        batch_rows = card.query_one("#approval-batch-rows")
 
         assert card.size.height <= _THREE_ROW_CARD_MAX_HEIGHT, (
             f"three-row approval card is {card.size.height} lines tall "
             f"(> {_THREE_ROW_CARD_MAX_HEIGHT})"
         )
-        assert actions.region.y >= rows[-1].region.y, (
+        # Three 7-line rows exceed `#approval-batch-rows`' `max-height: 15`,
+        # so the rows scroll and the bar sits directly under that cap.
+        assert actions.region.y >= batch_rows.region.bottom, (
             "the action bar must stay below the rows it commits"
         )
         assert card.region.bottom - actions.region.bottom <= 2, (
