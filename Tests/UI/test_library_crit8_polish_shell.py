@@ -1159,6 +1159,48 @@ async def test_a_title_tab_body_burst_lands_the_body_in_the_body_field():
 
 
 @pytest.mark.asyncio
+async def test_a_body_tab_burst_leaves_the_trailing_word_out_of_the_body():
+    """The same defect one widget over -- the note BODY (coordinator addendum).
+
+    A peer session reported typing vanishing after Tab out of a note body.
+    Same root cause: bursting ``hello`` + Tab + ``world`` into the body left
+    BOTH words in it (measured before the fix:
+    ``'helloworldalpha budget line'``) because Tab's focus move landed after
+    the burst. The body carries the same priority Tab binding as the fields
+    around it.
+
+    What this does NOT fix, and is a separate defect the peer's task keeps:
+    Tab from the body lands on a Button, which silently swallows the keys
+    that follow -- true at any typing speed, so it is a focus-ORDER problem,
+    not this one.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=WIDE_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_tree_note(screen, pilot)
+        body = screen.query_one("#library-note-body", TextArea)
+        # The priority binding is only correct while Tab means "leave the
+        # field" here; under "indent" it would steal the key the TextArea
+        # needs.
+        assert body.tab_behavior == "focus"
+        body.focus()
+        await pilot.pause()
+        before = body.text
+
+        _burst(host, *"hello", "tab", *"world")
+        await pilot.pause()
+        await pilot.pause()
+
+        after = screen.query_one("#library-note-body", TextArea).text
+        assert after == f"hello{before}", after
+        assert "world" not in after
+
+
+@pytest.mark.asyncio
 async def test_the_keywords_field_is_its_own_authority_while_focused():
     """task-32106 AC#2: the same rule as the title, one field over.
 

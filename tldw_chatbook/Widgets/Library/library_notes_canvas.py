@@ -192,6 +192,14 @@ _NOTE_EDITOR_INPUT_IDS = frozenset(
 )
 
 
+#: task-32106 AC#1: shared by every field of the note editor -- see
+#: ``NoteEditorInput`` below for the mechanism and the measurement.
+_NOTE_FIELD_TAB_BINDINGS = [
+    Binding("tab", "screen.focus_next", show=False, priority=True),
+    Binding("shift+tab", "screen.focus_previous", show=False, priority=True),
+]
+
+
 class NoteEditorInput(Input):
     """A note field whose Tab moves focus BEFORE the next key is forwarded.
 
@@ -212,15 +220,29 @@ class NoteEditorInput(Input):
     resolves to ``LibraryScreen.action_focus_next``, which cycles inside
     ``#screen-content`` (task-32052 AC#3) -- ``app.focus_next`` would walk
     the nav bar instead, and a bare ``focus_next`` resolves against this
-    ``Input``, which has no such action, so the binding never fires. The
-    body ``TextArea`` deliberately gets no such binding: it owns Tab
-    itself.
+    ``Input``, which has no such action, so the binding never fires.
     """
 
-    BINDINGS = [
-        Binding("tab", "screen.focus_next", show=False, priority=True),
-        Binding("shift+tab", "screen.focus_previous", show=False, priority=True),
-    ]
+    BINDINGS = _NOTE_FIELD_TAB_BINDINGS
+
+
+class NoteEditorTextArea(TextArea):
+    """The note body, with the same synchronous Tab as the fields around it.
+
+    The body has the identical defect one widget over (coordinator addendum
+    from a peer session): bursting ``hello`` + Tab + ``world`` into it left
+    BOTH words in the body -- measured here as
+    ``'helloworldalpha budget line'`` -- because Tab's focus move landed
+    after the burst.
+
+    Safe only while ``tab_behavior`` is ``"focus"`` -- Textual's default,
+    and what this editor wants: the body is prose, not code, and Tab is how
+    a reader leaves it. Under ``"indent"`` this binding would steal the key
+    the ``TextArea`` needs, so the pin asserts that behaviour rather than
+    trusting the default.
+    """
+
+    BINDINGS = _NOTE_FIELD_TAB_BINDINGS
 
 
 @dataclass(frozen=True)
@@ -1715,7 +1737,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     id="library-note-title",
                 )
             yield Static("Body", id="library-note-body-label", markup=False)
-            yield TextArea(content, id="library-note-body")
+            yield NoteEditorTextArea(content, id="library-note-body")
 
         with VerticalScroll(id="library-note-preview-region", can_focus=True):
             # task-32142 AC#1: the shared heading row's title Static (above)
