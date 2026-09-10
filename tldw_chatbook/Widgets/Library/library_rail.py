@@ -780,6 +780,18 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             # at a stale query had no affordance at all.
             clear = Button("x", id="library-search-clear", compact=True)
             clear.tooltip = "Clear the Library search box"
+            # task-32212 (critique #9 row 9): MEASURED, not inferred. Every
+            # region already sat inside the rail; what overflowed was this
+            # button's own CONTENT. Textual's Button carries `line-pad: 1`,
+            # flanking its label with a cell each side, so "x" painted as
+            # border(2) + " x "(3) = 5 cells inside its 3-cell box -- and
+            # Textual does not clip that. The search row's middle line
+            # therefore painted two cells long, pushing the rail's right
+            # border from column 41 to 43 and the canvas's left border with
+            # it, on every canvas and at every width. It has to be set here:
+            # `line-pad: 0` in TCSS is rejected by Textual's own integer
+            # parser, which errors on a literal 0.
+            clear.styles.line_pad = 0
             yield clear
         for section in self.shell.sections:
             yield from self._compose_section(section)

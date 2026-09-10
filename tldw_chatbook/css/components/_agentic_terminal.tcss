@@ -2438,6 +2438,12 @@ with stray left-edge border fragments), and padding 0 1 so the full
     height: 3;
     min-height: 3;
     margin: 0 0 1 0;
+    /* task-32212 (critique #9 row 9): this 3 is only honoured because
+       `LibraryRail.compose` zeroes the button's `line_pad` inline --
+       Textual's `Button` defaults to `line-pad: 1`, whose two flanking
+       cells made a 3-cell box paint 5 and shoved the rail's frame two
+       columns right. `line-pad: 0` cannot be written here: Textual's
+       `_process_integer` rejects a literal 0. See library_rail.py. */
     border: tall $ds-grid-line;
     background: $ds-surface-raised;
     color: $ds-text-primary;
