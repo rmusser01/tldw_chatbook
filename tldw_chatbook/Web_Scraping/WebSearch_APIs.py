@@ -121,8 +121,14 @@ def _search_error_kind(error: Exception) -> str:
     return "request"
 
 
+class _SearchChallengeError(ValueError):
+    """An observed provider challenge, independent of untrusted response text."""
+
+
 def _safe_search_error(error: Exception) -> str:
     """Closed messages keep endpoint URLs, credentials and bodies out of diagnostics."""
+    if isinstance(error, _SearchChallengeError):
+        return "DuckDuckGo returned an anti-bot challenge; automated search is unavailable."
     return {
         "auth": "Authentication failed. Check API key and account permissions.",
         "rate_limit": "Provider rate limit or quota reached. Try again later.",
@@ -3062,10 +3068,9 @@ def search_web_duckduckgo(
     assert keywords, "keywords is mandatory"
 
     if not LXML_AVAILABLE:
-        logger.error(
+        raise ImportError(
             "lxml not available for DuckDuckGo search. Install with: pip install tldw_chatbook[websearch]"
         )
-        return []
 
     payload = {
         "q": keywords,
@@ -3098,10 +3103,15 @@ def search_web_duckduckgo(
         response = requests.post("https://html.duckduckgo.com/html", data=payload, timeout=SEARCH_BACKEND_TIMEOUT_S, verify=requests_verify())
         response.raise_for_status()
         resp_content = response.content
+        tree = document_fromstring(resp_content)
+        if tree.xpath(
+            '//form[@id="challenge-form" or contains(@action, "anomaly.js")]'
+        ):
+            raise _SearchChallengeError(
+                "DuckDuckGo returned an anti-bot challenge; automated search is unavailable."
+            )
         if b"No  results." in resp_content:
             return results
-
-        tree = document_fromstring(resp_content)
         elements = tree.xpath("//div[h2]")
         if not isinstance(elements, list):
             return results
@@ -3806,9 +3816,9 @@ def parse_searx_results(searx_search_results: "list | dict | str", web_search_re
     Unlike every other backend in this file, the local `search_web_searx`
     always returns a JSON-encoded STRING: `json.dumps(hits)` on success
     (a list of `{title, link, snippet, publishedDate}` dicts), or
-    `json.dumps({"error": ...})` when nothing was found or the request
-    failed. A string is decoded first; an already-parsed list is also
-    accepted defensively for direct/test callers. Only a decoded list is
+    `json.dumps({"error": ...})` when setup or the request failed.
+    Empty searches return an encoded empty list. A string is decoded first;
+    an already-parsed list is also accepted for direct/test callers. Only a decoded list is
     tolerated as real results -- a decoded dict never is: `{"error": ...}`
     re-raises with that message, and any other dict (or any non-list
     scalar) raises a generic shape error, both surfacing via the
@@ -4181,9 +4191,10 @@ def search_web_yandex(search_query: str, result_count: Optional[int] = None) -> 
 def parse_yandex_results(yandex_search_results: dict, web_search_results_dict: dict) -> None:
     """Decode rawData base64 XML and parse docs into the standardized shape.
 
-    Raises on an in-XML <error> element (quota/auth/malformed-query arrive
-    inside HTTP 200): a quota error must never render as "No results found"
-    for a query that was never searched (spec 2026-08-06 §2). The raise is
+    Raises on an in-XML <error> element except code 15 (no matches).
+    Quota/auth/malformed-query errors can arrive inside HTTP 200 and must
+    never render as "No results found" for a query that was never searched
+    (spec 2026-08-06 §2). The raise is
     caught by process_web_search_results and lands in processing_error.
 
     Args:
@@ -4194,7 +4205,7 @@ def parse_yandex_results(yandex_search_results: dict, web_search_results_dict: d
 
     Raises:
         ValueError: when rawData is missing, or the decoded XML contains
-            an <error> element (quota/auth/malformed-query).
+            an <error> element other than no-matches code 15.
     """
     if "results" not in web_search_results_dict:
         web_search_results_dict["results"] = []
@@ -4206,6 +4217,8 @@ def parse_yandex_results(yandex_search_results: dict, web_search_results_dict: d
     error_el = root.find(".//error")
     if error_el is not None:
         code = error_el.get("code", "?")
+        if code == "15":
+            return
         text = "".join(error_el.itertext()).strip()
         raise ValueError(f"Yandex API error (code {code}): {text}")
     for doc in root.findall(".//group/doc"):

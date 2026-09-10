@@ -5,6 +5,7 @@ import base64
 import json
 
 import pytest
+import requests
 
 from tldw_chatbook import config
 from tldw_chatbook.Web_Scraping import WebSearch_APIs
@@ -126,39 +127,82 @@ def test_brave_request_carries_timeout(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-class _FakeDDGResponse:
-    def raise_for_status(self):
-        pass
-
-    def __init__(self, content: bytes):
-        self.content = content
-
-
 class _FakeDDGRequests:
     """DuckDuckGo's response is read via `.content` (raw bytes), not
     `.json()` -- a distinct fake shape from `_FakeRequests` above."""
 
-    def __init__(self, content: bytes):
+    def __init__(self, content: bytes, status_code=200):
         self.calls = []
         self._content = content
+        self._status_code = status_code
 
     def post(self, url, **kwargs):
         self.calls.append({"url": url, **kwargs})
-        return _FakeDDGResponse(self._content)
+        response = requests.Response()
+        response.status_code = self._status_code
+        response._content = self._content
+        return response
 
 
 def test_duckduckgo_request_carries_timeout(monkeypatch):
     if not WebSearch_APIs.LXML_AVAILABLE:
         pytest.skip("lxml not available")
-    # "No  results." (DDG's own literal, two spaces) short-circuits the
-    # function immediately after the request -- avoids needing a realistic
-    # lxml-parseable HTML fixture just to pin the request kwargs.
+    # DDG's literal empty response (two spaces) remains a successful search.
     fake = _FakeDDGRequests(b"No  results.")
     monkeypatch.setattr(WebSearch_APIs, "requests", fake)
     WebSearch_APIs.search_web_duckduckgo("cherry cake")
     assert fake.calls, "search_web_duckduckgo made no request"
     for call in fake.calls:
         assert call["timeout"] == 30
+
+
+@pytest.mark.parametrize("status_code", [200, 202])
+@pytest.mark.parametrize("page_text", [b"Select ducks", b"No  results."])
+def test_duckduckgo_challenge_is_a_failure(monkeypatch, status_code, page_text):
+    pytest.importorskip("lxml")
+    fake = _FakeDDGRequests(
+        b'<html><form id="challenge-form" action="/anomaly.js">'
+        b'<div class="anomaly-modal__puzzle">' + page_text + b"</div></form></html>",
+        status_code,
+    )
+    monkeypatch.setattr(WebSearch_APIs, "requests", fake)
+    with pytest.raises(ValueError, match="DuckDuckGo.*challenge"):
+        WebSearch_APIs.search_web_duckduckgo("cherry cake", max_results=5)
+    assert len(fake.calls) == 1
+
+
+@pytest.mark.parametrize("status_code", [403, 429, 500])
+def test_duckduckgo_http_failure_is_not_empty_results(monkeypatch, status_code):
+    pytest.importorskip("lxml")
+    fake = _FakeDDGRequests(b"No  results.", status_code)
+    monkeypatch.setattr(WebSearch_APIs, "requests", fake)
+    with pytest.raises(requests.HTTPError):
+        WebSearch_APIs.search_web_duckduckgo("cherry cake")
+
+
+def test_duckduckgo_missing_parser_is_a_failure(monkeypatch):
+    monkeypatch.setattr(WebSearch_APIs, "LXML_AVAILABLE", False)
+    with pytest.raises(ImportError, match="lxml"):
+        WebSearch_APIs.search_web_duckduckgo("cherry cake")
+
+
+def test_duckduckgo_results_and_confirmed_empty_are_distinct(monkeypatch):
+    pytest.importorskip("lxml")
+    fake = _FakeDDGRequests(
+        b"<html><div><h2><a>CAPTCHA documentation</a></h2>"
+        b'<a href="https://example.com/">Read about challenges</a></div></html>'
+    )
+    monkeypatch.setattr(WebSearch_APIs, "requests", fake)
+    result = WebSearch_APIs.search_web_duckduckgo("CAPTCHA", max_results=1)
+    assert result == [
+        {
+            "title": "CAPTCHA documentation",
+            "href": "https://example.com/",
+            "body": "Read about challenges",
+        }
+    ]
+    fake._content = b"No  results."
+    assert WebSearch_APIs.search_web_duckduckgo("no matches") == []
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +464,39 @@ def test_yandex_error_through_process_sets_processing_error():
     assert result["results"] == []
 
 
+@pytest.mark.parametrize("code", ["15", "32", "42"])
+def test_yandex_no_results_and_errors_reach_web_tool(monkeypatch, code):
+    from tldw_chatbook.Tools import web_tool_impls
+    from tldw_chatbook.Tools.local_tool_impls import LocalToolError
+
+    _set_key(monkeypatch, "yandex_search_api_key", "test-ya-key")
+    _set_key(monkeypatch, "yandex_search_folder_id", "test-folder")
+    # Code 15 is a successful search with no matches, regardless of localized text:
+    # https://aistudio.yandex.ru/en/docs/search-api/reference/error-codes
+    payload = _yandex_payload(
+        f'<yandexsearch><response><error code="{code}">message</error></response></yandexsearch>'.encode()
+    )
+    fake = _patch_requests(monkeypatch, payload)
+    web_tool_impls._reset_state_for_tests()
+    try:
+        if code == "15":
+            for _ in range(2):
+                assert web_tool_impls.web_search(
+                    "no matches", search_engine="yandex"
+                ) == (
+                    "No results found for 'no matches' via 'yandex'."
+                    "\n\nEngine: yandex (call override)"
+                )
+            assert len(fake.calls) == 2
+        else:
+            with pytest.raises(
+                LocalToolError, match="Search provider returned an invalid response"
+            ):
+                web_tool_impls.web_search("no matches", search_engine="yandex")
+    finally:
+        web_tool_impls._reset_state_for_tests()
+
+
 def test_yandex_end_to_end_through_process(monkeypatch):
     _set_key(monkeypatch, "yandex_search_api_key", "test-ya-key")
     _set_key(monkeypatch, "yandex_search_folder_id", "test-folder")
@@ -569,13 +646,14 @@ class _FakeSearxSession:
     `.Session()` stub, so this test patches `searx_create_session` directly
     (task-3060, Important 5) rather than extending the shared fake."""
 
-    def __init__(self, payload):
+    def __init__(self, payload, status_code=200):
         self.calls = []
         self._payload = payload
+        self._status_code = status_code
 
     def get(self, url, **kwargs):
         self.calls.append({"url": url, **kwargs})
-        return _FakeResponse(self._payload)
+        return _FakeResponse(self._payload, self._status_code)
 
 
 def test_searx_request_carries_timeout(monkeypatch):
@@ -587,6 +665,41 @@ def test_searx_request_carries_timeout(monkeypatch):
     assert fake_session.calls, "search_web_searx made no request"
     for call in fake_session.calls:
         assert call["timeout"] == 30
+
+
+@pytest.mark.parametrize("outcome", ["empty", "http_failure", "unconfigured"])
+def test_searx_backend_empty_and_failures_reach_web_tool(monkeypatch, outcome):
+    from tldw_chatbook.Tools import web_tool_impls
+    from tldw_chatbook.Tools.local_tool_impls import LocalToolError
+
+    _set_key(
+        monkeypatch,
+        "searx_search_api_url",
+        "" if outcome == "unconfigured" else "https://search.example.org/search",
+    )
+    session = _FakeSearxSession(
+        {"results": []}, status_code=503 if outcome == "http_failure" else 200
+    )
+    monkeypatch.setattr(WebSearch_APIs, "searx_create_session", lambda: session)
+    monkeypatch.setattr(WebSearch_APIs.random, "uniform", lambda a, b: 0.0)
+    web_tool_impls._reset_state_for_tests()
+    try:
+        if outcome == "empty":
+            for _ in range(2):
+                assert web_tool_impls.web_search(
+                    "no matches", search_engine="searx"
+                ) == (
+                    "No results found for 'no matches' via 'searx'."
+                    "\n\nEngine: searx (call override)"
+                )
+            assert len(session.calls) == 2  # empty searches are not cached
+        else:
+            reason = "Search provider returned an invalid response"
+            with pytest.raises(LocalToolError, match=reason):
+                web_tool_impls.web_search("no matches", search_engine="searx")
+            assert len(session.calls) == (1 if outcome == "http_failure" else 0)
+    finally:
+        web_tool_impls._reset_state_for_tests()
 
 
 def test_searx_parser_loads_json_string():

@@ -33,6 +33,7 @@ from urllib.robotparser import RobotFileParser
 
 import httpx
 from loguru import logger
+from pydantic import BaseModel, ConfigDict, StrictStr, ValidationError
 
 from .local_tool_impls import LocalToolError
 from ..Utils.tls_trust import build_httpx_client
@@ -1219,6 +1220,23 @@ def _with_search_backend(text: str, backend_note: str, max_bytes: int) -> str:
     return f"{text}\n\n{backend_note}"
 
 
+class _SearchResult(BaseModel):
+    """Validate only the optional text fields displayed by the search tool."""
+
+    model_config = ConfigDict(extra="ignore", strict=True)
+    title: StrictStr | None = None
+    url: StrictStr | None = None
+    content: StrictStr | None = None
+    snippet: StrictStr | None = None
+
+
+class _SearchResponse(BaseModel):
+    """Successful standardized search envelope; backend metadata is ignored."""
+
+    model_config = ConfigDict(extra="ignore", strict=True)
+    results: list[_SearchResult]
+
+
 def web_search(
     query: str,
     *,
@@ -1232,9 +1250,9 @@ def web_search(
     English in/out, moderate safesearch, no advanced filters). Each result
     block is bounded to SEARCH_RESULT_MAX_BYTES and the whole output to
     SEARCH_TOTAL_MAX_BYTES (both UTF-8 byte budgets), so the provider's
-    32 KiB byte fitting never triggers on search output. Backend failures
-    and error envelopes return an error string rather than raising (legacy
-    tool contract); only invalid arguments raise LocalToolError.
+    32 KiB byte fitting never triggers on search output. Backend failures,
+    error envelopes, and malformed responses raise LocalToolError so the
+    provider records a failed tool outcome.
 
     Successful results are cached for SEARCH_CACHE_TTL_SECONDS keyed by
     the post-coercion (engine, normalized query, count) — identical
@@ -1245,8 +1263,19 @@ def web_search(
     back to DuckDuckGo only when absent. An override never changes Settings.
     Backend/source provenance is attached per call, outside the cached body.
 
+    Args:
+        query: Non-empty search text; surrounding whitespace is stripped.
+        search_engine: Backend override for this call. None uses the saved
+            preference, or DuckDuckGo when no preference exists.
+        result_count: Requested count, coerced to an integer in the supported
+            range; invalid values use SEARCH_DEFAULT_RESULT_COUNT.
+
+    Returns:
+        Formatted result text or a confirmed-empty message, including the
+        effective backend and selection source, within SEARCH_TOTAL_MAX_BYTES.
+
     Raises:
-        LocalToolError: if ``query`` or the selected backend is invalid.
+        LocalToolError: If the query/backend is invalid or the search fails.
     """
     if not isinstance(query, str) or not query.strip():
         raise LocalToolError("[invalid-args] query must be a non-empty string")
@@ -1288,6 +1317,11 @@ def web_search(
     # module cheap to import and let tests monkeypatch the source attribute.
     from ..Web_Scraping.WebSearch_APIs import perform_websearch
 
+    failure = (
+        f"[search-failed] web search via {engine!r} failed. "
+        "Stop repeating searches with this backend until it is available or configured. "
+        "Use another configured search engine or ask the user to configure one. Reason: "
+    )
     try:
         results = perform_websearch(
             search_engine=engine,
@@ -1306,29 +1340,23 @@ def web_search(
             search_result_language=None,
             sort_results_by=None,
         )
-    except Exception as exc:  # noqa: BLE001 — backend failure is a result string, not an exception
+    except Exception as exc:  # Normalize the backend error contract.
         logger.warning(f"web_search backend failure via {engine!r}: {exc}")
-        return with_backend(f"[search-failed] web search via {engine!r} failed: {exc}")
+        raise LocalToolError(with_backend(f"{failure}{exc}")) from exc
 
     if not isinstance(results, dict):
-        return with_backend(
-            f"No results found or unexpected response format from {engine!r} "
-            f"(raw: {str(results)[:500]})"
-        )
+        raise LocalToolError(with_backend(f"{failure}unexpected response format"))
     # A well-formed envelope can still carry a failure: surface THAT reason.
     reason = results.get("processing_error") or results.get("error")
     if reason:
-        return with_backend(
-            f"[search-failed] web search via {engine!r} reported an error: {reason}"
-        )
-    if not isinstance(results.get("results"), list):
-        return with_backend(
-            f"No results found or unexpected response format from {engine!r} "
-            f"(raw: {str(results)[:500]})"
-        )
-    items = [
-        item if isinstance(item, dict) else {} for item in results["results"][:count]
-    ]
+        raise LocalToolError(with_backend(f"{failure}{reason}"))
+    try:
+        response = _SearchResponse.model_validate(results)
+    except ValidationError as exc:
+        raise LocalToolError(
+            with_backend(f"{failure}unexpected response format")
+        ) from exc
+    items = response.results[:count]
     if not items:
         return with_backend(f"No results found for {query!r} via {engine!r}.")
 
@@ -1343,13 +1371,9 @@ def web_search(
     for i, item in enumerate(items, 1):
         # Real standardized shape (process_web_search_results): body text is
         # top-level "content"; "snippet" lives under metadata. Accept both.
-        snippet = (
-            item.get("snippet") or item.get("content") or "No description available"
-        )
+        snippet = item.snippet or item.content or "No description available"
         block = (
-            f"{i}. {item.get('title') or 'No title'}\n"
-            f"   URL: {item.get('url') or ''}\n"
-            f"   {snippet}"
+            f"{i}. {item.title or 'No title'}\n   URL: {item.url or ''}\n   {snippet}"
         )
         block = _truncate_to_bytes(block, SEARCH_RESULT_MAX_BYTES)
         block_bytes = len(block.encode("utf-8"))
@@ -1361,8 +1385,7 @@ def web_search(
         total_bytes += separator_bytes + block_bytes
     output = "\n\n".join(blocks)
     # The ONE cacheable point (design doc ruling 1): only the genuine
-    # success-blocks output is stored — never the [search-failed] strings,
-    # the unmarked malformed-response strings, or the confirmed-empty
+    # success-blocks output is stored — never failures or the confirmed-empty
     # message (a transient zero must not pin for the TTL).
     _search_cache_put(cache_key, output)
     return with_backend(output)

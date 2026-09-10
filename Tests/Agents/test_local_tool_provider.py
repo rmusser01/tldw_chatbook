@@ -2715,7 +2715,7 @@ def test_web_search_handler_enforces_total_cap_with_multibyte(tmp_path, monkeypa
     assert len(r.content.encode("utf-8")) <= 24 * 1024 + 128
 
 
-def test_web_search_backend_error_becomes_result_string(tmp_path, monkeypatch):
+def test_web_search_backend_error_is_a_failed_tool_outcome(tmp_path, monkeypatch):
     def boom(**kwargs):
         raise RuntimeError("backend exploded")
 
@@ -2724,9 +2724,11 @@ def test_web_search_backend_error_becomes_result_string(tmp_path, monkeypatch):
     )
     p = make_provider(root=tmp_path)
     r = p.invoke("local:web_search", {"query": "python"})
-    # legacy contract: backend failure is a result string, not an exception.
-    assert r.ok
-    assert "backend exploded" in r.content
+    assert not r.ok
+    assert r.outcome is None  # ordinary failure, not a permission refusal
+    assert "backend exploded" in r.error
+    assert "Stop repeating" in r.error
+    assert "configure" in r.error
 
 
 def test_web_search_response_error_keys_surface_as_failure(tmp_path, monkeypatch):
@@ -2742,8 +2744,8 @@ def test_web_search_response_error_keys_surface_as_failure(tmp_path, monkeypatch
     )
     p = make_provider(root=tmp_path)
     r = p.invoke("local:web_search", {"query": "python"})
-    assert r.ok
-    assert "engine quota exhausted" in r.content
+    assert not r.ok
+    assert "engine quota exhausted" in r.error
 
     monkeypatch.setattr(
         "tldw_chatbook.Web_Scraping.WebSearch_APIs.perform_websearch",
@@ -2754,8 +2756,52 @@ def test_web_search_response_error_keys_surface_as_failure(tmp_path, monkeypatch
         },
     )
     r = p.invoke("local:web_search", {"query": "python"})
+    assert not r.ok
+    assert "Error processing search results: boom" in r.error
+
+
+@pytest.mark.parametrize(
+    "payload", ["not a dict", {}, {"results": None}, {"results": [None]}]
+)
+def test_web_search_malformed_response_is_a_failed_tool_outcome(
+    tmp_path, monkeypatch, payload
+):
+    monkeypatch.setattr(
+        "tldw_chatbook.Web_Scraping.WebSearch_APIs.perform_websearch",
+        lambda **kwargs: payload,
+    )
+    r = make_provider(root=tmp_path).invoke("local:web_search", {"query": "python"})
+    assert not r.ok
+    assert "unexpected response format" in r.error
+
+
+def test_web_search_confirmed_empty_is_successful(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.Web_Scraping.WebSearch_APIs.perform_websearch",
+        lambda **kwargs: {"results": []},
+    )
+    r = make_provider(root=tmp_path).invoke("local:web_search", {"query": "no matches"})
     assert r.ok
-    assert "Error processing search results: boom" in r.content
+    assert r.content.startswith("No results found for")
+
+
+def test_web_search_duckduckgo_challenge_reaches_provider_as_failure(
+    tmp_path, monkeypatch
+):
+    pytest.importorskip("lxml")
+    import requests
+
+    response = requests.Response()
+    response.status_code = 202
+    response._content = (
+        b'<html><form id="challenge-form" action="/anomaly.js"></form></html>'
+    )
+    monkeypatch.setattr(requests, "post", lambda *args, **kwargs: response)
+    r = make_provider(root=tmp_path).invoke("local:web_search", {"query": "python"})
+    assert not r.ok
+    assert r.outcome is None
+    assert "challenge" in r.error
+    assert "Stop repeating" in r.error
 
 
 def test_web_search_non_string_engine_fails_before_dispatch(tmp_path, monkeypatch):

@@ -50,6 +50,7 @@ async def _project_console(
     nested_tools=False,
     discover_tools=False,
     cold_after_request=None,
+    tool_prefix="",
 ):
     """Use real new-session/workspace defaults; replace only provider HTTP."""
     with (
@@ -140,7 +141,7 @@ async def _project_console(
                             "arguments": {"ids": ["builtin:calculator"]},
                         }
                     )
-                content = "```tool_call\n" + json.dumps(call) + "\n```"
+                content = tool_prefix + "```tool_call\n" + json.dumps(call) + "\n```"
             return httpx.Response(
                 200, json={"choices": [{"message": {"content": content}}]}
             )
@@ -340,8 +341,11 @@ async def test_nested_project_context_during_tool_calls_preserves_history(
 @pytest.mark.parametrize("capture_enabled", [False, True])
 @pytest.mark.parametrize("cold_factory", [False, True])
 @pytest.mark.parametrize("project_enabled", [False, True])
+@pytest.mark.parametrize(
+    "tool_prefix", ["", "Planning first.\n"], ids=["bare_fence", "planning_prefix"]
+)
 async def test_discovered_tool_schema_changes_preserve_the_captured_run(
-    tmp_path, monkeypatch, capture_enabled, cold_factory, project_enabled
+    tmp_path, monkeypatch, capture_enabled, cold_factory, project_enabled, tool_prefix
 ):
     from tldw_chatbook.Agents import agent_service
     from tldw_chatbook.Chat.console_trace_redaction import CredentialSanitizer
@@ -358,6 +362,7 @@ async def test_discovered_tool_schema_changes_preserve_the_captured_run(
         discover_tools=True,
         capture_enabled=capture_enabled,
         cold_after_request=2 if cold_factory else None,
+        tool_prefix=tool_prefix,
     ) as app:
         if not project_enabled:
             app.store.set_session_project_instruction_state(
