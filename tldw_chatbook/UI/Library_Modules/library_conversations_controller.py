@@ -8,7 +8,7 @@ Owns the browse cluster moved verbatim out of ``LibraryScreen`` in
 ``conversation``-named method NOT already moved to
 ``LibraryConversationReaderController`` (task 7) -- list paging, row
 selection/multiselect, export, filter, empty/retry states, and the
-"Use in Console" handoff -- plus the record-lookup and
+original-conversation Resume and separate source handoff -- plus the record-lookup and
 label helpers those clusters share. ``LibraryScreen`` keeps one-line
 delegators under every one of these original names.
 
@@ -932,6 +932,9 @@ class LibraryConversationsController:
                 return f"Updated: {value}"
         return "Updated: unknown"
 
+    def _conversation_recovery(self):
+        return self._screen._conversation_recovery()
+
     def _build_library_conversations_state(self):
         from .library_unavailable_navigation import build_canvas_state
 
@@ -1173,6 +1176,7 @@ class LibraryConversationsController:
                 conversation_id,
                 mode="local",
                 scope_type="all",
+                archive_scope="all",
                 limit=LIBRARY_CONVERSATION_PAGE_SIZE,
             )
         except Exception:
@@ -1218,6 +1222,7 @@ class LibraryConversationsController:
                 list_conversations,
                 mode="local",
                 scope_type="all",
+                archive_scope=self._conversation_recovery().scope,
                 query=normalized_query or None,
                 limit=LIBRARY_CONVERSATION_PAGE_SIZE,
                 offset=requested_offset,
@@ -1317,7 +1322,15 @@ class LibraryConversationsController:
                 self._selected_conversation_id = ""
                 self._sync_library_conversation_reader()
 
-        self._library_conversation_page_records = validated.items
+        try:
+            records = await self._conversation_recovery().annotate(validated.items)
+        except Exception:  # noqa: BLE001 - workspace metadata failure retains the prior page
+            self._fail_library_conversation_request(requested_page, normalized_query, generation)
+            return
+        if generation != self._library_conversation_request_generation:
+            return
+        self._library_conversation_page_records = records
+        self._screen._invalidate_library_workspace_depth_state()
         self._library_conversation_page = requested_page
         self._library_conversation_total = validated.total
         self._library_conversation_total_known = True
@@ -1583,6 +1596,60 @@ class LibraryConversationsController:
             raise ValueError("Conversation locator target position is invalid.")
         return validated.items, page, validated.total, validated.has_more
 
+    @on(Button.Pressed, ".library-conversation-scope")
+    def handle_library_conversation_scope(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._conversation_recovery().set_scope((event.button.id or "").rsplit("-", 1)[-1])
+
+
+    @on(Button.Pressed, "#library-conversations-view-archived")
+    def handle_library_conversation_view_archive(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._conversation_recovery().set_scope("archived")
+
+
+    @on(Button.Pressed, "#library-conversations-undo")
+    def handle_library_conversation_undo(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.run_worker(self._conversation_recovery().undo(), exclusive=True,
+                        group="library-conversation-archive")
+
+
+    @on(Button.Pressed, "#library-conversation-archive")
+    @on(Button.Pressed, "#library-conversation-restore")
+    @on(Button.Pressed, "#library-conversations-archive-selected")
+    @on(Button.Pressed, "#library-conversations-restore-selected")
+    def handle_library_conversation_archive_action(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._library_conversation_freshness != "fresh" or self._library_conversation_loading:
+            return
+        controller = self._conversation_recovery()
+        if controller.busy:
+            return
+        archived = "archive" in (event.button.id or "")
+        bulk = (event.button.id or "").endswith("-selected")
+        if not bulk and not self._library_conversation_reader_state.loaded_actions_eligible:
+            return
+        ids = (tuple(self._library_conversations_row_selection.ids) if bulk
+               else (self._library_conversation_reader_state.loaded_id,))
+        records = {str(row.get("id") or row.get("conversation_id")): row
+                   for row in self._conversation_records()}
+        captured = tuple(identity for identity in ids if identity in records)
+        versions = {identity: records[identity].get("version") for identity in captured}
+        if not captured:
+            return
+        from ...Widgets.confirmation_dialog import ConfirmationDialog
+        async def change() -> None:
+            await controller.change(captured, archived=archived, expected_versions=versions)
+        verb = "Archive" if archived else "Restore"
+        self.app.push_screen(ConfirmationDialog(
+            title=f"{verb} {len(captured)} conversation(s)?",
+            message=("Saved messages stay available in Archived. Active work or unsaved drafts are skipped."
+                     if archived else "Restore these saved conversations to Active. Console context stays unchanged."),
+            confirm_label=verb, confirm_callback=change,
+        ))
+
+
     def _open_selected_conversation_handoff(self) -> None:
         if self._library_conversation_freshness != "fresh":
             return
@@ -1631,6 +1698,20 @@ class LibraryConversationsController:
 
     @on(Button.Pressed, "#library-conversation-open-console")
     def open_selected_conversation_in_console(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.resume_selected_conversation()
+
+    def resume_selected_conversation(self) -> None:
+        """Resume only the fully loaded original identity shared by button and key."""
+        if self._library_conversation_freshness != "fresh" or not self._library_conversation_reader_state.loaded_actions_eligible:
+            return
+        selected_id = self._library_conversation_reader_state.loaded_id
+        resume = getattr(self.app_instance, "resume_console_conversation", None)
+        if selected_id and callable(resume):
+            resume(selected_id)
+
+    @on(Button.Pressed, "#library-conversation-use-source")
+    def use_selected_conversation_as_source(self, event: Button.Pressed) -> None:
         event.stop()
         self._open_selected_conversation_handoff()
 

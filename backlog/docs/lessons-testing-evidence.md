@@ -13177,3 +13177,15 @@ payload guards (an incomplete result must not navigate) and nowhere else. When
 a second route to an existing destination is added, first ask what the existing
 route does AFTER the selection lands — that post-selection work is where the
 new route will silently differ.
+
+
+### Archive recovery: canceled workers do not cancel SQLite threads (2026-09-10)
+
+During TASK-32273–32276, sequential archive/Undo checks passed but a simultaneous
+writer test exposed SQLite deferred-transaction contention; taking the write
+reservation up front resolved it. Independent review then canceled the UI worker
+while a thread-backed archive write was blocked: its guard cleared while the
+write continued, allowing a send before commit. The regression now controls the
+thread with events and verifies the archive reservation remains until commit and
+cache publication. Shield the operation that owns the reservation, rather than
+assuming coroutine cancellation stops a database thread.

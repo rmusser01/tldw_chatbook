@@ -8844,6 +8844,32 @@ class TldwCli(
             NavigateToScreen(TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_MODE: "notes"})
         )
 
+    def open_conversation_archive(
+        self, query: str = "", archive_scope: str = "archived"
+    ) -> None:
+        """Open Library conversation search with an explicit archive scope."""
+        self.post_message(
+            NavigateToScreen(
+                TAB_LIBRARY,
+                {
+                    LIBRARY_NAV_CONTEXT_MODE: "conversations",
+                    "conversation_archive_scope": archive_scope,
+                    "conversation_query": query,
+                },
+            )
+        )
+
+    def resume_console_conversation(self, conversation_id: str) -> None:
+        """Review restoration scope and resume the original local conversation."""
+        from .UI.Console_Modules.archive import request_conversation_resume
+
+        self.run_worker(
+            request_conversation_resume(self, conversation_id),
+            name="resume-saved-conversation",
+            group="resume-saved-conversation",
+            exclusive=True,
+        )
+
     def open_chat_with_handoff(
         self,
         payload: ChatHandoffPayload,

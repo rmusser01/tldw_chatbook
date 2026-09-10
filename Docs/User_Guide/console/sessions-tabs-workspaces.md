@@ -469,3 +469,53 @@ rest of this page's content unchanged from the prior stamp).*
 *Reconciled against the TASK-20937 native Workspace Tree and exclusive
 Default/unassigned ownership implementation — 2026-08-23. Additional
 same-cell terminal-client verification remains tracked by TASK-20937.6.*
+
+## Archive, find, review and resume a saved chat
+
+In Console context → Conversations, choose **Archive this chat** to put an idle,
+saved conversation away. Its messages, branches and workspace are preserved.
+The receipt offers **Undo**, **View archived** and **Done**. A chat with a draft,
+attachments, unsaved messages, or running/queued work must finish saving or have
+that work resolved before it can be archived. An archived open tab remains
+readable; restore it before sending again.
+
+1. Choose **Archived chats** in Console context, or open the session switcher
+   and choose **Archived chats**. Library opens in its **Archived** scope.
+2. Search the conversation title or saved message text. **Active**, **Archived**
+   and **All** control which conversations are included; switching scope keeps
+   the query. Workspace archival is shown separately beside each row.
+3. Select the conversation to open its **Read** / **Info** reader. It is
+   read-only. Use message navigation and **Find in complete transcript…**, then
+   **Find previous** / **Find next**, to inspect the saved transcript.
+4. Choose **Restore and resume** to continue the original conversation. If its
+   workspace is archived, the confirmation explains that the whole workspace
+   will be restored. If its name is in use, choose a replacement name.
+5. Console opens the original conversation and saved branch. If already open,
+   its existing tab and draft are reused. Type the next message in the composer.
+
+**Restore only** returns a chat to active history without switching Console.
+**Use as source** adds the selected conversation as source context; use **Resume**
+when you want to continue its own history.
+
+For several conversations, enter **Select**, choose rows on the current page,
+and use **Archive selected** or **Restore selected**. The receipt reports actual
+changes and any skipped conversations. **Undo** reverses only successful changes;
+if a conversation has changed since then, refresh and restore it explicitly.
+
+The quick session switcher searches titles, workspaces and status. Choose
+**Search all chats…** to carry that query into Library's full-text search.
+
+## Recover an archived workspace
+
+Open **Switch / Alt+W**, enable **Show archived**, and choose **Restore** or
+**Restore as** beside the workspace. The same controls are in **Settings →
+Workspaces**. Restoring does not activate the workspace; choose **Switch** when
+ready. **Restore as** resolves a name reused by another active workspace.
+
+Archiving a workspace hides the group from normal Console browsing. Its saved
+conversations remain in Library, with the workspace marked archived. This is
+separate from individually archiving a conversation.
+
+Closing a tab removes the open session. Saved history stays in Library; the
+close dialog separately lists unsaved messages, drafts, attachments and live or
+queued work that closing would discard or cancel.

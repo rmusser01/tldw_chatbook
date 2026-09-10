@@ -775,10 +775,13 @@ class LocalWorkspaceRegistryService:
             raise WorkspaceRegistryServiceError("Workspace archive failed.")
         return archived
 
-    def unarchive_workspace(self, workspace_id: str) -> WorkspaceRecord:
+    def unarchive_workspace(
+        self, workspace_id: str, *, name: str | None = None
+    ) -> WorkspaceRecord:
         """Restore an archived workspace to listings (spec §2).
 
-        Never auto-activates: the user chooses when to switch.
+        Never auto-activates: the user chooses when to switch. A replacement
+        name resolves name reuse in the same transaction as restoration.
 
         Raises:
             WorkspaceNotFound: Unknown or not-archived workspace.
@@ -788,20 +791,24 @@ class LocalWorkspaceRegistryService:
         record = self.get_workspace(safe_workspace_id)
         if record is None or not record.archived:
             raise WorkspaceNotFound(safe_workspace_id)
+        safe_name = record.name if name is None else str(name).strip()
+        if not safe_name:
+            raise WorkspaceRegistryServiceError("Workspace name cannot be blank.")
+        self._reject_duplicate_name(safe_name, exclude_workspace_id=safe_workspace_id)
         now = self._now_factory()
         try:
             with self.db.transaction() as conn:
                 conn.execute(
                     """
                     UPDATE workspace_records
-                    SET archived = 0, updated_at = ?
-                    WHERE workspace_id = ?
+                    SET archived = 0, name = ?, updated_at = ?
+                    WHERE workspace_id = ? AND archived = 1
                     """,
-                    (now, safe_workspace_id),
+                    (safe_name, now, safe_workspace_id),
                 )
         except sqlite3.IntegrityError as exc:
             raise WorkspaceRegistryServiceError(
-                f"A workspace named {record.name} already exists; rename it before unarchiving."
+                f"A workspace named {safe_name} already exists. Choose Restore as with another name."
             ) from exc
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc

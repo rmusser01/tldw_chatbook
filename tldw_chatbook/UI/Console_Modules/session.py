@@ -281,10 +281,17 @@ class ConsoleSessionCloseImpact:
     session_id: str
     transcript_message_count: int
     lifecycle: ConsoleLifecycleImpact
+    has_draft: bool = False
+    pending_attachment_count: int = 0
 
     @property
     def has_loss_risk(self) -> bool:
-        return bool(self.transcript_message_count or self.lifecycle.has_loss_risk)
+        return bool(
+            self.transcript_message_count
+            or self.lifecycle.has_loss_risk
+            or self.has_draft
+            or self.pending_attachment_count
+        )
 
 
 @dataclass(slots=True)
@@ -2558,12 +2565,22 @@ class ConsoleSessionController:
         except KeyError:
             return None
         controller = self._ensure_console_chat_controller()
+        session = next(item for item in store.sessions() if item.id == session_id)
+        draft = store.session_draft(session_id)
+        composer = self._console_composer_or_none()
+        if (
+            composer is not None
+            and self._console_visible_draft_session_id == session_id
+        ):
+            draft = composer.draft_text()
         return ConsoleSessionCloseImpact(
             session_id=session_id,
             transcript_message_count=sum(
                 message.persisted_message_id is None for message in messages
             ),
             lifecycle=controller.lifecycle_impact(session_id=session_id),
+            has_draft=bool(draft),
+            pending_attachment_count=len(session.pending_attachments),
         )
 
     async def _await_confirmation(self, dialog: Any) -> bool:
@@ -2583,8 +2600,11 @@ class ConsoleSessionController:
         dialog = ConfirmationDialog(
             title="Close Console session?",
             message=(
-                "Closing this session will discard or cancel:\n\n"
-                f"Transcript messages: {impact.transcript_message_count}\n"
+                "Saved history stays in Library. Closing removes this open tab.\n\n"
+                "Closing will discard or cancel:\n"
+                f"Temporary or unsaved messages: {impact.transcript_message_count}\n"
+                f"Unsent draft: {'yes' if impact.has_draft else 'no'}\n"
+                f"Pending attachments: {impact.pending_attachment_count}\n"
                 f"Live agent turns: {lifecycle.live_run_count}\n"
                 f"Unsent queued prompts: {lifecycle.unsent_prompt_count}\n\n"
                 "Close this session?"

@@ -225,6 +225,10 @@ class ConsoleSessionSwitcherModal(
     }
     #console-switcher-confirm-mark-seen { display: none; }
     #console-switcher-recovery { display: none; width: 19; }
+    #console-switcher-archive-actions { height: 1; min-height: 1; }
+    #console-switcher-full-search, #console-switcher-archive {
+        width: 1fr; height: 1; min-height: 1; border: none; padding: 0 1;
+    }
     #console-switcher-footer { height: 1; min-height: 1; }
     #console-switcher-hints { width: 1fr; height: 1; color: $text-muted; overflow: hidden; }
     .console-switcher-result {
@@ -275,10 +279,12 @@ class ConsoleSessionSwitcherModal(
         authority_snapshot: AuthoritySnapshot | None = None,
         activity_receipt_state: str = "ready",
         active_projection_loader: ActiveProjectionLoader | None = None,
+        on_full_search: Callable[[str, str], None] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize with an immediate Active snapshot and lazy History seam."""
         super().__init__(**kwargs)
+        self._on_full_search = on_full_search
         self._rows = rows
         self._legacy_rows = active_results is None
         self._active_results = (
@@ -381,7 +387,7 @@ class ConsoleSessionSwitcherModal(
                     if self._mode is SwitcherMode.CHARACTER_CHATS
                     else self._operational_query
                 ),
-                placeholder="Search sessions, workspaces, waiting, running, or finished…",
+                placeholder="Find titles, workspaces or status…",
                 id="console-switcher-query",
                 max_length=CONSOLE_SWITCHER_QUERY_MAX_LENGTH,
             )
@@ -398,6 +404,16 @@ class ConsoleSessionSwitcherModal(
                 yield Button("Refresh results", id="console-switcher-recovery")
                 yield Button("Mark seen", id="console-switcher-confirm-mark-seen")
                 yield Button("Next", id="console-switcher-next-page")
+            if self._on_full_search is not None:
+                with Horizontal(id="console-switcher-archive-actions"):
+                    yield Button(
+                        "Search all chats…",
+                        id="console-switcher-full-search",
+                        compact=True,
+                    )
+                    yield Button(
+                        "Archived chats", id="console-switcher-archive", compact=True
+                    )
             with Horizontal(id="console-switcher-footer"):
                 yield Static(
                     "Enter: switch · F3: History",
@@ -405,6 +421,20 @@ class ConsoleSessionSwitcherModal(
                     markup=False,
                 )
                 yield Button("Cancel", id="console-switcher-cancel")
+
+    @on(Button.Pressed, "#console-switcher-full-search, #console-switcher-archive")
+    def open_full_search(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._activation_phase in {
+            ConsoleActivationPhase.OPENING_CANCELLABLE,
+            ConsoleActivationPhase.COMMITTING,
+        }:
+            return
+        query = self.query_one("#console-switcher-query", Input).value
+        scope = "archived" if event.button.id == "console-switcher-archive" else "all"
+        self.dismiss(None)
+        if self._on_full_search is not None:
+            self.app.call_later(self._on_full_search, query, scope)
 
     async def on_mount(self) -> None:  # type: ignore[override]
         """Paint Active immediately and leave History cold.
@@ -448,23 +478,26 @@ class ConsoleSessionSwitcherModal(
             return
         viewport_height = self.app.size.height
         viewport_width = self.app.size.width
+        chrome_rows = 13 if self._on_full_search is not None else 12
         self._compact_layout = viewport_height <= 20 or viewport_width <= 52
         modal.styles.max_height = min(35, viewport_height)
         if self._compact_layout:
             modal.styles.width = min(52, viewport_width)
             modal.styles.height = viewport_height
-            results.styles.height = max(2, viewport_height - 12)
-            results.styles.max_height = max(2, viewport_height - 12)
+            results.styles.height = max(2, viewport_height - chrome_rows)
+            results.styles.max_height = max(2, viewport_height - chrome_rows)
         else:
             modal.styles.width = min(76, viewport_width)
             section_count = len(
                 {str(getattr(entry, "section", "") or "") for entry in self._entries}
             )
             result_rows = min(22, (2 * len(self._entries)) + section_count)
-            estimated_rows = 12 + result_rows
+            estimated_rows = chrome_rows + result_rows
             modal_height = min(35, viewport_height, max(14, estimated_rows))
             modal.styles.height = modal_height
-            visible_result_rows = max(2, min(22, result_rows, modal_height - 12))
+            visible_result_rows = max(
+                2, min(22, result_rows, modal_height - chrome_rows)
+            )
             results.styles.height = visible_result_rows
             results.styles.max_height = visible_result_rows
         self._update_receipt_status()
@@ -1888,7 +1921,7 @@ class ConsoleSessionSwitcherModal(
             query.placeholder = (
                 "Search local Character chats by Keyword…"
                 if self._mode is SwitcherMode.CHARACTER_CHATS
-                else ("Search sessions, workspaces, waiting, running, or finished…")
+                else ("Find titles, workspaces or status…")
             )
         except NoMatches:
             pass
@@ -1915,6 +1948,8 @@ class ConsoleSessionSwitcherModal(
             "console-switcher-mode-current",
         )
         for control in (active, history, character):
+            control.disabled = self._activation_in_flight
+        for control in self.query("#console-switcher-full-search, #console-switcher-archive"):
             control.disabled = self._activation_in_flight
 
     def _update_page_controls(

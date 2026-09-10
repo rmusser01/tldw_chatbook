@@ -791,7 +791,7 @@ def test_unarchive_collision_with_live_name_is_explained(tmp_path: Path) -> None
 
     with pytest.raises(WorkspaceRegistryServiceError) as excinfo:
         service.unarchive_workspace("ws-a")
-    assert "rename it before unarchiving" in str(excinfo.value)
+    assert "already exists" in str(excinfo.value)
 
 
 def test_v2_migration_dedupes_and_indexes_existing_duplicates(tmp_path: Path) -> None:
@@ -1068,3 +1068,21 @@ def test_mutation_generation_bumps_on_binding_and_membership_mutators(
     with pytest.raises(WorkspaceRegistryServiceError):
         service.remove_runtime_binding("binding-1")  # already gone
     assert service.mutation_generation == generation
+
+
+def test_restore_as_resolves_collision_atomically_without_activation(
+    tmp_path: Path,
+) -> None:
+    service = build_test_registry(tmp_path)
+    service.ensure_default_workspace()
+    service.create_workspace(workspace_id="old", name="Client A")
+    service.archive_workspace("old")
+    service.create_workspace(workspace_id="new", name="Client A")
+    with pytest.raises(WorkspaceRegistryServiceError):
+        service.unarchive_workspace("old", name="Client A")
+    unchanged = service.get_workspace("old")
+    assert unchanged.archived and unchanged.name == "Client A"
+    restored = service.unarchive_workspace("old", name="Client A recovered")
+    assert restored.name == "Client A recovered" and not restored.archived
+    assert not restored.active
+    assert service.get_active_workspace().workspace_id == DEFAULT_WORKSPACE_ID

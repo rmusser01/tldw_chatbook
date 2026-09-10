@@ -256,3 +256,90 @@ async def test_mounted_page_request_publishes_loading_and_suppresses_duplicate()
             row.conversation_id != "page-row"
             for row in controller._console_persisted_rows_cache[0]
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(100, 30), (160, 44)])
+async def test_switcher_shows_archived_and_restores_as_without_switching(
+    size, tmp_path
+) -> None:
+    from textual.widgets import Checkbox
+
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="ws-old", name="Client A")
+    registry.archive_workspace("ws-old")
+    registry.create_workspace(workspace_id="ws-new", name="Client A")
+    active_id = registry.get_active_workspace().workspace_id
+    host = ConsoleHarness(app)
+    async with host.run_test(size=size) as pilot:
+        await pilot.pause(0.2)
+        notices = []
+        app.notify = lambda message, **kwargs: notices.append(str(message))
+        modal = await _open_switcher(host, pilot)
+        assert "(archived)" not in host.export_screenshot()
+        modal.query_one("#console-workspace-show-archived", Checkbox).focus()
+        await pilot.press("space")
+        await pilot.pause(0.3)
+        assert "(archived)" in host.export_screenshot()
+        host.save_screenshot(
+            filename=f"workspace-switcher-{size[0]}.svg", path=str(tmp_path)
+        )
+        button = next(b for b in modal.query(Button) if str(b.label) == "Restore as…")
+        button.focus()
+        await pilot.press("enter")
+        await pilot.pause(0.2)
+        rename = host.screen
+        rename.query_one("#console-workspace-rename-input", Input).value = "Recovered A"
+        rename.query_one("#console-workspace-rename-save", Button).press()
+        await pilot.pause(0.4)
+        assert registry.get_workspace("ws-old").name == "Recovered A"
+        assert not registry.get_workspace("ws-old").archived
+        assert registry.get_active_workspace().workspace_id == active_id
+        assert any("Restored Recovered A" in message for message in notices)
+
+
+
+@pytest.mark.asyncio
+async def test_archive_receipt_undo_restores_without_activation() -> None:
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="ws-receipt", name="Receipt")
+    registry.set_active_workspace("ws-receipt")
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.2)
+        modal = await _open_switcher(host, pilot)
+        next(b for b in modal.query(Button) if str(b.label) == "Archive").press()
+        await pilot.pause(0.2)
+        host.screen.query_one("#confirm-button", Button).press()
+        await pilot.pause(0.4)
+        assert registry.get_workspace("ws-receipt").archived
+        assert "View archived" in host.export_screenshot().replace("&#160;", " ")
+        host.screen.query_one("#workspace-archive-undo", Button).press()
+        await pilot.pause(0.4)
+        assert not registry.get_workspace("ws-receipt").archived
+        assert registry.get_active_workspace().workspace_id == DEFAULT_WORKSPACE_ID
+
+
+
+@pytest.mark.asyncio
+async def test_workspace_archive_rechecks_draft_after_confirmation() -> None:
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="ws-draft", name="Draft")
+    registry.set_active_workspace("ws-draft")
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen
+        store = console._ensure_console_chat_store()
+        modal = await _open_switcher(host, pilot)
+        next(b for b in modal.query(Button) if str(b.label) == "Archive").press()
+        await pilot.pause(0.2)
+        session = next(s for s in store.sessions() if s.workspace_id == "ws-draft")
+        store.set_session_draft(session.id, "Keep this draft")
+        host.screen.query_one("#confirm-button", Button).press()
+        await pilot.pause(0.3)
+        assert not registry.get_workspace("ws-draft").archived
+        assert store.session_draft(session.id) == "Keep this draft"

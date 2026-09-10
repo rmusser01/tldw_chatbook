@@ -1430,7 +1430,7 @@ class TestLibraryConversationSeams:
             def __init__(self):
                 self.calls = []
 
-            def list_library_conversations_page(self, *, limit, offset):
+            def list_library_conversations_page(self, *, limit, offset, archive_scope):
                 self.calls.append(("list", limit, offset))
                 return {"items": [{"id": "conv-1"}], "total": 7}
 
@@ -1452,7 +1452,7 @@ class TestLibraryConversationSeams:
             def __init__(self):
                 self.calls = []
 
-            def search_library_conversations_page(self, *, query, limit, offset):
+            def search_library_conversations_page(self, *, query, limit, offset, archive_scope):
                 self.calls.append(("search", query, limit, offset))
                 return {"items": [{"id": "conv-2", "matched_fields": ["title"]}], "total": 1}
 

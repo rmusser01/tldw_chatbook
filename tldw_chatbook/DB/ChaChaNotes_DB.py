@@ -673,7 +673,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 70  # Independent local Buddy visual ownership.
+    _CURRENT_SCHEMA_VERSION = 71  # Local conversation archive lifecycle.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -8187,6 +8187,29 @@ UPDATE db_schema_version
                 f"Unexpected error migrating from V7 to V8 for '{self._SCHEMA_NAME}': {e}"
             ) from e
 
+    def _migrate_from_v70_to_v71(self, conn: sqlite3.Connection) -> None:
+        """Add local archive state without changing existing rows or sync payloads."""
+        try:
+            conn.execute(
+                "ALTER TABLE conversations ADD COLUMN archived INTEGER NOT NULL "
+                "DEFAULT 0 CHECK (archived IN (0, 1))"
+            )
+            conn.execute(
+                "CREATE INDEX idx_conversations_archive ON conversations "
+                "(archived, deleted, last_modified DESC, id DESC)"
+            )
+            cursor = conn.execute(
+                "UPDATE db_schema_version SET version = 71 "
+                "WHERE schema_name = ? AND version = 70",
+                (self._SCHEMA_NAME,),
+            )
+            if cursor.rowcount != 1:
+                raise SchemaError(
+                    "Migration V70 to V71 version update was not applied."
+                )
+        except sqlite3.Error as exc:
+            raise SchemaError("Migration from V70 to V71 failed.") from exc
+
     def _initialize_schema(self):
         """
         Initializes or migrates the database schema to `_CURRENT_SCHEMA_VERSION`.
@@ -8313,6 +8336,7 @@ UPDATE db_schema_version
                     67: self._migrate_from_v67_to_v68,
                     68: self._migrate_from_v68_to_v69,
                     69: self._migrate_from_v69_to_v70,
+                    70: self._migrate_from_v70_to_v71,
                 }
 
                 if current_db_version == 0:
@@ -10800,8 +10824,103 @@ UPDATE db_schema_version
             raise
         return None  # Should not be reached
 
+    @staticmethod
+    def _conversation_archive_scope_clause(archive_scope: str) -> str:
+        """Validate archive scope and return a fixed SQL predicate."""
+        if archive_scope not in ("active", "archived", "all"):
+            raise InputError("archive_scope must be active, archived, or all.")
+        return {"active": "archived = 0", "archived": "archived = 1", "all": "1 = 1"}[
+            archive_scope
+        ]
+
+    def get_conversation_archive_states(
+        self, conversation_ids: Iterable[str]
+    ) -> dict[str, bool]:
+        """Read local lifecycle flags in batches; omit missing/deleted records."""
+        ids = list(dict.fromkeys(conversation_ids))
+        states: dict[str, bool] = {}
+        with self.transaction() as conn:
+            for start in range(0, len(ids), 500):
+                batch = ids[start : start + 500]
+                placeholders = ",".join("?" for _ in batch)
+                rows = conn.execute(
+                    f"SELECT id, archived FROM conversations WHERE deleted = 0 AND id IN ({placeholders})",
+                    batch,
+                ).fetchall()
+                states.update({row["id"]: bool(row["archived"]) for row in rows})
+        return states
+
+    def set_conversations_archived(
+        self,
+        conversation_ids: Iterable[str],
+        *,
+        archived: bool,
+        expected_versions: Mapping[str, int],
+    ) -> dict[str, Any]:
+        """Version-check each archive/restore and return actual changes for Undo.
+
+        Args:
+            conversation_ids: Persisted local IDs; duplicates are processed once.
+            archived: Desired local lifecycle flag.
+            expected_versions: Versions observed by the caller, required per ID.
+
+        Returns:
+            ``changed`` maps changed IDs to new versions. ``failures`` maps
+            refused IDs to missing_version, stale_version, not_found,
+            already_archived, or already_active. Busy-work guards belong to
+            the caller; this operation changes persistence only.
+        """
+        if type(archived) is not bool:
+            raise InputError("archived must be a boolean.")
+        ids = list(dict.fromkeys(conversation_ids))
+        if any(not isinstance(cid, str) or not cid.strip() for cid in ids):
+            raise InputError("conversation_ids must contain non-empty strings.")
+        changed: dict[str, int] = {}
+        failures: dict[str, str] = {}
+        try:
+            # Competing writers must reserve the write transaction before any
+            # SQLite/FTS work can acquire a snapshot that cannot be upgraded.
+            with self.transaction(immediate=True) as conn:
+                for cid in ids:
+                    version = expected_versions.get(cid)
+                    if type(version) is not int or version < 1:
+                        failures[cid] = "missing_version"
+                        continue
+                    cursor = conn.execute(
+                        "UPDATE conversations SET archived = ?, version = version + 1, "
+                        "last_modified = ? WHERE id = ? AND deleted = 0 "
+                        "AND version = ? AND archived != ?",
+                        (
+                            int(archived),
+                            self._get_current_utc_timestamp_iso(),
+                            cid,
+                            version,
+                            int(archived),
+                        ),
+                    )
+                    if cursor.rowcount == 1:
+                        changed[cid] = version + 1
+                        continue
+                    row = conn.execute(
+                        "SELECT version, archived FROM conversations WHERE id = ? AND deleted = 0",
+                        (cid,),
+                    ).fetchone()
+                    if row is None:
+                        failures[cid] = "not_found"
+                    elif row["version"] != version:
+                        failures[cid] = "stale_version"
+                    else:
+                        failures[cid] = (
+                            "already_archived" if archived else "already_active"
+                        )
+        except sqlite3.Error as exc:
+            raise CharactersRAGDBError(
+                "Failed to change conversation archive state."
+            ) from exc
+        return {"changed": changed, "failures": failures}
+
     def list_all_active_conversations(
-        self, limit: int = 1000, offset: int = 0
+        self, limit: int = 1000, offset: int = 0, *, archive_scope: str = "active"
     ) -> List[Dict[str, Any]]:
         """
         Lists all active (not soft-deleted) conversations.
@@ -10826,7 +10945,8 @@ UPDATE db_schema_version
         logger.debug(
             f"Listing all active conversations: limit={limit}, offset={offset}"
         )
-        query = """
+        archive_clause = self._conversation_archive_scope_clause(archive_scope)
+        query = f"""
                 SELECT id, \
                        root_id, \
                        character_id, \
@@ -10846,7 +10966,7 @@ UPDATE db_schema_version
                        version, \
                        client_id
                 FROM conversations
-                WHERE deleted = 0
+                WHERE deleted = 0 AND {archive_clause}
                   AND scope_type = 'global'
                   AND client_id = ?
                 ORDER BY last_modified DESC, id DESC LIMIT ? \
@@ -10996,7 +11116,9 @@ UPDATE db_schema_version
                     cursor.close()
         return results
 
-    def get_conversation_by_name(self, conversation_name: str) -> List[Dict[str, Any]]:
+    def get_conversation_by_name(
+        self, conversation_name: str, *, archive_scope: str = "active"
+    ) -> List[Dict[str, Any]]:
         """
         Retrieves all conversations with the specified name.
 
@@ -11013,7 +11135,8 @@ UPDATE db_schema_version
             CharactersRAGDBError: For database errors during fetching.
         """
         start_time = time.time()
-        query = "SELECT * FROM conversations WHERE title = ? AND deleted = 0 ORDER BY created_at DESC"
+        archive_clause = self._conversation_archive_scope_clause(archive_scope)
+        query = f"SELECT * FROM conversations WHERE title = ? AND deleted = 0 AND {archive_clause} ORDER BY created_at DESC"
         try:
             cursor = self.execute_query(query, (conversation_name,))
             rows = cursor.fetchall()
@@ -11052,6 +11175,7 @@ UPDATE db_schema_version
         limit: int = 50,
         offset: int = 0,
         *,
+        archive_scope: str = "active",
         before_last_modified: str | datetime | None = None,
         before_id: str | None = None,
     ) -> list[dict[str, Any]]:
@@ -11099,10 +11223,11 @@ UPDATE db_schema_version
             raise InputError("A seek cursor cannot be combined with a nonzero offset.")
 
         start_time = time.time()
+        archive_clause = self._conversation_archive_scope_clause(archive_scope)
         if cursor_supplied:
             query = (
                 "SELECT * FROM conversations "
-                "WHERE character_id = ? AND deleted = 0 AND scope_type = 'global' "
+                f"WHERE character_id = ? AND deleted = 0 AND scope_type = 'global' AND {archive_clause} "
                 "AND (julianday(last_modified) < julianday(?) "
                 "OR (julianday(last_modified) = julianday(?) AND id < ?)) "
                 "ORDER BY julianday(last_modified) DESC, id DESC LIMIT ?"
@@ -11117,7 +11242,7 @@ UPDATE db_schema_version
         else:
             query = (
                 "SELECT * FROM conversations "
-                "WHERE character_id = ? AND deleted = 0 AND scope_type = 'global' "
+                f"WHERE character_id = ? AND deleted = 0 AND scope_type = 'global' AND {archive_clause} "
                 "ORDER BY julianday(last_modified) DESC, id DESC LIMIT ? OFFSET ?"
             )
             params = (character_id, limit, offset)
@@ -11161,6 +11286,7 @@ UPDATE db_schema_version
         query: Optional[str],
         *,
         client_id: Optional[str] = None,
+        archive_scope: str = "active",
         include_deleted: bool = False,
         deleted_only: bool = False,
         character_id: Optional[int] = None,
@@ -11175,7 +11301,7 @@ UPDATE db_schema_version
         query_workspace_ids_by_term: Optional[Sequence[Sequence[str]]] = None,
         query_include_global_scope_by_term: Optional[Sequence[bool]] = None,
     ) -> Tuple[str, List[Any]]:
-        clauses: List[str] = []
+        clauses: List[str] = [self._conversation_archive_scope_clause(archive_scope)]
         params: List[Any] = []
         if not isinstance(include_global_scope, bool):
             raise InputError("include_global_scope must be a boolean.")
@@ -11418,6 +11544,7 @@ UPDATE db_schema_version
         query: Optional[str],
         *,
         client_id: Optional[str] = None,
+        archive_scope: str = "active",
         include_deleted: bool = False,
         deleted_only: bool = False,
         character_id: Optional[int] = None,
@@ -11439,6 +11566,7 @@ UPDATE db_schema_version
         where_clause, params = self._conversation_search_filter(
             query,
             client_id=client_id,
+            archive_scope=archive_scope,
             include_deleted=include_deleted,
             deleted_only=deleted_only,
             character_id=character_id,
@@ -11483,6 +11611,7 @@ UPDATE db_schema_version
         query: Optional[str] = None,
         *,
         client_id: Optional[str] = None,
+        archive_scope: str = "active",
         include_deleted: bool = False,
         deleted_only: bool = False,
         character_id: Optional[int] = None,
@@ -11529,6 +11658,7 @@ UPDATE db_schema_version
         where_clause, params = self._conversation_search_filter(
             query,
             client_id=client_id,
+            archive_scope=archive_scope,
             include_deleted=include_deleted,
             deleted_only=deleted_only,
             character_id=character_id,
@@ -12609,7 +12739,12 @@ UPDATE db_schema_version
             raise
 
     def search_conversations_by_title(
-        self, title_query: str, character_id: Optional[int] = None, limit: int = 10
+        self,
+        title_query: str,
+        character_id: Optional[int] = None,
+        limit: int = 10,
+        *,
+        archive_scope: str = "active",
     ) -> List[Dict[str, Any]]:
         """
         Searches conversations by title using FTS.
@@ -12648,12 +12783,13 @@ UPDATE db_schema_version
         safe_search_term = build_and_match_query(title_query)
         if not safe_search_term:
             return []
-        base_query = """
+        archive_clause = self._conversation_archive_scope_clause(archive_scope).replace("archived", "c.archived")
+        base_query = f"""
                      SELECT c.*
                      FROM conversations_fts fts
                               JOIN conversations c ON fts.rowid = c.rowid
                      WHERE fts.conversations_fts MATCH ? \
-                       AND c.deleted = 0 \
+                       AND c.deleted = 0 AND {archive_clause} \
                      """
         params_list: List[Any] = [safe_search_term]
         if character_id is not None:
@@ -12677,6 +12813,8 @@ UPDATE db_schema_version
         search_query: str,
         limit: int = 10,
         fts_match_query: Optional[str] = None,
+        *,
+        archive_scope: str = "active",
     ) -> List[Dict[str, Any]]:
         """
         Searches conversations by message content using FTS.
@@ -12730,7 +12868,10 @@ UPDATE db_schema_version
             return []
 
         # Search for messages containing the query, then get their conversations
-        query = """
+        archive_clause = self._conversation_archive_scope_clause(archive_scope).replace(
+            "archived", "c.archived"
+        )
+        query = f"""
             SELECT DISTINCT c.*, 
                    COUNT(m.id) as message_count,
                    MIN(rank) as best_rank
@@ -12739,7 +12880,7 @@ UPDATE db_schema_version
             JOIN conversations c ON m.conversation_id = c.id
             WHERE fts.messages_fts MATCH ?
               AND m.deleted = 0
-              AND c.deleted = 0
+              AND c.deleted = 0 AND {archive_clause}
             GROUP BY c.id
             ORDER BY best_rank
             LIMIT ?
@@ -18053,17 +18194,22 @@ UPDATE db_schema_version
             "created_at": row["created_at"],
             "last_modified": row["last_modified"],
             "version": row["version"],
+            "archived": bool(row["archived"]),
+            "workspace_id": row["workspace_id"],
+            "scope_type": row["scope_type"],
+            "state": row["state"],
             "keywords": visible,
             "keyword_total": len(all_keywords),
             "keywords_truncated": len(all_keywords) > len(visible),
         }
 
     def list_library_conversations_page(
-        self, *, limit: int, offset: int
+        self, *, limit: int, offset: int, archive_scope: str = "active"
     ) -> Dict[str, Any]:
         """Return one page of active conversations plus the exact active total.
 
-        Active means ``deleted = 0``. Ordering is stable:
+        Active means ``deleted = 0 AND archived = 0``; ``archive_scope`` can
+        select archived or all non-deleted rows instead. Ordering is stable:
         ``last_modified DESC, rowid DESC``. The count and the page are read
         in one transaction.
 
@@ -18077,16 +18223,18 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: If a database error occurs.
         """
+        archive_clause = self._conversation_archive_scope_clause(archive_scope)
+        self._validate_conversation_page_coordinates(limit, offset)
         try:
             with self.transaction() as conn:
                 total = conn.execute(
-                    "SELECT COUNT(*) AS count FROM conversations WHERE deleted = 0"
+                    f"SELECT COUNT(*) AS count FROM conversations WHERE deleted = 0 AND {archive_clause}"
                 ).fetchone()["count"]
                 cursor = conn.execute(
-                    """
-                    SELECT id, title, created_at, last_modified, version
+                    f"""
+                    SELECT id, title, created_at, last_modified, version, archived, workspace_id, scope_type, state
                     FROM conversations
-                    WHERE deleted = 0
+                    WHERE deleted = 0 AND {archive_clause}
                     ORDER BY last_modified DESC, rowid DESC
                     LIMIT ? OFFSET ?
                     """,
@@ -18111,7 +18259,7 @@ UPDATE db_schema_version
             ) from e
 
     def search_library_conversations_page(
-        self, *, query: str, limit: int, offset: int
+        self, *, query: str, limit: int, offset: int, archive_scope: str = "active"
     ) -> Dict[str, Any]:
         """Search active conversations, returning one page plus exact total.
 
@@ -18177,19 +18325,21 @@ UPDATE db_schema_version
             f"({branch}) AS hit_{index}" for index, branch in enumerate(branches)
         )
 
+        archive_clause = self._conversation_archive_scope_clause(archive_scope)
+        self._validate_conversation_page_coordinates(limit, offset)
         try:
             with self.transaction() as conn:
                 total = conn.execute(
                     f"SELECT COUNT(*) AS count FROM conversations "
-                    f"WHERE deleted = 0 AND ({where_clause})",
+                    f"WHERE deleted = 0 AND {archive_clause} AND ({where_clause})",
                     tuple(params),
                 ).fetchone()["count"]
                 cursor = conn.execute(
                     f"""
-                    SELECT id, title, created_at, last_modified, version,
+                    SELECT id, title, created_at, last_modified, version, archived, workspace_id, scope_type, state,
                            {hit_selects}
                     FROM conversations
-                    WHERE deleted = 0 AND ({where_clause})
+                    WHERE deleted = 0 AND {archive_clause} AND ({where_clause})
                     ORDER BY (LOWER(title) = LOWER(?)) DESC,
                              last_modified DESC, rowid DESC
                     LIMIT ? OFFSET ?
@@ -18275,7 +18425,7 @@ UPDATE db_schema_version
         message_id: Optional[str] = None,
         char_start: int = 0,
     ) -> Optional[Dict[str, Any]]:
-        """Return a text-only, windowed message page for one active conversation.
+        """Return bounded text for one non-deleted conversation, including archives.
 
         Two modes:
 
@@ -19193,14 +19343,22 @@ UPDATE db_schema_version
             ) from e
 
     def get_conversations_for_keyword(
-        self, keyword_id: int, limit: int = 50, offset: int = 0
+        self,
+        keyword_id: int,
+        limit: int = 50,
+        offset: int = 0,
+        *,
+        archive_scope: str = "active",
     ) -> List[Dict[str, Any]]:
-        query = """
+        archive_clause = self._conversation_archive_scope_clause(archive_scope).replace(
+            "archived", "c.archived"
+        )
+        query = f"""
                 SELECT c.* \
                 FROM conversations c \
                          JOIN conversation_keywords ck ON c.id = ck.conversation_id
                 WHERE ck.keyword_id = ? \
-                  AND c.deleted = 0
+                  AND c.deleted = 0 AND {archive_clause}
                 ORDER BY c.last_modified DESC LIMIT ? \
                 OFFSET ? \
                 """

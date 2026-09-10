@@ -18577,14 +18577,14 @@ class SettingsScreen(BaseAppScreen):
         with Vertical(id="settings-workspaces-list"):
             for record in registry.list_workspaces(include_archived=show_archived):
                 marker = " (active)" if record.workspace_id == active_id else ""
-                archived_suffix = " [archived]" if record.archived else ""
+                archived_prefix = "(archived) " if record.archived else ""
                 folders = (
                     len(registry.list_folder_bindings(record.workspace_id))
                     if record.workspace_id != DEFAULT_WORKSPACE_ID
                     else 0
                 )
                 yield Button(
-                    f"{record.name}{marker}{archived_suffix} - {folders} folders",
+                    Text(f"{archived_prefix}{record.name}{marker} - {folders} folders"),
                     id=f"settings-workspace-row-{record.workspace_id}",
                     classes="settings-workspace-row",
                     compact=True,
@@ -18594,6 +18594,14 @@ class SettingsScreen(BaseAppScreen):
             id="settings-workspaces-result",
             classes="settings-status-row",
         )
+        if getattr(self, "_settings_workspace_archive_receipt", None) is not None:
+            with Horizontal(classes="settings-input-row"):
+                yield Button(
+                    "Undo archive", id="settings-workspace-archive-undo", compact=True
+                )
+                yield Button(
+                    "View archived", id="settings-workspace-archive-view", compact=True
+                )
         yield from self._render_workspace_card(registry, active_id)
 
     def _render_workspace_card(
@@ -18645,15 +18653,20 @@ class SettingsScreen(BaseAppScreen):
                 # controls all require an ACTIVE workspace_id underneath --
                 # offering them here let a user hit a bare-id error acting
                 # on a workspace that is currently invisible everywhere
-                # else. Unarchive first restores it to normal editing.
+                # else. Restore first returns it to normal editing.
                 yield Static(
-                    "Archived workspace. Unarchive it to rename, activate, "
-                    "or edit folders.",
+                    "Archived workspace. Restore to list it again; your active workspace stays unchanged. Edit the name below if it is already in use.",
                     id="settings-workspace-archived-note",
                     classes="settings-status-row",
                 )
+                yield Static("Restore as", classes="settings-detail-row")
+                yield Input(
+                    value=record.name,
+                    id="settings-workspace-restore-name",
+                    classes="settings-compact-input",
+                )
                 yield Button(
-                    "Unarchive", id="settings-workspace-unarchive", compact=True
+                    "Restore workspace", id="settings-workspace-unarchive", compact=True
                 )
                 return
             with Horizontal(classes="settings-input-row"):
@@ -23278,9 +23291,22 @@ class SettingsScreen(BaseAppScreen):
         if record is None:
             return
 
+        from tldw_chatbook.Chat.conversation_archive_actions import (
+            workspace_archive_refusal,
+        )
+
+        refusal = workspace_archive_refusal(self.app_instance, workspace_id)
+        if refusal:
+            self._set_settings_workspaces_result(refusal)
+            return
+
         async def _archive() -> None:
+            refusal = workspace_archive_refusal(self.app_instance, workspace_id)
+            if refusal:
+                self._set_settings_workspaces_result(refusal)
+                return
             try:
-                registry.archive_workspace(workspace_id)
+                archived = registry.archive_workspace(workspace_id)
             except WorkspaceRegistryServiceError as exc:
                 self._set_settings_workspaces_result(str(exc))
                 return
@@ -23288,7 +23314,10 @@ class SettingsScreen(BaseAppScreen):
             # list -- a selection surviving would point the card at a
             # workspace no longer in view.
             self._settings_selected_workspace_id = None
-            self._settings_workspaces_result = ""
+            self._settings_workspace_archive_receipt = archived
+            self._settings_workspaces_result = (
+                f"Archived {record.name}. Saved conversations stay in Library."
+            )
             self._refresh_settings_workspaces_pane()
 
         self.app.push_screen(
@@ -23297,12 +23326,48 @@ class SettingsScreen(BaseAppScreen):
                 message=(
                     f"Archive {record.name}? Its conversations stay saved and "
                     "remain visible in Library; the workspace disappears from "
-                    "the switcher and the Console browser."
+                    "the active switcher list and the Console browser. Recover it using Show archived."
                 ),
                 confirm_label="Archive",
                 confirm_callback=_archive,
             )
         )
+
+    @on(Button.Pressed, "#settings-workspace-archive-view")
+    def handle_workspace_archive_view(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._settings_show_archived_workspaces = True
+        receipt = getattr(self, "_settings_workspace_archive_receipt", None)
+        if receipt is not None:
+            self._settings_selected_workspace_id = receipt.workspace_id
+        self._refresh_settings_workspaces_pane()
+
+    @on(Button.Pressed, "#settings-workspace-archive-undo")
+    def handle_workspace_archive_undo(self, event: Button.Pressed) -> None:
+        event.stop()
+        receipt = getattr(self, "_settings_workspace_archive_receipt", None)
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if receipt is None or registry is None:
+            return
+        current = registry.get_workspace(receipt.workspace_id)
+        if current != receipt:
+            self._set_settings_workspaces_result(
+                "Workspace changed since archive. Use View archived to review before restoring."
+            )
+            return
+        try:
+            restored = registry.unarchive_workspace(receipt.workspace_id)
+        except WorkspaceRegistryServiceError as exc:
+            self._set_settings_workspaces_result(
+                f"{exc} Use View archived and Restore as to choose an available name."
+            )
+            return
+        self._settings_workspace_archive_receipt = None
+        self._settings_selected_workspace_id = restored.workspace_id
+        self._settings_workspaces_result = (
+            f"Restored {restored.name}. Active workspace unchanged."
+        )
+        self._refresh_settings_workspaces_pane()
 
     @on(Button.Pressed, "#settings-workspace-unarchive")
     def handle_workspace_unarchive(self, event: Button.Pressed) -> None:
@@ -23316,11 +23381,12 @@ class SettingsScreen(BaseAppScreen):
         if registry is None:
             return
         try:
-            registry.unarchive_workspace(workspace_id)
+            name = self.query_one("#settings-workspace-restore-name", Input).value
+            restored = registry.unarchive_workspace(workspace_id, name=name)
         except WorkspaceRegistryServiceError as exc:
             self._set_settings_workspaces_result(str(exc))
             return
-        self._settings_workspaces_result = ""
+        self._settings_workspaces_result = f"Restored {restored.name}. Active workspace unchanged; choose Set active to switch."
         self._refresh_settings_workspaces_pane()
 
     @on(Button.Pressed, "#settings-workspace-change-review-toggle")

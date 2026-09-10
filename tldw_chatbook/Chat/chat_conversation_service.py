@@ -267,6 +267,7 @@ def normalize_conversation_row(
         "last_modified": conversation_row.get("last_modified"),
         "created_at": conversation_row.get("created_at"),
         "deleted": conversation_row.get("deleted"),
+        "archived": bool(conversation_row.get("archived", False)),
         "message_count": int(
             message_count
             if message_count is not None
@@ -781,6 +782,24 @@ class ChatConversationService:
             )
         )
 
+    def set_conversations_archived(
+        self,
+        conversation_ids: Iterable[str],
+        *,
+        archived: bool,
+        expected_versions: Mapping[str, int],
+    ) -> dict[str, Any]:
+        """Archive/restore exact local identities with version-checked receipts."""
+        return self.db.set_conversations_archived(
+            conversation_ids, archived=archived, expected_versions=expected_versions
+        )
+
+    def get_conversation_archive_states(
+        self, conversation_ids: Iterable[str]
+    ) -> dict[str, bool]:
+        """Return persisted archive flags, omitting missing/deleted IDs."""
+        return self.db.get_conversation_archive_states(conversation_ids)
+
     def list_conversations(
         self,
         query: str | None = None,
@@ -794,6 +813,7 @@ class ChatConversationService:
         query_terms: Sequence[str] | None = None,
         query_workspace_ids_by_term: Sequence[Sequence[str]] | None = None,
         query_include_global_scope_by_term: Sequence[bool] | None = None,
+        archive_scope: str = "active",
         include_deleted: bool = False,
         deleted_only: bool = False,
         state: str | None = None,
@@ -873,6 +893,7 @@ class ChatConversationService:
             query_terms=query_terms,
             query_workspace_ids_by_term=query_workspace_ids_by_term,
             query_include_global_scope_by_term=query_include_global_scope_by_term,
+            archive_scope=archive_scope,
             include_deleted=include_deleted,
             deleted_only=deleted_only,
             state=_normalize_state(state) if state is not None else None,
@@ -902,6 +923,7 @@ class ChatConversationService:
         limit: int = 20,
         scope_type: str | None = None,
         workspace_id: str | None = None,
+        archive_scope: str = "active",
         include_deleted: bool = False,
         deleted_only: bool = False,
         state: str | None = None,
@@ -929,6 +951,7 @@ class ChatConversationService:
             query=query,
             scope_type=normalized_scope,
             workspace_id=normalized_workspace_id,
+            archive_scope=archive_scope,
             include_deleted=include_deleted,
             deleted_only=deleted_only,
             state=_normalize_state(state) if state is not None else None,
@@ -971,8 +994,7 @@ class ChatConversationService:
         if (
             len(row_ids) != len(rows)
             or any(
-                not isinstance(row_id, str) or not row_id.strip()
-                for row_id in row_ids
+                not isinstance(row_id, str) or not row_id.strip() for row_id in row_ids
             )
             or len(set(row_ids)) != len(row_ids)
         ):
@@ -1003,7 +1025,7 @@ class ChatConversationService:
     # carry ``include_rag_context: False``.
 
     def list_library_conversations(
-        self, *, limit: int = 20, offset: int = 0
+        self, *, limit: int = 20, offset: int = 0, archive_scope: str = "active"
     ) -> dict[str, Any]:
         """Page active local conversations for Library agent tools.
 
@@ -1017,7 +1039,9 @@ class ChatConversationService:
         Raises:
             CharactersRAGDBError: If the local conversation store cannot be read.
         """
-        payload = self.db.list_library_conversations_page(limit=limit, offset=offset)
+        payload = self.db.list_library_conversations_page(
+            limit=limit, offset=offset, archive_scope=archive_scope
+        )
         return {
             "items": payload["items"],
             "total": payload["total"],
@@ -1026,7 +1050,12 @@ class ChatConversationService:
         }
 
     def search_library_conversations(
-        self, *, query: str, limit: int = 20, offset: int = 0
+        self,
+        *,
+        query: str,
+        limit: int = 20,
+        offset: int = 0,
+        archive_scope: str = "active",
     ) -> dict[str, Any]:
         """Search active local conversations for Library agent tools.
 
@@ -1042,7 +1071,7 @@ class ChatConversationService:
             CharactersRAGDBError: If the local conversation store cannot be read.
         """
         payload = self.db.search_library_conversations_page(
-            query=query, limit=limit, offset=offset
+            query=query, limit=limit, offset=offset, archive_scope=archive_scope
         )
         return {
             "items": payload["items"],
@@ -1061,9 +1090,9 @@ class ChatConversationService:
         message_id: str | None = None,
         char_start: int = 0,
     ) -> dict[str, Any] | None:
-        """Read a text-only, windowed message page for one active conversation.
+        """Read bounded text for one non-deleted conversation, including archives.
 
-        Returns None when no active conversation matches ``conversation_id``.
+        Returns None when no non-deleted conversation matches ``conversation_id``.
 
         Args:
             conversation_id: Stable conversation identifier.

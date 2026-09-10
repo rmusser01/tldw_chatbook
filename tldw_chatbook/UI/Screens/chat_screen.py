@@ -5134,6 +5134,7 @@ class ChatScreen(BaseAppScreen):
                         presentation_owners.pop(id(request))
 
         modal = ConsoleSessionSwitcherModal(
+            on_full_search=self.app_instance.open_conversation_archive,
             active_results=initial_results,
             history_loader=self._workspace.load_console_session_switcher_history,
             character_loader=self._load_console_character_switcher_page,
@@ -16117,6 +16118,10 @@ class ChatScreen(BaseAppScreen):
             self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._start_resume_navigation_startup)
         else:
             self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_chat_handoff)
+            self.set_timer(
+                self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                self._consume_pending_conversation_resume,
+            )
             self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_console_roleplay_repair)
             # Mirrors the handoff timer above: the native composer is not
             # guaranteed to exist in the DOM yet at this exact point (it can
@@ -16208,6 +16213,7 @@ class ChatScreen(BaseAppScreen):
                 opened = await self._workspace.open_console_workspace_conversation(target)
         finally:
             self._resume_navigation_startup_in_progress = False
+        await self._consume_pending_conversation_resume()
         if opened is True:
             return
         store = self._ensure_console_chat_store()
@@ -16808,6 +16814,28 @@ class ChatScreen(BaseAppScreen):
         # fixing it belongs with whoever does.
         self._console_runtime().remount_pending_approval()
         self.sync_task_resume_state()
+
+    async def _consume_pending_conversation_resume(self) -> None:
+        """Consume recovery only while Console owns the visible screen."""
+        if self.app.screen is not self:
+            return
+        from ..Console_Modules.archive import consume_conversation_resume
+
+        await consume_conversation_resume(self)
+
+    @on(Button.Pressed, "#console-archive-chat")
+    async def _archive_current_saved_chat(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._session._sync_console_session_draft()
+        from ..Console_Modules.archive import archive_current_conversation
+
+        await archive_current_conversation(self)
+
+    @on(Button.Pressed, "#console-open-archive, #console-search-all")
+    def _open_saved_chat_search(self, event: Button.Pressed) -> None:
+        event.stop()
+        scope = "archived" if event.button.id == "console-open-archive" else "all"
+        self.app_instance.open_conversation_archive(archive_scope=scope)
 
     async def _consume_pending_chat_handoff(
         self,
@@ -18068,6 +18096,20 @@ class ChatScreen(BaseAppScreen):
         # restores it instead. Snapshot before submit_draft so the hook's
         # consumption is observable here.
         inflight_stash = self._console_inflight_send_stashes.get(session_id)
+        sending_session = next(
+            (item for item in controller.store.sessions() if item.id == session_id),
+            None,
+        )
+        sending_id = (
+            sending_session.persisted_conversation_id if sending_session else None
+        )
+        send_reservations = getattr(
+            self.app_instance, "_conversation_send_inflight", None
+        )
+        if send_reservations is None:
+            send_reservations = self.app_instance._conversation_send_inflight = {}
+        if sending_id:
+            send_reservations[sending_id] = send_reservations.get(sending_id, 0) + 1
         try:
             # F4 fix (Qodo wave): thread the session THIS worker was
             # dispatched for all the way into the controller -- previously
@@ -18076,6 +18118,28 @@ class ChatScreen(BaseAppScreen):
             # racing the scheduling gap between `run_worker(...)` and this
             # coroutine body actually running could submit into whichever
             # session the user switched TO instead of the dispatching one.
+            from ...Chat.conversation_archive_actions import conversation_send_refusal
+
+            session = next(
+                (item for item in controller.store.sessions() if item.id == session_id),
+                None,
+            )
+            reason = await conversation_send_refusal(
+                self.app_instance,
+                session.persisted_conversation_id if session else None,
+            )
+            if reason:
+                leaked_stash = self._console_inflight_send_stashes.pop(session_id, None)
+                if self._console_visible_draft_session_id == session_id:
+                    if leaked_stash is not None:
+                        self._restore_console_send_stash(leaked_stash)
+                elif session is not None:
+                    controller.store.set_session_draft(
+                        session_id,
+                        draft + ("\n" + session.draft if session.draft else ""),
+                    )
+                self.app_instance.notify(reason, severity="warning")
+                return
             result = await controller.run_prompt_chain(draft, session_id=session_id)
         except Exception:
             # An unexpected submit crash must not eat the keypress-cleared
@@ -18091,6 +18155,12 @@ class ChatScreen(BaseAppScreen):
             )
             return
         finally:
+            if sending_id:
+                remaining = send_reservations.get(sending_id, 1) - 1
+                if remaining:
+                    send_reservations[sending_id] = remaining
+                else:
+                    send_reservations.pop(sending_id, None)
             if task is not None:
                 self._console_submit_session_by_task.pop(task, None)
         # TASK-251: a submit may have created/updated a persisted
@@ -18342,6 +18412,15 @@ class ChatScreen(BaseAppScreen):
 
     def _console_send_blocked_reason(self) -> str:
         """Return a user-facing reason if Console send cannot safely run."""
+        conversation_id = self._current_console_conversation_id()
+        if conversation_id in getattr(
+            self.app_instance, "_conversation_archive_inflight", ()
+        ):
+            return "Archive change in progress. Your draft is preserved."
+        if getattr(self.app_instance, "_conversation_archive_states", {}).get(
+            conversation_id
+        ):
+            return "This chat is archived. Open Archived chats to restore and resume."
         pending_launch = self._consume_pending_console_launch()
         if pending_launch is not None and _source_mentions_rag(pending_launch.source):
             evidence_state = build_console_evidence_display_state(pending_launch)
@@ -22860,16 +22939,35 @@ class ChatScreen(BaseAppScreen):
                 # `open_chat_with_handoff` payloads and vLLM "Use in
                 # Console" targets staged against a warm Chat screen were
                 # never applied. Same 0.15s settle hedge as on_mount.
-                self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_chat_handoff),
-                self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_console_prompt_insert),
-                self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self.consume_pending_console_provider_intent),
-                self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_conversation_settings_return
+                self.set_timer(
+                    self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                    self._consume_pending_chat_handoff,
                 ),
-                self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self.consume_pending_vllm_console_intent),
+                self.set_timer(
+                    self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                    self._consume_pending_conversation_resume,
+                ),
+                self.set_timer(
+                    self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                    self._consume_pending_console_prompt_insert,
+                ),
+                self.set_timer(
+                    self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                    self.consume_pending_console_provider_intent,
+                ),
+                self.set_timer(
+                    self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                    self._consume_pending_conversation_settings_return,
+                ),
+                self.set_timer(
+                    self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                    self.consume_pending_vllm_console_intent,
+                ),
                 # PR3a-2 Task 4: mirrors the on_mount claim -- a completion
                 # staged while the user was on another screen is claimed on
                 # resume too.
-                self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                self.set_timer(
+                    self.CONSUMER_SETTLE_HEDGE_SECONDS,
                     self._fleet.consume_pending_console_fleet_completion,
                 ),
             ]

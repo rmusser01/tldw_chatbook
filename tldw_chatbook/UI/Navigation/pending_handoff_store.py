@@ -53,6 +53,22 @@ class ConsoleProviderIntent:
 
 
 @dataclass(frozen=True, slots=True)
+class ConsoleConversationResumeIntent:
+    """Resume one exact local conversation; never a source-context payload."""
+
+    conversation_id: str
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.conversation_id) is not str
+            or not self.conversation_id
+            or self.conversation_id != self.conversation_id.strip()
+            or len(self.conversation_id) > 256
+        ):
+            raise ValueError("Console conversation identity is invalid")
+
+
+@dataclass(frozen=True, slots=True)
 class ConsoleFirstChatIntent:
     """Secret-free request to activate one exact first-run Console session."""
 
@@ -92,6 +108,7 @@ class ConsoleFirstChatIntent:
 class HandoffChannel(StrEnum):
     """Typed single-slot channels owned by the application."""
 
+    CONSOLE_CONVERSATION_RESUME = "console_conversation_resume"
     CHAT = "chat"
     CONSOLE_LIVE_WORK = "console_live_work"
     CONSOLE_PROMPT_INSERT = "console_prompt_insert"
@@ -651,6 +668,10 @@ class PendingHandoffStore:
 
     @staticmethod
     def _copy_value(channel: HandoffChannel, value: Any) -> Any:
+        if channel is HandoffChannel.CONSOLE_CONVERSATION_RESUME:
+            if not isinstance(value, ConsoleConversationResumeIntent):
+                raise TypeError("Console resume handoff must be typed")
+            return ConsoleConversationResumeIntent(value.conversation_id)
         if channel is HandoffChannel.CHAT:
             if not isinstance(value, (ChatHandoffPayload, Mapping)):
                 raise TypeError("Chat handoff must be a payload or mapping")

@@ -118,15 +118,16 @@ async def test_create_rename_archive_unarchive_flow() -> None:
                 pilot,
                 "#settings-workspace-rename-input",
             )
-            screen.query_one(
-                "#settings-workspace-rename-input", Input
-            ).value = "Client Y"
+            rename_input = screen.query_one("#settings-workspace-rename-input", Input)
+            rename_input.value = "Client Y"
             screen.query_one("#settings-workspace-rename-apply", Button).press()
-            await _wait_for_selector(
-                screen,
-                pilot,
-                "#settings-workspace-set-active",
-            )
+            # Persistence can complete before the refreshed card remounts.
+            for _ in range(200):
+                candidates = list(screen.query("#settings-workspace-rename-input"))
+                if candidates and candidates[0] is not rename_input:
+                    break
+                await pilot.pause(0.01)
+            await _wait_for_selector(screen, pilot, "#settings-workspace-rename-input")
             assert registry.get_workspace(workspace_id).name == "Client Y"
 
             # Duplicate rename surfaces inline, not as a crash.
@@ -341,8 +342,7 @@ async def test_archived_workspace_card_offers_only_unarchive() -> None:
         assert not screen.query("#settings-workspace-folder-add")
         assert screen.query_one("#settings-workspace-unarchive", Button)
         assert (
-            "Archived workspace. Unarchive it to rename, activate, "
-            "or edit folders." in _visible_text(screen)
+            "Archived workspace. Restore to list it again; your active workspace stays unchanged." in _visible_text(screen)
         )
 
 
@@ -725,3 +725,58 @@ async def test_change_review_global_kill_disclosed_in_settings(
         assert "disabled globally" in text, text
         assert "Tracking enabled" not in text
         assert not screen.query("#settings-workspace-change-review-toggle")
+
+
+@pytest.mark.asyncio
+async def test_settings_archived_label_and_restore_name_preserve_active_workspace() -> (
+    None
+):
+    from textual.widgets import Button, Checkbox, Input
+
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="old", name="Repeated")
+    registry.archive_workspace("old")
+    registry.create_workspace(workspace_id="new", name="Repeated")
+    active_id = registry.get_active_workspace().workspace_id
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(160, 44)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-workspaces")
+        screen.query_one("#settings-workspaces-show-archived", Checkbox).value = True
+        await pilot.pause(0.3)
+        assert "(archived)" in host.export_screenshot()
+        screen.query_one("#settings-workspace-row-old", Button).press()
+        await pilot.pause(0.2)
+        screen.query_one("#settings-workspace-restore-name", Input).value = "Recovered"
+        screen.query_one("#settings-workspace-unarchive", Button).press()
+        await pilot.pause(0.3)
+        assert not registry.get_workspace("old").archived
+        assert registry.get_workspace("old").name == "Recovered"
+        assert registry.get_active_workspace().workspace_id == active_id
+        assert "Restored Recovered" in _visible_text(screen)
+
+
+
+@pytest.mark.asyncio
+async def test_settings_archive_receipt_undo_without_switching() -> None:
+    from textual.widgets import Button
+
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="receipt", name="Receipt")
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(160, 44)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-workspaces")
+        screen.query_one("#settings-workspace-row-receipt", Button).press()
+        await pilot.pause(0.2)
+        screen.query_one("#settings-workspace-archive", Button).press()
+        await pilot.pause(0.2)
+        host.screen.query_one("#confirm-button", Button).press()
+        await pilot.pause(0.3)
+        assert registry.get_workspace("receipt").archived
+        screen.query_one("#settings-workspace-archive-undo", Button).press()
+        await pilot.pause(0.3)
+        assert not registry.get_workspace("receipt").archived
+        assert registry.get_active_workspace().workspace_id == "workspace-default"
