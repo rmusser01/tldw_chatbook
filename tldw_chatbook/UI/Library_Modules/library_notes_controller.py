@@ -517,6 +517,12 @@ from textual.widgets import Button, Input, Static, TextArea
 
 from ...DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...config import get_cli_setting
+from ...Library.library_browse_location import (
+    claim_browse_directory,
+    remember_browse_directory,
+    validated_browse_directory,
+)
 from ...Library.library_export_scope import ExportScope
 from ...Library.library_note_import_state import (
     LibraryNoteImportSnapshot,
@@ -536,11 +542,13 @@ from ...Library.library_notes_session import (
     NoteSaveOutcomeKind,
 )
 from ...Library.library_notes_state import (
+    LIBRARY_NOTES_TRASH_PAGE_SIZE,
     LibraryNoteDeleteReceipt,
     LibraryNoteEditorState,
     LibraryNotesFocusIdentity,
     LibraryNotesOperationState,
     build_library_note_editor_state,
+    build_library_notes_trash_state,
     build_note_export_content,
     notes_autosave_status_text,
 )
@@ -577,6 +585,7 @@ from ...Widgets.Library.library_notes_add_from_files_canvas import (
     LibraryNotesAddFromFilesCanvas,
 )
 from ...Widgets.Library.library_notes_canvas import (
+    LIBRARY_NOTE_BACKLINK_DISPLAY_CAP,
     LibraryNotePresentationState,
     resolve_database_note_status_channels,
 )
@@ -1469,6 +1478,8 @@ class LibraryNotesController:
                 snapshot.note_id
             ),
             status_channels=status_channels,
+            backlinks=self._library_notes_backlinks,
+            backlinks_status=self._library_notes_backlinks_status,
         )
     def _library_notes_active_region(
         self,
@@ -1632,6 +1643,7 @@ class LibraryNotesController:
         "lasting_add",
         "lasting_roots",
         "import",
+        "trash",
     ]:
         """Return the semantic Notes region currently presented by the host."""
         if self._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE:
@@ -1642,6 +1654,8 @@ class LibraryNotesController:
             return self._library_notes_view
         if self._library_notes_view == "import":
             return "import"
+        if self._library_notes_view == "trash":
+            return "trash"
         if self._library_notes_view == "list":
             return "navigator"
         if self._library_note_context:
@@ -2917,6 +2931,13 @@ class LibraryNotesController:
                 ),
             )
             return
+        if self._library_notes_view == "trash":
+            # task-32144: the Trash view's own Escape, sharing the one exit
+            # its Back button uses. Placed before the editor branch because
+            # the branches below read the selected rail row and this one has
+            # no business depending on it.
+            self._leave_library_notes_trash()
+            return
         if self._library_notes_view == "editor":
             # P0 (found independently by task-3315 and at dev 4d0232358):
             # this called `_back_from_library_note_editor()`, a method that
@@ -3147,6 +3168,9 @@ class LibraryNotesController:
             "tree_deleted_folder_available": (
                 getattr(self, "_library_notes_deleted_folder_receipt", None) is not None
             ),
+            # task-32144: the same snapshot feeds the list pane's "Recently
+            # deleted (N)" row and the work pane's Trash view.
+            "trash": getattr(self, "_library_notes_trash", None),
             "title_placeholder_only": False,
             "compact": self._library_notes_compact,
             # task-32127: the toolbar merges its two action groups only when
@@ -3168,6 +3192,8 @@ class LibraryNotesController:
             values["mode"] = "lasting_add"
         elif self._library_notes_view == "lasting_roots":
             values["mode"] = "lasting_roots"
+        elif self._library_notes_view == "trash":
+            values["mode"] = "trash"
         elif self._library_notes_view == "editor":
             presentation_state = self._library_note_editor_state()
             if presentation_state is None:
@@ -3251,6 +3277,8 @@ class LibraryNotesController:
         self._library_note_delete_origin_context = False
         self._library_note_delete_origin_preview = False
         self._library_note_editor_armed = False
+        self._library_notes_backlinks = ()
+        self._library_notes_backlinks_status = "loading"
         self._apply_library_notes_stage_visibility()
         self.run_worker(
             self._refresh_library_note_detail(
@@ -3261,6 +3289,11 @@ class LibraryNotesController:
             group="library_note_detail",
         )
         self.run_worker(
+            self._load_library_note_backlinks(note_id),
+            exclusive=True,
+            group="library_note_backlinks",
+        )
+        self.run_worker(
             self._locate_library_notes_tree_target(
                 note_id=note_id,
                 focus=False,
@@ -3269,6 +3302,73 @@ class LibraryNotesController:
             exclusive=True,
             group="library_notes_locator",
         )
+    async def _load_library_note_backlinks(self, note_id: str) -> None:
+        """Fill Info's "Linked from" list for one opening note (task-32145).
+
+        Its own worker, not part of the detail load: the detail load owns
+        how fast the editor appears, and a bounded containment query over
+        note bodies has no business delaying that. The query itself runs in
+        a thread inside the service seam.
+
+        Args:
+            note_id: The note whose inbound links to list.
+        """
+        if not note_id:
+            return
+        service = getattr(self.app_instance, "notes_scope_service", None)
+        method = getattr(service, "list_note_backlinks", None)
+        rows: Any = ()
+        # A lookup that did not answer must not read as "no notes link here
+        # yet" -- no service to ask and a raising query are both `failed`.
+        status = "ready" if callable(method) else "failed"
+        if callable(method):
+            try:
+                rows = await method(
+                    scope="local_note",
+                    note_id=note_id,
+                    user_id=self._library_notes_user_id(),
+                    limit=LIBRARY_NOTE_BACKLINK_DISPLAY_CAP + 1,
+                )
+            except Exception:  # noqa: BLE001 - one Info panel, never the note
+                logger.opt(exception=True).debug(
+                    "library_note_backlinks_failed", note_id=note_id
+                )
+                rows = ()
+                status = "failed"
+        if note_id != self._selected_note_id or self._library_notes_view != "editor":
+            return
+        self._library_notes_backlinks = tuple(
+            (str(row.get("id") or ""), str(row.get("title") or ""))
+            for row in rows or ()
+            if str(row.get("id") or "")
+        )
+        self._library_notes_backlinks_status = status
+        self._apply_library_note_presentation_state()
+    @on(Button.Pressed, ".library-note-backlink")
+    async def handle_library_note_backlink(self, event: Button.Pressed) -> None:
+        """Open the note an Info "Linked from" row names (task-32145).
+
+        The same flush-then-open contract ``handle_library_notes_row`` uses,
+        minus the list-only concerns (select mode, the row marker, the tree
+        placement): a backlink row is only reachable from an open note's Info
+        panel, where none of those apply.
+
+        Args:
+            event: Press of one ``.library-note-backlink`` row button.
+        """
+        event.stop()
+        note_id = str(getattr(event.button, "note_id", "") or "")
+        if not note_id or self._library_notes_mutation_fenced():
+            return
+        note_flush = await self._flush_library_note_save()
+        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
+            return
+        self._library_notes_notice = ""
+        self._library_note_pending_blank_gc_id = None
+        self._library_note_session_blank_id = None
+        self._library_note_title_user_edited = False
+        self._begin_library_note_load(note_id)
+        _sync_library_canvas(self, "notes")
     @on(LibraryNoteWorkPane.EditorReady)
     def handle_library_note_work_pane_editor_ready(
         self, event: LibraryNoteWorkPane.EditorReady
@@ -4509,14 +4609,42 @@ class LibraryNotesController:
         async def selected(path: Path | None) -> None:
             if path is None or not path.is_dir():
                 return
+            self._persist_library_notes_sync_location(path)
             controller = self._library_notes_sync_controller
             controller.set_setup("folder", str(path))
             if not controller.snapshot.setup.display_name:
                 controller.set_setup("display_name", path.name)
 
         self.app.push_screen(
-            FileOpen(title="Choose a folder to keep synced", offer_select_folder=True),
+            FileOpen(
+                title="Choose a folder to keep synced",
+                offer_select_folder=True,
+                location=self._library_notes_sync_browse_location(),
+            ),
             selected,
+        )
+
+    def _library_notes_sync_browse_location(self) -> str:
+        """Return where "Keep a folder synced" should open (task-32174 AC#2).
+
+        Keyed independently (``library.notes_sync``) from Import once and
+        the ingest browser -- each picker context remembers its own
+        last-used directory. The stored value is persisted user state, so it
+        is validated in ``library_browse_location`` before it is used.
+        """
+        remembered = validated_browse_directory(
+            get_cli_setting("library.notes_sync", "last_directory", None)
+        )
+        return str(remembered) if remembered is not None else str(Path.home())
+
+    def _persist_library_notes_sync_location(self, selected_path: Path) -> None:
+        """Off the event loop: remember the picked sync-folder directory."""
+        generation = claim_browse_directory("library.notes_sync", "last_directory")
+        self.run_worker(
+            lambda: remember_browse_directory(
+                "library.notes_sync", "last_directory", selected_path, generation
+            ),
+            thread=True,
         )
     @on(LibraryNotesAddFromFilesCanvas.CheckRequested)
     async def handle_library_notes_lasting_check(
@@ -5175,6 +5303,134 @@ class LibraryNotesController:
                 "notes",
                 then=self._arm_library_list_entry_focus,
             )
+    @on(Button.Pressed, "#library-notes-trash-open")
+    def handle_library_notes_trash_open(self, event: Button.Pressed) -> None:
+        """Open the Trash view and reload it, so its rows are never stale.
+
+        Args:
+            event: Press event emitted by the "Recently deleted (N)" row.
+        """
+        event.stop()
+        if self._library_notes_mutation_fenced():
+            return
+        self._library_notes_view = "trash"
+        self._refresh_library_notes_trash()
+        self._apply_library_notes_footer_context()
+        if self.is_mounted:
+            _sync_library_canvas(
+                self,
+                "notes",
+                then=lambda: self._focus_library_note_control(
+                    "#library-notes-trash-restore-0"
+                ),
+            )
+
+    @on(Button.Pressed, "#library-notes-trash-back")
+    def handle_library_notes_trash_back(self, event: Button.Pressed) -> None:
+        """Leave the Trash view for the notes list it was opened from.
+
+        Args:
+            event: Press event emitted by the Trash view's Back action.
+        """
+        event.stop()
+        self._leave_library_notes_trash()
+
+    def _leave_library_notes_trash(self) -> None:
+        """The single exit from the Trash view -- Back and Escape share it."""
+        self._library_notes_view = "list"
+        self._apply_library_notes_footer_context()
+        if self.is_mounted:
+            _sync_library_canvas(
+                self,
+                "notes",
+                then=lambda: self._focus_library_note_control(
+                    "#library-notes-trash-open"
+                ),
+            )
+
+    @on(Button.Pressed, ".library-notes-trash-restore")
+    def handle_library_notes_trash_restore(self, event: Button.Pressed) -> None:
+        """Restore one row through the very seam the receipt's Undo uses.
+
+        The Trash view is a second entry to the SAME recovery, not a second
+        implementation of it: the pressed row is turned back into a
+        ``LibraryNoteDeleteReceipt`` (a tombstone's own ``version`` is what
+        ``restore_note`` expects) and handed to
+        ``_undo_library_note_delete``, so the row returns to its folder or
+        Unfiled through the tree reconciler and the rail count moves exactly
+        as an Undo makes it move.
+
+        Args:
+            event: Press event emitted by one row's Restore button.
+        """
+        event.stop()
+        if self._library_notes_mutation_fenced():
+            return
+        button = event.button
+        note_id = getattr(button, "note_id", "")
+        if not note_id:
+            return
+        receipt = LibraryNoteDeleteReceipt(
+            note_id=note_id,
+            title=getattr(button, "note_title", "") or "Untitled",
+            expected_version=int(getattr(button, "note_version", 0) or 0),
+        )
+        self._library_notes_mutation_in_flight = True
+        self.run_worker(
+            self._undo_library_note_delete(receipt),
+            exclusive=True,
+            group="library_note_mutation",
+        )
+
+    def _refresh_library_notes_trash(self) -> None:
+        """Reload the soft-deleted snapshot the row and the view both read.
+
+        Always starts a read. An in-flight one is SUPERSEDED, not a reason to
+        drop this request: `exclusive=True` on the group cancels the running
+        worker, so a read that began before a delete or restore committed can
+        neither finish into the snapshot nor swallow the refresh that mutation
+        asked for.
+        """
+        self.run_worker(
+            self._load_library_notes_trash(),
+            exclusive=True,
+            group="library_notes_trash",
+        )
+
+    async def _load_library_notes_trash(self) -> None:
+        """Read one bounded page of soft-deleted notes, degrading quietly.
+
+        A failed or absent seam leaves the previous snapshot in place rather
+        than publishing an empty one: hiding the "Recently deleted" row
+        because a read failed would claim there is nothing to recover.
+        """
+        page: Any = None
+        service = getattr(self.app_instance, "notes_scope_service", None)
+        list_deleted_notes = getattr(service, "list_deleted_notes", None)
+        if callable(list_deleted_notes):
+            try:
+                page = await self._run_library_service_call(
+                    list_deleted_notes,
+                    scope="local_note",
+                    user_id=self._library_notes_user_id(),
+                    limit=LIBRARY_NOTES_TRASH_PAGE_SIZE,
+                    isolate_in_worker=True,
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Failed to read the Library notes trash"
+                )
+                page = None
+        if not isinstance(page, Mapping):
+            return
+        total = page.get("total")
+        self._library_notes_trash = build_library_notes_trash_state(
+            page.get("items") or (),
+            total=total if isinstance(total, int) else None,
+        )
+        if self.is_mounted:
+            _sync_library_canvas(self, "notes")
+
     async def _undo_library_note_delete(
         self, receipt: LibraryNoteDeleteReceipt
     ) -> None:
@@ -5208,13 +5464,20 @@ class LibraryNotesController:
                         "This deleted note changed elsewhere — refresh and try again."
                     )
                 except Exception:
-                    logger.warning("Failed to restore a Library note")
+                    logger.opt(exception=True).warning(
+                        "Failed to restore a Library note"
+                    )
                     failure_message = "Could not restore this note."
 
             if restored_record is not None:
                 self._append_library_note_source_record(restored_record)
                 if self._library_note_delete_receipt == receipt:
                     self._library_note_delete_receipt = None
+                # task-32144: the row has left the tombstones, so the
+                # "Recently deleted (N)" count and the Trash view's own rows
+                # both have to move -- here, in the ONE seam both Undo and
+                # the Trash view's Restore commit through.
+                self._refresh_library_notes_trash()
             else:
                 self._notify_library_note_delete_warning(
                     failure_message or "Could not restore this note."

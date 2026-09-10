@@ -108,6 +108,9 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-127](127-fresh-install-private-data-root-recovery.md) | Accepted | Select durable home-level private storage for fresh installs blocked by shared default ancestors. |
 | [ADR-139](139-independent-buddy-conversation-and-workspace-bindings.md) | Accepted | Give one Buddy independent artwork ownership, explicit conversation/workspace binding, and directed interaction while retaining Console execution authority. |
 | [ADR-140](140-official-kokoro-pytorch-runtime.md) | Accepted | Use the official optional Kokoro PyTorch runtime with scoped MPS Fourier fallback and preserve existing TTS settings and lifecycle owners. |
+| [ADR-144](144-character-expression-playback.md) | Accepted | Present Dynamic or Static Console character expressions with bounded preparation and visibility-aware playback. |
+| [ADR-145](145-reviewed-petdex-import-and-pinned-https.md) | Accepted; destination partially superseded by ADR-146 | Import reviewed Petdex artwork with pinned HTTPS and preserved native notices. |
+| [ADR-146](146-independent-buddy-petdex-publication-and-character-creation.md) | Accepted | Publish reviewed Petdex artwork to an independent Buddy and create durable characters through guarded management entry points. |
 
 ## Historical Decision Material
 
