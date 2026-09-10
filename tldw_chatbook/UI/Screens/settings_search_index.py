@@ -431,7 +431,10 @@ def build_field_search_index() -> None:
                     "settings-console-background-effect-intensity",
                     "Background effect intensity",
                 ),
-                ("settings-console-background-effect-fps", "Background effect frame rate"),
+                (
+                    "settings-console-background-effect-fps",
+                    "Background effect frame rate",
+                ),
                 # Review finding 5: bare Button toggle with no labeled row --
                 # invisible to the drift guard's heuristic, indexed by hand.
                 (
@@ -446,6 +449,10 @@ def build_field_search_index() -> None:
                 ("settings-appearance-font-size", "Web font size (px)"),
                 ("settings-appearance-density", "Density"),
                 ("settings-appearance-transcript-style", "Console transcript"),
+                (
+                    "settings-appearance-character-expression-mode",
+                    "Character expressions Dynamic Static",
+                ),
                 ("settings-appearance-animations-enabled", "Animations"),
                 # TASK-23109: the setting the critique could not find by name.
                 ("settings-appearance-reduce-motion", "Reduce motion"),
