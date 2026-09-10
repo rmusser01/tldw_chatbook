@@ -327,9 +327,18 @@ async def test_a_long_analysis_scrolls_its_pane_with_the_actions_at_the_end():
     chosen contract is one consistent position -- the actions follow the
     content in every case -- with the mode wrapper owning the scroll.
 
-    What must not regress: the viewer's own chrome stays pinned (task-31237),
-    there is exactly one scrollbar, and scrolling to the end reaches the
-    actions.
+    What must not regress: the viewer's own chrome stays pinned (task-31237)
+    and scrolling to the end reaches the actions.
+
+    Note what this does NOT claim. For an analysis longer than the pane there
+    are TWO scrollers, measured here at 235x52/100x30/60x24 with 400 lines:
+    the box still fills the pane (h 41/20/14) because
+    ``VirtualizedRawContent._apply_height_cap`` caps its child at the
+    parent's content height, the inner virtualized view scrolls the text
+    (virt 400, max_scroll_y 361/382/388, own scrollbar), and this wrapper
+    carries only the 4-5 rows of overhang that the action row and its reason
+    line occupy. The wheel bubbles to the wrapper once the inner view bottoms
+    out, which is what makes the actions reachable.
     """
     host = _analysis_host("\n".join(f"Analysis line {n}." for n in range(400)))
     async with host.run_test(size=(235, 52)) as pilot:
@@ -346,9 +355,11 @@ async def test_a_long_analysis_scrolls_its_pane_with_the_actions_at_the_end():
             mode.virtual_size,
             mode.container_size,
         )
-        # ...and it is the ONLY scroller: measured live at 235x52, a box that
-        # kept its own scroll swallowed the wheel and stranded the actions
-        # below the fold with no way to scroll to them.
+        # The BOX itself adds no scroller of its own between the inner view
+        # and the wrapper (it is capped at its child's height by
+        # _apply_height_cap). This is a narrow guard, not a "one scroller"
+        # claim -- the two assertions above and the reachability check below
+        # are what carry the contract.
         assert content.virtual_size.height <= content.container_size.height, (
             content.virtual_size,
             content.container_size,

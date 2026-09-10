@@ -2585,11 +2585,24 @@ with stray left-edge border fragments), and padding 0 1 so the full
     /* task-32217 (critique #9 density rule) reverses task-31237's fill FOR
        THIS TAB ONLY -- see the sibling rule below for why. This wrapper
        takes the pane (explicit 1fr, not the unstyled default 31222 warned
-       about) and owns the ONE scrollbar: with the content box hugging its
-       text, a long analysis overflows this wrapper rather than the box, so
-       the actions ride at the end of the scrolled flow instead of being
-       clipped. Two scrollbars never appear -- the box's own is unused
-       while its height is auto. */
+       about) and, crucially, scrolls: it is the ONE thing that changed
+       reachability, because the action row now lives in its scrolled flow
+       instead of being clipped at the pane edge.
+
+       There are TWO scrollers for a long analysis, not one. Measured on a
+       400-line analysis (235x52 / 100x30 / 60x24): this wrapper carries
+       only the last 4-5 rows (virt 45 vs h 41, 25 vs 20, 19 vs 14 --
+       max_scroll_y 4/5/5), which is exactly the overhang of the action row
+       and its reason line; the analysis TEXT is scrolled by the inner
+       virtualized view (#library-media-viewer-content-text, virt 400 vs
+       h 39/18/12 -- max_scroll_y 361/382/388), which paints its own
+       scrollbar. The wheel bubbles from the inner view to this wrapper
+       once the inner view bottoms out (Textual stops the event only when
+       an inner scroll actually moved), so reading to the end of the text
+       and then continuing brings the actions on screen; focusing the
+       button scrolls it into view the same way. Verified live at 235x52:
+       wheeling reached paragraph 119, the box's bottom border, then
+       "Edit analysis / ○ Regenerate". */
     height: 1fr;
     overflow-y: auto;
 }
@@ -2608,16 +2621,24 @@ with stray left-edge border fragments), and padding 0 1 so the full
        action row one line past the pane (measured: edit.bottom 51 vs
        viewer.bottom 50). Hence the wrapper scroll above.
 
+       `auto` hugs only while the text FITS. Past that the box fills the
+       pane exactly as 1fr did (measured, 400-line analysis: h 41/20/14 at
+       235x52/100x30/60x24, i.e. the whole pane) because
+       VirtualizedRawContent._apply_height_cap caps its child at the
+       parent's content height. That is fine and intended: the short case is
+       the one 32217 is about, and in the long case the wrapper's scroll is
+       what carries the actions on screen.
+
        Read keeps 1fr -- nothing sits under its box there, so hugging would
        only re-open the stranded blank band 31237 closed (critique #3 P2). */
     height: auto;
-    /* The box must not keep its own scroll here. Measured live at 235x52
-       with a 120-line analysis: with the box still scrollable it took the
-       whole pane and swallowed the wheel, so the actions sat below the fold
-       and no amount of scrolling over the text ever reached them. Handing
-       the scroll to the wrapper above makes the box grow to its full text
-       and the ONE scrollbar carry the reader down to the actions at the
-       end, which is the contract this tab documents. */
+    /* Belt-and-braces only: this declaration is INERT today. Analysis always
+       composes the body in raw mode, and LibraryMediaContentBody._apply_mode_
+       overflow sets overflow_y="hidden" INLINE for raw, which outranks the
+       stylesheet (measured: the box's _inline_styles already has the rule).
+       It is kept so the box still cannot become a third scroller if that
+       mode mapping ever changes -- but it is NOT what fixed reachability;
+       the wrapper's `height: 1fr` + `overflow-y: auto` above is. */
     overflow-y: hidden;
 }
 
