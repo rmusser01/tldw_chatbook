@@ -12254,6 +12254,7 @@ class TldwCli(
     _SCREEN_OWNED_ROUTE_CSS: dict[str, tuple[str, ...]] = {
         TAB_SCHEDULES: ("screen_feature_scheduling.tcss",),
         TAB_EVALS: ("screen_feature_evals.tcss",),
+        TAB_WATCHLISTS_COLLECTIONS: ("screen_feature_watchlists.tcss",),
     }
 
     def _ensure_screen_owned_css(self, canonical_route: str) -> None:

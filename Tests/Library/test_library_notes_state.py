@@ -215,8 +215,39 @@ def test_editor_state_builds_fields_and_meta_line():
     assert state.keywords_text == "retro, q3"
     assert state.version == 2
     assert state.has_note is True
-    assert "Created 6d" in state.meta_line and "Modified 3m" in state.meta_line
+    # task-32142 AC#3: the relative age alone decays into an unverifiable
+    # guess -- an absolute local timestamp now sits beside it. Computed the
+    # same way the source does (astimezone()), so this holds regardless of
+    # the machine's local timezone.
+    created_absolute = (
+        datetime.fromisoformat(detail["created_at"]).astimezone().strftime("%Y-%m-%d %H:%M")
+    )
+    modified_absolute = (
+        datetime.fromisoformat(detail["last_modified"])
+        .astimezone()
+        .strftime("%Y-%m-%d %H:%M")
+    )
+    assert f"Created {created_absolute} · 6d ago" in state.meta_line
+    assert f"Modified {modified_absolute} · 3m ago" in state.meta_line
     assert "v2" in state.meta_line
+
+
+def test_editor_state_renders_just_now_not_the_grammatically_broken_now_ago():
+    """Fix round 1 Important 3, live-caught: format_console_relative_age's
+    own literal "now" (under a minute) concatenated into "now ago" --
+    "Modified 2026-09-08 23:51 · now ago". Modified equal to `now` must
+    read "just now" instead."""
+    detail = {
+        "id": "n-1",
+        "title": "Q3 retro",
+        "content": "alpha body",
+        "version": 1,
+        "last_modified": NOW.isoformat(),
+        "keywords": [],
+    }
+    state = build_library_note_editor_state(detail, now=NOW)
+    assert "just now" in state.meta_line
+    assert "now ago" not in state.meta_line
 
 
 def test_editor_state_none_detail_yields_empty():

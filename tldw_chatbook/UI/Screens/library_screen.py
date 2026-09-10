@@ -872,6 +872,31 @@ def _assign_library_reader_preferences_attribute(
     setattr(target, tail, value)
 
 
+def _library_note_editor_exit_veto_message(kind: NoteFlushOutcomeKind) -> str:
+    """The user-facing "why" and "what to do" for one flush-veto kind.
+
+    task-32133 AC#1 / fix round 1 Important 2: the mandated copy ("fix the
+    title or press Discard new note") is specific to VALIDATION_VETO; the
+    other four kinds each name their own real state and next step instead
+    of reusing that sentence verbatim. ``NoteFlushOutcome.message`` already
+    carries an accurate-but-technical string for these (meant for the
+    status line, e.g. "A destructive action is in progress."); this is the
+    same information reworded for a one-shot toast.
+    """
+    if kind is NoteFlushOutcomeKind.VALIDATION_VETO:
+        return "Can't leave yet — fix the title or press Discard new note."
+    if kind is NoteFlushOutcomeKind.FAILED:
+        return "Can't leave yet — the save failed; press Save to retry or Discard."
+    if kind is NoteFlushOutcomeKind.CONFLICTED:
+        return (
+            "Can't leave yet — this note changed elsewhere; "
+            "choose Overwrite or Reload."
+        )
+    if kind is NoteFlushOutcomeKind.BLOCKED:
+        return "Can't leave yet — another action is already in progress; wait for it to finish."
+    return "Can't leave yet — the note changed while saving; try again."  # STALE
+
+
 def _log_source_snapshot_failure(deadline_marker: str = "") -> None:
     """The one warning both source-snapshot failure branches share.
 
@@ -1112,13 +1137,16 @@ class LibraryScreen(BaseAppScreen):
     )
 
     #: task-2237 (R2): the landing state advertises its full keyboard
-    #: story -- `/` focuses the rail search box, `i`/`n` are the hub
-    #: next-action accelerators (landing-scoped, like the actions they
-    #: mirror), and F6 cycles the workbench panes.
+    #: story -- `/` focuses the rail search box, `i` is the Import
+    #: accelerator, and F6 cycles the workbench panes. task-32138: New note
+    #: now advertises ``ctrl+n`` here too -- the same copy the Notes canvas
+    #: already used -- instead of a bare `n` that worked nowhere else; the
+    #: bare `n` key still fires (kept for muscle memory and an existing
+    #: pin), it is just no longer the ADVERTISED story in two places.
     LIBRARY_LANDING_SHORTCUTS = (
         ("/", "focus search"),
         ("i", "import content"),
-        ("n", "new note"),
+        ("ctrl+n", "new note"),
         ("F6", "next pane"),
     )
 
@@ -4277,6 +4305,14 @@ class LibraryScreen(BaseAppScreen):
             "library-notes-template-"
         ):
             return "create note"
+        # task-32132 AC#2: the delete-confirmation footer used to say
+        # "enter confirm delete" unconditionally -- while Cancel held the
+        # entry focus the prompt lands on (Enter cancels there), it was
+        # advertising the OTHER button's action.
+        if widget_id == "library-note-delete-cancel":
+            return "cancel"
+        if widget_id == "library-note-delete-confirm":
+            return "delete"
         return ""
 
     @staticmethod
@@ -7579,9 +7615,13 @@ class LibraryScreen(BaseAppScreen):
                 self.LIBRARY_NOTES_CONFLICT_SHORTCUTS_COMPACT,
             )
         if self._notes_state.confirming_delete:
+            # task-32132 AC#2: name the FOCUSED button's own action -- entry
+            # focus lands on Cancel, where Enter cancels, not "confirm
+            # delete" as the old static copy claimed regardless of focus.
+            enter_label = self._library_focus_enter_label() or "cancel"
             return self._notes_footer_tier(
-                (("enter", "confirm delete"), ("esc", "cancel delete")),
-                (("enter", "confirm"), ("esc", "cancel")),
+                (("enter", enter_label), ("tab", "switch button"), ("esc", "cancel")),
+                (("enter", enter_label), ("tab", "switch"), ("esc", "cancel")),
             )
         region = self._library_notes_focus_region()
         if region == "navigator":
@@ -7944,6 +7984,27 @@ class LibraryScreen(BaseAppScreen):
             event.stop()
             event.prevent_default()
             return
+        # task-32132 AC#3: while the note-delete confirmation is open, Tab /
+        # Shift+Tab must stay inside it -- the natural focus chain used to
+        # walk straight out into the Info pane's other Danger-section
+        # buttons (Copy/Export/the Delete button itself) and beyond, into a
+        # pane grip, with the prompt still open and no visible cue why.
+        if (
+            self._notes_state.confirming_delete
+            and event.key in ("tab", "shift+tab", "backtab")
+        ):
+            try:
+                cancel_button = self.query_one("#library-note-delete-cancel", Button)
+                confirm_button = self.query_one("#library-note-delete-confirm", Button)
+            except (NoMatches, QueryError):
+                pass
+            else:
+                (
+                    confirm_button if self.focused is cancel_button else cancel_button
+                ).focus()
+                event.stop()
+                event.prevent_default()
+                return
         if isinstance(self.focused, (Input, TextArea)):
             return
         if event.key in ("up", "down") and _move_library_list_row_focus(
@@ -8034,15 +8095,20 @@ class LibraryScreen(BaseAppScreen):
             event.stop()
             event.prevent_default()
             return
-        # Landing-scoped hub accelerator (task-2237): `n` (new note) stays
-        # landing-only -- unlike `i`, it opens a CREATE editor, which would
-        # be a surprising context loss from a browse canvas.
-        if self._library_selected_row_id:
-            return
+        # `n` (new note) accelerator (task-2237), landing-scoped by design --
+        # unlike `i`, it opens a CREATE editor, which would be a surprising
+        # context loss from a browse canvas OTHER than Notes. task-32138
+        # widened it to also fire wherever ctrl+n already does (inside the
+        # Notes workflow itself): the two keys share ``library_notes_new``'s
+        # ``check_action`` gate now, rather than the landing check here and
+        # a separate ctrl+n-only Binding disagreeing about where New note
+        # works.
         if event.key != "n":
             return
+        if not self.check_action("library_notes_new", ()):
+            return
         self.run_worker(
-            self._select_library_rail_row(LIBRARY_ROW_CREATE_NOTE),
+            self.action_library_notes_new(),
             exclusive=True,
             group="library_rail_row_switch",
         )
@@ -23107,12 +23173,23 @@ class LibraryScreen(BaseAppScreen):
             )
             region = self._library_notes_focus_region()
             if action == "library_notes_new":
-                return visible_notes and region in {
-                    "navigator",
-                    "editor",
-                    "preview",
-                    "context",
-                }
+                # task-32138: ctrl+n was inert on the Library landing --
+                # only the bare `n` accelerator (a separate, manual on_key
+                # branch, task-2237) opened Create there, while ctrl+n only
+                # fired once already inside Notes. Both keys now cover both
+                # places (see the pinned reconciliation note on
+                # ``test_library_notes_bindings_are_inactive_outside_notes_
+                # workflow``): the landing has no selected row, so widen the
+                # gate the same way task-3302 widened `i`/Import to work
+                # from anywhere.
+                return bool(
+                    (
+                        visible_notes
+                        and region
+                        in {"navigator", "editor", "preview", "context"}
+                    )
+                    or not self._library_selected_row_id
+                )
             if action == "library_notes_focus_filter":
                 return bool(
                     visible_notes
@@ -27739,6 +27816,17 @@ class LibraryScreen(BaseAppScreen):
         note_id = self._notes_state.selected_note_id
         note_flush = await self._flush_library_note_save()
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
+            # task-32133 AC#1 (fix round 1): notify from THIS shared seam,
+            # not just the Escape caller -- the "‹ Notes"/"‹ Back to list"
+            # button, action_library_note_editor_back, and the wide
+            # task-return control all reach this exact veto through this
+            # one function and were discarding the False silently too.
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(
+                    _library_note_editor_exit_veto_message(note_flush.kind),
+                    severity="warning",
+                )
             return False
         navigation_generation = self._supersede_library_notes_navigation()
         placement_id = self._notes_state.tree_selected_placement_id

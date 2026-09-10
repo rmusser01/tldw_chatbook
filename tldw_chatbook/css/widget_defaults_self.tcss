@@ -1023,30 +1023,6 @@
 
 
 
-/* ===== WIDGET: MCPScreen (UI/Screens/mcp_screen.py) ===== */
-
-
-
-    /* A1: focus must not impersonate the active-mode indicator above (bold
-    underline). A keyboard-focused, non-active chip gets the standard
-    reverse-video focus affordance instead -- no underline -- so the two
-    states read as visually distinct. Kept in lockstep with the
-    higher-specificity app-bundle copy (#mcp-mode-strip .mcp-mode-chip:focus,
-    _agentic_terminal.tcss).
-    NOTE: uses the raw `$surface`/`$text`/`$text-muted` tokens (not the
-    project's `$ds-focus-bg`/`$ds-focus-fg`/`$ds-text-muted` aliases)
-    deliberately -- those aliases are only defined once the app-wide tcss
-    bundle is loaded, and several destination-shell tests mount MCPScreen
-    under a harness App that never sets CSS_PATH. `$ds-focus-bg` and
-    `$ds-focus-fg` currently alias to exactly `$surface` and `$text` (see
-    css/core/_variables.tcss), so this is not a visual compromise. */
-
-    /* Active AND focused: still reads as "active" (bold underline, same
-    background as non-focused .is-active) rather than picking up the
-    reverse-video focus treatment above. */
-
-
-
 /* ===== WIDGET: ModelCatalogConsentModal (UI/Screens/model_catalog_consent.py) ===== */
 
     ModelCatalogConsentModal {
@@ -1630,26 +1606,6 @@
 
     /* task-2723: without margins these Statics render flush against each
        other — "Last pull: —Last push: —<error text>" read as one run. */
-
-
-
-
-
-/* ===== WIDGET: TaskDetail (UI/Screens/scheduling/task_detail.py) ===== */
-
-
-
-
-
-
-
-    /* 31712 AC#5: "Recent runs:"/"Open incidents:" are stacked labels (own
-       line, value on the next), not paired with a value in a Horizontal --
-       the shared class's fixed 10-column width above wraps them instead of
-       aligning anything. */
-
-
-
 
 
 
@@ -2552,35 +2508,6 @@
         height: 1;
         border: none;
     }
-
-
-/* ===== WIDGET: LibraryMediaCanvas (Widgets/Library/library_media_canvas.py) ===== */
-
-    /* task-30043: the multi-row action grammar needs CONTENT-width buttons.
-     * Textual Button's 16-cell min-width floor alone would overflow the
-     * pane's 40-col floor (six floors = 96 cells); each row's label budget
-     * is what keeps task-28025's fit contract true. Baseline geometry lives
-     * here so harnesses without the app bundle lay out like the app. */
-
-    /* task-31224: Textual Input defaults to width 100%, which consumed the
-     * whole filter row and pushed "Clear filter" off-screen -- the one
-     * honest recovery for a filter miss was invisible (live: it never
-     * rendered at any width). Share the row instead. */
-
-
-    /* task-31270: receipts are two rows, full width; the copy wraps and the
-     * action row keeps content-width buttons so Undo/Dismiss always paint. */
-
-
-
-    /* Task 8: same trap as #library-media-filter above -- Input defaults to
-     * width 100%, which inside a row Horizontal would blow the label off
-     * to the side. */
-
-    /* Class-keyed (not `.row Static`): ancestor-scoped bare-type subjects
-     * are ratcheted by test_textual_css_fastpath (ADR-097). */
-
-
 
 
 /* ===== WIDGET: LibraryNoteFolderNameDialog (Widgets/Library/library_note_folder_dialog.py) ===== */
