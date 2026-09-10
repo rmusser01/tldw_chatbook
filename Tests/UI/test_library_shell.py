@@ -35240,7 +35240,7 @@ async def test_background_recompose_restores_focus_on_a_filtered_empty_media_lis
     ``_library_media_empty_list_fallback_target() is None`` leg. Re-pinning
     it needs a Media page that composes no enabled fallback at all -- an
     empty list with the type or sort chooser OPEN is the remaining one,
-    because the chooser replaces the toolbar row. Tracked as a rider.
+    because the chooser replaces the toolbar row. Tracked as task-32292.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
