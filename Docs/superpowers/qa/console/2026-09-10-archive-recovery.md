@@ -54,3 +54,12 @@ Review verification: the combined DB/service/scope/Library run passed 117 cases;
 The retention review also exercised existing privacy and maintenance coverage. Two raw hard-delete fixture cases stop at existing message semantic-authorization guards before reaching retention; both failures reproduced using the unchanged pre-review DB implementation. They are excluded from the focused retention acceptance run, not counted as passing. Archive-cycle, stale-Undo, late-obsolete-payload, soft-delete, restore and maintenance checks exercise the revised retention boundary.
 
 Final archive/retention acceptance run: 41 passed, 2 baseline-reproduced hard-delete cases deselected.
+
+
+### Latest dev integration
+
+Rebased onto dev at `98704acc283b2e09229c7b9b475153c372a581db`, retaining the shared Library pager and explanatory keyboard behavior from PR2569. Source reuse keeps workspace membership checks and its own disabled marker; Resume uses the loaded original identity and fresh storage reads. A stale list no longer silently vetoes an otherwise eligible Resume.
+
+The rebased core/architecture/pager run passed 86 cases. The mounted UI run passed 79 of 80; its remaining failure was the archive test observing a pushed confirmation screen before its button mounted. The test now waits for that action control. All 17 final handoff tests pass, including button/key dispatch with stale browse state and current-storage deleted-record refusal.
+
+Final compact/wide recovery rerun: 3 passed after waiting for actual actionable controls across both modal mounting and canvas recomposition. Conversation characterization: 3 passed. No unresolved failures remain in the targeted acceptance checks.

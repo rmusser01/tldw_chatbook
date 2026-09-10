@@ -20,6 +20,18 @@ async def wait_until(pilot, predicate, debug=None):
     assert predicate(), debug() if debug else "condition not reached"
 
 
+async def wait_for_button(pilot, screen, selector):
+    """Wait for the actual actionable control after asynchronous recomposition."""
+    await wait_until(
+        pilot,
+        lambda: (
+            bool(screen.query(selector))
+            and not screen.query_one(selector, Button).disabled
+        ),
+    )
+    return screen.query_one(selector, Button)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(100, 30), (160, 44)])
 async def test_real_saved_body_search_archive_restore_resume_and_undo(size, tmp_path):
@@ -101,9 +113,17 @@ async def test_real_saved_body_search_archive_restore_resume_and_undo(size, tmp_
                 screen._conversations_state.reader_state.find_matches[0].message_offset
                 == 7997
             )
-            archive = screen.query_one("#library-conversation-archive", Button)
+            archive = await wait_for_button(
+                pilot, screen, "#library-conversation-archive"
+            )
             archive.press()
-            await wait_until(pilot, lambda: host.screen is not screen)
+            await wait_until(
+                pilot,
+                lambda: (
+                    host.screen is not screen
+                    and bool(host.screen.query("#confirm-button"))
+                ),
+            )
             host.screen.query_one("#confirm-button", Button).press()
             recovery = screen._conversation_recovery()
             await wait_until(
@@ -116,11 +136,10 @@ async def test_real_saved_body_search_archive_restore_resume_and_undo(size, tmp_
             )
             assert local.get_conversation_archive_states([cid]) == {cid: True}
             assert screen._conversations_state.total == 0
-            await wait_until(
-                pilot,
-                lambda: bool(screen.query("#library-conversations-view-archived")),
+            view_archive = await wait_for_button(
+                pilot, screen, "#library-conversations-view-archived"
             )
-            screen.query_one("#library-conversations-view-archived", Button).press()
+            view_archive.press()
             await wait_until(
                 pilot,
                 lambda: (
@@ -130,9 +149,13 @@ async def test_real_saved_body_search_archive_restore_resume_and_undo(size, tmp_
             )
             await pilot.pause(0.3)
             assert screen._conversations_state.requested_query == "needle"
-            resume = screen.query_one("#library-conversation-open-console", Button)
+            resume = await wait_for_button(
+                pilot, screen, "#library-conversation-open-console"
+            )
             assert str(resume.label) == "Restore and resume"
-            source = screen.query_one("#library-conversation-use-source", Button)
+            source = await wait_for_button(
+                pilot, screen, "#library-conversation-use-source"
+            )
             assert resume in screen.focus_chain
             assert source in screen.focus_chain, (
                 source.disabled,
@@ -155,7 +178,10 @@ async def test_real_saved_body_search_archive_restore_resume_and_undo(size, tmp_
             assert local.get_conversation_archive_states([cid]) == {cid: False}
             assert screen._conversations_state.total == 0
             assert not recovery.receipt_versions
-            screen.query_one("#library-conversations-scope-all", Button).press()
+            all_scope = await wait_for_button(
+                pilot, screen, "#library-conversations-scope-all"
+            )
+            all_scope.press()
             await wait_until(
                 pilot,
                 lambda: (

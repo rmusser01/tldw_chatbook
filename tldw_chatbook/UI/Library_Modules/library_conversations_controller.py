@@ -1734,8 +1734,8 @@ class LibraryConversationsController:
         self.resume_selected_conversation()
 
     def resume_selected_conversation(self) -> None:
-        """Resume only the fully loaded original identity shared by button and key."""
-        if self._library_conversation_freshness != "fresh" or not self._library_conversation_reader_state.loaded_actions_eligible:
+        """Resume the loaded original; the typed request rereads current storage."""
+        if not self._library_conversation_reader_state.loaded_actions_eligible:
             return
         selected_id = self._library_conversation_reader_state.loaded_id
         resume = getattr(self.app_instance, "resume_console_conversation", None)

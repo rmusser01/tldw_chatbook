@@ -538,3 +538,83 @@ def test_ready_resume_key_ignores_source_workspace_membership() -> None:
     screen.action_library_conversation_open_console()
     app.resume_console_conversation.assert_called_once_with("chat-a")
     app.open_chat_with_handoff.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dispatch", ["button", "key"])
+@pytest.mark.parametrize("exists_now", [True, False])
+async def test_stale_list_resume_dispatches_original_and_checks_current_storage(
+    dispatch, exists_now, monkeypatch
+) -> None:
+    """List freshness cannot silence Resume; fresh storage still decides recovery."""
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Console_Modules.archive import request_conversation_resume
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+    from tldw_chatbook.UI.Screens.library_screen import (
+        LIBRARY_ROW_BROWSE_CONVERSATIONS,
+        LibraryScreen,
+    )
+
+    app = _build_test_app()
+    app.notify = Mock()
+    app.post_message = Mock()
+    app.resume_console_conversation = Mock()
+    app.open_chat_with_handoff = Mock()
+    registry = app.workspace_registry_service
+    registry.create_workspace(
+        workspace_id="current-workspace", name="Current workspace"
+    )
+    read_workspace = Mock(wraps=registry.get_workspace)
+    monkeypatch.setattr(registry, "get_workspace", read_workspace)
+    current_metadata = {
+        "id": "chat-a",
+        "version": 9,
+        "archived": False,
+        "workspace_id": "current-workspace",
+    }
+    read_metadata = Mock(return_value=current_metadata if exists_now else None)
+    app.local_chat_conversation_service = SimpleNamespace(
+        get_conversation_metadata=read_metadata
+    )
+    screen = LibraryScreen(app)
+    screen.restore_state({"library_selected_row_id": LIBRARY_ROW_BROWSE_CONVERSATIONS})
+    screen._conversations_state.reader_state = _loaded_reader_state()
+    screen._conversations_state.freshness = "stale"
+    assert screen._library_conversation_handoff_ready()
+    assert (
+        "c",
+        "resume conversation",
+    ) in screen._library_route_shortcuts_for_current_state()
+
+    if dispatch == "button":
+        screen.open_selected_conversation_in_console(
+            Button.Pressed(Button(id="library-conversation-open-console"))
+        )
+    else:
+        screen.action_library_conversation_open_console()
+    app.resume_console_conversation.assert_called_once_with("chat-a")
+
+    screen.use_selected_conversation_as_source(
+        Button.Pressed(Button(id="library-conversation-use-source"))
+    )
+    app.open_chat_with_handoff.assert_not_called()
+    # Follow the same typed request invoked by the application dispatcher.
+    await request_conversation_resume(
+        app, app.resume_console_conversation.call_args.args[0]
+    )
+    read_metadata.assert_called_once_with("chat-a")
+    claim = app.pending_handoffs.claim(HandoffChannel.CONSOLE_CONVERSATION_RESUME)
+    if exists_now:
+        read_workspace.assert_called_once_with("current-workspace")
+        assert claim is not None and claim.value.conversation_id == "chat-a"
+        app.post_message.assert_called_once()
+    else:
+        read_workspace.assert_not_called()
+        assert claim is None
+        app.post_message.assert_not_called()
+        app.notify.assert_called_once_with(
+            "This conversation is no longer available.", severity="warning"
+        )
