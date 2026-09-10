@@ -128,6 +128,10 @@ class LibraryNavigationController:
         screen._apply_navigation_context_state(
             context, character_admission=character_admission
         )
+        # task-32245: pre-mount there is no canvas to focus into yet, so the
+        # destination's entry focus is deferred to ``on_mount`` -- the same
+        # deferral the note/media/collections deep-link loads there use.
+        screen._pending_library_entry_focus_row = target_row_id
 
     def present_pending_repair(self) -> None:
         """Present a typed context once the retained Library owns the screen."""
