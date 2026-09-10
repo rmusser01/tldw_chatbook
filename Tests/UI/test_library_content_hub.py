@@ -208,7 +208,7 @@ async def test_library_stage_c_search_rag_promotes_query_scope_and_evidence_regi
             toggle = screen.query_one(
                 f"#library-rag-scope-toggle-{source_type}", Button
             )
-            assert str(toggle.label).startswith("✓")
+            assert str(toggle.label).startswith("☑")
             assert toggle.disabled is False
         assert not screen.query("#library-rag-scope-row-all")
         assert not screen.query("#library-rag-scope-row-workspace")
