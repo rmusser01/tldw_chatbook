@@ -1113,6 +1113,31 @@ def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
     )
 
 
+def adapter_wire_kwargs(kwargs: Mapping[str, Any]) -> dict[str, Any]:
+    """Return adapter kwargs whose message rows a provider can serialize.
+
+    The trace surface reissues recursively frozen rows (``freeze_json``) so
+    the verifier can prove that what was recorded is identically what is
+    dispatched -- and those exact objects must survive verification. Provider
+    adapters then serialize with ``json``/``requests``, neither of which can
+    encode a ``mappingproxy``: task-32273 died in request preparation on the
+    first native tool-call continuation row (the nested ``tool_calls``
+    mappings) and was reported to the user as a provider HTTP 400. Thawing
+    happens here, after verification and immediately before adapter entry.
+
+    Args:
+        kwargs: Verified adapter kwargs carrying ``messages_payload``.
+
+    Returns:
+        A copy whose ``messages_payload`` rows are mutable JSON containers.
+    """
+
+    payload = kwargs.get("messages_payload")
+    if not payload:
+        return dict(kwargs)
+    return {**kwargs, "messages_payload": [thaw_json(row) for row in payload]}
+
+
 def _flight_capture(
     run_tag: str,
     seq: int,
@@ -4905,7 +4930,7 @@ class ConsoleProviderGateway:
                         admission,
                         self._chat_api_call,
                         _console_adapter_entry_gate=adapter_entry_gate,
-                        **kwargs,
+                        **adapter_wire_kwargs(kwargs),
                     )
                 except _ProviderAdapterEntryCancelled:
                     self._commit_trace_dispatch_unknown(trace_call_boundary)

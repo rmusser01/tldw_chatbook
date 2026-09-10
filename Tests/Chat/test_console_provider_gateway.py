@@ -36,12 +36,14 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ProviderThinkingDelta,
     ProviderThinkingCaptureError,
     ProviderToolCalls,
+    adapter_wire_kwargs,
     build_llamacpp_chat_payload,
     normalize_llamacpp_base_url,
     safe_provider_error_copy,
 )
 from tldw_chatbook.Chat.console_prepared_request import (
     CONTINUATION_OWNER_KEY,
+    freeze_json,
     PreparedProviderRequest,
     build_console_request,
 )
@@ -11532,3 +11534,40 @@ def test_bounded_accumulator_drops_non_envelope_tool_metadata() -> None:
     assert isinstance(retained, ProviderToolCalls)
     assert retained.metadata is None
     assert canary not in repr(retained)
+
+
+def test_adapter_wire_kwargs_hands_providers_serializable_messages() -> None:
+    """task-32273: the trace surface reissues frozen rows; a provider adapter
+    must still receive plain JSON containers. A tool-call continuation row
+    otherwise reaches ``requests`` as a mappingproxy and dies in request
+    preparation."""
+
+    messages = [
+        {"role": "user", "content": "hi"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "find_tools", "arguments": '{"query": "x"}'},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "ok"},
+    ]
+    # Exactly what ConsoleTraceService issues, and what the surface verifier
+    # requires the dispatched kwargs to hold by identity.
+    verified_kwargs = {
+        "messages_payload": tuple(freeze_json(row) for row in messages),
+        "provider_continuations": (),
+        "model": "fake-model",
+    }
+
+    kwargs = adapter_wire_kwargs(verified_kwargs)
+
+    assert kwargs["model"] == "fake-model"
+    payload = kwargs["messages_payload"]
+    assert json.loads(json.dumps(payload)) == messages
+    assert payload[1]["tool_calls"][0]["function"]["arguments"] == '{"query": "x"}'
