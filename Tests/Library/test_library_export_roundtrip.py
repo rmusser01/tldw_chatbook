@@ -525,3 +525,83 @@ def test_library_export_success_records_a_durable_receipt_with_the_real_path(
     # The current (non-superseded) run's canvas DOM update still ran.
     assert update_calls == ["update"]
     assert notified  # the success notification also fired
+
+
+def _seed_two_selectable_media(seeded: dict) -> tuple[int, int]:
+    """Add the two media items the selected-scope tests below export."""
+    media_db = seeded["media_db"]
+    selected_a_id, _msg, _status = media_db.add_media_with_keywords(
+        url="https://example.com/canonical-a",
+        title="Canonical A",
+        media_type="video",
+        content="CANONICAL A TRANSCRIPT",
+        keywords=["a"],
+    )
+    selected_b_id, _msg, _status = media_db.add_media_with_keywords(
+        url="https://example.com/canonical-b",
+        title="Canonical B",
+        media_type="audio",
+        content="CANONICAL B TRANSCRIPT",
+        keywords=["b"],
+    )
+    return selected_a_id, selected_b_id
+
+
+def test_library_export_roundtrip_selected_media_uses_canonical_display_ids(
+    tmp_path,
+):
+    """task-32232 AC#1/#2: Media select mode carries CANONICAL display ids
+    (``local:media:<n>`` -- see ``library_media_int_backing_id``), not bare
+    integers, so the ids reaching ``resolve_export_selections`` look like
+    the ones the real toolbar builds. Before the fix the selected-scope
+    branch passed them through untouched, ``ChatbookCreator._collect_media``
+    raised ``invalid literal for int()`` inside its broad ``except``, and the
+    bundle shipped README + ``content_items: []`` while the run reported
+    success. Pin the real id shape end to end through the real service."""
+    seeded = _seed_source_dbs(tmp_path)
+    selected_a_id, selected_b_id = _seed_two_selectable_media(seeded)
+
+    # EXACTLY what `LibraryMediaRowSelection.export_scope()` produces from
+    # select mode: canonical row ids, not `str(int(...))`.
+    scope = ExportScope(
+        kind="media",
+        ids=(f"local:media:{selected_a_id}", f"local:media:{selected_b_id}"),
+    )
+    selections = resolve_export_selections(
+        scope,
+        seeded["media_db"],
+        seeded["chachanotes_db"],
+        seeded["prompts_db"],
+    )
+    payload = LibraryScreen._build_library_export_payload(
+        name="Canonical Selected Media",
+        description="",
+        selections=selections,
+        destination=str(tmp_path / "canonical_selected.zip"),
+        media_quality="thumbnail",
+    )
+    assert payload["include_media"] is True
+
+    service = LocalChatbookService(
+        seeded["db_paths"], registry_path=tmp_path / "chatbooks.json"
+    )
+    outcome = LibraryScreen._run_library_export_via_service(
+        service, payload, name="Canonical Selected Media", description=""
+    )
+
+    assert outcome["success"] is True, outcome["message"]
+    with zipfile.ZipFile(Path(outcome["path"]), "r") as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        exported_titles = {
+            item["title"]
+            for item in manifest["content_items"]
+            if item["type"] == "media"
+        }
+        assert exported_titles == {"Canonical A", "Canonical B"}
+        assert manifest["statistics"]["total_media_items"] == 2
+        media_texts = {
+            zf.read(name).decode("utf-8")
+            for name in zf.namelist()
+            if name.startswith("content/media/") and name.endswith(".txt")
+        }
+        assert media_texts == {"CANONICAL A TRANSCRIPT", "CANONICAL B TRANSCRIPT"}
