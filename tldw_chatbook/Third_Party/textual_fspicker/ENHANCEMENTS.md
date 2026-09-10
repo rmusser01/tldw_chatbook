@@ -163,6 +163,31 @@ directory listing) or the separate `EnhancedFileDialog` picker in
 `Widgets/enhanced_file_picker.py`, which composes its own, differently-`id`d
 Input/Select and is unaffected.
 
+### 7. The Filename Field Is Also the Path Field (task-32122, task-32229)
+
+Both changes extend the ONE input the bar already has, rather than adding a
+second field beside it:
+
+- **Label follows the value** (task-32122): `#file-name-label` reads
+  "Folder path:" instead of "File name:" once the typed text resolves to an
+  existing directory, and only for `FileOpen(offer_select_folder=True)`,
+  whose "Select folder" button reads that same field.
+- **Typing a rooted path moves the listing** (task-32229): on
+  `Input.Changed`, a value that is absolute or starts with `~` goes through
+  `resolve_typed_directory` (the shared validator "Select folder" already
+  used) and `DirectoryNavigation.location` follows it. Relative values are
+  deliberately ignored -- they are file names, and one of them is the
+  basename `_select_file` pre-fills on a click for "Select folder" to read.
+  The placeholder says "File name or path"; the pre-existing hidden Ctrl+L
+  path bar is untouched.
+- **Ctrl+A selects the field** (task-32229): Textual's `Input` binds
+  `home,ctrl+a` to "go to start", and a focused widget's own bindings beat
+  the screen's, so the bar's Input is now a three-line `FileNameInput`
+  subclass whose only content is `Binding("ctrl+a", "select_all")`. `Home`
+  is unchanged.
+
+`SelectDirectory` is not a `BaseFileDialog` and none of this reaches it.
+
 ## Contributing Upstream
 
 These enhancements are designed to be contributed back to the original textual-fspicker project. They:
