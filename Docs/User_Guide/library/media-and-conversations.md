@@ -449,9 +449,8 @@ still spans the pane.
 
 - **Read** — the complete stored text ("No stored content." when empty).
   Whenever the stored text itself has a real heading, table, or fenced code
-  block — whatever the item's media type, because ingestion files `.md`,
-  `.txt`, `.csv` and `.log` under one type and the type therefore proves
-  nothing — a "Rendered (selected) |
+  block — whatever the item's media type, because the stored type does not
+  tell you what the text contains — a "Rendered (selected) |
   Raw" toggle appears above the box and defaults to **Rendered** — headings,
   tables, and code render properly instead of showing literal `#`/`##`/`|`
   characters, using the same renderer as Notes' own "Preview". Press
@@ -751,10 +750,13 @@ loads immediately.
 **Escape** closes transient Reader state first — the Find bar, then the More
 strip — and then steps out of the Reader to the Items list; the footer chip
 always names the next step it will take. The chip is the authority, and it
-reads **`esc focus Items`** from the open document and **`esc focus Library`**
-from the Items row; an open type/sort strip or an armed delete or edit is
-transient too, so the chip reads **`esc close`** over any of them. The rail
-row is the last stop, where the footer drops the `esc` chip rather than
+has four readings: **`esc close`** over anything transient (the Find bar, the
+More strip, an open type/sort strip, an armed delete or edit),
+**`esc focus Items`** from the open document, **`esc focus Library`** from the
+Items row, and **`esc back`** wherever the next pane out is collapsed rather
+than on screen — the Items row at 100x30 and narrower, and the rail row in any
+layout the Reader still has a real exit from. In the three-pane layout the rail
+row is the last stop, and the footer drops the `esc` chip there rather than
 advertise a key that does nothing. No step lands in a text box.
 Stepping out of the Reader moves focus, not the document: in the three-pane
 layout (verified at 235x52) the Items pane is already showing the list, so

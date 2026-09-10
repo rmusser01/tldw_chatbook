@@ -197,8 +197,10 @@ async def test_match_scroll_moves_the_visible_scroller_after_a_mode_round_trip()
         )
         # task-32234 removed the media-type allowlist (the content sniff
         # decides alone now), so this forcing is no longer required for the
-        # sniff to apply -- it is kept so the row's "Type:" line stays the
-        # plaintext one this test's other assertions were written against.
+        # sniff to apply. It is kept because dropping it would change the
+        # metadata line ("Type: markdown (stored as plaintext)" -> "Type:
+        # video") and with it the fixture's row geometry, which this
+        # overflow-sensitive test does depend on.
         source = next(
             item for item in service.media_items if item["id"] == f"media-{backing_id}"
         )

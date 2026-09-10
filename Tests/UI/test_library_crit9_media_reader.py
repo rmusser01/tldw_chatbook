@@ -36,6 +36,7 @@ from Tests.UI.test_library_media_side_by_side import (
     _open_media_list,
 )
 from Tests.UI.test_library_media_render_fixes import (
+    _MORE_ACTION_LABELS,
     _four_action_host,
     _open_first_reader_row,
     _open_reader_more,
@@ -57,14 +58,6 @@ _GUIDE = (
     / "library"
     / "media-and-conversations.md"
 )
-
-_MORE_ACTION_LABELS = (
-    "Edit metadata",
-    "Open original",
-    "Open manager",
-    "Move to trash",
-)
-
 
 @pytest.mark.asyncio
 async def test_the_more_strip_paints_every_label_at_the_narrowest_stage():
@@ -174,6 +167,11 @@ def test_the_escape_chip_and_the_guide_quote_the_same_words():
     assert LibraryScreen._library_media_escape_label(reader_fake) == "focus Library"
     assert "`esc focus Library`" in guide
 
+    # The fourth reading: the next pane out is collapsed, not on screen.
+    shell.effective_layout.library_open = False
+    assert LibraryScreen._library_media_escape_label(reader_fake) == "back"
+    assert "`esc back`" in guide
+
     # Every transient sub-state shares the one word.
     more_fake, _calls, _shell, _find = _escape_fake(region="reader", more_open=True)
     assert LibraryScreen._library_media_escape_label(more_fake) == "close"
@@ -218,11 +216,12 @@ def test_a_delete_and_its_undo_both_stamp_the_item_modified_now(tmp_path):
         return str(row[0])
 
     seeded = stored_last_modified()
-    # The stamps carry milliseconds; one second apart is unambiguous.
-    time.sleep(1.1)
+    # ``_get_current_utc_timestamp_str`` formats %f truncated to
+    # milliseconds, so 10 ms is already 10x the resolution.
+    time.sleep(0.01)
     assert db.mark_as_trash(media_id) is True
     after_delete = stored_last_modified()
-    time.sleep(1.1)
+    time.sleep(0.01)
     assert db.restore_from_trash(media_id) is True
     after_undo = stored_last_modified()
 
