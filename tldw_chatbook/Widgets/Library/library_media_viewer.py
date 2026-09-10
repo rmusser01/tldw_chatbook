@@ -1044,6 +1044,10 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 id="library-media-viewer-analysis-text",
                 markup=False,
             )
+        # task-32217 reverses task-31237's `height: 1fr` fill for THIS tab
+        # (see the analysis-scoped rules in _agentic_terminal.tcss): the fill
+        # pinned this row to the pane floor, ~33 empty rows under a 2-line
+        # analysis; the box now hugs its text and these actions follow it.
         with Horizontal(classes="ds-toolbar"):
             yield Button(
                 "Edit analysis" if self.viewer.analysis else "Add analysis",

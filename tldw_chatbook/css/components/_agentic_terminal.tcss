@@ -3803,6 +3803,46 @@ with stray left-edge border fragments), and padding 0 1 so the full
     padding: 0 1;
 }
 
+#library-media-reader-mode-analysis {
+    /* task-32217 (critique #9 density rule) reverses task-31237's fill FOR
+       THIS TAB ONLY -- see the sibling rule below for why. This wrapper
+       takes the pane (explicit 1fr, not the unstyled default 31222 warned
+       about) and owns the ONE scrollbar: with the content box hugging its
+       text, a long analysis overflows this wrapper rather than the box, so
+       the actions ride at the end of the scrolled flow instead of being
+       clipped. Two scrollbars never appear -- the box's own is unused
+       while its height is auto. */
+    height: 1fr;
+    overflow-y: auto;
+}
+
+#library-media-reader-mode-analysis #library-media-viewer-content {
+    /* Analysis is the one tab with an action row BELOW the content box, so
+       31237's 1fr fill pinned "Edit analysis" / "Generate" to the pane
+       floor: measured at 235x52, a 2-line analysis got a 37-row box and
+       its actions at y=47 against a content top of y=9 -- 33 rows of empty
+       bordered box between the text and the controls that act on it. The
+       box now hugs its text and the actions follow it directly.
+
+       `max-height: 1fr` was tried first and does NOT work here: Textual
+       resolves fr in max-height against the whole container, not the
+       post-auto remainder, so the box took all 41 rows and pushed the
+       action row one line past the pane (measured: edit.bottom 51 vs
+       viewer.bottom 50). Hence the wrapper scroll above.
+
+       Read keeps 1fr -- nothing sits under its box there, so hugging would
+       only re-open the stranded blank band 31237 closed (critique #3 P2). */
+    height: auto;
+    /* The box must not keep its own scroll here. Measured live at 235x52
+       with a 120-line analysis: with the box still scrollable it took the
+       whole pane and swallowed the wheel, so the actions sat below the fold
+       and no amount of scrolling over the text ever reached them. Handing
+       the scroll to the wrapper above makes the box grow to its full text
+       and the ONE scrollbar carry the reader down to the actions at the
+       end, which is the contract this tab documents. */
+    overflow-y: hidden;
+}
+
 /* task-31277 (critique #4 P2, AC#4): the reading measure. The bodies used
    the whole pane, so prose ran ~150 cells at 235 columns against DESIGN.md's
    65-75. The cap is on the TEXT bodies only -- #library-media-viewer-content

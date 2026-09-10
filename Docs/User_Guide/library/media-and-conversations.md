@@ -483,6 +483,10 @@ still spans the pane.
   and server-item previews are not fetched or rendered here.
 - **Analysis** — stored analysis text you can view and edit ("Edit
   analysis", or "Add analysis" when empty; "No analysis yet." otherwise).
+  The actions sit directly beneath the analysis text, however short it is —
+  a two-line analysis puts them on the next line, not at the bottom of the
+  pane. A long analysis scrolls the tab, carrying its actions to the end of
+  the text rather than clipping them.
   Analysis is produced at import time (the "Analyze after import" option),
   written by hand here, or generated in place: **"Generate"** (**"Regenerate"**
   once one exists) calls the configured analysis provider without leaving
@@ -1106,3 +1110,12 @@ Measured against a real MediaDatabase: `mark_as_trash` ALREADY stamps `last_modi
 with the current time, so the re-dating starts at the delete and dropping
 the stamp from `restore_from_trash` alone would change nothing the user
 sees. The behaviour is documented and pinned instead.)*
+
+*Verified against fix/library-crit9-media-reader — 2026-09-10 (task-32217
+AC#2, media clause: the Analysis tab's actions now sit under the analysis
+text instead of at the pane floor. task-31237's `height: 1fr` fill is
+reversed for this tab only — Read keeps it, because nothing sits under its
+box there. Live at 235x52, 100x30 and 60x24 a 5-line analysis puts "Edit
+analysis" / "○ Regenerate" on the next line; a 120-line analysis scrolls the
+tab on one scrollbar and the wheel carries the reader to the actions at the
+end.)*

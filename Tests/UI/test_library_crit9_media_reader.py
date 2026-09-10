@@ -25,6 +25,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from textual.widgets import Button
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Library.library_media_viewer_state import _is_markdown_media
@@ -239,3 +240,131 @@ def test_a_delete_and_its_undo_both_stamp_the_item_modified_now(tmp_path):
         "returns at the top of a Newest sort" in prose
     ), "The Trash/Restore paragraph no longer states the real behaviour."
     assert "restore never rewrites the item" not in prose
+
+
+def _analysis_host(analysis_text: str) -> LibraryProductionCSSHarness:
+    """Two items whose newest version carries ``analysis_text``.
+
+    Local media detail never carries ``analysis_content`` at the top level;
+    the viewer reads the newest ``versions`` entry
+    (``library_media_viewer_state._latest_version_analysis_text``).
+    """
+    app = _build_media_test_app()
+    items = [
+        {
+            "id": f"media-{index}",
+            "title": f"Roadmap Recording {index}",
+            "type": "document",
+            "last_modified": f"2026-07-06T0{index}:00:00Z",
+            "author": "Jordan Lee",
+            "keywords": ["roadmap"],
+            "content": "Plain body text.\n",
+            "versions": [{"version_number": 1, "analysis_content": analysis_text}],
+            "version": 1,
+        }
+        for index in (1, 2)
+    ]
+    _seed_conversations(app, _two_conversations(), media=items)
+    return LibraryProductionCSSHarness(app)
+
+
+async def _open_analysis_tab(screen, pilot):
+    screen.query_one("#library-media-reader-select-analysis", Button).press()
+    for _ in range(3):
+        await pilot.pause()
+    return (
+        screen.query_one("#library-media-viewer-content"),
+        screen.query_one("#library-media-analysis-edit", Button),
+    )
+
+
+@pytest.mark.parametrize(
+    "size", [(235, 52), (100, 30), (60, 24)], ids=["wide", "mid", "narrow"]
+)
+@pytest.mark.asyncio
+async def test_analysis_actions_sit_directly_under_a_short_analysis(size):
+    """task-32217 AC#2 (media clause), reversing task-31237 for this tab.
+
+    task-31237 gave ``#library-media-viewer-content`` ``height: 1fr`` so it
+    fills the pane. On the Analysis tab that pinned "Edit analysis" /
+    "Generate" to the pane FLOOR: a six-line analysis left ~28 rows of empty
+    bordered box between the last line and the actions that act on it. The
+    density rule puts the actions back under the content they belong to.
+    """
+    host = _analysis_host("Short analysis line one.\nAnd line two.\n")
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        content, edit = await _open_analysis_tab(screen, pilot)
+        viewer = screen.query_one("#library-media-viewer")
+
+        # The box hugs its two lines instead of eating the pane. Measured
+        # before the fix at 235x52: viewer height 45, content height 37 for
+        # a 2-line analysis, "Edit analysis" at y=47 against a content top
+        # of y=9 -- 33 rows of empty bordered box in between.
+        assert content.region.height <= 8, (content.region, viewer.region)
+        assert content.region.height < viewer.region.height // 2, (
+            content.region,
+            viewer.region,
+        )
+        # ...and the actions are directly beneath it, not at the pane floor.
+        assert 0 <= edit.region.y - content.region.bottom <= 1, (
+            content.region,
+            edit.region,
+        )
+        assert edit.region.y < viewer.region.bottom - 8, (edit.region, viewer.region)
+
+
+@pytest.mark.asyncio
+async def test_a_long_analysis_scrolls_its_pane_with_the_actions_at_the_end():
+    """The long-document half: actions ride the scroll, and stay REACHABLE.
+
+    task-32217's density rule and a docked action row cannot both hold in
+    declarative Textual here: ``height: 1fr`` fills even when the text is two
+    lines (the defect), and ``max-height: 1fr`` resolves against the whole
+    container rather than the post-auto remainder, so it pushes the action
+    row past the pane (measured: edit.bottom 51 vs viewer.bottom 50). The
+    chosen contract is one consistent position -- the actions follow the
+    content in every case -- with the mode wrapper owning the scroll.
+
+    What must not regress: the viewer's own chrome stays pinned (task-31237),
+    there is exactly one scrollbar, and scrolling to the end reaches the
+    actions.
+    """
+    host = _analysis_host("\n".join(f"Analysis line {n}." for n in range(400)))
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        content, edit = await _open_analysis_tab(screen, pilot)
+        viewer = screen.query_one("#library-media-viewer")
+        mode = screen.query_one("#library-media-reader-mode-analysis")
+
+        # The actions follow the content, exactly as in the short case.
+        assert edit.region.y >= content.region.bottom, (content.region, edit.region)
+        # The mode wrapper owns the overflow...
+        assert mode.virtual_size.height > mode.container_size.height, (
+            mode.virtual_size,
+            mode.container_size,
+        )
+        # ...and it is the ONLY scroller: measured live at 235x52, a box that
+        # kept its own scroll swallowed the wheel and stranded the actions
+        # below the fold with no way to scroll to them.
+        assert content.virtual_size.height <= content.container_size.height, (
+            content.virtual_size,
+            content.container_size,
+        )
+        # ...and the viewer itself still does not scroll (task-31237 held).
+        assert viewer.virtual_size.height <= viewer.container_size.height, (
+            viewer.virtual_size,
+            viewer.container_size,
+        )
+
+        # Reachable: scrolling the pane to the end brings the actions on screen.
+        mode.scroll_end(animate=False)
+        for _ in range(3):
+            await pilot.pause()
+        edit = screen.query_one("#library-media-analysis-edit", Button)
+        assert viewer.region.contains_region(edit.region), (
+            edit.region,
+            viewer.region,
+        )
