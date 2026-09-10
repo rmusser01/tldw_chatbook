@@ -9668,14 +9668,23 @@ class LibraryScreen(BaseAppScreen):
                 # Veto every older deferred restore before its next turn can
                 # steal the control the user just chose.
                 self._notes_state.focus_intent_generation += 1
-                # PR #2571 review, finding 4: the supersede below also revokes
-                # a pending focus handoff, and skipping it for a focus=False
-                # locator would leave that handoff armed against a user who
-                # just took focus. That revoke belongs to the focus change,
-                # not to the locator, so it runs either way.
-                self._notes_state.pending_focus_identity = None
-                self._notes_state.pending_focus_waits_for_snapshot = False
-                self._notes_state.pending_focus_generation = None
+                # PR #2571 review, finding 4: the supersede below does four
+                # more things -- it clears the pending focus handoff, the
+                # navigation status and the branch navigation requests. None
+                # of those run now while a focus=False locator is in flight.
+                # The status and the in-flight branch requests are that
+                # locator's own and MUST survive. The pending focus handoff
+                # is the one that could in principle go stale, and the
+                # invariant that makes this safe is: nothing arms a pending
+                # handoff while a focus=False locator runs -- the only
+                # arming site (`_exit_library_note_editor_guarded`)
+                # supersedes navigation itself and arms with the generation
+                # that supersede returns. Hoisting the handoff clear out of
+                # the supersede was TRIED and reverted: it reds the notes
+                # focus/footer pins in `test_library_canvas_sync_defects.py`,
+                # because `_rehydrate_library_notes_after_recompose` reads
+                # that same pending identity to decide it MAY restore focus
+                # at all.
                 # task-32100: a running locator that would take focus is the
                 # one this focus change overrules. A ``focus=False`` locator
                 # only reveals a row, and the row click that started it lands
