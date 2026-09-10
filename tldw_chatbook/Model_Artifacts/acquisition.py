@@ -42,7 +42,7 @@ from .fetch import (
     stream_fetch,
 )
 from .leases import ArtifactLeaseTimeoutError, ArtifactOperationLease, LeaseMode
-from .maintenance import staged_read
+from .maintenance import acquisition_call, staged_read
 from .service import (
     ACQUISITION_SESSION_LEASE_KEY,
     NONBLOCKING_LEASE_TIMEOUT_SECONDS,
@@ -811,6 +811,7 @@ class ArtifactAcquisitionService:
             return None
         return {"Authorization": f"Bearer {token}"}
 
+    @acquisition_call
     async def preflight(
         self,
         root: ArtifactRef,
@@ -1073,6 +1074,7 @@ class ArtifactAcquisitionService:
         )
         return closure, report, gating_targets, resolved_sources
 
+    @acquisition_call
     async def provision(
         self,
         root: ArtifactRef,

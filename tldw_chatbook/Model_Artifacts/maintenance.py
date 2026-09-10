@@ -64,8 +64,11 @@ def _installed_caller(service):
     )
 
 
-def model_call(function):
+def model_call(function=None, *, execution=False):
     """Count finite original service calls, including constructors and readers."""
+
+    if function is None:
+        return partial(model_call, execution=execution)
 
     @wraps(function)
     def call(self, *args, **kwargs):
@@ -89,10 +92,40 @@ def model_call(function):
             lifetime = _Lifetime(root)
         _local.active = (self, lifetime)
         try:
+            if execution:
+                from tldw_chatbook.Backup_Recovery.activation import execution_scope
+
+                from .service import ArtifactStateError
+
+                with execution_scope(
+                    ("config", "models.artifacts"), root, retained=lifetime.lease
+                ) as allowed:
+                    if not allowed:
+                        raise ArtifactStateError("model_activation_required")
+                    return function(self, *args, **kwargs)
             return function(self, *args, **kwargs)
         finally:
             _local.active = previous
             lifetime.release()
+
+    return call
+
+
+def acquisition_call(function):
+    """Gate network acquisition through its existing native settlement boundary."""
+
+    @wraps(function)
+    async def call(self, *args, **kwargs):
+        from tldw_chatbook.Backup_Recovery.activation import execution_scope
+
+        from .acquisition import AcquisitionError
+
+        with execution_scope(
+            ("config", "models.artifacts"), self._core.locks_path.parent
+        ) as allowed:
+            if not allowed:
+                raise AcquisitionError("model_activation_required")
+            return await function(self, *args, **kwargs)
 
     return call
 
@@ -172,7 +205,10 @@ def staged_read(function):
         previous = getattr(_local, "active", None)
         previous_entry = getattr(_local, "entry", None)
         _local.active = (self._core, lifetime)
-        _local.entry = (self._core, ModelArtifactService._download_stage_for.__wrapped__)
+        _local.entry = (
+            self._core,
+            ModelArtifactService._download_stage_for.__wrapped__,
+        )
         try:
             return function(self, *args, **kwargs)
         finally:

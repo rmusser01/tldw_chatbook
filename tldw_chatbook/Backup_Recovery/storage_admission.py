@@ -492,11 +492,26 @@ class _Hold:
             self.ready.set()
 
 
+def _execution_selection_for(path):
+    root = bootstrap.default_bootstrap_root()
+    selector = effective_config_path()
+    source = lexical_path(path) if path is not None else None
+    return (
+        os.getpid(),
+        root,
+        selector,
+        selector.resolve(),
+        source,
+        source.resolve() if source is not None else None,
+    )
+
+
 class StorageLease:
     """Idempotent retirement token; successful close releases actual participation."""
 
     def __init__(self, key: tuple[int, str] | None):
         self._key = key
+        self._execution_selection = None
         self.resource_policy = None
         self.resource_path = None
         self.resource_thread = None
@@ -529,6 +544,24 @@ class StorageLease:
             if not names:
                 raise bootstrap.RecoveryRequired("execution_scope_not_admitted")
             return Path(key[1]), names
+
+    def execution_context(self, path: Path | None):
+        """Verify the exact acquisition selection before borrowing its authority.
+
+        None namespaces describe a real unqualified ordinary acquisition, never
+        native admission. Only independent ordinary-history checks may use it.
+        """
+        observed = _execution_selection_for(path)
+        with _lock:
+            if (
+                self not in _live_leases
+                or self._execution_selection is None
+                or observed != self._execution_selection
+            ):
+                raise bootstrap.RecoveryRequired("execution_selection_changed")
+            if self._key is None:
+                return observed[1], None
+            return self.execution_scope()
 
     def close(self) -> None:
         retired = None
@@ -656,6 +689,9 @@ def _acquire_storage(path: Path | None, attempt: _Acquisition) -> StorageLease:
         raise bootstrap.RecoveryRequired("forked_owner_restart_required")
     root = bootstrap.default_bootstrap_root()
     selector = effective_config_path()
+    execution_selection = _execution_selection_for(path)
+    if execution_selection[1:3] != (root, selector):
+        raise bootstrap.RecoveryRequired("execution_selection_changed")
     with _lock:
         attempt.check(path)
         if (
@@ -684,7 +720,9 @@ def _acquire_storage(path: Path | None, attempt: _Acquisition) -> StorageLease:
                 raise bootstrap.RecoveryRequired(reason)
             with _lock:
                 attempt.check(path)
-                return StorageLease(None)
+                token = StorageLease(None)
+                token._execution_selection = execution_selection
+                return token
         # Opening existing authority can wait on the registry. Retiring unrelated
         # owners must remain possible while that or a native gate is contended.
         authority = admission_authority(root)
@@ -703,6 +741,7 @@ def _acquire_storage(path: Path | None, attempt: _Acquisition) -> StorageLease:
             _holds[key] = hold
         hold.count += 1
         token = StorageLease(key)
+        token._execution_selection = execution_selection
     # Count pending acquisitions before dropping the lock: a drain must see
     # them, and another acquiring thread must share this same native hold.
     try:

@@ -2712,7 +2712,7 @@ class ModelArtifactService:
             raise ArtifactPathError("failed to inspect derived state path") from error
         return True
 
-    @model_call
+    @model_call(execution=True)
     def activate(self, root_reference: ArtifactRef) -> ArtifactRef:
         """Verify or reuse one exact dependency closure, then select its root."""
 
@@ -2790,7 +2790,7 @@ class ModelArtifactService:
         except OSError as error:
             raise ArtifactStateError("artifact activation I/O failed") from error
 
-    @model_call
+    @model_call(execution=True)
     def acquire(self, root_reference: ArtifactRef) -> LeasedArtifactHandle:
         """Acquire shared leases for one unchanged strict readiness record."""
 
@@ -2845,7 +2845,7 @@ class ModelArtifactService:
                     error.add_note(note)
             raise
 
-    @model_call
+    @model_call(execution=True)
     def acquire_installed_root(
         self,
         reference: ArtifactRef,
@@ -4063,7 +4063,7 @@ class ModelArtifactService:
                             f"staging operation lease release failed: {release_error!r}"
                         )
 
-    @model_call
+    @model_call(execution=True)
     def install(
         self,
         descriptor: ArtifactDescriptor,

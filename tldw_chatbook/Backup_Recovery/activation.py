@@ -49,6 +49,7 @@ def activation_permission(
     config_selector: Path | None = None,
     bootstrap_root: Path | None = None,
     namespaces: tuple[str, ...] | None = None,
+    ordinary_only: bool = False,
 ) -> bool:
     """Read paired history before config fingerprint fallback, without repair.
 
@@ -96,6 +97,8 @@ def activation_permission(
             witness = profile.get("activation") if profile else None
             if witness is None and association is None:
                 continue
+            if ordinary_only:
+                return False
             if association is None or witness != association["activation"]:
                 return False
             if registry is None or any(
@@ -171,29 +174,34 @@ def _source_scope_admitted(root: Path, names: tuple[str, ...], path: Path) -> bo
 
 
 @contextmanager
-def execution_scope(owners: tuple[str, ...], path: Path | None = None):
+def execution_scope(
+    owners: tuple[str, ...], path: Path | None = None, *, retained=None
+):
     """Keep actual storage admission through an accepted execution effect.
 
     A false result permits local inspection only. Callers retain this context
     inside the real worker/child, not around a cancellable offload waiter.
     """
-    from .storage_admission import acquire_storage
+    from .storage_admission import StorageLease, acquire_storage
 
     lease = None
     allowed = False
     try:
         selected = bootstrap.effective_config_path()
-        lease = acquire_storage(path)
-        root, names = lease.execution_scope()
+        lease = acquire_storage(path) if retained is None else retained
+        if type(lease) is not StorageLease:
+            raise ValueError("execution_lease_invalid")
+        root, names = lease.execution_context(path)
         allowed = (
             selected == bootstrap.effective_config_path()
-            and (path is None or _source_scope_admitted(root, names, path))
+            and (path is None or _source_scope_admitted(root, names or (), path))
             and all(
                 activation_permission(
                     owner,
                     config_selector=selected,
                     bootstrap_root=root,
                     namespaces=names,
+                    ordinary_only=names is None,
                 )
                 for owner in owners
             )
@@ -203,7 +211,7 @@ def execution_scope(owners: tuple[str, ...], path: Path | None = None):
     try:
         yield allowed
     finally:
-        if lease is not None:
+        if lease is not None and retained is None:
             lease.close()
 
 
