@@ -97,7 +97,7 @@ Using compact **Back to navigator** does not reset it.
 
 | Control | What it does |
 |---|---|
-| **Choose folder…** / **Change…** | Opens the "Choose File Notes Folder" picker; the choice is saved to `[file_notes] root` in config.toml. Type into the **Folder path** field and either press Enter (browses into it) or click **Select** (uses it right away, without needing Enter first); an invalid path shows an inline reason and leaves the picker open |
+| **Choose folder…** / **Change…** | Opens the "Choose File Notes Folder" picker; the choice is saved to `[file_notes] root` in config.toml. It opens on the linked folder when there is one, and otherwise on the folder you last picked through it (`[file_notes] browse`) — or your home directory the first time. Type into the **Folder path** field and either press Enter (browses into it) or click **Select** (uses it right away, without needing Enter first); an invalid path shows an inline reason and leaves the picker open |
 | **Details** | Opens "File Notes folder details" — a read-only status report; **Close** or **Esc** dismisses it |
 | **Cancel** (folder change) | Appears once a folder change has been running about three seconds — the same moment the line stops being a bare "Changing folder…". Press it to stop waiting: the status reads "Folder change cancelled · previous folder kept" and the folder you already had stays linked |
 | **Keep waiting** (folder change) | Appears beside **Cancel** once a folder change has been running about three seconds. Grants the change one more full 30-second budget; it can be used once per change, then the control goes away |
@@ -396,7 +396,11 @@ save shortcut. File edits save automatically.
 ## Related settings & docs
 
 - **config.toml `[file_notes]`** — `root` is the linked folder; written
-  whenever you use **Choose folder…** / **Change…**.
+  whenever you use **Choose folder…** / **Change…**. `browse` is where that
+  picker reopens while no folder is linked yet: the folder you last picked
+  through it, written on every pick, and ignored in favour of your home
+  directory if it no longer exists. **Import once** and **Keep a folder
+  synced** keep their own separate keys, see [Database notes](notes.md).
 - [Database notes](notes.md) — the Library-stored notes system, with
   templates, reviewed **Add from files…**, lasting root management, and Console
   handoff. Folder files is different — the files *are* the notes.
@@ -505,6 +509,15 @@ review round 2: **Keep waiting** also extends a change queued behind an
 earlier folder's scan, and the "finished before it could be stopped" outcome
 is painted on the folder line rather than only in the editor's status line.
 `[notes] sync_directory` must be an absolute path to be offered.)*
+
+*Verified against fix/library-notes-r-pickers — 2026-09-09 (task-32174: the
+"Choose File Notes Folder" picker opens on the current folder when one is
+linked; otherwise it now opens on the folder last picked through it,
+falling back to home when none has been picked yet — or when the stored
+value no longer names a real folder. Stored as `[file_notes] browse` in
+`config.toml`. Independent of Import once's and
+Keep a folder synced's own last-used directories, see
+[Database notes](notes.md).)*
 
 *Verified against fix/library-notes-r-file-notes — 2026-09-09 (task-32173:
 the Library rail is now shown inside Folder files before a folder is linked,

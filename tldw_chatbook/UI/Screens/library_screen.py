@@ -96,6 +96,11 @@ from ...Library.collections_capture_models import (
     CaptureIdentity,
     CapturePageRequest,
 )
+from ...Library.library_browse_location import (
+    claim_browse_directory,
+    remember_browse_directory,
+    validated_browse_directory,
+)
 from ...Library.library_content_evidence import (
     LibraryContentEvidence,
     LibraryEvidenceStatus,
@@ -25353,6 +25358,7 @@ class LibraryScreen(BaseAppScreen):
         async def import_callback(selected_path: Path | None) -> None:
             if selected_path is None:
                 return
+            self._persist_library_note_import_location(selected_path)
             try:
                 self._library_note_import_controller.accept_selected_path(
                     selected_path,
@@ -25366,8 +25372,34 @@ class LibraryScreen(BaseAppScreen):
             FileOpen(
                 title="Import once (files or one folder)",
                 offer_select_folder=True,
+                location=self._library_note_import_browse_location(),
             ),
             import_callback,
+        )
+
+    def _library_note_import_browse_location(self) -> str:
+        """Return where Import once's picker should open (task-32174 AC#1).
+
+        Mirrors ``_library_ingest_browse_location``: prefer the directory a
+        prior Import once selection came from, else home. Keyed
+        independently (``library.notes_import``) from the ingest browser and
+        from the other two Notes pickers -- each context remembers its own
+        last-used directory. The stored value is persisted user state, so it
+        is validated in ``library_browse_location`` before it is used.
+        """
+        remembered = validated_browse_directory(
+            get_cli_setting("library.notes_import", "last_directory", None)
+        )
+        return str(remembered) if remembered is not None else str(Path.home())
+
+    def _persist_library_note_import_location(self, selected_path: Path) -> None:
+        """Off the event loop: remember the picked Import once directory."""
+        generation = claim_browse_directory("library.notes_import", "last_directory")
+        self.run_worker(
+            lambda: remember_browse_directory(
+                "library.notes_import", "last_directory", selected_path, generation
+            ),
+            thread=True,
         )
 
     @on(Button.Pressed, '#library-notes-add-from-files')
