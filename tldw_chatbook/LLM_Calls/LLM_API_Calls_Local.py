@@ -555,6 +555,7 @@ def chat_with_local_llm(
     api_base_url: Optional[str] = None,
     reasoning_effort: Optional[str] = None,
     thinking_budget_tokens: Optional[int] = None,
+    chat_template_kwargs: dict[str, Any] | None = None,
 ):
     """Chat with a local llamafile/Local-LLM OpenAI-compatible server.
 
@@ -580,6 +581,7 @@ def chat_with_local_llm(
             is the fallback.
         provider_name: Provider key for dynamic config lookup; also
             drives ADR-066 thinking wire composition.
+        chat_template_kwargs: Reviewed template options selected by the caller.
 
     Returns:
         The assistant reply text, or a streaming generator of chunks.
@@ -682,6 +684,7 @@ def chat_with_local_llm(
         reasoning_effort=reasoning_effort,
         thinking_budget_tokens=thinking_budget_tokens,
         thinking_wire_key="local-llm",
+        chat_template_kwargs=chat_template_kwargs,
         # Same pre-existing dict-.capitalize() crash as chat_with_custom_openai.
         provider_name="Local-LLM",
         timeout=timeout,
@@ -755,6 +758,11 @@ def chat_with_llama(
             is the fallback.
         provider_name: Provider key for dynamic config lookup; also
             drives ADR-066 thinking wire composition.
+        chat_template_kwargs: Reviewed template options selected by the caller.
+        api_key_resolved: Whether the caller made the final credential decision,
+            including an explicitly keyless endpoint.
+        tools: OpenAI-format native tool definitions, when the target supports them.
+        tool_choice: Native tool selection policy for this request.
 
     Returns:
         The assistant reply text, or a streaming generator of chunks.
@@ -1492,6 +1500,11 @@ def chat_with_vllm(
             is the fallback.
         provider_name: Provider key for dynamic config lookup; also
             drives ADR-066 thinking wire composition.
+        chat_template_kwargs: Reviewed template options selected by the caller.
+        api_key_resolved: Whether the caller made the final credential decision,
+            including an explicitly keyless endpoint.
+        tools: OpenAI-format native tool definitions, when the target supports them.
+        tool_choice: Native tool selection policy for this request.
 
     Returns:
         The assistant reply text, or a streaming generator of chunks.

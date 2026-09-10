@@ -15,6 +15,7 @@ from contextvars import ContextVar, copy_context
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from time import monotonic
 from types import GeneratorType, MappingProxyType
 from typing import Any, AsyncIterator, Callable, Literal, TypeVar, cast
 from urllib.parse import urlparse, urlunparse
@@ -159,6 +160,9 @@ from tldw_chatbook.Utils.tls_trust import build_httpx_async_client
 
 DEFAULT_LLAMACPP_BASE_URL = "http://127.0.0.1:9099"
 PROBE_TIMEOUT_SECONDS = 5.0
+REASONING_METADATA_TTL_SECONDS = 60.0
+REASONING_METADATA_RETRY_SECONDS = 15.0
+REASONING_METADATA_CACHE_SIZE = 32
 """Per-request timeout for readiness probes (``/health``, ``/v1/models``)."""
 GENERATION_CONNECT_TIMEOUT_SECONDS = 10.0
 """Connect timeout for the owned HTTP client used for generation calls."""
@@ -2369,6 +2373,8 @@ class ConsoleProviderGateway:
         self._normalized_writes_enabled = normalized_writes_enabled or (lambda: True)
         self._trace_compatibility_metrics = trace_compatibility_metrics
         self._adapter_admission_issuer = object()
+        self._reasoning_metadata_cache: dict[str, tuple[float, str | None, bool]] = {}
+        self.reasoning_policies: dict[str, ReasoningReplayPolicy] = {}
 
     @property
     def supports_durable_capture(self) -> bool:
@@ -3224,9 +3230,13 @@ class ConsoleProviderGateway:
             endpoint=resolution.base_url,
             model=resolution.model or "",
         )
-        template = None
-        native_tools = False
-        if resolution.ready:
+        key = reasoning_override_key(
+            resolution.provider, resolution.base_url, resolution.model or ""
+        )
+        cached = self._reasoning_metadata_cache.get(key)
+        now = monotonic()
+        template, native_tools = cached[1:] if cached else (None, False)
+        if resolution.ready and (cached is None or now >= cached[0]):
             from .local_reasoning import _LOCAL_FAMILIES
 
             family = _LOCAL_FAMILIES.get(resolution.provider.lower())
@@ -3248,13 +3258,16 @@ class ConsoleProviderGateway:
                         async for chunk in response.aiter_bytes():
                             data.extend(chunk)
                             if len(data) > 262144:
-                                return {}
+                                raise ValueError(
+                                    "Template metadata exceeds size limit."
+                                )
                         payload = json.loads(data)
                         return payload if isinstance(payload, dict) else {}
 
                 try:
                     metadata = await asyncio.wait_for(read_template(), timeout=1.0)
-                    template = metadata.get("chat_template")
+                    raw_template = metadata.get("chat_template")
+                    template = raw_template if isinstance(raw_template, str) else None
                     caps = metadata.get("chat_template_caps", {})
                     native_tools = (
                         family == "llama_cpp"
@@ -3262,24 +3275,30 @@ class ConsoleProviderGateway:
                         and caps.get("supports_tool_calls") is True
                         and caps.get("supports_tools") is True
                     )
+                    ttl = REASONING_METADATA_TTL_SECONDS
                 except (httpx.HTTPError, ValueError, TimeoutError):
-                    pass
-        key = reasoning_override_key(
-            resolution.provider, resolution.base_url, resolution.model or ""
-        )
+                    # Back off missing routes and keep the last successful facts.
+                    # Preferences are reapplied below, never cached with metadata.
+                    ttl = REASONING_METADATA_RETRY_SECONDS
+                self._reasoning_metadata_cache[key] = (
+                    monotonic() + ttl,
+                    template,
+                    native_tools,
+                )
+                while (
+                    len(self._reasoning_metadata_cache) > REASONING_METADATA_CACHE_SIZE
+                ):
+                    self._reasoning_metadata_cache.pop(
+                        next(iter(self._reasoning_metadata_cache))
+                    )
         overrides = console.get("reasoning_native_tool_overrides", {})
         if isinstance(overrides, Mapping) and overrides.get(key) is True:
             native_tools = True
         policy = resolve_reasoning_policy(
             mode, template=template, native_tools=native_tools
         )
-        if not hasattr(self, "reasoning_policies"):
-            self.reasoning_policies = {}
-        key = reasoning_override_key(
-            resolution.provider, resolution.base_url, resolution.model or ""
-        )
         self.reasoning_policies[key] = policy
-        while len(self.reasoning_policies) > 32:
+        while len(self.reasoning_policies) > REASONING_METADATA_CACHE_SIZE:
             self.reasoning_policies.pop(next(iter(self.reasoning_policies)))
         return replace(
             resolution,

@@ -62,7 +62,19 @@ _REVIEWED_TEMPLATES = {
 
 @dataclass(frozen=True)
 class ReasoningReplayPolicy:
-    """Immutable optional-reasoning policy pinned to one resolved send."""
+    """Immutable optional-reasoning policy pinned to one resolved send.
+
+    Attributes:
+        mode: Effective history mode, including ``server_default`` for an
+            unreviewed template's automatic behavior.
+        source: User-facing description of where the policy was selected.
+        template_family: Reviewed template family, or an empty string.
+        supports_preserve: Whether the template accepts preservation options;
+            this does not widen the template's own replay eligibility.
+        verified: Whether the template matched an exact reviewed fingerprint.
+        native_tools: Whether the server independently declares native tool
+            support or the user explicitly enabled it for this target.
+    """
 
     mode: str
     source: str
@@ -73,6 +85,11 @@ class ReasoningReplayPolicy:
 
     @property
     def label(self) -> str:
+        """Return a concise description of the resolved mode and template.
+
+        Returns:
+            User-facing policy source, mode, and optional template family.
+        """
         label = {value: label for label, value in REASONING_HISTORY_OPTIONS}.get(
             self.mode, "Server default (unverified template)"
         )
@@ -84,7 +101,19 @@ class ReasoningReplayPolicy:
 def resolve_reasoning_policy(
     mode: str, *, template: object = None, native_tools: bool = False
 ) -> ReasoningReplayPolicy:
-    """Resolve only reviewed templates; unknown text is never executed."""
+    """Resolve only reviewed templates; unknown text is never executed.
+
+    Args:
+        mode: Requested mode: ``auto``, ``current``, ``all``, or ``off``.
+            Unrecognized values use ``auto``.
+        template: Template text to fingerprint, or any non-string value when
+            metadata is unavailable. This function never renders the text.
+        native_tools: Separately established native-tool capability.
+
+    Returns:
+        Frozen effective policy. Automatic mode uses a reviewed template's
+        preference when available and otherwise retains the server default.
+    """
     known = None
     if isinstance(template, str):
         digest = hashlib.sha256(
@@ -105,7 +134,20 @@ def resolve_reasoning_policy(
 
 
 def reasoning_override_key(provider: str, endpoint: str, model: str) -> str:
-    """Stable local target identity, without persisting credentials in the key."""
+    """Build a stable local target key without retaining endpoint credentials.
+
+    Args:
+        provider: Local provider key or supported alias.
+        endpoint: Server URL, optionally ending in ``/v1/chat/completions``.
+        model: Exact selected model identifier.
+
+    Returns:
+        SHA-256 digest of the normalized provider, credential-free endpoint,
+        and model identity.
+
+    Raises:
+        ValueError: If the endpoint cannot be parsed as a URL.
+    """
     parsed = urlsplit(endpoint.strip())
     path = parsed.path.rstrip("/")
     for suffix in ("/chat/completions", "/v1"):
@@ -127,7 +169,22 @@ def reasoning_mode_setting(
     endpoint: str = "",
     model: str = "",
 ) -> str:
-    """Read a scoped override, with explicit legacy-off migration."""
+    """Read a scoped override, with an explicit legacy-off fallback.
+
+    Args:
+        console: Loaded Console settings mapping.
+        provider: Provider key for an optional target-specific lookup.
+        endpoint: Endpoint used with the provider and model to identify an
+            override.
+        model: Exact model identifier; an empty value skips scoped lookup.
+
+    Returns:
+        A supported mode from the scoped override or global preference, or
+        ``off`` for a legacy opt-out and ``auto`` otherwise.
+
+    Raises:
+        ValueError: If an endpoint used for scoped lookup is not parseable.
+    """
     modes = {value for _, value in REASONING_HISTORY_OPTIONS}
     overrides = console.get("reasoning_history_overrides", {})
     if provider and model and isinstance(overrides, Mapping):
@@ -150,7 +207,17 @@ def effective_replay_policy(
     policy: ReasoningReplayPolicy | None,
     conversation_policy: str,
 ) -> ReasoningReplayPolicy | None:
-    """Apply explicit conversation authority before device-local Auto policy."""
+    """Apply explicit conversation authority before device-local Auto policy.
+
+    Args:
+        policy: Frozen device-local policy, or None when no policy was resolved.
+        conversation_policy: Saved conversation preference. ``exclude`` forces
+            Off, ``include`` forces All, and other values retain ``policy``.
+
+    Returns:
+        The effective optional replay policy without mutating the original.
+        Required provider continuation is managed separately.
+    """
     if conversation_policy in {"exclude", "include"}:
         base = policy or ReasoningReplayPolicy("server_default", "Server default")
         return replace(base, mode="off" if conversation_policy == "exclude" else "all")
@@ -158,7 +225,15 @@ def effective_replay_policy(
 
 
 def starts_reasoning_exchange(row: Mapping[str, Any]) -> bool:
-    """Only an actual user request closes the previous reasoning exchange."""
+    """Identify a user request that starts a new reasoning exchange.
+
+    Args:
+        row: Semantic message, including any internal origin annotations.
+
+    Returns:
+        True for an actual user request. Tool results, runtime guidance, and
+        ephemeral project context continue the existing exchange.
+    """
     from tldw_chatbook.Agents.agent_models import FENCE_TOOL_RESULT_PREFIX
     from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 
@@ -172,7 +247,16 @@ def starts_reasoning_exchange(row: Mapping[str, Any]) -> bool:
 
 
 def supports_local_reasoning(provider: str, model: str) -> bool:
-    """Recognize local transports that accept separate reasoning fields."""
+    """Recognize local transports that accept separate reasoning fields.
+
+    Args:
+        provider: Provider key or supported local alias.
+        model: Selected model identifier.
+
+    Returns:
+        True for a supported local transport with a nonblank model. This does
+        not imply that its template or native-tool behavior is verified.
+    """
     return provider.lower() in _LOCAL_FAMILIES and bool(model.strip())
 
 
@@ -188,6 +272,25 @@ def project_reasoning_history(
 
     This is the agent accounting path; durable history comes from canonical
     sidecars at the gateway. No separate persisted reasoning body is accepted.
+
+    Args:
+        messages: Semantic rows carrying optional ephemeral canonical call
+            envelopes. Input rows and envelopes are not mutated.
+        provider: Target provider key.
+        model: Exact target model identifier.
+        policy: Frozen local replay and template policy, when available.
+        enabled: Whether optional replay is allowed. False applies Exclude
+            independently of the policy's mode.
+
+    Returns:
+        Mutable provider-visible message copies with eligible reasoning and
+        template control encodings. Empty input returns an empty list.
+
+    Raises:
+        ValueError: If a call envelope is invalid, belongs to a non-assistant
+            row, or message ownership cannot form a canonical request.
+        ThinkingHistorySerializationError: If retained reasoning cannot be
+            encoded safely with its visible owner.
     """
     if not messages:
         return []
@@ -245,7 +348,16 @@ def reasoning_template_kwargs(
     provider: str,
     policy: ReasoningReplayPolicy | None,
 ) -> dict[str, bool]:
-    """Expose exact reviewed template options for dispatch and trace admission."""
+    """Expose exact reviewed template options for dispatch and trace admission.
+
+    Args:
+        provider: Target provider key or supported local alias.
+        policy: Frozen replay policy, or None when unavailable.
+
+    Returns:
+        ``preserve_thinking`` with the selected retention value for compatible
+        llama.cpp/vLLM templates, or an empty mapping otherwise.
+    """
     if (
         policy is not None
         and policy.supports_preserve

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from tldw_chatbook.Chat.console_provider_gateway import (
@@ -32,13 +32,29 @@ CALL_THINKING_KEY = "_tldw_call_thinking"
 
 
 def consume_call_thinking(
-    messages: Sequence[Mapping], *, owner_key: str
-) -> tuple[list[dict], tuple[ProviderThinkingSidecar, ...]]:
-    """Extract ephemeral call envelopes before provider and trace preparation."""
+    messages: Sequence[Mapping[str, Any]], *, owner_key: str
+) -> tuple[list[dict[str, Any]], tuple[ProviderThinkingSidecar, ...]]:
+    """Extract ephemeral call envelopes before provider and trace preparation.
+
+    Args:
+        messages: Semantic message mappings, optionally carrying a canonical
+            envelope under ``CALL_THINKING_KEY``.
+        owner_key: Temporary row field used to bind each extracted envelope to
+            its assistant owner during subsequent request preparation.
+
+    Returns:
+        Message copies with internal call envelopes removed, together with
+        canonical sidecars for nonempty envelopes. Each sidecar's owner is
+        the envelope's first block identifier; input messages are unchanged.
+
+    Raises:
+        ValueError: If an internal call value is not a ThinkingEnvelope or its
+            message does not have the assistant role.
+    """
     from tldw_chatbook.Chat.console_thinking_history import ProviderThinkingSidecar
 
-    rows = []
-    sidecars = []
+    rows: list[dict[str, Any]] = []
+    sidecars: list[ProviderThinkingSidecar] = []
     for message in messages:
         row = dict(message)
         envelope = row.pop(CALL_THINKING_KEY, None)

@@ -201,6 +201,7 @@ from ...Utils.input_validation import (
     sanitize_string,
     validate_bounded_integer,
     validate_number_range,
+    validate_reasoning_history_selector,
     validate_text_input,
     validate_url,
 )
@@ -23972,6 +23973,12 @@ class SettingsScreen(BaseAppScreen):
     def handle_console_reasoning_native_tools_changed(
         self, event: Checkbox.Changed
     ) -> None:
+        """Stage explicit native-tool support for the active local target.
+
+        Args:
+            event: Checkbox event carrying the requested support state.
+        """
+
         event.stop()
         target = getattr(self, "_reasoning_override_target", None)
         if target is None:
@@ -23989,10 +23996,18 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Select.Changed, "#settings-console-reasoning-history")
     def handle_console_reasoning_history_changed(self, event: Select.Changed) -> None:
+        """Validate and stage the default local reasoning replay mode.
+
+        Args:
+            event: Selector event carrying the requested default mode.
+        """
+
         event.stop()
-        if event.value not in {value for _, value in REASONING_HISTORY_OPTIONS}:
+        try:
+            value = validate_reasoning_history_selector(event.value)
+        except ValueError:
             return
-        self._stage_console_default_value("reasoning_history", str(event.value))
+        self._stage_console_default_value("reasoning_history", value)
         self._mark_console_behavior_settings_staged()
         self._set_static_text(
             "#settings-console-reasoning-status", self._reasoning_policy_status()
@@ -24000,19 +24015,31 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Select.Changed, "#settings-console-reasoning-override")
     def handle_console_reasoning_override_changed(self, event: Select.Changed) -> None:
+        """Validate and stage the active target's remembered replay override.
+
+        Args:
+            event: Selector event carrying a replay mode or ``inherit``.
+        """
+
         event.stop()
         target = getattr(self, "_reasoning_override_target", None)
-        allowed = {"inherit", *(value for _, value in REASONING_HISTORY_OPTIONS)}
-        if target is None or event.value not in allowed:
+        if target is None:
+            return
+        try:
+            value = validate_reasoning_history_selector(
+                event.value,
+                allow_inherit=True,
+            )
+        except ValueError:
             return
         overrides = dict(
             self._console_behavior_value("reasoning_history_overrides") or {}
         )
         key = reasoning_override_key(*target)
-        if event.value == "inherit":
+        if value == "inherit":
             overrides.pop(key, None)
         else:
-            overrides[key] = str(event.value)
+            overrides[key] = value
         self._stage_console_default_value("reasoning_history_overrides", overrides)
         self._mark_console_behavior_settings_staged()
         self._set_static_text(

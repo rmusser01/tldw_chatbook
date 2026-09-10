@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, Callable, ContextManager, Sequence, cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
     from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
     from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot
     from tldw_chatbook.UI.Screens.change_review_screen import (
@@ -2391,6 +2392,7 @@ def _fenced_project_instruction_payload_fits(
     model: str,
     provider: str,
     response_reserve_tokens: int,
+    reasoning_replay: ReasoningReplayPolicy | None = None,
 ) -> bool:
     """Validate the exact transformed fenced request before ledger advance."""
     try:
@@ -2401,6 +2403,7 @@ def _fenced_project_instruction_payload_fits(
             ),
             model,
             provider,
+            reasoning_replay=reasoning_replay,
         )
     except Exception:
         return False
@@ -4245,6 +4248,7 @@ def build_console_first_request_plan(
                 ],
                 resolved_model,
                 api_endpoint,
+                reasoning_replay=config.reasoning_replay,
             )
             if native_schema_rows:
                 required_tokens += _count_model_messages(
@@ -4260,6 +4264,7 @@ def build_console_first_request_plan(
                     ],
                     resolved_model,
                     api_endpoint,
+                    reasoning_replay=config.reasoning_replay,
                 )
             available_input_tokens = max(
                 0, input_limit - response_reserve - required_tokens
@@ -5204,6 +5209,7 @@ class ConsoleAgentBridge:
                         model=config.model,
                         provider=first_request_plan.api_endpoint,
                         response_reserve_tokens=config.response_reserve_tokens,
+                        reasoning_replay=config.reasoning_replay,
                     )
                 ),
             )

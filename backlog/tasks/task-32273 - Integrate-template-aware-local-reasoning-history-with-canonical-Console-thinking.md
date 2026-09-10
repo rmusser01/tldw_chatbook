@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-10 19:32'
-updated_date: '2026-09-10 20:05'
+updated_date: '2026-09-10 20:28'
 labels: []
 dependencies: []
 ---
@@ -36,5 +36,5 @@ ADR required: yes. ADR path: backlog/decisions/090-console-thinking-block-owners
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Integrated local replay with ADR-090 canonical ownership, typed local adapter events, exact per-call agent sidecars, paired projection/accounting/provenance and canonical Settings. Added frozen endpoint/model policy, explicit keyless credential handling and scoped native tools; preserved child-final thinking and bounded retained bodies. Tested reviewed Gemma/Qwen templates and live Gemma4 on localhost:9099 including native calculator replay. Targeted gateway 508 pass, final feature matrix75 pass, agent122 pass, history150 pass; known unchanged-dev stop/delete/layout failures reproduced independently. Qodo review and required CI pending before merge.
+Integrated template-aware local replay with ADR-090 canonical ownership and per-call thinking. Live Gemma4 on localhost:9099 verified Auto/All/Off and native calculator replay; exact reviewed Gemma/Qwen templates are retained. Addressed all 11 initial Qodo findings: strict sanitized config validation and environment precedence, legacy Off migration, shared settings validation, Local-LLM template forwarding, bounded metadata cache/backoff, policy-aligned profile capacity, API documentation/types and corrected ADR task link. Review-fix verification: gateway regressions 488 passed with 2 sandbox listener skips; config/settings 120 passed; import boundary 14 passed; profile/capture 38 passed; gateway cache focused 36 passed. Changed-line Ruff and diff checks passed. Reviewed the sole new diagnostic as a fixed field-name-only warning and regenerated its inventory. Initial GitHub fast lane and derived artifacts passed; final-head Qodo review and CI remain pending before merge.
 <!-- SECTION:NOTES:END -->

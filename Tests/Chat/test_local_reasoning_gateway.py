@@ -365,3 +365,166 @@ def test_structured_capture_accepts_only_declared_transport_encoding(provider, k
         )
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_local_llm_template_control_reaches_actual_http_payload(monkeypatch):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
+
+    sent = []
+
+    def post(_session, url, **kwargs):
+        sent.append((url, kwargs["json"]))
+        response = Mock(status_code=200)
+        response.json.return_value = {"choices": [{"message": {"content": "done"}}]}
+        return response
+
+    monkeypatch.setattr("requests.Session.post", post)
+    monkeypatch.setattr(
+        "tldw_chatbook.LLM_Calls.LLM_API_Calls_Local.get_runtime_config_snapshot",
+        lambda: SimpleNamespace(values={"api_settings": {}}),
+    )
+    gateway = ConsoleProviderGateway()
+    resolution = ConsoleProviderResolution(
+        provider="local-llm",
+        execution_key="local-llm",
+        model="alias",
+        base_url="http://localhost:12345",
+        ready=True,
+        streaming=False,
+        reasoning_replay=ReasoningReplayPolicy(
+            "all", "override", supports_preserve=True
+        ),
+    )
+    assert [
+        x
+        async for x in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "test"}]
+        )
+    ] == ["done"]
+    assert sent == [
+        (
+            "http://localhost:12345/v1/chat/completions",
+            {**sent[0][1], "chat_template_kwargs": {"preserve_thinking": True}},
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_template_metadata_cache_reuses_facts_but_reapplies_preferences(
+    monkeypatch,
+):
+    from dataclasses import replace
+
+    now = [100.0]
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_provider_gateway.monotonic",
+        lambda: now[0],
+        raising=False,
+    )
+    seen = []
+    template = Path("Tests/fixtures/reasoning_templates/gemma4.jinja").read_text()
+
+    def respond(request):
+        seen.append(str(request.url))
+        if len(seen) == 2:
+            return httpx.Response(503)
+        return httpx.Response(
+            200,
+            json={
+                "chat_template": template,
+                "chat_template_caps": {
+                    "supports_tools": True,
+                    "supports_tool_calls": True,
+                },
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        gateway = ConsoleProviderGateway(http_client=client)
+        resolution = ConsoleProviderResolution(
+            provider="llama_cpp",
+            model="alias",
+            base_url="http://localhost:9099",
+            ready=True,
+        )
+        first = await gateway._resolve_reasoning_history(resolution, {})
+        again = await gateway._resolve_reasoning_history(
+            replace(resolution, base_url="http://localhost:9099/v1"),
+            {"console": {"reasoning_history": "off"}},
+        )
+        assert len(seen) == 1
+        assert first.reasoning_replay.mode == "current"
+        assert again.reasoning_replay.mode == "off"
+        now[0] += 61
+        stale = await gateway._resolve_reasoning_history(resolution, {})
+        assert stale.reasoning_replay.template_family == "Gemma 4"
+        assert stale.reasoning_replay.native_tools
+        assert len(seen) == 2
+        await gateway._resolve_reasoning_history(resolution, {})
+        assert len(seen) == 2
+        await gateway._resolve_reasoning_history(
+            replace(resolution, model="different"), {}
+        )
+        assert len(seen) == 3
+
+
+@pytest.mark.asyncio
+async def test_failed_metadata_probe_has_bounded_negative_cache(monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_provider_gateway.monotonic",
+        lambda: now[0],
+        raising=False,
+    )
+    seen = []
+
+    def respond(request):
+        seen.append(request)
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        gateway = ConsoleProviderGateway(http_client=client)
+        resolution = ConsoleProviderResolution(
+            provider="local_vllm",
+            model="alias",
+            base_url="http://localhost:8000",
+            ready=True,
+        )
+        for _ in range(2):
+            result = await gateway._resolve_reasoning_history(resolution, {})
+            assert result.reasoning_replay.mode == "server_default"
+        assert len(seen) == 1
+        now[0] += 16
+        await gateway._resolve_reasoning_history(resolution, {})
+        assert len(seen) == 2
+
+
+@pytest.mark.asyncio
+async def test_metadata_cache_evicts_old_targets_instead_of_growing():
+    from dataclasses import replace
+
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        gateway = ConsoleProviderGateway(http_client=client)
+        resolution = ConsoleProviderResolution(
+            provider="local_vllm",
+            model="0",
+            base_url="http://localhost:8000",
+            ready=True,
+        )
+        for number in range(33):
+            await gateway._resolve_reasoning_history(
+                replace(resolution, model=str(number)), {}
+            )
+        assert len(gateway._reasoning_metadata_cache) == 32
+        await gateway._resolve_reasoning_history(resolution, {})
+        assert len(requests) == 34
+        assert len(gateway._reasoning_metadata_cache) == 32

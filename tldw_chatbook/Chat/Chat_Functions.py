@@ -536,6 +536,7 @@ PROVIDER_PARAM_MAP = {
         "chat_template_kwargs": "chat_template_kwargs",
     },
     "local-llm": {
+        "chat_template_kwargs": "chat_template_kwargs",
         "messages_payload": "input_data",
         "temp": "temp",
         "system_message": "system_message",

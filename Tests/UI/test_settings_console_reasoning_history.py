@@ -220,3 +220,30 @@ async def test_gemma_status_explains_fenced_tool_round_limit() -> None:
             "Native server tools are needed to retain Gemma thinking across tool rounds"
             in _visible_text(screen)
         )
+
+
+@pytest.mark.asyncio
+async def test_mounted_reasoning_selectors_use_shared_validation(monkeypatch) -> None:
+    app = _app_with_local_console_target()
+    calls: list[tuple[object, bool]] = []
+
+    def validate(value: object, *, allow_inherit: bool = False) -> str:
+        calls.append((value, allow_inherit))
+        return str(value)
+
+    monkeypatch.setattr(
+        settings_screen_module,
+        "validate_reasoning_history_selector",
+        validate,
+    )
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+
+        screen.query_one("#settings-console-reasoning-history", Select).value = "current"
+        screen.query_one("#settings-console-reasoning-override", Select).value = "all"
+        await pilot.pause()
+
+    assert ("current", False) in calls
+    assert ("all", True) in calls

@@ -291,7 +291,7 @@ class PreparedConsoleRequest:
             + self.active_request
         )
 
-    def without_oldest_units(self, count: int) -> "PreparedConsoleRequest":
+    def without_oldest_units(self, count: int) -> PreparedConsoleRequest:
         """Return a new request with ``count`` oldest compactable units removed."""
 
         return PreparedConsoleRequest(
@@ -319,7 +319,22 @@ def project_thinking_history(
     request: PreparedConsoleRequest,
     reasoning_replay: ReasoningReplayPolicy | None,
 ) -> PreparedConsoleRequest:
-    """Filter complete optional owner groups and matching provenance together."""
+    """Filter complete optional owner groups and matching provenance together.
+
+    Args:
+        request: Immutable semantic request with canonical owner groups and
+            any aligned capture provenance.
+        reasoning_replay: Frozen local policy to refine conversation Auto.
+            Explicit Include and Exclude retain their authority.
+
+    Returns:
+        A new request with retained thinking groups, matching provenance, and
+        effective replay policy. Required continuation remains unchanged.
+
+    Raises:
+        TraceProvenanceAlignmentError: If reconstructed provenance does not
+            align with the projected semantic request.
+    """
     policy = effective_replay_policy(reasoning_replay, request.thinking_policy)
     mode = policy.mode if policy is not None else "all"
     keep_old = mode not in {"current", "off"}
@@ -1637,7 +1652,35 @@ def prepare_provider_request(
     response_format: Mapping[str, Any] | None = None,
     reasoning_replay: ReasoningReplayPolicy | None = None,
 ) -> PreparedProviderRequest:
-    """Window, serialize once, and account one exact provider request."""
+    """Window, serialize once, and account one exact provider request.
+
+    Args:
+        semantic: Immutable provider-neutral request with semantic ownership.
+        wire_style: Whether system messages remain separate or form a preamble.
+        model: Target model used for serialization and token accounting.
+        provider: Provider identity retained on the prepared artifact.
+        capacity: Resolved context and output limits for the request.
+        per_image_tokens: Token estimate charged for each image part.
+        count_fn: Optional message-token counter; defaults to the Console's
+            multimodal-aware counter.
+        apply_safety_window: Whether to evict complete oldest compactable units
+            when they exceed the effective input ceiling.
+        response_format: Optional structured-response configuration to freeze.
+        reasoning_replay: Frozen local policy applied before serialization and
+            counting; defaults to the policy already attached to ``semantic``.
+
+    Returns:
+        One immutable provider artifact whose serialized messages, ownership,
+        provenance, token totals, and overflow status describe the same request.
+
+    Raises:
+        ThinkingHistorySerializationError: If retained thinking cannot be
+            safely serialized with its visible owner.
+        TraceProvenanceAlignmentError: If provider rewrites do not preserve
+            exact message and sidecar ownership.
+        TypeError: If values to freeze are not JSON-compatible.
+        ValueError: If frozen numeric values are not finite.
+    """
 
     semantic = project_thinking_history(
         semantic, reasoning_replay or semantic.reasoning_replay

@@ -1935,21 +1935,14 @@ def _load_settings_uncached(
         final_console_settings_cli.get("stack_collapsed_rail_labels", False),
         False,
     )
-    from tldw_chatbook.Chat.local_reasoning import reasoning_mode_setting
+    from tldw_chatbook.Utils.reasoning_config import resolve_console_reasoning_config
 
-    final_console_settings_cli["replay_thinking"] = coerce_bool_setting(
-        final_console_settings_cli.get("replay_thinking", True),
-        True,
-    )
-    final_console_settings_cli["reasoning_history"] = reasoning_mode_setting(
+    reasoning_resolution = resolve_console_reasoning_config(
         final_console_settings_cli
     )
-    for key in (
-        "reasoning_history_overrides",
-        "reasoning_native_tool_overrides",
-    ):
-        if not isinstance(final_console_settings_cli.get(key), dict):
-            final_console_settings_cli[key] = {}
+    for diagnostic in reasoning_resolution.diagnostics:
+        logger.warning("Invalid Console reasoning configuration: {}", diagnostic)
+    final_console_settings_cli.update(reasoning_resolution.settings.model_dump())
     _rail_layout_scope = final_console_settings_cli.get("rail_layout_scope")
     final_console_settings_cli["rail_layout_scope"] = (
         _rail_layout_scope.strip().lower()
@@ -3571,6 +3564,8 @@ shutdown_grace_seconds = 120.0
 collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
 show_model_thinking = true  # Presentation only; capture and replay are unchanged
 thinking_history_policy_default = "auto"  # auto, include, exclude for new conversations
+# Environment overrides: TLDW_CONSOLE_REASONING_HISTORY (mode), and JSON maps in
+# TLDW_CONSOLE_REASONING_HISTORY_OVERRIDES / TLDW_CONSOLE_REASONING_NATIVE_TOOL_OVERRIDES.
 reasoning_history = "auto"  # local replay when a conversation uses Auto: auto, current, all, off
 reasoning_history_overrides = {}  # normalized endpoint/model digest -> replay mode
 reasoning_native_tool_overrides = {}  # normalized endpoint/model digest -> true
@@ -6062,6 +6057,11 @@ def _load_cli_config_bootstrap_unlocked(
         user_config_from_file, _schema_changed, _schema_conflict = (
             migrate_config_forward(user_config_from_file)
         )
+        from tldw_chatbook.Utils.reasoning_config import (
+            migrate_legacy_reasoning_history,
+        )
+
+        migrate_legacy_reasoning_history(user_config_from_file)
         _CONFIG_SCHEMA_CONFLICT = _schema_conflict
         if _schema_conflict is not None:
             logger.warning(_schema_conflict)

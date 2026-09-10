@@ -255,7 +255,22 @@ def serialize_thinking_message(
     message: Mapping[str, Any],
     group: ThinkingOwnerGroup,
 ) -> dict[str, Any]:
-    """Encode complete canonical blocks without changing a structured answer."""
+    """Encode complete canonical blocks without changing a structured answer.
+
+    Args:
+        message: Assistant message whose visible content owns the thinking.
+        group: Compatible complete thinking blocks for that exact owner.
+
+    Returns:
+        A message copy with start-anchored thinking encoded in ``content`` or
+        structured thinking in its declared separate field. Separate-field
+        encoding leaves the visible answer unchanged.
+
+    Raises:
+        ThinkingHistorySerializationError: If the group mixes source encodings,
+            uses an unsupported format, or cannot safely encode start-anchored
+            thinking alongside the supplied answer.
+    """
     row = dict(message)
     formats = {block.source_format for block in group.blocks}
     if formats == {_START_ANCHORED_FORMAT}:
