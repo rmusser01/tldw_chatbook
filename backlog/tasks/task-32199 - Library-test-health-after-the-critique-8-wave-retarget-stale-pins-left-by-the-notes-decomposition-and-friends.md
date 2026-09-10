@@ -63,4 +63,7 @@ Cleared what was clearable of the pre-wave Library baseline; the rest is traced 
 **Item 6 (screen size ratchet) -- DECISION-NEEDED, deliberately not re-pinned.** Red at the dev tip: `library_screen.py` 33261 lines vs a 33204 budget (+57), `chat_screen.py` 23958 vs 16966 (+6992), and `test_task_22507_4_does_not_worsen_chat_screen_base` (23958 <= 20099). The ratchet's own failure message is the policy -- "Do NOT raise the budget to make this pass. Lower it when a decomposition wave lands" -- so no re-pin was made. Two open peer PRs (#2543, #2547) add further lines to `library_screen.py` without re-pinning, so any pin set now drifts on merge. The owner must choose between one deliberate re-pin after those land and a decomposition wave. AC #1 is left unticked for this.
 
 Modified files: `Tests/Architecture/test_persistent_diagnostic_inventory.py`, `Tests/UI/test_library_multiselect_conversations.py`, `Tests/UI/test_library_media_render_fixes.py`. `./scripts/preflight.sh` passes.
+
+**Item 7 (added 2026-09-10 while landing):** `Tests/Library/test_library_export_roundtrip.py::test_library_export_success_records_a_durable_receipt_with_the_real_path` was red at the dev tip with `AttributeError: 'types.SimpleNamespace' object has no attribute '_sync_library_emergency_guard_presentation'` — the export success path gained an emergency-guard re-sync and the unbound fake-self never grew the stub (the cancel test already carries one). Fix: one `lambda: None` stub on the fake; the file is 5/5 green.
+
 <!-- SECTION:NOTES:END -->
