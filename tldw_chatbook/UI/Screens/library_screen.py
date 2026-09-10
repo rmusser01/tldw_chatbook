@@ -1011,6 +1011,15 @@ class LibraryScreen(BaseAppScreen):
         # ``_library_media_confirming_delete`` branch).
         ("escape", "library_media_bulk_delete_cancel", "Cancel delete confirmation"),
         ("escape", "library_emergency_return", "Return to Library rail"),
+        # task-32225: the adaptive-reader twin of the binding above. That one
+        # covers the ordinary (shell-less) routes; this one covers a route
+        # whose reader shell has CLOSED the Library pane, where the focus hop
+        # declared below would aim at a widget inside that closed pane and
+        # move nothing. Declared here, above ``library_blur_text_field`` and
+        # ``library_list_focus_rail``, because Textual resolves same-key
+        # bindings in DECLARATION ORDER and getting back to a rail that is off
+        # screen outranks both a blur and a hop that cannot land.
+        ("escape", "library_narrow_stage_return", "Back to Library"),
         # task-32051: the LAST resort before the focus-rail hop -- Escape in
         # a Library text box hands focus back to the canvas. Position is the
         # whole contract: every binding above owns Escape for its own
@@ -4393,6 +4402,14 @@ class LibraryScreen(BaseAppScreen):
             shortcuts = tuple(pair for pair in shortcuts if pair[0] != "esc") + (
                 ("esc", "rail"),
             )
+        elif self._library_narrow_stage_return_active():
+            # task-32225: the adaptive-reader twin of the swap above. Applied
+            # here rather than in each of the route function's eight branches
+            # so no destination can be left behind with the old chip, and the
+            # label matches the "‹ Library" control that is on screen with it.
+            shortcuts = tuple(pair for pair in shortcuts if pair[0] != "esc") + (
+                ("esc", "back to Library"),
+            )
         if self._library_lifecycle not in (
             LibraryLifecycle.UNKNOWN,
             LibraryLifecycle.STARTER,
@@ -6689,6 +6706,49 @@ class LibraryScreen(BaseAppScreen):
                 here so the canvas-action handlers do not also see it.
         """
         event.stop()
+        self.action_library_narrow_stage_return()
+
+    def _library_narrow_stage_return_active(self) -> bool:
+        """Whether the Library pane is closed on the live adaptive route.
+
+        task-32225: while it is, the footer's "esc focus rail" chip was a lie
+        on every adaptive-reader destination -- the hop's destination
+        (``#library-search-input``) lives INSIDE the closed pane, so Escape
+        moved nothing at 60x24 and the "‹ Library" control that does work was
+        never named. This is the eighth honest Escape context; it is disjoint
+        from ``library_emergency_return`` by construction (that stage is only
+        ever set when NO reader shell is mounted, see
+        ``_apply_library_emergency_geometry``).
+
+        Returns:
+            Whether Escape should reopen the Library pane instead of hopping.
+        """
+        # Bounded to the single-stage band, the same floor task-32065 gave the
+        # "‹ Library" control. ABOVE it a closed Library pane is an ordinary
+        # collapsed pane one grip away, and Escape there is the pinned
+        # step-back through the visible roles ("focus Items", then "focus
+        # Library"); taking the key from that would break the contract
+        # test_conversations_escape_moves_to_nearest_visible_prior_role holds.
+        if not ordinary_emergency_required(self.size.width):
+            return False
+        shells = self.query(_LIBRARY_READER_SHELL_SELECTOR)
+        if not shells:
+            return False
+        # Queried, not read from ``_library_reader_shell_ref``: that cache is
+        # probed once per compose generation and stays False for the rest of
+        # it when the probe ran before the route mounted -- which is exactly
+        # the first frames of the visit this context has to be right about.
+        layout = getattr(shells.first(Widget), "effective_layout", None)
+        return layout is not None and not layout.library_open
+
+    def action_library_narrow_stage_return(self) -> None:
+        """Reopen the closed Library pane (task-32225).
+
+        The one seam the "‹ Library" control, its keyboard binding and the
+        pane grips all reach: the shell's own ``PaneToggleRequested``, so the
+        preference write and the persistence generation are handled exactly
+        once, by ``_toggle_library_media_reader_pane``.
+        """
         self.post_message(PaneToggleRequested("library"))
 
     def _sync_library_media_reader_layout_from_shell(
@@ -23321,6 +23381,11 @@ class LibraryScreen(BaseAppScreen):
             )
         if action == "library_emergency_return":
             return self._library_emergency_return_eligibility().enabled
+        if action == "library_narrow_stage_return":
+            # task-32225: exactly while the Library pane is closed on the live
+            # adaptive route -- the same predicate the footer chip reads, so
+            # the chip and the key can never disagree.
+            return self._library_narrow_stage_return_active()
         if action == "library_ingest_retry_last":
             # task-3313: only on the Ingest canvas AND while the affordance
             # itself is offered. THE SAME predicate the state builder uses

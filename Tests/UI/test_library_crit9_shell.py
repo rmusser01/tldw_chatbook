@@ -7,8 +7,10 @@ critique-9 fix wave.
 from __future__ import annotations
 
 import pytest
+from textual.widget import Widget
 
 from tldw_chatbook.UI.Library_Modules.screen_constants import (
+    _LIBRARY_READER_SHELL_SELECTOR,
     LIBRARY_COLLECTIONS_READER_PROFILE,
     LIBRARY_CONVERSATION_READER_PROFILE,
     LIBRARY_PROMPTS_READER_PROFILE,
@@ -37,6 +39,17 @@ NARROW_TEST_SIZE = (60, 24)
 
 def _library_host() -> LibraryHarness:
     return LibraryHarness(_build_test_app())
+
+
+def _narrow_stage_layout(screen):
+    """Return the route shell's settled layout while the rail pane is closed."""
+    shells = screen.query(_LIBRARY_READER_SHELL_SELECTOR)
+    if not shells:
+        return None
+    layout = shells.first(Widget).effective_layout
+    if layout.library_open or layout.items_width + layout.reader_width == 0:
+        return None
+    return layout
 
 
 @pytest.mark.parametrize(
@@ -129,3 +142,42 @@ async def test_the_skills_list_shows_each_row_s_trust_state() -> None:
         print(f"MEASURED skills rows: {sorted(labels)}")
         assert any("code-review · trusted" in label for label in labels), labels
         assert any("summarize · needs review" in label for label in labels), labels
+
+
+@pytest.mark.parametrize(
+    "row_id", ["browse-media", "browse-prompts", "browse-collections"]
+)
+async def test_escape_returns_to_the_library_pane_below_64_columns(
+    row_id: str,
+) -> None:
+    """task-32225: at 60 columns the rail pane is gone and Escape was inert.
+
+    The footer advertised "esc focus rail" while the hop's destination
+    (``#library-search-input``) lived inside a closed pane, so the key moved
+    nothing on every adaptive-reader route. The chip now names the control
+    that IS on screen ("‹ Library") and Escape does what that control does.
+    """
+    host = _library_host()
+    async with host.run_test(size=NARROW_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one(f"#library-row-{row_id}").press()
+        # Wait for a SETTLED allocation: the first frames carry an all-zero
+        # layout whose rail is already hidden, so "the rail is not displayed"
+        # alone reports the transition, not the stage.
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(screen.query(_LIBRARY_READER_SHELL_SELECTOR))
+            and _narrow_stage_layout(screen) is not None,
+            message="The Library pane never closed at 60 columns.",
+        )
+        chips = screen._library_footer_shortcuts_for_current_state()
+        assert ("esc", "back to Library") in chips, chips
+        assert not any(pair == ("esc", "focus rail") for pair in chips), chips
+
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one("#library-rail").display,
+            message="Escape never reopened the Library pane.",
+        )
