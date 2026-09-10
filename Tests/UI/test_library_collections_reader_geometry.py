@@ -30,14 +30,10 @@ PREFERENCES = AdaptiveReaderLayoutPreferences()
 @pytest.mark.parametrize(
     ("width", "expected"),
     (
-        # task-31951 re-anchored these to the one-cell grip: each row gained
-        # the eight cells the two five-cell grips used to hold back, and the
-        # rail now opens at 114 instead of 122 -- which is why 120 flipped
-        # from a library-closed 56-cell list to the rail beside a 40-cell one.
-        (160, (30, 40, 88)),  # was (30, 40, 80)
-        (120, (24, 40, 54)),  # was (0, 56, 54)
-        (100, (0, 50, 48)),  # was (0, 42, 48)
-        (80, (0, 0, 78)),  # was (0, 0, 70)
+        (160, (35, 50, 65)),
+        (120, (0, 56, 54)),
+        (100, (0, 42, 48)),
+        (80, (0, 0, 70)),
     ),
 )
 def test_collections_profile_has_pinned_pure_geometry(width, expected) -> None:
@@ -91,8 +87,8 @@ async def test_mounted_collections_geometry_matches_one_settled_resolution(size)
         assert shell.items.region.width == expected.items_width
         assert shell.work.region.width == expected.reader_width
         # task-31951/31952: painted width IS the resolver's reservation.
-        assert shell.library_grip.region.width == 1
-        assert shell.items_grip.region.width == 1
-        assert expected.grip_width == 1
+        assert shell.library_grip.region.width == 5
+        assert shell.items_grip.region.width == 5
+        assert expected.grip_width == 5
         assert shell.work.is_mounted and shell.work.display
         assert sum(child.region.width for child in shell.children) == measured_width

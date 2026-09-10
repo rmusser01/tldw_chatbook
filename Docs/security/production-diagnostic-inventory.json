@@ -2227,8 +2227,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 18,
-      "diagnostic_digest": "cb9f264116e53eb7660d",
+      "call_count": 15,
+      "diagnostic_digest": "b9ed83dfddbba0812747",
       "owner": "TASK-494",
       "path": "tldw_chatbook/TTS/backends/alltalk.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2262,8 +2262,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 92,
-      "diagnostic_digest": "15a2bc7a4e501acc7bfd",
+      "call_count": 93,
+      "diagnostic_digest": "7bf2c7aa8627f6aa5f28",
       "owner": "TASK-494",
       "path": "tldw_chatbook/TTS/backends/higgs.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2276,8 +2276,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 65,
-      "diagnostic_digest": "83ea677c53d1212fd535",
+      "call_count": 62,
+      "diagnostic_digest": "b0fe354e2504adebacc3",
       "owner": "TASK-494",
       "path": "tldw_chatbook/TTS/backends/kokoro.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2311,8 +2311,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 5,
-      "diagnostic_digest": "6082bcd632c2111c3074",
+      "call_count": 1,
+      "diagnostic_digest": "8e686a5287395336950c",
       "owner": "TASK-494",
       "path": "tldw_chatbook/TTS/kokoro_pytorch.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2661,10 +2661,17 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 7,
-      "diagnostic_digest": "0b8f0c839f48e21ef525",
+      "call_count": 9,
+      "diagnostic_digest": "ac515f10c9f9681a22ed",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Library_Modules/canvas_sync.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "e71de8429fe7d8d158e7",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Library_Modules/library_browse_route_swap.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -2934,8 +2941,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 82,
-      "diagnostic_digest": "1808a32657ce74bf3bc7",
+      "call_count": 81,
+      "diagnostic_digest": "036cc48ec446b0a054bf",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/library_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3641,8 +3648,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 104,
-      "diagnostic_digest": "37972e1ac99fc6d3d304",
+      "call_count": 90,
+      "diagnostic_digest": "112d848018fb4108a207",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Web_Scraping/WebSearch_APIs.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -9313,20 +9320,6 @@
     {
       "candidates": [
         {
-          "call_digest": "3a5896930ee573d5",
-          "method": "info",
-          "path_expressions": [
-            "self.model_path"
-          ],
-          "scope": "KokoroModel.load",
-          "status": "legacy_unreviewed"
-        }
-      ],
-      "path": "tldw_chatbook/TTS/kokoro_pytorch.py"
-    },
-    {
-      "candidates": [
-        {
           "call_digest": "b864aac62306f280",
           "method": "warning",
           "path_expressions": [
@@ -10519,20 +10512,6 @@
     {
       "candidates": [
         {
-          "call_digest": "56c6886efa132412",
-          "method": "info",
-          "path_expressions": [
-            "search_url"
-          ],
-          "scope": "search_web_searx",
-          "status": "legacy_unreviewed"
-        }
-      ],
-      "path": "tldw_chatbook/Web_Scraping/WebSearch_APIs.py"
-    },
-    {
-      "candidates": [
-        {
           "call_digest": "0bce284e6744b7f9",
           "method": "error",
           "path_expressions": [
@@ -11500,11 +11479,11 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 593,
-    "path_privacy_candidate_calls": 711,
+    "owner_files": 594,
+    "path_privacy_candidate_calls": 709,
     "persistent_sink_files": 12,
     "task_31551_calls": 55,
     "task_492_calls": 1351,
-    "task_494_calls": 7670
+    "task_494_calls": 7649
   }
 }

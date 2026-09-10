@@ -28,6 +28,35 @@ def test_pinned_textual_serve_exposes_the_supported_child_environment_seam() -> 
     )
 
 
+@pytest.mark.loopback_network
+def test_parent_captures_one_snapshot_for_gateway_and_child_authentication(tmp_path):
+    import asyncio
+
+    from Tests.Canvas.browser.test_canvas_served_flow import _server
+    from tldw_chatbook.Canvas.control_protocol import CanvasControlClient
+    from tldw_chatbook.Canvas.profiles import runtime_snapshot_id
+
+    async def scenario():
+        server = _server(tmp_path)
+        await server.on_startup(None)
+        client = None
+        try:
+            snapshot = server._canvas_profile_snapshot
+            assert server._served_canvas_gateway.profile_snapshot is snapshot
+            launch = server._canvas_control_broker.issue_child("child-a")
+            client = CanvasControlClient(
+                launch.environment, runtime_snapshot_id=runtime_snapshot_id(snapshot)
+            )
+            await client.start()
+            await server._canvas_control_broker.wait_connected("child-a", timeout=1)
+        finally:
+            if client:
+                await client.aclose()
+            await server.on_shutdown(None)
+
+    asyncio.run(scenario())
+
+
 class _BaseAppService:
     def __init__(self, command: str, **_kwargs) -> None:
         self.command = command
@@ -78,6 +107,7 @@ def test_chatbook_app_service_injects_control_data_via_environment_only() -> Non
 
         assert service.command == "python -m tldw_chatbook.app"
         assert service.environment["COLUMNS"] == "100"
+        assert service.environment["CHATBOOK_SERVED_CHILD"] == "1"
         assert service.environment["CHATBOOK_CANVAS_CONTROL_CHILD_ID"] == (
             "app-service-a"
         )

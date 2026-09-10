@@ -319,6 +319,40 @@ All path-taking tools confine to a configurable `[console] workspace_root`
 allowed under the root via a new `allow_hidden` parameter on `validate_path`;
 traversal outside the root is always rejected.
 
+## Shared search backend default (TASK-32187, 2026-09-09)
+
+Basic `web_search` and `web_deep_search` select a backend using the same
+precedence: explicit invocation argument, then the existing
+`[SearchSettings] search_provider_default`, then DuckDuckGo when that setting
+is absent. Resolve the preference when the invocation starts, so a Settings
+save affects the next call without rebuilding the tool catalog. Preserve
+existing saved choices; no config migration or automatic preference write is
+needed. The common research parameter builder follows the same resolution.
+
+An explicit override applies only to its invocation and never rewrites the
+saved preference. Reject unsupported or malformed choices before provider
+dispatch and identify whether the caller argument or saved setting needs
+correction. Do not redirect an invalid or failing choice to another provider.
+Result text identifies the effective backend and its source (call override,
+saved default, or application default). Search result caching remains keyed
+by backend, query and result count; provenance is attached for each invocation
+so a cache hit cannot mislabel an override as a saved preference.
+
+This amends the earlier per-call-only selection wording, while preserving
+the existing permission, opt-in, timeout and endpoint boundaries. The new
+missing-value default changes deep search from Google to DuckDuckGo; explicit
+Google settings remain Google. DuckDuckGo removes the API-key prerequisite,
+but still requires the web-search dependencies and working network access.
+
+Separate basic/deep preferences were rejected because they make a single
+saved choice unreliable across workflows. Capturing a default in the tool
+schema or provider constructor was rejected because it becomes stale after a
+Settings save. Automatic provider fallback was rejected because it changes
+query destination and potentially cost without an explicit choice.
+
+See [TASK-32187](../tasks/task-32187%20-%20Share-the-saved-search-backend-across-basic-and-deep-search.md)
+and the [implementation plan](../../Docs/superpowers/plans/2026-09-09-shared-search-backend-default.md).
+
 ## Context
 
 The Console agent runtime currently offers only calculator/datetime plus MCP

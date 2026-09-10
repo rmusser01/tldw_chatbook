@@ -1,0 +1,50 @@
+{
+  "schema_source": "/private/tmp/tts-macos-burndown/alltalk/source/tts_server.py",
+  "schema_line": 1056,
+  "schema_only": true,
+  "models_loaded": false,
+  "server_started": false,
+  "results": [
+    {
+      "voice": "alloy",
+      "accepted": true
+    },
+    {
+      "voice": "female_01.wav",
+      "accepted": false,
+      "errors": [
+        {
+          "loc": [
+            "voice"
+          ],
+          "message": "Value error, Voice must be one of ['alloy', 'echo', 'fable', 'nova', 'onyx', 'shimmer']"
+        }
+      ]
+    },
+    {
+      "voice": "p225",
+      "accepted": false,
+      "errors": [
+        {
+          "loc": [
+            "voice"
+          ],
+          "message": "Value error, Voice must be one of ['alloy', 'echo', 'fable', 'nova', 'onyx', 'shimmer']"
+        }
+      ]
+    },
+    {
+      "voice": "p225.wav",
+      "accepted": false,
+      "errors": [
+        {
+          "loc": [
+            "voice"
+          ],
+          "message": "Value error, Voice must be one of ['alloy', 'echo', 'fable', 'nova', 'onyx', 'shimmer']"
+        }
+      ]
+    }
+  ],
+  "chatbook_current_behavior": "AllTalkTTSBackend._map_voice_to_alltalk maps alloy to female_01.wav before POST /v1/audio/speech"
+}

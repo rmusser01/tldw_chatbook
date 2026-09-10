@@ -1,0 +1,97 @@
+"""Serialized post-review installed-wheel playback plus audited local ASR."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import time
+
+root = Path('/private/tmp/tts-macos-burndown')
+source = Path('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown')
+python = root / 'final-wheel-venv/bin/python'
+package = root / 'final-wheel-venv/lib/python3.12/site-packages/tldw_chatbook'
+small = root / 'languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120'
+medium = root / 'languages/whisper-medium/08e178d48790749d25932bbc082711ddcfdfbc4f'
+receipt = root / 'qodo-clean-installed-wheel-matrix.json'
+output_root = root / 'qodo-clean-installed-wheel'
+identity_path = root / 'qodo-clean-wheel-identity.json'
+identity = json.loads(identity_path.read_text())
+assert identity['status'] == 'source_wheel_install_identity_passed'
+assert identity['source_commit'] == subprocess.check_output(['git', '-C', str(source), 'rev-parse', 'HEAD'], text=True).strip()
+assert hashlib.sha256(Path(identity['wheel']).read_bytes()).hexdigest() == identity['wheel_sha256']
+for base in (source, package.parent):
+    actual = {p.relative_to(base).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in (base / 'tldw_chatbook').rglob('*.py') if '__pycache__' not in p.parts}
+    assert actual == identity['python_sha256'], 'Source or install changed after wheel verification'
+print('SOURCE_WHEEL_INSTALL_IDENTITY_PASSED', identity['python_file_count'], flush=True)
+assert not receipt.exists()
+output_root.mkdir(exist_ok=False)
+config = Path('/Users/macbook-dev/.config/tldw_cli/config.toml')
+config_hash = hashlib.sha256(config.read_bytes()).hexdigest()
+(root/'qodo-clean-user-config-before.json').write_text(json.dumps({'path':str(config),'sha256':config_hash},indent=2)+'\n')
+env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1', OPEN_JTALK_DICT_DIR=str(root/'languages/open_jtalk_dic_utf_8-1.11'))
+env.pop('PYTHONPATH', None)
+# The positive control must be denied by this audit before the file is opened.
+guard = '''import pathlib, runpy, sys
+protected = pathlib.Path('/Users/macbook-dev/.config/tldw_cli')
+def audit(event, arguments):
+    if event in {'open', 'os.listdir', 'os.scandir'} and arguments and isinstance(arguments[0], (str, bytes)):
+        value = arguments[0].decode() if isinstance(arguments[0], bytes) else arguments[0]
+        if pathlib.Path(value).absolute().is_relative_to(protected):
+            raise PermissionError('User profile access denied by live ASR audit')
+sys.addaudithook(audit)
+try:
+    open(protected / 'codex-tts-positive-control', 'rb')
+except PermissionError:
+    print('PROFILE_GUARD_POSITIVE_CONTROL_PASSED', flush=True)
+else:
+    raise AssertionError('Profile guard missing')
+script = sys.argv.pop(1)
+sys.argv[0] = script
+runpy.run_path(script, run_name='__main__')
+'''
+rows = [dict(engine=e,device=d,format=f,language='en-us',voice='af_heart',asr_language='en') for e,d,f in [('pytorch','cpu','wav'),('pytorch','mps','wav'),('onnx','cpu','mp3')]]
+rows += [dict(r,engine='onnx',device='cpu',format='wav') for r in json.loads((root/'languages/phrases.json').read_text()) if r['language'] in ('ja','zh')]
+results = []
+for row in rows:
+    name = f'{row["engine"]}-{row["device"]}-{row["format"]}-{row["language"]}'
+    output = output_root / name
+    command = [str(python), '-I', '-B', str(source/'scripts/validate_live_tts.py'), '--engine',row['engine'],'--device',row['device'],'--voice',row['voice'],'--language',row['language'],'--format',row['format'],'--expected-package-root',str(package),'--output',str(output),'--scenarios','playback,cancel' if row['language']=='en-us' else 'playback','--repeats','1','--play-audio']
+    if row['engine']=='pytorch':
+        command += ['--model',str(root/'languages/kokoro-model/kokoro-v1_0.pth'),'--voice-dir',str(root/'languages/kokoro-model/voices')]
+    else:
+        command += ['--model','/private/tmp/kokoro-playback-validation/models/kokoro-v1.0.onnx','--voices','/private/tmp/kokoro-playback-validation/models/voices-v1.0.bin']
+    if row.get('text_file'):
+        command += ['--text-file',row['text_file']]
+    result = dict(name=name, command=command, started=time.time(), controller_pid=os.getpid())
+    print('START',name,flush=True)
+    with (output_root/f'{name}-parent.log').open('w') as log:
+        child = subprocess.Popen(command,cwd=output_root,env=env,stdout=log,stderr=subprocess.STDOUT)
+        result['parent_pid']=child.pid
+        result['runtime_exit']=child.wait()
+    evidence=output/'evidence.json'
+    if evidence.exists():
+        data=json.loads(evidence.read_text())
+        result.update(status=data['status'],cleanup_joined=data.get('cleanup_joined'),source_unchanged=data.get('source_unchanged'),failure=data.get('failure'))
+    if result['runtime_exit']==0:
+        asr=small if row['language']=='en-us' else medium
+        content_command=[str(python),'-I','-B','-c',guard,str(source/'scripts/verify_live_tts_content.py'),'--evidence',str(evidence),'--model',str(asr),'--language',row['asr_language'],'--output',str(output/'content.json')]
+        for anchor in row.get('anchors',[]): content_command += ['--anchor',anchor]
+        result['content_command']=content_command
+        result['verifier_sha256']=hashlib.sha256((source/'scripts/verify_live_tts_content.py').read_bytes()).hexdigest()
+        with (output/'content.log').open('w') as log:
+            child=subprocess.Popen(content_command,cwd=output_root,env=env,stdout=log,stderr=subprocess.STDOUT)
+            result['asr_pid']=child.pid
+            result['content_exit']=child.wait()
+        if (output/'content.json').exists():
+            content=json.loads((output/'content.json').read_text())
+            result.update(content_status=content['status'],successful_clips=len(content['clips']),normalized_exact=sum(c['normalized_exact'] for c in content['clips']))
+        result['profile_guard_positive_control']='PROFILE_GUARD_POSITIVE_CONTROL_PASSED' in (output/'content.log').read_text()
+    result['finished']=time.time()
+    results.append(result)
+    receipt.write_text(json.dumps(results,indent=2,ensure_ascii=False)+'\n')
+    print('RESULT',json.dumps({k:v for k,v in result.items() if k not in ('command','content_command')}),flush=True)
+    if result['runtime_exit'] or result.get('content_exit') not in (0,1) or (row['language']=='en-us' and result.get('content_exit')!=0):
+        raise SystemExit(1)
+after=hashlib.sha256(config.read_bytes()).hexdigest()
+(root/'qodo-clean-user-config-after.json').write_text(json.dumps({'path':str(config),'before_sha256':config_hash,'sha256':after,'unchanged':after==config_hash},indent=2)+'\n')
+assert after==config_hash

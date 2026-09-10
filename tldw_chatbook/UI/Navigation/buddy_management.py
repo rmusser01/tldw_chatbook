@@ -15,6 +15,55 @@ from tldw_chatbook.Persona_Buddy.interaction import (
 )
 
 
+def _review_buddy_import(library: Any, archive_path: str) -> Any:
+    """Review a lexically validated path on the worker, retaining no-follow checks."""
+    import stat
+    from pathlib import Path
+
+    from tldw_chatbook.Persona_Visual.importer import PersonaVisualImportError
+
+    path = Path(archive_path)
+    # This preflight supplies recovery copy only. The review below independently
+    # pins/revalidates the file, so a successful stat never grants read authority.
+    try:
+        entry = path.lstat()
+    except FileNotFoundError:
+        raise ValueError(
+            "Buddy pack not found. Check the filename and download location."
+        ) from None
+    except OSError:
+        raise ValueError(
+            "Could not read the Buddy pack. Check file access permissions and retry."
+        ) from None
+    if not stat.S_ISREG(entry.st_mode) or entry.st_nlink != 1:
+        raise ValueError(
+            "Choose a regular file copied to this device, not a folder or linked file."
+        )
+    try:
+        return library.review_archive(path)
+    except PersonaVisualImportError as exc:
+        message = {
+            "persona_visual_import_invalid": (
+                "This file is not a valid native Buddy pack. Download the .tldw-persona-vpack "
+                "again using GitHub's Download raw file button, then retry."
+            ),
+            "persona_visual_import_unsupported": (
+                "This pack uses an unsupported format or renderer. Choose a native "
+                ".tldw-persona-vpack compatible with this Chatbook version."
+            ),
+            "persona_visual_import_stale": "The pack changed during import. Finish downloading it, then retry.",
+            "persona_visual_import_cancelled": "Buddy import was cancelled. Retry when ready.",
+        }.get(
+            exc.category,
+            "Could not read the Buddy pack. Check file access permissions and retry.",
+        )
+        raise ValueError(message) from exc
+    except Exception as exc:
+        raise ValueError(
+            "Could not read the Buddy pack. Check the path and file access permissions, then retry."
+        ) from exc
+
+
 class BuddyManagementCoordinator:
     """Own staged-management application and scope; never own Console execution."""
 
@@ -467,6 +516,23 @@ class BuddyManagementCoordinator:
 
         Import failure cannot change selection. A failed preference write rolls back
         only this exact in-memory revision, preserving any newer user changes.
+
+        Args:
+            choice: Staged artwork, binding, Persona and presentation choices.
+                Import paths accept absolute or current-home-relative local paths
+                with optional matching outer quotes.
+            expected_revision: Preference generation observed by the caller; a
+                changed generation blocks applying stale choices.
+            imports: Optional dialog-scoped map of normalized lexical paths to
+                already installed Buddy IDs. Retain it across retries after a
+                settings-write failure to reuse the installed artwork copy.
+
+        Raises:
+            ValueError: A selection or binding is invalid or stale; the import
+                path is missing, unsafe or unreadable; pack validation or source
+                revalidation fails; artwork installation, preference persistence
+                or the requested Persona assignment fails. Messages describe
+                recovery without exposing private paths or raw backend errors.
         """
         from tldw_chatbook.Persona_Buddy.preferences import BuddySelection
         from tldw_chatbook.Widgets.Persona_Widgets.buddy_management_modal import (
@@ -500,25 +566,38 @@ class BuddyManagementCoordinator:
                 assignment = None
             selected_id = choice.buddy_id
             if choice.import_path:
-                selected_id = (
-                    imports.get(choice.import_path) if imports is not None else None
+                from tldw_chatbook.Utils.input_validation import (
+                    validate_buddy_import_path,
                 )
+
+                archive_path = await asyncio.to_thread(
+                    validate_buddy_import_path, choice.import_path
+                )
+                require_current()
+                selected_id = imports.get(archive_path) if imports is not None else None
                 if selected_id is None:
+                    review = await asyncio.to_thread(
+                        _review_buddy_import, self.library, archive_path
+                    )
+                    require_current()
                     try:
-                        review = await asyncio.to_thread(
-                            self.library.review_archive, choice.import_path
-                        )
-                        require_current()
                         record = await asyncio.to_thread(
                             self.library.publish_review, review
                         )
                     except Exception as exc:
+                        if isinstance(exc, ValueError) and str(exc) in {
+                            "buddy_source_changed",
+                            "persona_visual_authority_changed",
+                        }:
+                            raise ValueError(
+                                "The pack changed during import. Finish downloading it, then retry."
+                            ) from exc
                         raise ValueError(
-                            "Could not import this Buddy pack. Check the path, pack format and profile storage, then retry."
+                            "The pack was read but could not be installed. Check profile storage permissions and free space, then retry."
                         ) from exc
                     selected_id = record.id
                     if imports is not None:
-                        imports[choice.import_path] = selected_id
+                        imports[archive_path] = selected_id
                 elif (
                     await asyncio.to_thread(self.library.get_buddy, selected_id) is None
                 ):

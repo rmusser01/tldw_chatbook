@@ -241,7 +241,11 @@ async def test_escape_does_not_reopen_a_notes_list_the_user_collapsed():
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes", Button).press()
         await _wait_for_selector(screen, pilot, "#library-notes-tree-note-1")
-        screen.query_one("#library-notes-items-grip", Button).press()
+        # Reconciliation with phase C (TASK-32089): task 2 unified the media and
+        # notes browse routes onto ONE resident shell (`id_prefix="library-
+        # browse"`), so the notes Items grip is now `#library-browse-items-grip`
+        # -- it was `#library-notes-items-grip` on this test's own branch.
+        screen.query_one("#library-browse-items-grip", Button).press()
         await pilot.pause()
         await pilot.pause()
         assert screen._notes_state.reader_preferences.items_open is False

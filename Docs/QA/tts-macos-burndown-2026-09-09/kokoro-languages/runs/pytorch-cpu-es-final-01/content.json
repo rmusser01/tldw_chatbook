@@ -1,0 +1,94 @@
+{
+  "evidence_path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-es-final-01/evidence.json",
+  "evidence_sha256": "6750513b199a2d69fbfa8f07faa594e3ba8d3d62e7b6b77d6b6f340eef3cfac7",
+  "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+  "model_files": {
+    "config.json": "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828",
+    "model.bin": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671",
+    "tokenizer.json": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+    "vocabulary.txt": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913"
+  },
+  "runtime": {
+    "faster-whisper": "1.2.1",
+    "ctranslate2": "4.8.2"
+  },
+  "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+  "device": "cpu",
+  "compute_type": "int8",
+  "success_audio_count": 2,
+  "clips": [
+    {
+      "transcript": "La brújula plateada abre esta respuesta. En el centro hay un huerto tranquilo. La respuesta termina con un amanecer dorado.",
+      "expected_text": "La brújula plateada abre esta respuesta. En el centro hay un huerto tranquilo. La respuesta termina con un amanecer dorado.",
+      "anchors": [
+        "brújula plateada",
+        "huerto tranquilo",
+        "amanecer dorado"
+      ],
+      "anchor_positions": [
+        2,
+        49,
+        87
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "speech-lab",
+      "audio_sha256": "e1eb66c7e313d955b1a1f0e116ce7a671d2814560339f07e4d17c4447007d690",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 2.64,
+          "text": " La brújula plateada abre esta respuesta."
+        },
+        {
+          "start": 2.64,
+          "end": 4.8,
+          "text": " En el centro hay un huerto tranquilo."
+        },
+        {
+          "start": 4.8,
+          "end": 7.4,
+          "text": " La respuesta termina con un amanecer dorado."
+        }
+      ],
+      "detected_language": "es"
+    },
+    {
+      "transcript": "La brújula plateada abre esta respuesta. En el centro hay un huerto tranquilo. La respuesta termina con un amanecer dorado.",
+      "expected_text": "La brújula plateada abre esta respuesta. En el centro hay un huerto tranquilo. La respuesta termina con un amanecer dorado.",
+      "anchors": [
+        "brújula plateada",
+        "huerto tranquilo",
+        "amanecer dorado"
+      ],
+      "anchor_positions": [
+        2,
+        49,
+        87
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "console-warmup",
+      "audio_sha256": "2a9679f8e0fdf0ef3040236e63a452862ab48b2bc60d481075246e10067791df",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 2.64,
+          "text": " La brújula plateada abre esta respuesta."
+        },
+        {
+          "start": 2.64,
+          "end": 4.8,
+          "text": " En el centro hay un huerto tranquilo."
+        },
+        {
+          "start": 4.8,
+          "end": 7.4,
+          "text": " La respuesta termina con un amanecer dorado."
+        }
+      ],
+      "detected_language": "es"
+    }
+  ],
+  "status": "content_passed"
+}

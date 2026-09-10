@@ -1,0 +1,13 @@
+{
+  "model_tensor_header_totals": {
+    "BF16": {
+      "tensors": 397,
+      "elements": 5771283456,
+      "bytes": 11542566912
+    }
+  },
+  "audio_tokenizer_legacy_config_binds": true,
+  "hubert_offline_main_config": "/private/tmp/tts-macos-burndown/higgs/assets/hub/models--bosonai--hubert_base/snapshots/d7a7039bd0d93005f6532853db1934722d9a5e02/config.json",
+  "models_loaded": false,
+  "tensor_payload_read": false
+}

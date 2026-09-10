@@ -18,7 +18,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Lock
-from typing import Literal, Protocol, cast
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 from uuid import UUID, uuid4
 
 from rich.text import Text
@@ -51,10 +51,6 @@ from tldw_chatbook.TTS import (
     TTSProfileAvailabilitySnapshot,
     TTSProfileDraft,
     TTSProfilePageSnapshot,
-    TTSVoiceBundleHandle,
-    TTSVoiceBundleImportChoice,
-    TTSVoiceBundleImportResult,
-    TTSVoiceBundleReview,
 )
 from tldw_chatbook.TTS.profile_portability import (
     PortableTTSProfile,
@@ -73,6 +69,14 @@ from tldw_chatbook.UI.tts_profile_recovery import (
     TTSProfileDependencyActionProjection,
     dependency_recovery_actions,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - annotations only
+    from tldw_chatbook.TTS import (
+        TTSVoiceBundleHandle,
+        TTSVoiceBundleImportChoice,
+        TTSVoiceBundleImportResult,
+        TTSVoiceBundleReview,
+    )
 from tldw_chatbook.Utils.input_validation import validate_text_input
 
 PROFILE_PAGE_SIZE = 50
@@ -346,6 +350,8 @@ def voice_bundle_import_choice(
     choice = choices.get(action.operation)
     if action.disabled or choice is None:
         raise ValueError("action is not an enabled import operation")
+    from tldw_chatbook.TTS import TTSVoiceBundleImportChoice
+
     return TTSVoiceBundleImportChoice(
         choice=choice,
         inactive_consent=inactive_consent,

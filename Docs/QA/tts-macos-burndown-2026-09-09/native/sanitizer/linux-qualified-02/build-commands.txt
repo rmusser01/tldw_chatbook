@@ -1,0 +1,2 @@
+cc -c -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer /source/external/cJSON/cJSON.c -o /evidence/cJSON.o
+c++ -std=c++17 -pthread -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -I/source/include -I/source/external/cJSON /source/tests/unittests/test_http_shutdown.cpp /source/app/server/http.cpp /source/src/framework/io/json.cpp /source/src/framework/io/filesystem.cpp /evidence/cJSON.o -o /evidence/http_shutdown_test

@@ -1,0 +1,101 @@
+[
+  {
+    "case": "active-handler",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/fixed-sanitized/http_shutdown_test",
+      "active-handler",
+      "64577"
+    ],
+    "timeout": true,
+    "stdout": "None",
+    "stderr": "None"
+  },
+  {
+    "case": "stream-callback",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/fixed-sanitized/http_shutdown_test",
+      "stream-callback",
+      "64591"
+    ],
+    "timeout": true,
+    "stdout": "None",
+    "stderr": "None"
+  },
+  {
+    "case": "accept-loop-exception",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/fixed-sanitized/http_shutdown_test",
+      "accept-loop-exception",
+      "64600"
+    ],
+    "timeout": true,
+    "stdout": "None",
+    "stderr": "None"
+  },
+  {
+    "case": "idle-client",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/fixed-sanitized/http_shutdown_test",
+      "idle-client",
+      "64633"
+    ],
+    "timeout": true,
+    "stdout": "None",
+    "stderr": "None"
+  },
+  {
+    "case": "partial-header",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/fixed-sanitized/http_shutdown_test",
+      "partial-header",
+      "64649"
+    ],
+    "timeout": true,
+    "stdout": "None",
+    "stderr": "None"
+  },
+  {
+    "case": "partial-body",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/fixed-sanitized/http_shutdown_test",
+      "partial-body",
+      "64662"
+    ],
+    "timeout": true,
+    "stdout": "None",
+    "stderr": "None"
+  },
+  {
+    "case": "idle",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/fixed-sanitized/http_shutdown_test",
+      "idle",
+      "64677"
+    ],
+    "timeout": true,
+    "stdout": "None",
+    "stderr": "None"
+  },
+  {
+    "case": "completed-request",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/fixed-sanitized/http_shutdown_test",
+      "completed-request",
+      "64690"
+    ],
+    "timeout": true,
+    "stdout": "None",
+    "stderr": "None"
+  },
+  {
+    "case": "handler-exception",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/fixed-sanitized/http_shutdown_test",
+      "handler-exception",
+      "64710"
+    ],
+    "timeout": true,
+    "stdout": "None",
+    "stderr": "None"
+  }
+]

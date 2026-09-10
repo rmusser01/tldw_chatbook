@@ -48,6 +48,15 @@ The next question can use Capture On again when that discarded response has an
 unambiguous saved owner, including after earlier failed follow-ups have also
 been discarded. Discard does not replay or undo tools from the old run.
 
+A tool run that has already settled as Failed with an empty reply can also be
+followed by a captured send, including after successful Capture Off replies.
+Console verifies the saved message chain and the closed run before continuing;
+earlier captures remain unchanged. Active attempts, partial replies, or history
+that cannot be verified still require recovery rather than automatic dispatch.
+
+Models may include planning text before a tool call. That text stays in the
+captured request alongside the tool call.
+
 ## Safe and Full are views of one trace
 
 **Safe** and **Full** no longer choose how much history is stored. They are local
