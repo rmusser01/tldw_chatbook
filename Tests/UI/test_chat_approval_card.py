@@ -588,6 +588,8 @@ def test_a_mutating_tool_is_floored_by_the_same_tag_the_effect_derives_from():
 
 _ONE_ROW_CARD_MAX_HEIGHT = 12
 _THREE_ROW_CARD_MAX_HEIGHT = 22
+#: The surface's non-approval cards: a few Statics and one button row each.
+_SIBLING_CARD_MAX_HEIGHT = 8
 
 
 def _pending_calls(count: int) -> list[dict]:
@@ -627,14 +629,22 @@ async def _mounted_batch(app, pilot, count: int):
 
 
 def _task_surface_harness():
-    """An app whose only content is the production task-card surface."""
+    """An app whose only content is the production task-card surface.
+
+    `APP_STYLESHEETS`, not `BUNDLED_STYLESHEET`: the console's rules were
+    split out of the bundle into `screen_agentic_console.tcss`, which the
+    real app parses on first visit to the Console (see the module docstring
+    in Tests/UI/consolidated_css.py). Pinning the bundle alone would drop
+    `#console-task-surface` and every other console rule on the floor and
+    measure a surface production never renders.
+    """
     from textual.app import ComposeResult
 
-    from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+    from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
     from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 
     class _TaskSurfaceHarness(ConsolidatedCSSApp):
-        CSS_PATH = str(BUNDLED_STYLESHEET)
+        CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
         def compose(self) -> ComposeResult:
             yield ChatTaskCards(id="console-task-surface")
@@ -755,7 +765,9 @@ async def test_action_bar_is_actually_visible_at_80x24_in_the_production_console
             # An approval can only reach a Console the user has already set
             # up, so the first-run modal is never up at the same time; left
             # covering the workbench it would be the widget every hit test
-            # below reported, measuring nothing about the card.
+            # below reported, measuring nothing about the card. `display =
+            # False` is not enough -- the screen re-syncs the modal during
+            # the pause that follows, so it has to go.
             await screen.query("#console-setup-modal").remove()
             await pilot.pause()
 
@@ -769,4 +781,66 @@ async def test_action_bar_is_actually_visible_at_80x24_in_the_production_console
                 "the Submit button's own coordinates render "
                 f"{hit.id or type(hit).__name__} instead -- the approval card "
                 "is clipped by its task surface at 80x24"
+            )
+
+
+@pytest.mark.asyncio
+async def test_every_task_surface_card_hugs_its_content():
+    """The surface's other cards must not re-inflate it (task-32287 review).
+
+    `#console-task-surface { height: auto }` is only half a fix while a
+    card inside it still carries Textual's `height: 1fr` default: the
+    fraction resolves against the whole offered box, so the surface grows
+    right back. All four cards it hosts measured 50 rows in this 50-row
+    harness before their rules landed (the two skill cards through their
+    unstyled `Horizontal` button rows, one level down).
+    """
+    from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
+
+    revealed = {
+        "#chat-resume-panel": TaskResumeState(
+            summary="Refactor the parser",
+            last_step="ran the tests",
+            diff_summary="3 files changed",
+            next_action="review the diff",
+        ),
+        "#chat-skill-install-card": TaskResumeState(
+            pending_skill_install={
+                "url": "https://example.com/demo.zip",
+                "timeout_seconds": 120.0,
+                "request_id": "r1",
+            }
+        ),
+        "#chat-skill-script-card": TaskResumeState(
+            pending_skill_script={
+                "skill_name": "demo",
+                "script_path": "run.sh",
+                "request_id": "r1",
+            }
+        ),
+    }
+
+    for selector, state in revealed.items():
+        app = _task_surface_harness()
+        async with app.run_test(size=(200, 50)) as pilot:
+            await pilot.pause()
+            surface = app.query_one(ChatTaskCards)
+            surface.sync_state(state)
+            await pilot.pause()
+            await pilot.pause()
+
+            card = app.query_one(selector)
+            assert card.display is True, f"{selector} did not reveal"
+            assert card.size.height <= _SIBLING_CARD_MAX_HEIGHT, (
+                f"{selector} is {card.size.height} lines tall "
+                f"(> {_SIBLING_CARD_MAX_HEIGHT}) -- it is still filling the "
+                "surface instead of hugging its content"
+            )
+            visible = sum(
+                child.region.height for child in surface.children if child.display
+            )
+            assert surface.size.height == visible, (
+                f"the task surface is {surface.size.height} lines tall for "
+                f"{visible} lines of visible cards"
             )

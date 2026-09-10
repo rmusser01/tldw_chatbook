@@ -3310,6 +3310,24 @@ ConsoleBoundedSection {
     min-height: 0;
 }
 
+/* task-32287 review: and so do the sibling cards that share the surface.
+   With the surface `auto`, a child left on Textual's `height: 1fr` default
+   resolves that fraction against the whole offered box instead of the
+   surface's content, so each of these rendered 50 rows in a 50-row harness
+   -- the ballooning simply moved down a level. The two skill cards need
+   their button rows named as well (`Horizontal`, also unstyled, also
+   `1fr`): a `1fr` grandchild re-inflates an `auto` parent exactly as
+   `#approval-batch-actions` did. ChatQuestionCard is absent
+   here on purpose: it already ships `height: auto; max-height: 24` in its
+   own BUNDLED_CSS and measures 14 rows in that same harness. */
+#chat-resume-panel,
+#chat-skill-install-card,
+#chat-skill-script-card,
+#skill-install-buttons,
+#skill-script-buttons {
+    height: auto;
+}
+
 .-dark-mode .console-assistant-turn {
     border-left: tall $ds-chat-assistant-accent-dark;
 }
