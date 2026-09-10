@@ -219,7 +219,9 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import json
 import threading
+import zipfile
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
@@ -236,6 +238,7 @@ from ...Library.library_export_state import (
     DEFAULT_MEDIA_QUALITY,
     MEDIA_QUALITY_OPTIONS,
     default_export_name,
+    format_empty_export_error,
     normalize_export_destination,
 )
 from ...Library.library_notes_session import NoteFlushOutcomeKind
@@ -251,6 +254,39 @@ from .library_export_state import LibraryExportState
 
 if TYPE_CHECKING:
     from ..Screens.library_screen import LibraryScreen
+
+
+def _read_export_artifact_facts(output_path: str) -> tuple[int | None, int | None]:
+    """Read an export receipt's facts back out of the archive that was written.
+
+    task-32232 AC#4: the receipt used to be built entirely from the
+    intent (the path we asked for), so a bundle whose manifest held
+    ``content_items: []`` still produced a confident "Last export: …"
+    line. Reopening the finished zip and counting its manifest is the
+    only reading that can contradict the request.
+
+    Args:
+        output_path: The archive the service reported writing.
+
+    Returns:
+        ``(item_count, size_bytes)`` from the artifact, or ``(None,
+        None)`` when it cannot be read -- the zip genuinely exists in
+        that case (the service reported success), so an unreadable
+        manifest degrades the receipt to its path-only form rather than
+        flipping a real export into a failure.
+    """
+    try:
+        path = Path(output_path)
+        size_bytes = path.stat().st_size
+        with zipfile.ZipFile(path, "r") as archive:
+            manifest = json.loads(archive.read("manifest.json"))
+        return len(manifest.get("content_items") or []), size_bytes
+    except Exception:
+        logger.opt(exception=True).warning(
+            f"Library export wrote {output_path!r} but its manifest could not "
+            "be read back for the receipt."
+        )
+        return None, None
 
 
 class LibraryExportController:
@@ -943,17 +979,34 @@ class LibraryExportController:
             }
 
         if not export_result.get("success"):
+            failure_info = export_result.get("dependency_info") or {}
+            # task-32232 AC#3: "asked for N, collected 0" is the one failure
+            # the creator reports structurally (``empty_export_requested``),
+            # so the canvas can name the selection size instead of showing
+            # the creator's own internal sentence.
+            requested = (
+                failure_info.get("empty_export_requested")
+                if isinstance(failure_info, dict)
+                else None
+            )
             return {
                 "success": False,
-                "message": str(export_result.get("message") or "Export failed."),
+                "message": (
+                    format_empty_export_error(int(requested))
+                    if requested
+                    else str(export_result.get("message") or "Export failed.")
+                ),
                 "path": export_result.get("path") or payload.get("output_path", ""),
-                "dependency_info": export_result.get("dependency_info") or {},
+                "dependency_info": failure_info,
                 "registry_recorded": False,
                 "cancelled": bool(export_result.get("cancelled", False)),
+                "item_count": 0,
+                "size_bytes": 0,
             }
 
         output_path = export_result.get("path") or payload.get("output_path", "")
         dependency_info = export_result.get("dependency_info") or {}
+        item_count, size_bytes = _read_export_artifact_facts(output_path)
         registry_recorded = False
         try:
             asyncio.run(  # policy-exception: worker-thread loop
@@ -977,6 +1030,8 @@ class LibraryExportController:
             "dependency_info": dependency_info,
             "registry_recorded": registry_recorded,
             "cancelled": False,
+            "item_count": item_count,
+            "size_bytes": size_bytes,
         }
 
     def _marshal_library_export_success(
@@ -986,6 +1041,9 @@ class LibraryExportController:
         dependency_info: Any,
         registry_recorded: bool,
         message: str = "",
+        *,
+        item_count: int | None = None,
+        size_bytes: int | None = None,
     ) -> None:
         """Marshal a successful run onto the UI thread (called from the worker)."""
         try:
@@ -996,6 +1054,8 @@ class LibraryExportController:
                 dependency_info,
                 registry_recorded,
                 message,
+                item_count=item_count,
+                size_bytes=size_bytes,
             )
         except Exception:
             # A shutdown/detach mid-marshal can raise RuntimeError OR

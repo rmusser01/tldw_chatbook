@@ -33,9 +33,11 @@ from textual.widgets import Button, Static
 from tldw_chatbook.Library.library_export_scope import ExportScope
 from tldw_chatbook.Library.library_export_state import (
     EXPORT_BUTTON_COUNTING_TOOLTIP,
+    EXPORT_RETRY_BUTTON_COPY,
     EXPORT_BUTTON_NO_DESTINATION_TOOLTIP,
     EXPORT_BUTTON_READY_TOOLTIP,
     build_library_export_form_state,
+    format_empty_export_error,
 )
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_INGEST_EXPORT
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
@@ -231,6 +233,8 @@ async def test_apply_library_export_counts_patches_tooltip_alongside_disabled():
                 error="",
                 last_path="",
                 last_at=None,
+                last_items=None,
+                last_bytes=None,
             ),
             query_one=pilot.app.query_one,
         )
@@ -309,6 +313,11 @@ async def test_update_library_export_canvas_after_run_patches_receipt_and_toolti
                 error="",
                 last_path="/tmp/out.zip",
                 last_at=1000.0,
+                # task-32232 AC#4: the receipt's facts come from the
+                # WRITTEN archive (manifest content_items + size on disk),
+                # recorded by the completion handler before this patch runs.
+                last_items=2,
+                last_bytes=3072,
             ),
             query_one=pilot.app.query_one,
         )
@@ -328,7 +337,9 @@ async def test_update_library_export_canvas_after_run_patches_receipt_and_toolti
 
         last_line = pilot.app.query_one("#library-export-last-line", Static)
         assert last_line.display is True
-        assert "Last export: /tmp/out.zip" in str(last_line.render())
+        assert "✓ exported · 2 items · 3 KB · /tmp/out.zip" in str(
+            last_line.render()
+        )
         button = pilot.app.query_one("#library-export-submit", Button)
         assert button.disabled is False
         assert button.tooltip == EXPORT_BUTTON_READY_TOOLTIP
@@ -423,3 +434,26 @@ def test_restore_state_degrades_gracefully_with_no_prior_receipt():
 
     assert restored._export_state.last_path == ""
     assert restored._export_state.last_at is None
+
+
+# --- Failed run: the same button says it is the Retry (task-32232 AC#3) ------
+
+
+@pytest.mark.asyncio
+async def test_submit_button_offers_retry_after_a_failed_run():
+    """task-32232 AC#3: a failure line on the canvas means the run can be
+    re-attempted -- the Export button relabels itself as the Retry rather
+    than leaving the user to re-press "Export bundle (.zip)" on faith."""
+    state = _state(error_line=format_empty_export_error(2))
+    assert state.export_enabled is True  # the retry is genuinely available
+
+    app = _Host(state)
+    async with app.run_test() as pilot:
+        button = pilot.app.query_one("#library-export-submit", Button)
+        assert str(button.label) == EXPORT_RETRY_BUTTON_COPY
+        assert button.disabled is False
+        error_line = pilot.app.query_one("#library-export-error-line", Static)
+        assert error_line.display is True
+        assert "✗ export produced no content · 2 items were selected" in str(
+            error_line.render()
+        )

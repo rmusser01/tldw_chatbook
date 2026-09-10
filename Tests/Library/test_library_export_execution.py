@@ -390,6 +390,12 @@ def test_export_via_service_calls_export_then_create_in_order_on_success():
         "dependency_info": {"auto_included": [1, 2]},
         "registry_recorded": True,
         "cancelled": False,
+        # task-32232 AC#4: the artifact's own facts ride back with the
+        # outcome. This fake service never writes a zip, so reading
+        # ``/tmp/out.zip`` back yields nothing and the receipt degrades to
+        # its path-only form rather than inventing counts.
+        "item_count": None,
+        "size_bytes": None,
     }
     assert service.create_kwargs[0]["file_path"] == "/tmp/out.zip"
     assert service.create_kwargs[0]["tags"] == ["library-export"]
