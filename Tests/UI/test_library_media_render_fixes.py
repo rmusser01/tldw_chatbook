@@ -2965,12 +2965,28 @@ def _fifteen_item_host() -> LibraryProductionCSSHarness:
     return LibraryProductionCSSHarness(app)
 
 
+def _blank_row_focus_bar(line: str) -> str:
+    """Blank the focused row's ``border-left: thick`` cell (task-32199).
+
+    Entering the Media list parks DOM focus on the first row (task-2856),
+    and since task-31983 a focused row paints a ``█`` bar in the cell its
+    left padding otherwise occupies (``.library-media-row:focus``). That
+    bar is chrome, not row text, and ONLY the focused row carries it -- left
+    in the capture it makes row 0 incomparable with its own siblings, which
+    is what these row-text assertions compare. One cell in, one cell out, so
+    every column index in this file still lines up.
+    """
+    return f" {line[1:]}" if line.startswith("█") else line
+
+
 def _painted_item_lines(host, screen) -> list[str]:
     """Return the painted row-scroll lines of the Media list."""
     scroll = screen.query_one("#library-media-row-scroll")
     strips = list(host.screen._compositor.render_strips())
     return [
-        strips[y].crop(scroll.region.x, scroll.region.right).text
+        _blank_row_focus_bar(
+            strips[y].crop(scroll.region.x, scroll.region.right).text
+        )
         for y in range(scroll.region.y, min(scroll.region.bottom, len(strips)))
     ]
 
@@ -3049,17 +3065,30 @@ def _painted_media_rows(host, screen) -> tuple[list[str], list[str]]:
     return titles, secondaries
 
 
-@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.parametrize(
+    ("size", "items_width"),
+    [((235, 52), 132), ((100, 30), 44)],
+    ids=["wide", "narrow"],
+)
 @pytest.mark.asyncio
-async def test_media_rows_paint_analysed_only_for_analysed_items(size):
+async def test_media_rows_paint_analysed_only_for_analysed_items(size, items_width):
     """task-28008: the row says which items already carry an analysis, in words.
 
-    What this pins about width: BOTH parametrized sizes resolve the Items
-    pane to 52 cells (the resolver's automatic width here), and the 24-cell
+    What this pins about width: each parametrized size resolves the Items
+    pane to its own AUTOMATIC width, and the 24-cell
     ``document · 5m · analysed`` paints whole in it, indented, with room to
     spare. The narrower 36-cell FLOOR is pinned separately by
     ``test_analysed_secondary_survives_the_36_cell_items_floor`` -- a
-    ``>= 36`` assertion here would have claimed a floor that never ran.
+    ``>= 36`` assertion here would have claimed a floor that never ran,
+    which is why the exact automatic width is asserted instead.
+
+    task-32199: both numbers used to be 52 and had been stale on dev since
+    the resolver changed under them -- 9187bc0307 (task-31979) hands the
+    empty Reader's unused width to the Items list at the wide size, and the
+    below-64 Media stage work (c668aaec5e / db86a39b19) re-fitted the narrow
+    one. Both new widths are still far above the 24-cell secondary, so what
+    the assertion means is unchanged; the resolver's own contract lives in
+    Tests/UI/test_library_adaptive_reader_shell.py.
     """
     host = _review_state_host()
     async with host.run_test(size=size) as pilot:
@@ -3077,7 +3106,7 @@ async def test_media_rows_paint_analysed_only_for_analysed_items(size):
             "document · 5m",
             "document · 5m",
         ], secondaries
-        assert _items_pane_width(screen) == 52
+        assert _items_pane_width(screen) == items_width
 
 
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
