@@ -28148,7 +28148,7 @@ async def test_library_shell_export_rail_row_opens_everything_scope_and_counts_l
 
         scope_line = str(screen.query_one("#library-export-scope-line").renderable)
         assert scope_line == (
-            "Everything: 1 media · 1 conversations · 1 notes · 0 prompts"
+            "Everything: 1 media item · 1 conversation · 1 note · 0 prompts"
         )
         submit = screen.query_one("#library-export-submit", Button)
         # Counts landed with a positive total, but no destination chosen yet.
@@ -28715,7 +28715,7 @@ async def test_library_shell_export_counts_worker_uses_real_thread_for_file_back
 
         scope_line = str(screen.query_one("#library-export-scope-line").renderable)
         assert scope_line == (
-            "Everything: 1 media · 1 conversations · 0 notes · 0 prompts"
+            "Everything: 1 media item · 1 conversation · 0 notes · 0 prompts"
         )
 
 
@@ -28835,7 +28835,7 @@ async def test_library_shell_export_counts_landing_preserves_input_focus_and_tex
         assert screen.query_one("#library-export-scope-line", Static) is scope_line
         assert (
             str(scope_line.renderable)
-            == "Everything: 1 media · 1 conversations · 0 notes · 0 prompts"
+            == "Everything: 1 media item · 1 conversation · 0 notes · 0 prompts"
         )
         # Positive total, but still no destination -- Export stays disabled.
         assert screen.query_one("#library-export-submit", Button).disabled is True
