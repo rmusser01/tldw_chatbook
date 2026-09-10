@@ -6887,6 +6887,10 @@ def get_chachanotes_db_lazy() -> Optional[CharactersRAGDB]:
             logger.opt(exception=True).error(
                 f"Failed to lazy-initialize ChaChaNotes_DB at {chachanotes_path}: {e}"
             )
+            if chachanotes_db is not None:
+                # Seeding can fail after construction has acquired this worker's
+                # connection. Retire it before discarding the lazy owner.
+                chachanotes_db.close_connection()
             chachanotes_db = None
     return chachanotes_db
 

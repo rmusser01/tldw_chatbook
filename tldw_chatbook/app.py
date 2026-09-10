@@ -7694,7 +7694,8 @@ class TldwCli(
         return True
 
     def _init_notes_service(self, user_name_for_notes: str) -> None:
-        """Initialize notes service - for parallel execution."""
+        """Initialize notes service and retire this startup thread's connection."""
+        notes_db = None
         try:
             # Get the full path to the unified ChaChaNotes DB FILE
             chachanotes_db_file_path = get_chachanotes_db_path()
@@ -7706,10 +7707,11 @@ class TldwCli(
                 f"Notes for user '{user_name_for_notes}' will use the unified DB: {chachanotes_db_file_path}"
             )
 
+            notes_db = get_chachanotes_db_lazy()
             self.notes_service = NotesInteropService(
                 base_db_directory=actual_base_directory_for_service,
                 api_client_id="tldw_tui_client_v1",
-                global_db_to_use=get_chachanotes_db_lazy(),
+                global_db_to_use=notes_db,
             )
             logger.info(
                 f"NotesInteropService successfully initialized for user '{user_name_for_notes}'."
@@ -7719,6 +7721,9 @@ class TldwCli(
                 f"Failed to initialize NotesInteropService: {e}"
             )
             self.notes_service = None
+        finally:
+            if notes_db is not None:
+                notes_db.close_connection()
 
     def _init_providers_models(self) -> None:
         """Initialize providers and models - for parallel execution."""
@@ -7748,16 +7753,20 @@ class TldwCli(
             logger.opt(exception=True).error(
                 f"Failed to initialize Prompts Interop Service: {e}"
             )
+        finally:
+            if prompts_interop.is_initialized():
+                prompts_interop.get_db_instance().close_connection()
 
     def _init_media_db(self) -> None:
-        """Initialize media database - for parallel execution."""
+        """Initialize media database and retire this startup thread's connection."""
+        media_db = None
         try:
             media_db_path = get_media_db_path()
             # Get integrity check configuration
             check_integrity = self.app_config.get("database", {}).get(
                 "check_integrity_on_startup", False
             )
-            self.media_db = MediaDatabase(
+            media_db = self.media_db = MediaDatabase(
                 db_path=media_db_path,
                 client_id=CLI_APP_CLIENT_ID,
                 check_integrity_on_startup=check_integrity,
@@ -7794,6 +7803,9 @@ class TldwCli(
             logger.opt(exception=True).error(f"Failed to initialize media DB: {e}")
             self.media_db = None
             self._media_types_for_ui = ["Error: Exception fetching media types"]
+        finally:
+            if media_db is not None:
+                media_db.close_connection()
 
     def _notify_rag_indexing_failure(self, message: str) -> None:
         """Surface a background RAG-indexing failure as a toast (best effort).
