@@ -2168,6 +2168,49 @@ class LibraryIngestQueueMixin:
         self._parakeet_submitting_scope_ids: set[str] = set()
         self._ingest_local_stt_jobs: dict[str, tuple[int, str]] = {}
         self._ingest_shutdown: bool = False
+        self._ingest_maintenance_paused = False
+        self._ingest_writer_threads: set[threading.Thread] = set()
+        self._ingest_writer_threads_lock = threading.Lock()
+
+    def _ingest_writers_pending(self) -> bool:
+        """Observe actual thread bodies, including cancelled Textual wrappers."""
+        with self._ingest_writer_threads_lock:
+            return bool(self._ingest_writer_threads)
+
+    def _ingest_maintenance_close_admission(self) -> None:
+        """Stop new submissions/top-ups while admitted results still publish."""
+        self._ingest_maintenance_paused = True
+
+    async def _ingest_maintenance_drain(self, deadline: float) -> bool:
+        """Wait for owned parses and payload publication without killing work."""
+        if not self._ingest_maintenance_paused:
+            raise RuntimeError("ingest_maintenance_not_paused")
+        while (
+            self.library_ingest_jobs.runner_active
+            or self._ingest_writers_pending()
+            or self._ingest_parsed_payloads
+            or self._ingest_local_stt_jobs
+            or any(self._ingest_parse_jobs_by_generation.values())
+            or any(
+                worker.group.startswith("library_ingest_") and not worker.is_finished
+                for worker in getattr(self, "workers", ())
+            )
+        ):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(remaining, 0.02))
+        return True
+
+    def _ingest_maintenance_resume(self) -> None:
+        """Keep queued jobs and resume the existing writer/parser dispatch."""
+        self._ingest_maintenance_paused = False
+        if self._ingest_shutdown:
+            return
+        if self._ingest_parsed_payloads:
+            self._start_library_ingest_queue_if_idle()
+        self._top_up_ingest_parse_pool()
+        self.poll_remote_ingest_jobs()
 
     def _restore_ingest_jobs(self) -> None:
         """One-time on_mount restore of persisted ingest job history."""
@@ -2282,6 +2325,8 @@ class LibraryIngestQueueMixin:
             so each file gets its own queue row, its own outcome and its own
             retry -- one unsupported file no longer fails its siblings.
         """
+        if getattr(self, "_ingest_maintenance_paused", False):
+            raise RuntimeError("ingest_maintenance_paused")
         backend = self._resolve_ingest_backend()
         expanded = self._expand_library_ingest_source(source_path)
         sources = tuple(expanded) if expanded is not None else (source_path,)
@@ -2512,6 +2557,8 @@ class LibraryIngestQueueMixin:
             when ``media_db`` is unavailable), or ``None`` when nothing was
             requeued.
         """
+        if getattr(self, "_ingest_maintenance_paused", False):
+            raise RuntimeError("ingest_maintenance_paused")
         replacement_options = None
         if transcription_provider not in {None, "faster-whisper"}:
             return None
@@ -3805,7 +3852,7 @@ class LibraryIngestQueueMixin:
         letting document parses fan out wide while transcriptions stay
         capped.
         """
-        if self._ingest_shutdown:
+        if self._ingest_shutdown or getattr(self, "_ingest_maintenance_paused", False):
             return
         worker_count = self._ingest_parse_worker_count()
         heavy_cap = self._ingest_heavy_lane_max_workers()
@@ -4782,6 +4829,8 @@ class LibraryIngestQueueMixin:
         this again while a poll loop is already running is a no-op rather than a
         second poller.
         """
+        if getattr(self, "_ingest_maintenance_paused", False):
+            return
         if not pending_remote_batches(self.library_ingest_jobs):
             return
         self._run_remote_ingest_poll()
@@ -4808,16 +4857,18 @@ class LibraryIngestQueueMixin:
             logger.debug("Remote ingest poll: no server media service; not polling.")
             return
 
-        while not self._ingest_shutdown:
+        while not self._ingest_shutdown and not getattr(self, "_ingest_maintenance_paused", False):
             batches = pending_remote_batches(self.library_ingest_jobs)
             if not batches:
                 return
 
             for batch_id in batches:
-                if self._ingest_shutdown:
+                if self._ingest_shutdown or getattr(self, "_ingest_maintenance_paused", False):
                     return
                 await self._reconcile_remote_batch(service, batch_id)
 
+            if self._ingest_shutdown or getattr(self, "_ingest_maintenance_paused", False):
+                return
             await asyncio.sleep(self.REMOTE_INGEST_POLL_SECONDS)
 
     # -- Writer (claim-or-release loop, narrowed to the write stage) -------
@@ -4973,6 +5024,10 @@ class LibraryIngestQueueMixin:
         for why the crash-recovery callable is skipped on a clean exit.
         """
         clean_exit = False
+        media_db = self.media_db
+        writer_thread = threading.current_thread()
+        with self._ingest_writer_threads_lock:
+            self._ingest_writer_threads.add(writer_thread)
         try:
             while True:
                 claim = self.call_from_thread(self._claim_next_ingest_job_or_release)
@@ -5000,7 +5055,7 @@ class LibraryIngestQueueMixin:
                     )
                     media_id, _media_uuid, _message = persist_parsed_media(
                         payload,
-                        self.media_db,
+                        media_db,
                         overwrite_existing=overwrite_existing,
                         generate_embeddings=generate_embeddings,
                     )
@@ -5018,8 +5073,8 @@ class LibraryIngestQueueMixin:
                     # against an ``AttributeError`` on a stale/racy reference.
                     was_duplicate = media_id is None
                     content_hash = payload.get("content_hash")
-                    if media_id is None and self.media_db is not None:
-                        existing = self.media_db.get_media_by_url(payload["url"])
+                    if media_id is None and media_db is not None:
+                        existing = media_db.get_media_by_url(payload["url"])
                         if existing is None:
                             if content_hash is None and isinstance(
                                 payload.get("content"), str
@@ -5037,7 +5092,7 @@ class LibraryIngestQueueMixin:
                                 ).hexdigest()
                             if content_hash:
                                 try:
-                                    existing = self.media_db.get_media_by_hash(
+                                    existing = media_db.get_media_by_hash(
                                         content_hash
                                     )
                                 except (
@@ -5108,8 +5163,16 @@ class LibraryIngestQueueMixin:
                         },
                     )
         finally:
-            if not clean_exit:
-                self.call_from_thread(self._release_ingest_runner_after_crash)
+            try:
+                if type(media_db) is MediaDatabase and not media_db.is_memory_db:
+                    media_db.close_connection()
+            finally:
+                try:
+                    if not clean_exit:
+                        self.call_from_thread(self._release_ingest_runner_after_crash)
+                finally:
+                    with self._ingest_writer_threads_lock:
+                        self._ingest_writer_threads.discard(writer_thread)
 
 
 # --- Main App ---
