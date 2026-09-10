@@ -18,6 +18,64 @@ from tldw_chatbook.Canvas.control_protocol import (
 pytestmark = pytest.mark.loopback_network
 
 
+def test_v2_auth_codec_retains_snapshot_identity():
+    message = ControlMessage(
+        version=2,
+        message_type="auth.request",
+        request_id="auth-1",
+        deadline_ms=None,
+        payload={
+            "child_id": "child-a",
+            "secret": "a" * 64,
+            "runtime_snapshot_id": "b" * 64,
+        },
+    )
+    decoded = decode_control_frame(encode_control_frame(message)[4:])
+    assert decoded.payload["runtime_snapshot_id"] == "b" * 64
+
+
+@pytest.mark.parametrize("identity", [None, "", "b" * 63, "g" * 64, 1])
+def test_auth_rejects_malformed_snapshot_identity(identity):
+    with pytest.raises(ControlProtocolError, match="invalid_runtime_snapshot_id"):
+        _message(
+            "auth.request",
+            {
+                "child_id": "child-a",
+                "secret": "a" * 64,
+                "runtime_snapshot_id": identity,
+            },
+        )
+
+
+def test_auth_rejects_missing_identity_and_legacy_version():
+    with pytest.raises(ControlProtocolError, match="missing_payload_field"):
+        _message("auth.request", {"child_id": "child-a", "secret": "a" * 64})
+    with pytest.raises(ControlProtocolError, match="unsupported_version"):
+        ControlMessage(
+            1,
+            "auth.request",
+            "auth-old",
+            None,
+            {"child_id": "child-a", "secret": "a" * 64},
+        )
+
+
+def test_parent_refuses_foreign_snapshot():
+    async def scenario():
+        broker = CanvasControlBroker(runtime_snapshot_id="a" * 64)
+        await broker.start()
+        launch = broker.issue_child("child-a")
+        client = CanvasControlClient(launch.environment, runtime_snapshot_id="b" * 64)
+        try:
+            with pytest.raises(ControlProtocolError, match="runtime_snapshot_mismatch"):
+                await client.start()
+        finally:
+            await client.aclose()
+            await broker.aclose()
+
+    asyncio.run(scenario())
+
+
 def _message(message_type: str, payload: dict, *, request_id: str = "request-1"):
     return ControlMessage(
         version=CONTROL_PROTOCOL_VERSION,
@@ -108,14 +166,14 @@ def test_codec_fails_closed_on_wrong_envelope_scalar_types(field, value, code) -
     [
         (
             (
-                b'{"version":1,"type":"health.request","request_id":"request-1",'
+                b'{"version":2,"type":"health.request","request_id":"request-1",'
                 b'"deadline_ms":' + (b"9" * 5000) + b',"payload":{}}'
             ),
             "invalid_json",
         ),
         (
             (
-                b'{"version":1,"type":"bridge.request","request_id":"request-1",'
+                b'{"version":2,"type":"bridge.request","request_id":"request-1",'
                 b'"deadline_ms":null,"payload":{"request":'
                 + (b"[" * 2000)
                 + b"null"
@@ -178,7 +236,7 @@ def test_typed_payloads_reject_values_of_the_wrong_kind(message_type, payload) -
 
 def test_parent_rejects_out_of_order_response_types() -> None:
     async def scenario() -> None:
-        broker = CanvasControlBroker()
+        broker = CanvasControlBroker(runtime_snapshot_id="a" * 64)
         await broker.start()
         launch = broker.issue_child("child-a")
 
@@ -190,7 +248,9 @@ def test_parent_rejects_out_of_order_response_types() -> None:
                 request_id=message.request_id,
             )
 
-        client = CanvasControlClient(launch.environment, handler=wrong_handler)
+        client = CanvasControlClient(
+            launch.environment, runtime_snapshot_id="a" * 64, handler=wrong_handler
+        )
         await client.start()
         await broker.wait_connected("child-a", timeout=1)
         try:
@@ -220,10 +280,14 @@ def test_child_timeout_cancels_work_and_releases_backpressure_slot() -> None:
                 request_id=message.request_id,
             )
 
-        broker = CanvasControlBroker(max_pending_requests=1)
+        broker = CanvasControlBroker(
+            runtime_snapshot_id="a" * 64, max_pending_requests=1
+        )
         await broker.start()
         launch = broker.issue_child("child-a")
-        client = CanvasControlClient(launch.environment, handler=handler)
+        client = CanvasControlClient(
+            launch.environment, runtime_snapshot_id="a" * 64, handler=handler
+        )
         await client.start()
         await broker.wait_connected("child-a", timeout=1)
         try:
@@ -239,7 +303,7 @@ def test_child_timeout_cancels_work_and_releases_backpressure_slot() -> None:
 
 def test_two_children_cannot_cross_auth_or_receive_each_others_events() -> None:
     async def scenario() -> None:
-        broker = CanvasControlBroker()
+        broker = CanvasControlBroker(runtime_snapshot_id="a" * 64)
         await broker.start()
         launch_a = broker.issue_child("child-a")
         launch_b = broker.issue_child("child-b")
@@ -248,12 +312,16 @@ def test_two_children_cannot_cross_auth_or_receive_each_others_events() -> None:
         crossed["CHATBOOK_CANVAS_CONTROL_SECRET"] = launch_b.environment[
             "CHATBOOK_CANVAS_CONTROL_SECRET"
         ]
-        attacker = CanvasControlClient(crossed)
+        attacker = CanvasControlClient(crossed, runtime_snapshot_id="a" * 64)
         with pytest.raises(ControlProtocolError, match="authentication_failed"):
             await attacker.start()
 
-        client_a = CanvasControlClient(launch_a.environment)
-        client_b = CanvasControlClient(launch_b.environment)
+        client_a = CanvasControlClient(
+            launch_a.environment, runtime_snapshot_id="a" * 64
+        )
+        client_b = CanvasControlClient(
+            launch_b.environment, runtime_snapshot_id="a" * 64
+        )
         await client_a.start()
         await client_b.start()
         await broker.wait_connected("child-a", timeout=1)
@@ -282,7 +350,7 @@ def test_two_children_cannot_cross_auth_or_receive_each_others_events() -> None:
 
 def test_child_restart_rotates_and_revokes_the_previous_secret() -> None:
     async def scenario() -> None:
-        broker = CanvasControlBroker()
+        broker = CanvasControlBroker(runtime_snapshot_id="a" * 64)
         await broker.start()
         first = broker.issue_child("child-a")
         second = broker.issue_child("child-a")
@@ -290,7 +358,7 @@ def test_child_restart_rotates_and_revokes_the_previous_secret() -> None:
             first.environment["CHATBOOK_CANVAS_CONTROL_SECRET"]
             != second.environment["CHATBOOK_CANVAS_CONTROL_SECRET"]
         )
-        stale = CanvasControlClient(first.environment)
+        stale = CanvasControlClient(first.environment, runtime_snapshot_id="a" * 64)
         with pytest.raises(ControlProtocolError, match="authentication_failed"):
             await stale.start()
         await broker.aclose()
@@ -300,16 +368,16 @@ def test_child_restart_rotates_and_revokes_the_previous_secret() -> None:
 
 def test_launch_secret_cannot_be_replayed_after_a_disconnect() -> None:
     async def scenario() -> None:
-        broker = CanvasControlBroker()
+        broker = CanvasControlBroker(runtime_snapshot_id="a" * 64)
         await broker.start()
         launch = broker.issue_child("child-a")
-        first = CanvasControlClient(launch.environment)
+        first = CanvasControlClient(launch.environment, runtime_snapshot_id="a" * 64)
         await first.start()
         await broker.wait_connected("child-a", timeout=1)
         await first.aclose()
         await asyncio.sleep(0)
 
-        replay = CanvasControlClient(launch.environment)
+        replay = CanvasControlClient(launch.environment, runtime_snapshot_id="a" * 64)
         with pytest.raises(ControlProtocolError, match="authentication_failed"):
             await replay.start()
         await broker.aclose()
@@ -320,10 +388,10 @@ def test_launch_secret_cannot_be_replayed_after_a_disconnect() -> None:
 @pytest.mark.parametrize("invalid_secret", ["", "é" * 32])
 def test_consumed_launch_rejects_a_raw_malformed_secret(invalid_secret) -> None:
     async def scenario() -> None:
-        broker = CanvasControlBroker()
+        broker = CanvasControlBroker(runtime_snapshot_id="a" * 64)
         await broker.start()
         launch = broker.issue_child("child-a")
-        first = CanvasControlClient(launch.environment)
+        first = CanvasControlClient(launch.environment, runtime_snapshot_id="a" * 64)
         await first.start()
         await broker.wait_connected("child-a", timeout=1)
         await first.aclose()
@@ -337,7 +405,11 @@ def test_consumed_launch_rejects_a_raw_malformed_secret(invalid_secret) -> None:
             encode_control_frame(
                 _message(
                     "auth.request",
-                    {"child_id": "child-a", "secret": invalid_secret},
+                    {
+                        "child_id": "child-a",
+                        "secret": invalid_secret,
+                        "runtime_snapshot_id": "a" * 64,
+                    },
                     request_id="auth-empty",
                 )
             )
@@ -374,10 +446,14 @@ def test_cancelling_parent_request_cancels_child_and_releases_pending_slot() -> 
                 "health.response", {"status": "ok"}, request_id=message.request_id
             )
 
-        broker = CanvasControlBroker(max_pending_requests=1)
+        broker = CanvasControlBroker(
+            runtime_snapshot_id="a" * 64, max_pending_requests=1
+        )
         await broker.start()
         launch = broker.issue_child("child-a")
-        client = CanvasControlClient(launch.environment, handler=handler)
+        client = CanvasControlClient(
+            launch.environment, runtime_snapshot_id="a" * 64, handler=handler
+        )
         await client.start()
         await broker.wait_connected("child-a", timeout=1)
         try:
@@ -415,10 +491,12 @@ def test_late_response_after_timeout_does_not_disconnect_child() -> None:
                 "health.response", {"status": "ok"}, request_id=message.request_id
             )
 
-        broker = CanvasControlBroker()
+        broker = CanvasControlBroker(runtime_snapshot_id="a" * 64)
         await broker.start()
         launch = broker.issue_child("child-a")
-        client = CanvasControlClient(launch.environment, handler=handler)
+        client = CanvasControlClient(
+            launch.environment, runtime_snapshot_id="a" * 64, handler=handler
+        )
         await client.start()
         await broker.wait_connected("child-a", timeout=1)
         try:
@@ -436,10 +514,10 @@ def test_late_response_after_timeout_does_not_disconnect_child() -> None:
 
 def test_revoked_channel_reports_disconnect_and_rejects_lost_events() -> None:
     async def scenario() -> None:
-        broker = CanvasControlBroker()
+        broker = CanvasControlBroker(runtime_snapshot_id="a" * 64)
         await broker.start()
         launch = broker.issue_child("child-a")
-        client = CanvasControlClient(launch.environment)
+        client = CanvasControlClient(launch.environment, runtime_snapshot_id="a" * 64)
         await client.start()
         await broker.wait_connected("child-a", timeout=1)
 

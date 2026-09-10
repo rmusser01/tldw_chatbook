@@ -554,7 +554,7 @@ async def test_late_canvas_compile_refusal_cannot_replace_stale_draft(
     started = threading.Event()
     release = threading.Event()
 
-    def paused_refusal(_source):
+    def paused_refusal(_source, *, snapshot, parent_profile):
         started.set()
         if not release.wait(2):
             raise AssertionError("paused compiler was not released")

@@ -391,7 +391,7 @@ class _StageGateScreen:
         # Cheap state the signature reads directly.
         self._library_compose_generation = 0
         self._library_reader_shell_ref = (
-            _FakeStageWidget(widget_id="library-notes-reader-shell")
+            _FakeStageWidget(widget_id="library-browse-reader-shell")
             if reader_active
             else None
         )

@@ -461,6 +461,19 @@ def _canvas_revision_payload_valid(
     )
 
 
+def _install_canvas_revision_payload_validator(
+    connection: sqlite3.Connection,
+) -> None:
+    """Install the pure Canvas payload validator required by the schema."""
+
+    connection.create_function(
+        _CANVAS_REVISION_PAYLOAD_VALIDATION_FUNCTION,
+        3,
+        _canvas_revision_payload_valid,
+        deterministic=True,
+    )
+
+
 class _CanvasRevisionDeletionAuthorization:
     """Connection-local capability for an exact repository-owned hard purge."""
 
@@ -3437,12 +3450,7 @@ UPDATE db_schema_version
                     self._local.semantic_mutation_authorization = (
                         register_semantic_mutation_guard(conn)
                     )
-                    conn.create_function(
-                        _CANVAS_REVISION_PAYLOAD_VALIDATION_FUNCTION,
-                        3,
-                        _canvas_revision_payload_valid,
-                        deterministic=True,
-                    )
+                    _install_canvas_revision_payload_validator(conn)
                     canvas_deletion_authorization = (
                         _CanvasRevisionDeletionAuthorization(conn)
                     )
@@ -17239,6 +17247,53 @@ UPDATE db_schema_version
         cursor = self.execute_query(query)
         row = cursor.fetchone()
         return int(row["cnt"] if row else 0)
+
+    def get_notes_linking_to(
+        self, note_id: str, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """List notes whose body carries the note link for ``note_id``.
+
+        The note-link form is the one the Obsidian importer writes when a
+        ``[[wikilink]]`` resolves inside the batch:
+        ``[label](note://<note_id>)`` (``note_import_plan_models.
+        rewrite_wikilinks``). Matching the closing parenthesis too is what
+        keeps ``note://abc`` from also matching a link to ``note://abcdef``.
+
+        FTS5 is the wrong index here: its tokenizer splits ``note://<uuid>``
+        into ``note`` plus the id's hex runs, so a MATCH would answer a
+        looser question than "carries this exact link".
+
+        Args:
+            note_id: The linked-to note. Bound as a parameter, with LIKE's
+                own wildcards escaped so an id containing ``%`` or ``_``
+                cannot widen the search.
+            limit: Maximum rows to return.
+
+        Returns:
+            ``{"id", "title"}`` rows for the linking notes, soft-deleted
+            notes and the target itself excluded, ordered by title.
+        """
+        if not note_id:
+            return []
+        escaped = (
+            str(note_id)
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        query = """
+            SELECT id, title
+            FROM notes
+            WHERE deleted = 0
+              AND id != ?
+              AND content LIKE ? ESCAPE '\\'
+            ORDER BY title COLLATE NOCASE, id
+            LIMIT ?
+        """
+        cursor = self.execute_query(
+            query, (note_id, f"%(note://{escaped})%", max(0, int(limit)))
+        )
+        return [dict(row) for row in cursor.fetchall()]
 
     # ============================= Library read seams (task-1337) =========================================
     #

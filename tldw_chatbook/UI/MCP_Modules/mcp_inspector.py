@@ -2512,7 +2512,9 @@ class MCPInspector(Vertical):
         except NoMatches:
             pass
         else:
-            await panel.remove()
+            # Child teardown clears styles before removal reflows the compositor.
+            with self.app.batch_update():
+                await panel.remove()
         try:
             self.query_one("#mcp-inspector-test-tool", Button).disabled = False
         except NoMatches:

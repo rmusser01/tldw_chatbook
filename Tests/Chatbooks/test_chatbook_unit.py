@@ -39,6 +39,25 @@ from tldw_chatbook.Chatbooks.error_handler import safe_chatbook_operation
 from Tests.Chatbooks.factories import ManifestFactory
 
 
+
+def _collect_one_item(content_type: ContentType):
+    """Stand-in collector that records ONE collected item on the manifest.
+
+    task-32232: ``create_chatbook`` refuses to write an archive when a
+    non-empty selection collects nothing, so a collector patched to a bare
+    no-op now (correctly) fails the whole export. These tests are about the
+    call wiring, not about collecting nothing, so their doubles record a
+    single item exactly as the real collectors do.
+    """
+
+    def _collect(ids, work_dir, manifest, content, *args, **kwargs):
+        manifest.content_items.append(
+            ContentItem(id=str(ids[0]), type=content_type, title="stub")
+        )
+
+    return _collect
+
+
 class TestChatbookCreator:
     """Test ChatbookCreator functionality."""
 
@@ -80,7 +99,11 @@ class TestChatbookCreator:
     ):
         """Test creating chatbook with conversations."""
         # Mock database interactions
-        with patch.object(chatbook_creator, "_collect_conversations") as mock_collect:
+        with patch.object(
+            chatbook_creator,
+            "_collect_conversations",
+            side_effect=_collect_one_item(ContentType.CONVERSATION),
+        ) as mock_collect:
             output_path = temp_dir / "conversations.zip"
 
             success, message, info = chatbook_creator.create_chatbook(
@@ -97,11 +120,31 @@ class TestChatbookCreator:
     def test_create_chatbook_with_all_content_types(self, chatbook_creator, temp_dir):
         """Test creating chatbook with all content types."""
         with (
-            patch.object(chatbook_creator, "_collect_conversations"),
-            patch.object(chatbook_creator, "_collect_notes"),
-            patch.object(chatbook_creator, "_collect_characters"),
-            patch.object(chatbook_creator, "_collect_media"),
-            patch.object(chatbook_creator, "_collect_prompts"),
+            patch.object(
+                chatbook_creator,
+                "_collect_conversations",
+                side_effect=_collect_one_item(ContentType.CONVERSATION),
+            ),
+            patch.object(
+                chatbook_creator,
+                "_collect_notes",
+                side_effect=_collect_one_item(ContentType.NOTE),
+            ),
+            patch.object(
+                chatbook_creator,
+                "_collect_characters",
+                side_effect=_collect_one_item(ContentType.CHARACTER),
+            ),
+            patch.object(
+                chatbook_creator,
+                "_collect_media",
+                side_effect=_collect_one_item(ContentType.MEDIA),
+            ),
+            patch.object(
+                chatbook_creator,
+                "_collect_prompts",
+                side_effect=_collect_one_item(ContentType.PROMPT),
+            ),
         ):
             output_path = temp_dir / "all_content.zip"
 

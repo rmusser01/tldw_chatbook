@@ -1,0 +1,180 @@
+{
+  "baseline": "8b54cbf884",
+  "parent": [
+    {
+      "stage": "imports_started",
+      "time": 2139538.420439125
+    },
+    {
+      "stage": "imports_complete",
+      "time": 2139540.578741166
+    },
+    {
+      "stage": "parent_test_enter",
+      "time": 2139540.826327958
+    },
+    {
+      "stage": "parent_login_start",
+      "time": 2139541.899076583
+    },
+    {
+      "stage": "parent_login_complete",
+      "time": 2139542.158075958
+    },
+    {
+      "stage": "parent_first_byte_seen",
+      "time": 2139547.040954458
+    },
+    {
+      "stage": "parent_composer_seen",
+      "time": 2139554.93059725
+    },
+    {
+      "stage": "parent_reconnect_start",
+      "time": 2139570.12991725
+    },
+    {
+      "stage": "parent_saved_loaded_seen",
+      "time": 2139582.136661
+    },
+    {
+      "stage": "parent_cleanup_start",
+      "time": 2139597.488658166,
+      "services": 2,
+      "live_children": 0
+    },
+    {
+      "stage": "parent_cleanup_complete",
+      "time": 2139597.494809333
+    }
+  ],
+  "initial_child": [
+    {
+      "stage": "imports_started",
+      "time": 2139542.183821291
+    },
+    {
+      "stage": "imports_complete",
+      "time": 2139544.491123458
+    },
+    {
+      "stage": "main_enter",
+      "time": 2139544.491369833
+    },
+    {
+      "stage": "app_factory_start",
+      "time": 2139544.491471083
+    },
+    {
+      "stage": "app_factory_complete",
+      "time": 2139545.382389416
+    },
+    {
+      "stage": "database_complete",
+      "time": 2139545.809714625
+    },
+    {
+      "stage": "run_enter",
+      "time": 2139545.87459225
+    },
+    {
+      "stage": "f12_enter",
+      "time": 2139566.604658958,
+      "recovered": false,
+      "target_set": true,
+      "sync_in_progress": false,
+      "sync_requested": false,
+      "cards": 2,
+      "matches": 1,
+      "mounted_matches": 1,
+      "active_matches": 1
+    },
+    {
+      "stage": "card_button_press",
+      "time": 2139566.608212958
+    },
+    {
+      "stage": "card_button_return",
+      "time": 2139566.610179166
+    },
+    {
+      "stage": "production_open_enter",
+      "time": 2139566.641661333
+    },
+    {
+      "stage": "production_open_return",
+      "time": 2139566.643073208
+    },
+    {
+      "stage": "selection_ack",
+      "time": 2139566.679541791,
+      "pinned": true
+    },
+    {
+      "stage": "run_return",
+      "time": 2139569.051580666
+    }
+  ],
+  "replacement_child": [
+    {
+      "stage": "imports_started",
+      "time": 2139570.213182958
+    },
+    {
+      "stage": "imports_complete",
+      "time": 2139572.493538666
+    },
+    {
+      "stage": "main_enter",
+      "time": 2139572.49381175
+    },
+    {
+      "stage": "app_factory_start",
+      "time": 2139572.493925416
+    },
+    {
+      "stage": "app_factory_complete",
+      "time": 2139573.404701708
+    },
+    {
+      "stage": "database_complete",
+      "time": 2139573.466299083
+    },
+    {
+      "stage": "run_enter",
+      "time": 2139573.5299185
+    },
+    {
+      "stage": "f10_enter",
+      "time": 2139582.05658475
+    },
+    {
+      "stage": "f10_load_complete",
+      "time": 2139582.128087375,
+      "recovered": true,
+      "target_set": true,
+      "sync_in_progress": true,
+      "sync_requested": true,
+      "cards": 0,
+      "matches": 0,
+      "mounted_matches": 0,
+      "active_matches": 0
+    },
+    {
+      "stage": "f12_enter",
+      "time": 2139582.174503458,
+      "recovered": true,
+      "target_set": true,
+      "sync_in_progress": true,
+      "sync_requested": true,
+      "cards": 0,
+      "matches": 0,
+      "mounted_matches": 0,
+      "active_matches": 0
+    },
+    {
+      "stage": "run_return",
+      "time": 2139582.793932708
+    }
+  ]
+}

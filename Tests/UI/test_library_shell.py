@@ -467,7 +467,7 @@ async def test_mounted_reader_snapshot_reuses_routes_and_refreshes_once_per_gene
         )
 
         for row_id, selector in (
-            (LIBRARY_ROW_BROWSE_MEDIA, "#library-media-reader-shell"),
+            (LIBRARY_ROW_BROWSE_MEDIA, ".library-media-route"),
             (LIBRARY_ROW_BROWSE_PROMPTS, "#library-prompts-canvas"),
             (
                 LIBRARY_ROW_BROWSE_CONVERSATIONS,
@@ -4154,12 +4154,12 @@ async def test_ordinary_rail_restores_custom_owner_after_collapse_and_adaptive_r
         assert rail.region.width == saved_width
 
         adaptive_routes = (
-            (LIBRARY_ROW_BROWSE_MEDIA, "#library-media-reader-shell"),
+            (LIBRARY_ROW_BROWSE_MEDIA, ".library-media-route"),
             (
                 LIBRARY_ROW_BROWSE_CONVERSATIONS,
                 "#library-conversations-reader-shell",
             ),
-            (LIBRARY_ROW_BROWSE_NOTES, "#library-notes-reader-shell"),
+            (LIBRARY_ROW_BROWSE_NOTES, ".library-notes-route"),
         )
         for row_id, selector in adaptive_routes:
             await screen._select_library_rail_row(row_id)
@@ -4288,7 +4288,7 @@ async def test_notes_compact_takeovers_restore_the_ordinary_custom_contract() ->
         await _wait_for_library_shell(screen, pilot)
         await _wait_for_library_notes_compact(screen, pilot, True)
         await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
-        shell = await _wait_for_selector(screen, pilot, "#library-notes-reader-shell")
+        shell = await _wait_for_selector(screen, pilot, ".library-notes-route")
 
         screen._sync_library_notes_reader_layout_from_shell(priority="library")
         await pilot.pause()
@@ -4620,9 +4620,9 @@ def test_library_emergency_escape_binding_follows_specific_guards() -> None:
 @pytest.mark.parametrize(
     ("row_id", "shell_selector"),
     (
-        (LIBRARY_ROW_BROWSE_MEDIA, "#library-media-reader-shell"),
+        (LIBRARY_ROW_BROWSE_MEDIA, ".library-media-route"),
         (LIBRARY_ROW_BROWSE_CONVERSATIONS, "#library-conversations-reader-shell"),
-        (LIBRARY_ROW_BROWSE_NOTES, "#library-notes-reader-shell"),
+        (LIBRARY_ROW_BROWSE_NOTES, ".library-notes-route"),
         (LIBRARY_ROW_BROWSE_PROMPTS, "#library-prompts-reader-shell"),
     ),
 )
@@ -5499,19 +5499,19 @@ async def test_library_route_matrix_keeps_default_ordinary_rail_edge_stable() ->
             )
             rail = screen.query_one("#library-rail", LibraryRail)
             canvas = screen.query_one("#library-canvas")
-            assert str(rail.styles.width) == "3fr"
-            assert rail.styles.min_width.value == 24
-            assert rail.styles.max_width.value == 34
+            assert rail.styles.width.value == landing_width
+            assert rail.styles.min_width.value == landing_width
+            assert rail.styles.max_width.value == landing_width
             assert abs(rail.region.width - landing_width) <= 1
             assert abs(rail.region.right - canvas.region.x) <= 1
 
         for row_id, selector in (
-            (LIBRARY_ROW_BROWSE_MEDIA, "#library-media-reader-shell"),
+            (LIBRARY_ROW_BROWSE_MEDIA, ".library-media-route"),
             (
                 LIBRARY_ROW_BROWSE_CONVERSATIONS,
                 "#library-conversations-reader-shell",
             ),
-            (LIBRARY_ROW_BROWSE_NOTES, "#library-notes-reader-shell"),
+            (LIBRARY_ROW_BROWSE_NOTES, ".library-notes-route"),
             (LIBRARY_ROW_BROWSE_PROMPTS, "#library-prompts-reader-shell"),
         ):
             await screen._select_library_rail_row(row_id)
@@ -5707,7 +5707,7 @@ async def test_library_production_width_matrix_adaptive_work_owned(
         await pilot.pause()
 
         outer = screen.query_one("#library-shell-grid")
-        reader = screen.query_one("#library-notes-reader-shell")
+        reader = screen.query_one(".library-notes-route")
         layout = reader.effective_layout
         assert outer.content_region.width == expected_content_width
         if terminal_width < 120:
@@ -5840,7 +5840,7 @@ async def test_library_production_width_matrix_custom_preferences(
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
         screen.query_one("#library-notes-row-0", Button).press()
         await _wait_for_selector(screen, pilot, "#library-note-body")
-        adaptive = screen.query_one("#library-notes-reader-shell")
+        adaptive = screen.query_one(".library-notes-route")
         screen._notes_state.reader_layout = (
             library_screen_module.resolve_adaptive_reader_layout(
                 0,
@@ -6079,7 +6079,7 @@ async def test_library_resize_geometry_high_frequency_does_no_non_layout_work(
         await _wait_for_selector(screen, pilot, "#library-note-body")
         await screen.workers.wait_for_complete()
         await pilot.pause()
-        reader = screen.query_one("#library-notes-reader-shell")
+        reader = screen.query_one(".library-notes-route")
         with monkeypatch.context() as transient:
             transient.setattr(
                 screen,

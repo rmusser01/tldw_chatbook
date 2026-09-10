@@ -28,23 +28,23 @@ def test_width_policy_constants_express_the_approved_bounds() -> None:
         LIBRARY_CUSTOM_MAX_WIDTH,
         LIBRARY_CANVAS_MIN_WIDTH,
         LIBRARY_EMERGENCY_WIDTH,
-    ) == (31, 24, 34, 48, 40, 64)
+    ) == (36, 24, 39, 48, 40, 64)
     assert LIBRARY_EMERGENCY_WIDTH == LIBRARY_MIN_WIDTH + LIBRARY_CANVAS_MIN_WIDTH
 
 
 @pytest.mark.parametrize(
     ("content_width", "expected"),
     [
-        (1, 24),
-        (24, 24),
-        (127, 24),
-        (128, 24),
-        (152, 29),
-        (163, 31),
-        (165, 31),
-        (178, 33),
-        (181, 34),
-        (10000, 34),
+        (1, 29),
+        (24, 29),
+        (127, 29),
+        (128, 29),
+        (152, 34),
+        (163, 36),
+        (165, 36),
+        (178, 38),
+        (181, 39),
+        (10000, 39),
     ],
 )
 def test_project_default_library_width_is_bounded_fractional(
@@ -72,10 +72,10 @@ def test_ordinary_emergency_is_required_only_below_sixty_four_columns(
     assert ordinary_emergency_required(content_width) is expected
 
 
-def test_default_alongside_contract_uses_native_fractional_width() -> None:
+def test_default_alongside_contract_preserves_the_canvas_minimum() -> None:
     assert resolve_ordinary_rail_contract(
         64, OrdinaryRailPresentation.ALONGSIDE, False, 31
-    ) == OrdinaryRailStyleContract(True, "3fr", 24, 34)
+    ) == OrdinaryRailStyleContract(True, 24, 24, 24)
 
 
 @pytest.mark.parametrize(

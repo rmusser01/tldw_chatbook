@@ -197,6 +197,22 @@ class _SelectModeApp(ConsolidatedCSSApp):
             id="library-media-canvas",
         )
 
+    @staticmethod
+    def _library_media_analyze_reason() -> str:
+        """Screen method the media row-toggle patcher calls (task-28007 AC#4).
+
+        TASK-31880: this app is a duck-typed SCREEN stand-in for
+        ``_apply_library_row_toggle``, whose media leg grew an in-place
+        "Analyze" flip on 2026-09-04 -- and that leg reads a screen method
+        this harness did not have. The dispatcher's own ``except Exception``
+        swallowed the ``AttributeError`` and silently rerouted every toggle
+        here onto the full-recompose fallback, so the in-place patch path
+        the test below exists to cover stopped being exercised. Same stub
+        (empty reason = provider ready) the screen/controller double in
+        ``test_library_selection_updates.py`` uses.
+        """
+        return ""
+
 
 @pytest.mark.asyncio
 async def test_select_mode_bulk_buttons_carry_marker_at_zero_selection():
@@ -1124,8 +1140,20 @@ async def test_row_toggle_patcher_rebuilds_marker_label_both_directions():
     """Mutation C's survival: `_apply_library_row_toggle` flips `.disabled`
     on the bulk buttons in place, so it must rebuild the "○" marker label
     too. Crossing 0->1 must strip the marker AND enable; 1->0 must restore
-    both. The host app recomposes to the 0-selected state, so the
-    patcher's full-recompose fallback cannot mask a missing label patch."""
+    both.
+
+    TASK-31880: the spellings below are media's SHORT bulk-action words
+    ("Export"/"Delete"), which task-30043 (2026-09-03) adopted for the
+    ~40-col items pane -- the full "Export selected" this test used to
+    expect collapsed to a bare "○" at that width. The enabled spelling
+    keeps the marker's own two cells reserved (`LIBRARY_ACTION_LABEL_PAD`,
+    task-31635/task-31959) so the word holds its column across the flip.
+    The identity checks pin that each direction really ran the in-place
+    patch: the dispatcher's `except Exception` fallback recomposes the
+    host app, which would swap in FRESH buttons at the 0-selected state
+    and leave these references stale.
+    """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ACTION_LABEL_PAD
     from tldw_chatbook.Library.row_selection import RowSelection
     from tldw_chatbook.UI.Screens.library_screen import _apply_library_row_toggle
 
@@ -1139,32 +1167,34 @@ async def test_row_toggle_patcher_rebuilds_marker_label_both_directions():
         row_button = pilot.app.query_one("#library-media-row-0", Button)
         export_btn = pilot.app.query_one("#library-media-export-selected", Button)
         delete_btn = pilot.app.query_one("#library-media-delete-selected", Button)
-        assert (
-            str(export_btn.label) == f"{LIBRARY_DISABLED_ACTION_MARKER} Export selected"
-        )
+        assert str(export_btn.label) == f"{LIBRARY_DISABLED_ACTION_MARKER} Export"
 
         # 0 -> 1 selected through the real patch path.
         app._media_state.row_selection.toggle("m0")
         _apply_library_row_toggle(app, "media", row_button, "m0")
         await pilot.pause()
+        assert (
+            pilot.app.query_one("#library-media-export-selected", Button)
+            is export_btn
+        )
         assert export_btn.disabled is False
-        assert str(export_btn.label) == "Export selected"
+        assert str(export_btn.label) == f"{LIBRARY_ACTION_LABEL_PAD}Export"
         assert delete_btn.disabled is False
-        assert str(delete_btn.label) == "Delete selected"
+        assert str(delete_btn.label) == f"{LIBRARY_ACTION_LABEL_PAD}Delete"
         assert str(row_button.label).startswith("☑")
 
         # 1 -> 0: the marker must come back with `disabled`.
         app._media_state.row_selection.toggle("m0")
         _apply_library_row_toggle(app, "media", row_button, "m0")
         await pilot.pause()
+        assert (
+            pilot.app.query_one("#library-media-export-selected", Button)
+            is export_btn
+        )
         assert export_btn.disabled is True
-        assert str(export_btn.label) == (
-            f"{LIBRARY_DISABLED_ACTION_MARKER} Export selected"
-        )
+        assert str(export_btn.label) == f"{LIBRARY_DISABLED_ACTION_MARKER} Export"
         assert delete_btn.disabled is True
-        assert str(delete_btn.label) == (
-            f"{LIBRARY_DISABLED_ACTION_MARKER} Delete selected"
-        )
+        assert str(delete_btn.label) == f"{LIBRARY_DISABLED_ACTION_MARKER} Delete"
         assert str(row_button.label).startswith("☐")
 
 

@@ -12,6 +12,7 @@ class SettingsCategoryId(StrEnum):
 
     OVERVIEW = "overview"
     PROVIDERS_MODELS = "providers-models"
+    WEB_SEARCH = "web-search"
     SPEECH_TTS = "speech-tts"
     APPEARANCE = "appearance"
     THEME = "theme"

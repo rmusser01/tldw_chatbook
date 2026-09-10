@@ -2461,6 +2461,10 @@ async def test_settings_advanced_config_controls_use_action_and_status_rows():
         await _click_settings_category(screen, pilot, "advanced-config")
         await _wait_for_selector(screen, pilot, "#settings-advanced-config-editor")
 
+        await pilot.click("#settings-advanced-validate-config")
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
         actions = screen.query_one("#settings-advanced-config-actions")
         result = screen.query_one("#settings-advanced-config-result")
 

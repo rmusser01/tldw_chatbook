@@ -1,0 +1,14 @@
+............................................s........................... [ 66%]
+....................................                                     [100%]
+=============================== warnings summary ===============================
+../../../../../../../private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydub/utils.py:14
+  /private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydub/utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+SKIPPED [1] Tests/TTS/test_kokoro_pytorch_runtime.py:463: Requires real MPS
+107 passed, 1 skipped, 140 deselected, 1 warning in 4.71s

@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+import os
+from typing import Protocol
+
+
+class _MigrationCleanupOwner(Protocol):
+    def close(self) -> None: ...
+
 
 _VALIDATION_CODES = frozenset(
     {
@@ -60,6 +67,8 @@ _REPOSITORY_CODES = frozenset(
         "reference_unavailable",
         "restore_failed",
         "restoring",
+        "restart_required",
+        "runtime_unsupported",
         "schema_corrupt",
         "schema_partial",
         "schema_unsupported",
@@ -114,10 +123,125 @@ class ProfileRepositoryError(_ProfileError, RuntimeError):
             if type(code) is str and code in _REPOSITORY_CODES
             else "operation_failed"
         )
-        super().__init__(safe_code, f"TTS profile repository failed: {safe_code}")
+        message = (
+            "TTS profile repository unavailable: restart is required."
+            if safe_code == "restart_required"
+            else "TTS profile repository unavailable: SQLite runtime lacks required "
+            "close-policy support."
+            if safe_code == "runtime_unsupported"
+            else f"TTS profile repository failed: {safe_code}"
+        )
+        super().__init__(safe_code, message)
 
     def __reduce__(self) -> tuple[type["ProfileRepositoryError"], tuple[str]]:
         return (ProfileRepositoryError, (self.code,))
+
+
+class ProfileMigrationCleanupError(ProfileRepositoryError):
+    """Retain teardown authority after an exclusive migration close failed."""
+
+    def __init__(
+        self, owner: _MigrationCleanupOwner, *, code: str = "unavailable"
+    ) -> None:
+        super().__init__(code)
+        self.owner = owner
+
+
+def _migration_cleanup_owner(
+    error: BaseException | None,
+) -> _MigrationCleanupOwner | None:
+    if error is None:
+        return None
+    metadata = BaseException.__dict__["__dict__"].__get__(error, BaseException)
+    cleanup = (
+        error
+        if isinstance(error, ProfileMigrationCleanupError)
+        else metadata.get("_profile_migration_cleanup_error")
+    )
+    if isinstance(cleanup, ProfileMigrationCleanupError):
+        return BaseException.__dict__["__dict__"].__get__(cleanup, BaseException)[
+            "owner"
+        ]
+    return None
+
+
+def _raise_migration_cleanup_failure(
+    owner: _MigrationCleanupOwner,
+    *errors: BaseException | None,
+    code: str = "unavailable",
+) -> None:
+    owners = []
+    for error in errors:
+        previous = _migration_cleanup_owner(error)
+        if previous is not None and all(
+            previous is not retained for retained in owners
+        ):
+            owners.append(previous)
+    if all(owner is not retained for retained in owners):
+        owners.append(owner)
+    cleanup = ProfileMigrationCleanupError(
+        owners[0] if len(owners) == 1 else _MigrationCleanupGroup(*owners), code=code
+    )
+    for error in errors:
+        if error is not None and not isinstance(error, Exception):
+            metadata = BaseException.__dict__["__dict__"].__get__(error, BaseException)
+            metadata["_profile_migration_cleanup_error"] = cleanup
+            raise error from None
+    try:
+        raise cleanup from None
+    except ProfileMigrationCleanupError:
+        # Even callers unwinding an active native exception expose no chain.
+        cleanup.__context__ = None
+        cleanup.__cause__ = None
+        raise
+
+
+class _MigrationCleanupGroup:
+    def __init__(self, *owners: _MigrationCleanupOwner) -> None:
+        self._owners = list(owners)
+
+    def __repr__(self) -> str:
+        return "_MigrationCleanupGroup(<private>)"
+
+    def close(self) -> None:
+        while self._owners:
+            self._owners[0].close()
+            self._owners.pop(0)
+
+
+class _ProfileMigrationValidationOwner:
+    """One exclusive view and its pins; retries only settle native teardown."""
+
+    def __init__(self, file_fd: int, parent_fd: int = -1) -> None:
+        self.connection = None
+        self.file_fd = file_fd
+        self.parent_fd = parent_fd
+
+    def __repr__(self) -> str:
+        return "_ProfileMigrationValidationOwner(<private>)"
+
+    def close_sqlite(self, body_error: BaseException | None = None) -> None:
+        if self.connection is not None:
+            close_error = None
+            try:
+                self.connection.close()
+            except BaseException as error:  # noqa: BLE001 - preserve native ownership and control flow
+                close_error = error
+            if close_error is not None:
+                _raise_migration_cleanup_failure(self, body_error, close_error)
+            self.connection = None
+
+    def close(self) -> None:
+        self.close_sqlite()
+        for attribute in ("file_fd", "parent_fd"):
+            descriptor = getattr(self, attribute)
+            if descriptor >= 0:
+                # A raw close may consume the descriptor even when it errors.
+                setattr(self, attribute, -1)
+                try:
+                    os.close(descriptor)
+                except BaseException as error:  # noqa: BLE001 - retain remaining teardown authority
+                    _raise_migration_cleanup_failure(self, error)
 
 
 class ProfileServiceError(_ProfileError, RuntimeError):

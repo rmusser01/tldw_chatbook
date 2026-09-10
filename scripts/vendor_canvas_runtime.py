@@ -522,6 +522,47 @@ def vendor(
                 notices,
             )
         }
+        profile_contract = {
+            "engine": {
+                "id": "quickjs-wasm-0.32.0-release-sync",
+                "sha256": outputs["quickjs-runtime.js"]["sha256"],
+            },
+            "facade": {
+                "id": "canvas-v1-facade-1",
+                "sha256": outputs["canvas_runtime_worker.js"]["sha256"],
+            },
+            "plan": {
+                "id": "canvas-v1-plan-1",
+                "sha256": outputs["canvas_renderer.js"]["sha256"],
+            },
+            "grammar": {
+                "id": "canvas-html-v1",
+                "sha256": "90bf85f9365542beea79b7048f79d97825d37bb2bc46bba0739b46614ffd7e40",
+            },
+            "layout": {
+                "id": "canvas-v1-layout-1",
+                "sha256": outputs["canvas_renderer.js"]["sha256"],
+            },
+            "unicode": {
+                "version": "15.1.0",
+                "segmentation": "ecmascript-code-point",
+                "width": "css-authored",
+                "sha256": "eb4ff11733a5eb96cc3009a581cff2ab00f65bf1957b571b83ef2fb26f30d72f",
+            },
+            "quotas": {
+                "id": "canvas-v1-quotas-1",
+                "html_bytes": 512 * 1024,
+                "script_bytes": 256 * 1024,
+                "runtime_memory_bytes": 32 * 1024 * 1024,
+                "stack_bytes": 512 * 1024,
+                "startup_milliseconds": 250,
+                "event_milliseconds": 50,
+                "pending_jobs": 100,
+                "dom_nodes": 1800,
+                "css_rules": 900,
+                "patches_per_operation": 500,
+            },
+        }
         manifest = {
             "schema_version": 1,
             "runtime_profile": "canvas-v1",
@@ -539,6 +580,7 @@ def vendor(
                 "filesystem": False,
                 "single_file": True,
             },
+            "profile_contract": profile_contract,
             "packages": [
                 _manifest_entry(spec, extracted_digests[spec.name])
                 for spec in RUNTIME_PACKAGES

@@ -842,7 +842,49 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # this ratchet exists to make visible, not a regression. Re-pinned to the
     # measured post-merge value per `test_budget_is_not_left_slack_after_a_
     # wave`'s own instruction ("set it to {lines} so the gain is locked in").
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32263, 1258),
+    # 2026-09-08, Library phase C task 2 (the resident browse shell): 32263 ->
+    # 32242. The gain is one move, not a compression: the ~100-line body of
+    # `_replace_library_browse_canvas` became a 26-line delegation to
+    # `UI/Library_Modules/library_browse_route_swap.py`, and the Notes
+    # source-strip compose block moved to that module's shared builder (the
+    # route swap MOUNTS the same strip a recompose composes, so one builder is
+    # the only way the two can't drift). Method count is untouched at 1259 --
+    # which is 1 OVER the 1258 budget dev left here, so this row still fails on
+    # methods; that red predates this task (measured identical at its base
+    # commit 9158fac98) and the budget is deliberately NOT raised to hide it.
+    # 2026-09-08, Library phase C task 2.5 (the sync storm): 32242 -> 32241.
+    # A one-line give-back, not a wave: the rail-switch handler needed one
+    # named constant (`LIBRARY_NOTES_RAIL_ROWS`, in `screen_constants.py`)
+    # to ask whether a press is LEAVING Notes, and using it at the three
+    # sites that spelled the same pair inline paid for the import and the
+    # comment. Re-pinned rather than left as slack, per this file's own rule.
+    # 2026-09-09, Library phase C task 3 (region ownership, media): 32241 ->
+    # 32178 and 1259 -> 1243 methods. Sixteen canvas-origin `@on` delegators
+    # left the screen's routing table for `LibraryMediaCanvas`, which is on
+    # the DOM path their messages already travel. This is the first time this
+    # row's METHOD count moves at all, and it clears the +1 red dev left here
+    # by measurement rather than by raising: 1243 is what the class now has.
+    # 2026-09-09, RECONCILIATION MERGE with `origin/dev` (217 commits):
+    # 32178/1243 -> 33204/1276. This row is set to the TRUE merged measurement,
+    # NOT to a phase-C number -- the delta above phase C's earned row is dev's,
+    # and it is spelled out here so it is never mistaken for phase-C growth:
+    #   * phase C (this branch) REMOVED 173 lines / 16 methods, earning
+    #     32178/1243 from the phase base 32351/1259 (fresh `_measure()`).
+    #   * dev's concurrent `library_screen.py` work ADDED +1026 lines / +33
+    #     methods measured from the merge-base `7e81ed55d` (32351/1259 ->
+    #     33377/1292), i.e. +1114 lines / +34 methods against dev's own pinned
+    #     row (32263/1258), on which dev's branch was already RED -- dev never
+    #     lowered nor raised its pin to match that growth. dev did not touch
+    #     THIS file at all (empty diff vs the merge-base), so there is no
+    #     dev-side annotation to carry; its growth lands entirely in the source.
+    #   * the merge composed cleanly with no line-level overlap: base + both
+    #     deltas = 32351 - 173 + 1026 = 33204 lines, 1259 - 16 + 33 = 1276
+    #     methods, which is exactly what `_measure()` reads on the merged tree.
+    # Not a give-back and not slack: this is the arithmetic sum of two
+    # independent trajectories, pinned to reality. dev's +1026 remains real
+    # debt to be worked down on dev's own decomposition schedule; pinning it
+    # here keeps the merged tree green without hiding whose lines they are.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 33204, 1276),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

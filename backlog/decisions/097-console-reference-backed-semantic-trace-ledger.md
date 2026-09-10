@@ -582,3 +582,37 @@ to the current admitted user. Validate all saved values and recheck the full cha
 at final binding. Missing, active, changed, cyclic, ambiguous or over-limit chains
 remain ineligible. This adds only bounded revision/owner identities to the existing
 in-memory witness; it does not store transcript copies or modify historical calls.
+
+### Amendment recorded 2026-09-09: closed unanswered runs and untraced follow-ups
+
+TASK-32197 reproduces a request-construction failure after successful tool calls:
+the individual trace calls settle COMPLETE while the saved assistant settles FAILED
+with an empty semantic envelope and no dispatch checkpoint. That failed owner has
+no pending response to discard. Permit this exact durable closure as an alternative
+to explicit discard in the existing bounded tool-turn replacement witness. Require
+one undeleted assistant child, empty text and no image, attachment, thinking or
+provider-continuation sidecars, no active checkpoint, and a settled response-bearing
+prior call. Failed state alone never supplies an answer or successful run outcome.
+
+The user may have continued with Capture Off before returning to Capture On. The
+same witness may carry a bounded exact saved-parent chain through intervening closed
+unanswered turns and complete untraced user/assistant pairs. Require live exact saved
+revisions for every provider-visible intervening row, unique undeleted parent owners,
+no intervening captured calls or active dispatch checkpoints, and the same strict
+sidecar exclusions for the newly admitted closure/history cases. These rows become
+ordinary saved history of the incoming request; do not fabricate captures, outcomes
+or response links for their earlier untraced delivery. Retain the prior explicit
+Discard contract and its existing descriptor representation. When a completed
+uncaptured follow-up requires the closed representation, re-read the original
+owner's durable Discard state at every validation, including final binding, before
+allowing its existing RESPONSE_STARTED evidence. Failed-empty owners still require
+settled response-bearing calls.
+
+Recheck the full closure and chain at final dispatch binding, along with the existing
+attached owner, latest settled call, exact source, unchanged prefix and tail, matching
+disclosure settings, same-run tool/project artifact ownership and 256-node bound.
+Partial failed answers, active or uncertain delivery, changed values, ambiguous or
+deleted siblings, gaps, unknown owners and over-limit chains remain ineligible.
+Historical calls, request heads and reconstructed requests stay immutable. This adds
+only bounded transient identity evidence to the existing witness; no schema, durable
+registry, retention change or general history-replacement permission is introduced.

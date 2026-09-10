@@ -36,6 +36,10 @@ from tldw_chatbook.Library.library_export_scope import (
     ExportScope,
     resolve_export_selections,
 )
+from tldw_chatbook.Library.library_export_state import (
+    format_empty_export_error,
+    format_last_export_line,
+)
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 # Pinned transcript text -- the round-trip assertion below checks this
@@ -504,6 +508,9 @@ def test_library_export_success_records_a_durable_receipt_with_the_real_path(
             LibraryScreen._build_library_export_success_message
         ),
         _update_library_export_canvas_after_run=lambda: update_calls.append("update"),
+        # The success path re-syncs the emergency guard (task-32199: the
+        # fake fell behind the screen when that call was added).
+        _sync_library_emergency_guard_presentation=lambda: None,
     )
 
     before = time.time()
@@ -525,3 +532,181 @@ def test_library_export_success_records_a_durable_receipt_with_the_real_path(
     # The current (non-superseded) run's canvas DOM update still ran.
     assert update_calls == ["update"]
     assert notified  # the success notification also fired
+
+
+def _seed_two_selectable_media(seeded: dict) -> tuple[int, int]:
+    """Add the two media items the selected-scope tests below export."""
+    media_db = seeded["media_db"]
+    selected_a_id, _msg, _status = media_db.add_media_with_keywords(
+        url="https://example.com/canonical-a",
+        title="Canonical A",
+        media_type="video",
+        content="CANONICAL A TRANSCRIPT",
+        keywords=["a"],
+    )
+    selected_b_id, _msg, _status = media_db.add_media_with_keywords(
+        url="https://example.com/canonical-b",
+        title="Canonical B",
+        media_type="audio",
+        content="CANONICAL B TRANSCRIPT",
+        keywords=["b"],
+    )
+    return selected_a_id, selected_b_id
+
+
+def test_library_export_roundtrip_selected_media_uses_canonical_display_ids(
+    tmp_path,
+):
+    """task-32232 AC#1/#2: Media select mode carries CANONICAL display ids
+    (``local:media:<n>`` -- see ``library_media_int_backing_id``), not bare
+    integers, so the ids reaching ``resolve_export_selections`` look like
+    the ones the real toolbar builds. Before the fix the selected-scope
+    branch passed them through untouched, ``ChatbookCreator._collect_media``
+    raised ``invalid literal for int()`` inside its broad ``except``, and the
+    bundle shipped README + ``content_items: []`` while the run reported
+    success. Pin the real id shape end to end through the real service."""
+    seeded = _seed_source_dbs(tmp_path)
+    selected_a_id, selected_b_id = _seed_two_selectable_media(seeded)
+
+    # EXACTLY what `LibraryMediaRowSelection.export_scope()` produces from
+    # select mode: canonical row ids, not `str(int(...))`.
+    scope = ExportScope(
+        kind="media",
+        ids=(f"local:media:{selected_a_id}", f"local:media:{selected_b_id}"),
+    )
+    selections = resolve_export_selections(
+        scope,
+        seeded["media_db"],
+        seeded["chachanotes_db"],
+        seeded["prompts_db"],
+    )
+    payload = LibraryScreen._build_library_export_payload(
+        name="Canonical Selected Media",
+        description="",
+        selections=selections,
+        destination=str(tmp_path / "canonical_selected.zip"),
+        media_quality="thumbnail",
+    )
+    assert payload["include_media"] is True
+
+    service = LocalChatbookService(
+        seeded["db_paths"], registry_path=tmp_path / "chatbooks.json"
+    )
+    outcome = LibraryScreen._run_library_export_via_service(
+        service, payload, name="Canonical Selected Media", description=""
+    )
+
+    assert outcome["success"] is True, outcome["message"]
+    with zipfile.ZipFile(Path(outcome["path"]), "r") as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        exported_titles = {
+            item["title"]
+            for item in manifest["content_items"]
+            if item["type"] == "media"
+        }
+        assert exported_titles == {"Canonical A", "Canonical B"}
+        assert manifest["statistics"]["total_media_items"] == 2
+        media_texts = {
+            zf.read(name).decode("utf-8")
+            for name in zf.namelist()
+            if name.startswith("content/media/") and name.endswith(".txt")
+        }
+        assert media_texts == {"CANONICAL A TRANSCRIPT", "CANONICAL B TRANSCRIPT"}
+
+
+def test_library_export_selected_media_collecting_nothing_reports_failure(
+    tmp_path,
+):
+    """task-32232 AC#3: a non-empty selection that collects ZERO items must
+    report failure -- never a success receipt over a bundle holding README +
+    ``content_items: []``. Feeds an id no media row carries; the creator
+    refuses to write the archive, the run surfaces the canvas's failure copy,
+    and no registry record is created."""
+    seeded = _seed_source_dbs(tmp_path)
+
+    scope = ExportScope(kind="media", ids=("local:media:987654",))
+    selections = resolve_export_selections(
+        scope,
+        seeded["media_db"],
+        seeded["chachanotes_db"],
+        seeded["prompts_db"],
+    )
+    destination = tmp_path / "empty_selection.zip"
+    payload = LibraryScreen._build_library_export_payload(
+        name="Empty Selection",
+        description="",
+        selections=selections,
+        destination=str(destination),
+        media_quality="thumbnail",
+    )
+
+    registry_path = tmp_path / "chatbooks.json"
+    service = LocalChatbookService(seeded["db_paths"], registry_path=registry_path)
+    outcome = LibraryScreen._run_library_export_via_service(
+        service, payload, name="Empty Selection", description=""
+    )
+
+    assert outcome["success"] is False
+    assert outcome["message"] == format_empty_export_error(1)
+    assert outcome["registry_recorded"] is False
+    # Nothing was left on disk to mistake for a real bundle.
+    assert not destination.exists()
+    assert asyncio.run(service.list_chatbooks()) == []
+
+
+def test_library_export_receipt_counts_come_from_the_written_manifest(
+    tmp_path,
+):
+    """task-32232 AC#4: the receipt is read back from the ARTIFACT, not the
+    request. Three ids are selected but only two exist, so a receipt built
+    from the intent would claim 3; the manifest holds 2."""
+    seeded = _seed_source_dbs(tmp_path)
+    selected_a_id, selected_b_id = _seed_two_selectable_media(seeded)
+
+    scope = ExportScope(
+        kind="media",
+        ids=(
+            f"local:media:{selected_a_id}",
+            f"local:media:{selected_b_id}",
+            "local:media:987654",  # deleted/unknown -- collects nothing
+        ),
+    )
+    selections = resolve_export_selections(
+        scope,
+        seeded["media_db"],
+        seeded["chachanotes_db"],
+        seeded["prompts_db"],
+    )
+    assert len(selections[ContentType.MEDIA]) == 3  # the REQUEST says 3
+
+    destination = tmp_path / "partial.zip"
+    payload = LibraryScreen._build_library_export_payload(
+        name="Partial Selection",
+        description="",
+        selections=selections,
+        destination=str(destination),
+        media_quality="thumbnail",
+    )
+    service = LocalChatbookService(
+        seeded["db_paths"], registry_path=tmp_path / "chatbooks.json"
+    )
+    outcome = LibraryScreen._run_library_export_via_service(
+        service, payload, name="Partial Selection", description=""
+    )
+
+    assert outcome["success"] is True, outcome["message"]
+    with zipfile.ZipFile(destination, "r") as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+    assert len(manifest["content_items"]) == 2  # the ARTIFACT says 2
+
+    # The run reports the artifact's own facts, and the receipt renders them.
+    assert outcome["item_count"] == 2
+    assert outcome["size_bytes"] == destination.stat().st_size
+    receipt = format_last_export_line(
+        str(destination),
+        time.time(),
+        item_count=outcome["item_count"],
+        size_bytes=outcome["size_bytes"],
+    )
+    assert receipt.startswith("✓ exported · 2 items · ")
+    assert receipt.endswith(f" · {destination}")

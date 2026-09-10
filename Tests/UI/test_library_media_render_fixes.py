@@ -41,8 +41,8 @@ from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
     LIBRARY_ADAPTIVE_READER_GRIP_CLASS,
 )
-from tldw_chatbook.Widgets.Library.library_media_reader_shell import (
-    LibraryMediaReaderShell,
+from tldw_chatbook.Widgets.Library.library_browse_reader_shell import (
+    LibraryBrowseReaderShell,
 )
 
 from Tests.UI.test_library_media_side_by_side import (
@@ -1014,7 +1014,7 @@ async def test_space_in_select_mode_never_reaches_the_pane_grip():
         assert screen._media_state.select_mode is True
 
         shell = screen.query_one(
-            "#library-media-reader-shell", LibraryMediaReaderShell
+            ".library-media-route", LibraryBrowseReaderShell
         )
         before = shell.effective_layout
         shell.library_grip.focus()
@@ -1025,7 +1025,7 @@ async def test_space_in_select_mode_never_reaches_the_pane_grip():
         await pilot.pause()
 
         shell = screen.query_one(
-            "#library-media-reader-shell", LibraryMediaReaderShell
+            ".library-media-route", LibraryBrowseReaderShell
         )
         assert shell.effective_layout.library_open is before.library_open
         assert screen._media_state.row_selection.count == 0
@@ -1088,7 +1088,7 @@ async def test_space_in_select_mode_is_claimed_from_rows_and_grips_only():
         assert claim() is True
 
         shell = screen.query_one(
-            "#library-media-reader-shell", LibraryMediaReaderShell
+            ".library-media-route", LibraryBrowseReaderShell
         )
         shell.library_grip.focus()
         await pilot.pause()
@@ -1126,7 +1126,7 @@ def _global_key_host() -> LibraryGlobalKeyProductionCSSHarness:
 
 def _media_layout(screen):
     return screen.query_one(
-        "#library-media-reader-shell", LibraryMediaReaderShell
+        ".library-media-route", LibraryBrowseReaderShell
     ).effective_layout
 
 
@@ -1564,7 +1564,7 @@ async def test_no_join_artifact_after_find_closes():
         def join_slices() -> list[str]:
             """The grip's own columns left of the Reader, top three rows."""
             viewer = screen.query_one("#library-media-viewer")
-            grip = screen.query_one("#library-media-items-grip")
+            grip = screen.query_one("#library-browse-items-grip")
             title = screen.query_one("#library-media-viewer-title")
             # The sample must actually cover the header: Back, title, toolbar.
             assert title.region.y - viewer.region.y <= 2, (
@@ -1718,16 +1718,12 @@ async def test_reader_body_wraps_at_a_reading_measure():
         await _open_first_reader_row(screen, pilot)
         box = screen.query_one("#library-media-viewer-content")
         body = screen.query_one("#library-media-viewer-content-text")
-        # task-31633: the Items column now takes half of the Reader's surplus
-        # and each grip costs one cell instead of five, so the Reader pane of
-        # the 231-cell shell is 139 cells rather than 147. The box still spans
-        # the whole pane -- only the prose inside it is capped.
+        # The box spans the full pane while the text retains its reading
+        # measure. Wider navigation and five-cell controls reduce the pane's
+        # spare columns without changing the prose cap.
         work = screen.query_one(".library-adaptive-reader-work")
         assert box.region.width == work.region.width, (box.region, work.region)
-        # The equality alone would also hold if the pane itself collapsed, so
-        # keep an absolute floor now that the pane width is dynamic. 139 is the
-        # measured pane width here, not a comfort minimum.
-        assert work.region.width >= 139, work.region
+        assert work.region.width > 92, work.region
         assert body.region.width <= 92, (body.region, box.region)
         # Painted proof the wrap index was built at the capped width: the
         # long line's tail lands on the row below it, not off at column 150.
@@ -2969,12 +2965,28 @@ def _fifteen_item_host() -> LibraryProductionCSSHarness:
     return LibraryProductionCSSHarness(app)
 
 
+def _blank_row_focus_bar(line: str) -> str:
+    """Blank the focused row's ``border-left: thick`` cell (task-32199).
+
+    Entering the Media list parks DOM focus on the first row (task-2856),
+    and since task-31983 a focused row paints a ``█`` bar in the cell its
+    left padding otherwise occupies (``.library-media-row:focus``). That
+    bar is chrome, not row text, and ONLY the focused row carries it -- left
+    in the capture it makes row 0 incomparable with its own siblings, which
+    is what these row-text assertions compare. One cell in, one cell out, so
+    every column index in this file still lines up.
+    """
+    return f" {line[1:]}" if line.startswith("█") else line
+
+
 def _painted_item_lines(host, screen) -> list[str]:
     """Return the painted row-scroll lines of the Media list."""
     scroll = screen.query_one("#library-media-row-scroll")
     strips = list(host.screen._compositor.render_strips())
     return [
-        strips[y].crop(scroll.region.x, scroll.region.right).text
+        _blank_row_focus_bar(
+            strips[y].crop(scroll.region.x, scroll.region.right).text
+        )
         for y in range(scroll.region.y, min(scroll.region.bottom, len(strips)))
     ]
 
@@ -3053,17 +3065,36 @@ def _painted_media_rows(host, screen) -> tuple[list[str], list[str]]:
     return titles, secondaries
 
 
-@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.parametrize(
+    ("size", "items_width"),
+    [((235, 52), 132), ((100, 30), 44)],
+    ids=["wide", "narrow"],
+)
 @pytest.mark.asyncio
-async def test_media_rows_paint_analysed_only_for_analysed_items(size):
+async def test_media_rows_paint_analysed_only_for_analysed_items(size, items_width):
     """task-28008: the row says which items already carry an analysis, in words.
 
-    What this pins about width: BOTH parametrized sizes resolve the Items
-    pane to 52 cells (the resolver's automatic width here), and the 24-cell
+    What this pins about width: each parametrized size resolves the Items
+    pane to its own AUTOMATIC width, and the 24-cell
     ``document · 5m · analysed`` paints whole in it, indented, with room to
     spare. The narrower 36-cell FLOOR is pinned separately by
     ``test_analysed_secondary_survives_the_36_cell_items_floor`` -- a
-    ``>= 36`` assertion here would have claimed a floor that never ran.
+    ``>= 36`` assertion here would have claimed a floor that never ran,
+    which is why the exact automatic width is asserted instead.
+
+    task-32199: both numbers used to be 52 and had been stale on dev since
+    the resolver changed under them -- 9187bc0307 (task-31979) hands the
+    empty Reader's unused width to the Items list at the wide size, and the
+    below-64 Media stage work (c668aaec5e / db86a39b19) re-fitted the narrow
+    one. Both new widths are still far above the 24-cell secondary, so what
+    the assertion means is unchanged; the resolver's own contract lives in
+    Tests/UI/test_library_adaptive_reader_shell.py.
+
+    Args:
+        size: Terminal dimensions ``(columns, rows)`` the harness runs at.
+        items_width: The Items pane's automatically resolved width at that
+            terminal size -- the exact number, so a resolver change lands
+            here instead of hiding behind a ``>=`` floor.
     """
     host = _review_state_host()
     async with host.run_test(size=size) as pilot:
@@ -3081,7 +3112,7 @@ async def test_media_rows_paint_analysed_only_for_analysed_items(size):
             "document · 5m",
             "document · 5m",
         ], secondaries
-        assert _items_pane_width(screen) == 52
+        assert _items_pane_width(screen) == items_width
 
 
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])

@@ -4,23 +4,22 @@ from __future__ import annotations
 
 import base64
 import hashlib
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 import io
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tarfile
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from threading import Thread
 from types import ModuleType
 from typing import Any
 from urllib.request import Request
 
 import pytest
-
 
 ROOT = Path(__file__).resolve().parents[2]
 STATIC = ROOT / "tldw_chatbook" / "Canvas" / "static"
@@ -104,6 +103,173 @@ def _load_vendor_module() -> ModuleType:
 
 def _sri_sha512(data: bytes) -> str:
     return "sha512-" + base64.b64encode(hashlib.sha512(data).digest()).decode("ascii")
+
+
+def _load_mermaid_vendor():
+    _load_vendor_module()
+    spec = importlib.util.spec_from_file_location(
+        "vendor_canvas_mermaid", ROOT / "scripts/vendor_canvas_mermaid.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_admitted_mermaid_profile_retains_exact_qualified_assets():
+    from tldw_chatbook.Canvas.profiles import (
+        load_profile_snapshot,
+        resolve_profile,
+        runtime_assets_for,
+    )
+
+    base = load_profile_snapshot()
+    candidate = "canvas-v2-mermaid-1"
+    assert resolve_profile(
+        base, operation="load", parent_profile=candidate, has_diagrams=True
+    ).executable
+    assert base.default_diagram_profile == candidate
+    assert next(
+        row for row in base.profiles if row.profile_id == candidate
+    ).manifest_sha256 == (
+        "17717bcab7c7bba4a28e0069354f6ecbf895d2ca58f4b8d1c0355b7726e2f466"
+    )
+    owned = runtime_assets_for(base, candidate)
+    library = json.loads(owned.library_files["mermaid-subset.json"])
+    assert library["source_bytes"] == len(library["source"].encode())
+    assert (
+        library["source_sha256"]
+        == hashlib.sha256(library["source"].encode()).hexdigest()
+    )
+    assert library["source_bytes"] < 262144
+    quotas = owned.manifest["profile_contract"]["quotas"]
+    assert quotas["diagram_input_bytes"] == 8192
+    assert quotas["document_input_bytes"] == 16384
+
+
+@pytest.mark.parametrize(
+    "mutation", ["missing", "unexpected", "unsafe", "duplicate", "symlink", "oversized"]
+)
+def test_mermaid_vendor_rejects_invalid_archive_inventory(mutation):
+    vendor = _load_mermaid_vendor()
+    members = [
+        (
+            "package/package.json",
+            b'{"name":"mermaid","version":"11.17.2","license":"MIT"}',
+            "file",
+        )
+    ]
+    selected = {name: hashlib.sha256(data).hexdigest() for name, data, _ in members}
+    names = list(selected)
+    if mutation == "missing":
+        names.append("package/missing")
+    elif mutation == "unexpected":
+        members.append(("package/extra", b"x", "file"))
+    elif mutation == "unsafe":
+        members.append(("package/../escape", b"x", "file"))
+    elif mutation == "duplicate":
+        members.append(members[0])
+    elif mutation == "symlink":
+        members.append(("package/link", b"", "symlink"))
+    else:
+        # A declared oversized selected file must fail before allocation/extraction.
+        payload = b"x" * (32 * 1024 * 1024 + 1)
+        members.append(("package/large", payload, "file"))
+        names.append("package/large")
+        selected["package/large"] = hashlib.sha256(payload).hexdigest()
+    archive = _tar_bytes(members)
+    inputs = {
+        "mermaid_integrity": _sri_sha512(archive),
+        "members": names,
+        "selected": selected,
+    }
+    with pytest.raises(vendor.VendorError):
+        vendor.selected_archive(archive, inputs)
+
+
+def test_mermaid_vendor_requires_authenticated_input_and_exact_map_entry():
+    vendor = _load_mermaid_vendor()
+    with pytest.raises(vendor.VendorError, match="integrity"):
+        vendor.verify_input(b"tampered", {"bytes": 8, "sha256": "0" * 64})
+    rule = {"member": "map", "source": "exact", "sha256": "0" * 64}
+    for value in (
+        {"sources": ["wrong"], "sourcesContent": ["value"]},
+        {"sources": ["exact", "exact"], "sourcesContent": ["a", "a"]},
+        {"sources": ["exact"], "sourcesContent": ["tampered"]},
+    ):
+        with pytest.raises(vendor.VendorError):
+            vendor.grammar_source({"map": json.dumps(value).encode()}, rule)
+
+
+def test_mermaid_rebuild_is_reproducible_from_verified_inputs(tmp_path):
+    input_dir = os.environ.get("TLDW_CANVAS_MERMAID_INPUT_DIR")
+    if not input_dir:
+        pytest.skip("explicit offline Mermaid inputs required for rebuild")
+    vendor = _load_mermaid_vendor()
+    first = vendor.build(Path(input_dir), tmp_path / "first")
+    second = vendor.build(Path(input_dir), tmp_path / "second")
+    assert first == second
+    # An independent output directory must contain the candidate's actual
+    # worker/renderer closure, not just manifests that refer back to the checkout.
+    manifest = json.loads(
+        (tmp_path / "first" / "mermaid-runtime-manifest.json").read_bytes()
+    )
+    for role in ("worker", "renderer"):
+        assert (tmp_path / "first" / manifest["runtime_layout"][role]).is_file()
+    for name in first:
+        assert (tmp_path / "first" / name).read_bytes() == (STATIC / name).read_bytes()
+
+
+@pytest.mark.parametrize("policy", ["admitted", "revoked"])
+@pytest.mark.parametrize("mutation", [None, "manifest", "library", "notices"])
+def test_mermaid_rebuild_retains_policy_only_for_exact_identity(
+    tmp_path, monkeypatch, policy, mutation
+):
+    input_dir = os.environ.get("TLDW_CANVAS_MERMAID_INPUT_DIR")
+    if not input_dir:
+        pytest.skip("explicit offline Mermaid inputs required for rebuild")
+    vendor = _load_mermaid_vendor()
+    owned_static = tmp_path / "static"
+    shutil.copytree(STATIC, owned_static)
+    monkeypatch.setattr(vendor, "STATIC", owned_static)
+    vendor.build(Path(input_dir), owned_static)
+    manifest = json.loads((owned_static / "mermaid-runtime-manifest.json").read_bytes())
+    assert "qualification" not in manifest["mermaid_candidate"]
+    catalog_path = owned_static / "profile-catalog.json"
+    catalog = json.loads(catalog_path.read_bytes())
+    row = next(
+        row for row in catalog["profiles"] if row["profile_id"] == "canvas-v2-mermaid-1"
+    )
+    row.update(
+        executable=policy == "admitted",
+        reason=None if policy == "admitted" else "revoked",
+    )
+    catalog["default_diagram_profile"] = (
+        row["profile_id"] if policy == "admitted" else None
+    )
+    if mutation == "manifest":
+        row["manifest_sha256"] = "0" * 64
+    elif mutation in {"library", "notices"}:
+        name = (
+            "mermaid-subset.json"
+            if mutation == "library"
+            else "MERMAID_THIRD_PARTY_LICENSES.txt"
+        )
+        row["library"]["files"][name]["sha256"] = "0" * 64
+    catalog_path.write_bytes(vendor.pretty(catalog))
+    first = vendor.build(Path(input_dir), tmp_path / "first")
+    second = vendor.build(Path(input_dir), tmp_path / "second")
+    assert first == second
+    result = json.loads((tmp_path / "first/profile-catalog.json").read_bytes())
+    result_row = next(
+        row for row in result["profiles"] if row["profile_id"] == "canvas-v2-mermaid-1"
+    )
+    assert result_row["executable"] is (policy == "admitted" and mutation is None)
+    assert result_row["reason"] == (
+        row["reason"] if mutation is None else "profile-unavailable"
+    )
+    assert result["default_diagram_profile"] == (
+        catalog["default_diagram_profile"] if mutation is None else None
+    )
 
 
 def _tar_bytes(members: list[tuple[str, bytes, str]]) -> bytes:
@@ -229,6 +395,22 @@ def test_runtime_loader_returns_only_verified_packaged_bytes() -> None:
     )
     assert result.renderer_javascript == (STATIC / "canvas_renderer.js").read_bytes()
     assert result.manifest["runtime_profile"] == "canvas-v1"
+    assert result.manifest_bytes == MANIFEST.read_bytes()
+
+    with pytest.raises(TypeError):
+        result.manifest["runtime_profile"] = "canvas-v2"
+
+
+def test_profile_asset_loader_rejects_unsafe_manifest_name() -> None:
+    from tldw_chatbook.Canvas.runtime_assets import load_canvas_profile_runtime_assets
+
+    with pytest.raises(ValueError, match="manifest filename"):
+        load_canvas_profile_runtime_assets(
+            profile_id="canvas-v1",
+            manifest_name="../runtime-manifest.json",
+            manifest_sha256="a" * 64,
+            library_inventory={"bytes": 0, "files": {}},
+        )
 
 
 @pytest.mark.parametrize(
@@ -237,7 +419,7 @@ def test_runtime_loader_returns_only_verified_packaged_bytes() -> None:
 def test_runtime_loader_fails_closed_with_a_bounded_content_free_diagnostic(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, damage: str
 ) -> None:
-    import tldw_chatbook.Canvas.runtime_assets as runtime_assets
+    from tldw_chatbook.Canvas import runtime_assets
 
     package_root = tmp_path / "Canvas"
     shutil.copytree(STATIC, package_root / "static")
@@ -346,7 +528,7 @@ def test_download_rejects_redirect_before_target_request(
     requests = {"redirect": 0, "target": 0}
 
     class RedirectHandler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
+        def do_GET(self) -> None:
             if self.path == "/redirect":
                 requests["redirect"] += 1
                 self.send_response(302)

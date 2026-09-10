@@ -249,7 +249,7 @@ class BuddyManagementModal(
                     )
                     yield Input(
                         value=initial.import_path,
-                        placeholder="Path to pack; installed when you Apply",
+                        placeholder="Absolute path or ~/Downloads/pack.tldw-persona-vpack",
                         id="buddy-import",
                     )
                     yield Static("", id="buddy-import-error", markup=False)

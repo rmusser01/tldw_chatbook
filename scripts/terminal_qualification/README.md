@@ -9,9 +9,9 @@ dependencies.
 Use a unique disposable directory and the exact host interpreter being claimed:
 
 ```bash
-ROW_DIR=$(mktemp -d /tmp/tldw-task-22512-macos-arm64-py311.XXXXXX)
-python3.11 scripts/terminal_qualification/common.py prepare-row \
-  --row-id macos-arm64-py311 \
+ROW_DIR=$(mktemp -d /tmp/tldw-task-22512-macos-arm64-py312.XXXXXX)
+python3.12 scripts/terminal_qualification/common.py prepare-row \
+  --row-id macos-arm64-py312 \
   --row-dir "$ROW_DIR" \
   --requirement pyte==0.8.2 \
   --requirement "wcwidth>=0.2.14,<1" \

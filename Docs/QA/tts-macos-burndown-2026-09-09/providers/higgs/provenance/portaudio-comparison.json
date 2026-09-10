@@ -1,0 +1,40 @@
+[
+  {
+    "runtime": "higgs/venv",
+    "exit_code": 0,
+    "stdout": {
+      "executable": "/private/tmp/tts-macos-burndown/higgs/venv/bin/python",
+      "python": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+      "sounddevice_version": "0.5.6",
+      "sounddevice_file": "/private/tmp/tts-macos-burndown/higgs/venv/lib/python3.12/site-packages/sounddevice.py",
+      "portaudio_selected_name": "/private/tmp/tts-macos-burndown/higgs/venv/lib/python3.12/site-packages/_sounddevice_data/portaudio-binaries/libportaudio.dylib",
+      "portaudio_version": [
+        1246976,
+        "PortAudio V19.7.0-devel, revision unknown"
+      ],
+      "selected_file_exists": true,
+      "selected_file_realpath": "/private/tmp/tts-macos-burndown/higgs/venv/lib/python3.12/site-packages/_sounddevice_data/portaudio-binaries/libportaudio.dylib",
+      "selected_file_sha256": "f48bedb7f4f79c0ca050776afe943458555db7341e0dae00511d109ccde907c0"
+    },
+    "stderr": ""
+  },
+  {
+    "runtime": "runtime-python312",
+    "exit_code": 0,
+    "stdout": {
+      "executable": "/private/tmp/tts-macos-burndown/runtime-python312/bin/python",
+      "python": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+      "sounddevice_version": "0.5.6",
+      "sounddevice_file": "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/sounddevice.py",
+      "portaudio_selected_name": "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/_sounddevice_data/portaudio-binaries/libportaudio.dylib",
+      "portaudio_version": [
+        1246976,
+        "PortAudio V19.7.0-devel, revision unknown"
+      ],
+      "selected_file_exists": true,
+      "selected_file_realpath": "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/_sounddevice_data/portaudio-binaries/libportaudio.dylib",
+      "selected_file_sha256": "f48bedb7f4f79c0ca050776afe943458555db7341e0dae00511d109ccde907c0"
+    },
+    "stderr": ""
+  }
+]
