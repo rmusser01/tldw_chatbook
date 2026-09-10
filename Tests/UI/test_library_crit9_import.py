@@ -23,7 +23,16 @@ from __future__ import annotations
 import pytest
 from textual.widgets import Button, Input
 
-from tldw_chatbook.Library.library_ingest_jobs import IngestJobState
+from tldw_chatbook.Library.library_ingest_jobs import (
+    IngestJobState,
+    LibraryIngestJob,
+)
+from tldw_chatbook.Library.library_ingest_state import (
+    LibraryIngestFormState,
+    build_library_ingest_state,
+    group_ingest_queue_rows,
+)
+from Tests.UI.test_library_ingest_canvas import _QueuePanelHost
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     _INGEST_POLL_ATTEMPTS,
@@ -210,7 +219,7 @@ async def test_four_identical_failures_paint_one_row_with_three_actions(tmp_path
         await pilot.pause()
         painted = _painted_text(harness, queue.region)
         assert "✗ failed · 4 files · " in painted, painted
-        for label in ("Show the 4 files", "Dismiss all"):
+        for label in ("Show the 4 files", "Retry all", "Dismiss all"):
             assert label in painted, painted
         # Every per-file row and its buttons are gone until asked for.
         for job in jobs:
@@ -286,6 +295,23 @@ async def test_dismiss_all_clears_the_whole_group(tmp_path):
         )
         visible = {job.job_id for job in harness.library_ingest_jobs.jobs()}
         assert not visible & {job.job_id for job in jobs}
+        # ...and every member left the task-2140 durable record behind, the
+        # one reason `_dismiss_library_ingest_job` was extracted at all.
+        ledger = {job.job_id for job in screen._ingest_state.recent_ledger}
+        assert ledger >= {job.job_id for job in jobs}, ledger
+        # (review finding 2) The pressed button is gone with the group, so
+        # the toggle's "keep focus on yourself" rule cannot apply -- but
+        # focus must still LAND somewhere. Parked at None, the user's next
+        # Tab restarts from the top of the screen.
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", None)
+            == "library-ingest-path",
+            message=lambda: (
+                "Dismiss all stranded focus instead of landing it on the "
+                f"import form: {screen.focused!r}"
+            ),
+        )
 
 
 @pytest.mark.asyncio
@@ -303,6 +329,73 @@ async def test_retry_all_requeues_every_member(tmp_path):
         await _wait_for_selector(screen, pilot, f"#library-ingest-group-retry-{leader}")
 
         screen.query_one(f"#library-ingest-group-retry-{leader}", Button).press()
-        await pilot.pause()
+        # Wait for the calls rather than one pump turn: a single `pause`
+        # lost the race once under load and reported an empty list.
+        await _wait_for_condition(
+            pilot,
+            lambda: len(retried) == len(jobs),
+            message=lambda: f"Retry all did not reach every member: {retried}",
+        )
         # Newest-first render order, one call per member, no duplicates.
         assert sorted(retried) == sorted(job.job_id for job in jobs), retried
+        # (review finding 2) The group action keeps focus the way every
+        # other queue toggle now does: on itself while it survives, on the
+        # import form once the group it belonged to is gone. Never nowhere.
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", None)
+            in (f"library-ingest-group-retry-{leader}", "library-ingest-path"),
+            message=lambda: (
+                f"Retry all stranded focus: {screen.focused!r}"
+            ),
+        )
+
+
+# --- review finding 1 (Medium): STT failures never offer a bare "Retry all" ---
+
+
+def _stt_failed_job(n: int):
+    """One failed job whose recovery is a chosen model, not a bare requeue."""
+    return LibraryIngestJob(
+        job_id=f"ingest-job-{n}",
+        source_path=f"/tmp/audio/talk{n}.mp3",
+        state=IngestJobState.FAILED,
+        submitted_at=100.0,
+        finished_at=120.0,
+        error="Transcription failed: the model could not be loaded.",
+        error_detail={
+            "category": "stt_failure",
+            "actions": ["retry_faster_whisper", "choose_another_gguf"],
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_group_of_stt_failures_offers_no_bare_retry_all():
+    """The collapsed row must not offer what the expanded rows withhold.
+
+    A row whose ``error_detail`` is an ``stt_failure`` gets "Choose another
+    GGUF…" / "Retry with faster-whisper" INSTEAD of plain "Retry" -- a bare
+    requeue fails the same way against the same broken provider. A folder of
+    audio files failing on one missing model is a contiguous run of
+    identical failures, so it collapses; the group must inherit that gate,
+    or the collapsed and expanded views of the same rows disagree about
+    what is allowed.
+    """
+    jobs = tuple(_stt_failed_job(n) for n in range(3))
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    rows = state.queue_rows
+    assert len(group_ingest_queue_rows(rows)) == 1, [row.line for row in rows]
+    # Guard the fixture: without per-row retryability the gate below would
+    # pass for the wrong reason.
+    assert all(row.can_retry for row in rows), [row.can_retry for row in rows]
+
+    host = _QueuePanelHost(state)
+    async with host.run_test(size=LIBRARY_TEST_SIZE):
+        leader = rows[0].job_id
+        assert host.query_one(f"#library-ingest-group-expand-{leader}", Button)
+        assert host.query_one(f"#library-ingest-group-dismiss-{leader}", Button)
+        assert not host.query(f"#library-ingest-group-retry-{leader}"), (
+            "the grouped row offers a bare Retry all for failures whose own "
+            "rows deliberately withhold Retry"
+        )

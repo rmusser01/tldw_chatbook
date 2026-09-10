@@ -608,7 +608,21 @@ class LibraryIngestQueuePanel(PostRecomposeCallback, Vertical):
                     ),
                     compact=True,
                 )
-                if group.can_retry:
+                # (review finding 1) The SAME predicate the member rows use
+                # (`row.can_retry and not stt_actions`, below): an
+                # ``stt_failure`` offers "Choose another GGUF…" / "Retry
+                # with faster-whisper" INSTEAD of a bare Retry, because a
+                # plain requeue fails the same way against the same broken
+                # provider. A folder of audio files failing on one missing
+                # model is a contiguous run of identical failures, so it
+                # collapses -- and the collapsed row must not offer what the
+                # expanded rows withhold. Those recovery actions are
+                # per-file (a GGUF picker addresses one job), so they stay
+                # behind "Show the N files" rather than being lifted here.
+                if group.can_retry and not any(
+                    _stt_recovery_actions(member.error_detail)
+                    for member in group.members
+                ):
                     yield Button(
                         "Retry all",
                         id=f"library-ingest-group-retry-{group.key}",
@@ -706,7 +720,6 @@ class LibraryIngestQueuePanel(PostRecomposeCallback, Vertical):
         Returns:
             The row's widgets.
         """
-        state = self.state
         header_line = headers_before.get(row.job_id, "")
         if header_line:
             yield Static(
@@ -904,6 +917,7 @@ class LibraryIngestQueuePanel(PostRecomposeCallback, Vertical):
                         ),
                         compact=True,
                     )
+
 
 _STT_RECOVERY_ACTIONS = frozenset(
     {"choose_another_gguf", "retry_faster_whisper"}
