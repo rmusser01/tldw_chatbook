@@ -102,6 +102,34 @@ def validate_reasoning_history_selector(
         raise ValueError("reasoning history selector value is invalid") from None
 
 
+class ConversationArchiveScopeInput(BaseModel):
+    """Strict shared scope for local conversation lifecycle queries."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    scope: Literal["active", "archived", "all"]
+
+
+def validate_conversation_archive_scope(
+    value: object,
+) -> Literal["active", "archived", "all"]:
+    """Return an exact supported conversation archive scope without coercion.
+
+    Args:
+        value: Candidate scope from UI controls, saved navigation, or storage calls.
+
+    Returns:
+        The validated active, archived, or all scope.
+
+    Raises:
+        ValueError: If the value is not an exact supported scope string.
+    """
+    try:
+        return ConversationArchiveScopeInput.model_validate({"scope": value}).scope
+    except PydanticValidationError:
+        raise ValueError("archive_scope must be active, archived, or all.") from None
+
+
 class VllmDraftInputEvent(BaseModel):
     """Strict lexical boundary for one editable vLLM setup control."""
 

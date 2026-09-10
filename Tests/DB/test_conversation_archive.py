@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -136,7 +138,23 @@ def test_v70_migration_preserves_existing_rows_and_adds_archive_index(
             for r in old.get_connection().execute("PRAGMA table_info(conversations)")
         }
         old.close_connection()
+    executed = []
+    execute = CharactersRAGDB._execute_migration_statements
+
+    def record_artifact(self, cursor, script, label):
+        if label == "V70→V71":
+            executed.append(script)
+        return execute(self, cursor, script, label)
+
+    monkeypatch.setattr(
+        CharactersRAGDB, "_execute_migration_statements", record_artifact
+    )
     current = CharactersRAGDB(path, client_id="archive-test")
+    artifact = (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook/DB/migrations/chachanotes_v70_to_v71_conversation_archive.sql"
+    )
+    assert executed == [artifact.read_text(encoding="utf-8")]
     assert current.get_conversation_by_id(cid)["archived"] == 0
     assert current.get_conversation_by_id(cid)["version"] == version
     assert current.get_library_conversation_messages(cid)["messages"][0]["id"] == mid
@@ -313,3 +331,145 @@ def test_archived_character_seek_pagination_keeps_cursor_semantics(db):
         before_id=first[0]["id"],
     )
     assert [row["id"] for row in second] == [ids[0]]
+
+
+def test_archive_transitions_stay_local_and_receipts_reject_stale_cycle(db):
+    cid, _, version = seed(db)
+    db.update_conversation(cid, {"title": "Unsent shared title"}, version)
+    version += 1
+    connection = db.get_connection()
+    before = [
+        tuple(row)
+        for row in connection.execute("SELECT * FROM sync_log ORDER BY change_id")
+    ]
+    for archived in (True, False, True):
+        result = db.set_conversations_archived(
+            [cid], archived=archived, expected_versions={cid: version}
+        )
+        version = result["changed"][cid]
+        assert [
+            tuple(row)
+            for row in connection.execute("SELECT * FROM sync_log ORDER BY change_id")
+        ] == before
+        db.prune_sync_log()
+        assert [
+            tuple(row)
+            for row in connection.execute("SELECT * FROM sync_log ORDER BY change_id")
+        ] == before
+    assert db.set_conversations_archived(
+        [cid], archived=False, expected_versions={cid: version - 2}
+    )["failures"] == {cid: "stale_version"}
+    db.update_conversation(cid, {"title": "Still syncs while archived"}, version)
+    payload = connection.execute(
+        "SELECT payload FROM sync_log WHERE entity='conversations' AND entity_id=? "
+        "ORDER BY change_id DESC LIMIT 1",
+        (cid,),
+    ).fetchone()[0]
+    assert "Still syncs while archived" in payload
+    assert "archived" not in json.loads(payload)
+    version += 1
+    db.soft_delete_conversation(cid, version)
+    assert (
+        connection.execute(
+            "SELECT operation FROM sync_log WHERE entity='conversations' AND entity_id=? "
+            "ORDER BY change_id DESC LIMIT 1",
+            (cid,),
+        ).fetchone()[0]
+        == "delete"
+    )
+    db.restore_conversation(cid, version + 1)
+    assert (
+        connection.execute(
+            "SELECT operation FROM sync_log WHERE entity='conversations' AND entity_id=? "
+            "ORDER BY change_id DESC LIMIT 1",
+            (cid,),
+        ).fetchone()[0]
+        == "update"
+    )
+
+
+def test_exact_title_lookup_is_bounded_and_paginates_after_archive_filter(db):
+    ids = [db.add_conversation({"title": "Repeated"}) for _ in range(1005)]
+    db.set_conversations_archived(
+        ids[:3],
+        archived=True,
+        expected_versions={
+            cid: db.get_conversation_by_id(cid)["version"] for cid in ids[:3]
+        },
+    )
+    assert (
+        len(db.get_conversation_by_name("Repeated", archive_scope="all", limit=5000))
+        == 1000
+    )
+    first = db.get_conversation_by_name("Repeated")
+    second = db.get_conversation_by_name("Repeated", limit=1000, offset=100)
+    assert len(first) == 100
+    assert len(second) == 902
+    assert {row["id"] for row in first + second} == set(ids[3:])
+    archived = db.get_conversation_by_name(
+        "Repeated", archive_scope="archived", limit=2
+    )
+    archived_next = db.get_conversation_by_name(
+        "Repeated", archive_scope="archived", limit=2, offset=2
+    )
+    assert {row["id"] for row in archived + archived_next} == set(ids[:3])
+    assert len(archived) == 2 and len(archived_next) == 1
+    for invalid in (0, -1, True, "2"):
+        with pytest.raises(InputError):
+            db.get_conversation_by_name("Repeated", limit=invalid)
+    with pytest.raises(InputError):
+        db.get_conversation_by_name("Repeated", offset=-1)
+
+
+def test_mixed_archive_and_shared_payload_change_still_emits_sync_update(db):
+    cid, _, version = seed(db)
+    with db.transaction() as cursor:
+        cursor.execute(
+            "UPDATE conversations SET archived = 1, title = ?, version = version + 1 "
+            "WHERE id = ?",
+            ("Mixed change", cid),
+        )
+    row = (
+        db.get_connection()
+        .execute(
+            "SELECT version, payload FROM sync_log WHERE entity='conversations' "
+            "AND entity_id=? AND operation='update'",
+            (cid,),
+        )
+        .fetchone()
+    )
+    assert row[0] == version + 1
+    assert json.loads(row[1])["title"] == "Mixed change"
+    assert "archived" not in json.loads(row[1])
+
+
+@pytest.mark.parametrize("deleted", [False, True])
+def test_conversation_retention_removes_late_superseded_payload(db, deleted):
+    cid, _, version = seed(db)
+    db.update_conversation(cid, {"title": "Current shared title"}, version)
+    version += 1
+    if deleted:
+        db.soft_delete_conversation(cid, version)
+    else:
+        db.set_conversations_archived(
+            [cid], archived=True, expected_versions={cid: version}
+        )
+    connection = db.get_connection()
+    before = [
+        tuple(row)
+        for row in connection.execute("SELECT * FROM sync_log ORDER BY change_id")
+    ]
+    with db.transaction() as cursor:
+        cursor.execute(
+            "INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload) "
+            "VALUES('conversations',?,'update',?,'late-client',1,?)",
+            (
+                cid,
+                db._get_current_utc_timestamp_iso(),
+                '{"title":"obsolete private text"}',
+            ),
+        )
+    assert [
+        tuple(row)
+        for row in connection.execute("SELECT * FROM sync_log ORDER BY change_id")
+    ] == before

@@ -505,6 +505,19 @@ class LibraryConversationReader(Vertical):
             )
             link = self.query_one("#library-conversation-link-workspace", Button)
             retry = self.query_one("#library-conversation-reader-retry", Button)
+            find_position = self.query_one(
+                "#library-conversation-find-position", Static
+            )
+            find_navigation = self.query_one("#library-conversation-find-navigation")
+            find_buttons = tuple(
+                self.query_one(f"#library-conversation-find-{direction}", Button)
+                for direction in ("previous", "next")
+            )
+            source = self.query_one("#library-conversation-use-source", Button)
+            archive_buttons = {
+                action: self.query_one(f"#library-conversation-{action}", Button)
+                for action in ("archive", "restore")
+            }
         except (NoMatches, QueryError):
             # A retained-reader recompose can briefly leave the mounted
             # parent with an incomplete child tree. State and metadata were
@@ -521,14 +534,10 @@ class LibraryConversationReader(Vertical):
         if find_key != self._find_navigation_key:
             self._find_navigation_key = find_key
             self._find_navigation_index = -1
-            self.query_one("#library-conversation-find-position", Static).update("")
-        self.query_one("#library-conversation-find-navigation").display = (
-            state.mode == "read"
-        )
-        for direction in ("previous", "next"):
-            self.query_one(
-                f"#library-conversation-find-{direction}", Button
-            ).disabled = not (
+            find_position.update("")
+        find_navigation.display = state.mode == "read"
+        for button in find_buttons:
+            button.disabled = not (
                 state.loaded_actions_eligible
                 and state.find_complete
                 and state.find_matches
@@ -544,12 +553,10 @@ class LibraryConversationReader(Vertical):
         )
         open_console.disabled = not state.loaded_actions_eligible
         open_console.tooltip = _open_console_disabled_tooltip(state)
-        source = self.query_one("#library-conversation-use-source", Button)
         source.label = self._source_label()
         source.disabled = not self._actions_enabled()
         source.tooltip = self._open_console_tooltip()
-        for action in ("archive", "restore"):
-            button = self.query_one(f"#library-conversation-{action}", Button)
+        for action, button in archive_buttons.items():
             button.display = bool(self.loaded_metadata.get("archived")) == (
                 action == "restore"
             )
@@ -565,7 +572,11 @@ class LibraryConversationReader(Vertical):
     @on(Button.Pressed, "#library-conversation-find-previous")
     @on(Button.Pressed, "#library-conversation-find-next")
     def move_find_match(self, event: Button.Pressed) -> None:
-        """Cycle matches in the exact loaded transcript without changing sessions."""
+        """Cycle matches in the exact loaded transcript without changing sessions.
+
+        Args:
+            event: Previous/next press consumed by this Reader.
+        """
         event.stop()
         matches = self.state.find_matches
         if (

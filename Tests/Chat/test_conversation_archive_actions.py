@@ -359,3 +359,90 @@ def test_archive_checks_hidden_branch_persistence_for_conversation_and_workspace
             assert refusal is None
         else:
             assert refusal is not None and "saving" in refusal
+
+
+@pytest.mark.parametrize("surface", ["stack", "retained"])
+@pytest.mark.parametrize("guard_kind", ["conversation", "workspace"])
+def test_archive_captures_covered_console_draft_for_its_visible_owner(
+    surface, guard_kind
+):
+    from tldw_chatbook.Chat.conversation_archive_actions import (
+        conversation_archive_refusal,
+        workspace_archive_refusal,
+    )
+
+    owner = SimpleNamespace(
+        id="owner", persisted_conversation_id="c", workspace_id="w", draft=""
+    )
+    active = SimpleNamespace(
+        id="active", persisted_conversation_id="other", workspace_id="other", draft=""
+    )
+    store = SimpleNamespace(
+        sessions=lambda: [owner, active],
+        active_session_id="active",
+        messages_for_session=lambda _: [],
+        set_session_draft=lambda sid, text: setattr(
+            owner if sid == "owner" else active, "draft", text
+        ),
+    )
+    text = [""]
+    console = SimpleNamespace(
+        is_mounted=True,
+        _console_visible_draft_session_id="owner",
+        _console_composer_or_none=lambda: SimpleNamespace(draft_text=lambda: text[0]),
+    )
+    app = SimpleNamespace(
+        console_runtime=SimpleNamespace(chat_store=store, chat_controller=None),
+        screen_stack=[console, object()] if surface == "stack" else [],
+        _reusable_screen_instances={"chat": (object(), console)}
+        if surface == "retained"
+        else {},
+    )
+    check = (
+        (lambda: conversation_archive_refusal(app, "c"))
+        if guard_kind == "conversation"
+        else (lambda: workspace_archive_refusal(app, "w"))
+    )
+    assert check() is None
+    text[0] = "Typed while the Console is covered"
+    assert "draft" in (check() or "")
+    assert owner.draft == text[0]
+    assert active.draft == ""
+
+
+@pytest.mark.parametrize("owner_is_active", [True, False])
+def test_empty_archive_composer_clears_stale_draft_only_for_settled_owner(
+    owner_is_active,
+):
+    from tldw_chatbook.Chat.conversation_archive_actions import (
+        workspace_archive_refusal,
+    )
+
+    owner = SimpleNamespace(
+        id="owner",
+        persisted_conversation_id="c",
+        workspace_id="w",
+        draft="Previously typed",
+    )
+    store = SimpleNamespace(
+        active_session_id="owner" if owner_is_active else "new-active",
+        sessions=lambda: [owner],
+        messages_for_session=lambda _: [],
+        set_session_draft=lambda _, text: setattr(owner, "draft", text),
+    )
+    console = SimpleNamespace(
+        is_mounted=True,
+        _console_visible_draft_session_id="owner",
+        _console_composer_or_none=lambda: SimpleNamespace(draft_text=lambda: ""),
+    )
+    app = SimpleNamespace(
+        console_runtime=SimpleNamespace(chat_store=store, chat_controller=None),
+        screen_stack=[console],
+    )
+    refusal = workspace_archive_refusal(app, "w")
+    if owner_is_active:
+        assert refusal is None
+        assert owner.draft == ""
+    else:
+        assert "draft" in refusal
+        assert owner.draft == "Previously typed"

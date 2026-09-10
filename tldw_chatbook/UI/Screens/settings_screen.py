@@ -23386,6 +23386,9 @@ class SettingsScreen(BaseAppScreen):
         except WorkspaceRegistryServiceError as exc:
             self._set_settings_workspaces_result(str(exc))
             return
+        receipt = getattr(self, "_settings_workspace_archive_receipt", None)
+        if receipt is not None and receipt.workspace_id == workspace_id:
+            self._settings_workspace_archive_receipt = None
         self._settings_workspaces_result = f"Restored {restored.name}. Active workspace unchanged; choose Set active to switch."
         self._refresh_settings_workspaces_pane()
 

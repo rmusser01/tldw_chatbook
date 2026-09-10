@@ -73,6 +73,7 @@ if TYPE_CHECKING:
 from loguru import logger
 
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
+from tldw_chatbook.Utils.input_validation import validate_conversation_archive_scope
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
 
@@ -8188,26 +8189,23 @@ UPDATE db_schema_version
             ) from e
 
     def _migrate_from_v70_to_v71(self, conn: sqlite3.Connection) -> None:
-        """Add local archive state without changing existing rows or sync payloads."""
+        """Apply the canonical local-archive artifact under the migration transaction."""
+        self._require_migration_entry_version(conn, 70, "V70→V71")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v70_to_v71_conversation_archive.sql"
+        )
         try:
-            conn.execute(
-                "ALTER TABLE conversations ADD COLUMN archived INTEGER NOT NULL "
-                "DEFAULT 0 CHECK (archived IN (0, 1))"
-            )
-            conn.execute(
-                "CREATE INDEX idx_conversations_archive ON conversations "
-                "(archived, deleted, last_modified DESC, id DESC)"
-            )
-            cursor = conn.execute(
-                "UPDATE db_schema_version SET version = 71 "
-                "WHERE schema_name = ? AND version = 70",
-                (self._SCHEMA_NAME,),
-            )
-            if cursor.rowcount != 1:
-                raise SchemaError(
-                    "Migration V70 to V71 version update was not applied."
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, migration_path.read_text(encoding="utf-8"), "V70→V71"
                 )
-        except sqlite3.Error as exc:
+                if self._get_db_version(conn) != 71:
+                    raise SchemaError(
+                        "Migration V70 to V71 version update was not applied."
+                    )
+        except (OSError, sqlite3.Error) as exc:
             raise SchemaError("Migration from V70 to V71 failed.") from exc
 
     def _initialize_schema(self):
@@ -10827,8 +10825,10 @@ UPDATE db_schema_version
     @staticmethod
     def _conversation_archive_scope_clause(archive_scope: str) -> str:
         """Validate archive scope and return a fixed SQL predicate."""
-        if archive_scope not in ("active", "archived", "all"):
-            raise InputError("archive_scope must be active, archived, or all.")
+        try:
+            archive_scope = validate_conversation_archive_scope(archive_scope)
+        except ValueError as exc:
+            raise InputError(str(exc)) from exc
         return {"active": "archived = 0", "archived": "archived = 1", "all": "1 = 1"}[
             archive_scope
         ]
@@ -11117,15 +11117,23 @@ UPDATE db_schema_version
         return results
 
     def get_conversation_by_name(
-        self, conversation_name: str, *, archive_scope: str = "active"
+        self,
+        conversation_name: str,
+        *,
+        archive_scope: str = "active",
+        limit: int = 100,
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """
-        Retrieves all conversations with the specified name.
+        Retrieve a bounded page of conversations with the specified name.
 
         Only non-deleted conversations are returned.
 
         Args:
             conversation_name: The name of the conversation.
+            archive_scope: Active, archived, or all non-deleted conversations.
+            limit: Page size, default 100 and capped at 1000.
+            offset: Number of matching rows to skip for the next page.
 
         Returns:
             A list of dictionaries containing the conversations' data.
@@ -11136,9 +11144,14 @@ UPDATE db_schema_version
         """
         start_time = time.time()
         archive_clause = self._conversation_archive_scope_clause(archive_scope)
-        query = f"SELECT * FROM conversations WHERE title = ? AND deleted = 0 AND {archive_clause} ORDER BY created_at DESC"
+        self._validate_conversation_page_coordinates(limit, offset)
+        limit = min(limit, 1000)
+        query = (
+            "SELECT * FROM conversations WHERE title = ? AND deleted = 0 "
+            f"AND {archive_clause} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"
+        )
         try:
-            cursor = self.execute_query(query, (conversation_name,))
+            cursor = self.execute_query(query, (conversation_name, limit, offset))
             rows = cursor.fetchall()
             results = [dict(row) for row in rows]
 
@@ -20499,6 +20512,8 @@ UPDATE db_schema_version
     #   * messages, live    -> {v, v-1}  (v-1 feeds the base-hash lookup in
     #                          ``_previous_committed_chat_payload_hash``)
     #   * messages, deleted -> {v} only  (the tombstone; it carries no content)
+    #   * conversations -> latest emitted version (archive-only local bumps
+    #                      must not prune an unsent shared payload)
     #   * every other entity -> {v} only (nothing reads them)
     #   * orphans (entity row gone) -> nothing
     _SYNC_LOG_RETENTION_SCOPES: Tuple[Tuple[str, str, str, bool, bool], ...] = (
@@ -20662,7 +20677,8 @@ UPDATE db_schema_version
           character_cards, keywords, keyword_collections) -- a row is reachable
           only through a JOIN to its live entity row on ``entity_id`` AND
           ``version``. Live messages keep ``{v, v-1}``; everything else keeps
-          ``{v}``; orphans keep nothing.
+          ``{v}``, except conversations retain their latest emitted version
+          across local archive-only increments; orphans keep nothing.
         * ``_SYNC_LOG_LATEST_ONLY_SCOPES`` (chat_dictionaries, world_books,
           world_book_entries) -- version cannot express reachability for these
           (see that constant), so at most ONE content-bearing row survives per
@@ -20727,6 +20743,13 @@ UPDATE db_schema_version
                         if keep_previous
                         else "src.version"
                     )
+                    if entity == "conversations":
+                        # Archive-only mutations have no replacement sync row.
+                        floor_expr = (
+                            "SELECT MAX(frontier.version) FROM sync_log AS frontier "
+                            "WHERE frontier.entity = 'conversations' "
+                            f"AND frontier.entity_id = {id_expr}"
+                        )
                     removed += conn.execute(
                         f"""
                         DELETE FROM sync_log

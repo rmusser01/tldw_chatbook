@@ -247,6 +247,7 @@ from ...Library.library_conversations_state import (
 )
 from ...Library.library_export_scope import ExportScope
 from ...Library.library_shell_state import LIBRARY_ROW_BROWSE_CONVERSATIONS
+from ...Utils.input_validation import validate_conversation_archive_scope
 from ...Widgets.Library import LibraryAdaptiveReaderShell, LibraryConversationsCanvas
 from ...Workspaces import library_item_context_handoff
 from .canvas_sync import _sync_library_canvas
@@ -1598,18 +1599,39 @@ class LibraryConversationsController:
 
     @on(Button.Pressed, ".library-conversation-scope")
     def handle_library_conversation_scope(self, event: Button.Pressed) -> None:
+        """Select a validated archive scope and reload the first result page.
+
+        Args:
+            event: Scope button press consumed before starting the page request.
+        """
         event.stop()
-        self._conversation_recovery().set_scope((event.button.id or "").rsplit("-", 1)[-1])
+        try:
+            scope = validate_conversation_archive_scope(
+                (event.button.id or "").rsplit("-", 1)[-1]
+            )
+        except ValueError:
+            return
+        self._conversation_recovery().set_scope(scope)
 
 
     @on(Button.Pressed, "#library-conversations-view-archived")
     def handle_library_conversation_view_archive(self, event: Button.Pressed) -> None:
+        """Show archived conversations while retaining the current search query.
+
+        Args:
+            event: Receipt action press consumed before switching to Archived.
+        """
         event.stop()
         self._conversation_recovery().set_scope("archived")
 
 
     @on(Button.Pressed, "#library-conversations-undo")
     def handle_library_conversation_undo(self, event: Button.Pressed) -> None:
+        """Schedule reversal of successful versioned archive changes.
+
+        Args:
+            event: Undo press consumed before starting the exclusive recovery worker.
+        """
         event.stop()
         self.run_worker(self._conversation_recovery().undo(), exclusive=True,
                         group="library-conversation-archive")
@@ -1620,6 +1642,11 @@ class LibraryConversationsController:
     @on(Button.Pressed, "#library-conversations-archive-selected")
     @on(Button.Pressed, "#library-conversations-restore-selected")
     def handle_library_conversation_archive_action(self, event: Button.Pressed) -> None:
+        """Confirm archive or restore for captured identities and versions.
+
+        Args:
+            event: Single or bulk archive/restore press consumed by this handler.
+        """
         event.stop()
         if self._library_conversation_freshness != "fresh" or self._library_conversation_loading:
             return
@@ -1698,6 +1725,11 @@ class LibraryConversationsController:
 
     @on(Button.Pressed, "#library-conversation-open-console")
     def open_selected_conversation_in_console(self, event: Button.Pressed) -> None:
+        """Resume the fully loaded original conversation in Console.
+
+        Args:
+            event: Resume press consumed before checking the retained identity fence.
+        """
         event.stop()
         self.resume_selected_conversation()
 
@@ -1712,6 +1744,11 @@ class LibraryConversationsController:
 
     @on(Button.Pressed, "#library-conversation-use-source")
     def use_selected_conversation_as_source(self, event: Button.Pressed) -> None:
+        """Stage the loaded transcript under the existing workspace source rules.
+
+        Args:
+            event: Source action press consumed before the handoff eligibility check.
+        """
         event.stop()
         self._open_selected_conversation_handoff()
 

@@ -38,11 +38,19 @@ async def request_conversation_resume(app: Any, conversation_id: str) -> None:
         return
     registry = getattr(app, "workspace_registry_service", None)
     workspace_id = row.get("workspace_id")
-    workspace = (
-        await storage_call(registry, "get_workspace", workspace_id)
-        if registry and workspace_id
-        else None
-    )
+    try:
+        workspace = (
+            await storage_call(registry, "get_workspace", workspace_id)
+            if registry and workspace_id
+            else None
+        )
+    except Exception:  # noqa: BLE001 - retain recovery state when storage is unavailable
+        logger.exception("Conversation workspace unavailable")
+        app.notify(
+            "Could not read this workspace. Refresh Library and try Resume again.",
+            severity="error",
+        )
+        return
 
     async def proceed(replacement_name: str | None = None) -> None:
         try:

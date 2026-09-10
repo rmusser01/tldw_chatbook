@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-10 15:35'
-updated_date: '2026-09-10 16:44'
+updated_date: '2026-09-10 19:56'
 labels: []
 dependencies: []
 priority: high
@@ -36,6 +36,8 @@ Inspect pending handoff and Console activation; pin exact resume/draft/busy guar
 
 Plan: Docs/superpowers/plans/2026-09-10-console-archive-recovery.md
 Spec: Docs/superpowers/specs/2026-09-10-console-archive-recovery-design.md
+
+PR #2576 review: guard the initial workspace read during Resume; verify a storage failure preserves recovery state and a retry opens the original conversation. Existing ADR147 applies.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -46,4 +48,5 @@ Connected Console archive/search controls to Library and added a typed original-
 ADR: backlog/decisions/147-conversation-archive-and-exact-resume.md. User guide: Docs/User_Guide/console/sessions-tabs-workspaces.md. Targeted verification and limitations: Docs/superpowers/qa/console/2026-09-10-archive-recovery.md.
 
 Integrated onto an isolated branch from current dev; original checkout changes are excluded. Task and ADR IDs were reassigned to avoid published collisions.
+PR #2576 review: initial workspace-read failures now show recovery guidance without navigation; a successful retry stages the original ID. Added a failing-before/passing-after regression. The mounted rename-collision workflow waits for its actual action control before interacting.
 <!-- SECTION:NOTES:END -->

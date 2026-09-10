@@ -338,7 +338,7 @@ async def test_workspace_archive_rechecks_draft_after_confirmation() -> None:
         next(b for b in modal.query(Button) if str(b.label) == "Archive").press()
         await pilot.pause(0.2)
         session = next(s for s in store.sessions() if s.workspace_id == "ws-draft")
-        store.set_session_draft(session.id, "Keep this draft")
+        console._console_composer_or_none().load_draft("Keep this draft")
         host.screen.query_one("#confirm-button", Button).press()
         await pilot.pause(0.3)
         assert not registry.get_workspace("ws-draft").archived

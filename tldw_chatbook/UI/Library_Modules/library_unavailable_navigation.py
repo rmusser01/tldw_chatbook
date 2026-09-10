@@ -13,6 +13,7 @@ from ...Constants import (
     LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION,
 )
 from ...Library.library_conversation_reader_state import LIBRARY_CONVERSATION_PAGE_SIZE
+from ...Utils.input_validation import validate_conversation_archive_scope
 
 if TYPE_CHECKING:
     from ...Character_Chat.character_conversation_navigation import (
@@ -684,8 +685,13 @@ def _apply_navigation_context_state(
     notes_create = bool(context.get(LIBRARY_NAV_CONTEXT_NOTES_CREATE))
     ingest_media = bool(context.get(LIBRARY_NAV_CONTEXT_INGEST))
     target_mode = requested_mode if requested_mode in LIBRARY_NAV_MODE_TO_ROW_ID else ""
-    archive_scope = context.get("conversation_archive_scope")
-    archive_navigation = isinstance(archive_scope, str) and archive_scope in {"active", "archived", "all"}
+    try:
+        archive_scope = validate_conversation_archive_scope(
+            context.get("conversation_archive_scope")
+        )
+    except ValueError:
+        archive_scope = None
+    archive_navigation = archive_scope is not None
     if archive_navigation:
         self._conversation_recovery().scope = archive_scope
         self._conversations_state.projection = ""

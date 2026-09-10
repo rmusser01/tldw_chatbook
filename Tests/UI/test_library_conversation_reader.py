@@ -193,7 +193,22 @@ async def test_open_console_requires_final_complete_error_free_match(
 
 
 @pytest.mark.asyncio
-async def test_sync_state_tolerates_partial_recompose_gap(widget_pilot) -> None:
+@pytest.mark.parametrize(
+    "missing_child",
+    [
+        "reader-status",
+        "find-position",
+        "find-navigation",
+        "find-previous",
+        "find-next",
+        "use-source",
+        "archive",
+        "restore",
+    ],
+)
+async def test_sync_state_tolerates_partial_recompose_gap(
+    widget_pilot, missing_child
+) -> None:
     """A retained reader caches arrivals while its child tree is incomplete."""
     loaded = _loaded_reader_state()
     async with await widget_pilot(
@@ -206,16 +221,21 @@ async def test_sync_state_tolerates_partial_recompose_gap(widget_pilot) -> None:
         reader = pilot.app.query_one(
             "#library-conversation-reader", LibraryConversationReader
         )
-        status = reader.query_one("#library-conversation-reader-status", Static)
-        await status.remove()
+        await reader.query_one(f"#library-conversation-{missing_child}").remove()
 
         updated = replace(loaded, mode="info")
-        reader.sync_state(updated)
+        metadata = {"title": "Newly archived planning", "archived": True}
+        reader.sync_state(updated, loaded_metadata=metadata)
 
         assert reader.state is updated
+        assert reader.loaded_metadata == metadata
         await reader.recompose()
         await pilot.pause()
         assert reader.query_one("#library-conversation-reader-info-body").display
+        assert (
+            str(reader.query_one("#library-conversation-open-console", Button).label)
+            == "Restore and resume"
+        )
 
 
 @pytest.mark.asyncio
@@ -879,7 +899,12 @@ async def test_rejected_later_page_cannot_promote_hostile_metadata() -> None:
             "alpha",
             "planning",
         ]
-        assert screen._conversations_state.reader_selected_metadata == record
+        # The list annotates its original row with a workspace label; rejected
+        # transcript metadata must not replace any of those selected fields.
+        assert screen._conversations_state.reader_selected_metadata == {
+            **record,
+            "workspace_name": "Default",
+        }
 
 
 @pytest.mark.parametrize("steal_focus", (False, True))

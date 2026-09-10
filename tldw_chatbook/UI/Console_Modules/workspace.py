@@ -4168,6 +4168,7 @@ class ConsoleWorkspaceController:
                 )
                 self._open_console_workspace_switcher(show_archived=True)
                 return
+            self._invalidate_console_persisted_rows_cache()
             self.run_worker(
                 self._sync_native_console_chat_ui(),
                 exclusive=True,
@@ -4250,6 +4251,7 @@ class ConsoleWorkspaceController:
             )
             return
         from tldw_chatbook.Chat.conversation_archive_actions import (
+            capture_console_archive_draft,
             workspace_archive_refusal,
         )
         from tldw_chatbook.Widgets.Console.console_workspace_switcher_modal import (
@@ -4257,15 +4259,7 @@ class ConsoleWorkspaceController:
         )
 
         def _refusal() -> str | None:
-            composer = self._screen._console_composer_or_none()
-            visible_id = self._screen._console_visible_draft_session_id
-            if composer is not None and visible_id is not None:
-                store = self._ensure_console_chat_store()
-                if any(item.id == visible_id for item in store.sessions()):
-                    # Preserve keystrokes that have not reached the store yet.
-                    live_draft = composer.draft_text()
-                    if live_draft:
-                        store.set_session_draft(visible_id, live_draft)
+            capture_console_archive_draft(self.app_instance, screen=self._screen)
             return workspace_archive_refusal(self.app_instance, workspace_id)
 
         refusal = _refusal()
@@ -4296,6 +4290,7 @@ class ConsoleWorkspaceController:
                     "Workspace could not be archived.", severity="error"
                 )
                 return
+            self._invalidate_console_persisted_rows_cache()
             self._sync_console_chat_core_state()
             if was_active:
                 self._activate_console_session_for_workspace(DEFAULT_WORKSPACE_ID)

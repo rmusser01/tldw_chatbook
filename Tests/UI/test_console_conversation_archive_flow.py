@@ -214,7 +214,9 @@ async def test_restore_resume_then_send_retains_original_history_and_unrelated_d
             if workspace_collision:
                 for _ in range(80):
                     await pilot.pause(0.03)
-                    if isinstance(host.screen, ConsoleWorkspaceRenameModal):
+                    if isinstance(
+                        host.screen, ConsoleWorkspaceRenameModal
+                    ) and host.screen.query("#console-workspace-rename-save"):
                         break
                 assert isinstance(host.screen, ConsoleWorkspaceRenameModal)
                 host.screen.query_one(

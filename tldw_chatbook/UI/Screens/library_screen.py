@@ -9308,11 +9308,15 @@ class LibraryScreen(BaseAppScreen):
         self._conversations_state.focus_after_apply = ""
         self._conversations_state.select_mode = False
         self._conversations_state.row_selection.clear()
-        self._conversation_recovery().scope = (
-            state.get("conversation_archive_scope")
-            if state.get("conversation_archive_scope") in {"active", "archived", "all"}
-            else "active"
-        )
+        from ...Utils.input_validation import validate_conversation_archive_scope
+
+        try:
+            archive_scope = validate_conversation_archive_scope(
+                state.get("conversation_archive_scope")
+            )
+        except ValueError:
+            archive_scope = "active"
+        self._conversation_recovery().scope = archive_scope
         conversation_query = state.get("library_conversation_query")
         self._conversations_state.requested_query = self._safe_text(
             conversation_query if isinstance(conversation_query, str) else "",
@@ -14604,14 +14608,29 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, ".library-conversation-scope")
     def handle_library_conversation_scope(self, event: Button.Pressed) -> None:
+        """Select a validated archive scope and reload the first result page.
+
+        Args:
+            event: Scope button press consumed before starting the page request.
+        """
         return self._conversations_controller.handle_library_conversation_scope(event)
 
     @on(Button.Pressed, "#library-conversations-view-archived")
     def handle_library_conversation_view_archive(self, event: Button.Pressed) -> None:
+        """Show archived conversations while retaining the current search query.
+
+        Args:
+            event: Receipt action press consumed before switching to Archived.
+        """
         return self._conversations_controller.handle_library_conversation_view_archive(event)
 
     @on(Button.Pressed, "#library-conversations-undo")
     def handle_library_conversation_undo(self, event: Button.Pressed) -> None:
+        """Schedule reversal of successful versioned archive changes.
+
+        Args:
+            event: Undo press consumed before starting the exclusive recovery worker.
+        """
         return self._conversations_controller.handle_library_conversation_undo(event)
 
     @on(Button.Pressed, "#library-conversation-archive")
@@ -14619,6 +14638,11 @@ class LibraryScreen(BaseAppScreen):
     @on(Button.Pressed, "#library-conversations-archive-selected")
     @on(Button.Pressed, "#library-conversations-restore-selected")
     def handle_library_conversation_archive_action(self, event: Button.Pressed) -> None:
+        """Confirm archive or restore for captured identities and versions.
+
+        Args:
+            event: Single or bulk archive/restore press consumed by this handler.
+        """
         return self._conversations_controller.handle_library_conversation_archive_action(event)
 
     def _conversation_recovery(self):
@@ -33283,6 +33307,11 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-conversation-open-console")
     def open_selected_conversation_in_console(self, event: Button.Pressed) -> None:
+        """Resume the fully loaded original conversation in Console.
+
+        Args:
+            event: Resume press consumed before checking the retained identity fence.
+        """
         return self._conversations_controller.open_selected_conversation_in_console(event)
 
 

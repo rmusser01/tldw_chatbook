@@ -35,3 +35,22 @@ One bare-open SIGKILL test did not reach its v48 child marker within 60 seconds.
 New Python files pass Ruff and formatting. Changed existing files add no Ruff findings over the dev baseline; fatal-error checks and `git diff --check` pass. Consolidated CSS was regenerated successfully. A final cross-module review was performed before publication.
 
 Final review correction: archive refusal now checks all session branches, including hidden unsaved/pending messages. The new regression failed before the fix; all 13 action tests pass afterward. The focused re-review checks this correction.
+
+
+## PR #2576 Qodo review corrections
+
+The first Qodo review identified thirteen actionable findings. The corrections cover:
+
+- Portable screenshot paths; guarded Reader child lookups during recomposition; independent conversation/workspace lifecycle assertions.
+- Capturing unsent Console text for its owning session before archive checks; invalidating saved-row caches after workspace lifecycle changes; clearing only the restored workspace's Undo receipt.
+- Recoverable initial workspace-read failures during Resume, retaining original-ID retry behavior.
+- One executable migration artifact; local-only archive transitions with optimistic Undo versions; bounded exact-title pagination and explicit service scope-forwarding assertions.
+- Shared strict archive-scope validation and public UI handler docstrings.
+
+ADR147 remains the governing decision. Review verification uses targeted tests; the historical-migration limits above remain applicable.
+
+Review verification: the combined DB/service/scope/Library run passed 117 cases; the shared action/workspace regressions passed 25. The 76-case mounted UI run passed 74 and exposed two test assumptions: exact row equality omitted the intentional workspace label, and the rename test observed the screen before its action control mounted. After correcting those expectations, all six focused rerun cases passed, including both full restore/resume/send workflows. Changed files introduce no Ruff diagnostics over the reviewed head; new files pass Ruff, and diff checks pass.
+
+The retention review also exercised existing privacy and maintenance coverage. Two raw hard-delete fixture cases stop at existing message semantic-authorization guards before reaching retention; both failures reproduced using the unchanged pre-review DB implementation. They are excluded from the focused retention acceptance run, not counted as passing. Archive-cycle, stale-Undo, late-obsolete-payload, soft-delete, restore and maintenance checks exercise the revised retention boundary.
+
+Final archive/retention acceptance run: 41 passed, 2 baseline-reproduced hard-delete cases deselected.

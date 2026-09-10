@@ -1,7 +1,5 @@
 """Archive recovery through the current permanent Library reader and real SQLite."""
 
-from pathlib import Path
-
 import pytest
 from textual.widgets import Button, Input
 
@@ -149,7 +147,7 @@ async def test_real_saved_body_search_archive_restore_resume_and_undo(size, tmp_
             source.press()
             await wait_until(pilot, lambda: len(calls) == 2)
             assert calls[-1] == ("source", cid)
-            Path(f"/private/tmp/library-archive-port-{size[0]}.svg").write_text(
+            (tmp_path / f"library-archive-port-{size[0]}.svg").write_text(
                 host.export_screenshot()
             )
             await recovery.undo()

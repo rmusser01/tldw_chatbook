@@ -37,6 +37,45 @@ async def storage_call(service: Any, method: str, *args: Any, **kwargs: Any) -> 
     return await asyncio.to_thread(call, *args, **kwargs)
 
 
+def capture_console_archive_draft(app: Any, *, screen: Any = None) -> None:
+    """Capture unsent composer text before checking archive eligibility.
+
+    Args:
+        app: Application owning the Console runtime and reusable screens.
+        screen: Optional caller's Console screen, including embedded hosts.
+    """
+    store = getattr(getattr(app, "console_runtime", None), "chat_store", None)
+    if store is None:
+        return
+    candidates = [screen] if screen is not None else []
+    candidates.extend(reversed(tuple(getattr(app, "screen_stack", ()))))
+    candidates.extend(
+        entry[1] for entry in getattr(app, "_reusable_screen_instances", {}).values()
+    )
+    seen = set()
+    session_ids = {session.id for session in store.sessions()}
+    for console in candidates:
+        if (
+            console is None
+            or id(console) in seen
+            or not getattr(console, "is_mounted", False)
+        ):
+            continue
+        seen.add(id(console))
+        owner_id = getattr(console, "_console_visible_draft_session_id", None)
+        composer_lookup = getattr(console, "_console_composer_or_none", None)
+        if owner_id not in session_ids or not callable(composer_lookup):
+            continue
+        composer = composer_lookup()
+        if composer is not None:
+            draft = composer.draft_text()
+            if draft or owner_id == getattr(store, "active_session_id", None):
+                # An empty settled composer clears its stale stored draft;
+                # during a switch it must not clear another session's draft.
+                # Never assign the visible text to a newer active session.
+                store.set_session_draft(owner_id, draft)
+
+
 def _session_refusal(app: Any, session: Any) -> str | None:
     if getattr(app, "_conversation_send_inflight", {}).get(
         session.persisted_conversation_id, 0
@@ -69,6 +108,7 @@ def _session_refusal(app: Any, session: Any) -> str | None:
 
 def conversation_archive_refusal(app: Any, conversation_id: str) -> str | None:
     """Explain why archiving would put this open conversation at risk."""
+    capture_console_archive_draft(app)
     store = getattr(getattr(app, "console_runtime", None), "chat_store", None)
     for session in store.sessions() if store is not None else ():
         if session.persisted_conversation_id == conversation_id:
@@ -80,6 +120,7 @@ def conversation_archive_refusal(app: Any, conversation_id: str) -> str | None:
 
 def workspace_archive_refusal(app: Any, workspace_id: str) -> str | None:
     """Apply the same loss checks to every open session in a workspace."""
+    capture_console_archive_draft(app)
     store = getattr(getattr(app, "console_runtime", None), "chat_store", None)
     for session in store.sessions() if store is not None else ():
         if getattr(session, "workspace_id", None) == workspace_id:

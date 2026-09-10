@@ -6,6 +6,8 @@ import asyncio
 from dataclasses import replace
 from typing import Any
 
+from ...Utils.input_validation import validate_conversation_archive_scope
+
 
 async def change_conversation_archive(
     app: Any, ids: tuple[str, ...], **kwargs: Any
@@ -47,7 +49,16 @@ class LibraryConversationRecovery:
         )
 
     def set_scope(self, scope: str) -> None:
-        if scope not in {"active", "archived", "all"} or self.busy:
+        """Validate scope and refresh page one while preserving the search query.
+
+        Args:
+            scope: Requested local conversation lifecycle scope.
+        """
+        try:
+            scope = validate_conversation_archive_scope(scope)
+        except ValueError:
+            return
+        if self.busy:
             return
         self.scope = scope
         self.screen._start_library_conversation_page_request(
