@@ -159,7 +159,7 @@ def test_notes_list_keeps_sixty_columns_beside_an_open_note() -> None:
 #: two five-cell grips (Notes keeps the default grip, unlike Media), the
 #: list target and the profile's 48-cell work floor. It was 98 while that
 #: target was 40, then 108 once the phase-C graduation raised the target to
-#: 50 -- and it is 98 again: task-32184 (PR #2559) makes an automatic layout
+#: 50 -- and it is 98 again: task-32200 (PR #2559) makes an automatic layout
 #: surrender the ADDED preferred cells before it hides a pane that still
 #: fits, so the raised target no longer costs ten columns of two-pane range.
 _NOTES_TWO_PANE_MIN_WIDTH = 98
@@ -185,7 +185,7 @@ def test_notes_list_closes_rather_than_starving_below_the_two_pane_width() -> No
     48-cell editor is the shape task-32127 set out to remove, so the honest
     narrow answer is one pane and a grip to reopen the other.
 
-    The floor itself moved (108 -> 98) under task-32184: an automatic layout
+    The floor itself moved (108 -> 98) under task-32200: an automatic layout
     now yields the added preferred cells rather than hiding a list that
     still fits. That widened the two-pane range; it did not soften the rule,
     so the boundary is pinned from BOTH sides here -- closed at the floor
