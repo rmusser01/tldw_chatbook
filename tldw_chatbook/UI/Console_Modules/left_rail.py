@@ -1430,10 +1430,14 @@ class ConsoleLeftRail(Vertical):
         # nor blanks the live one. Both properties are pinned by
         # Tests/UI/test_console_avatar_geometry_offloop.py.
         prerendered = await self._prerender_character_avatar(generation, target_box)
-        replaced = await self.replace_character_avatar_widget(
-            lambda: builder(target_box, prerendered=prerendered),
-            is_current=is_current,
-        )
+        try:
+            replaced = await self.replace_character_avatar_widget(
+                lambda: builder(target_box, prerendered=prerendered),
+                is_current=is_current,
+            )
+        except Exception:  # noqa: BLE001 - disposable view worker must fail soft
+            logger.opt(exception=True).debug("avatar: geometry mount failed")
+            return
         if not replaced:
             return
         if generation != self._character_avatar_fit_generation:
