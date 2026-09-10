@@ -115,6 +115,11 @@ def test_deep_search_zero_relevant_is_not_an_error(deep_env, monkeypatch):
     assert "[deep-search-failed]" not in out
     assert "sq1" in out  # sub-queries tried are listed
     assert "what is love" in out
+    assert "Engine: google (saved default)" in out
+
+    oversized = web_deep_search("what is love " * 2000, engine="exa")
+    assert len(oversized.encode("utf-8")) <= web_tool_impls.DEEP_SEARCH_TOTAL_MAX_BYTES
+    assert "Engine: exa (call override)" in oversized
 
 
 def test_deep_search_deadline_sets_cancel_event(deep_env, monkeypatch):
@@ -708,6 +713,7 @@ def test_deep_search_deadline_message_makes_no_scored_count_claim(deep_env, monk
     out = web_deep_search("what is love")
     assert "none were scored in time" not in out.lower()  # false zero-claim removed
     assert "unknown number" in out.lower()
+    assert "Engine: google (saved default)" in out
     assert "longer" in out.lower() and "deep_search_timeout_s" in out
     assert "rephrasing may help" in out.lower()
 

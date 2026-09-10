@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from tldw_chatbook import config
 from tldw_chatbook.Web_Scraping import WebSearch_APIs
 
 
@@ -24,7 +25,7 @@ class _FakeResponse:
 
     def raise_for_status(self):
         if self.status_code >= 400:
-            raise WebSearch_APIs.requests.exceptions.HTTPError(f"status {self.status_code}")
+            raise WebSearch_APIs.requests.exceptions.HTTPError(f"status {self.status_code}", response=self)
 
 
 class _FakeRequests:
@@ -54,7 +55,7 @@ def _patch_requests(monkeypatch, payload, status_code=200):
 
 
 def _set_key(monkeypatch, key, value):
-    monkeypatch.setitem(WebSearch_APIs.loaded_config_data["search_engines"], key, value)
+    monkeypatch.setitem(config.load_cli_config_and_ensure_existence()["SearchEngines"], key, value)
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +113,7 @@ _BRAVE_PAYLOAD = {"web": {"results": [{"title": "Br Title", "url": "https://br.e
 
 
 def test_brave_request_carries_timeout(monkeypatch):
-    _set_key(monkeypatch, "brave_search_ai_api_key", "test-brave-key")
+    _set_key(monkeypatch, "brave_search_api_key", "test-brave-key")
     fake = _patch_requests(monkeypatch, _BRAVE_PAYLOAD)
     WebSearch_APIs.search_web_brave("cherry cake", "US", "en", "en", 10)
     assert fake.calls, "search_web_brave made no request"
@@ -126,6 +127,9 @@ def test_brave_request_carries_timeout(monkeypatch):
 
 
 class _FakeDDGResponse:
+    def raise_for_status(self):
+        pass
+
     def __init__(self, content: bytes):
         self.content = content
 
@@ -259,7 +263,8 @@ def test_serper_http_error_via_perform_websearch(monkeypatch):
     result = WebSearch_APIs.perform_websearch("serper", "q", "US", "en", "en", 5)
     assert isinstance(result, dict)
     assert result.get("processing_error") is not None
-    assert "401" in result["processing_error"]
+    assert result["error_kind"] == "auth"
+    assert "Authentication" in result["processing_error"]
 
 
 # ---------------------------------------------------------------------------
@@ -411,7 +416,7 @@ def test_yandex_error_through_process_sets_processing_error():
     processing_error seam — never a silent empty result list."""
     result = WebSearch_APIs.process_web_search_results(_yandex_payload(_YANDEX_ERROR_XML), "yandex")
     assert result["processing_error"] is not None
-    assert "32" in result["processing_error"] or "Quota" in result["processing_error"]
+    assert result["processing_error"] == "Search provider returned an invalid response."
     assert result["results"] == []
 
 
@@ -476,8 +481,8 @@ def test_tavily_parser_absent_results_tolerated():
 
 
 def test_tavily_error_string_raises_and_surfaces_as_processing_error():
-    """search_web_tavily returns a plain error STRING (not a dict) on
-    request failure. The parser must raise ValueError with that text
+    """Legacy Tavily callers may supply a plain error string on failure.
+    The parser must raise ValueError with that text
     directly, AND process_web_search_results (which must not choke on the
     non-dict input) must surface it as processing_error rather than
     silently producing zero results (task-2990)."""
@@ -486,7 +491,7 @@ def test_tavily_error_string_raises_and_surfaces_as_processing_error():
 
     result = WebSearch_APIs.process_web_search_results(_TAVILY_ERROR_STRING, "tavily")
     assert result["processing_error"] is not None
-    assert "boom" in result["processing_error"]
+    assert result["processing_error"] == "Search provider returned an invalid response."
     assert result["results"] == []
 
 
@@ -534,7 +539,7 @@ def test_tavily_non_dict_item_surfaces_as_processing_error():
     }
     result = WebSearch_APIs.process_web_search_results(bad_payload, "tavily")
     assert result["processing_error"] is not None
-    assert "index 0" in result["processing_error"]
+    assert result["processing_error"] == "Search provider returned an invalid response."
     assert result["results"] == []
 
 
@@ -555,6 +560,9 @@ _SEARX_ERROR_PAYLOAD = json.dumps({"error": "No information was found online for
 
 
 class _FakeSearxSession:
+    def close(self):
+        pass
+
     """search_web_searx breaks the standard `requests.get/post` idiom every
     other engine here uses: it calls `searx_create_session()` ->
     `requests.Session()` -> `session.get(...)`. `_FakeRequests` above has no
@@ -571,13 +579,10 @@ class _FakeSearxSession:
 
 
 def test_searx_request_carries_timeout(monkeypatch):
-    """task-3060. Also mocks `random.uniform` (Minor 8): search_web_searx
-    calls `time.sleep(random.uniform(2, 5))` before every request --
-    precedent: test_deep_search_pipeline.py:667."""
-    _set_key(monkeypatch, "searx_search_api_url", "https://searx.example.com/search")
+    """Every SearX HTTP attempt carries the bounded provider timeout."""
+    _set_key(monkeypatch, "searx_search_api_url", "https://search.example.org/search")
     fake_session = _FakeSearxSession(_SEARX_HITS)
     monkeypatch.setattr(WebSearch_APIs, "searx_create_session", lambda: fake_session)
-    monkeypatch.setattr(WebSearch_APIs.random, "uniform", lambda a, b: 0.0)
     WebSearch_APIs.search_web_searx("cherry cake")
     assert fake_session.calls, "search_web_searx made no request"
     for call in fake_session.calls:
@@ -658,7 +663,7 @@ def test_searx_error_dict_raises_and_surfaces_as_processing_error():
 
     result = WebSearch_APIs.process_web_search_results(_SEARX_ERROR_PAYLOAD, "searx")
     assert result["processing_error"] is not None
-    assert "No information" in result["processing_error"]
+    assert result["processing_error"] == "Search provider returned an invalid response."
     assert result["results"] == []
 
 
@@ -681,7 +686,7 @@ def test_searx_non_dict_item_surfaces_as_processing_error():
     ])
     result = WebSearch_APIs.process_web_search_results(bad_payload, "searx")
     assert result["processing_error"] is not None
-    assert "index 0" in result["processing_error"]
+    assert result["processing_error"] == "Search provider returned an invalid response."
     assert result["results"] == []
 
 

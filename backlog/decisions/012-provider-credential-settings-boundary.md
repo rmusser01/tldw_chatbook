@@ -32,6 +32,46 @@ Console missing-key recovery must navigate to Settings with provider and credent
 
 This ADR does not introduce encrypted credential storage, keyring migration, or provider-specific secret validation. Those require separate UX, storage, and migration decisions.
 
+## Web search setup extension (TASK-32188 / TASK-32189, 2026-09-09)
+
+The canonical F9 Settings screen exposes a staged **Web Search** category.
+It owns the existing `[SearchSettings] search_provider_default` and curated
+`[SearchEngines]` fields. Selecting which backend to edit does not change the
+default. Save applies the complete staged delta atomically through the config
+owner; Revert discards it. Provider and category navigation preserve drafts.
+The category uses ADR-033's staged model and ADR-032's shared-default policy.
+
+A shared search-backend field catalog defines labels, required fields,
+secret flags, environment names, legacy aliases, and setup guidance. Runtime
+requests and setup checks resolve the same environment > local config values.
+No additional credential store is introduced. Saved secrets are never
+prefilled into widgets; blank replacement fields keep existing keys, explicit
+Clear stages deletion, and an active environment override remains visible.
+Tests and diagnostics use closed, secret-safe messages rather than provider
+exception bodies. No secret or probe result is persisted as UI metadata.
+
+Setup checks are local. **Test saved settings** is a separate explicit action:
+it sends the visible sample query to the selected saved backend, may consume
+provider quota, does not invoke a synthesis LLM, and never silently saves a
+draft. Test state is invalidated by edits and stale results cannot update a
+different backend or a later Settings view. SearX endpoints may be local, as
+already allowed by ADR-032. Tests do not grant Console tool permission.
+
+Backend requests resolve current config without rewriting a process-global
+request snapshot. Shipped Bing/SearX field spellings remain compatible with
+legacy aliases; retired/restricted services are labeled instead of appearing
+as interchangeable first-run recommendations.
+
+Alternatives rejected: raw-TOML-only setup retains the discovery and recovery
+failure; automatically making the edited provider the default changes query
+destination while configuring an alternative; automatic network validation
+would spend quota and send queries during ordinary editing; storing test
+results permanently would imply readiness beyond the configuration tested.
+
+The existing product identity and Settings layout remain authoritative. The
+new panel is modular; it does not add another Settings surface or redesign the
+application shell.
+
 ## Links
 
 - [Design spec](../../Docs/superpowers/specs/2026-06-30-provider-credentials-console-setup-polish-design.md)

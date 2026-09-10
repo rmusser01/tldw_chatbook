@@ -1508,6 +1508,34 @@ explicit Workspace bindings, not a global confinement-directory field.
 `[mcp] expose_local_tools` is only for external MCP clients and does not enable
 these tools in Console.
 
+**Default search backend.** Basic `web_search` and the opt-in
+`web_deep_search` share one preference. Open **Settings (F9) → Web Search**,
+choose **Default search backend**, complete its fields, and **Save (s)**.
+Use **Test saved settings** to send the displayed sample query and check access.
+For file-based configuration, the equivalent preference is:
+
+```toml
+[SearchSettings]
+search_provider_default = "serper"
+```
+
+Use a backend whose credentials or self-hosted endpoint you have configured.
+The preference is read on the next search; it does not require a restart.
+With no saved preference, both tools use DuckDuckGo, which requires no API key
+but still needs the web-search dependencies and network access. Existing saved
+choices, including Google, are preserved. Deep search remains separately
+opt-in through `[tools] web_deep_search_enabled = true` (restart required) and
+requires its relevance/synthesis LLM configuration.
+
+For a temporary choice, supply `search_engine` to `web_search`, or `engine`
+to `web_deep_search`. That affects only that call. A result line such as
+`Engine: serper (saved default)` shows the effective backend; other sources are
+`call override` and `application default`. Cached results retain the current
+call's source label. Invalid choices fail before searching, and backend
+failures do not automatically switch providers. Web Search shows local setup
+requirements separately from its explicit network test. **Configure backend**
+lets you prepare another provider without changing the shared default.
+
 Web-tool results are ephemeral. To persist a page in Library, use **Library →
 Import…** and submit its URL; Console does not advertise the retired
 `ingest_media` placeholder.

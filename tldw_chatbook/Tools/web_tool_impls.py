@@ -1178,16 +1178,57 @@ def _truncate_to_bytes(text: str, max_bytes: int) -> str:
     return raw[:max_bytes].decode("utf-8", errors="ignore") + _TRUNCATED_MARKER
 
 
+def _saved_search_engine() -> object:
+    """Read the current preference, preserving absent and malformed values."""
+    from ..config import get_cli_setting  # local: keep module import cheap
+
+    return get_cli_setting("SearchSettings", "search_provider_default", None)
+
+
+def _resolve_search_engine(
+    engine: Optional[str], saved_engine: object, *, failure_prefix: str
+) -> tuple[str, str]:
+    """Resolve and validate one invocation's backend and preference source."""
+    if engine is not None:
+        selected, source = engine, "call override"
+    elif saved_engine is not None:
+        selected, source = saved_engine, "saved default"
+    else:
+        selected, source = SEARCH_DEFAULT_ENGINE, "application default"
+
+    if not isinstance(selected, str) or selected.strip().lower() not in SEARCH_ENGINES:
+        if engine is not None:
+            raise LocalToolError(
+                f"[invalid-args] engine must be one of {SEARCH_ENGINES}: {selected!r}"
+            )
+        raise LocalToolError(
+            f"[{failure_prefix}] search: configured [SearchSettings] "
+            f"search_provider_default {selected!r} is not a supported engine "
+            f"(one of {SEARCH_ENGINES})"
+        )
+    return selected.strip().lower(), source
+
+
+def _with_search_backend(text: str, backend_note: str, max_bytes: int) -> str:
+    """Keep backend provenance visible even when result text needs trimming."""
+    body_budget = max_bytes - len(backend_note.encode("utf-8")) - 2
+    if len(text.encode("utf-8")) > body_budget:
+        text = _truncate_to_bytes(
+            text, body_budget - len(_TRUNCATED_MARKER.encode("utf-8"))
+        )
+    return f"{text}\n\n{backend_note}"
+
+
 def web_search(
     query: str,
     *,
-    search_engine: str = SEARCH_DEFAULT_ENGINE,
+    search_engine: Optional[str] = None,
     result_count: int = SEARCH_DEFAULT_RESULT_COUNT,
 ) -> str:
     """Run a web search and return bounded, formatted results as text.
 
     Delegates to ``Web_Scraping.WebSearch_APIs.perform_websearch`` with the
-    legacy ``Tools/web_search_tool.py`` config-default wiring (country US,
+    legacy ``Tools/web_search_tool.py`` filter wiring (country US,
     English in/out, moderate safesearch, no advanced filters). Each result
     block is bounded to SEARCH_RESULT_MAX_BYTES and the whole output to
     SEARCH_TOTAL_MAX_BYTES (both UTF-8 byte budgets), so the provider's
@@ -1200,17 +1241,26 @@ def web_search(
     searches within a session stop re-billing the provider (task-2832).
     Failure shapes and confirmed-empty results are never cached.
 
+    An omitted engine reads the current shared saved preference, falling
+    back to DuckDuckGo only when absent. An override never changes Settings.
+    Backend/source provenance is attached per call, outside the cached body.
+
     Raises:
-        LocalToolError: if ``query`` is empty.
+        LocalToolError: if ``query`` or the selected backend is invalid.
     """
     if not isinstance(query, str) or not query.strip():
         raise LocalToolError("[invalid-args] query must be a non-empty string")
     query = query.strip()
-    # Coerced like result_count below: garbage input degrades to the default.
-    if isinstance(search_engine, str) and search_engine.strip():
-        engine = search_engine.strip().lower()
-    else:
-        engine = SEARCH_DEFAULT_ENGINE
+    engine, engine_source = _resolve_search_engine(
+        search_engine,
+        _saved_search_engine() if search_engine is None else None,
+        failure_prefix="search-failed",
+    )
+    backend_note = f"Engine: {engine} ({engine_source})"
+
+    def with_backend(text: str) -> str:
+        return _with_search_backend(text, backend_note, SEARCH_TOTAL_MAX_BYTES)
+
     try:
         count = int(result_count)
     except (TypeError, ValueError):
@@ -1228,7 +1278,7 @@ def web_search(
         if cached is not None:
             expires_at, cached_text = cached
             if time.monotonic() < expires_at:
-                return cached_text
+                return with_backend(cached_text)
             # pop-not-del (review Minor 3): concurrent tool threads can
             # both observe the same expired entry; the loser's del would
             # KeyError. The lock makes the observe+pop atomic anyway.
@@ -1258,32 +1308,44 @@ def web_search(
         )
     except Exception as exc:  # noqa: BLE001 — backend failure is a result string, not an exception
         logger.warning(f"web_search backend failure via {engine!r}: {exc}")
-        return f"[search-failed] web search via {engine!r} failed: {exc}"
+        return with_backend(f"[search-failed] web search via {engine!r} failed: {exc}")
 
     if not isinstance(results, dict):
-        return (
+        return with_backend(
             f"No results found or unexpected response format from {engine!r} "
             f"(raw: {str(results)[:500]})"
         )
     # A well-formed envelope can still carry a failure: surface THAT reason.
     reason = results.get("processing_error") or results.get("error")
     if reason:
-        return f"[search-failed] web search via {engine!r} reported an error: {reason}"
+        return with_backend(
+            f"[search-failed] web search via {engine!r} reported an error: {reason}"
+        )
     if not isinstance(results.get("results"), list):
-        return (
+        return with_backend(
             f"No results found or unexpected response format from {engine!r} "
             f"(raw: {str(results)[:500]})"
         )
-    items = [item if isinstance(item, dict) else {} for item in results["results"][:count]]
+    items = [
+        item if isinstance(item, dict) else {} for item in results["results"][:count]
+    ]
     if not items:
-        return f"No results found for {query!r} via {engine!r}."
+        return with_backend(f"No results found for {query!r} via {engine!r}.")
 
     blocks: list[str] = []
     total_bytes = 0
+    omitted_note = "… [further results omitted: total size cap reached]"
+    # A cached body can later acquire the longer application-default label.
+    # Reserve the longest provenance plus omission and paragraph separators.
+    longest_note = f"Engine: {engine} (application default)"
+    body_budget = SEARCH_TOTAL_MAX_BYTES - len(longest_note.encode("utf-8")) - 2
+    results_budget = body_budget - len(omitted_note.encode("utf-8")) - 2
     for i, item in enumerate(items, 1):
         # Real standardized shape (process_web_search_results): body text is
         # top-level "content"; "snippet" lives under metadata. Accept both.
-        snippet = item.get("snippet") or item.get("content") or "No description available"
+        snippet = (
+            item.get("snippet") or item.get("content") or "No description available"
+        )
         block = (
             f"{i}. {item.get('title') or 'No title'}\n"
             f"   URL: {item.get('url') or ''}\n"
@@ -1291,18 +1353,19 @@ def web_search(
         )
         block = _truncate_to_bytes(block, SEARCH_RESULT_MAX_BYTES)
         block_bytes = len(block.encode("utf-8"))
-        if total_bytes + block_bytes > SEARCH_TOTAL_MAX_BYTES:
-            blocks.append("… [further results omitted: total size cap reached]")
+        separator_bytes = 2 if blocks else 0
+        if total_bytes + separator_bytes + block_bytes > results_budget:
+            blocks.append(omitted_note)
             break
         blocks.append(block)
-        total_bytes += block_bytes
+        total_bytes += separator_bytes + block_bytes
     output = "\n\n".join(blocks)
     # The ONE cacheable point (design doc ruling 1): only the genuine
     # success-blocks output is stored — never the [search-failed] strings,
     # the unmarked malformed-response strings, or the confirmed-empty
     # message (a transient zero must not pin for the TTL).
     _search_cache_put(cache_key, output)
-    return output
+    return with_backend(output)
 
 
 # ---------------------------------------------------------------------------
@@ -2026,8 +2089,9 @@ def _deep_search_settings() -> dict:
     there is no import cycle); the one bool through a strict true-set
     (``"true"`` / ``"1"`` / literal ``True`` -- deliberately narrower than
     ``config._get_typed_value``'s bool coercion, since this flag gates a
-    paid LLM call); provider/engine strings stripped of surrounding
-    whitespace.
+    paid LLM call); provider strings stripped of surrounding whitespace.
+    The backend value stays raw so the shared resolver can distinguish a
+    missing preference from an invalid saved choice before dispatch.
     """
     from ..config import _get_int_timeout_value, get_cli_setting  # local: keep module import cheap
 
@@ -2057,7 +2121,9 @@ def _deep_search_settings() -> dict:
         return _get_int_timeout_value({key: raw}, key, default)
 
     return {
-        "search_provider_default": _str("search_provider_default", "google"),
+        # Preserve absence for provenance and malformed values for rejection;
+        # only the shared resolver may select the application fallback.
+        "search_provider_default": _saved_search_engine(),
         "relevance_analysis_llm": _str("relevance_analysis_llm", "openai"),
         "final_answer_llm": _str("final_answer_llm", "openai"),
         "search_enable_subquery": _bool("search_enable_subquery", False),
@@ -2224,7 +2290,11 @@ def deep_search_pipeline_params(
     deadline_s = float(settings.get("deep_search_timeout_s", 240) or 240)
 
     params: dict = {
-        "engine": engine or settings.get("search_provider_default", SEARCH_DEFAULT_ENGINE),
+        "engine": _resolve_search_engine(
+            engine,
+            settings.get("search_provider_default"),
+            failure_prefix="deep-search-failed",
+        )[0],
         "content_country": "US",
         "search_lang": "en",
         "output_lang": "en",
@@ -2331,24 +2401,12 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
 
     settings = _deep_search_settings()
 
-    # Track provenance: an invalid engine the CALLER passed is the caller's
-    # mistake ([invalid-args], the model should retry with a different
-    # value); an invalid engine that came from [SearchSettings]
-    # search_provider_default is a config problem the caller had no part
-    # in -- blaming the caller's (absent) argument would misdirect a model
-    # into "fixing" an argument it never supplied (task-1356 review minor).
-    engine_from_caller = engine is not None
-    if engine is None:
-        engine = settings.get("search_provider_default", SEARCH_DEFAULT_ENGINE)
-    if not isinstance(engine, str) or engine.strip().lower() not in SEARCH_ENGINES:
-        if engine_from_caller:
-            raise LocalToolError(f"[invalid-args] engine must be one of {SEARCH_ENGINES}: {engine!r}")
-        raise LocalToolError(
-            f"[deep-search-failed] search: configured [SearchSettings] "
-            f"search_provider_default {engine!r} is not a supported engine "
-            f"(one of {SEARCH_ENGINES})"
-        )
-    engine = engine.strip().lower()
+    engine, engine_source = _resolve_search_engine(
+        engine,
+        settings.get("search_provider_default"),
+        failure_prefix="deep-search-failed",
+    )
+    backend_note = f"Engine: {engine} ({engine_source})"
 
     try:
         result_ceiling = int(settings.get("search_result_max", SEARCH_MAX_RESULT_COUNT))
@@ -2470,19 +2528,25 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
             # very top of the loop. This version claims only what's
             # knowable -- N raw results found, an unknown number scored --
             # and gives advice for both worlds.
-            return (
+            return _with_search_backend(
                 f"Deep search for {question!r} was cut off by the {deadline_s:.0f}s "
                 "deep-search deadline before any result was confirmed relevant. "
                 f"Found {len(results)} raw result(s) across {n_queries} quer{query_plural}; "
                 "an unknown number were scored before the cutoff. A longer "
                 "deep_search_timeout_s allows more results to be scored; if many were "
-                "scored but none proved relevant, rephrasing may help."
+                "scored but none proved relevant, rephrasing may help.",
+                backend_note,
+                DEEP_SEARCH_TOTAL_MAX_BYTES,
             )
-        queries_tried = "; ".join([question, *sub_questions]) if sub_questions else question
-        return (
+        queries_tried = (
+            "; ".join([question, *sub_questions]) if sub_questions else question
+        )
+        return _with_search_backend(
             f"No relevant results found for {question!r}. Analyzed {len(results)} "
             f"result(s) across {n_queries} quer{query_plural} "
-            f"tried: {queries_tried}. Try rephrasing the question or broadening it."
+            f"tried: {queries_tried}. Try rephrasing the question or broadening it.",
+            backend_note,
+            DEEP_SEARCH_TOTAL_MAX_BYTES,
         )
 
     # Footer built first (task-1356 review): it always survives regardless
@@ -2533,7 +2597,7 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
         citation_note = f" · {citation_summary}"
 
     footer = (
-        f"Confidence: {confidence:.2f} · Engine: {engine} · Sub-queries: {len(sub_questions)} · "
+        f"Confidence: {confidence:.2f} · {backend_note} · Sub-queries: {len(sub_questions)} · "
         f"Relevant: {len(relevant_results)} of {len(results)} {coverage_verb}"
         f"{fallback_note}{warning_note}{deadline_note}{citation_note}{gate_note}"
     )
