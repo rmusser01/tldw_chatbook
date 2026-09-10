@@ -1172,6 +1172,41 @@ def test_unfiled_date_order_breaks_ties_by_note_id_for_page_and_locator(
         assert location.placement_offset == rank
 
 
+def test_mixed_timestamp_shapes_still_order_chronologically(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    """Qodo follow-up on task-32172: schema-default vs. app timestamp shapes
+    must not misorder same-day notes.
+
+    ``last_modified`` is ``DATETIME DEFAULT CURRENT_TIMESTAMP`` (space
+    separator), while every application writer stamps ISO
+    ``YYYY-MM-DDTHH:MM:SS.sssZ`` (``T`` separator). Comparing the raw text
+    sorts by that separator character, not by time -- a noon space-shaped
+    stamp reads as "before" a chronologically earlier morning ISO stamp
+    because ``' ' (0x20) < 'T' (0x54)``. Both the pager and the locator have
+    to normalize before comparing or they'll agree with each other on the
+    wrong order.
+    """
+    morning = "2026-01-15T06:00:00.000Z"  # chronologically first
+    noon = "2026-01-15 12:00:00"  # schema-default shape; chronologically second
+    assert noon < morning  # the raw-text trap this test pins against
+
+    _insert_note(repository, note_id="mixed-morning", title="Morning", last_modified=morning)
+    _insert_note(repository, note_id="mixed-noon", title="Noon", last_modified=noon)
+
+    page = repository.page_note_placements(
+        parent_id=None, limit=10, offset=0, order="oldest"
+    )
+    ids = [str(placement.note["id"]) for placement in page.placements]
+    assert ids.index("mixed-morning") < ids.index("mixed-noon")
+
+    location = repository.locate_note_tree_placement(
+        note_id="mixed-noon", page_size=1, order="oldest"
+    )
+    assert location is not None
+    assert location.placement_offset == 1
+
+
 @pytest.mark.parametrize(
     "method_name", ["page_note_placements", "locate_note_tree_placement"]
 )

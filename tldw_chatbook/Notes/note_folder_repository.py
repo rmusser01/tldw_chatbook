@@ -2892,11 +2892,20 @@ def _validate_placement_order(order: object) -> str:
 
 
 def _placement_order_term(order: str, *, prefix: str = "") -> str:
-    """Return the leading ORDER BY term for one placement order."""
+    """Return the leading ORDER BY term for one placement order.
+
+    ``last_modified`` is a ``DATETIME`` column, but its stored text is not
+    one shape: the schema's ``DEFAULT CURRENT_TIMESTAMP`` writes
+    space-separated ``YYYY-MM-DD HH:MM:SS``, while every application writer
+    stamps ISO ``YYYY-MM-DDTHH:MM:SS.sssZ``. Comparing that text directly
+    sorts same-day rows by the separator character (``' ' < 'T'``) instead
+    of by time, so both date orders wrap the column in ``julianday()`` to
+    compare a normalized numeric instant instead.
+    """
     if order == "newest":
-        return f"{prefix}last_modified DESC"
+        return f"julianday({prefix}last_modified) DESC"
     if order == "oldest":
-        return f"{prefix}last_modified"
+        return f"julianday({prefix}last_modified)"
     return f"{prefix}title COLLATE NOCASE"
 
 
@@ -2910,7 +2919,8 @@ def _placement_rank_clauses(order: str, *, prefix: str = "") -> tuple[str, str]:
     ``DATETIME`` column, so a value read into Python comes back through the
     connection's datetime converter and is re-bound in a different textual
     shape than the column holds -- which silently mis-ranks the anchor
-    against itself.
+    against itself. The date orders also wrap both sides in ``julianday()``
+    for the same mixed-timestamp-shape reason as ``_placement_order_term``.
 
     Args:
         order: An already-validated placement order.
@@ -2925,11 +2935,12 @@ def _placement_rank_clauses(order: str, *, prefix: str = "") -> tuple[str, str]:
             f"{prefix}title COLLATE NOCASE < {anchor} COLLATE NOCASE",
             f"{prefix}title = {anchor} COLLATE NOCASE",
         )
-    anchor = "(SELECT last_modified FROM notes WHERE id = ?)"
+    anchor = "julianday((SELECT last_modified FROM notes WHERE id = ?))"
     comparison = ">" if order == "newest" else "<"
+    column = f"julianday({prefix}last_modified)"
     return (
-        f"{prefix}last_modified {comparison} {anchor}",
-        f"{prefix}last_modified = {anchor}",
+        f"{column} {comparison} {anchor}",
+        f"{column} = {anchor}",
     )
 
 
