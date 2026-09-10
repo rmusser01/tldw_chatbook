@@ -136,6 +136,14 @@ class LibraryExportState:
     # AC, via that already-existing seam).
     last_path: str = ""
     last_at: float | None = None
+    # task-32232 AC#4: the WRITTEN archive's own facts -- its manifest's
+    # ``content_items`` count and its size on disk, read back by
+    # ``_read_export_artifact_facts`` after the zip landed. ``None`` means
+    # "not read back" (an older restored receipt, or an archive whose
+    # manifest could not be reopened), which degrades the receipt to its
+    # path-only form rather than inventing a count from the request.
+    last_items: int | None = None
+    last_bytes: int | None = None
 
     #: task-4023 AC#7: which canvas's "Export…" action opened the Export
     #: canvas ("" = entered from the rail/deep link). Escape returns
