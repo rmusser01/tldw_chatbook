@@ -15,7 +15,9 @@ from .bootstrap import _key, _overlap, _read, _records, _registry
 from .journal import (
     _CandidateReceipt,
     _DirectoryState,
+    _evidence_digest,
     _matches,
+    _Object,
     _Prepared,
     _PublicationContext,
     _Rollback,
@@ -58,7 +60,233 @@ def _plan_digest(plan):
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
-def _pending(journal, context, *, targets=(), durable=False):
+def _finalization_session(session, context, prepared):
+    from .control_records import UNBOUND_NAMESPACE
+    from .storage_admission import MaintenanceSession, _contains_owned_path
+
+    if type(session) is not MaintenanceSession:
+        raise ValueError("maintenance_session_required")
+    MaintenanceSession._check(session)
+    if UNBOUND_NAMESPACE not in session._names:
+        raise ValueError("finalization_unbound_guard_required")
+    if session._control != Path(context.bootstrap_root) / "admission":
+        raise ValueError("conflicting_admission_authority")
+    with pinned_directory(session._control) as fd:
+        info = os.fstat(fd)
+        if (info.st_dev, info.st_ino) != session._control_identity:
+            raise ValueError("finalization_authority_changed")
+    registry = _registry(Path(context.bootstrap_root))
+    if (
+        registry is None
+        or not set(context.namespaces) <= set(session._names)
+        or any(name not in registry for name in context.namespaces)
+        or any(
+            not any(_contains_owned_path(root, path) for root in session._roots)
+            for path in (
+                *map(Path, context.selectors),
+                *_publication_targets(prepared),
+                *(
+                    Path(path)
+                    for name in context.namespaces
+                    for path in registry[name]["roots"]
+                ),
+            )
+        )
+    ):
+        raise ValueError("finalization_scope_uncovered")
+
+
+def _activation_proof(journal, context, generation, selectors, owners):
+    """Read and flush the exact pair plus immutable requirements, never approvals."""
+    from .activation import ActivationStore, _private
+    from .bootstrap import _binding, _control_records
+
+    root = Path(context.bootstrap_root)
+    _, profiles, associations = _control_records(root)
+    registry = _registry(root)
+    store = ActivationStore(journal.root.parent / "activation")
+    paths = []
+    for selector in selectors:
+        profile = next((p for p in profiles if p["selector"] == selector), None)
+        association = next((a for a in associations if a["selector"] == selector), None)
+        if (
+            profile is None
+            or association is None
+            or _binding(Path(selector), [profile], registry) is None
+        ):
+            raise ValueError("finalization_activation_unverified")
+        expected = {
+            "operation_id": journal.operation_id,
+            "generation": generation,
+            "owners": owners,
+            "namespaces": profile["namespaces"],
+            "store_root": str(store.root),
+        }
+        if (
+            profile.get("activation") != expected
+            or association["activation"] != expected
+            or not set(profile["namespaces"]) <= set(context.namespaces)
+        ):
+            raise ValueError("finalization_activation_unverified")
+        with _private(root) as parent:
+            for prefix, value in (("profile-", profile), ("activation-", association)):
+                name = prefix + _key(selector) + ".json"
+                journal._flush_record(parent, name, value)
+                paths.append(root / name)
+            flush_directory(parent)
+    directory = store._generation(generation)
+    with _private(directory) as parent:
+        requirement = store._required(parent, generation)
+        if requirement.owners != owners:
+            raise ValueError("finalization_activation_unverified")
+        journal._flush_record(parent, "required.json", requirement.model_dump())
+        flush_directory(parent)
+    paths.append(directory / "required.json")
+    return [observe_artifact(path) for path in sorted(paths)]
+
+
+def finalize_candidate(candidate: Path, plan: RestorePlan, journal, *, session) -> str:
+    """Commit current installed proof and retire only its pending native fence.
+
+    Internal executor composition: the caller retains the actual session through
+    publication and completion, including bootstrap.unbound so new unbound storage
+    users remain blocked after pointer retirement. That guard is not an affected
+    profile namespace and does not enter the pending record or activation binding.
+    Config-owned restored items are selectors; managed
+    relocation directories are not. A restored config requires every installed
+    activation-required capability, including omitted/preserved dependent stores.
+    Existing per-owner reviews survive identical retries. No service is started.
+
+    An absent pointer is accepted only with this operation's durable typed commit
+    and freshly rechecked installed objects and paired activation identities. An
+    unlink/barrier failure may be retried under fresh native recovery maintenance;
+    this reestablishes the bootstrap barrier without recreating a pointer.
+    """
+    from .activation import bind_activation
+    from .owner_registry import install_adapters
+    from .staging import _items
+
+    with journal._locked(exclusive=True) as parent:
+        records = journal._records(parent)
+        row = next((row for row in records if row.event == "prepared"), None)
+        if row is None:
+            raise ValueError("publication_incomplete")
+        prepared = _Prepared.model_validate(row.evidence)
+        context = prepared.publication
+        if context is None or context.plan_digest != _plan_digest(plan):
+            raise ValueError("publication_context_unverified")
+        _finalization_session(session, context, prepared)
+        committed = records[-1] if records[-1].event == "committed" else None
+        _pending(
+            journal,
+            context,
+            targets=_publication_targets(prepared),
+            committed=committed,
+        )
+    root = Path(context.bootstrap_root)
+    name = "pending-" + _key(journal.operation_id) + ".json"
+    with pinned_directory(root) as parent:
+        root_identity = (os.fstat(parent).st_dev, os.fstat(parent).st_ino)
+        before = observe_artifact(root / name) if os.path.lexists(root / name) else None
+    installed = _validate_installed(journal, candidate, plan)
+    with journal._locked(exclusive=True) as parent:
+        records = journal._records(parent)
+        _finalization_session(session, context, prepared)
+        with reader._regular(journal.root / "verified-manifest.json") as stream:
+            manifest = stream.read(ArchiveLimits().manifest_bytes + 1)
+        if hashlib.sha256(manifest).hexdigest() != installed["manifest_digest"]:
+            raise ValueError("verified_manifest_changed")
+        doc = reader._manifest(manifest, ArchiveLimits(), True)
+        selectors = sorted(
+            {
+                str(item.path)
+                for item in _items(doc, plan).values()
+                if item.owner == "config"
+            }
+        )
+        if not selectors or not set(selectors) <= set(context.selectors):
+            raise ValueError("finalization_config_selector_required")
+        owners = sorted(
+            owner.owner_id for owner in install_adapters() if owner.activation_required
+        )
+        prior = next(
+            (row for row in records if row.event == "activation_recorded"), None
+        )
+        if prior is None:
+            for selector in selectors:
+                bind_activation(
+                    root,
+                    journal.operation_id,
+                    Path(selector),
+                    prepared.generation,
+                    tuple(owners),
+                    session=session,
+                )
+        proof = {
+            "generation": prepared.generation,
+            "plan_digest": context.plan_digest,
+            "installed_digest": _evidence_digest(installed),
+            "selectors": selectors,
+            "owners": owners,
+            "records": _activation_proof(
+                journal, context, prepared.generation, selectors, owners
+            ),
+        }
+
+        def check_installed():
+            if any(
+                not _matches(_Object.model_validate(item), item["path"], metadata=True)
+                for item in installed["artifacts"]
+            ):
+                raise ValueError("installed_evidence_changed")
+
+        check_installed()
+        if prior is None:
+            journal._append(parent, "activation_recorded", proof)
+        elif prior.evidence != proof:
+            raise ValueError("finalization_activation_changed")
+        check_installed()
+        if committed is None:
+            journal._append(
+                parent,
+                "committed",
+                {
+                    "generation": prepared.generation,
+                    "activation_digest": _evidence_digest(proof),
+                },
+            )
+        journal._flush_records(parent)
+        _finalization_session(session, context, prepared)
+        check_installed()
+        if (
+            _activation_proof(journal, context, prepared.generation, selectors, owners)
+            != proof["records"]
+        ):
+            raise ValueError("finalization_activation_changed")
+        committed = journal._records(parent)[-1]
+        _pending(
+            journal,
+            context,
+            targets=_publication_targets(prepared),
+            durable=True,
+            committed=committed,
+        )
+        with pinned_directory(root) as bootstrap:
+            info = os.fstat(bootstrap)
+            if (info.st_dev, info.st_ino) != root_identity:
+                raise ValueError("finalization_authority_changed")
+            after = (
+                observe_artifact(root / name) if os.path.lexists(root / name) else None
+            )
+            if after != before:
+                raise ValueError("finalization_pending_changed")
+            if before is not None:
+                os.unlink(name, dir_fd=bootstrap)
+            flush_directory(bootstrap)
+    return prepared.generation
+
+
+def _pending(journal, context, *, targets=(), durable=False, committed=None):
     pending, _ = _records(Path(context.bootstrap_root))
     expected = {
         "version": 1,
@@ -67,9 +295,11 @@ def _pending(journal, context, *, targets=(), durable=False):
         "selectors": context.selectors,
         "control_root": str(journal.root.parent),
     }
-    if [row for row in pending if row["operation_id"] == journal.operation_id] != [
-        expected
-    ]:
+    matching = [row for row in pending if row["operation_id"] == journal.operation_id]
+    absent_commit = (
+        not matching and committed is not None and committed.event == "committed"
+    )
+    if matching != [expected] and not absent_commit:
         raise ValueError("publication_pending_mismatch")
     registry = _registry(Path(context.bootstrap_root))
     if registry is not None:
@@ -97,9 +327,10 @@ def _pending(journal, context, *, targets=(), durable=False):
     if durable:
         root = Path(context.bootstrap_root)
         with pinned_directory(root) as parent:
-            journal._flush_record(
-                parent, f"pending-{_key(journal.operation_id)}.json", expected
-            )
+            if not absent_commit:
+                journal._flush_record(
+                    parent, f"pending-{_key(journal.operation_id)}.json", expected
+                )
             flush_directory(parent)
         # Any of these local directories may have been created by registration.
         # The filesystem root itself has no containing directory entry to flush.
@@ -838,6 +1069,9 @@ def _validate_installed(journal, candidate, plan):
 
     with journal._locked(exclusive=True) as parent:
         records = journal._records(parent)
+        committed = (
+            records[-1] if records and records[-1].event == "committed" else None
+        )
         receipt_row = next(
             (row for row in records if row.event == "candidate_staged"), None
         )
@@ -916,6 +1150,7 @@ def _validate_installed(journal, candidate, plan):
                 journal,
                 context,
                 targets=_publication_targets(prepared),
+                committed=committed,
             )
             states = _states(prepared)
             for item in prepared.artifacts:
@@ -969,6 +1204,7 @@ def _validate_installed(journal, candidate, plan):
             context,
             targets=_publication_targets(prepared),
             durable=True,
+            committed=committed,
         )
         journal._flush_records(parent)
         # The existing SQLite seam accepts disposable candidates, never live WAL
@@ -1074,16 +1310,17 @@ def _validate_installed(journal, candidate, plan):
             evidence = [
                 observe_artifact(Path(path), metadata=True) for path in sorted(expected)
             ]
-            journal._append(
-                parent,
-                "installed_validated",
-                {
-                    "plan_digest": receipt.plan_digest,
-                    "descriptor_digest": receipt.descriptor.sha256,
-                    "manifest_digest": receipt.manifest_digest,
-                    "artifacts": evidence,
-                },
-            )
+            proof = {
+                "plan_digest": receipt.plan_digest,
+                "descriptor_digest": receipt.descriptor.sha256,
+                "manifest_digest": receipt.manifest_digest,
+                "artifacts": evidence,
+            }
+            if prior_validation is None:
+                journal._append(parent, "installed_validated", proof)
+            elif prior_validation.evidence != proof:
+                raise ValueError("installed_evidence_changed")
+            return proof
         finally:
             shutil.rmtree(work)
 

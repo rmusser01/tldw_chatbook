@@ -353,6 +353,26 @@ class _Installed(_Evidence):
     artifacts: list[_Object] = Field(max_length=MAX_EVENTS)
 
 
+def _evidence_digest(evidence: dict) -> str:
+    return hashlib.sha256(
+        json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+class _ActivationRecorded(_Evidence):
+    generation: str = Field(min_length=1, max_length=256)
+    plan_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    installed_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    selectors: list[str] = Field(min_length=1, max_length=4096)
+    owners: list[str] = Field(min_length=1, max_length=4096)
+    records: list[_Object] = Field(min_length=3, max_length=MAX_EVENTS)
+
+
+class _Committed(_Evidence):
+    generation: str = Field(min_length=1, max_length=256)
+    activation_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class _Event(_Evidence):
     version: Literal[1] = 1
     operation_id: str
@@ -366,6 +386,8 @@ class _Event(_Evidence):
         "artifact_retired",
         "artifact_published",
         "installed_validated",
+        "activation_recorded",
+        "committed",
         "directory_metadata_started",
         "directory_metadata_applied",
     ]
@@ -403,6 +425,12 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
             else set()
         )
     )
+    if events and events[-1] == "committed":
+        allowed = set()
+    elif events and events[-1] == "activation_recorded":
+        allowed = {"committed"}
+    elif events and events[-1] == "installed_validated":
+        allowed.add("activation_recorded")
     if event not in allowed:
         raise ValueError("journal_transition_invalid")
     if (
@@ -418,12 +446,40 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
         "artifact_retired": _Progress,
         "artifact_published": _Progress,
         "installed_validated": _Installed,
+        "activation_recorded": _ActivationRecorded,
+        "committed": _Committed,
         "directory_metadata_started": _DirectoryIntent,
         "directory_metadata_applied": _DirectoryProgress,
     }.get(event, _Evidence)
     try:
         validated = model.model_validate(dict(evidence))
-        if isinstance(validated, (_DirectoryIntent, _DirectoryProgress)):
+        if isinstance(validated, _ActivationRecorded):
+            prepared = _Prepared.model_validate(prepared_record.evidence)
+            if (
+                prepared.publication is None
+                or validated.generation != prepared.generation
+                or validated.plan_digest != prepared.publication.plan_digest
+                or validated.installed_digest != _evidence_digest(prior[-1].evidence)
+                or validated.selectors != sorted(set(validated.selectors))
+                or not set(validated.selectors) <= set(prepared.publication.selectors)
+                or validated.owners != sorted(set(validated.owners))
+                or any(
+                    not owner or len(owner) > 256 or "\0" in owner
+                    for owner in validated.owners
+                )
+                or len({item.path for item in validated.records})
+                != len(validated.records)
+                or any(item.kind != "file" for item in validated.records)
+            ):
+                raise ValueError("activation_context_invalid")
+            for selector in validated.selectors:
+                _Object.absolute_path(selector)
+        elif isinstance(validated, _Committed):
+            if validated.generation != prior[-1].evidence[
+                "generation"
+            ] or validated.activation_digest != _evidence_digest(prior[-1].evidence):
+                raise ValueError("commit_context_invalid")
+        elif isinstance(validated, (_DirectoryIntent, _DirectoryProgress)):
             prepared = _Prepared.model_validate(prepared_record.evidence)
             item = next(
                 (

@@ -236,6 +236,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Backup_Recovery/publication.py | _flush_original | open | 1 | generic_boundary | backup_recovery_publication |
 | tldw_chatbook/Backup_Recovery/publication.py | _retire | open | 1 | generic_boundary | backup_recovery_publication |
 | tldw_chatbook/Backup_Recovery/publication.py | _installed_metadata | open | 1 | generic_boundary | backup_recovery_publication |
+| tldw_chatbook/Backup_Recovery/publication.py | finalize_candidate | os.unlink | 1 | generic_boundary | backup_control |
 | tldw_chatbook/Backup_Recovery/publication.py | _validate_installed | mkdir | 2 | generic_boundary | backup_recovery_publication |
 | tldw_chatbook/Backup_Recovery/publication.py | _validate_installed | open | 1 | generic_boundary | backup_recovery_publication |
 | tldw_chatbook/Backup_Recovery/publication.py | _validate_installed | write | 1 | generic_boundary | backup_recovery_publication |
