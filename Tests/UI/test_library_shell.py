@@ -18882,11 +18882,12 @@ async def test_library_shell_notes_row_opens_notes_list_canvas():
         header = str(screen.query_one("#library-notes-header").renderable)
         assert header == "Notes (2)"
         assert screen.query_one("#library-notes-filter")
-        # task-32175: Sort is a flat-list-only control (task-32128) -- the
-        # seeded Agent_Lessons folder means this screen always composes the
-        # folder tree, where Sort never mounts. Pin that absence rather than
-        # dropping the line (review round 1, finding 4).
-        assert not screen.query("#library-notes-sort")
+        # task-32172 put Sort back on the folder tree (task-32128 had taken
+        # it away): the tree's order is a pager parameter now, not a
+        # hard-coded repository contract, so the control really re-pages.
+        # Unfiltered, it is offered enabled.
+        sort_button = screen.query_one("#library-notes-sort", Button)
+        assert sort_button.disabled is False
         assert screen.query_one("#library-notes-new")
 
 
@@ -18895,17 +18896,11 @@ async def test_library_shell_notes_list_actions_use_two_named_horizontal_rows():
     """Navigator actions stay grouped without overlapping the note list.
 
     task-32127 kept this contract rather than overriding it: the two groups
-    share one row ONLY from `_TOOLBAR_MERGE_MIN_WIDTH` (100 columns) up,
+    share one row ONLY from `_TOOLBAR_MERGE_MIN_WIDTH` (109 columns) up,
     and this harness's list pane is ~78, so both keep their own row here.
     Above the threshold they are still two named `ds-toolbar` Horizontals,
     nested in `#library-notes-action-rows`; the merged geometry is pinned
     in Tests/UI/test_library_notes_wave_list.py.
-
-    task-32175: Sort is a flat-list-only control (task-32128) and this
-    screen's seeded Agent_Lessons folder means it always composes the
-    folder tree, where Sort never mounts -- dropped from the browse group
-    checked here (the flat toolbar's own Sort placement is still pinned by
-    Tests/UI/test_library_notes_wave_list.py).
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
@@ -18922,11 +18917,11 @@ async def test_library_shell_notes_list_actions_use_two_named_horizontal_rows():
         assert browse_toolbar.has_class("ds-toolbar")
         assert transfer_toolbar.has_class("ds-toolbar")
 
-        # Why "#library-notes-sort" left this group (review round 1,
-        # finding 5): it is not composed at all in tree mode.
-        assert not screen.query("#library-notes-sort")
+        # Sort is part of this group again since task-32172 put it back on
+        # the folder tree, so it is checked here with its siblings.
         browse_selectors = (
             "#library-notes-new",
+            "#library-notes-sort",
             "#library-notes-select-toggle",
         )
         transfer_selectors = (
@@ -31810,13 +31805,13 @@ async def test_library_note_editor_back_restores_exact_wide_browse_context() -> 
         screen.query_one("#library-row-browse-notes").press()
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
 
-        # task-32175 (review round 1): this used to press #library-notes-sort
-        # ("title") for a deterministic row order. Sort is a flat-list-only
-        # control (task-32128) and this screen's seeded Agent_Lessons folder
-        # means it always composes the folder tree, where Sort never mounts;
-        # the tree's own order is already title-based, so row 18 below is
-        # deterministic without pressing anything.
-        assert not screen.query("#library-notes-sort")
+        # This used to press #library-notes-sort ("title") for a
+        # deterministic row order. It no longer needs to: since task-32172
+        # the Sort value IS the tree's ORDER BY, applied by the pager, and
+        # the row picked below comes out of the settled filter window
+        # anyway. Sort itself is composed here (task-32172 put it back on
+        # the folder tree) and enabled while no filter is applied.
+        assert screen.query_one("#library-notes-sort", Button).disabled is False
         notes_filter = screen.query_one("#library-notes-filter", Input)
         notes_filter.value = "scope"
         notes_filter.focus()
@@ -34042,15 +34037,15 @@ async def test_library_note_keyboard_capability_matrix(
 
         if capability == "filter":
             # task-32175: this used to be "filter_sort" and also drove
-            # #library-notes-sort by keyboard, but Sort is a flat-list-only
-            # control (task-32128) -- this screen's seeded Agent_Lessons
-            # folder means it always composes the folder tree, where Sort
-            # never mounts. Sort's keyboard round trip (Tab to the control,
-            # Enter, Tab to the option, Enter, sort applied) moved to the
-            # flat-list harness in Tests/UI/test_library_notes_wave_list.py
-            # ::test_sort_is_operable_by_keyboard_on_the_flat_list, which is
-            # the only place a real #library-notes-sort Button still mounts
-            # (review round 1, finding 2).
+            # #library-notes-sort by keyboard. It was split while task-32128
+            # had Sort off the folder tree; task-32172 has since put Sort
+            # back, so this node COULD carry its Sort half again -- but it is
+            # red on an unrelated filter-submit defect (task-32201), so
+            # rejoining them here would only hide Sort behind that red.
+            # Sort's keyboard round trip (Tab to the control, Enter, Tab to
+            # the option, Enter, sort applied) is pinned meanwhile in
+            # Tests/UI/test_library_notes_wave_list.py
+            # ::test_sort_is_operable_by_keyboard_on_the_flat_list.
             await _task10_open_notes_navigator(screen, pilot)
             filter_input = await _task10_focus_with_keyboard(
                 screen, pilot, "#library-notes-filter"

@@ -118,21 +118,18 @@ async def test_database_notes_capability_inventory_and_modes(
             await _wait_for_selector(screen, pilot, ".library-notes-row")
 
             # The navigator capability inventory remains on the incumbent
-            # controls. Sort is excluded: it is a flat-list-only control
-            # (task-32128) and this screen's seeded Agent_Lessons folder
-            # means it always composes the folder tree, where Sort never
-            # mounts (task-32175).
+            # controls, Sort among them: task-32128 took it off the folder
+            # tree and task-32172 put it back, because the tree's order is
+            # a pager parameter now rather than a fixed repository contract.
             for selector in (
                 "#library-notes-filter",
+                "#library-notes-sort",
                 "#library-notes-select-toggle",
                 "#library-notes-new",
                 "#library-notes-add-from-files",
                 "#library-notes-export",
             ):
                 assert screen.query_one(selector)
-            # Sort's absence is part of the inventory, not a gap in it
-            # (task-32175, review round 1, findings 4/5).
-            assert not screen.query("#library-notes-sort")
             assert not screen.query("#library-notes-delete-selected")
             filter_input = screen.query_one("#library-notes-filter", Input)
             filter_input.value = "alpha"

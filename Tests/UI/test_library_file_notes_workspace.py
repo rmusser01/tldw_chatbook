@@ -3678,13 +3678,12 @@ async def test_wide_files_task_return_restores_database_browse_receipt() -> None
             lambda: len(screen.query(".library-notes-row")) >= 20,
             "Database Notes did not render the browse rows.",
         )
-        # task-32175: this used to press #library-notes-sort ("title") to
-        # get a deterministic row order -- Sort is a flat-list-only
-        # control (task-32128), and this screen's seeded Agent_Lessons
-        # folder means it always composes the folder tree, where Sort
-        # never mounts. The tree's own order is already title-based (its
-        # row order is the repository's paging contract), so the row pick
-        # below is deterministic without pressing anything.
+        # This used to press #library-notes-sort ("title") for a
+        # deterministic row order. Since task-32172 the Sort value IS the
+        # tree's ORDER BY, applied by the pager, so the settled order is
+        # already deterministic at whatever Sort holds -- the receipt this
+        # test is about does not depend on which order that is, and the
+        # sort key itself is pinned at the end of the test.
         row = list(screen.query(".library-notes-row"))[18]
         note_id = str(row.note_id)
         notes_list = screen.query_one("#library-notes-list")

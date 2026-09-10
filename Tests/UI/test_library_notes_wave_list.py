@@ -614,13 +614,10 @@ async def test_every_sort_option_renders_in_the_narrowest_pane() -> None:
 async def test_pressing_a_sort_option_applies_that_sort(monkeypatch) -> None:
     """task-32128 AC#3: the composed option really applies its sort value.
 
-    The press -> apply round trip used to be pinned in the shell by
-    `test_library_shell_notes_sort_opens_direct_choices_and_applies_one_value`,
-    which now only asserts Sort's ABSENCE (the seeded shell always builds the
-    folder tree, so it composes no Sort control to press). Nothing else
-    asserted that pressing an option changes the sort, so the two real halves
-    are joined here: the option Button this canvas composes, and the
-    controller handler the screen routes its press to.
+    The two real halves are joined here: the option Button this canvas
+    composes, and the controller handler the screen routes its press to.
+    The shell's own press -> apply round trip is
+    `test_library_shell_notes_sort_opens_direct_choices_and_applies_one_value`.
     """
     state = LibraryNotesListState(
         rows=(LibraryNotesListRow("n1", "Alpha", "2h", False),),
@@ -719,12 +716,11 @@ async def test_sort_is_operable_by_keyboard_on_the_flat_list(monkeypatch) -> Non
 
     ``test_library_note_keyboard_capability_matrix[filter_sort]`` used to
     drive ``#library-notes-sort`` -> ``#library-notes-sort-oldest`` with Tab
-    and Enter, but every seeded shell now composes the folder tree, where
-    Sort is not composed at all -- so that node was renamed to ``filter``
-    and the keyboard half was lost. The flat list is still a live production
-    path (``library_screen.py`` builds a tree projection only ``if branches``)
-    and keyboard completeness was a P1 of the Library critique, so the round
-    trip lives here now, on the one harness that still mounts a real Sort.
+    and Enter. It was split to ``filter`` while task-32128 had Sort off the
+    folder tree, and the keyboard half went with it; task-32172 has since put
+    Sort back on the tree, but that node is red for an unrelated
+    filter-submit defect (task-32201), so this stays Sort's keyboard pin
+    either way. Keyboard completeness was a P1 of the Library critique.
 
     What this pins: Textual's focus traversal and press dispatch, through
     ``LibraryScreen``'s own ``@on`` selectors (adopted, not retyped -- see
@@ -736,12 +732,17 @@ async def test_sort_is_operable_by_keyboard_on_the_flat_list(monkeypatch) -> Non
     in for it; the screen's own method binding is covered where the screen is
     mounted.
     """
+    repaged: list[bool] = []
     screen_state = SimpleNamespace(
         _library_notes_mutation_fenced=lambda: False,
         _library_notes_sort="newest",
         _library_notes_sort_choices_visible=False,
         _library_notes_select_mode=False,
         _library_notes_row_selection=SimpleNamespace(clear=lambda: None),
+        # task-32172: a changed sort value IS the tree's repository ORDER BY,
+        # so the handler must ask for a re-page rather than re-sorting the
+        # loaded window (which could not move a note across a page boundary).
+        _request_library_notes_tree_initial_load=lambda: repaged.append(True),
     )
     app = _SortKeyboardApp(
         pane_width=100,
@@ -794,6 +795,7 @@ async def test_sort_is_operable_by_keyboard_on_the_flat_list(monkeypatch) -> Non
     # merely that some handler ran.
     assert screen_state._library_notes_sort_choices_visible is False
     assert screen_state._library_notes_select_mode is False
+    assert repaged == [True], "the changed sort never asked the tree to re-page"
 
 
 # -- task-32137: rows carry an age and duplicates are distinguishable -----
