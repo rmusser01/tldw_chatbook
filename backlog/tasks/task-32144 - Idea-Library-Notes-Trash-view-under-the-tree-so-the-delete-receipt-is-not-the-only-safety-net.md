@@ -76,5 +76,19 @@ caller asked for -- and a silent clamp returns fewer rows than requested
 without saying so). A persisted deletion-order column for true
 same-millisecond chronology was judged a migration for a cosmetic tie.
 
+Whole-wave review: F5 -- the earlier "Notes do not currently expose a separate
+Trash browser" sentence is now marked superseded by task-32144 rather than
+deleted, the shape r-file-notes used. F9 -- a comment at the Trash `ORDER BY`
+says why raw string ordering is right HERE (the one writer of
+`notes.deleted = 1` stamps `_get_current_utc_timestamp_iso()` in the same
+UPDATE) and must not be copied to active-note queries, whose `last_modified`
+mixes the schema's `CURRENT_TIMESTAMP` shape with ISO and needs `julianday()`
+(task-32172). F4 -- `origin/fix/library-notes-i-backlinks` merged in: the two
+branches insert methods at the same anchors in `ChaChaNotes_DB.py`,
+`Notes_Library.py` and `notes_scope_service.py` (interleaving inside shared
+docstrings and an `asyncio.to_thread(` call, so no union resolution parses)
+and both move the wiring census. Resolved by hand keeping both methods
+everywhere; census 100 + trash(1) + backlinks(2) = 103.
+
 Files: `DB/ChaChaNotes_DB.py`, `Notes/Notes_Library.py`, `Notes/notes_scope_service.py`, `Library/library_notes_state.py`, `UI/Library_Modules/library_notes_state.py`, `UI/Library_Modules/library_notes_controller.py`, `UI/Screens/library_screen.py`, `Widgets/Library/library_notes_canvas.py`, `css/components/_agentic_terminal.tcss` (+ regenerated bundle), `Docs/User_Guide/library/notes.md`, and the tests above.
 <!-- SECTION:NOTES:END -->
