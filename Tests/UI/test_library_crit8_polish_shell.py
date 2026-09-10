@@ -318,12 +318,15 @@ async def _open_the_first_note_editor(screen, pilot, gates) -> None:
 
 
 async def _type(pilot, text: str) -> None:
-    """Send ``text`` as one burst of keystrokes, the way fast typing arrives.
+    """Send ``text`` one key at a time through the pilot.
 
-    task-32062: one `pilot.press` per character pumps the whole message queue
-    between keystrokes, so every async follow-up settles before the next key
-    lands -- and the defect never appears. `press(*keys)` posts them all first
-    and pauses once, which is what a ~0.4 s sentence actually looks like.
+    This is NOT a burst, and the docstring that used to claim it was is the
+    folklore that cost PR #2571 a whole review round: ``App._press_keys``
+    awaits ``wait_for_idle(0)`` twice plus the animator between EVERY key,
+    so the event loop fully drains between keystrokes. That is enough for
+    task-32062's defect, which needs only a refresh to land between two
+    keystrokes -- but never for anything whose trigger is "faster than the
+    event loop". For that, see ``_burst`` below.
     """
     await pilot.press(*("space" if character == " " else character for character in text))
 

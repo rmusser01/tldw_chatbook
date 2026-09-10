@@ -2360,6 +2360,17 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.query_one("#library-note-delete-confirmation").display = confirming_delete
 
         locked = confirming_delete or state.destructive_running or bulk_read_only
+        # task-32106 (PR #2571 re-review, NEW-2): DISABLED, not read-only,
+        # is load-bearing while ``confirming_delete``. These four fields
+        # carry a PRIORITY tab binding (``NoteEditorInput`` /
+        # ``NoteEditorTextArea``), which ``App._check_bindings`` resolves
+        # before ``LibraryScreen.on_key`` -- and ``on_key`` is where the
+        # delete prompt's Tab trap lives. Textual blurs a widget when it
+        # becomes disabled and drops it from ``focusable``, so no note field
+        # can be in the binding chain while the prompt is open and the trap
+        # holds. Keep one of these live behind the prompt and Tab would walk
+        # straight out of it; ``test_delete_confirmation_traps_tab_between_
+        # cancel_and_delete`` asserts the disabled state for that reason.
         title_input.disabled = not show_editor or locked
         body_input.disabled = not show_editor or locked
         wide_keywords.disabled = state.compact or show_context or locked

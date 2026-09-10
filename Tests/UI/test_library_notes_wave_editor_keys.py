@@ -176,7 +176,17 @@ async def test_delete_confirmation_footer_follows_the_focused_button():
 
 @pytest.mark.asyncio
 async def test_delete_confirmation_traps_tab_between_cancel_and_delete():
-    """AC#3: Tab/Shift+Tab cycle only Cancel<->Delete while the prompt is open."""
+    """AC#3: Tab/Shift+Tab cycle only Cancel<->Delete while the prompt is open.
+
+    task-32106 (PR #2571 re-review, NEW-2): the trap lives in
+    ``LibraryScreen.on_key``, and the note editor fields now carry a PRIORITY
+    tab binding that ``App._check_bindings`` resolves BEFORE ``on_key``. The
+    trap therefore holds only because the prompt disables all four fields --
+    Textual blurs a disabled widget and drops it from ``focusable``, so none
+    of them can be in the binding chain. Asserted below so a change to
+    read-only-instead-of-disabled fails here rather than silently letting Tab
+    walk out of the prompt.
+    """
     host = _build_notes_host()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
@@ -188,6 +198,16 @@ async def test_delete_confirmation_traps_tab_between_cancel_and_delete():
         cancel_button = screen.query_one("#library-note-delete-cancel", Button)
         confirm_button = screen.query_one("#library-note-delete-confirm", Button)
         assert screen.focused is cancel_button
+        for field in (
+            "#library-note-title",
+            "#library-note-body",
+            "#library-note-keywords",
+            "#library-note-context-keywords",
+        ):
+            assert screen.query_one(field).disabled, (
+                f"{field} stays live behind the delete prompt; its priority "
+                "tab binding now beats the trap in on_key"
+            )
 
         for _ in range(8):
             await pilot.press("tab")

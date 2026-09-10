@@ -8166,11 +8166,25 @@ class LibraryScreen(BaseAppScreen):
         left Library. Tab now cycles within ``#screen-content``; the nav bar
         keeps its own documented keys (Ctrl+digit / F-keys) and stays
         traversable once focus is genuinely in it (mirrors ``ChatScreen``).
+
+        task-32106 (PR #2571 re-review, NEW-1): the note editor's fields
+        carry a PRIORITY ``tab`` binding, and ``App._check_bindings``
+        consumes a priority key before ``on_key`` ever runs -- so for a
+        focused note field this action, not ``on_key``, is the whole Tab
+        path. ``on_key``'s preamble marks the keystroke as a Notes user
+        interaction, which is the only keyboard site that clears
+        ``resize_settling``; without it the first Tab after a terminal
+        resize was classified programmatic in ``on_descendant_focus``.
+        Marking it here covers both the field bindings and this screen's
+        own (``on_key`` marks it a second time for non-priority keys, and
+        marking twice is a no-op).
         """
+        self._mark_library_notes_user_interaction()
         self._move_library_screen_focus(1)
 
     def action_focus_previous(self) -> None:
         """Shift+Tab: the reverse of ``action_focus_next``."""
+        self._mark_library_notes_user_interaction()
         self._move_library_screen_focus(-1)
 
     def _move_library_screen_focus(self, direction: int) -> Widget | None:
@@ -23265,6 +23279,21 @@ class LibraryScreen(BaseAppScreen):
             ``True`` to force-activate it, or ``None`` to defer to Textual's
             default resolution.
         """
+        if action in {"focus_next", "focus_previous"}:
+            # task-32106 (PR #2571 re-review, NEW-1). These stay universal
+            # everywhere except the canvas-only emergency stage, where
+            # ``on_key``'s ``emergency_tab`` branch OWNS Tab: it advances the
+            # emergency interaction and gives Shift+Tab its hop to
+            # ``#library-emergency-return``. A note field's PRIORITY tab
+            # binding would be consumed by ``App._check_bindings`` before
+            # ``on_key`` runs, so deactivating the action there hands the key
+            # back to the normal path and that branch keeps working. The
+            # screen's own non-priority binding never ran there either --
+            # ``on_key`` stops the event first -- so nothing else changes.
+            return not (
+                self._library_emergency_stage == "canvas-only"
+                and self._library_emergency_restore_receipt is not None
+            )
         if action in {
             "library_notes_new",
             "library_notes_focus_filter",
