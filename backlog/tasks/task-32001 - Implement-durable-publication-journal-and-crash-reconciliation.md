@@ -1,16 +1,17 @@
 ---
 id: TASK-32001
 title: Implement durable publication journal and crash reconciliation
-status: To Do
+status: In Progress
 assignee: []
-created_date: '2026-09-07 23:58'
+created_date: 2026-09-07 23:58
 labels:
-  - backup-recovery
+- backup-recovery
 dependencies:
-  - task-31978
-  - task-31987
-  - task-31988
-  - task-32000
+- task-31978
+- task-31987
+- task-31988
+- task-32000
+updated_date: 2026-09-10 19:55
 ---
 
 ## Description
@@ -26,6 +27,19 @@ Deliver the approved local recovery behavior for this independently reviewable s
 - [ ] #3 Native crash tests cover every durable transition and refuse unqualified filesystem semantics.
 <!-- AC:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Original Task18, ADR-126 and Docs/superpowers/plans/2026-09-07-backup-recovery-04-restore-recovery.md#task-18.
+1. Write focused behavioral-red journal tests, including incomplete publication remaining recovery-required.
+2. Implement versioned private durable event records and validated evidence/state transitions for prepared, rollback_verified, publication_started, artifact_published, installed_validated, activation_recorded, committed, rollback_started and recovery_required.
+3. Register fixed bootstrap pending pointer and affected namespaces before publication; preserve previous/candidate identities, target-volume paths, generation, rollback reference, retirement intent and progress without secrets.
+4. Publish through qualified native no-replace and checked retirement/replacement primitives per target volume.
+5. Reconcile actual filesystem identity/digests against intent after interruption; preserve uncertain or corrupt evidence and startup fencing.
+6. Test real subprocess interruption at durable boundaries, rename-before-record, sidecars, failure and unavailable volumes; keep admission fenced until installed validation and activation are durable.
+7. Run focused checks, Ruff/format, Bandit and review; update inventory/doc evidence and only mark Done when all original criteria pass.
+<!-- SECTION:PLAN:END -->
+
 ## Design references
 
 - [Approved specification](../../Docs/superpowers/specs/2026-09-07-complete-local-backup-restore-design.md)
@@ -39,3 +53,9 @@ ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
 Reason: direct implementation of the approved recovery ownership, archive, and lifecycle contract; reuse ADR-126.
 
 Before implementation, move this task to In Progress and copy its linked task steps into an Implementation Plan section. Keep implementation notes and completion evidence for after the work is finished. Do not mark criteria complete from this planning document.
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+First original Task18 journal/evidence slice implemented (not complete publication): private bounded exclusive sequence records with stable native lock, strict prepared/publication intent schemas, chained record digests, retained corrupt/partial evidence, bounded nofollow file/tree identity+bytes observations and staged/published/uncertain classification. No admission clearing or successful commit inferred from labels; replacement start refuses absent verified rollback. Behavioral red6fail→basicgreen6; next evidence red3fail13pass→16pass; review caught missing retained/previous consistency and earlier-child mutation duringlater read, both reproduced red then fixed. Root latest18passed2.22s /private/tmp/chatbook-journal-review-green.log; Ruffclean/Bandit0 (/private/tmp/chatbook-journal-final-bandit.json). Two real child exits cover current durable preparation/intent boundaries and retain actual startup fence. Full Task18 state transitions, qualified publication/retirement and activation-proof integration remain unfinished; not marked Done. Review /private/tmp/chatbook-journal-records-review.md; ADR-126.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

@@ -227,6 +227,10 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Backup_Recovery/crypto.py | _open_regular | open | 1 | generic_boundary | generic |
 | tldw_chatbook/Backup_Recovery/crypto.py | _write_all | write | 1 | generic_boundary | generic |
 | tldw_chatbook/Backup_Recovery/inventory.py | discover | open | 1 | generic_boundary | generic |
+| tldw_chatbook/Backup_Recovery/journal.py | Journal._locked | open | 1 | generic_boundary | backup_recovery_journal |
+| tldw_chatbook/Backup_Recovery/journal.py | observe_artifact | open | 1 | generic_boundary | backup_recovery_journal |
+| tldw_chatbook/Backup_Recovery/journal.py | observe_artifact.read | open | 1 | generic_boundary | backup_recovery_journal |
+| tldw_chatbook/Backup_Recovery/journal.py | observe_artifact.recheck | open | 1 | generic_boundary | backup_recovery_journal |
 | tldw_chatbook/Backup_Recovery/mcp_source_participants.py | backup_corrupt | os.replace | 2 | generic_boundary | exact five MCP source lifetimes; custom sources ordinary; service/runtime pending |
 | tldw_chatbook/Backup_Recovery/mcp_source_participants.py | reader | open | 1 | generic_boundary | exact five MCP source lifetimes; custom sources ordinary; service/runtime pending |
 | tldw_chatbook/Backup_Recovery/mcp_source_participants.py | write_json | dump | 2 | generic_boundary | exact five MCP source lifetimes; custom sources ordinary; service/runtime pending |
