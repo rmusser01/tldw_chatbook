@@ -108,10 +108,11 @@ class ConsoleGoalsController:
         if run_id:
             self.open_changes(run_id, conversation_id=goal.conversation_id)
 
-    def open_setup(self) -> None:
-        self.run_worker(self._open_setup())
+    def open_setup(self, *, objective: str = "") -> None:
+        """Open launch review with an optional composer-supplied objective."""
+        self.run_worker(self._open_setup(objective=objective))
 
-    async def _open_setup(self) -> None:
+    async def _open_setup(self, *, objective: str = "") -> None:
         from tldw_chatbook.Agents.run_log import _setting
         from tldw_chatbook.config import coerce_bool_setting
         from tldw_chatbook.Widgets.Console.console_goal_setup_modal import (
@@ -197,7 +198,7 @@ class ConsoleGoalsController:
             )
             limits = AutomaticWorkLimits.from_settings("goal_iteration")
             request = GoalRequest(
-                objective="Describe the result you want",
+                objective=objective.strip() or "Describe the result you want",
                 criteria="Describe how the result will be checked",
                 provider=goal_provider_ref(resolution),
                 binding=bindings[0],

@@ -159,6 +159,8 @@ from ...Chat.console_command_grammar import (
     GENERATE_IMAGE_COMMAND_NAME,
     GENERATE_VIDEO_COMMAND_HANDLER_ID,
     GENERATE_VIDEO_COMMAND_NAME,
+    GOAL_COMMAND_HANDLER_ID,
+    GOAL_COMMAND_NAME,
     KIND_COMMAND,
     KIND_NOT_COMMAND,
     KIND_UNKNOWN,
@@ -13442,6 +13444,7 @@ class ChatScreen(BaseAppScreen):
         STREAM_VIDEO_COMMAND_NAME: STREAM_VIDEO_COMMAND_HANDLER_ID,
         REWIND_COMMAND_NAME: REWIND_COMMAND_HANDLER_ID,
         RESEARCH_COMMAND_NAME: RESEARCH_COMMAND_HANDLER_ID,
+        GOAL_COMMAND_NAME: GOAL_COMMAND_HANDLER_ID,
     }
 
     def _console_unknown_command_hint(self, name: str) -> str:
@@ -13498,11 +13501,16 @@ class ChatScreen(BaseAppScreen):
             STREAM_VIDEO_COMMAND_HANDLER_ID: self._console_command_stream_video,
             REWIND_COMMAND_HANDLER_ID: self._console_command_rewind,
             RESEARCH_COMMAND_HANDLER_ID: self._console_command_research,
+            GOAL_COMMAND_HANDLER_ID: self._console_command_goal,
         }
         handler = dispatch_map.get(handler_id)
         if handler is None:
             return
         await handler(parse)
+
+    async def _console_command_goal(self, parse: CommandParse) -> None:
+        """Prefill native goal setup while preserving the ordinary composer draft."""
+        self._goals.open_setup(objective=parse.args)
 
     async def _console_command_insert_prompt(self, parse: CommandParse) -> None:
         """Delegate to `ConsolePromptsController` (wave-3 console decomposition, task 3)."""

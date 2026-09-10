@@ -1,0 +1,17 @@
+......................................                                   [100%]
+=============================== warnings summary ===============================
+../../.venv/lib/python3.12/site-packages/requests/__init__.py:113
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4.4) doesn't match a supported version!
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+1.62s call     Tests/UI/test_console_goal_command.py::test_goal_completion_and_enter_open_review_then_persist_objective
+1.22s setup    Tests/UI/test_console_goal_command.py::test_goal_completion_and_enter_open_review_then_persist_objective
+1.20s setup    Tests/UI/test_console_goal_command.py::test_goal_refusal_preserves_draft_and_never_arms_literal_send[disabled]
+1.11s setup    Tests/UI/test_console_goal_command.py::test_goal_description_and_cancel_preserve_the_draft[/goal-Describe the result you want]
+1.09s setup    Tests/UI/test_console_goal_command.py::test_goal_description_and_cancel_preserve_the_draft[/GoAl   Fix `fixture.txt`\n  Keep the second line.  -Fix `fixture.txt`\n  Keep the second line.]
+1.03s setup    Tests/UI/test_console_goal_command.py::test_goal_refusal_preserves_draft_and_never_arms_literal_send[missing_binding]
+
+(19 durations < 1s hidden.)
+38 passed, 1 warning in 13.39s

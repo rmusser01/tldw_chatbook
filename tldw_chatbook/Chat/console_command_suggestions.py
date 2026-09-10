@@ -37,6 +37,7 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "stream-video": "Stream a video from a URL into the transcript",
     "rewind": "Rewind the session to an earlier user prompt",
     "research": "Run deep research in the background; the report is delivered into this conversation",
+    "goal": "Set up a goal with a task description and review it before starting",
 }
 
 #: Shown for a registered command with no ``_COMMAND_DESCRIPTIONS`` entry --

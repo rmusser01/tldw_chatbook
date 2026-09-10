@@ -19,8 +19,8 @@ not by scanning the draft text for marker substrings.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 COMMAND_PREFIX = "/"
 """Leading character that marks a Console draft as a candidate slash command."""
@@ -69,6 +69,10 @@ REWIND_COMMAND_HANDLER_ID = "rewind"
 RESEARCH_COMMAND_NAME = "research"
 RESEARCH_COMMAND_ARGUMENT_HINT = "<question>"
 RESEARCH_COMMAND_HANDLER_ID = "research"
+
+GOAL_COMMAND_NAME = "goal"
+GOAL_COMMAND_ARGUMENT_HINT = "[task description]"
+GOAL_COMMAND_HANDLER_ID = "goal"
 
 
 @dataclass(frozen=True)
@@ -188,12 +192,11 @@ class ConsoleCommandRegistry:
 
 
 def default_console_registry() -> ConsoleCommandRegistry:
-    """Build the default registry with built-in ``/prompt``, ``/system``, ``/skills``, ``/prefill``, ``/generate-image``, and ``/rewind`` commands.
+    """Build the default registry with the built-in Console commands.
 
     Returns:
-        A new `ConsoleCommandRegistry` with `PROMPT_COMMAND_NAME`, `SYSTEM_COMMAND_NAME`,
-        `SKILLS_COMMAND_NAME`, `PREFILL_COMMAND_NAME`, `GENERATE_IMAGE_COMMAND_NAME`,
-        and `REWIND_COMMAND_NAME` registered and no fallback resolvers.
+        A new `ConsoleCommandRegistry` with built-in commands registered
+        and no fallback resolvers.
     """
     registry = ConsoleCommandRegistry()
     registry.register(
@@ -257,6 +260,13 @@ def default_console_registry() -> ConsoleCommandRegistry:
             name=RESEARCH_COMMAND_NAME,
             argument_hint=RESEARCH_COMMAND_ARGUMENT_HINT,
             handler_id=RESEARCH_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=GOAL_COMMAND_NAME,
+            argument_hint=GOAL_COMMAND_ARGUMENT_HINT,
+            handler_id=GOAL_COMMAND_HANDLER_ID,
         )
     )
     return registry

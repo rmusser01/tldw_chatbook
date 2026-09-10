@@ -22,7 +22,18 @@ def _labels(result):
     return [s.label for s in result]
 
 
-COMMANDS = ["/prompt", "/system", "/skills", "/prefill", "/generate-image", "/generate-video", "/stream-video", "/rewind", "/research"]
+COMMANDS = [
+    "/prompt",
+    "/system",
+    "/skills",
+    "/prefill",
+    "/generate-image",
+    "/generate-video",
+    "/stream-video",
+    "/rewind",
+    "/research",
+    "/goal",
+]
 
 
 def test_bare_slash_lists_commands_then_skills():
@@ -62,7 +73,12 @@ def test_skills_arg_mode_filters_and_builds_full_replacement():
 
 
 def test_skills_arg_mode_ends_after_second_argument():
-    assert suggestions_for_draft("/skills web-search extra", default_console_registry(), SKILLS) is None
+    assert (
+        suggestions_for_draft(
+            "/skills web-search extra", default_console_registry(), SKILLS
+        )
+        is None
+    )
 
 
 def test_skill_named_like_a_command_is_deduplicated():

@@ -6,6 +6,8 @@ Scope: the goal feature on `codex/native-goal-runs`, relative to preserved prere
 
 A final [local identifier scan](../qa/native-goals/task5/final-id-scan.json) checked TASK-32116 through TASK-32120 and ADR-141 across **485 local branch/remote refs and 19 registered worktrees**, finding no conflicting filenames. This is a local snapshot without a fetch or reservation against future work; integration still requires a fresh reconciliation.
 
+The later pre-PR check found concurrent claims. The new composer task was renumbered from TASK-32193 to TASK-32194 before its first commit. An independent Library branch also uses ADR-141: the goal ADR was first added in `77bc58dc17` on September 8, before the Library retirement ADR in `5caa634c2d` on September 9. The earlier goal ADR is retained; this cross-branch ADR conflict remains an explicit integration dependency of the draft PR.
+
 Authority: [accepted ADR-141](../../../backlog/decisions/141-native-console-goal-runs.md), [design](../specs/2026-09-08-gnhf-inspired-goal-runs-design.md), [implementation plan](../plans/2026-09-08-gnhf-inspired-goal-runs.md), and [original seven-finding review](2026-09-08-goal-runs-preimplementation-review.md).
 
 The [Console qualification assets](../qa/native-goals/task5/README.md) preserve the actual CLI and endpoint traces, final fixture/diff, rendered controls, targeted test output and baseline diagnostic proofs.
@@ -76,9 +78,15 @@ The [affected gate](../qa/native-goals/task5/final-fix-affected.txt) returned **
 
 Root inspected the regenerated deterministic trace: the initial and later requests include the selected exact invocation while objective prose omits it. The actual CLI still exits **7→0** across two increments/five calls, with the same verifier SHA-256, the exact retained `valid\n` file and one-line diff, changed source fingerprints and unchanged external sentinel. The normalized trace matches its retained raw-capture hash. Both historical local-model traces remain byte-for-byte unchanged; their objectives already repeated the invocation, so missing launch metadata does not explain away those failures. No additional model calls were made.
 
-The final independent scoped re-review approved all five fixes at `052fd4b95f`, with no new Critical, Important or Minor findings and no deferred goal findings. All five Backlog tasks are Done, and the implementation plan and ADR record the completed feature. The branch and isolated worktree are preserved without a push or merge. Before integration, reconcile the preserved prerequisite baseline, concurrent Console/settings work, identifiers and migration ownership. Four distinct pre-existing test failures across the two gates above remain assigned to their existing owners; successful live-model correction remains unproven.
+The final independent scoped re-review approved all five fixes at `052fd4b95f`, with no new Critical, Important or Minor findings and no deferred goal findings. All five Backlog tasks are Done, and the implementation plan and ADR record the completed feature. The branch and isolated worktree are retained. The user subsequently requested one PR against `dev` for all session changes, including the composer follow-up below. Before integration, reconcile the preserved prerequisite baseline, concurrent Console/settings work, identifiers and migration ownership. Four distinct pre-existing test failures across the two gates above remain assigned to their existing owners; successful live-model correction remains unproven.
 
-To try the feature in this worktree, enable **Goal runs** under **F9 Settings → Console behavior** and Save. Open **Ctrl+P → Console: Goal runs… → New goal**. Goal runs default to disabled, and each launch keeps its selected resources, verification policy and finite allowance.
+To try the feature in this worktree, enable **Goal runs** under **F9 Settings → Console behavior** and Save. Open **Ctrl+P → Console: Goal runs… → New goal**, or send `/goal <task description>` in the composer. Goal runs default to disabled, and each launch keeps its selected resources, verification policy and finite allowance.
+
+## Composer follow-up
+
+TASK-32194 adds `/goal [task description]` to the existing command registry and popup. Sending it opens the same goal setup form, with the complete description prefilled; bare `/goal` opens ordinary setup. Review and Start remain explicit, and cancellation/refusal preserves the draft. Existing literal/paste behavior is unchanged.
+
+The [composer qualification](../qa/native-goals/composer/README.md) retains **118 affected passes** and **38 overlapping final passes** after mechanical lint cleanup. Mounted tests cross keyboard completion, actual command dispatch, launch review and real saved goal state. Scoped lint/format pass; ChatScreen adds no diagnostics. These follow-up gates do not erase the earlier baseline failures or establish live-model competence. The independent [scoped review](../qa/native-goals/composer/review.md) approved the addition with no actionable findings.
 
 ## Implementation decisions
 

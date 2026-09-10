@@ -1,0 +1,35 @@
+........................................................................ [ 61%]
+..............................................                           [100%]
+=============================== warnings summary ===============================
+../../.venv/lib/python3.12/site-packages/requests/__init__.py:113
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4.4) doesn't match a supported version!
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+5.15s call     Tests/UI/test_console_goal_navigation.py::test_production_styles_keep_goal_actions_visible_and_keyboard_accessible[size1]
+4.65s call     Tests/UI/test_console_goal_navigation.py::test_production_styles_keep_goal_actions_visible_and_keyboard_accessible[size0]
+2.32s call     Tests/UI/test_console_goal_navigation.py::test_palette_discovers_and_opens_goal_history
+2.26s call     Tests/UI/test_console_command_popup.py::test_popup_anchor_clears_chips_above_composer_by_default
+2.12s call     Tests/UI/test_console_command_popup.py::test_popup_anchor_clears_composer_with_chips_below
+2.00s call     Tests/UI/test_console_command_composer.py::test_console_collapsed_paste_starting_with_slash_sends_normally
+1.96s call     Tests/UI/test_console_command_composer.py::test_console_prompt_command_picker_uses_real_bound_search_and_selection_replaces_draft
+1.94s call     Tests/UI/test_console_command_composer.py::test_console_unknown_command_roundtrip_edit_back_to_armed_text_requires_fresh_arm
+1.87s call     Tests/UI/test_console_command_popup.py::test_popup_does_not_reclaim_workspace_grid_rows
+1.84s call     Tests/UI/test_console_command_composer.py::test_console_prompt_command_no_args_opens_picker_with_empty_query
+1.77s call     Tests/UI/test_console_command_popup.py::test_popup_anchors_above_composer_with_real_css
+1.76s call     Tests/UI/test_console_command_composer.py::test_console_prompt_command_picker_escape_leaves_draft_untouched
+1.71s call     Tests/UI/test_console_command_composer.py::test_console_collapse_disarms_unknown_command_literal_send
+1.67s call     Tests/UI/test_console_command_composer.py::test_console_unknown_command_second_unmodified_enter_sends_as_text
+1.66s call     Tests/UI/test_console_command_composer.py::test_console_resume_triggered_prompt_insert_survives_stale_session_switch
+1.64s call     Tests/UI/test_console_goal_command.py::test_goal_completion_and_enter_open_review_then_persist_objective
+1.54s call     Tests/UI/test_console_command_composer.py::test_console_prefill_pin_seeds_settings_on_settings_less_session
+1.51s call     Tests/UI/test_console_command_popup.py::test_skill_entries_and_skills_arg_mode
+1.51s call     Tests/UI/test_console_command_composer.py::test_console_prefill_pin_and_clear_round_trip
+1.51s call     Tests/UI/test_console_command_composer.py::test_console_prompt_system_only_requires_opt_in_and_clears_snapshot
+1.51s call     Tests/UI/test_console_command_composer.py::test_console_prompt_command_uses_shared_dialog_and_shared_value
+1.50s call     Tests/UI/test_console_command_composer.py::test_console_prompt_command_use_original_keeps_placeholders
+1.48s call     Tests/UI/test_console_command_composer.py::test_console_consumes_pending_prompt_insert_blocked_shows_exact_toast
+1.48s call     Tests/UI/test_console_command_composer.py::test_console_prompt_command_large_user_prompt_collapses_to_paste_token
+1.45s call     Tests/UI/test_console_command_composer.py::test_console_prompt_dialog_cancel_preserves_exact_snapshot_and_refocuses
+118 passed, 1 warning in 133.28s (0:02:13)
