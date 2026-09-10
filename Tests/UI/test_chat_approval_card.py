@@ -571,3 +571,200 @@ def test_a_mutating_tool_is_floored_by_the_same_tag_the_effect_derives_from():
 
     assert approval_effects_for_tool(_hub(("mutates",))) == ("mutates_local",)
     assert approval_effects_for_tool(_hub(("reads",))) == ()
+
+
+# ---------------------------------------------------------------------------
+# Mounted geometry -- the card hugs its content (task-32287)
+# ---------------------------------------------------------------------------
+#
+# Live at 200x50 a ONE-row batch rendered a 17-row card with ~10 blank rows
+# between the "Approve all / Submit / Deny all" bar and the bottom border,
+# and at 80x24 the bar was clipped away entirely. Cause: `#approval-batch-
+# body` (a Container) and `#approval-batch-actions` (a Horizontal) had no
+# CSS at all, so both kept Textual's `height: 1fr` default and grew to fill
+# whatever the parent offered; `#console-task-surface` (ChatTaskCards, also
+# a Container) did the same one level up, taking a 1fr share of the session
+# column -- too much at 50 rows, too little at 24, where it clipped the card.
+
+_ONE_ROW_CARD_MAX_HEIGHT = 12
+_THREE_ROW_CARD_MAX_HEIGHT = 22
+
+
+def _pending_calls(count: int) -> list[dict]:
+    """Return ``count`` distinct ordinary (non-raw-shell) MCP pending calls."""
+    return [
+        {
+            "llm_name": f"mcp__srv__tool{index}",
+            "server_key": "local:srv",
+            "tool_name": f"tool{index}",
+            "server_label": "Srv",
+            "arguments": {"query": "hello"},
+            "reason": "ask",
+        }
+        for index in range(count)
+    ]
+
+
+async def _mounted_batch(app, pilot, count: int):
+    """Render ``count`` rows through the real ChatTaskCards sync path."""
+    from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
+
+    app.query_one(ChatTaskCards).sync_state(
+        TaskResumeState(
+            pending_approval={
+                "calls": _pending_calls(count),
+                "timeout_seconds": 45.0,
+            }
+        )
+    )
+    await pilot.pause()
+    card = app.query_one(ChatApprovalCard)
+    assert card.display is True
+    assert len(card.query(".approval-row")) == count
+    return card
+
+
+def _task_surface_harness():
+    """An app whose only content is the production task-card surface."""
+    from textual.app import ComposeResult
+
+    from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
+
+    class _TaskSurfaceHarness(ConsolidatedCSSApp):
+        CSS_PATH = str(BUNDLED_STYLESHEET)
+
+        def compose(self) -> ComposeResult:
+            yield ChatTaskCards(id="console-task-surface")
+
+    return _TaskSurfaceHarness()
+
+
+@pytest.mark.asyncio
+async def test_one_row_approval_card_hugs_its_content():
+    """A one-row card is content-height, with no reserved slack under the bar."""
+    app = _task_surface_harness()
+    async with app.run_test(size=(200, 50)) as pilot:
+        card = await _mounted_batch(app, pilot, 1)
+
+        actions = card.query_one("#approval-batch-actions")
+        submit = card.query_one("#approval-submit")
+
+        assert card.size.height <= _ONE_ROW_CARD_MAX_HEIGHT, (
+            f"one-row approval card is {card.size.height} lines tall "
+            f"(> {_ONE_ROW_CARD_MAX_HEIGHT}) -- a container inside it is "
+            "still reserving blank rows"
+        )
+        assert actions.size.height <= submit.size.height + 1, (
+            f"the action bar is {actions.size.height} lines tall for a "
+            f"{submit.size.height}-line button -- it is padding the card "
+            "with blank rows"
+        )
+        # Nothing but the card's own padding + border may sit under the bar.
+        assert card.region.bottom - actions.region.bottom <= 2, (
+            f"{card.region.bottom - actions.region.bottom} rows sit between "
+            "the action bar and the card's bottom border"
+        )
+
+
+@pytest.mark.asyncio
+async def test_three_row_approval_card_stays_bounded():
+    """Three rows grow the card, but the rows container's cap still bounds it."""
+    app = _task_surface_harness()
+    async with app.run_test(size=(200, 50)) as pilot:
+        card = await _mounted_batch(app, pilot, 3)
+
+        actions = card.query_one("#approval-batch-actions")
+        rows = list(card.query(".approval-row"))
+
+        assert card.size.height <= _THREE_ROW_CARD_MAX_HEIGHT, (
+            f"three-row approval card is {card.size.height} lines tall "
+            f"(> {_THREE_ROW_CARD_MAX_HEIGHT})"
+        )
+        assert actions.region.y >= rows[-1].region.y, (
+            "the action bar must stay below the rows it commits"
+        )
+        assert card.region.bottom - actions.region.bottom <= 2, (
+            f"{card.region.bottom - actions.region.bottom} rows sit between "
+            "the action bar and the card's bottom border"
+        )
+
+
+@pytest.mark.asyncio
+async def test_action_bar_is_actually_visible_at_80x24_in_the_production_console():
+    """AC#2: at 80x24 the Submit button is on screen AND not clipped away.
+
+    Region alone is not evidence here: pre-fix the button reported a
+    region inside the 24-row screen while `#console-task-surface`'s 1fr
+    share (6 rows) clipped it, so the compositor handed those coordinates
+    to the transcript's empty state instead. `get_widget_at` is the check
+    that fails on the bug the live pass actually saw.
+    """
+    import time
+    from unittest.mock import patch
+
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
+
+    def _settings_without_splash(section, key=None, default=None):
+        if section == "splash_screen" and key == "enabled":
+            return False
+        return default
+
+    app = _build_test_app()
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
+        async with app.run_test(size=(80, 24)) as pilot:
+            deadline = time.monotonic() + 15.0
+            while time.monotonic() < deadline:
+                screen = app.screen
+                if (
+                    isinstance(screen, ChatScreen)
+                    and screen.is_mounted
+                    and screen.query("#console-task-surface")
+                ):
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Production Console did not finish mounting")
+
+            screen.set_task_resume_state(
+                TaskResumeState(
+                    pending_approval={
+                        "calls": _pending_calls(1),
+                        "timeout_seconds": 45.0,
+                    }
+                )
+            )
+            deadline = time.monotonic() + 8.0
+            while time.monotonic() < deadline:
+                cards = screen.query("#chat-approval-card")
+                if cards and cards.first().display and cards.first().query(
+                    ".approval-row"
+                ):
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Approval batch did not finish rendering")
+            # An approval can only reach a Console the user has already set
+            # up, so the first-run modal is never up at the same time; left
+            # covering the workbench it would be the widget every hit test
+            # below reported, measuring nothing about the card.
+            await screen.query("#console-setup-modal").remove()
+            await pilot.pause()
+
+            submit = screen.query_one("#approval-submit")
+            x, y = submit.region.center
+            assert submit.region in app.screen.region, (
+                f"Submit at {submit.region} is off an 80x24 screen"
+            )
+            hit, _region = app.screen.get_widget_at(int(x), int(y))
+            assert hit.id == "approval-submit", (
+                "the Submit button's own coordinates render "
+                f"{hit.id or type(hit).__name__} instead -- the approval card "
+                "is clipped by its task surface at 80x24"
+            )

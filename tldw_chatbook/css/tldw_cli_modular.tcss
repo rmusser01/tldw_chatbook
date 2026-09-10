@@ -4592,6 +4592,19 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
     width: 20;
 }
 
+/* task-32287: the card's body and its action bar hug their content too.
+   Both were unstyled -- `#approval-batch-body` is a Container and
+   `#approval-batch-actions` a Horizontal, so both defaulted to `height:
+   1fr` and expanded to fill the card, which (despite `.ds-approval-card`'s
+   own `height: auto`) therefore took whatever its parent offered: a
+   ONE-row batch measured 46 lines in a 50-row harness, with the ten-plus
+   blank rows between the action bar and the bottom border the 2026-09-10
+   live pass reported. */
+#approval-batch-body,
+#approval-batch-actions {
+    height: auto;
+}
+
 /* The Console MCP batch-approval card's per-row layout
    (`ChatApprovalCard.set_batch()`, chat_approval_card.py -- T5 deferred
    this CSS to T9's phase gate). This card carries no `DEFAULT_CSS` of its
