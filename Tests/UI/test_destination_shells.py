@@ -153,6 +153,7 @@ class StaticLibraryNotesScopeService:
         self.notes = tuple(notes)
         self.calls = []
         self.count_calls = []
+        self.backlink_calls = []
         self.search_calls = []
         self.detail_calls = []
         self.save_calls = []
@@ -201,6 +202,35 @@ class StaticLibraryNotesScopeService:
         and return value (an ``int``, not an envelope)."""
         self.count_calls.append({"scope": scope, "user_id": user_id, **kwargs})
         return len(self.notes)
+
+    async def list_note_backlinks(
+        self, *, scope, note_id, user_id=None, limit=50, **kwargs
+    ):
+        """Mirror ``NotesScopeService.list_note_backlinks`` (task-32145).
+
+        Same keyword-only signature, same return shape (a plain list of
+        ``{"id", "title"}`` rows ordered by title), and the same containment
+        rule the real SQL applies -- the body carries the exact
+        ``(note://<id>)`` token the Obsidian importer writes.
+        """
+        self.backlink_calls.append(
+            {
+                "scope": scope,
+                "note_id": note_id,
+                "user_id": user_id,
+                "limit": limit,
+                **kwargs,
+            }
+        )
+        token = f"(note://{note_id})"
+        rows = [
+            {"id": str(note.get("id")), "title": str(note.get("title") or "")}
+            for note in self.notes
+            if str(note.get("id")) != str(note_id)
+            and token in str(note.get("content") or "")
+        ]
+        rows.sort(key=lambda row: (row["title"].lower(), row["id"]))
+        return rows[: max(0, int(limit))]
 
     async def search_notes(
         self, *, scope, query, limit=None, user_id=None, offset=0, **kwargs
