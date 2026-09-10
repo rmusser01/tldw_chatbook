@@ -38,9 +38,15 @@ _BLOCKED_REASON = (
 
 def test_one_meaning_per_library_glyph() -> None:
     """The three literals that used to share ``○`` no longer do."""
-    from tldw_chatbook.Library.library_ingest_state import _GLYPH_SKIPPED
+    from tldw_chatbook.Library.library_ingest_state import (
+        _GLYPH_DONE,
+        _GLYPH_FAILED,
+        _GLYPH_SKIPPED,
+    )
     from tldw_chatbook.Library.library_shell_state import (
         LIBRARY_DISABLED_ACTION_MARKER,
+        LIBRARY_GLYPH_OUTCOME_DONE,
+        LIBRARY_GLYPH_OUTCOME_FAILED,
         LIBRARY_GLYPH_OUTCOME_SKIPPED,
         LIBRARY_GLYPH_SELECTED,
         LIBRARY_GLYPH_UNSELECTED,
@@ -53,6 +59,12 @@ def test_one_meaning_per_library_glyph() -> None:
     assert LIBRARY_DISABLED_ACTION_MARKER == "○"
     assert (LIBRARY_GLYPH_UNSELECTED, LIBRARY_GLYPH_SELECTED) == ("☐", "☑")
     assert _GLYPH_SKIPPED == LIBRARY_GLYPH_OUTCOME_SKIPPED == "–"
+    # The other two outcome glyphs already agreed with the legend; pinned so
+    # the queue and the legend cannot drift apart later.
+    assert (_GLYPH_DONE, _GLYPH_FAILED) == (
+        LIBRARY_GLYPH_OUTCOME_DONE,
+        LIBRARY_GLYPH_OUTCOME_FAILED,
+    )
     assert LIBRARY_DISABLED_ACTION_MARKER not in {
         LIBRARY_GLYPH_SELECTED,
         LIBRARY_GLYPH_UNSELECTED,
