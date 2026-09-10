@@ -264,6 +264,7 @@ from ...Library.library_notes_state import (
     LibraryNoteDeleteReceipt,
     LibraryNotesFocusIdentity,
     LibraryNotesOperationState,
+    LibraryNotesTrashState,
 )
 from ...Library.library_notes_tree_paging import (
     NotesBranchKey,
@@ -461,6 +462,12 @@ class LibraryNotesState:
     # writes serialized instead of letting separate workers race.
     mutation_in_flight: bool = False
     delete_receipt: LibraryNoteDeleteReceipt | None = None
+
+    # task-32144: the standing second safety net behind that receipt -- the
+    # soft-deleted page plus its exact total, reloaded on a fresh Notes visit
+    # and after every delete/restore. ``None`` means "not read yet", which is
+    # what keeps the "Recently deleted (N)" row off a failed read.
+    trash: LibraryNotesTrashState | None = None
     operation_counter: int = 0
     operation: LibraryNotesOperationState | None = None
 

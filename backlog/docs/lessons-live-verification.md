@@ -2438,3 +2438,17 @@ empty recovery each passed separately. Re-reading the durable original Discard
 marker at final binding repaired the mixed sequence without changing prior trace
 records. Mutation controls changing only that marker to failed still reject.
 Test transitions between recovery modes, not just each mode in isolation.
+
+## A mounted avatar can be hidden behind a same-screen setup overlay
+
+**TASK-32023, 2026-09-07.** Internal frame-pixel assertions passed, but the first
+three Console screenshots were identical: the setup overlay covered the rail.
+Textual's `is_on_screen` reported that the underlying avatar had a layout region;
+it did not prove that its pixels were the topmost visible content. Entering a
+conversation through the real store removed setup guidance, and the captured SVGs
+then contained red/blue/red avatar pixels for Dynamic frame one, frame two, and
+Static respectively. Playback now checks the topmost widget at its center and a
+mounted overlay test proves hidden time is excluded.
+
+**What to do.** Pair mounted-state assertions with actual screen pixels. Check
+same-screen overlays as well as screen-stack visibility when gating animation.
