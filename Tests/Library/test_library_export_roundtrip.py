@@ -508,6 +508,9 @@ def test_library_export_success_records_a_durable_receipt_with_the_real_path(
             LibraryScreen._build_library_export_success_message
         ),
         _update_library_export_canvas_after_run=lambda: update_calls.append("update"),
+        # The success path re-syncs the emergency guard (task-32199: the
+        # fake fell behind the screen when that call was added).
+        _sync_library_emergency_guard_presentation=lambda: None,
     )
 
     before = time.time()
