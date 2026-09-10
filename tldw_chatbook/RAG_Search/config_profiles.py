@@ -11,6 +11,7 @@ import os
 import re
 import threading
 import time
+from weakref import WeakSet
 from typing import Dict, Any, Optional, List, Literal, Tuple
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
@@ -23,6 +24,11 @@ from .reranker import RerankingConfig
 from .parallel_processor import ProcessingConfig
 from ..Backup_Recovery.storage_admission import acquire_storage
 from ..Backup_Recovery.bootstrap import RecoveryRequired
+from ..Backup_Recovery.rag_definition_participant import (
+    definition_experiment_operation,
+    definition_operation,
+    participant,
+)
 from ..config import get_user_data_dir
 from ..Metrics.metrics_logger import log_counter, log_histogram
 
@@ -212,6 +218,15 @@ class ConfigProfileManager:
     not here — this class is storage + CRUD only.
     """
 
+    _live_instances = WeakSet()
+
+    @classmethod
+    def live_instances(cls):
+        """Snapshot initialized managers without constructing owners."""
+        with participant._condition:
+            return tuple(cls._live_instances)
+
+    @definition_operation
     def __init__(self, profiles_dir: Optional[Path] = None):
         self.profiles_dir = profiles_dir or default_rag_profiles_dir()
         with acquire_storage(self.profiles_dir):
@@ -233,6 +248,8 @@ class ConfigProfileManager:
 
         # Load custom profiles
         self._load_custom_profiles()
+        with participant._condition:
+            ConfigProfileManager._live_instances.add(self)
 
     def _load_builtin_profiles(self):
         """Load predefined configuration profiles."""
@@ -1060,6 +1077,7 @@ class ConfigProfileManager:
 
         return custom_config
 
+    @definition_experiment_operation
     def start_experiment(self, config: ExperimentConfig):
         """Start an A/B testing experiment."""
         selected = config.results_dir or self.profiles_dir / "experiments" / config.experiment_id
@@ -1133,6 +1151,7 @@ class ConfigProfileManager:
             self._current_experiment.control_profile
         )
 
+    @definition_experiment_operation
     def record_experiment_result(
         self, profile_name: str, query: str, metrics: Dict[str, Any]
     ):
@@ -1161,6 +1180,7 @@ class ConfigProfileManager:
                     },
                 )
 
+    @definition_experiment_operation
     def end_experiment(self) -> Dict[str, Any]:
         """End the current experiment and return results summary."""
         if not self._current_experiment:

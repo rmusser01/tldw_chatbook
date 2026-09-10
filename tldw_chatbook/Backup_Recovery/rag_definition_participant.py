@@ -11,12 +11,13 @@ from .profile_paths import effective_config_path, lexical_path, user_data_dir
 
 
 class DefinitionParticipant:
-    """Settle the three installed synchronous profile/config write sequences."""
+    """Settle installed definition writes and protect experiment memory."""
 
     def __init__(self):
         self._condition = threading.Condition()
         self._local = threading.local()
         self._active = 0
+        self._experiment_transitions = 0
         self._closed = False
 
     def operation(self, function):
@@ -39,8 +40,43 @@ class DefinitionParticipant:
 
         return invoke
 
+    def experiment_operation(self, function):
+        """Keep experiment transitions atomic with the maintenance intake check."""
+
+        @wraps(function)
+        def invoke(*args, **kwargs):
+            if getattr(self._local, "experiment", False):
+                return function(*args, **kwargs)
+            with self._condition:
+                # Ordinary accepted work does not authorize new experiment state.
+                if self._closed:
+                    raise RecoveryRequired("rag_definition_operations_paused")
+                self._experiment_transitions += 1
+            self._local.experiment = True
+            try:
+                return function(*args, **kwargs)
+            finally:
+                self._local.experiment = False
+                with self._condition:
+                    self._experiment_transitions -= 1
+                    self._condition.notify_all()
+
+        return invoke
+
     def _maintenance_close_admission(self):
         with self._condition:
+            loaded = sys.modules.get("tldw_chatbook.RAG_Search.config_profiles")
+            manager_type = vars(loaded).get("ConfigProfileManager") if loaded else None
+            if self._experiment_transitions or (
+                manager_type is not None
+                and any(
+                    manager._current_experiment is not None
+                    for manager in manager_type.live_instances()
+                )
+            ):
+                # Do not seal intake and thereby reject an ongoing search's
+                # metric delivery. The user must end/save the experiment first.
+                raise RecoveryRequired("rag_definition_experiment_unsaved")
             self._closed = True
 
     async def _maintenance_drain(self, deadline):
@@ -62,6 +98,7 @@ class DefinitionParticipant:
 
 participant = DefinitionParticipant()
 definition_operation = participant.operation
+definition_experiment_operation = participant.experiment_operation
 
 
 def retained_issues(app):
@@ -72,7 +109,8 @@ def retained_issues(app):
     loaded = sys.modules.get("tldw_chatbook.RAG_Search.config_profiles")
     if loaded is None:
         return ()
-    managers = []
+    manager_type = vars(loaded).get("ConfigProfileManager")
+    managers = list(manager_type.live_instances()) if manager_type is not None else []
     manager = vars(loaded).get("_GLOBAL_PROFILE_MANAGER")
     if manager is not None:
         managers.append(manager)

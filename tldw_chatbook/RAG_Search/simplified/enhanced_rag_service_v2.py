@@ -13,6 +13,7 @@ from dataclasses import replace
 from typing import Any, Collection, Dict, List, Literal, Optional, Tuple, Union
 
 from loguru import logger
+from ...Backup_Recovery.rag_definition_participant import definition_experiment_operation
 
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram, timeit
 from .enhanced_rag_service import EnhancedRAGService
@@ -394,12 +395,14 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
             batch_size=batch_size or 32,
         )
 
+    @definition_experiment_operation
     def start_experiment(self, experiment_config: ExperimentConfig):
         """Start an A/B testing experiment."""
         self._current_experiment = experiment_config
         self.profile_manager.start_experiment(experiment_config)
         logger.info(f"Started RAG experiment: {experiment_config.name}")
 
+    @definition_experiment_operation
     def end_experiment(self) -> Dict[str, Any]:
         """End current experiment and get results."""
         if not self._current_experiment:
