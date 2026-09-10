@@ -9,11 +9,26 @@ class SQLiteCredentialColumn:
     owner: str
     table: str
     column: str
-    kind: Literal["config", "headers", "auth", "url"]
+    kind: Literal["config", "headers", "auth", "url", "citation"]
     identity: str = "id"
 
 
+CITATION_OWNER = "db.chachanotes.primary"
+CITATION_SERVICE = "tldw_chatbook.citation-provenance.v1"
+
 SQLITE_CREDENTIAL_COLUMNS = (
+    *(
+        SQLiteCredentialColumn(
+            owner, "rag_identity_context", "fingerprint_key_id", "citation"
+        )
+        for owner in (
+            CITATION_OWNER,
+            "chat.attachments",
+            "study.local",
+            "quiz.local",
+            "notes.sync_bindings",
+        )
+    ),
     SQLiteCredentialColumn("db.subscriptions", "subscriptions", "auth_config", "auth"),
     SQLiteCredentialColumn(
         "db.subscriptions", "subscriptions", "custom_headers", "headers"

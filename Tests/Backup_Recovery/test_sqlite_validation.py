@@ -453,3 +453,10 @@ def test_missing_security_primitive_fails_closed(tmp_path, monkeypatch, missing)
     assert validate_candidate(owner, path, Event(), migrate=True) == (
         "sqlite_security_unavailable",
     )
+
+
+def test_observed_schema_version_preserves_historical_layout(tmp_path):
+    owner, path = research_candidate(tmp_path)
+    assert validation.validated_schema_version(owner, path, Event()) == 0
+    assert validate_candidate(owner, path, Event(), migrate=True) == ()
+    assert validation.validated_schema_version(owner, path, Event()) == 1

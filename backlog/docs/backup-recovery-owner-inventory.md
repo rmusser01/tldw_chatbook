@@ -511,8 +511,8 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Model_Artifacts/fetch.py | stream_fetch | open | 1 | unsupported | models |
 | tldw_chatbook/Model_Artifacts/fetch.py | stream_fetch | write | 1 | unsupported | models |
 | tldw_chatbook/Model_Artifacts/gguf_admission.py | open_local_gguf | open | 1 | unsupported | models |
-| tldw_chatbook/Model_Artifacts/leases.py | ArtifactOperationLease._acquire_until | mkdir | 1 | unsupported | models |
-| tldw_chatbook/Model_Artifacts/leases.py | ArtifactOperationLease._acquire_until | open | 1 | unsupported | models |
+| tldw_chatbook/Model_Artifacts/leases.py | ArtifactOperationLease._acquire_native_until | mkdir | 1 | unsupported | models |
+| tldw_chatbook/Model_Artifacts/leases.py | ArtifactOperationLease._acquire_native_until | open | 1 | unsupported | models |
 | tldw_chatbook/Model_Artifacts/service.py | ModelArtifactService._copy_payload | mkdir | 1 | unsupported | models |
 | tldw_chatbook/Model_Artifacts/service.py | ModelArtifactService._copy_payload | open | 2 | unsupported | models |
 | tldw_chatbook/Model_Artifacts/service.py | ModelArtifactService._copy_payload | write | 1 | unsupported | models |
@@ -2833,3 +2833,52 @@ Catalog v1, exact source profile/message/slug/type references, operation journal
 | tldw_chatbook/Backup_Recovery/recovered_media.py | _RecoveredAdapter.validate | connect_private_sqlite | 1 | qualified | recovered.media |
 | tldw_chatbook/Backup_Recovery/recovered_media.py | _RecoveredAdapter.validate_dependencies | connect_private_sqlite | 1 | qualified | recovered.media |
 | tldw_chatbook/Backup_Recovery/recovered_media.py | _read | open_private_binary | 1 | qualified | recovered.media |
+
+## Original Task19 bounded RAG discovery and indexing SQLite
+
+The inert factory is Backup_Recovery.rag_inventory.recovery_adapters. RAG_Search
+runtime package startup remains unchanged. Nonempty definition files and Chroma
+stores remain unsupported; empty/absent selectors do not construct runtime owners.
+The indexing SQLite v0 catalog and native current-thread lifetime are qualified
+independently; this does not establish restored retrieval readiness or Chroma
+capture. Task19 source-generation/reconciliation gates remain outstanding.
+
+| sqlite:recovery.rag_indexing | tldw_chatbook/Backup_Recovery/rag_indexing | _PRIVATE_AND_READ_ONLY | exact installed indexing SQLite schema/capture |
+| tldw_chatbook/Backup_Recovery/rag_indexing.py | _Indexing.validate | connect_private_sqlite | 1 | qualified | db.rag_indexing |
+| tldw_chatbook/Backup_Recovery/rag_indexing.py | _Indexing.capture | copy_private_sqlite | 1 | qualified | db.rag_indexing |
+
+## Archive capture, validation and publication boundaries
+
+These calls operate on reviewed input archives, private disposable staging, or the
+explicit output destination. Their census classification does not qualify any
+additional live storage owner or claim complete backup/restore readiness. Preview
+copies preserve live main/WAL bytes; credential reconstruction operates only on
+private staged copies. Model lease rows retain their existing cohort status.
+
+| sqlite:recovery.credentials | tldw_chatbook/Backup_Recovery/credentials | _PRIVATE_FILE | disposable credential reconstruction |
+| sqlite:recovery.validation | tldw_chatbook/DB/private_sqlite | _PRIVATE_AND_READ_ONLY | disposable imported candidate validation |
+| sqlite:recovery.validation_schema | tldw_chatbook/Backup_Recovery/sqlite_validation | _MEMORY | installed schema reference |
+
+| tldw_chatbook/Backup_Recovery/archive_reader.py | _inspect | ZipFile | 1 | generic_boundary | reviewed archive input |
+| tldw_chatbook/Backup_Recovery/archive_reader.py | _regular | open | 1 | generic_boundary | reviewed archive input |
+| tldw_chatbook/Backup_Recovery/archive_reader.py | acquire | create_private_file | 1 | disposable | private archive staging |
+| tldw_chatbook/Backup_Recovery/archive_reader.py | acquire | write | 1 | disposable | private archive staging |
+| tldw_chatbook/Backup_Recovery/archive_reader.py | verify_sealed | ZipFile | 1 | generic_boundary | private archive validation |
+| tldw_chatbook/Backup_Recovery/archive_writer.py | _package | ZipFile | 1 | disposable | private output staging |
+| tldw_chatbook/Backup_Recovery/archive_writer.py | _package | create_private_file | 1 | disposable | private output staging |
+| tldw_chatbook/Backup_Recovery/archive_writer.py | _package | open | 1 | generic_boundary | captured payload input |
+| tldw_chatbook/Backup_Recovery/archive_writer.py | _package | write | 1 | disposable | private output staging |
+| tldw_chatbook/Backup_Recovery/capture.py | _capture_under_maintenance | create_private_file | 1 | disposable | private capture manifest |
+| tldw_chatbook/Backup_Recovery/capture.py | _capture_under_maintenance | write | 1 | disposable | private capture manifest |
+| tldw_chatbook/Backup_Recovery/credentials.py | _read | open_private_binary | 1 | generic_boundary | staged credential input |
+| tldw_chatbook/Backup_Recovery/credentials.py | _rewrite_database | connect_private_sqlite | 1 | disposable | staged credential reconstruction |
+| tldw_chatbook/Backup_Recovery/credentials.py | _rewrite_database | os.replace | 1 | disposable | staged credential reconstruction |
+| tldw_chatbook/Backup_Recovery/credentials.py | _write | atomic_private_write_text | 1 | disposable | staged credential rewrite |
+| tldw_chatbook/Backup_Recovery/sqlite_validation.py | _reference | connect_private_sqlite | 1 | memory | installed schema reference |
+| tldw_chatbook/Backup_Recovery/storage_admission.py | _PreviewScope.sqlite_target | create_private_file | 1 | disposable | private preview SQLite copy |
+| tldw_chatbook/Backup_Recovery/storage_admission.py | _PreviewScope.sqlite_target | open | 1 | generic_boundary | identity-bound live SQLite copy input |
+| tldw_chatbook/Backup_Recovery/storage_admission.py | _PreviewScope.sqlite_target | write | 1 | disposable | private preview SQLite copy |
+| tldw_chatbook/Backup_Recovery/storage_admission.py | _write_staged_credential_file | open | 1 | disposable | private staged credential rewrite |
+| tldw_chatbook/Backup_Recovery/storage_admission.py | _write_staged_credential_file | os.replace | 1 | disposable | private staged credential rewrite |
+| tldw_chatbook/Backup_Recovery/storage_admission.py | _write_staged_credential_file | os.unlink | 1 | disposable | private staged credential cleanup |
+| tldw_chatbook/Backup_Recovery/storage_admission.py | _write_staged_credential_file | write | 1 | disposable | private staged credential rewrite |

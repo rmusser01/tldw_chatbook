@@ -587,3 +587,289 @@ def test_unrecognized_mcp_launch_credentials_refuse_excluded_completeness(tmp_pa
         staging, inventory(path, "mcp.local"), mode="exclude", encrypted=False
     )
     assert path.read_bytes() == before
+
+
+@pytest.fixture(autouse=True)
+def no_real_keyring(monkeypatch):
+    """All credential tests use synthetic stores, including optional fixed slots."""
+    backend = SimpleNamespace(get_password=lambda *args: None)
+    monkeypatch.setattr(
+        credentials,
+        "_credential_store",
+        lambda: SimpleNamespace(
+            _keyring=backend,
+            get_scoped_secret=lambda scope: None,
+        ),
+    )
+
+
+def test_generation_keyring_only_without_config_subsections(tmp_path, monkeypatch):
+    staging, path = config_file(tmp_path, {})
+    reads = []
+
+    def get(service, username):
+        reads.append((service, username))
+        return "synthetic-keyring-only" if username == "minimax" else None
+
+    monkeypatch.setattr(
+        credentials,
+        "_credential_store",
+        lambda: SimpleNamespace(
+            _keyring=SimpleNamespace(get_password=get),
+        ),
+    )
+    issues = process_credentials(
+        staging, inventory(path), mode="include", encrypted=True
+    )
+    records = json.loads((staging / "credential-recovery.json").read_text())["records"]
+    assert any(row.get("value") == "synthetic-keyring-only" for row in records)
+    assert any("manual_recovery" in issue for issue in issues)
+    assert ("tldw_chatbook_videogen", "minimax") in reads
+
+
+@pytest.mark.parametrize("method", ["load_key", "provision_key"])
+def test_excluded_citation_reference_never_reads_or_provisions_key(method):
+    from tldw_chatbook.Chat.citation_trace_identity import (
+        CitationFingerprintKeyUnavailable,
+        KeyringCitationFingerprintKeyProvider,
+    )
+
+    provider = KeyringCitationFingerprintKeyProvider()
+    provider._secure_backend = lambda: pytest.fail("excluded key reached backend")
+    with pytest.raises(CitationFingerprintKeyUnavailable):
+        getattr(provider, method)("recovery:setup_required")
+
+
+@pytest.mark.parametrize("mode", ["exclude", "include", "rollback"])
+def test_skill_trust_bytes_are_retained_with_explicit_key_cache_coverage(
+    tmp_path, monkeypatch, mode
+):
+    from tldw_chatbook.Backup_Recovery.models import FileMetadata
+
+    staging, path = config_file(tmp_path, {})
+    path = staging / "snapshot.enc"
+    path.write_bytes(b"synthetic-encrypted-trust")
+    path.chmod(0o600)
+    item = StorageItem(
+        "skills",
+        "profile:p:skills:trust",
+        path,
+        "included",
+        (),
+        metadata=FileMetadata(
+            1, "skills", "trust/snapshots/old.enc", None, "file", 0o600, 0, "private"
+        ),
+    )
+    monkeypatch.setattr(
+        credentials, "_credential_store", lambda: pytest.fail("trust keyring read")
+    )
+    issues = process_credentials(
+        staging,
+        Inventory((item,), True, "scope", ()),
+        mode=mode,
+        encrypted=mode != "exclude",
+    )
+    assert issues == (
+        ()
+        if mode == "exclude"
+        else ("credential_skill_trust_manual_unlock_required:" + item.logical_id,)
+    )
+    assert path.read_bytes() == b"synthetic-encrypted-trust"
+
+
+@pytest.mark.parametrize("mode", ["exclude", "include", "invalid"])
+def test_citation_credential_policy_uses_real_staged_identity(tmp_path, mode):
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    _run(
+        tmp_path,
+        mode,
+        "citation",
+        script=r"""
+import base64, json, sqlite3, sys
+from pathlib import Path
+from contextlib import closing
+from types import SimpleNamespace
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Backup_Recovery import credentials
+from tldw_chatbook.Backup_Recovery.models import Inventory, StorageItem
+root=Path.home()/'stage'; root.mkdir(mode=0o700)
+path=root/'notes.db'
+db=CharactersRAGDB(path, client_id='test'); db.close_connection(); path.chmod(0o600)
+with closing(sqlite3.connect(path)) as conn:
+    conn.execute("UPDATE rag_identity_context SET fingerprint_key_id='synthetic-citation-key'")
+    conn.commit()
+reads=[]
+mode=sys.argv[1]
+def get(service, key):
+    reads.append((service,key))
+    if mode=='exclude': raise AssertionError('excluded key read')
+    return 'invalid-base64' if mode=='invalid' else base64.b64encode(b'k'*32).decode()
+credentials._credential_store=lambda: SimpleNamespace(_keyring=SimpleNamespace(get_password=get))
+inv=Inventory((StorageItem('db.chachanotes.primary','profile:p:notes',path,'included',()),), True,'scope',())
+issues=credentials.process_credentials(root,inv,mode='exclude' if mode=='exclude' else 'include',encrypted=mode!='exclude')
+if mode=='exclude':
+    assert not issues, issues
+    with closing(sqlite3.connect(path)) as conn:
+        assert conn.execute('SELECT fingerprint_key_id FROM rag_identity_context').fetchone()[0]=='recovery:setup_required'
+    assert b'synthetic-citation-key' not in path.read_bytes()
+    assert not reads
+else:
+    records=json.loads((root/'credential-recovery.json').read_text())['records']
+    selected=[r for r in records if r['kind']=='citation']
+    assert len(selected)==1, records
+    assert reads==[('tldw_chatbook.citation-provenance.v1','synthetic-citation-key')]
+    assert selected[0]['status']==('unreadable' if mode=='invalid' else 'captured')
+    if mode=='include':
+        before=list(reads)
+        plan=credentials.plan_credential_scopes(root)
+        assert credentials.restore_credential_values(root,plan)
+        assert reads==before
+print('retired and reopened')
+""",
+    )
+
+
+@pytest.mark.parametrize("mode", ["exclude", "include"])
+@pytest.mark.parametrize("shared_group", [None, "forged-semantic-tag"])
+def test_known_rag_profile_credentials_use_typed_config_policy(
+    tmp_path, mode, shared_group
+):
+    from tldw_chatbook.Backup_Recovery.models import FileMetadata
+
+    staging, _unused = config_file(tmp_path, {})
+    path = staging / "profile.json"
+    path.write_text(
+        json.dumps(
+            {
+                "name": "research",
+                "rag_config": {"embedding": {"api_key": "synthetic-rag-secret"}},
+            }
+        )
+    )
+    path.chmod(0o600)
+    item = StorageItem(
+        "rag.definitions",
+        "profile:p:rag",
+        path,
+        "included",
+        (),
+        shared_group=shared_group,
+        metadata=FileMetadata(
+            1, "rag", "profile.json", None, "file", 0o600, 0, "private"
+        ),
+    )
+    assert not process_credentials(
+        staging,
+        Inventory((item,), True, "scope", ()),
+        mode=mode,
+        encrypted=mode == "include",
+    )
+    assert ("synthetic-rag-secret" in path.read_text()) == (mode == "include")
+
+
+@pytest.mark.parametrize(
+    "relative", ["", "experiments/run.json", "custom_profiles.json", "other.json"]
+)
+def test_unqualified_rag_definition_is_explicit_credential_coverage(tmp_path, relative):
+    from tldw_chatbook.Backup_Recovery.models import FileMetadata
+
+    staging, path = config_file(tmp_path, {})
+    path.write_text('{"provider":{"api_key":"synthetic-unknown"}}')
+    item = StorageItem(
+        "rag.definitions",
+        "profile:p:rag:unknown",
+        path,
+        "included",
+        (),
+        shared_group="rag-definitions:profiles",
+        metadata=FileMetadata(1, "rag", relative, None, "file", 0o600, 0, "private"),
+    )
+    issues = process_credentials(
+        staging, Inventory((item,), True, "scope", ()), mode="exclude", encrypted=False
+    )
+    assert issues == (
+        "credential_rag_definition_format_unsupported:profile:p:rag:unknown",
+    )
+    assert "synthetic-unknown" in path.read_text()
+
+
+@pytest.mark.parametrize("mode", ["exclude", "include"])
+def test_shared_citation_payloads_apply_identical_credential_policy(tmp_path, mode):
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    _run(
+        tmp_path,
+        mode,
+        "aliases",
+        script=r"""
+import base64, json, shutil, sqlite3, sys
+from pathlib import Path
+from contextlib import closing
+from types import SimpleNamespace
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Backup_Recovery import credentials
+from tldw_chatbook.Backup_Recovery.models import Inventory, StorageItem
+root=Path.home()/'stage'; root.mkdir(mode=0o700)
+source=root/'notes.db'
+db=CharactersRAGDB(source,client_id='test'); db.close_connection(); source.chmod(0o600)
+with closing(sqlite3.connect(source)) as conn:
+    conn.execute("UPDATE rag_identity_context SET fingerprint_key_id='synthetic-shared-citation'")
+    conn.commit()
+owners=['db.chachanotes.primary','chat.attachments','study.local','quiz.local','notes.sync_bindings']
+paths=[source]
+for index in range(1,len(owners)):
+    path=root/f'alias{index}.db'; shutil.copyfile(source,path);path.chmod(0o600);paths.append(path)
+items=tuple(StorageItem(owner,'profile:p:'+owner,path,'included',(),shared_group='shared:chachanotes:profile:p') for owner,path in zip(owners,paths))
+credentials._credential_store=lambda: SimpleNamespace(_keyring=SimpleNamespace(get_password=lambda *args:base64.b64encode(b'x'*32).decode()))
+mode=sys.argv[1]
+issues=credentials.process_credentials(root,Inventory(items,True,'scope',()),mode=mode,encrypted=mode=='include')
+assert not issues if mode=='exclude' else all('manual_recovery' in issue for issue in issues),issues
+payloads=[path.read_bytes() for path in paths]
+assert all(payload==payloads[0] for payload in payloads)
+if mode=='exclude':
+    assert all(b'synthetic-shared-citation' not in payload for payload in payloads)
+else:
+    records=json.loads((root/'credential-recovery.json').read_text())['records']
+    assert {record['file'] for record in records if record['kind']=='citation'}=={path.name for path in paths}
+print('retired and reopened')
+""",
+    )
+
+
+def test_native_capture_snapshot_is_self_contained_without_changing_source_wal(
+    tmp_path, monkeypatch
+):
+    from Tests.Backup_Recovery.test_core_owners import application_authority
+    from tldw_chatbook.DB.private_sqlite import copy_private_sqlite
+
+    source = tmp_path / "source.sqlite"
+    with closing(sqlite3.connect(source)) as connection:
+        assert connection.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
+        connection.execute("CREATE TABLE retained(value TEXT)")
+        connection.execute("INSERT INTO retained VALUES ('retained')")
+        connection.commit()
+    source.chmod(0o600)
+    before = source.read_bytes()
+    stage = tmp_path / "stage"
+    stage.mkdir(mode=0o700)
+    candidate = stage / "candidate.sqlite"
+    authority = application_authority(tmp_path, source, monkeypatch)
+    with (
+        authority.maintenance(("core", "bootstrap.unbound"), 1) as session,
+        session.capture_scope((source,), stage),
+    ):
+        copy_private_sqlite("recovery.core.chachanotes", source, candidate)
+        with closing(
+            sqlite3.connect(candidate.as_uri() + "?mode=ro", uri=True)
+        ) as connection:
+            assert connection.execute("PRAGMA journal_mode").fetchone() == ("delete",)
+            assert connection.execute("SELECT value FROM retained").fetchall() == [
+                ("retained",)
+            ]
+        assert not any(
+            candidate.with_name(candidate.name + suffix).exists()
+            for suffix in ("-wal", "-shm", "-journal")
+        )
+    assert source.read_bytes() == before
+    assert before[18:20] == b"\x02\x02"

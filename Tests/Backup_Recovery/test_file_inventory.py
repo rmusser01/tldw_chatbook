@@ -1312,7 +1312,10 @@ async def test_remaining_installed_preferences_history_and_chatbooks_are_baselin
     for owner, path in expected.items():
         entries = adapters[owner].discover(config)
         assert next(item for item in entries if item.path == path).status == "included"
-        assert any(item.logical_id.endswith(":participant_pending") for item in entries)
+        pending = any(
+            item.logical_id.endswith(":participant_pending") for item in entries
+        )
+        assert pending == owner.startswith("chatbooks.")
     # The default archive directory owns every retained ordinary export, even
     # a backup-looking extension; registry external destinations remain inert.
     backup_named = archives / "ordinary-content.tldw-backup.zip"

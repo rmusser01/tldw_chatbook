@@ -526,14 +526,16 @@ def _private_sqlite_seam_violations(
         if seam_name == "open_recovery_validation":
             if (
                 (production_module, symbol) in {
-                    ("tldw_chatbook/Backup_Recovery/sqlite_validation", "validate_candidate"),
+                    ("tldw_chatbook/Backup_Recovery/sqlite_validation", "_validate_candidate"),
                     ("tldw_chatbook/Backup_Recovery/credentials", "_rewrite_database"),
+                    ("tldw_chatbook/Backup_Recovery/credentials", "_material"),
                 }
                 and call.args
                 and ast.unparse(call.args[0]) == "installed.owner_id"
                 and (
                     "installed = _installed_owner(owner.owner_id)" in source_path.read_text()
                     or (symbol == "_rewrite_database" and "installed = _installed_owner(owner_id)" in source_path.read_text())
+                    or (symbol == "_material" and "installed = _installed_owner(CITATION_OWNER)" in source_path.read_text())
                 )
             ):
                 continue

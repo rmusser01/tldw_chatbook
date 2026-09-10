@@ -311,27 +311,27 @@ def _check(connection, owner, policy):
     return (), version
 
 
-def validate_candidate(
+def _validate_candidate(
     owner: OwnerAdapter, candidate: Path, cancel: Event, *, migrate: bool
-) -> tuple[str, ...]:
+) -> tuple[tuple[str, ...], int | None]:
     """Validate installed content; optionally migrate this disposable file only."""
     from tldw_chatbook.DB.private_sqlite import open_recovery_validation
 
     restrictions = None
     if cancel.is_set():
-        return ("cancelled",)
+        return (("cancelled",), None)
     try:
         installed = _installed_owner(owner.owner_id)
         policy = installed.schema_policy()
         if owner.schema_policy() != policy:
-            return ("unsupported_schema_policy",)
+            return (("unsupported_schema_policy",), None)
         with open_recovery_validation(
             installed.owner_id, candidate, writable=migrate
         ) as connection:
             restrictions = _Restrictions(connection, cancel)
             issues, version = _check(connection, installed, policy)
             if issues:
-                return issues
+                return (issues, None)
             if migrate and version != max(policy.versions):
                 restrictions.migrating = True
                 connection.execute("BEGIN IMMEDIATE")
@@ -343,7 +343,7 @@ def validate_candidate(
                             if start == version and end > start
                         ]
                         if len(choices) != 1:
-                            return ("unsupported_schema_migration",)
+                            return (("unsupported_schema_migration",), None)
                         expected, statements = choices[0]
                         for statement in statements:
                             if restrictions.expired():
@@ -352,7 +352,7 @@ def validate_candidate(
                         restrictions.migrating = False
                         issues, version = _check(connection, installed, policy)
                         if issues or version != expected:
-                            return issues or ("unsupported_schema_migration",)
+                            return (issues or ("unsupported_schema_migration",), None)
                         restrictions.migrating = True
                     if restrictions.expired():
                         raise InterruptedError
@@ -365,8 +365,11 @@ def validate_candidate(
                     connection.rollback()
                     restrictions.migrating = False
             if restrictions.expired():
-                return ("cancelled" if cancel.is_set() else "sqlite_resource_limit",)
-            return ()
+                return (
+                    ("cancelled" if cancel.is_set() else "sqlite_resource_limit",),
+                    None,
+                )
+            return ((), version)
     except (
         sqlite3.Error,
         OSError,
@@ -376,13 +379,30 @@ def validate_candidate(
         InterruptedError,
     ) as error:
         if cancel.is_set():
-            return ("cancelled",)
+            return (("cancelled",), None)
         if restrictions is not None and restrictions.expired():
-            return ("sqlite_resource_limit",)
+            return (("sqlite_resource_limit",), None)
         if isinstance(error, ValueError) and str(error) in {
             "sqlite_security_unavailable",
             "sqlite_resource_limit",
             "unsupported_sqlite_owner",
         }:
-            return (str(error),)
-        return ("sqlite_validation_unavailable",)
+            return ((str(error),), None)
+        return (("sqlite_validation_unavailable",), None)
+
+
+def validate_candidate(
+    owner: OwnerAdapter, candidate: Path, cancel: Event, *, migrate: bool
+) -> tuple[str, ...]:
+    """Validate with the original issue-only contract on one restricted connection."""
+    return _validate_candidate(owner, candidate, cancel, migrate=migrate)[0]
+
+
+def validated_schema_version(
+    owner: OwnerAdapter, candidate: Path, cancel: Event
+) -> int:
+    """Return the exact observed installed version after full restricted validation."""
+    issues, version = _validate_candidate(owner, candidate, cancel, migrate=False)
+    if issues or version is None:
+        raise ValueError(issues[0] if issues else "sqlite_validation_unavailable")
+    return version

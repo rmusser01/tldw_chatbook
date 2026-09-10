@@ -275,6 +275,12 @@ _SQLITE_OWNER_POLICIES = {
         centralized_backup_allowed=True, preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
+    "recovery.rag_indexing": SQLiteOwnerPolicy(
+        "tldw_chatbook/Backup_Recovery/rag_indexing", _PRIVATE_AND_READ_ONLY,
+        "Exact installed RAG indexing schema; no vector engine startup.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
     "recovery.core.chachanotes": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
         "Native-held complete recovery snapshot; selective export policy unchanged.",
@@ -1517,6 +1523,14 @@ def _connect_registered_sqlite(
                     read_only and policy.preserve_read_only_source_mode
                 ),
             )
+        if read_only and policy.recovery_capture_allowed:
+            from tldw_chatbook.Backup_Recovery.storage_admission import (
+                _preview_sqlite_target,
+            )
+
+            preview_target = _preview_sqlite_target(selected)
+            if preview_target is not None:
+                selected = preview_target
         connection_target = os.fspath(selected)
         if read_only:
             connection_target = _build_read_only_uri(
@@ -3297,6 +3311,24 @@ def copy_private_sqlite(
                     restore=False,
                     progress_guard=progress_guard,
                 )
+                # A native capture owns this new staged snapshot. Normalize its
+                # copied WAL header on the existing destination connection before
+                # read validators can create sidecars. Ordinary copies keep their
+                # historical mode; live/source journal modes are never changed.
+                from tldw_chatbook.Backup_Recovery.admission import _local
+                from tldw_chatbook.Backup_Recovery.storage_admission import (
+                    _CaptureScope,
+                )
+
+                scope = getattr(_local, "capture_scope", None)
+                if type(scope) is _CaptureScope:
+                    scope.check()
+                    if (
+                        not SQLITE_OWNER_REGISTRY[owner_id].recovery_capture_allowed
+                        or scope.staging not in destination_path.resolve().parents
+                    ):
+                        raise ValueError("capture_snapshot_scope_invalid")
+                    _restore_destination_mode(destination, "delete", restore=False)
                 _reverify_source(source_pin)
             finally:
                 _close_owned_connections((("copy destination", destination),))

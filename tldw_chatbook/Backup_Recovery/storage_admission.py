@@ -829,6 +829,213 @@ class _CaptureScope:
             resource.retire()
 
 
+class _DiscoveryScope:
+    """Read-only installed owner probes within an already native-held scope."""
+
+    def __init__(self, session):
+        self.session = session
+        self.resources = []
+        self.active = True
+
+    def check(self):
+        self.session._check()
+        if not self.active or getattr(_local, "discovery_scope", None) is not self:
+            raise bootstrap.RecoveryRequired("discovery_scope_inactive")
+
+    def retire(self):
+        self.active = False
+        for resource in tuple(self.resources):
+            resource.retire()
+
+
+class _PreviewScope:
+    """Bounded read probes over private SQLite copies, without live admission."""
+
+    def __init__(self, limits, byte_budget):
+        self.pid = os.getpid()
+        self.thread = threading.get_ident()
+        self.resources = []
+        self.active = True
+        self.limits = limits
+        self.byte_budget = byte_budget
+        self.copied_bytes = 0
+        self.directory = None
+        self.snapshots = {}
+
+    def check(self):
+        if (
+            not self.active
+            or self.pid != os.getpid()
+            or self.thread != threading.get_ident()
+            or getattr(_local, "preview_scope", None) is not self
+        ):
+            raise bootstrap.RecoveryRequired("preview_scope_inactive")
+
+    @staticmethod
+    def _source_state(source):
+        result = []
+        for suffix in ("", "-wal", "-journal"):
+            path = source.with_name(source.name + suffix)
+            try:
+                info = path.lstat()
+            except FileNotFoundError:
+                result.append(None)
+                continue
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_nlink != 1
+                or info.st_uid != os.geteuid()
+            ):
+                raise ValueError("preview_sqlite_unavailable")
+            result.append(
+                (
+                    info.st_dev,
+                    info.st_ino,
+                    info.st_size,
+                    info.st_mtime_ns,
+                    info.st_ctime_ns,
+                )
+            )
+        if result[0] is None or result[2] is not None and result[2][2]:
+            # A hot rollback journal needs recovery; preview never runs that on
+            # the source or guesses a committed image from an incomplete copy.
+            raise ValueError("preview_sqlite_unavailable")
+        return tuple(result)
+
+    def sqlite_target(self, source):
+        """Copy a stable main/WAL set once; never open live SQLite to back it up."""
+        import shutil
+        import tempfile
+
+        from .native_files import create_private_directory, create_private_file
+        from .space import require_capacity
+
+        self.check()
+        source = lexical_path(source)
+        before = self._source_state(source)
+        if source in self.snapshots:
+            previous, target = self.snapshots[source]
+            if previous != before:
+                raise ValueError("preview_sqlite_changed")
+            return target
+        required = sum(state[2] for state in before[:2] if state is not None)
+        if (
+            any(
+                state is not None and state[2] > self.limits.member_bytes
+                for state in before[:2]
+            )
+            or self.copied_bytes + required > self.byte_budget
+        ):
+            raise ValueError("preview_sqlite_limit")
+        temporary_parent = Path(tempfile.gettempdir()).resolve()
+        require_capacity({temporary_parent: required * 2})
+        if self.directory is None:
+            self.directory = Path(
+                tempfile.mkdtemp(prefix="chatbook-preview-", dir=temporary_parent)
+            )
+        target_root = self.directory / str(len(self.snapshots))
+        create_private_directory(target_root)
+        target = target_root / "source.sqlite3"
+        try:
+            with bootstrap.pinned_directory(source.parent) as parent:
+                for suffix, expected in zip(("", "-wal"), before[:2], strict=True):
+                    if expected is None:
+                        continue
+                    descriptor = os.open(
+                        source.name + suffix,
+                        os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                        dir_fd=parent,
+                    )
+                    try:
+                        opened = os.fstat(descriptor)
+                        if (
+                            opened.st_dev,
+                            opened.st_ino,
+                            opened.st_size,
+                            opened.st_mtime_ns,
+                            opened.st_ctime_ns,
+                        ) != expected:
+                            raise ValueError("preview_sqlite_changed")
+                        with create_private_file(
+                            target.with_name(target.name + suffix)
+                        ) as output:
+                            count = 0
+                            while chunk := os.read(
+                                descriptor, min(1024**2, expected[2] - count + 1)
+                            ):
+                                count += len(chunk)
+                                if count > expected[2]:
+                                    raise ValueError("preview_sqlite_changed")
+                                view = memoryview(chunk)
+                                while view:
+                                    written = os.write(output, view)
+                                    if not written:
+                                        raise OSError("preview_sqlite_write_failed")
+                                    view = view[written:]
+                            info = os.fstat(descriptor)
+                            observed = (
+                                info.st_dev,
+                                info.st_ino,
+                                info.st_size,
+                                info.st_mtime_ns,
+                                info.st_ctime_ns,
+                            )
+                            if count != expected[2] or observed != expected:
+                                raise ValueError("preview_sqlite_changed")
+                    finally:
+                        os.close(descriptor)
+            if self._source_state(source) != before:
+                raise ValueError("preview_sqlite_changed")
+        except BaseException:
+            shutil.rmtree(target_root)
+            raise
+        self.copied_bytes += required
+        self.snapshots[source] = before, target
+        return target
+
+    def retire(self):
+        import shutil
+
+        self.active = False
+        for resource in tuple(self.resources):
+            resource.retire()
+        if self.directory is not None:
+            shutil.rmtree(self.directory)
+            self.directory = None
+
+
+def _preview_sqlite_target(source):
+    scope = getattr(_local, "preview_scope", None)
+    return None if scope is None else scope.sqlite_target(source)
+
+
+@contextmanager
+def _preview_reads(*, limits=None, byte_budget=None):
+    """Keep installed read-only discovery from bootstrapping ordinary services."""
+    from .limits import ArchiveLimits
+
+    limits = ArchiveLimits() if limits is None else limits
+    if type(limits) is not ArchiveLimits:
+        raise TypeError("invalid_preview_limits")
+    byte_budget = limits.expanded_bytes if byte_budget is None else byte_budget
+    if type(byte_budget) is not int or not 0 < byte_budget <= limits.expanded_bytes:
+        raise ValueError("invalid_preview_budget")
+    if (
+        getattr(_local, "preview_scope", None) is not None
+        or getattr(_local, "maintenance_session", None) is not None
+    ):
+        raise bootstrap.RecoveryRequired("nested_preview_scope")
+    scope = _PreviewScope(limits, byte_budget)
+    _local.preview_scope = scope
+    try:
+        yield
+    finally:
+        try:
+            scope.retire()
+        finally:
+            _local.preview_scope = None
+
+
 class MaintenanceSession:
     """Opaque native-held executor authority; only Admission can mint a session.
 
@@ -848,6 +1055,66 @@ class MaintenanceSession:
             or getattr(_local, "maintenance_session", None) is not self
         ):
             raise bootstrap.RecoveryRequired("maintenance_session_inactive")
+
+    def _discover_capture_inventory(self, config_paths, selections, approved_scope):
+        """Qualify first-use sources from installed discovery under native locks.
+
+        Ordinary backup need not rewrite the live client's profile enrollment.
+        Only files rediscovered here, within the held namespace roots, gain this
+        session-local authority. A caller-supplied Inventory grants nothing.
+        """
+        from .inventory import discover
+        from .models import DiscoverySelections
+
+        self._check()
+        if (
+            type(config_paths) is not tuple
+            or not config_paths
+            or type(selections) is not DiscoverySelections
+        ):
+            raise ValueError("invalid_capture_selection")
+        if UNBOUND_NAMESPACE not in self._names:
+            raise bootstrap.RecoveryRequired("capture_unbound_admission_required")
+        selectors = tuple(lexical_path(path) for path in config_paths)
+        if any(
+            not any(_contains_owned_path(root, path) for root in self._roots)
+            for path in selectors
+        ):
+            raise bootstrap.RecoveryRequired("capture_source_outside_scope")
+        with self._discovery_reads():
+            current = discover(selectors, selections=selections)
+        if current.scope_digest != approved_scope:
+            raise ValueError("scope_changed")
+        sources = []
+        for item in current.items:
+            if item.status != "included" or item.path is None:
+                continue
+            path = lexical_path(item.path)
+            if not any(_contains_owned_path(root, path) for root in self._roots):
+                raise bootstrap.RecoveryRequired("capture_source_outside_scope")
+            info = path.stat()
+            if not stat.S_ISREG(info.st_mode):
+                raise bootstrap.RecoveryRequired("capture_file_not_regular")
+            sources.append((path.resolve(strict=True), info.st_dev, info.st_ino))
+        self._discovered_sources = tuple(sources)
+        return current
+
+    @contextmanager
+    def _discovery_reads(self):
+        """Allow bounded installed read probes, never writes, before staging."""
+        self._check()
+        if getattr(_local, "discovery_scope", None) is not None:
+            raise bootstrap.RecoveryRequired("nested_discovery_scope")
+        scope = _DiscoveryScope(self)
+        self._scopes.append(scope)
+        _local.discovery_scope = scope
+        try:
+            yield
+        finally:
+            try:
+                scope.retire()
+            finally:
+                _local.discovery_scope = None
 
     @contextmanager
     def capture_scope(self, sources: tuple[Path, ...], staging: Path):
@@ -888,11 +1155,17 @@ class MaintenanceSession:
                 _contains_owned_path(root, source) for root in self._roots
             ):
                 raise bootstrap.RecoveryRequired("capture_source_outside_scope")
-            if not any(
+            bound = any(
                 _contains_owned_path(Path(owned), source)
                 for binding in bindings
                 for owned in binding["roots"]
-            ):
+            )
+            discovered = (
+                source.resolve(strict=True),
+                info.st_dev,
+                info.st_ino,
+            ) in getattr(self, "_discovered_sources", ())
+            if not bound and not discovered:
                 raise bootstrap.RecoveryRequired("capture_source_binding_unverified")
             selected.append((source.resolve(strict=True), info.st_dev, info.st_ino))
         staging = lexical_path(staging)
@@ -954,7 +1227,25 @@ def _acquire_capture_storage(path: Path, *, owner_id: str, read_only: bool):
     """
     scope = getattr(_local, "capture_scope", None)
     if scope is None:
-        return None
+        scope = getattr(_local, "discovery_scope", None) or getattr(
+            _local, "preview_scope", None
+        )
+        if scope is None:
+            return None
+        scope.check()
+        from tldw_chatbook.DB.private_sqlite import SQLITE_OWNER_REGISTRY
+
+        if (
+            not read_only
+            or not SQLITE_OWNER_REGISTRY[owner_id].recovery_capture_allowed
+        ):
+            raise bootstrap.RecoveryRequired("discovery_read_only_required")
+        selected = lexical_path(path)
+        if type(scope) is _DiscoveryScope and not any(
+            _contains_owned_path(root, selected) for root in scope.session._roots
+        ):
+            raise bootstrap.RecoveryRequired("capture_source_outside_scope")
+        return _CaptureLease(scope)
     scope.check()
     from tldw_chatbook.DB.private_sqlite import SQLITE_OWNER_REGISTRY
 
@@ -1027,6 +1318,14 @@ def _check_capture_file_identity(scope, selected, info, *, source_only=False):
     scope.check()
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
         raise bootstrap.RecoveryRequired("capture_file_not_regular")
+    if type(scope) is _DiscoveryScope:
+        if not any(
+            _contains_owned_path(root, selected) for root in scope.session._roots
+        ):
+            raise bootstrap.RecoveryRequired("capture_source_outside_scope")
+        return
+    if type(scope) is _PreviewScope:
+        return
     source_identity = any(
         (info.st_dev, info.st_ino) == (dev, ino) for _, dev, ino in scope.sources
     )
@@ -1040,6 +1339,7 @@ def _check_capture_file_identity(scope, selected, info, *, source_only=False):
 
 # Explicit installed owners; identifiers grant no path or maintenance authority.
 _RAW_RECOVERY_LIMITS = {
+    "rag.definitions": 16 * 1024**2,
     "recovered.media": 512 * 1024**2,
     "generation.assets": 256 * 1024**3,
     "diagnostics.logs": 256 * 1024**3,
@@ -1104,6 +1404,105 @@ def _read_recovery_file(owner_id: str, candidate: Path, *, max_bytes: int) -> by
     )
 
 
+def _staged_credential_path(scope, candidate: Path, *, allow_missing=False):
+    """Require a private staged regular file, distinct from captured sources."""
+    scope.check()
+    selected = lexical_path(candidate)
+    if scope.staging not in selected.parents:
+        raise bootstrap.RecoveryRequired("capture_path_outside_scope")
+    try:
+        info = selected.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        if allow_missing:
+            return selected, None
+        raise
+    _check_capture_file_identity(scope, selected, info)
+    if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+        raise bootstrap.RecoveryRequired("credential_staging_required")
+    return selected, info
+
+
+def _read_staged_credential_file(candidate: Path, *, max_bytes: int) -> bytes | None:
+    """Read only a native-held staged copy; None selects ordinary staging I/O."""
+    scope = getattr(_local, "capture_scope", None)
+    if scope is None:
+        return None
+    selected, _ = _staged_credential_path(scope, candidate)
+    return _consume_recovery_file(
+        "config", selected, max_bytes=max_bytes, collect=True, private=True
+    )
+
+
+def _write_staged_credential_file(candidate: Path, data: str) -> bool:
+    """Write private staged text under capture authority, preserving sources."""
+    scope = getattr(_local, "capture_scope", None)
+    if scope is None:
+        return False
+    if type(data) is not str:
+        raise TypeError("credential_text_required")
+    encoded = data.encode("utf-8")
+    if len(encoded) > 16 * 1024**2:
+        raise ValueError("credential_resource_limit")
+    selected, original = _staged_credential_path(scope, candidate, allow_missing=True)
+    import uuid
+
+    temporary = ".credential-" + uuid.uuid4().hex
+    resources = _CaptureFileDescriptors(scope)
+    try:
+        with resources.pinned_directory(selected.parent) as parent:
+            fd = os.open(
+                temporary,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=parent,
+            )
+            resources.fds.append(fd)
+            try:
+                view = memoryview(encoded)
+                while view:
+                    count = os.write(fd, view)
+                    if count <= 0:
+                        raise OSError("capture_write_unavailable")
+                    view = view[count:]
+                os.fsync(fd)
+                _, current = _staged_credential_path(
+                    scope, selected, allow_missing=True
+                )
+                held_parent, current_parent = os.fstat(parent), selected.parent.stat()
+                current_identity = (
+                    None if current is None else (current.st_dev, current.st_ino)
+                )
+                original_identity = (
+                    None if original is None else (original.st_dev, original.st_ino)
+                )
+                if current_identity != original_identity or (
+                    held_parent.st_dev,
+                    held_parent.st_ino,
+                ) != (current_parent.st_dev, current_parent.st_ino):
+                    raise bootstrap.RecoveryRequired("capture_target_changed")
+                if original is None:
+                    os.link(
+                        temporary,
+                        selected.name,
+                        src_dir_fd=parent,
+                        dst_dir_fd=parent,
+                        follow_symlinks=False,
+                    )
+                else:
+                    os.replace(
+                        temporary, selected.name, src_dir_fd=parent, dst_dir_fd=parent
+                    )
+                os.fsync(parent)
+            finally:
+                try:
+                    os.unlink(temporary, dir_fd=parent)
+                except FileNotFoundError:
+                    pass
+    finally:
+        resources.retire()
+    return True
+
+
 def _check_recovery_file(
     owner_id: str,
     candidate: Path,
@@ -1143,11 +1542,16 @@ def _consume_recovery_file(
     collect: bool,
     cancel: threading.Event | None = None,
     digest: bool = False,
+    private: bool = False,
 ) -> bytes | tuple[int, str] | None:
     """Return bounded definition bytes after native reader retirement."""
     _recovery_file_limit(owner_id, max_bytes)
     selected = lexical_path(candidate)
-    scope = getattr(_local, "capture_scope", None)
+    scope = (
+        getattr(_local, "capture_scope", None)
+        or getattr(_local, "discovery_scope", None)
+        or getattr(_local, "preview_scope", None)
+    )
     lease = acquire_storage(selected) if scope is None else None
     resources = _CaptureFileDescriptors(scope)
     try:
@@ -1163,6 +1567,8 @@ def _consume_recovery_file(
             info = os.fstat(fd)
             if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
                 raise bootstrap.RecoveryRequired("capture_file_not_regular")
+            if private and (info.st_uid != os.geteuid() or info.st_mode & 0o077):
+                raise bootstrap.RecoveryRequired("credential_staging_required")
             if scope is not None:
                 _check_capture_file_identity(scope, selected, info)
             chunks = []
@@ -1186,7 +1592,10 @@ def _consume_recovery_file(
                 if hasher is not None:
                     hasher.update(chunk)
             if scope is not None:
-                _check_capture_file_identity(scope, selected, os.fstat(fd))
+                after = os.fstat(fd)
+                _check_capture_file_identity(scope, selected, after)
+                if private and (after.st_uid != os.geteuid() or after.st_mode & 0o077):
+                    raise bootstrap.RecoveryRequired("credential_staging_required")
                 current_parent = selected.parent.stat()
                 held_parent = os.fstat(parent)
                 if (current_parent.st_dev, current_parent.st_ino) != (

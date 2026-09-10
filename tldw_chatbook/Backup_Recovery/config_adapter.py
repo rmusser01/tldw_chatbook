@@ -489,37 +489,42 @@ def config_adapter() -> OwnerAdapter:
     return _Config("config", format="toml", max_bytes=_MAX_CONFIG_BYTES)
 
 
+class _ExternalFiles(_RawDeclaration):
+    """Capture explicitly selected external entries declared by inventory."""
+
+    def discover(self, config):
+        # Inventory attaches the reviewed external selections to each profile.
+        # This installed adapter supplies their raw capture/validation policy.
+        return ()
+
+
 def recovery_adapters() -> tuple[OwnerAdapter, ...]:
     """Installed config history and durable definition selectors only."""
     return (
         config_adapter(),
+        _ExternalFiles("external.files"),
         _Attachments(),
         _Generated("generation.assets"),
         _Diagnostics("diagnostics.logs"),
         _CatalogCache("cache.model_catalog"),
         _InstanceLock("runtime.instance_lock"),
         _ChatbookScratch("runtime.chatbook_scratch"),
-        _Definition(
-            "chat.prompt_history", leaf="prompt_history.jsonl", participant_pending=True
-        ),
+        _Definition("chat.prompt_history", leaf="prompt_history.jsonl"),
         _Definition(
             "ui.state",
             leaf="ui_state.toml",
             location="config",
-            participant_pending=True,
         ),
         _Definition(
             "ui.emoji_recents",
             leaf="recent_emojis.json",
             location="config",
-            participant_pending=True,
         ),
         _Definition(
             "ui.themes",
             leaf="themes",
             location="config",
             tree=True,
-            participant_pending=True,
         ),
         _ChatbookRegistry("chatbooks.registry", participant_pending=True),
         _Definition(
@@ -530,49 +535,37 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             leaf="tokenizers",
             location="default_config",
             tree=True,
-            participant_pending=True,
         ),
         _History("config.history", max_bytes=_MAX_CONFIG_BYTES),
-        _Definition(
-            "personas", leaf="tldw_chatbook_personas.json", participant_pending=True
-        ),
+        _Definition("personas", leaf="tldw_chatbook_personas.json"),
         _Definition(
             "chat.dictionary_history",
             leaf="tldw_chatbook_chat_dictionary_history.json",
-            participant_pending=True,
         ),
         _Definition(
             "chat.rag_context",
             leaf="tldw_chatbook_chat_rag_context.json",
-            participant_pending=True,
         ),
         _Definition(
             "chat.grammars",
             leaf="tldw_chatbook_chat_grammars.json",
-            participant_pending=True,
         ),
-        _Definition(
-            "feedback", leaf="tldw_chatbook_feedback.json", participant_pending=True
-        ),
+        _Definition("feedback", leaf="tldw_chatbook_feedback.json"),
         _Definition(
             "audio.history",
             leaf="tldw_chatbook_audio_history.json",
             participant_pending=True,
         ),
-        _Definition(
-            "chat.dictionaries", leaf="chat_dicts", tree=True, participant_pending=True
-        ),
+        _Definition("chat.dictionaries", leaf="chat_dicts", tree=True),
         _Definition(
             "chunking.templates",
             leaf="chunking_templates",
             tree=True,
-            participant_pending=True,
         ),
         _Definition(
             "notes.templates",
             leaf="note_templates.json",
             location="config",
-            participant_pending=True,
         ),
         _Definition(
             "chat.prompts", leaf="Chat/prompt_templates", location="package", tree=True
@@ -581,6 +574,5 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             "generation.styles",
             leaf="image_generation_styles",
             tree=True,
-            participant_pending=True,
         ),
     )

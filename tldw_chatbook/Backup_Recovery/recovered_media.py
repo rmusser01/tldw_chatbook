@@ -515,11 +515,13 @@ class _RecoveredAdapter:
                 found.add(item.path.name)
                 if item.path.name in assets:
                     try:
-                        payload = _read(item.path)
-                        valid = (
-                            hashlib.sha256(payload).hexdigest(),
-                            len(payload),
-                        ) == assets[item.path.name]
+                        from .storage_admission import _consume_recovery_file
+
+                        size, digest = _consume_recovery_file(
+                            self.owner_id, item.path, max_bytes=MAX_PAYLOAD_BYTES,
+                            collect=False, digest=True, private=True,
+                        )
+                        valid = (digest, size) == assets[item.path.name]
                     except (OSError, ValueError):
                         valid = False
                     if not valid:
@@ -546,7 +548,7 @@ class _RecoveredAdapter:
             item.logical_id for item in selected if item.path != catalog
         )
         return tuple(
-            replace(item, dependencies=item.dependencies + dependencies)
+            replace(item, dependencies=tuple(dict.fromkeys(item.dependencies + dependencies)))
             if item.path == catalog
             else item
             for item in selected

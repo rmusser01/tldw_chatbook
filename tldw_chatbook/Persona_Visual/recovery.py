@@ -215,14 +215,11 @@ class _Assets(_Definition):
 
 def recovery_adapters() -> tuple[OwnerAdapter, ...]:
     return (
-        _Assets(
-            "persona.assets", leaf="persona_visual", tree=True, participant_pending=True
-        ),
+        _Assets("persona.assets", leaf="persona_visual", tree=True),
         _Assets(
             "persona.visual_identity",
             leaf="visual_identities",
             tree=True,
-            participant_pending=True,
         ),
         _Assets(
             "persona.visual_identity_builtin",

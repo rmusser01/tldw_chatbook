@@ -61,6 +61,7 @@ def _retire_current_thread_caches(pause) -> None:
         "db.agent_runs": "close",
         "db.subscriptions": "close",
         "db.evals": "close",
+        "db.rag_indexing": "close",
         "notifications.client": "close",
         "notes.file_notes": "close",
     }
@@ -173,6 +174,7 @@ def _repository_types():
     for module_name, class_name, owner_id in (
         ("tldw_chatbook.Backup_Recovery.recovered_media", "RecoveredMedia", "recovered.media"),
         ("tldw_chatbook.DB.Evals_DB", "EvalsDB", "db.evals"),
+        ("tldw_chatbook.DB.RAG_Indexing_DB", "RAGIndexingDB", "db.rag_indexing"),
         ("tldw_chatbook.DB.Subscriptions_DB", "SubscriptionsDB", "db.subscriptions"),
         (
             "tldw_chatbook.Notes.file_notes_replica",

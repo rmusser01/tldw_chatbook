@@ -92,13 +92,67 @@ UNRESOLVED_OWNERS = (
     "chunking.templates",
     "tokenizers.custom",
     "tamagotchi.config",
-    "runtime.credentials",
 )
+
+# Managed credentials are a staged cross-owner policy, not a missing filesystem
+# store. Capture applies the installed credential policies to these owners and
+# refuses unsupported formats or unacknowledged encrypted recovery omissions.
 
 
 def _identity(path: Path) -> tuple[int, int]:
     value = path.stat()
     return value.st_dev, value.st_ino
+
+
+def _sqlite_sidecars(declared, adapters):
+    """Exclude exact SQLite transient files without hiding unknown lookalikes.
+
+    Both paths are declared even while absent so SQLite's ordinary WAL lifecycle
+    cannot expand reviewed scope. Unsafe aliases remain explicit blocking items.
+    """
+    sqlite_owners = {
+        adapter.owner_id
+        for adapter in adapters
+        if (policy := adapter.schema_policy()) is not None and policy.schema_sql
+    }
+    sidecars = []
+    declared_paths = {item.path for item in declared if item.path is not None}
+    for item in declared:
+        if (
+            item.owner not in sqlite_owners
+            or item.status != "included"
+            or item.path is None
+        ):
+            continue
+        # This installed adapter owns both its SQLite catalog and raw media.
+        # Mirror its capture dispatch; payload names never confer SQLite scope.
+        if item.owner == "recovered.media" and item.path.name != "catalog.sqlite3":
+            continue
+        main = item.path.lstat()
+        for suffix in ("-wal", "-shm"):
+            path = item.path.with_name(item.path.name + suffix)
+            safe = stat.S_ISREG(main.st_mode) and path not in declared_paths
+            try:
+                info = path.lstat()
+            except FileNotFoundError:
+                pass
+            else:
+                safe = (
+                    safe
+                    and stat.S_ISREG(info.st_mode)
+                    and info.st_uid == os.geteuid()
+                    and info.st_nlink == 1
+                )
+            sidecars.append(
+                StorageItem(
+                    "sqlite.transient",
+                    item.logical_id + ":sqlite" + suffix,
+                    path,
+                    "intentionally_excluded" if safe else "unsupported",
+                    (item.logical_id,),
+                )
+            )
+    return tuple(sidecars)
 
 
 def classify_entries(items: tuple[StorageItem, ...]) -> Inventory:
@@ -214,6 +268,25 @@ def classify_entries(items: tuple[StorageItem, ...]) -> Inventory:
                 )
             ):
                 issues.add("dependency_unavailable")
+    # Approved tree boundaries cover ordinary included descendants. Keep every
+    # blocking/excluded/deleted record and explicit physical alias in scope; a
+    # new owner, root, coverage choice or shared identity still requires review.
+    def scope_id(item):
+        metadata = item.metadata
+        root = by_id.get(metadata.root_id) if metadata else None
+        if (
+            item.status in {"included", "included_directory"}
+            and not item.shared_group
+            and root is not None
+            and root.owner == item.owner
+            and root.status == "included_directory"
+            and root.metadata is not None
+            and root.metadata.root_id == root.logical_id
+            and root.metadata.relative_path == ""
+        ):
+            return root.logical_id
+        return item.logical_id
+
     # Stable scope, not payload or inode fingerprint: ordinary record growth and
     # atomic replacement inside an approved logical owner do not alter its scope.
     payload = sorted(
@@ -224,7 +297,7 @@ def classify_entries(items: tuple[StorageItem, ...]) -> Inventory:
                 str(item.path) if item.path else None,
                 resolved_paths.get(item.logical_id),
                 item.status,
-                tuple(sorted(item.dependencies)),
+                tuple(sorted({scope_id(by_id[key]) if key in by_id else key for key in item.dependencies})),
                 item.shared_group,
                 item.deletion_validated,
                 (
@@ -239,6 +312,7 @@ def classify_entries(items: tuple[StorageItem, ...]) -> Inventory:
                 else None,
             )
             for item in items
+            if scope_id(item) == item.logical_id
         ),
         key=lambda row: json.dumps(row),
     )
@@ -453,6 +527,7 @@ def discover(
                             external=True,
                         )
                     )
+            declared.extend(_sqlite_sidecars(declared, adapters))
             declared.extend(_planned_output_exclusion(context, declared, root))
             items[profile_start:] = declared
             known = {entry.path for entry in declared if entry.path is not None}
@@ -497,6 +572,7 @@ def discover(
     for index, entry in enumerate(items):
         if (
             entry.path is not None
+            and entry.owner != "sqlite.transient"
             and entry.shared_group is None
             and entry.status
             not in {

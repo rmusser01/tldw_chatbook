@@ -5,6 +5,8 @@ are not resolved or inferred here. Arbitrary prose/logs/external files are not
 claimed sanitized by these semantic policies.
 """
 
+import base64
+import binascii
 import hashlib
 import json
 import os
@@ -28,6 +30,8 @@ from tldw_chatbook.Utils.sensitive_config_keys import is_sensitive_config_key
 
 from .credential_policies import (
     AUTH_FIELDS,
+    CITATION_OWNER,
+    CITATION_SERVICE,
     CONFIG_OWNERS,
     GENERATION_KEYRINGS,
     HEADER_FIELDS,
@@ -65,17 +69,24 @@ def _read_scope(record, store):
     return store._keyring.get_password(record["service"], record["username"])
 
 
-def _capture_record(record, material, issues):
+def _capture_record(record, material, issues, *, optional=False):
     if len(material) >= 10000:
         raise ValueError("credential_resource_limit")
     record["id"] = _fingerprint(record)
     try:
         value = _read_scope(record, _credential_store())
         if value is None:
+            if optional:
+                return
             record["status"] = "missing"
         elif not isinstance(value, str):
             record["status"] = "unreadable"
         else:
+            if (
+                record["kind"] == "citation"
+                and len(base64.b64decode(value, validate=True)) != 32
+            ):
+                raise ValueError("invalid_citation_key")
             record.update(status="captured", value=value)
     except Exception:  # noqa: BLE001 - backend errors can contain secret values
         # Backends can include secret values in exception text. Only an opaque
@@ -169,18 +180,18 @@ def _capture_owned(owner, path, data, staging, material, issues):
             if not isinstance(values, dict):
                 raise TypeError("unsupported_credential_format")
             for name in names:
-                if name in values:
-                    _capture_record(
-                        {
-                            "kind": "generation",
-                            "file": relative,
-                            "service": service,
-                            "username": name,
-                            "remappable": False,
-                        },
-                        material,
-                        issues,
-                    )
+                _capture_record(
+                    {
+                        "kind": "generation",
+                        "file": relative,
+                        "service": service,
+                        "username": name,
+                        "remappable": False,
+                    },
+                    material,
+                    issues,
+                    optional=name not in values,
+                )
         _capture_encrypted(data, relative, material, issues)
 
 
@@ -244,7 +255,12 @@ def _material(staging):
             not in {"captured", "missing", "unreadable", "locked"}
         ):
             raise ValueError("unsupported_credential_material")
-        if record.get("kind") not in {"server", "generation", "encrypted_config"}:
+        if record.get("kind") not in {
+            "server",
+            "generation",
+            "encrypted_config",
+            "citation",
+        }:
             raise ValueError("unsupported_credential_material")
         seen.add(record["id"])
         _staged_path(staging, Path(staging) / record["file"])
@@ -289,6 +305,35 @@ def _material(staging):
                 for _, service, names in GENERATION_KEYRINGS
             ):
                 raise ValueError("unsupported_credential_material")
+        elif record["kind"] == "citation":
+            if record.get("service") != CITATION_SERVICE or record["remappable"]:
+                raise ValueError("unsupported_credential_material")
+            from tldw_chatbook.DB.private_sqlite import open_recovery_validation
+
+            from .sqlite_validation import _check, _installed_owner
+
+            installed = _installed_owner(CITATION_OWNER)
+            with open_recovery_validation(
+                installed.owner_id, Path(staging) / record["file"], writable=False
+            ) as source:
+                if (
+                    _check(source, installed, installed.schema_policy())[0]
+                    or not source.execute(
+                        "SELECT 1 FROM rag_identity_context WHERE fingerprint_key_id=?",
+                        (record.get("username"),),
+                    ).fetchone()
+                ):
+                    raise ValueError("credential_reference_changed")
+            if record["status"] == "captured":
+                try:
+                    valid = (
+                        len(base64.b64decode(record.get("value", ""), validate=True))
+                        == 32
+                    )
+                except (ValueError, binascii.Error, TypeError):
+                    valid = False
+                if not valid:
+                    raise ValueError("unsupported_credential_material")
         elif record["kind"] != "encrypted_config":
             raise ValueError("unsupported_credential_material")
         if record["status"] == "captured" and not isinstance(record.get("value"), str):
@@ -449,6 +494,11 @@ def _staged_path(staging, path):
 def _read(path):
     from tldw_chatbook.Utils.private_paths import open_private_binary
 
+    from .storage_admission import _read_staged_credential_file
+
+    captured = _read_staged_credential_file(path, max_bytes=_MAX_BYTES)
+    if captured is not None:
+        return captured
     with open_private_binary(path) as opened:
         if not opened.result.verified_private:
             raise ValueError("credential_staging_required")
@@ -461,6 +511,10 @@ def _read(path):
 def _write(path, data):
     from tldw_chatbook.Utils.private_paths import atomic_private_write_text
 
+    from .storage_admission import _write_staged_credential_file
+
+    if _write_staged_credential_file(path, data):
+        return
     result = atomic_private_write_text(path, data)
     if not result.verified_private:
         raise ValueError("credential_staging_required")
@@ -581,6 +635,8 @@ def _sanitize_connections(owner, data):
 
 
 def _sanitize_column(value, kind):
+    if kind == "citation":
+        return RECOVERY_SETUP_REQUIRED
     if value is None or value == "":
         return value
     if kind == "url":
@@ -627,7 +683,22 @@ def _rewrite_database(staging, path, owner_id, *, export=None):
                     for rowid, value in source.execute(
                         f'SELECT rowid,"{column}" FROM "{table}"'  # nosec B608 - installed policy identifiers only
                     ):
-                        if value and kind != "url":
+                        if kind == "citation":
+                            if not isinstance(value, str) or not value:
+                                raise TypeError("unsupported_credential_format")
+                            if value != RECOVERY_SETUP_REQUIRED:
+                                _capture_record(
+                                    {
+                                        "kind": "citation",
+                                        "file": str(path.relative_to(staging)),
+                                        "service": CITATION_SERVICE,
+                                        "username": value,
+                                        "remappable": False,
+                                    },
+                                    material,
+                                    coverage,
+                                )
+                        elif value and kind != "url":
                             decoded = json.loads(value)
                             if not isinstance(decoded, dict):
                                 raise TypeError("unsupported_credential_format")
@@ -738,14 +809,48 @@ def process_credentials(
         if (staging / _MATERIAL).exists():
             raise ValueError("credential_material_already_present")
         candidates = []
+        issues = []
+        for item in inventory.items:
+            if (
+                mode != "exclude"
+                and item.status == "included"
+                and item.owner == "skills"
+                and item.metadata
+                and item.metadata.kind == "file"
+                and Path(item.metadata.relative_path).parts[:1] == ("trust",)
+            ):
+                # These disk files contain historical trust metadata/skill content,
+                # not the derived keys held only in the optional keyring cache.
+                # Including credentials must disclose that cache's omission.
+                issues.append(
+                    "credential_skill_trust_manual_unlock_required:" + item.logical_id
+                )
+
         sqlite_owners = {rule.owner for rule in SQLITE_CREDENTIAL_COLUMNS}
         for item in inventory.items:
             if (
                 item.status != "included"
                 or item.owner
-                not in CONFIG_OWNERS | JSON_CONNECTION_OWNERS | sqlite_owners
+                not in CONFIG_OWNERS
+                | JSON_CONNECTION_OWNERS
+                | sqlite_owners
+                | {"rag.definitions"}
             ):
                 continue
+            if item.owner == "rag.definitions":
+                relative = Path(item.metadata.relative_path) if item.metadata else None
+                if (
+                    relative is None
+                    or len(relative.parts) != 1
+                    or relative.suffix != ".json"
+                    or relative.name
+                    in {"custom_profiles.json", "custom_profiles.json.migrated"}
+                ):
+                    issues.append(
+                        "credential_rag_definition_format_unsupported:"
+                        + item.logical_id
+                    )
+                    continue
             path = _staged_path(staging, item.path)
             if any(
                 Path(str(path) + suffix).exists()
@@ -754,7 +859,7 @@ def process_credentials(
                 raise ValueError("credential_sidecar_unprocessed")
             candidates.append((item, path))
         seen = set()
-        material, issues = [], []
+        material = []
         for item, path in candidates:
             if path in seen:
                 continue
@@ -777,6 +882,14 @@ def process_credentials(
                 if mode != "rollback":
                     raise
                 issues.append("credential_format_unreadable")
+                continue
+            if item.owner == "rag.definitions" and (
+                not isinstance(data, dict)
+                or not isinstance(data.get("rag_config"), dict)
+            ):
+                issues.append(
+                    "credential_rag_definition_format_unsupported:" + item.logical_id
+                )
                 continue
             if mode == "exclude":
                 if item.owner in CONFIG_OWNERS:
@@ -803,7 +916,12 @@ def process_credentials(
                         _sanitize_connections(item.owner, data)
                     except (ValueError, TypeError):
                         issues.append("credential_connection_format_unsupported")
-                _capture_owned(item.owner, path, data, staging, material, issues)
+                if item.owner == "rag.definitions":
+                    _capture_encrypted(
+                        data, str(path.relative_to(staging)), material, issues
+                    )
+                else:
+                    _capture_owned(item.owner, path, data, staging, material, issues)
         if mode != "exclude":
             encoded = json.dumps(
                 {"version": 1, "mode": mode, "records": material}, ensure_ascii=False

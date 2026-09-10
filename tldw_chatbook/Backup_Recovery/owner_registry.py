@@ -37,3 +37,54 @@ def registered() -> tuple[OwnerAdapter, ...]:
     """Return an immutable, deterministically ordered installed-adapter snapshot."""
     with _lock:
         return tuple(_adapters[key] for key in sorted(_adapters))
+
+
+def install_adapters() -> tuple[OwnerAdapter, ...]:
+    """Install the shipped inert declarations before preview or capture."""
+    from importlib import import_module
+
+    factories = (
+        ("DB.recovery_core", "core_adapters"),
+        ("DB.recovery_operations", "recovery_adapters"),
+        ("Backup_Recovery.config_adapter", "recovery_adapters"),
+        ("Backup_Recovery.recovered_media", "recovery_adapters"),
+        ("Backup_Recovery.rag_inventory", "recovery_adapters"),
+        *(
+            (name + ".recovery", "recovery_adapters")
+            for name in (
+                "Agents",
+                "Evals",
+                "Kanban_Interop",
+                "MCP",
+                "Model_Artifacts",
+                "Notes",
+                "Notifications",
+                "Persona_Visual",
+                "Research_Interop",
+                "Scheduling",
+                "Skills_Interop",
+                "Study_Interop",
+                "Subscriptions",
+                "Sync_Interop",
+                "TTS",
+                "Widgets.Tamagotchi",
+                "Workspaces",
+                "Writing_Interop",
+                "runtime_policy",
+            )
+        ),
+    )
+    declarations = tuple(
+        adapter
+        for module, factory in factories
+        for adapter in getattr(import_module("tldw_chatbook." + module), factory)()
+    )
+    with _lock:
+        for adapter in declarations:
+            existing = _adapters.get(adapter.owner_id)
+            if existing is not None and type(existing) is not type(adapter):
+                raise ValueError("conflicting_installed_owner")
+        for adapter in declarations:
+            if adapter.owner_id not in _adapters:
+                register(adapter)
+        return registered()
