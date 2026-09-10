@@ -238,6 +238,12 @@ class TestChatbookProperties:
                 author=author,
                 tags=tags,
                 categories=categories,
+                # The strategy can produce a MEDIA-only selection, and the
+                # media collector only runs when this is on -- without it
+                # such an example collects nothing, which the empty-export
+                # guard refuses to package (PR #2568 review: a media
+                # selection counts as requested even with the flag off).
+                include_media=True,
             )
 
             assert success is True
