@@ -77,10 +77,17 @@ from ...Chat.console_roleplay_identity import (
     normalize_chat_display_name,
 )
 from ...Chat.console_rail_state import normalize_console_rail_layout_scope
+from ...Chat.local_reasoning import (
+    REASONING_HISTORY_OPTIONS,
+    reasoning_mode_setting,
+    reasoning_override_key,
+    supports_local_reasoning,
+)
 from ...Widgets.glyph_fallback import set_ascii_glyph_mode
 from ...Chat.console_provider_endpoints import (
     URL_BASED_PROVIDER_KEYS,
     generic_endpoint_differs,
+    safe_endpoint_display,
     unsaved_endpoint_copy,
 )
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
@@ -1173,6 +1180,9 @@ CONSOLE_BEHAVIOR_CONSOLE_KEYS = frozenset(
         "collapse_large_pastes",
         "show_model_thinking",
         "thinking_history_policy_default",
+        "reasoning_history",
+        "reasoning_history_overrides",
+        "reasoning_native_tool_overrides",
         "rail_layout_scope",
         "stack_collapsed_rail_labels",
         "paste_collapse_threshold",
@@ -1248,6 +1258,9 @@ CONSOLE_BEHAVIOR_SAVE_ORDER = (
     "collapse_large_pastes",
     "show_model_thinking",
     "thinking_history_policy_default",
+    "reasoning_history",
+    "reasoning_history_overrides",
+    "reasoning_native_tool_overrides",
     "rail_layout_scope",
     "stack_collapsed_rail_labels",
     "paste_collapse_threshold",
@@ -5526,6 +5539,98 @@ class SettingsScreen(BaseAppScreen):
     def _loaded_thinking_history_policy_default(self) -> str:
         return load_thinking_history_policy_default(self._console_settings())
 
+    def _current_reasoning_target(self) -> tuple[str, str, str] | None:
+        """Snapshot the active local Console endpoint/model identity."""
+
+        runtime = getattr(self.app_instance, "console_runtime", None)
+        controller = getattr(runtime, "chat_controller", None)
+        store = getattr(runtime, "chat_store", None)
+        if controller is None or store is None or store.active_session_id is None:
+            return None
+        snapshot = controller.resolve_turn_configuration_snapshot(
+            store.active_session_id
+        )
+        selection = snapshot.provider_selection
+        model = normalize_console_model_value(
+            selection.explicit_model or selection.configured_model
+        )
+        if model is None or not supports_local_reasoning(selection.provider, model):
+            return None
+
+        from tldw_chatbook.Chat.console_provider_endpoints import (
+            effective_provider_endpoint,
+        )
+
+        provider_key = provider_config_key(selection.provider)
+        provider_settings = provider_settings_for_key(
+            self.app_instance.app_config.get("api_settings", {}),
+            provider_key,
+        )
+        endpoint = (
+            effective_provider_endpoint(
+                provider_key,
+                selection.base_url,
+                provider_settings,
+            )
+            or ""
+        )
+        if selection.provider in {"llama_cpp", "local_llamacpp"}:
+            from tldw_chatbook.Chat.console_session_settings import (
+                normalize_llamacpp_base_url,
+            )
+
+            endpoint = normalize_llamacpp_base_url(selection.base_url)
+        return selection.provider, endpoint, model
+
+    def _reasoning_override_value(self) -> str:
+        target = getattr(self, "_reasoning_override_target", None)
+        overrides = self._console_behavior_value("reasoning_history_overrides") or {}
+        value = (
+            overrides.get(reasoning_override_key(*target), "inherit")
+            if target and isinstance(overrides, Mapping)
+            else "inherit"
+        )
+        allowed = {"inherit", *(value for _, value in REASONING_HISTORY_OPTIONS)}
+        return value if isinstance(value, str) and value in allowed else "inherit"
+
+    def _reasoning_native_override_value(self) -> bool:
+        target = getattr(self, "_reasoning_override_target", None)
+        values = self._console_behavior_value("reasoning_native_tool_overrides") or {}
+        return bool(
+            target
+            and isinstance(values, Mapping)
+            and values.get(reasoning_override_key(*target)) is True
+        )
+
+    def _reasoning_policy_status(self) -> str:
+        target = getattr(self, "_reasoning_override_target", None)
+        mode = self._reasoning_override_value()
+        if mode == "inherit":
+            mode = str(self._console_behavior_value("reasoning_history"))
+        if mode != "auto":
+            label = {value: label for label, value in REASONING_HISTORY_OPTIONS}.get(
+                mode, "Automatic"
+            )
+            return f"Conversation Auto next send: {label}"
+        runtime = getattr(self.app_instance, "console_runtime", None)
+        gateway = getattr(runtime, "provider_gateway", None)
+        known = getattr(gateway, "reasoning_policies", {})
+        policy = (
+            known.get(reasoning_override_key(*target))
+            if target and isinstance(known, Mapping)
+            else None
+        )
+        if policy is not None and policy.source == "Auto":
+            status = f"{policy.label} — checked again on next send"
+            if policy.template_family == "Gemma 4" and not policy.native_tools:
+                status += (
+                    ". Native server tools are needed to retain Gemma thinking "
+                    "across tool rounds; legacy fenced tool results begin a new "
+                    "server-side user turn."
+                )
+            return status
+        return "Conversation Auto: template checked on next send"
+
     def _show_model_thinking_label(self) -> str:
         state = "On" if self._loaded_show_model_thinking() else "Off"
         return f"Show model thinking ({state})"
@@ -5914,6 +6019,22 @@ class SettingsScreen(BaseAppScreen):
             "thinking_history_policy_default": (
                 self._loaded_thinking_history_policy_default()
             ),
+            "reasoning_history": reasoning_mode_setting(self._console_settings()),
+            "reasoning_history_overrides": dict(
+                self._console_settings().get("reasoning_history_overrides")
+            )
+            if isinstance(
+                self._console_settings().get("reasoning_history_overrides"), Mapping
+            )
+            else {},
+            "reasoning_native_tool_overrides": dict(
+                self._console_settings().get("reasoning_native_tool_overrides")
+            )
+            if isinstance(
+                self._console_settings().get("reasoning_native_tool_overrides"),
+                Mapping,
+            )
+            else {},
             "rail_layout_scope": self._loaded_console_rail_layout_scope(),
             "stack_collapsed_rail_labels": self._loaded_stack_collapsed_rail_labels(),
             "paste_collapse_threshold": self._loaded_paste_collapse_threshold(),
@@ -16159,6 +16280,59 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-console-show-model-thinking-help",
                 classes="settings-detail-row",
             )
+            yield Static("Local reasoning history", classes="destination-section")
+            yield Select(
+                REASONING_HISTORY_OPTIONS,
+                value=self._console_behavior_value("reasoning_history"),
+                allow_blank=False,
+                id="settings-console-reasoning-history",
+            )
+            yield Static(
+                "These device-local controls refine Conversation Auto. Conversation "
+                "Include and Exclude override them, and Required continuation remains "
+                "intact. Automatic follows reviewed templates; unknown templates keep "
+                "the server default. All available sends every compatible field, but "
+                "the server template can still omit older reasoning.",
+                id="settings-console-reasoning-history-help",
+                classes="settings-detail-row",
+            )
+            self._reasoning_override_target = self._current_reasoning_target()
+            target = self._reasoning_override_target
+            with Collapsible(title="Override current Console model", collapsed=True):
+                yield Static(
+                    f"{target[0]} / {target[2]} — {safe_endpoint_display(target[1])}"
+                    if target
+                    else "Select a local model in Console to set a remembered override.",
+                    markup=False,
+                    classes="settings-detail-row",
+                )
+                yield Select(
+                    (("Use default", "inherit"), *REASONING_HISTORY_OPTIONS),
+                    value=self._reasoning_override_value(),
+                    allow_blank=False,
+                    disabled=target is None,
+                    id="settings-console-reasoning-override",
+                )
+                yield Checkbox(
+                    "This server is configured for native tool calls",
+                    value=self._reasoning_native_override_value(),
+                    disabled=target is None,
+                    id="settings-console-reasoning-native-tools",
+                    tooltip=(
+                        "Use when the server cannot report support. Configure the "
+                        "server's native tool parser before enabling this preference."
+                    ),
+                )
+                yield Static(
+                    "Remembered for this normalized endpoint and model. Native tool "
+                    "support is configured separately from reasoning replay.",
+                    classes="settings-detail-row",
+                )
+            yield Static(
+                self._reasoning_policy_status(),
+                id="settings-console-reasoning-status",
+                classes="settings-detail-row",
+            )
             yield Button(
                 "Conversation context and memory ↓",
                 id="settings-console-context-memory-jump",
@@ -23794,6 +23968,57 @@ class SettingsScreen(BaseAppScreen):
         self._thinking_visibility_desired_value = next_value
         self._start_thinking_visibility_persist_if_idle()
 
+    @on(Checkbox.Changed, "#settings-console-reasoning-native-tools")
+    def handle_console_reasoning_native_tools_changed(
+        self, event: Checkbox.Changed
+    ) -> None:
+        event.stop()
+        target = getattr(self, "_reasoning_override_target", None)
+        if target is None:
+            return
+        values = dict(
+            self._console_behavior_value("reasoning_native_tool_overrides") or {}
+        )
+        key = reasoning_override_key(*target)
+        if event.value:
+            values[key] = True
+        else:
+            values.pop(key, None)
+        self._stage_console_default_value("reasoning_native_tool_overrides", values)
+        self._mark_console_behavior_settings_staged()
+
+    @on(Select.Changed, "#settings-console-reasoning-history")
+    def handle_console_reasoning_history_changed(self, event: Select.Changed) -> None:
+        event.stop()
+        if event.value not in {value for _, value in REASONING_HISTORY_OPTIONS}:
+            return
+        self._stage_console_default_value("reasoning_history", str(event.value))
+        self._mark_console_behavior_settings_staged()
+        self._set_static_text(
+            "#settings-console-reasoning-status", self._reasoning_policy_status()
+        )
+
+    @on(Select.Changed, "#settings-console-reasoning-override")
+    def handle_console_reasoning_override_changed(self, event: Select.Changed) -> None:
+        event.stop()
+        target = getattr(self, "_reasoning_override_target", None)
+        allowed = {"inherit", *(value for _, value in REASONING_HISTORY_OPTIONS)}
+        if target is None or event.value not in allowed:
+            return
+        overrides = dict(
+            self._console_behavior_value("reasoning_history_overrides") or {}
+        )
+        key = reasoning_override_key(*target)
+        if event.value == "inherit":
+            overrides.pop(key, None)
+        else:
+            overrides[key] = str(event.value)
+        self._stage_console_default_value("reasoning_history_overrides", overrides)
+        self._mark_console_behavior_settings_staged()
+        self._set_static_text(
+            "#settings-console-reasoning-status", self._reasoning_policy_status()
+        )
+
     @on(Checkbox.Changed, "#settings-console-stack-collapsed-rail-labels")
     def handle_console_rail_label_style_changed(self, event: Checkbox.Changed) -> None:
         """Stage the collapsed Console rail presentation preference."""
@@ -28611,6 +28836,30 @@ class SettingsScreen(BaseAppScreen):
         self._set_static_text(
             "#settings-console-exchange-capture-status",
             self._console_capture_status,
+        )
+        try:
+            native = self.query_one(
+                "#settings-console-reasoning-native-tools", Checkbox
+            )
+            with native.prevent(Checkbox.Changed):
+                native.value = self._reasoning_native_override_value()
+        except QueryError:
+            pass
+        for selector, value in (
+            (
+                "#settings-console-reasoning-history",
+                self._console_behavior_value("reasoning_history"),
+            ),
+            ("#settings-console-reasoning-override", self._reasoning_override_value()),
+        ):
+            try:
+                widget = self.query_one(selector, Select)
+                with widget.prevent(Select.Changed):
+                    widget.value = value
+            except QueryError:
+                pass
+        self._set_static_text(
+            "#settings-console-reasoning-status", self._reasoning_policy_status()
         )
         try:
             checkbox = self.query_one("#settings-console-show-model-thinking", Checkbox)

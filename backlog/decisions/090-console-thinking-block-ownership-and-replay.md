@@ -148,3 +148,16 @@ continuation Discard or the retention of a distinct, non-deleted off-branch vari
 - [ADR-064: DeepSeek Dual API Provider Boundary](064-deepseek-dual-api-provider-boundary.md)
 - [ADR-066: Local Provider Thinking Controls](066-local-provider-thinking-controls.md)
 - [Console Assistant Turn Grouping](../../Docs/superpowers/specs/2026-08-21-console-assistant-turn-grouping-design.md)
+
+
+## Amendment: template-aware local reasoning replay (2026-09-10, TASK-32243)
+
+PR 2575 is reconciled with this ADR rather than introducing duplicate display or metadata-based thinking storage. Canonical envelopes and generation ownership remain authoritative. Local adapters can declare separate `reasoning_content` (llama.cpp/vLLM) or `reasoning` (Ollama) source encodings. Exact per-call thinking accompanies its assistant/tool owner in active exchanges; aggregate review traces must never be combined as a final-call reasoning value. Tool-round provenance is excluded when its actual tool-call owner is absent.
+
+The conversation's Exclude still disables optional replay, Include requests all eligible history with strict serialization checks, and Required continuation remains independent. Conversation Auto is refined by device-local `console.reasoning_history` (Automatic/current exchange/all available/off), with normalized provider/endpoint/model overrides. This preserves synced conversation preferences while allowing server-specific compatibility choices. Old explicit replay false migrates to Off.
+
+Automatic recognizes exact reviewed templates, not aliases. Reviewed Gemma 4 and Qwen3.5/3.6 use current exchange; reviewed Qwen3.8 uses all available. Unknown/custom/Ollama templates retain server defaults. Optional metadata reads are bounded and failure does not block send. Native-tool support is established separately through server capabilities or explicit configured-server preference, never by template identity alone.
+
+Projection occurs before serialization, token accounting and provider admission. Whole owner groups and their matching provenance are filtered together. Runtime guidance and tool results continue the active exchange; any provider-visible row rewrite must preserve causal trace provenance. Children inherit policy but never a parent's thinking owner. Capture, default-on display, canonical persistence and importable transcript export are unaffected by replay preferences.
+
+Reviewed local runtime-control encoding uses the typed `RUNTIME_GUIDANCE` provenance transform. It retains the tool-result/control source and every appended guidance input; ordinary `MESSAGE_REWRITE` continues to accept only exact thinking/continuation attachments.

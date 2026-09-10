@@ -430,6 +430,7 @@ PROVIDER_PARAM_MAP = {
         "stop": "stop",  # often 'stop_sequences'
     },
     "llama_cpp": {  # Has api_url as a positional argument which needs special handling if not None
+        "api_key_resolved": "api_key_resolved",
         "api_key": "api_key",
         "temp": "temp",  # audit task-286: was a dead 'temperature' key (temp silently dropped); handler takes temp
         "messages_payload": "input_data",
@@ -453,6 +454,9 @@ PROVIDER_PARAM_MAP = {
         "top_logprobs": "top_logprobs",
         "reasoning_effort": "reasoning_effort",
         "thinking_budget_tokens": "thinking_budget_tokens",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "chat_template_kwargs": "chat_template_kwargs",
     },
     "koboldcpp": {
         "api_key": "api_key",
@@ -504,6 +508,7 @@ PROVIDER_PARAM_MAP = {
         "stop": "stop",
     },
     "vllm": {  # vllm_api_url consideration
+        "api_key_resolved": "api_key_resolved",
         "api_key": "api_key",
         "messages_payload": "input_data",
         "temp": "temperature",
@@ -526,6 +531,9 @@ PROVIDER_PARAM_MAP = {
         "user_identifier": "user_identifier",
         "reasoning_effort": "reasoning_effort",
         "thinking_budget_tokens": "thinking_budget_tokens",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "chat_template_kwargs": "chat_template_kwargs",
     },
     "local-llm": {
         "messages_payload": "input_data",
@@ -543,6 +551,7 @@ PROVIDER_PARAM_MAP = {
         "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "ollama": {  # api_url consideration
+        "api_key_resolved": "api_key_resolved",
         "api_key": "api_key",  # api_key is not used by ollama directly, url is more important
         "messages_payload": "input_data",
         "temp": "temperature",
@@ -557,6 +566,9 @@ PROVIDER_PARAM_MAP = {
         "response_format": "format",  # 'json' string
         "presence_penalty": "presence_penalty",
         "frequency_penalty": "frequency_penalty",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "chat_template_kwargs": "chat_template_kwargs",
     },
     "aphrodite": {
         "api_key": "api_key",
@@ -660,6 +672,7 @@ PROVIDER_PARAM_MAP = {
     },
     # Local provider mappings (same as their non-local counterparts)
     "local_llamacpp": {
+        "api_key_resolved": "api_key_resolved",
         "api_key": "api_key",
         "messages_payload": "input_data",
         "temp": "temp",  # audit task-286: generic name is 'temp'; the 'temperature' key was dead
@@ -679,8 +692,12 @@ PROVIDER_PARAM_MAP = {
         "frequency_penalty": "frequency_penalty",
         "reasoning_effort": "reasoning_effort",
         "thinking_budget_tokens": "thinking_budget_tokens",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "chat_template_kwargs": "chat_template_kwargs",
     },
     "local_llamafile": {
+        "api_key_resolved": "api_key_resolved",
         "api_key": "api_key",
         "messages_payload": "input_data",
         "temp": "temp",  # audit task-286: generic name is 'temp'; the 'temperature' key was dead
@@ -700,8 +717,12 @@ PROVIDER_PARAM_MAP = {
         "frequency_penalty": "frequency_penalty",
         "reasoning_effort": "reasoning_effort",
         "thinking_budget_tokens": "thinking_budget_tokens",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "chat_template_kwargs": "chat_template_kwargs",
     },
     "local_ollama": {
+        "api_key_resolved": "api_key_resolved",
         "api_key": "api_key",
         "messages_payload": "input_data",
         "temp": "temperature",
@@ -716,8 +737,12 @@ PROVIDER_PARAM_MAP = {
         "response_format": "format",
         "presence_penalty": "presence_penalty",
         "frequency_penalty": "frequency_penalty",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "chat_template_kwargs": "chat_template_kwargs",
     },
     "local_vllm": {
+        "api_key_resolved": "api_key_resolved",
         "api_key": "api_key",
         "messages_payload": "input_data",
         "temp": "temperature",
@@ -739,6 +764,9 @@ PROVIDER_PARAM_MAP = {
         "user_identifier": "user_identifier",
         "reasoning_effort": "reasoning_effort",
         "thinking_budget_tokens": "thinking_budget_tokens",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "chat_template_kwargs": "chat_template_kwargs",
     },
     "local_mlx_lm": {
         "api_key": "api_key",
@@ -951,6 +979,7 @@ def chat_api_call(
     request_retry_delay: Optional[float] = None,
     *,
     api_key_resolved: bool | None = None,
+    chat_template_kwargs: dict[str, Any] | None = None,
 ):
     """
     Acts as a unified dispatcher to call various LLM API providers.
@@ -1182,9 +1211,7 @@ def chat_api_call(
             # a usable number of seconds; the retry backoff honours it.
             retry_after_header = None
             try:
-                raw_retry_after = getattr(e.response, "headers", {}).get(
-                    "Retry-After"
-                )
+                raw_retry_after = getattr(e.response, "headers", {}).get("Retry-After")
                 if raw_retry_after is not None:
                     retry_after_header = float(str(raw_retry_after).strip())
             except (TypeError, ValueError):

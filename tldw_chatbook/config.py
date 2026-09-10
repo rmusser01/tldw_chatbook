@@ -1935,6 +1935,21 @@ def _load_settings_uncached(
         final_console_settings_cli.get("stack_collapsed_rail_labels", False),
         False,
     )
+    from tldw_chatbook.Chat.local_reasoning import reasoning_mode_setting
+
+    final_console_settings_cli["replay_thinking"] = coerce_bool_setting(
+        final_console_settings_cli.get("replay_thinking", True),
+        True,
+    )
+    final_console_settings_cli["reasoning_history"] = reasoning_mode_setting(
+        final_console_settings_cli
+    )
+    for key in (
+        "reasoning_history_overrides",
+        "reasoning_native_tool_overrides",
+    ):
+        if not isinstance(final_console_settings_cli.get(key), dict):
+            final_console_settings_cli[key] = {}
     _rail_layout_scope = final_console_settings_cli.get("rail_layout_scope")
     final_console_settings_cli["rail_layout_scope"] = (
         _rail_layout_scope.strip().lower()
@@ -3556,6 +3571,9 @@ shutdown_grace_seconds = 120.0
 collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
 show_model_thinking = true  # Presentation only; capture and replay are unchanged
 thinking_history_policy_default = "auto"  # auto, include, exclude for new conversations
+reasoning_history = "auto"  # local replay when a conversation uses Auto: auto, current, all, off
+reasoning_history_overrides = {}  # normalized endpoint/model digest -> replay mode
+reasoning_native_tool_overrides = {}  # normalized endpoint/model digest -> true
 stack_collapsed_rail_labels = false  # Use compact stacked labels on collapsed Console rails
 rail_layout_scope = "global"  # Share Console rail disclosure across workspaces; use "workspace" for per-workspace layouts
 assistant_library_access_default = false  # New Console sessions block assistant Library access
@@ -5677,6 +5695,8 @@ _FREEFORM_CONFIG_PREFIXES: tuple[tuple[str, ...], ...] = (
                                 # Agents/agent_service.py (two-homes drift),
                                 # so documented overrides here would all flag
                                 # as unknown (Qodo #13, PR #2301)
+    ("console", "reasoning_history_overrides"),
+    ("console", "reasoning_native_tool_overrides"),
     ("api_settings",),          # provider configs incl. user-added custom providers
     ("providers",),             # provider display sections + model lists
     ("model_capabilities", "models"),    # arbitrary model names

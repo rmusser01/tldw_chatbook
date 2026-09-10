@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from tldw_chatbook.Chat.console_provider_gateway import (
@@ -23,6 +24,36 @@ from tldw_chatbook.Chat.thinking_blocks import (
     ThinkingStatus,
     dump_thinking_blocks_json,
 )
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_thinking_history import ProviderThinkingSidecar
+
+CALL_THINKING_KEY = "_tldw_call_thinking"
+
+
+def consume_call_thinking(
+    messages: Sequence[Mapping], *, owner_key: str
+) -> tuple[list[dict], tuple[ProviderThinkingSidecar, ...]]:
+    """Extract ephemeral call envelopes before provider and trace preparation."""
+    from tldw_chatbook.Chat.console_thinking_history import ProviderThinkingSidecar
+
+    rows = []
+    sidecars = []
+    for message in messages:
+        row = dict(message)
+        envelope = row.pop(CALL_THINKING_KEY, None)
+        if envelope is not None:
+            if (
+                not isinstance(envelope, ThinkingEnvelope)
+                or row.get("role") != "assistant"
+            ):
+                raise ValueError("Call thinking must belong to an assistant envelope.")
+            if envelope.blocks:
+                owner = envelope.blocks[0].block_id
+                row[owner_key] = owner
+                sidecars.append(ProviderThinkingSidecar(owner, envelope))
+        rows.append(row)
+    return rows, tuple(sidecars)
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +189,30 @@ class ThinkingCapture:
         """Close the current primary model round at its tool-call seam."""
         self._require_live()
         update = self._mark_boundary()
+        current = self._current_block()
+        if (
+            isinstance(current, DisplayableThinkingBlock)
+            and current.provider
+            in {
+                "llama_cpp",
+                "local_llamacpp",
+                "vllm",
+                "local_vllm",
+                "ollama",
+                "local_ollama",
+            }
+            and current.source_format
+            in {"start_anchored_think", "reasoning_content", "reasoning"}
+        ):
+            self._install(
+                tuple(
+                    replace(block, source_format=block.source_format + ":tool_call")
+                    if block.block_id == current.block_id
+                    else block
+                    for block in self._blocks
+                )
+            )
+            update = replace(update, envelope=self._envelope())
         self._round_ordinal += 1
         self._boundary_reached = False
         return update
