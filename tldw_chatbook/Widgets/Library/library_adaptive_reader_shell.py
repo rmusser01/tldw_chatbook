@@ -42,6 +42,27 @@ class AdaptiveReaderShellResized(Message):
     """Report that the settled shell allocation may need resolving."""
 
 
+class LibraryPaneVisibilityChanged(Message):
+    """Report that an optional pane's APPLIED visibility changed.
+
+    task-32225: distinct from ``AdaptiveReaderShellResized``, which the shell
+    posts from ``on_resize`` -- its OWN size. A pane toggle only changes child
+    widths, so nothing announced "the Library pane is now closed" and the
+    footer's narrow-stage return chip went stale in both directions. Posted
+    from ``sync_layout``, the one place an applied layout is installed, so no
+    destination can forget to announce it.
+
+    Attributes:
+        pane: Which optional pane changed.
+        open: Its applied visibility after the change.
+    """
+
+    def __init__(self, pane: PaneName, open: bool) -> None:
+        super().__init__()
+        self.pane = pane
+        self.open = open
+
+
 class LibraryAdaptiveReaderPaneGrip(Button):
     """Narrow keyboard and pointer control for one optional pane.
 
@@ -361,6 +382,20 @@ class LibraryAdaptiveReaderShell(Horizontal):
             self.work.styles.width = "1fr"
             self.work.styles.min_width = 0
             self.work.styles.height = "100%"
+        for pane_name, was_open, now_open in (
+            (
+                "library",
+                None if previous_layout is None else previous_layout.library_open,
+                layout.library_open,
+            ),
+            (
+                "items",
+                None if previous_layout is None else previous_layout.items_open,
+                layout.items_open,
+            ),
+        ):
+            if was_open != now_open:
+                self.post_message(LibraryPaneVisibilityChanged(pane_name, now_open))
         self._applied_layout = layout
         if evacuation_target is not None:
             self.screen.set_focus(evacuation_target, scroll_visible=False)

@@ -41,6 +41,21 @@ def _library_host() -> LibraryHarness:
     return LibraryHarness(_build_test_app())
 
 
+def _panes_match_layout(screen, shell_id: str) -> bool:
+    """Whether both optional panes are painted at their resolved widths."""
+    shells = screen.query(shell_id)
+    if not shells:
+        return False
+    shell = shells.first(LibraryAdaptiveReaderShell)
+    layout = shell.effective_layout
+    return (
+        layout.items_open
+        and layout.reader_width > 0
+        and shell.items.region.width == layout.items_width
+        and shell.work.region.width == layout.reader_width
+    )
+
+
 def _narrow_stage_layout(screen):
     """Return the route shell's settled layout while the rail pane is closed."""
     shells = screen.query(_LIBRARY_READER_SHELL_SELECTOR)
@@ -85,10 +100,12 @@ async def test_a_canvas_with_nothing_open_gives_its_columns_to_the_list(
         await _wait_for_library_shell(screen, pilot)
         screen.query_one(f"#library-row-{row_id}").press()
         await _wait_for_selector(screen, pilot, shell_id)
+        # Settled means PAINTED, not merely resolved: an intermediate frame
+        # can hand the work pane the whole stage while the list pane is still
+        # 0x0, which reads exactly like the defect this test pins.
         await _wait_for_condition(
             pilot,
-            lambda: screen.query_one(shell_id, LibraryAdaptiveReaderShell).work.region.width
-            > 0,
+            lambda: _panes_match_layout(screen, shell_id),
             message=f"{shell_id} never settled its allocation.",
         )
         shell = screen.query_one(shell_id, LibraryAdaptiveReaderShell)
@@ -181,3 +198,61 @@ async def test_escape_returns_to_the_library_pane_below_64_columns(
             lambda: screen.query_one("#library-rail").display,
             message="Escape never reopened the Library pane.",
         )
+
+
+@pytest.mark.parametrize(
+    "row_id", ["browse-media", "browse-prompts", "browse-collections"]
+)
+async def test_the_registered_footer_names_the_return_below_64_columns(
+    row_id: str,
+) -> None:
+    """task-32225 AC#1: the chip reaches the RENDERED footer, not just the set.
+
+    The footer is registered from ``compose_content``, before the shell has
+    resolved its allocation, so the live app at 60x24 showed only "F6 next
+    pane" while ``_library_footer_shortcuts_for_current_state()`` already
+    carried the chip. Read back what was registered.
+    """
+    host = _library_host()
+    async with host.run_test(size=NARROW_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one(f"#library-row-{row_id}").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: ("esc", "back to Library")
+            in tuple((screen._footer_shortcut_registration or ("", ()))[1]),
+            message=lambda: (
+                "The registered footer never named the return: "
+                f"{screen._footer_shortcut_registration}"
+            ),
+        )
+
+
+async def test_the_return_chip_disappears_once_the_library_pane_is_back() -> None:
+    """task-32225: the chip follows the pane, not just the width."""
+    host = _library_host()
+    async with host.run_test(size=NARROW_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-prompts").press()
+        # Settled first: pressing Escape against the all-zero opening layout
+        # toggles a pane the resolver has not decided yet.
+        await _wait_for_condition(
+            pilot,
+            lambda: _narrow_stage_layout(screen) is not None
+            and ("esc", "back to Library")
+            in tuple((screen._footer_shortcut_registration or ("", ()))[1]),
+            message="The registered footer never named the return.",
+        )
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: ("esc", "back to Library")
+            not in tuple((screen._footer_shortcut_registration or ("", ()))[1]),
+            message=lambda: (
+                "The return chip outlived the pane it names: "
+                f"{screen._footer_shortcut_registration}"
+            ),
+        )
+        assert screen.query_one("#library-rail").display

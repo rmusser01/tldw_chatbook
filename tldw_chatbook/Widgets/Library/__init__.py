@@ -30,6 +30,7 @@ from .library_ingest_canvas import (
     LibraryIngestPreflightSummary,
     LibraryIngestQueuePanel,
 )
+from .library_adaptive_reader_shell import LibraryPaneVisibilityChanged
 from .library_media_canvas import LibraryMediaCanvas
 from .library_browse_reader_shell import (
     LIBRARY_BROWSE_READER_SHELL_ID,
@@ -156,6 +157,7 @@ __all__ = [
     "LibraryNotesCanvas",
     "LibraryNotesSyncRootsCanvas",
     "LibraryNavigationRailHandle",
+    "LibraryPaneVisibilityChanged",
     "PaneToggleRequested",
     "LibraryPromptsListCanvas",
     "LibraryPromptWorkPane",

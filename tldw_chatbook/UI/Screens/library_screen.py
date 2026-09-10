@@ -432,6 +432,7 @@ from ...Widgets.Library import (
     LibraryNotesCanvas,
     LibraryNavigationRailHandle,
     PaneToggleRequested,
+    LibraryPaneVisibilityChanged,
     LibraryPromptWorkPane,
     LibraryPromptsListCanvas,
     LibraryRail,
@@ -3795,6 +3796,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_reader_shell_probe_generation = -1
         self._library_emergency_stage: Literal["rail-only", "canvas-only"] | None = None
         self._library_stage_interaction_generation = 0
+        # task-32225: last value ``_sync_library_narrow_stage_footer`` acted on.
+        self._library_narrow_stage_footer_state: bool | None = None
         self._library_emergency_restore_receipt: (
             _LibraryEmergencyRestoreReceipt | None
         ) = None
@@ -4407,8 +4410,15 @@ class LibraryScreen(BaseAppScreen):
             # here rather than in each of the route function's eight branches
             # so no destination can be left behind with the old chip, and the
             # label matches the "‹ Library" control that is on screen with it.
-            shortcuts = tuple(pair for pair in shortcuts if pair[0] != "esc") + (
-                ("esc", "back to Library"),
+            #
+            # FIRST, not appended: this context exists only below 64 columns,
+            # exactly where AppFooterStatus keeps a PREFIX of the actions and
+            # drops the tail -- appended, the chip was registered and never
+            # painted (live capture at 60x24 showed "/ focus search | F6 next
+            # pane" and no return). Recovery outranks navigation here anyway,
+            # which is the order that ladder assumes.
+            shortcuts = (("esc", "back to Library"),) + tuple(
+                pair for pair in shortcuts if pair[0] != "esc"
             )
         if self._library_lifecycle not in (
             LibraryLifecycle.UNKNOWN,
@@ -6740,6 +6750,30 @@ class LibraryScreen(BaseAppScreen):
         # the first frames of the visit this context has to be right about.
         layout = getattr(shells.first(Widget), "effective_layout", None)
         return layout is not None and not layout.library_open
+
+    @on(LibraryPaneVisibilityChanged)
+    def _library_pane_visibility_changed(
+        self, event: LibraryPaneVisibilityChanged
+    ) -> None:
+        """Re-read the narrow-stage footer when a pane's visibility settles."""
+        event.stop()
+        self._sync_library_narrow_stage_footer()
+
+    def _sync_library_narrow_stage_footer(self) -> None:
+        """Re-register the footer when the narrow single stage flips (task-32225).
+
+        The footer is registered from ``compose_content``, which runs BEFORE
+        the shell has resolved its allocation -- so on arrival at 60x24 the
+        chip set was decided while the Library pane was still nominally open,
+        and the "back to Library" chip never appeared even though the key
+        worked (live capture, seeded profile). Flip-gated, so a settle that
+        changes nothing costs no footer churn.
+        """
+        active = self._library_narrow_stage_return_active()
+        if active == self._library_narrow_stage_footer_state:
+            return
+        self._library_narrow_stage_footer_state = active
+        self._register_footer_shortcuts()
 
     def action_library_narrow_stage_return(self) -> None:
         """Reopen the closed Library pane (task-32225).
