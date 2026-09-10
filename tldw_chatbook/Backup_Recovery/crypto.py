@@ -15,7 +15,7 @@ import subprocess
 import tempfile
 from threading import Event, Lock, Thread
 import time
-from typing import Annotated, BinaryIO, Literal
+from typing import Annotated, BinaryIO, Callable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -88,6 +88,9 @@ def _pipes(
     cancel: Event,
     limit: int,
     deadline: float | None = None,
+    input_limit: int | None = None,
+    output_limit: int | None = None,
+    space_check: Callable[[int], None] | None = None,
 ) -> None:
     """Pump all three pipes concurrently, retaining no input or diagnostics."""
     failed = Event()
@@ -110,7 +113,7 @@ def _pipes(
                 total = 0
                 while data := source.read(_BUFFER):
                     total += len(data)
-                    if total > limit:
+                    if total > (input_limit if input_limit is not None else limit):
                         failed.set()
                         return
                     _write_all(pipe, data)
@@ -123,9 +126,11 @@ def _pipes(
                 total = 0
                 while data := pipe.read(_BUFFER):
                     total += len(data)
-                    if total > limit:
+                    if total > (output_limit if output_limit is not None else limit):
                         failed.set()
                         return
+                    if space_check is not None:
+                        space_check(len(data))
                     _write_all(output, data)
         except (OSError, ValueError):
             failed.set()
@@ -288,13 +293,26 @@ def helper_capability() -> tuple[bool, str]:
 
 
 def transform(
-    source: Path, target: Path, *, password: bytes, decrypt: bool, cancel: Event
+    source: Path,
+    target: Path,
+    *,
+    password: bytes,
+    decrypt: bool,
+    cancel: Event,
+    input_limit: int = _MAX_CONTAINER,
+    output_limit: int = _MAX_CONTAINER,
+    space_check: Callable[[int], None] | None = None,
 ) -> None:
     """Stream an age transform to a new private file, or raise a fixed code.
 
     The process-wide job lock bounds KDF concurrency to one per application.
     The helper independently enforces both 2 TiB stream budgets.
     """
+    if any(
+        type(value) is not int or not 0 < value <= _MAX_CONTAINER
+        for value in (input_limit, output_limit)
+    ):
+        raise CryptoError("invalid_budget")
     if type(password) is not bytes or not 1 <= len(password) <= 4096:
         raise CryptoError("invalid_password")
     while not _JOBS.acquire(timeout=0.05):
@@ -326,6 +344,9 @@ def transform(
                     password=password,
                     cancel=cancel,
                     limit=_MAX_CONTAINER,
+                    input_limit=input_limit,
+                    output_limit=output_limit,
+                    space_check=space_check,
                 )
                 output.flush()
                 os.fsync(output.fileno())
