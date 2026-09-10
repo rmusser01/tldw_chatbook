@@ -287,7 +287,9 @@ it was deleted, newest first. Press a row to select it (the **▸** marker
 moves), then **"Restore"** to put it back: the row leaves the Trash, the
 rail's "Media N" count goes up in place, a "Restored 'Title'." line
 confirms it, and the item is back in the media list (and in search
-results) exactly as it was — restore never rewrites the item. "‹ Media" or
+results) with its title, content and analysis untouched. Restore brings the
+item back and marks it changed now, so it returns at the top of a Newest
+sort — the same is true of "Undo" on a delete receipt. "‹ Media" or
 Escape returns to the list.
 
 Notes on the edges: with nothing deleted the view says "Trash is empty.
@@ -1095,3 +1097,10 @@ claimed two different targets in two places while the chip named a third;
 the chip is pinned by test and the guide was not, so the guide now quotes
 `esc focus Items` / `esc focus Library` / `esc close` and a test asserts the
 quotes are the strings the code produces.)*
+
+*Verified against fix/library-crit9-media-reader — 2026-09-10 (task-32224:
+the page no longer claims "restore never rewrites the item". Measured
+against a real MediaDatabase: `mark_as_trash` ALREADY stamps `last_modified`
+with the current time, so the re-dating starts at the delete and dropping
+the stamp from `restore_from_trash` alone would change nothing the user
+sees. The behaviour is documented and pinned instead.)*

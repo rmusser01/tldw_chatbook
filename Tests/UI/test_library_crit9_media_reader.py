@@ -182,3 +182,60 @@ def test_the_escape_chip_and_the_guide_quote_the_same_words():
     # The contradicting claims are gone.
     assert "Escape never leaves the Reader at all" not in guide
     assert "in narrower layouts Escape shows the list again" not in guide
+
+
+def test_a_delete_and_its_undo_both_stamp_the_item_modified_now(tmp_path):
+    """task-32224: the re-dating starts at the DELETE, not at the Undo.
+
+    The guide claimed "restore never rewrites the item". It does, and so
+    does the delete that precedes it: both ``mark_as_trash`` and
+    ``restore_from_trash`` bump ``version`` and stamp ``last_modified`` with
+    the current time (they are optimistic-locking writes that log a sync
+    event, so the stamp is that row's sync clock, not an edit marker).
+
+    Dropping the stamp from the restore alone would therefore fix nothing
+    -- the item would keep the DELETE's "now" and still sort to the top of
+    Newest. Preserving the pre-delete time would mean capturing it before
+    the delete and writing it back through the restore, i.e. a new
+    cross-cutting write path in the media DB's shared sync contract for a
+    P3 ordering nicety. AC#1's second clause is taken instead: the guide
+    now states this behaviour, and this test is what keeps it honest.
+    """
+    db = MediaDatabase(str(tmp_path / "media.db"), client_id="crit9-media-reader")
+    media_id, _uuid, _msg = db.add_media_with_keywords(
+        title="Roadmap Sync Notes",
+        media_type="document",
+        content="# Roadmap sync\n\nBody.\n",
+        keywords=["roadmap"],
+        url="crit9://roadmap",
+    )
+
+    def stored_last_modified() -> str:
+        with db.transaction() as conn:
+            row = conn.execute(
+                "SELECT last_modified FROM Media WHERE id = ?", (media_id,)
+            ).fetchone()
+        return str(row[0])
+
+    seeded = stored_last_modified()
+    # The stamps carry milliseconds; one second apart is unambiguous.
+    time.sleep(1.1)
+    assert db.mark_as_trash(media_id) is True
+    after_delete = stored_last_modified()
+    time.sleep(1.1)
+    assert db.restore_from_trash(media_id) is True
+    after_undo = stored_last_modified()
+
+    assert after_delete != seeded, (seeded, after_delete)
+    assert after_undo != after_delete, (after_delete, after_undo)
+
+    # The guide says exactly this, in the words the user reads (compared
+    # with the page's own line wrapping collapsed, so a reflow is not a
+    # test failure).
+    guide = _GUIDE.read_text(encoding="utf-8")
+    prose = " ".join(guide.split())
+    assert (
+        "Restore brings the item back and marks it changed now, so it "
+        "returns at the top of a Newest sort" in prose
+    ), "The Trash/Restore paragraph no longer states the real behaviour."
+    assert "restore never rewrites the item" not in prose
