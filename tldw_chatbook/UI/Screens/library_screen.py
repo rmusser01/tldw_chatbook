@@ -2257,6 +2257,11 @@ class LibraryScreen(BaseAppScreen):
             "quizzes": None,
         }
         self._library_loaded = False
+        #: task-32245: a navigation context admitted BEFORE mount cannot arm
+        #: its destination's entry focus yet (no canvas exists). The row is
+        #: parked here and ``on_mount`` runs the same
+        #: ``_arm_library_row_entry_focus`` the mounted route runs inline.
+        self._pending_library_entry_focus_row: str | None = None
         # Combined Search+RAG canvas state; see LibraryRagSearchState's own
         # module docstring/field comments for the per-field detail that
         # used to live here. `history` has a genuinely computed default
@@ -8620,6 +8625,12 @@ class LibraryScreen(BaseAppScreen):
                 exclusive=True,
                 group="library_nav_character",
             )
+        pending_entry_focus_row = self._pending_library_entry_focus_row
+        self._pending_library_entry_focus_row = None
+        if pending_entry_focus_row:
+            # task-32245: a pre-mount navigation context selected this row
+            # but could not arm its entry focus; the canvas exists now.
+            self._arm_library_row_entry_focus(pending_entry_focus_row)
 
     async def on_unmount(self) -> None:
         """Unregister the ingest registry listener registered in ``on_mount``.
@@ -10168,6 +10179,9 @@ class LibraryScreen(BaseAppScreen):
             if not self._unavailable_navigation._library_character_admission_is_current(self, character_admission):
                 self._unavailable_navigation._discard_library_character_admission(self, character_admission)
                 return
+        # task-32245: a deep link owes its destination the same entry focus a
+        # rail-row press does.
+        self._arm_library_row_entry_focus(target_row_id)
         if character_admission is not None:
             await self._unavailable_navigation._open_pending_library_character_navigation(self, )
 
@@ -11419,9 +11433,20 @@ class LibraryScreen(BaseAppScreen):
                     id="library-conversations-canvas",
                 )
         elif (
-            shell.canvas_kind == LIBRARY_CANVAS_KIND_NOTES
+            shell.canvas_kind
+            in (LIBRARY_CANVAS_KIND_NOTES, LIBRARY_CANVAS_KIND_NOTES_CREATE)
             and self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
         ):
+            # task-32245: NOTES_CREATE belongs here too. ``compose_content``
+            # mounts the shared "Loading local Library sources…" placeholder
+            # for BOTH kinds (they share one retained Items pane), but this
+            # reconciler only knew ``notes`` -- so a first entry that landed
+            # on New note before the snapshot resolved (the wizard's "Write
+            # your first note" hand-off, the Console setup card's notes
+            # action, a cold command-palette "new_note") kept that
+            # placeholder for the life of the visit. ``_build_library_entry_
+            # active_child`` and ``_LIBRARY_RESIDENT_CANVAS_OWNER_ROWS``
+            # already pair the two kinds; this site was the odd one out.
             local_list_surface = True
             expected_selector = "#library-notes-canvas"
             if self._library_lookup_error is None:
@@ -20695,6 +20720,24 @@ class LibraryScreen(BaseAppScreen):
             self._arm_library_list_entry_focus()
         if self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT:
             self._start_library_export_counts_worker()
+        self._arm_library_row_entry_focus(row_id)
+
+    def _arm_library_row_entry_focus(self, row_id: str) -> None:
+        """Park entry focus for one destination row once its canvas exists.
+
+        task-32245: this was inline in the rail-row switch, so it ran only
+        on that route. The navigation-context deep links
+        (``apply_navigation_context``) apply the SAME row selection and
+        recompose from it, but skipped every arm here -- so the wizard's
+        "Write your first note" hand-off landed on the New-note canvas with
+        nothing focused: its advertised "enter create note" was dead (the
+        footer fell back to the bare "esc back to notes" tier) and the first
+        Enter fell through to the app's own binding and left Library for
+        Home. Both routes now share this one arm.
+
+        Args:
+            row_id: The destination rail row the route is landing on.
+        """
         if row_id == LIBRARY_ROW_INGEST_MEDIA and self.is_mounted:
             # task-3302 AC#1 (MI-03): entering Ingest parks the caret in
             # the path field -- the first action on this canvas is always
