@@ -525,11 +525,16 @@ def _private_sqlite_seam_violations(
     for symbol, seam_name, call in calls:
         if seam_name == "open_recovery_validation":
             if (
-                production_module == "tldw_chatbook/Backup_Recovery/sqlite_validation"
-                and symbol == "validate_candidate"
+                (production_module, symbol) in {
+                    ("tldw_chatbook/Backup_Recovery/sqlite_validation", "validate_candidate"),
+                    ("tldw_chatbook/Backup_Recovery/credentials", "_rewrite_database"),
+                }
                 and call.args
                 and ast.unparse(call.args[0]) == "installed.owner_id"
-                and "installed = _installed_owner(owner.owner_id)" in source_path.read_text()
+                and (
+                    "installed = _installed_owner(owner.owner_id)" in source_path.read_text()
+                    or (symbol == "_rewrite_database" and "installed = _installed_owner(owner_id)" in source_path.read_text())
+                )
             ):
                 continue
             violations.append(f"{production_module}:{symbol}: unqualified recovery validation")
@@ -651,7 +656,7 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # the dead db.search_history owner, formerly C16; every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
-        for number in range(1, 81)
+        for number in range(1, 82)
     ]
     assert [row["id"] for row in backup_rows] == [
         f"B{number:02d}" for number in range(1, 38)

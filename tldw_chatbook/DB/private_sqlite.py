@@ -99,6 +99,11 @@ _PRIVATE_MEMORY_AND_READ_ONLY = frozenset(
 )
 
 _SQLITE_OWNER_POLICIES = {
+    "recovery.credentials": SQLiteOwnerPolicy(
+        "tldw_chatbook/Backup_Recovery/credentials",
+        _PRIVATE_FILE,
+        "Fresh disposable credential reconstruction from installed schema and parameterized rows.",
+    ),
     "recovery.validation": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/private_sqlite",
         _PRIVATE_AND_READ_ONLY,
@@ -1293,7 +1298,7 @@ def _with_storage_admission(function):
             raise TypeError("invalid_private_admission_outcome")
         policy = _validated_owner_policy(owner_id)
         if (
-            owner_id == "recovery.validation"
+            owner_id in {"recovery.validation", "recovery.credentials"}
             or kwargs.get("_verified_descriptor_fd") is not None
             or os.fspath(database) == ":memory:"
             or (kwargs.get("read_only", False) and policy.foreign_read_only_source)

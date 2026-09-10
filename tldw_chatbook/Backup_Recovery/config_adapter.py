@@ -41,6 +41,10 @@ def managed_secret_locations(
                 locations.append(location)
             elif isinstance(child, Mapping):
                 walk(child, location, depth + 1)
+            elif isinstance(child, list):
+                for index, entry in enumerate(child):
+                    if isinstance(entry, Mapping):
+                        walk(entry, location + (str(index),), depth + 1)
 
     walk(config, (), 0)
     return tuple(sorted(locations))

@@ -21,6 +21,7 @@ from .bootstrap import (
 )
 from .server_credentials import (
     CredentialStoreUnavailable,
+    RECOVERY_SETUP_REQUIRED,
     SERVER_CREDENTIAL_ACCESS_TOKEN,
     SERVER_CREDENTIAL_API_KEY,
     SERVER_CREDENTIAL_BEARER_TOKEN,
@@ -648,6 +649,14 @@ class RuntimeServerContextProvider:
         *,
         allow_legacy_config: bool,
     ) -> tuple[str | None, str]:
+        if target.auth_reference == RECOVERY_SETUP_REQUIRED:
+            return None, "none"
+        if allow_legacy_config:
+            legacy = self._legacy_api_config()
+            if legacy.get("auth_reference") == RECOVERY_SETUP_REQUIRED and not any(
+                legacy.get(key) for key in ("auth_token", "api_key", "bearer_token")
+            ):
+                return None, "none"
         purpose = self._purpose_from_auth_reference(target.auth_reference)
         if purpose is not None:
             secret = self._get_credential_secret(server_id, purpose)

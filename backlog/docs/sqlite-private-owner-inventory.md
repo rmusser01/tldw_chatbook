@@ -239,6 +239,7 @@ the existing C/B owner policy or admit an arbitrary dynamic call site.
 
 | C79 | tldw_chatbook/DB/private_sqlite | open_recovery_validation | recovery.validation | private_file, read_only_uri | disposable staged import inspection and installed migration | Migrated via `open_recovery_validation`. Explicit installed logical owner lookup, mandatory security primitives, one restricted candidate connection. No live resource enrollment, ordinary repository, or unrestricted retry. |
 | C80 | tldw_chatbook/Backup_Recovery/sqlite_validation | _reference | recovery.validation_schema | memory | exact installed schema metadata reference | Migrated via `connect_private_sqlite`. Only frozen installed SQL enters this memory database; candidate SQL is compared before metadata/version/domain inspection. |
+| C81 | tldw_chatbook/Backup_Recovery/credentials | _rewrite_database | recovery.credentials | private_file | fresh staged credential-free logical reconstruction | Migrated via `connect_private_sqlite`. Exact installed catalog from restricted validated source, explicit hidden rowids and parameterized rows, installed triggers created after data copy, then restricted output validation. Never opens a live destination or copies freed pages/sidecars. |
 
 The candidate entry compares complete ordered catalogs plus columns, autoindexes,
 indexes, views and FTS/shadow metadata. It checks versions, integrity, foreign keys
