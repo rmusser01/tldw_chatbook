@@ -105,3 +105,28 @@ async def test_the_rail_heading_is_never_cut_mid_word() -> None:
         painted = _painted(host, screen.query_one("#library-rail-heading").region)
         assert "Navigati" not in painted or "Navigation" in painted, painted
         assert "Navigat…" in painted or "Navigation" in painted, painted
+
+
+# --- task-32226: unsubmitted rail text stays on its own canvas -------------
+
+
+@pytest.mark.asyncio
+async def test_unsubmitted_rail_text_never_seeds_the_rag_query_box() -> None:
+    """AC#1: text typed into the rail box on a browse canvas is never
+    committed to the Search/RAG query state, so it cannot reappear in the
+    Search/RAG query box on the next visit."""
+    host = _library_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-filter")
+        box = screen.query_one("#library-search-input", Input)
+        box.focus()
+        await pilot.press(*"draft")  # typed, never submitted
+        await pilot.pause()
+        assert box.value == "draft", "the keystrokes stay in the widget"
+        screen.query_one("#library-row-browse-search").press()
+        query_box = await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+        assert query_box.value == "", query_box.value
+        assert screen._rag_search_state.query == "", screen._rag_search_state.query
