@@ -5513,7 +5513,10 @@ class ConsoleTranscript(VerticalScroll):
                         video_card_spec=video_spec,
                     )
                 )
-            elif card_spec is not None:
+            elif card_spec is not None and not (
+                (recovered := self._image_specs.get(message.id)) is not None
+                and recovered.recovered_status is not None
+            ):
                 # A generation-card message renders the card row INSTEAD of
                 # the plain image row -- mutually exclusive per message id.
                 rows.append(
@@ -5532,7 +5535,11 @@ class ConsoleTranscript(VerticalScroll):
                         _TranscriptRow(
                             key=f"image:{message.id}",
                             kind="image",
-                            signature=("image", message.id, image_spec.mode),
+                            signature=("image", message.id, image_spec.mode) + (
+                                (image_spec.recovered_status, image_spec.recovered_key,
+                                 image_spec.pil is not None or image_spec.pixels is not None)
+                                if image_spec.recovered_status is not None else ()
+                            ),
                             message=message,
                             image_spec=image_spec,
                         )
@@ -5825,6 +5832,10 @@ class ConsoleTranscript(VerticalScroll):
 
     def _image_row_widget(self, spec: ConsoleImageRowSpec) -> Widget:
         """Build the mounted widget for one inline-image row."""
+        if spec.recovered_status in {"missing", "deleted", "failed"}:
+            return Static(spec.recovered_status.capitalize() + " recovered media", classes="console-transcript-image")
+        if spec.recovered_status == "ready" and spec.pil is None and spec.pixels is None:
+            return Static("Loading recovered media", classes="console-transcript-image")
         widget: Widget | None = None
         if spec.mode == "graphics" and spec.pil is not None:
             try:

@@ -30,7 +30,7 @@ from tldw_chatbook.Widgets.Console.console_video_preview import ConsoleVideoPrev
 CARD_BORDER_COLOR = "#6f7782"
 CARD_TITLE = "Video Generation"
 
-VideoCardStatus = Literal["ready", "expired"]
+VideoCardStatus = Literal["ready", "expired", "recovered_missing", "recovered_deleted"]
 
 
 @dataclass(frozen=True)
@@ -145,6 +145,10 @@ def video_card_status_line(spec: ConsoleVideoCardSpec) -> str:
     """Return the one-line status header for the card's current state."""
     if spec.status == "ready":
         return "▶ Ready — select for Play / Save a copy / ♻ Regenerate"
+    if spec.status == "recovered_missing":
+        return "Missing recovered media"
+    if spec.status == "recovered_deleted":
+        return "Deleted recovered media"
     return "⏳ Expired — the ephemeral file is gone; ♻ Regenerate recreates it"
 
 

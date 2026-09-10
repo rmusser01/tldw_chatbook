@@ -2816,3 +2816,20 @@ Same-process ordinary first authority initialization uses existing pending acqui
 Ruling119 refinement: the sanitized writer now pins the selected parent and target FD, verifies existing identity/type before truncation, creates absent output exclusively beneath that parent, and uses nonblocking opens to refuse a substituted FIFO without a reader. The stream uses closefd=False; its buffer/target FD and independent parent FD have explicit separate native retirement, with first/unknown outcomes retained. Late path replacement does not redirect writes to a foreign inode; no caller output is deleted. This adds concrete native effects beyond the syntactic alias census and does not promote the cohort classification.
 
 Ruling120 keeps an upfront original-primitive capability check and the original ordinary pathname stream export on unavailable platforms. This route is explicitly unqualified for Library maintenance, retains complete stream/result lifetimes, and never follows a failed/unknown pinned allocation. No global supports_dir_fd metadata is mutated. A mounted private capability simulation verifies ordinary public success/bytes/close separately from refused Library qualification; it is not a real cross-platform run.
+
+## Recovered media durable owner — TASK-31994 / ADR-126
+
+Catalog v1, exact source profile/message/slug/type references, operation journal and validated versioned tombstones live under the profile recovered_media root. Ready payloads are baseline dependencies; intentional deletion is validated inside the catalog and does not emit caller-supplied deletion_validated flags. Unknown files and pending operations block complete capture. Temporary VideoStore TTL/session cleanup never traverses this root. Real consumers: VideoStore.resolve_state and Console video card/play/save; the enhanced image implementation is Widgets/Chat_Widgets/chat_message_enhanced.py behind the compatibility alias. Single-image ambiguity renders missing. Task10 composition remains incomplete.
+
+| sqlite:recovered.media | tldw_chatbook/Backup_Recovery/recovered_media | _PRIVATE_FILE | recovered.media/durable |
+| sqlite:recovery.recovered_media | tldw_chatbook/Backup_Recovery/recovered_media | _PRIVATE_AND_READ_ONLY | recovered.media/capture-validation |
+
+| tldw_chatbook/Backup_Recovery/recovered_media.py | RecoveredMedia.__init__ | secure_private_directory | 1 | qualified | recovered.media |
+| tldw_chatbook/Backup_Recovery/recovered_media.py | RecoveredMedia._connection | connect_private_sqlite | 1 | qualified | recovered.media |
+| tldw_chatbook/Backup_Recovery/recovered_media.py | RecoveredMedia._finish_delete | os.unlink | 1 | qualified | recovered.media |
+| tldw_chatbook/Backup_Recovery/recovered_media.py | RecoveredMedia.retain | atomic_private_write_bytes | 1 | qualified | recovered.media |
+| tldw_chatbook/Backup_Recovery/recovered_media.py | _RecoveredAdapter.capture | copy_private_sqlite | 1 | qualified | recovered.media |
+| tldw_chatbook/Backup_Recovery/recovered_media.py | _RecoveredAdapter.discover | connect_private_sqlite | 1 | qualified | recovered.media |
+| tldw_chatbook/Backup_Recovery/recovered_media.py | _RecoveredAdapter.validate | connect_private_sqlite | 1 | qualified | recovered.media |
+| tldw_chatbook/Backup_Recovery/recovered_media.py | _RecoveredAdapter.validate_dependencies | connect_private_sqlite | 1 | qualified | recovered.media |
+| tldw_chatbook/Backup_Recovery/recovered_media.py | _read | open_private_binary | 1 | qualified | recovered.media |

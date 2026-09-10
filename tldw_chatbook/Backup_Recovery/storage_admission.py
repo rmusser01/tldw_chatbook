@@ -885,6 +885,7 @@ def _check_capture_file_identity(scope, selected, info, *, source_only=False):
 
 # Explicit installed owners; identifiers grant no path or maintenance authority.
 _RAW_RECOVERY_LIMITS = {
+    "recovered.media": 512 * 1024**2,
     "generation.assets": 256 * 1024**3,
     "diagnostics.logs": 256 * 1024**3,
     "tokenizers.custom": 256 * 1024**3,

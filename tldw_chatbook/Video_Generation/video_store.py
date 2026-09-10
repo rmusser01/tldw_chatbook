@@ -165,9 +165,11 @@ class VideoStore:
             defaults to the live config at call time.
     """
 
-    def __init__(self, root: Path | None = None, *, config=None) -> None:
+    def __init__(self, root: Path | None = None, *, config=None, recovered_root=None, recovered_profile=None) -> None:
         self._root = (root or (get_user_data_dir() / "generated_videos")).expanduser()
         self._config = config
+        self._recovered_root = recovered_root or self._root.parent / "recovered_media"
+        self._recovered_profile = recovered_profile
         self._transaction_lock = threading.RLock()
 
     @property
@@ -451,11 +453,29 @@ class VideoStore:
         rather than raising -- resolution is a read path against durable,
         possibly hand-edited names.
         """
+        return self.resolve_state(message_id, slug, extension=extension)[1]
+
+    def resolve_state(self, message_id: str, slug: str, *, extension: str):
+        """Resolve durable recovery identity before the ephemeral filename."""
+        from tldw_chatbook.Backup_Recovery.recovered_media import (
+            RecoveredMedia,
+            current_profile_id,
+        )
+
+        catalog = self._recovered_root / "catalog.sqlite3"
+        if catalog.exists():
+            store = RecoveredMedia(self._recovered_root)
+            status, path = store.resolve_reference(
+                profile=self._recovered_profile or current_profile_id(),
+                message=message_id, slug=slug, media_type="video/" + extension,
+            )
+            if status != "unknown":
+                return ("ready" if status == "ready" else "recovered_" + status), path
         try:
             path = self._video_path(message_id, slug, extension)
         except (ValueError, VideoStoreSaveError):
-            return None
-        return path if self._is_safe_regular_file(path) else None
+            return "expired", None
+        return ("ready", path) if self._is_safe_regular_file(path) else ("expired", None)
 
     def iter_stored(self) -> Iterator[StoredVideo]:
         """Return an iterator over one completed non-following snapshot."""

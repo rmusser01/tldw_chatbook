@@ -54,20 +54,24 @@ class _Profiles(_SQLiteDeclaration):
             with closing(
                 connect_private_sqlite("recovery.files.tts", candidate, read_only=True)
             ) as connection:
-                issues = _validate_sqlite(connection, self.versions, self.schemas)
-                if issues:
-                    return issues
-                for payload, count, digest in connection.execute(
-                    "SELECT wav_bytes,byte_length,sha256 FROM tts_profile_clone_references"
-                ):
-                    if (
-                        len(payload) != count
-                        or hashlib.sha256(payload).hexdigest() != digest
-                    ):
-                        return ("tts_reference_digest_mismatch",)
-                return ()
+                return self._validate_connection(connection)
         except (OSError, ValueError, sqlite3.Error, RuntimeError):
             return ("tts_validation_unavailable",)
+
+    def _validate_connection(self, connection):
+        """Run existing owned-content checks on an already restricted connection."""
+        issues = _validate_sqlite(connection, self.versions, self.schemas)
+        if issues:
+            return issues
+        for payload, count, digest in connection.execute(
+            "SELECT wav_bytes,byte_length,sha256 FROM tts_profile_clone_references"
+        ):
+            if (
+                len(payload) != count
+                or hashlib.sha256(payload).hexdigest() != digest
+            ):
+                return ("tts_reference_digest_mismatch",)
+        return ()
 
     def capture(self, item: StorageItem, destination: Path, cancel: Event) -> None:
         from tldw_chatbook.DB.private_sqlite import copy_private_sqlite

@@ -116,6 +116,7 @@ def _repository_types():
     # optional runtime stacks just to compare an unrelated source's exact type.
     optional = {}
     for module_name, class_name, owner_id in (
+        ("tldw_chatbook.Backup_Recovery.recovered_media", "RecoveredMedia", "recovered.media"),
         ("tldw_chatbook.DB.Evals_DB", "EvalsDB", "db.evals"),
         ("tldw_chatbook.DB.Subscriptions_DB", "SubscriptionsDB", "db.subscriptions"),
         (

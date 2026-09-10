@@ -52,6 +52,7 @@ CONNECTION_BACKUP_OWNER_IDS = (
     "db.prompts.backup",
 )
 COPY_BACKUP_OWNER_IDS = (
+    "recovery.recovered_media",
     "recovery.files.tts",
     "recovery.operations.workspaces",
     "recovery.operations.agent_runs",

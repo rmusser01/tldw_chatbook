@@ -190,16 +190,20 @@ class _SyncBindings:
                     "recovery.operations.note_bindings", candidate, read_only=True
                 )
             ) as connection:
-                connection.execute("PRAGMA trusted_schema=OFF")
-                if connection.execute(
-                    "SELECT 1 FROM note_folder_memberships WHERE ownership NOT IN ('manual','managed') OR (ownership='manual' AND (owner_id<>'' OR owner_active<>1)) OR (ownership='managed' AND length(owner_id)=0) LIMIT 1"
-                ).fetchone():
-                    return ("invalid_managed_membership",)
-                # Existing FK integrity checks cover note/folder/session references.
-                # Absolute root/file paths are historical evidence, never opened.
-                return ()
+                return self._validate_connection(connection)
         except (OSError, ValueError, sqlite3.Error):
             return ("operational_validation_unavailable",)
+
+    def _validate_connection(self, connection):
+        """Run existing owned-content checks on an already restricted connection."""
+        connection.execute("PRAGMA trusted_schema=OFF")
+        if connection.execute(
+            "SELECT 1 FROM note_folder_memberships WHERE ownership NOT IN ('manual','managed') OR (ownership='manual' AND (owner_id<>'' OR owner_active<>1)) OR (ownership='managed' AND length(owner_id)=0) LIMIT 1"
+        ).fetchone():
+            return ("invalid_managed_membership",)
+        # Existing FK integrity checks cover note/folder/session references.
+        # Absolute root/file paths are historical evidence, never opened.
+        return ()
 
     def capture(self, item, destination, cancel):
         from dataclasses import replace

@@ -353,6 +353,8 @@ class ConsoleImageRowSpec:
     mode: Literal["pixels", "graphics"]
     pixels: Pixels | None = None
     pil: "PILImage.Image | None" = None
+    recovered_status: Literal["ready", "missing", "deleted", "failed"] | None = None
+    recovered_key: str | None = None
 
 
 class ConsoleImageRenderCache:

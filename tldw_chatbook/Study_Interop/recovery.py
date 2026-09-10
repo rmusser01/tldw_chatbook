@@ -71,78 +71,82 @@ class _SharedAdapter:
                     "recovery.domain.study", candidate, read_only=True
                 )
             ) as conn:
-                conn.execute("PRAGMA trusted_schema=OFF")
-                if conn.execute(
-                    "SELECT 1 FROM flashcard_assets WHERE typeof(content) != 'blob' OR byte_size != length(content) LIMIT 1"
-                ).fetchone():
-                    return ("missing_required_asset",)
-                queries = (
-                    (
-                        "SELECT * FROM flashcards",
-                        "SELECT * FROM flashcard_templates",
-                        "SELECT * FROM decks",
-                    )
-                    if self.owner_id == "study.local"
-                    else (
-                        "SELECT * FROM quiz_questions",
-                        "SELECT * FROM quiz_attempts",
-                    )
-                )
-                for query in queries:
-                    for row in conn.execute(query):
-                        for text in row:
-                            if not isinstance(text, str):
-                                continue
-                            identities = re.findall(
-                                r"""flashcard-asset://([A-Za-z0-9_-]+)(?=$|[\s)"'])""",
-                                text,
-                            )
-                            if text.count("flashcard-asset://") != len(identities):
-                                return ("missing_required_asset",)
-                            for identity in identities:
-                                if (
-                                    conn.execute(
-                                        "SELECT 1 FROM flashcard_assets WHERE asset_uuid=?",
-                                        (identity,),
-                                    ).fetchone()
-                                    is None
-                                ):
-                                    return ("missing_required_asset",)
-                if self.owner_id == "study.local":
-                    for kind, identity in conn.execute(
-                        "SELECT entity_type,entity_id FROM study_sessions"
-                    ):
-                        query = {
-                            "topic": "SELECT 1 FROM topics WHERE id=?",
-                            "flashcard_deck": "SELECT 1 FROM decks WHERE id=?",
-                            "mindmap": "SELECT 1 FROM mindmaps WHERE id=?",
-                        }.get(kind)
-                        if query is None:
-                            return ("unsupported_domain_reference",)
-                        if conn.execute(query, (identity,)).fetchone() is None:
-                            return ("invalid_domain_reference",)
-                else:
-                    for snapshot, answers in conn.execute(
-                        "SELECT questions_snapshot,answers FROM quiz_attempts"
-                    ):
-                        questions = json.loads(snapshot or "[]")
-                        responses = json.loads(answers or "[]")
-                        if (
-                            not isinstance(questions, list)
-                            or not isinstance(responses, list)
-                            or any(
-                                not isinstance(q, dict) for q in questions + responses
-                            )
-                        ):
-                            return ("invalid_domain_reference",)
-                        ids = {q.get("id") for q in questions}
-                        if len(ids) != len(questions) or any(
-                            a.get("question_id") not in ids for a in responses
-                        ):
-                            return ("invalid_domain_reference",)
-                return ()
+                return self._validate_connection(conn)
         except (OSError, ValueError, TypeError, sqlite3.Error):
             return ("domain_validation_unavailable",)
+
+    def _validate_connection(self, conn):
+        """Run existing owned-content checks on an already restricted connection."""
+        conn.execute("PRAGMA trusted_schema=OFF")
+        if conn.execute(
+            "SELECT 1 FROM flashcard_assets WHERE typeof(content) != 'blob' OR byte_size != length(content) LIMIT 1"
+        ).fetchone():
+            return ("missing_required_asset",)
+        queries = (
+            (
+                "SELECT * FROM flashcards",
+                "SELECT * FROM flashcard_templates",
+                "SELECT * FROM decks",
+            )
+            if self.owner_id == "study.local"
+            else (
+                "SELECT * FROM quiz_questions",
+                "SELECT * FROM quiz_attempts",
+            )
+        )
+        for query in queries:
+            for row in conn.execute(query):
+                for text in row:
+                    if not isinstance(text, str):
+                        continue
+                    identities = re.findall(
+                        r"""flashcard-asset://([A-Za-z0-9_-]+)(?=$|[\s)"'])""",
+                        text,
+                    )
+                    if text.count("flashcard-asset://") != len(identities):
+                        return ("missing_required_asset",)
+                    for identity in identities:
+                        if (
+                            conn.execute(
+                                "SELECT 1 FROM flashcard_assets WHERE asset_uuid=?",
+                                (identity,),
+                            ).fetchone()
+                            is None
+                        ):
+                            return ("missing_required_asset",)
+        if self.owner_id == "study.local":
+            for kind, identity in conn.execute(
+                "SELECT entity_type,entity_id FROM study_sessions"
+            ):
+                query = {
+                    "topic": "SELECT 1 FROM topics WHERE id=?",
+                    "flashcard_deck": "SELECT 1 FROM decks WHERE id=?",
+                    "mindmap": "SELECT 1 FROM mindmaps WHERE id=?",
+                }.get(kind)
+                if query is None:
+                    return ("unsupported_domain_reference",)
+                if conn.execute(query, (identity,)).fetchone() is None:
+                    return ("invalid_domain_reference",)
+        else:
+            for snapshot, answers in conn.execute(
+                "SELECT questions_snapshot,answers FROM quiz_attempts"
+            ):
+                questions = json.loads(snapshot or "[]")
+                responses = json.loads(answers or "[]")
+                if (
+                    not isinstance(questions, list)
+                    or not isinstance(responses, list)
+                    or any(
+                        not isinstance(q, dict) for q in questions + responses
+                    )
+                ):
+                    return ("invalid_domain_reference",)
+                ids = {q.get("id") for q in questions}
+                if len(ids) != len(questions) or any(
+                    a.get("question_id") not in ids for a in responses
+                ):
+                    return ("invalid_domain_reference",)
+        return ()
 
     def relocate(self, candidate: Path, mapping: Mapping[str, Path]) -> None:
         # flashcard-asset:// UUIDs address retained BLOB bytes inside the shared

@@ -367,6 +367,7 @@ _PUBLIC_PRIVATE_SQLITE_SEAMS = {
     "discard_profile_migration_destination",
     "migrate_profile_store_to_candidate",
     "open_canonical_profile_migration_destination",
+    "open_recovery_validation",
     "restore_private_sqlite",
 }
 
@@ -522,6 +523,17 @@ def _private_sqlite_seam_violations(
     calls = _qualified_private_sqlite_calls(source_path)
     violations: list[str] = []
     for symbol, seam_name, call in calls:
+        if seam_name == "open_recovery_validation":
+            if (
+                production_module == "tldw_chatbook/Backup_Recovery/sqlite_validation"
+                and symbol == "validate_candidate"
+                and call.args
+                and ast.unparse(call.args[0]) == "installed.owner_id"
+                and "installed = _installed_owner(owner.owner_id)" in source_path.read_text()
+            ):
+                continue
+            violations.append(f"{production_module}:{symbol}: unqualified recovery validation")
+            continue
         if seam_name in {
             "backup_profile_migration_boundary",
             "close_profile_migration_destination",
@@ -639,10 +651,10 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # the dead db.search_history owner, formerly C16; every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
-        for number in range(1, 75)
+        for number in range(1, 81)
     ]
     assert [row["id"] for row in backup_rows] == [
-        f"B{number:02d}" for number in range(1, 37)
+        f"B{number:02d}" for number in range(1, 38)
     ]
 
 
@@ -968,6 +980,33 @@ def test_every_connection_and_backup_row_links_to_a_matching_policy() -> None:
         assert row["disposition"].strip()
 
 
+def test_restricted_validation_authorities_are_exact_and_not_backup_sources():
+    policies = {
+        key: policy for key, policy in SQLITE_OWNER_REGISTRY.items()
+        if key.startswith("recovery.validation")
+    }
+    assert set(policies) == {"recovery.validation", "recovery.validation_schema"}
+    assert policies["recovery.validation"].allowed_target_kinds == frozenset({
+        SQLiteTargetKind.PRIVATE_FILE, SQLiteTargetKind.READ_ONLY_URI,
+    })
+    assert policies["recovery.validation_schema"].allowed_target_kinds == frozenset({SQLiteTargetKind.MEMORY})
+    assert all(not policy.centralized_backup_allowed and not policy.recovery_capture_allowed for policy in policies.values())
+    assert not set(policies) & {row["owner_id"] for row in _inventory_rows("B")}
+
+
+def test_validation_guard_rejects_unqualified_candidate_open(tmp_path):
+    source = tmp_path / "unqualified.py"
+    source.write_text(
+        "from tldw_chatbook.DB.private_sqlite import open_recovery_validation as open_candidate\n"
+        "def validate_candidate(owner, path):\n"
+        "    return open_candidate(owner.owner_id, path, writable=True)\n"
+    )
+    _, violations = _private_sqlite_seam_violations(
+        source, "tldw_chatbook/Backup_Recovery/sqlite_validation"
+    )
+    assert len(violations) == 1 and "unqualified recovery validation" in violations[0]
+
+
 def test_notes_sync_state_inventory_row_is_exact_and_backup_excluded() -> None:
     row = next(row for row in _inventory_rows("C") if row["id"] == "C50")
 
@@ -1013,6 +1052,8 @@ def test_connection_and_backup_rows_record_completed_helper_migrations() -> None
                 )
             )
         )
+        if row["id"] == "C79":
+            helper = "open_recovery_validation"
         assert row["disposition"].startswith(f"Migrated via `{helper}`.")
     for row in backup_rows:
         assert row["disposition"].startswith(f"Migrated via `{row['operation']}`.")
@@ -1078,7 +1119,7 @@ def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> Non
             "backup_connection_to_private": 3,
             "backup_open_connections_to_private": 2,
             "backup_profile_migration_boundary": 1,
-            "copy_private_sqlite": 27,
+            "copy_private_sqlite": 28,
             "migrate_profile_store_to_candidate": 1,
             "restore_private_sqlite": 2,
         }
@@ -1113,6 +1154,7 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
 
     expected_calls = Counter(
         {
+            ("tldw_chatbook/Backup_Recovery/recovered_media", "_RecoveredAdapter.capture", "copy_private_sqlite"): 1,
             ("tldw_chatbook/DB/recovery_core", "_CoreAdapter.capture", "copy_private_sqlite"): 1,
             ("tldw_chatbook/TTS/recovery", "_Profiles.capture", "copy_private_sqlite"): 1,
             ("tldw_chatbook/Research_Interop/recovery", "_Adapter.capture", "copy_private_sqlite"): 1,
@@ -1438,6 +1480,7 @@ def test_core_recovery_factory_exactly_matches_registered_backup_authority():
         'recovery.operations.note_bindings',
         'recovery.files.persona',
         'recovery.files.tts',
+        'recovery.recovered_media',
     }
     assert {a.backup_owner_id for a in adapters} | installed_domain_authority == {
         name for name, policy in SQLITE_OWNER_REGISTRY.items() if policy.recovery_capture_allowed

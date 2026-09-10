@@ -99,6 +99,28 @@ _PRIVATE_MEMORY_AND_READ_ONLY = frozenset(
 )
 
 _SQLITE_OWNER_POLICIES = {
+    "recovery.validation": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/private_sqlite",
+        _PRIVATE_AND_READ_ONLY,
+        "Restricted disposable imported candidate, never a live repository open.",
+    ),
+    "recovery.validation_schema": SQLiteOwnerPolicy(
+        "tldw_chatbook/Backup_Recovery/sqlite_validation",
+        _MEMORY,
+        "Installed SQL only, in-memory reference for exact physical schema metadata.",
+    ),
+    "recovered.media": SQLiteOwnerPolicy(
+        "tldw_chatbook/Backup_Recovery/recovered_media",
+        _PRIVATE_FILE,
+        "Profile-owned durable recovered-media catalog and operation journal.",
+    ),
+    "recovery.recovered_media": SQLiteOwnerPolicy(
+        "tldw_chatbook/Backup_Recovery/recovered_media",
+        _PRIVATE_AND_READ_ONLY,
+        "Installed recovered-media catalog capture and validation.",
+        centralized_backup_allowed=True,
+        recovery_capture_allowed=True,
+    ),
     "app.prompts_parent": SQLiteOwnerPolicy(
         "tldw_chatbook/app",
         _PRIVATE_FILE,
@@ -1271,7 +1293,8 @@ def _with_storage_admission(function):
             raise TypeError("invalid_private_admission_outcome")
         policy = _validated_owner_policy(owner_id)
         if (
-            kwargs.get("_verified_descriptor_fd") is not None
+            owner_id == "recovery.validation"
+            or kwargs.get("_verified_descriptor_fd") is not None
             or os.fspath(database) == ":memory:"
             or (kwargs.get("read_only", False) and policy.foreign_read_only_source)
         ):
@@ -1530,6 +1553,32 @@ def connect_private_sqlite(
         expected_identity=expected_identity,
         **kwargs,
     )
+
+
+@contextlib.contextmanager
+def open_recovery_validation(
+    owner_id: str, candidate: Path, *, writable: bool
+) -> Iterator[sqlite3.Connection]:
+    """Open a disposable candidate with restrictions before any imported query.
+
+    The caller owns staging and must never pass a live destination. This authority
+    deliberately does not enroll the candidate as an ordinary profile resource.
+    """
+    from tldw_chatbook.Backup_Recovery.sqlite_validation import (
+        _installed_owner,
+        _restrict_connection,
+    )
+
+    _installed_owner(owner_id)
+    with contextlib.closing(
+        _connect_registered_sqlite(
+            "recovery.validation", candidate, read_only=not writable,
+            must_exist=True, immutable=not writable, isolation_level=None,
+            cached_statements=0, timeout=0,
+        )
+    ) as connection:
+        _restrict_connection(connection)
+        yield connection
 
 
 _ORIGINAL_DESCRIPTOR_CONNECTOR = _connect_registered_sqlite

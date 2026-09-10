@@ -163,7 +163,7 @@ class ConsoleVideoController:
             if meta is None:
                 continue
             extension = canonical_video_extension(meta.container)
-            path = store.resolve(
+            status, path = store.resolve_state(
                 self._video_storage_message_id(message),
                 meta.name,
                 extension=extension,
@@ -171,7 +171,7 @@ class ConsoleVideoController:
             specs[message.id] = ConsoleVideoCardSpec(
                 message_id=message.id,
                 meta=meta,
-                status="ready" if path is not None else "expired",
+                status=status,
                 file_path=str(path) if path is not None else None,
             )
         return specs
@@ -1241,7 +1241,7 @@ class ConsoleVideoController:
         if meta is None:
             return
         extension = canonical_video_extension(meta.container)
-        path = self._ensure_console_video_store().resolve(
+        status, path = self._ensure_console_video_store().resolve_state(
             self._video_storage_message_id(message),
             meta.name,
             extension=extension,
@@ -1249,7 +1249,8 @@ class ConsoleVideoController:
         if path is None:
             await self._sync_native_console_chat_ui()
             self.app_instance.notify(
-                "The ephemeral video file is gone — regenerate to recreate it.",
+                ("Deleted recovered media" if status == "recovered_deleted" else "Missing recovered media")
+                if status.startswith("recovered_") else "The ephemeral video file is gone — regenerate to recreate it.",
                 severity="warning",
             )
             return
@@ -1302,7 +1303,7 @@ class ConsoleVideoController:
         if meta is None:
             return
         extension = canonical_video_extension(meta.container)
-        path = self._ensure_console_video_store().resolve(
+        status, path = self._ensure_console_video_store().resolve_state(
             self._video_storage_message_id(message),
             meta.name,
             extension=extension,
@@ -1310,7 +1311,8 @@ class ConsoleVideoController:
         if path is None:
             await self._sync_native_console_chat_ui()
             self.app_instance.notify(
-                "The ephemeral video file is gone — regenerate to recreate it.",
+                ("Deleted recovered media" if status == "recovered_deleted" else "Missing recovered media")
+                if status.startswith("recovered_") else "The ephemeral video file is gone — regenerate to recreate it.",
                 severity="warning",
             )
             return

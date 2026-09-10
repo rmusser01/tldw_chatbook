@@ -226,3 +226,31 @@ retired before capture scope exit. See [core owner qualification](backup-recover
 `_CoreAdapter.discover` additionally reads qualified core schema 42 using literal
 `recovery.core.chachanotes` to derive present reference groups; it does not change
 the existing C/B owner policy or admit an arbitrary dynamic call site.
+
+## Recovered media catalog (TASK-31994, ADR-126)
+
+| C75 | tldw_chatbook/Backup_Recovery/recovered_media | RecoveredMedia._connection | recovered.media | private_file | finite catalog/file lifecycle | Migrated via `connect_private_sqlite`. Native connection holds admission through publication or retirement; no cached worker connection. |
+| C76 | tldw_chatbook/Backup_Recovery/recovered_media | _RecoveredAdapter.validate | recovery.recovered_media | private_file, read_only_uri | installed v1 catalog validation | Migrated via `connect_private_sqlite`. Exact schema and tombstone/reference validation, no media decoding. |
+| C77 | tldw_chatbook/Backup_Recovery/recovered_media | _RecoveredAdapter.discover | recovery.recovered_media | private_file, read_only_uri | catalog-owned payload discovery | Migrated via `connect_private_sqlite`. Baseline payloads independent of temporary-media selection. |
+| C78 | tldw_chatbook/Backup_Recovery/recovered_media | _RecoveredAdapter.validate_dependencies | recovery.recovered_media | private_file, read_only_uri | validated catalog to payload dependency group | Migrated via `connect_private_sqlite`. Registered SHA256/size checked against staged candidates; deleted rows need valid tombstones. |
+| B37 | tldw_chatbook/Backup_Recovery/recovered_media | _RecoveredAdapter.capture | recovery.recovered_media | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Existing native maintenance scope and page-progress checks remain mandatory. |
+
+## Restricted imported SQLite validation (TASK-31996, ADR-126)
+
+| C79 | tldw_chatbook/DB/private_sqlite | open_recovery_validation | recovery.validation | private_file, read_only_uri | disposable staged import inspection and installed migration | Migrated via `open_recovery_validation`. Explicit installed logical owner lookup, mandatory security primitives, one restricted candidate connection. No live resource enrollment, ordinary repository, or unrestricted retry. |
+| C80 | tldw_chatbook/Backup_Recovery/sqlite_validation | _reference | recovery.validation_schema | memory | exact installed schema metadata reference | Migrated via `connect_private_sqlite`. Only frozen installed SQL enters this memory database; candidate SQL is compared before metadata/version/domain inspection. |
+
+The candidate entry compares complete ordered catalogs plus columns, autoindexes,
+indexes, views and FTS/shadow metadata. It checks versions, integrity, foreign keys
+and existing owned BLOB/domain rules. Research v0→v1 is the installed supported
+migration; it runs transactionally on the same restricted candidate connection
+and repeats validation before commit. Cancellation and statement/deadline budgets
+interrupt work without suppressing rollback. Extension loading, ATTACH, ordinary
+writes, unsafe functions and schema-trust changes are refused. Limits include
+64 MiB values/rows, 1 MiB SQL, 250,000 compiled operations, a 2 MiB page cache,
+5 million progress steps and a 30 second validation deadline.
+
+The caller supplies a disposable private staged path, never a live destination.
+Cross-owner asset bytes require the executor's staged dependency map and are
+checked by existing dependency validation; this single-candidate interface cannot
+resolve those paths and never opens them. Source/profile binding remains Task20.

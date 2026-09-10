@@ -352,7 +352,11 @@ def discover(
     if type(selections) is not DiscoverySelections:
         raise ValueError("invalid_discovery_selections")
     items: list[StorageItem] = []
+    from .recovered_media import recovery_adapters
+
     adapters = registered()
+    if not any(adapter.owner_id == "recovered.media" for adapter in adapters):
+        adapters += recovery_adapters()
     selected_roots: set[Path] = set()
     for selected in config_paths or (profile_paths.effective_config_path(),):
         selected = profile_paths.lexical_path(selected)
