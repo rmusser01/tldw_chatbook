@@ -68,7 +68,7 @@ def test_counts_landed_renders_scope_label():
     )
     assert state.counts_loading is False
     assert state.scope_line == (
-        "Everything: 128 media · 542 conversations · 87 notes · 13 prompts"
+        "Everything: 128 media items · 542 conversations · 87 notes · 13 prompts"
     )
 
 

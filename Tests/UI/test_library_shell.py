@@ -15117,12 +15117,12 @@ async def test_library_shell_scope_toggle_deselect_sends_only_selected_types():
 
         assert str(
             screen.query_one("#library-rag-scope-toggle-media", Button).label
-        ).startswith("✓")
+        ).startswith("☑")
 
         screen.query_one("#library-rag-scope-toggle-media", Button).press()
         for _ in range(120):
             toggles = list(screen.query("#library-rag-scope-toggle-media"))
-            if toggles and str(toggles[0].label).startswith("○"):
+            if toggles and str(toggles[0].label).startswith("☐"):
                 break
             await pilot.pause(0.02)
         else:
@@ -15146,7 +15146,7 @@ async def test_library_shell_scope_toggle_deselect_sends_only_selected_types():
         screen.query_one("#library-rag-scope-toggle-notes", Button).press()
         for _ in range(120):
             toggles = list(screen.query("#library-rag-scope-toggle-notes"))
-            if toggles and str(toggles[0].label).startswith("○"):
+            if toggles and str(toggles[0].label).startswith("☐"):
                 break
             await pilot.pause(0.02)
         else:
@@ -15315,7 +15315,7 @@ def test_library_rag_panel_state_scope_hides_a_row_whose_source_count_drops_to_z
     (`_refresh_local_source_snapshot` recounts it to zero), and the Search
     canvas is revisited without re-querying. The Sources toggle strip's
     own marker is already count-intersected
-    (`LibraryRagScopeState.from_source_counts`) and would read "○ Notes
+    (`LibraryRagScopeState.from_source_counts`) and would read "☐ Notes
     (0)" in that state -- the evidence list must follow that SAME signal,
     or the toggle-vs-evidence lie D4 exists to close just gets a
     different trigger (count drift instead of a toggle press). Filtering
@@ -15619,7 +15619,7 @@ async def test_library_shell_scope_toggle_off_hides_rendered_rows_and_keeps_inde
         screen.query_one("#library-rag-scope-toggle-media", Button).press()
         for _ in range(120):
             toggles = list(screen.query("#library-rag-scope-toggle-media"))
-            if toggles and str(toggles[0].label).startswith("○"):
+            if toggles and str(toggles[0].label).startswith("☐"):
                 break
             await pilot.pause(0.02)
         else:
@@ -15670,7 +15670,7 @@ async def test_library_shell_scope_toggle_off_hides_rendered_rows_and_keeps_inde
         screen.query_one("#library-rag-scope-toggle-media", Button).press()
         for _ in range(120):
             toggles = list(screen.query("#library-rag-scope-toggle-media"))
-            if toggles and str(toggles[0].label).startswith("✓"):
+            if toggles and str(toggles[0].label).startswith("☑"):
                 break
             await pilot.pause(0.02)
         else:
@@ -24555,7 +24555,14 @@ async def _enter_task8_editor_state(screen, pilot, state: str) -> None:
             "context",
             {
                 "#library-note-heading": 1,
-                "#library-note-context-status": 1,
+                # task-32177: #library-note-context-status was removed (dead
+                # duplicate of #library-note-status, task-32142 had already
+                # hidden it) -- its row-height entry is gone with it. This
+                # parametrization is pre-existing baseline-broken (stale
+                # #library-notes-row-0 selector, see task-6-report.md) and
+                # cannot currently run far enough to re-measure
+                # #library-note-context-region's own height, so that entry
+                # is left as-is rather than guessed.
                 "#library-note-context-region": 7,
                 "#library-note-primary-actions": 2,
                 "#library-note-mode-controls": 1,
@@ -28148,7 +28155,7 @@ async def test_library_shell_export_rail_row_opens_everything_scope_and_counts_l
 
         scope_line = str(screen.query_one("#library-export-scope-line").renderable)
         assert scope_line == (
-            "Everything: 1 media · 1 conversations · 1 notes · 0 prompts"
+            "Everything: 1 media item · 1 conversation · 1 note · 0 prompts"
         )
         submit = screen.query_one("#library-export-submit", Button)
         # Counts landed with a positive total, but no destination chosen yet.
@@ -28715,7 +28722,7 @@ async def test_library_shell_export_counts_worker_uses_real_thread_for_file_back
 
         scope_line = str(screen.query_one("#library-export-scope-line").renderable)
         assert scope_line == (
-            "Everything: 1 media · 1 conversations · 0 notes · 0 prompts"
+            "Everything: 1 media item · 1 conversation · 0 notes · 0 prompts"
         )
 
 
@@ -28835,7 +28842,7 @@ async def test_library_shell_export_counts_landing_preserves_input_focus_and_tex
         assert screen.query_one("#library-export-scope-line", Static) is scope_line
         assert (
             str(scope_line.renderable)
-            == "Everything: 1 media · 1 conversations · 0 notes · 0 prompts"
+            == "Everything: 1 media item · 1 conversation · 0 notes · 0 prompts"
         )
         # Positive total, but still no destination -- Export stays disabled.
         assert screen.query_one("#library-export-submit", Button).disabled is True
@@ -30039,7 +30046,7 @@ async def test_library_search_rag_canvas_survives_ingest_done_count_growth(tmp_p
 
         media_toggle = screen.query_one("#library-rag-scope-toggle-media", Button)
         media_label_before = str(media_toggle.label)
-        assert media_label_before == "✓ Media (1)", (
+        assert media_label_before == "☑ Media (1)", (
             f"unexpected pre-event toggle label: {media_label_before!r}"
         )
 
@@ -30140,7 +30147,7 @@ async def test_library_search_rag_canvas_survives_ingest_done_count_growth(tmp_p
         media_label_after = str(
             screen.query_one("#library-rag-scope-toggle-media", Button).label
         )
-        assert media_label_after == "✓ Media (2)", (
+        assert media_label_after == "☑ Media (2)", (
             f"scope-toggle count went stale: {media_label_before!r} -> "
             f"{media_label_after!r} (expected the Media count to grow "
             "from 1 to 2)"
@@ -32114,12 +32121,14 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
             "context",
             "#library-note-context-region",
             (
+                # task-32177: #library-note-context-status was removed (dead
+                # duplicate of #library-note-status) -- dropped from the
+                # fixed-row list along with its expected-height entry below.
                 "#library-note-heading",
                 "#library-note-status",
                 "#library-note-primary-actions",
-                "#library-note-context-status",
             ),
-            (1, 1, 2, 1),
+            (1, 1, 2),
             11,
             17,
         ),
