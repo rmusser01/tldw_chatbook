@@ -3781,6 +3781,9 @@ class LibraryScreen(BaseAppScreen):
         #: cancel the other's. The File Notes folder change keeps its own
         #: wait on the workspace, which also owns every way out of it.
         self._library_structural_waits: dict[str, StructuralWait] = {}
+        #: task-32102: each owner's armed patience repaint, so a wait that
+        #: settles (or restarts) inside the patience window can stop it.
+        self._library_structural_wait_timers: dict[str, Timer] = {}
         self._library_model_install_progress_label: str = ""
         self._library_model_install_progress_owner: str | None = None
         #: The 5s first-load failsafe armed in ``on_mount``; retained so
@@ -9797,10 +9800,25 @@ class LibraryScreen(BaseAppScreen):
             owner=owner,
         )
         self._library_structural_waits[owner] = wait
+        # task-32102: whatever this owner had armed is gone the moment its
+        # wait is replaced -- a second folder change must not inherit the
+        # first one's patience clock.
+        self._stop_library_structural_wait_timer(owner)
         if repaint is not None:
             # One shot: the line only changes once, when patience runs out.
-            self.set_timer(STRUCTURAL_WAIT_PATIENCE_SECONDS, repaint)
+            # Retained so a wait that settles inside the patience window can
+            # stop it; unretained, the repaint fired into whatever the
+            # surface had become three seconds later (task-32102).
+            self._library_structural_wait_timers[owner] = self.set_timer(
+                STRUCTURAL_WAIT_PATIENCE_SECONDS, repaint
+            )
         return wait
+
+    def _stop_library_structural_wait_timer(self, owner: str) -> None:
+        """Stop and forget ``owner``'s armed patience repaint, if any."""
+        timer = self._library_structural_wait_timers.pop(owner, None)
+        if timer is not None:
+            timer.stop()
 
     def _library_structural_wait_for(self, owner: str) -> StructuralWait | None:
         """Return ``owner``'s in-flight wait, if it has one."""
@@ -9809,6 +9827,7 @@ class LibraryScreen(BaseAppScreen):
     def _end_library_structural_wait(self, owner: str) -> None:
         """Clear the wait once ``owner``'s operation has settled."""
         self._library_structural_waits.pop(owner, None)
+        self._stop_library_structural_wait_timer(owner)
 
     @on(Button.Pressed, "#library-structural-wait-cancel")
     def _library_structural_wait_cancel_pressed(self, event: Button.Pressed) -> None:
