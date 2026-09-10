@@ -202,6 +202,7 @@ from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Library import LocalLibraryCollectionsService
 from tldw_chatbook.Library.ingest_analysis import resolve_ingest_analysis_provider
@@ -6260,6 +6261,13 @@ class TldwCli(
         except Exception:
             logger.opt(exception=True).debug("Home flashcards-due count failed.")
             return None
+        finally:
+            if (
+                type(db) is CharactersRAGDB
+                and not db.is_memory_db
+                and threading.current_thread() is not threading.main_thread()
+            ):
+                db.close_connection()
 
     def open_active_home_item_details(
         self,
@@ -11127,8 +11135,28 @@ class TldwCli(
         )
         if coordinator is None or not coordinator.writes_enabled:
             return
+        from tldw_chatbook.Chat.citation_trace_repository import CitationTraceRepository
+
+        repository = getattr(coordinator, "trace_repository", None)
+        db = getattr(repository, "db", None)
+        retire = (
+            type(coordinator) is CitationArtifactOwnershipCoordinator
+            and type(coordinator.artifact_store) is LocalChatbookService
+            and type(repository) is CitationTraceRepository
+            and type(db) is CharactersRAGDB
+            and not db.is_memory_db
+        )
+        reconcile = coordinator.reconcile_pending
+
+        def reconcile_in_worker():
+            try:
+                return reconcile(limit=25)
+            finally:
+                if retire:
+                    db.close_connection()
+
         try:
-            result = await asyncio.to_thread(coordinator.reconcile_pending, limit=25)
+            result = await asyncio.to_thread(reconcile_in_worker)
         except Exception:
             self.loguru_logger.error(
                 "Citation artifact reconciliation failed: "
@@ -11158,8 +11186,29 @@ class TldwCli(
                 )
                 if migration is None or not migration.ready:
                     return
+                from tldw_chatbook.Chat.citation_legacy_migration import CitationLegacyMigrationService
+                from tldw_chatbook.Chat.citation_trace_repository import CitationTraceRepository
+
+                repository = getattr(migration, "repository", None)
+                db = getattr(migration, "db", None)
+                retire = (
+                    type(migration) is CitationLegacyMigrationService
+                    and type(repository) is CitationTraceRepository
+                    and repository.db is db
+                    and type(db) is CharactersRAGDB
+                    and not db.is_memory_db
+                )
+                migrate = migration.migrate_idle_unit
+
+                def migrate_in_worker():
+                    try:
+                        return migrate()
+                    finally:
+                        if retire:
+                            db.close_connection()
+
                 try:
-                    result = await asyncio.to_thread(migration.migrate_idle_unit)
+                    result = await asyncio.to_thread(migrate_in_worker)
                 except Exception:
                     retry_count += 1
                     self.loguru_logger.error(
