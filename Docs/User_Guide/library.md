@@ -177,9 +177,23 @@ the saved preference.
 
 Below 64 columns an ordinary Library route shows one stage at a time: either
 the rail or the canvas. Activating a rail destination opens its canvas; use
-**‹ Library** (or **< Library** with ASCII glyphs) to return. Widening restores
+**‹ Library** (or **< Library** with ASCII glyphs) to return, or press
+**Escape** — the footer names it as `esc back to Library`. Widening restores
 the co-present layout and prior focus/scroll position when no newer action has
 replaced it.
+
+The destinations with a three-pane reader (Media, Conversations, Notes,
+Prompts, Skills, Collections) close their Library pane at that width too, and
+Escape there does the same thing: it reopens the pane rather than trying to
+move focus into one that is off screen. Above 64 columns a closed Library pane
+is an ordinary collapsed pane one grip away, and Escape keeps its usual
+step-back through the visible panes.
+
+A pane with nothing open gives its columns to its sibling: on Prompts, Skills,
+Collections and Conversations the list widens to fill the canvas while the
+"Select something to open it here." pane holds only its own floor, and
+choosing an item restores the reading split. The landing hub is capped at a
+readable measure rather than stretched across the whole canvas.
 
 - **Chunking Lab strip** — directly under the header, on *every* Library
   canvas: a **Chunking Lab** button and a **Try selected text** button.
@@ -809,3 +823,8 @@ paints on every Library canvas, was undocumented (task-32064).)*
 *Verified against fix/library-crit8-waits — 2026-09-08 (task-32055: Library's
 structural waits report "still working · Cancel" past three seconds and never
 gate Escape, the back cue, the palette or Quit).*
+
+*Verified against fix/library-crit9-shell — 2026-09-10 (task-32225: Escape
+returns to the rail below 64 columns on every adaptive-reader destination and
+the footer names it; task-32217: an empty work pane hands its columns to the
+list, and the landing hub is capped at 96 cells).*

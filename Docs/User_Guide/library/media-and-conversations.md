@@ -1071,3 +1071,9 @@ with nothing on screen to link into.)*
 line beneath it, so it no longer truncates in a narrow reader pane; `c` now
 consults the workspace gate the button consults; a block linking cannot
 resolve says so and withholds the link.)*
+
+*Verified against fix/library-crit9-shell — 2026-09-10 (task-32228: the
+Conversations footer advertises `/ focus filter` whenever the Filter box is on
+screen — it previously offered only `F6 next pane`, because the chip was
+decided before the reader had resolved its panes; task-32217: with nothing
+loaded the conversation list takes the columns the empty Reader was holding).*

@@ -494,3 +494,7 @@ reasons and Previous/Next. Fix round 2: that header row now hides itself along
 with the button, instead of leaving an empty raised strip; and re-entering
 Media at an ordinary width no longer drops a pane priority the user just set
 with a grip.)*
+
+*Verified against fix/library-crit9-shell — 2026-09-10 (task-32217: with no
+prompt open the list takes the columns the "Select a prompt to edit it here."
+pane was holding — measured at 235 columns, list 50 → 134 cells).*
