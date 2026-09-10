@@ -1635,11 +1635,6 @@ class LibraryConversationsController:
         event.stop()
         self._open_selected_conversation_handoff()
 
-    @on(Button.Pressed, "#library-conversation-use-source")
-    def use_selected_conversation_as_source(self, event: Button.Pressed) -> None:
-        event.stop()
-        self._open_selected_conversation_handoff()
-
 # --- BEGIN generated conversations-state shims ---
 # Permanent, not a cleanup-PR deletion target: the conversations cleanup PR
 # landed (shims and dead delegators removed on `LibraryScreen`) and

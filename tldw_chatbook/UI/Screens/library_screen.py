@@ -440,6 +440,7 @@ from ...Widgets.Library import (
     LibrarySkillsListCanvas,
     LibraryStudyHandoffCanvas,
     LibraryStudyHandoffCanvasState,
+    library_conversation_block_sentence,
     library_dim_label_text,
     library_rag_scope_shows_recovery,
     skill_editor_warning_lines,
@@ -4028,8 +4029,11 @@ class LibraryScreen(BaseAppScreen):
             if self._conversations_state.reader_layout.items_open:
                 shortcuts.append(("/", "focus filter"))
             # task-32056: advertise the hand-off key exactly while it works,
-            # the same honest-footer idiom Media's l/c/t follow.
-            if self.check_action("library_conversation_open_console", ()):
+            # the same honest-footer idiom Media's l/c/t follow. (task-32101)
+            # Reads the readiness predicate directly now that the key's own
+            # gate is wider than it -- blocked, the key explains rather than
+            # opening, which is not what a footer chip promises.
+            if self._library_conversation_handoff_ready():
                 shortcuts.append(("c", "open in Console"))
             shortcuts.append(("F6", "next pane"))
             escape_label = self._library_conversation_escape_label()
@@ -23203,13 +23207,18 @@ class LibraryScreen(BaseAppScreen):
                 and not self._media_state.bulk_delete_in_flight
             )
         if action == "library_conversation_open_console":
-            # task-32056: the Conversations half of the shared "c" key. Same
-            # predicate the header action's own enabled state uses, so the
-            # key can never do what the button refuses.
-            return (
-                self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
-                and self._library_conversation_handoff_ready()
-            )
+            # task-32056: the Conversations half of the shared "c" key.
+            # task-32101: live wherever a conversation is OPEN, not only
+            # where the hand-off is ready -- the action itself refuses with
+            # the sentence the disabled control shows. Gating the key on
+            # readiness (fix round 1) made it silent on exactly the state
+            # the user needs explained. The footer chip still tracks
+            # readiness (see ``_library_route_shortcuts_for_current_state``),
+            # so nothing is advertised as working while it is blocked.
+            reader_state = self._conversations_state.reader_state
+            return self._library_selected_row_id == (
+                LIBRARY_ROW_BROWSE_CONVERSATIONS
+            ) and bool(reader_state.selected_id or reader_state.loaded_id)
         if action == "library_emergency_return":
             return self._library_emergency_return_eligibility().enabled
         if action == "library_ingest_retry_last":
@@ -32814,10 +32823,6 @@ class LibraryScreen(BaseAppScreen):
         return self._conversations_controller.open_selected_conversation_in_console(event)
 
 
-    @on(Button.Pressed, "#library-conversation-use-source")
-    def use_selected_conversation_as_source(self, event: Button.Pressed) -> None:
-        return self._conversations_controller.use_selected_conversation_as_source(event)
-
     @on(Button.Pressed, "#library-conversation-link-workspace")
     def link_selected_conversation_to_workspace(self, event: Button.Pressed) -> None:
         """Perform the remedy the blocked hand-off names (task-32056).
@@ -32830,13 +32835,44 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._link_selected_conversation_to_workspace()
 
+    def _library_conversation_block_sentence(self) -> str | None:
+        """Return the reader's current refusal sentence, or None (task-32101).
+
+        The very sentence the disabled control and its tooltip show, built
+        from the same helper the reader widget uses -- so the ``c`` key can
+        never explain the refusal differently from the button.
+        """
+        blocked, linkable, detail = self._library_conversation_workspace_block()
+        reader_state = self._conversations_state.reader_state
+        return library_conversation_block_sentence(
+            reader_state,
+            blocked=blocked,
+            detail=detail,
+            link_offered=(
+                reader_state.loaded_actions_eligible and bool(blocked) and linkable
+            ),
+        )
+
     def action_library_conversation_open_console(self) -> None:
         """Keyboard 'c': hand the open conversation to Console (task-32056).
 
         Mirrors ``action_library_media_use_in_console``; the two share the
         key and are separated by ``check_action``'s selected-row gate, since
         only one Library canvas is open at a time.
+
+        (task-32101) A blocked conversation answers with the sentence the
+        control on screen already carries, instead of nothing at all:
+        task-32056's fix round 1 stopped the key at ``check_action`` to kill
+        a toast that named a workspace with nothing to link into, but that
+        left the key dead with no way to learn why. The toast now repeats
+        the visible explanation, whose remedy IS on screen.
         """
+        if not self._library_conversation_handoff_ready():
+            sentence = self._library_conversation_block_sentence()
+            notify = getattr(self.app_instance, "notify", None)
+            if sentence and callable(notify):
+                notify(sentence, severity="warning")
+            return
         self._open_selected_conversation_handoff()
 
     def open_chunking_lab(self, *, use_selected: bool = False) -> None:

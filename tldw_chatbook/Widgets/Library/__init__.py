@@ -8,7 +8,10 @@ from .library_collections_capture_reader import (
     LibraryCollectionsWorkPane,
 )
 from .library_conversations_canvas import LibraryConversationsCanvas
-from .library_conversation_reader import LibraryConversationReader
+from .library_conversation_reader import (
+    LibraryConversationReader,
+    library_conversation_block_sentence,
+)
 from .library_adaptive_reader_shell import (
     LIBRARY_ADAPTIVE_READER_GRIP_CLASS,
     AdaptiveReaderShellResized,
@@ -129,6 +132,7 @@ __all__ = [
     "LibraryCollectionsWorkPane",
     "LibraryConversationsCanvas",
     "LibraryConversationReader",
+    "library_conversation_block_sentence",
     "LibraryExportCanvas",
     "LibraryLandingAttentionAction",
     "LibraryLandingCanvas",

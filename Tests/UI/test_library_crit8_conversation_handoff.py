@@ -6,6 +6,9 @@ refused with a toast naming a workspace the user had no way to link into.
 
 from __future__ import annotations
 
+import inspect
+import sys
+
 import pytest
 from textual.widgets import Button, Static
 
@@ -92,9 +95,11 @@ async def test_workspace_refusal_is_inline_with_a_link_action(
         link = pilot.app.query_one("#library-conversation-link-workspace", Button)
 
         # The reason wraps in a Static, not the Button label: a Button label
-        # is single-line and truncates (fix round 1).
+        # is single-line and truncates (fix round 1). It is the refusal
+        # SENTENCE, not a second copy of the action name (task-32101).
         assert str(blocked.renderable) == (
-            "○ Open in Console · not in this workspace"
+            "This conversation is not in this workspace. Press 'Link to "
+            "workspace' to add it to the active workspace."
         )
         assert blocked.display is True
         assert open_console.disabled is True
@@ -208,9 +213,9 @@ def test_conversation_open_console_has_a_keyboard_route() -> None:
         {"id": "chat-a", "title": "Alpha planning"}
     ]
 
-    # Blocked: the key must refuse exactly where the button does, or it
-    # reaches the press and raises the toast (fix round 1).
-    assert screen.check_action("library_conversation_open_console", ()) is False
+    # Blocked: the key stays live and explains (task-32101) -- what it must
+    # never do is silently perform the hand-off the button refuses.
+    assert screen.check_action("library_conversation_open_console", ()) is True
 
     registry.link_membership(
         "workspace-a",
@@ -287,14 +292,16 @@ async def test_mounted_reader_offers_the_link_then_enables_the_handoff() -> None
         )
         link = screen.query_one("#library-conversation-link-workspace", Button)
         assert str(blocked.renderable) == (
-            "○ Open in Console · not in this workspace"
+            "This conversation is not in this workspace. Press 'Link to "
+            "workspace' to add it to the active workspace."
         )
+        assert str(open_console.label) == "○ Open in Console"
         assert open_console.disabled is True
         assert link.display is True
-        # The accelerator must refuse exactly while the button does --
-        # otherwise "c" reaches the press and raises the toast this task
-        # exists to remove (fix round 1).
-        assert screen.check_action("library_conversation_open_console", ()) is False
+        # The accelerator stays live and says the same sentence the control
+        # shows (task-32101); the footer chip is what tracks readiness.
+        assert screen.check_action("library_conversation_open_console", ()) is True
+        assert ("c", "open in Console") not in screen._library_route_shortcuts_for_current_state()
 
         link.press()
         await pilot.pause()
@@ -419,3 +426,108 @@ def test_link_remedy_refuses_a_stale_retained_transcript() -> None:
     assert not registry.get_item_memberships(
         item_type="conversation", item_id="chat-a"
     )
+
+
+def test_use_as_source_handler_is_gone() -> None:
+    """task-32101 AC#1: the handler bound to an uncomposed button is deleted.
+
+    ``#library-conversation-use-source`` had zero compose sites anywhere in
+    ``tldw_chatbook/`` while two handlers (the controller's and the screen's
+    delegator) still claimed its press. Nothing can press it, so nothing
+    should answer for it.
+    """
+    from tldw_chatbook.UI.Library_Modules.library_conversations_controller import (
+        LibraryConversationsController,
+    )
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    assert not hasattr(LibraryScreen, "use_selected_conversation_as_source")
+    assert not hasattr(
+        LibraryConversationsController, "use_selected_conversation_as_source"
+    )
+    for module in (LibraryScreen, LibraryConversationsController):
+        source = inspect.getsource(sys.modules[module.__module__])
+        assert "library-conversation-use-source" not in source
+
+
+@pytest.mark.asyncio
+async def test_blocked_state_paints_the_action_name_once(widget_pilot) -> None:
+    """task-32101 AC#4: one control, one action name, one sentence.
+
+    The blocked state used to render the disabled Button ("Open in Console")
+    above a Static repeating "○ Open in Console · not in this workspace" --
+    two paints of the same action name, read on screen as two controls. The
+    marker now lives on the button label and the line beneath it carries the
+    reason SENTENCE only.
+    """
+    async with await widget_pilot(
+        LibraryConversationReader,
+        state=_loaded_reader_state(),
+        loaded_metadata={
+            "title": "Alpha planning",
+            "_workspace_block": "not in this workspace",
+            "_workspace_block_linkable": True,
+        },
+        id="library-conversation-reader",
+    ) as pilot:
+        open_console = pilot.app.query_one(
+            "#library-conversation-open-console", Button
+        )
+        blocked = pilot.app.query_one(
+            "#library-conversation-open-console-blocked", Static
+        )
+        assert str(open_console.label) == "○ Open in Console"
+        assert open_console.disabled is True
+        assert blocked.display is True
+        assert "Open in Console" not in str(blocked.renderable)
+        # ...and it is the very sentence the tooltip gives.
+        assert str(blocked.renderable) == str(open_console.tooltip)
+        assert "not in this workspace" in str(blocked.renderable)
+
+
+def test_blocked_c_key_says_what_the_control_says() -> None:
+    """task-32101 AC#2/#4: 'c' is never silent on a blocked conversation.
+
+    Reverses the fix-round-1 rule from task-32056 (``check_action`` refused
+    the key exactly where the button was disabled). That removed the toast
+    but left a dead key: pressing ``c`` on a blocked conversation did
+    nothing at all, with no way to learn why. The key now reaches the action
+    and speaks the SAME sentence the on-screen control already shows --
+    which, unlike the old toast, names a remedy that is on screen.
+    """
+    from unittest.mock import Mock
+
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Screens.library_screen import (
+        LIBRARY_ROW_BROWSE_CONVERSATIONS,
+        LIBRARY_ROW_BROWSE_MEDIA,
+        LibraryScreen,
+    )
+
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="workspace-a", name="Workspace A")
+    registry.set_active_workspace("workspace-a")
+    app.notify = Mock()
+    app.open_chat_with_handoff = Mock()
+    screen = LibraryScreen(app)
+    screen.restore_state(
+        {"library_selected_row_id": LIBRARY_ROW_BROWSE_CONVERSATIONS}
+    )
+    screen._conversations_state.reader_state = _loaded_reader_state()
+    screen._local_source_records["conversations"] = [
+        {"id": "chat-a", "title": "Alpha planning"}
+    ]
+
+    assert screen.check_action("library_conversation_open_console", ()) is True
+    screen.action_library_conversation_open_console()
+
+    app.open_chat_with_handoff.assert_not_called()
+    app.notify.assert_called_once()
+    said = app.notify.call_args.args[0]
+    assert said == screen._library_conversation_block_sentence()
+    assert "not in this workspace" in said
+
+    # The key is still scoped to the Conversations canvas.
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    assert screen.check_action("library_conversation_open_console", ()) is False
