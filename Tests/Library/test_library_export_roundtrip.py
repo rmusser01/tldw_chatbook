@@ -36,6 +36,10 @@ from tldw_chatbook.Library.library_export_scope import (
     ExportScope,
     resolve_export_selections,
 )
+from tldw_chatbook.Library.library_export_state import (
+    format_empty_export_error,
+    format_last_export_line,
+)
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 # Pinned transcript text -- the round-trip assertion below checks this
@@ -605,3 +609,101 @@ def test_library_export_roundtrip_selected_media_uses_canonical_display_ids(
             if name.startswith("content/media/") and name.endswith(".txt")
         }
         assert media_texts == {"CANONICAL A TRANSCRIPT", "CANONICAL B TRANSCRIPT"}
+
+
+def test_library_export_selected_media_collecting_nothing_reports_failure(
+    tmp_path,
+):
+    """task-32232 AC#3: a non-empty selection that collects ZERO items must
+    report failure -- never a success receipt over a bundle holding README +
+    ``content_items: []``. Feeds an id no media row carries; the creator
+    refuses to write the archive, the run surfaces the canvas's failure copy,
+    and no registry record is created."""
+    seeded = _seed_source_dbs(tmp_path)
+
+    scope = ExportScope(kind="media", ids=("local:media:987654",))
+    selections = resolve_export_selections(
+        scope,
+        seeded["media_db"],
+        seeded["chachanotes_db"],
+        seeded["prompts_db"],
+    )
+    destination = tmp_path / "empty_selection.zip"
+    payload = LibraryScreen._build_library_export_payload(
+        name="Empty Selection",
+        description="",
+        selections=selections,
+        destination=str(destination),
+        media_quality="thumbnail",
+    )
+
+    registry_path = tmp_path / "chatbooks.json"
+    service = LocalChatbookService(seeded["db_paths"], registry_path=registry_path)
+    outcome = LibraryScreen._run_library_export_via_service(
+        service, payload, name="Empty Selection", description=""
+    )
+
+    assert outcome["success"] is False
+    assert outcome["message"] == format_empty_export_error(1)
+    assert outcome["registry_recorded"] is False
+    # Nothing was left on disk to mistake for a real bundle.
+    assert not destination.exists()
+    assert asyncio.run(service.list_chatbooks()) == []
+
+
+def test_library_export_receipt_counts_come_from_the_written_manifest(
+    tmp_path,
+):
+    """task-32232 AC#4: the receipt is read back from the ARTIFACT, not the
+    request. Three ids are selected but only two exist, so a receipt built
+    from the intent would claim 3; the manifest holds 2."""
+    seeded = _seed_source_dbs(tmp_path)
+    selected_a_id, selected_b_id = _seed_two_selectable_media(seeded)
+
+    scope = ExportScope(
+        kind="media",
+        ids=(
+            f"local:media:{selected_a_id}",
+            f"local:media:{selected_b_id}",
+            "local:media:987654",  # deleted/unknown -- collects nothing
+        ),
+    )
+    selections = resolve_export_selections(
+        scope,
+        seeded["media_db"],
+        seeded["chachanotes_db"],
+        seeded["prompts_db"],
+    )
+    assert len(selections[ContentType.MEDIA]) == 3  # the REQUEST says 3
+
+    destination = tmp_path / "partial.zip"
+    payload = LibraryScreen._build_library_export_payload(
+        name="Partial Selection",
+        description="",
+        selections=selections,
+        destination=str(destination),
+        media_quality="thumbnail",
+    )
+    service = LocalChatbookService(
+        seeded["db_paths"], registry_path=tmp_path / "chatbooks.json"
+    )
+    outcome = LibraryScreen._run_library_export_via_service(
+        service, payload, name="Partial Selection", description=""
+    )
+
+    assert outcome["success"] is True, outcome["message"]
+    with zipfile.ZipFile(destination, "r") as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+    assert len(manifest["content_items"]) == 2  # the ARTIFACT says 2
+
+    # The run reports the artifact's own facts, and the receipt renders them.
+    assert outcome["item_count"] == 2
+    assert outcome["size_bytes"] == destination.stat().st_size
+    receipt = format_last_export_line(
+        str(destination),
+        time.time(),
+        item_count=outcome["item_count"],
+        size_bytes=outcome["size_bytes"],
+    )
+    assert receipt.startswith("✓ exported · 2 items · ")
+    assert receipt.endswith(f" · {destination}")

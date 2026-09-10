@@ -36,6 +36,11 @@ EMPTY_SCOPE_COPY = "Nothing to export in this scope."
 CHOOSE_DESTINATION_COPY = "Choose destination…"
 DESTINATION_PLACEHOLDER_COPY = "No destination chosen"
 EXPORT_BUTTON_COPY = "Export bundle (.zip)"
+# task-32232 AC#3: after a failed run the same button is the Retry -- it
+# says so, matching the ingest queue's "Retry this batch" grammar rather
+# than leaving the user to guess that re-pressing "Export bundle (.zip)"
+# is the retry.
+EXPORT_RETRY_BUTTON_COPY = "Retry export"
 SERVER_DISABLED_TOOLTIP_COPY = "Export packages local content only."
 
 # task-2858 AC#3 (LIB-11): the Export button's tooltip always names either
@@ -298,8 +303,32 @@ def export_button_tooltip(state: LibraryExportFormState) -> str:
     return EMPTY_SCOPE_COPY
 
 
+def format_empty_export_error(requested: int) -> str:
+    """Return the "the bundle would have been empty" failure line.
+
+    task-32232: a non-empty selection that collected ZERO items used to
+    write a bundle holding README + ``content_items: []`` and report
+    success. The creator now refuses to write that archive, and this is
+    the canvas copy for it -- it names what the user actually asked for
+    (``requested``) so "produced no content" cannot be read as "you
+    selected nothing".
+
+    Args:
+        requested: How many items the failed run had selected.
+
+    Returns:
+        e.g. ``"✗ export produced no content · 3 items were selected"``.
+    """
+    return f"✗ export produced no content · {requested} items were selected"
+
+
 def format_last_export_line(
-    path: str, exported_at: float, *, now: float | None = None
+    path: str,
+    exported_at: float,
+    *,
+    now: float | None = None,
+    item_count: int | None = None,
+    size_bytes: int | None = None,
 ) -> str:
     """Return the durable "Last export: <path> · <relative time>" receipt line.
 
@@ -319,14 +348,27 @@ def format_last_export_line(
             defaults to the real current time. Exposed so tests can pin
             it instead of depending on wall-clock time (mirrors
             ``default_export_name``'s ``today`` parameter).
+        item_count: How many ``content_items`` the WRITTEN archive holds,
+            read back from its manifest after the zip landed (task-32232
+            AC#4) -- never the requested selection size.
+        size_bytes: The written archive's size on disk, likewise stat'd
+            from the artifact.
 
     Returns:
-        ``""`` when ``path`` is empty; otherwise the formatted receipt,
-        e.g. ``"Last export: /tmp/out.zip · 2m ago"``.
+        ``""`` when ``path`` is empty; ``"✓ exported · N items · X KB ·
+        <path>"`` once the artifact's own facts are known; otherwise the
+        pre-readback fallback ``"Last export: /tmp/out.zip · 2m ago"``
+        (a receipt restored from a session that recorded only the path).
     """
     clean_path = str(path or "").strip()
     if not clean_path:
         return ""
+    if item_count is not None and size_bytes is not None:
+        item_word = "item" if item_count == 1 else "items"
+        kilobytes = max(1, round(size_bytes / 1024))
+        return (
+            f"✓ exported · {item_count} {item_word} · {kilobytes} KB · {clean_path}"
+        )
     current = time.time() if now is None else now
     elapsed = max(0.0, current - exported_at)
     if elapsed < _SECONDS_PER_MINUTE:
