@@ -90,3 +90,18 @@ async def test_the_rail_search_row_never_pushes_the_canvas_frame(size) -> None:
                 f"search-row line y={y} lost the rail frame at column "
                 f"{frame_column} at size {size}: {painted[:frame_column + 4]!r}"
             )
+
+
+# --- task-32220: the rail heading is never cut mid-word --------------------
+
+
+@pytest.mark.asyncio
+async def test_the_rail_heading_is_never_cut_mid_word() -> None:
+    """AC#1: at the compact rail width the heading ellipsises, never clips."""
+    host = _library_host()
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        painted = _painted(host, screen.query_one("#library-rail-heading").region)
+        assert "Navigati" not in painted or "Navigation" in painted, painted
+        assert "Navigat…" in painted or "Navigation" in painted, painted

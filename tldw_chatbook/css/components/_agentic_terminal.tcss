@@ -2460,6 +2460,13 @@ with stray left-edge border fragments), and padding 0 1 so the full
     color: $ds-text-primary;
 }
 
+/* task-32220 (critique #9 row 17): at the 22-column compact rail the heading
+   was cut mid-word to "Navigati". AC#1 accepts an ellipsis; the label keeps
+   its full word wherever it fits. */
+#library-rail-heading-label {
+    text-overflow: ellipsis;
+}
+
 #library-conversations-filter {
     width: 100%;
     height: 3;
