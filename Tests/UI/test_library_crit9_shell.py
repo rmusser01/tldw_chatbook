@@ -256,3 +256,37 @@ async def test_the_return_chip_disappears_once_the_library_pane_is_back() -> Non
             ),
         )
         assert screen.query_one("#library-rail").display
+
+
+async def test_the_conversations_footer_advertises_the_filter_key_it_honours() -> None:
+    """task-32228 AC#1: "/" is advertised exactly while it works.
+
+    Live at 100x30 the Conversations canvas showed its Filter box, "/" focused
+    it, and the footer said only "F6 next pane": the chip reads
+    ``reader_layout.items_open``, which was still False when the footer was
+    registered during compose. Every OTHER Conversations chip is honest -- the
+    Escape hop is advertised under the label it will actually perform
+    ("focus Items" / "focus Library", pinned by
+    test_conversations_escape_moves_to_nearest_visible_prior_role), and it is
+    absent exactly while the hop would move nothing.
+    """
+    host = _library_host()
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversations-filter")
+        await _wait_for_condition(
+            pilot,
+            lambda: ("/", "focus filter")
+            in tuple((screen._footer_shortcut_registration or ("", ()))[1]),
+            message=lambda: (
+                "The Conversations footer never advertised its Filter key: "
+                f"{screen._footer_shortcut_registration}"
+            ),
+        )
+        # ...and the key it advertises does what the chip says.
+        await pilot.press("slash")
+        await pilot.pause()
+        # By id: the canvas recomposes, so the mounted box is a new instance.
+        assert getattr(screen.focused, "id", None) == "library-conversations-filter"

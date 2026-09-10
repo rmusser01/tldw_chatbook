@@ -3796,8 +3796,6 @@ class LibraryScreen(BaseAppScreen):
         self._library_reader_shell_probe_generation = -1
         self._library_emergency_stage: Literal["rail-only", "canvas-only"] | None = None
         self._library_stage_interaction_generation = 0
-        # task-32225: last value ``_sync_library_narrow_stage_footer`` acted on.
-        self._library_narrow_stage_footer_state: bool | None = None
         self._library_emergency_restore_receipt: (
             _LibraryEmergencyRestoreReceipt | None
         ) = None
@@ -6755,24 +6753,23 @@ class LibraryScreen(BaseAppScreen):
     def _library_pane_visibility_changed(
         self, event: LibraryPaneVisibilityChanged
     ) -> None:
-        """Re-read the narrow-stage footer when a pane's visibility settles."""
-        event.stop()
-        self._sync_library_narrow_stage_footer()
+        """Re-register the footer when a pane's applied visibility settles.
 
-    def _sync_library_narrow_stage_footer(self) -> None:
-        """Re-register the footer when the narrow single stage flips (task-32225).
+        task-32225 / task-32228: the footer is registered from
+        ``compose_content``, which runs BEFORE the shell has resolved its
+        allocation -- so several chips were decided against a pane state that
+        was not yet true and nothing revisited them. Live on the seeded
+        profile: at 60x24 the "back to Library" chip never appeared though
+        Escape worked, and at 100x30 the Conversations canvas advertised only
+        "F6 next pane" while its Filter box was on screen and "/" focused it.
+        Both chips read a pane-open flag, and this message fires exactly when
+        one of those flags changes, so one re-registration fixes both.
 
-        The footer is registered from ``compose_content``, which runs BEFORE
-        the shell has resolved its allocation -- so on arrival at 60x24 the
-        chip set was decided while the Library pane was still nominally open,
-        and the "back to Library" chip never appeared even though the key
-        worked (live capture, seeded profile). Flip-gated, so a settle that
-        changes nothing costs no footer churn.
+        Unconditional because the message itself is the gate: the shell posts
+        it only when an APPLIED visibility genuinely flips (route entry, a
+        grip press, a breakpoint crossing), never per frame.
         """
-        active = self._library_narrow_stage_return_active()
-        if active == self._library_narrow_stage_footer_state:
-            return
-        self._library_narrow_stage_footer_state = active
+        event.stop()
         self._register_footer_shortcuts()
 
     def action_library_narrow_stage_return(self) -> None:
