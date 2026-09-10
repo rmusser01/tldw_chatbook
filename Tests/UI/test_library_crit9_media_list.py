@@ -9,7 +9,7 @@ paint/layout ones that a headless ``query_one`` never sees.
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Button, Input, OptionList, Static
+from textual.widgets import Button, Input, Static
 
 from Tests.UI.test_library_media_render_fixes import _host, _painted
 from Tests.UI.test_library_media_side_by_side import _open_media_list
