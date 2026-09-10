@@ -89,6 +89,29 @@ selected in select mode, exported; zip holds 6 entries including
 names both titles, and the canvas reads
 `✓ exported · 2 items · 4 KB · …/exports/p0.zip`.
 
+**Known ceiling (out of AC scope, no code here).** The empty-export guard
+counts only the six content types `create_chatbook` actually collects, so a
+selection consisting solely of `ContentType.EMBEDDING` or
+`ContentType.EVALUATION` ids still yields `requested_items == 0` and packages
+a README-only archive as a success. Those two types have no collector at all
+today, so nothing could have been collected for them under any fix; the
+honest repair is a collector or an up-front rejection of a selection naming
+an uncollectable type, which belongs in its own task.
+
+**PR #2568 review round.** Four Qodo findings + three from the human
+reviewer: selected media now counts as requested even when `include_media`
+is off (`ChatbookCreationWindow` lets a user select media-only with the box
+unchecked — my own `include_media` exclusion had left that path writing an
+empty bundle as a success); restored receipt counts must be positive
+integers or the receipt degrades to the path-only line (nothing impossible
+is re-persisted); the empty-export failure copy is pluralised ("1 item was
+selected"); the failure outcome dropped two dead `item_count`/`size_bytes`
+keys no failure path reads; and `test_library_export_execution._payload`
+writes inside `tmp_path` instead of depending on `/tmp/out.zip` not
+existing. Declined: Google-style `Args:` sections for the three tests'
+`tmp_path` fixture — `Tests/Library/` has zero `Args:` sections and all
+eight `tmp_path`-taking tests in that file omit one.
+
 Files: `Library/library_export_scope.py`, `Library/library_export_state.py`,
 `Chatbooks/chatbook_creator.py`,
 `UI/Library_Modules/library_export_controller.py`,

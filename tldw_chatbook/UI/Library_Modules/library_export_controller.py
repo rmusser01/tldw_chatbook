@@ -1003,8 +1003,6 @@ class LibraryExportController:
                 "dependency_info": failure_info,
                 "registry_recorded": False,
                 "cancelled": bool(export_result.get("cancelled", False)),
-                "item_count": 0,
-                "size_bytes": 0,
             }
 
         output_path = export_result.get("path") or payload.get("output_path", "")
