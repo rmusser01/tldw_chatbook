@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import time
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
+from functools import wraps
 from typing import Any, Callable, Coroutine, Optional
 
 from loguru import logger
 
 from tldw_chatbook.Metrics.metrics_logger import log_counter
-from tldw_chatbook.Utils.persistent_diagnostics import persist_event
 from tldw_chatbook.Scheduling.constants import (
     HANDLER_TIMEOUT_SECONDS,
     MISSED_FIRE_GRACE_SECONDS,
@@ -19,8 +21,18 @@ from tldw_chatbook.Scheduling.constants import (
 from tldw_chatbook.Scheduling.scheduler.queue import PriorityQueue
 from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
+from tldw_chatbook.Utils.persistent_diagnostics import persist_event
 
 Handler = Callable[[dict[str, Any]], Coroutine[Any, Any, None]]
+
+
+def _admitted_dispatch(method):
+    """Keep a complete scheduler operation admitted through nested dispatch."""
+    @wraps(method)
+    async def admitted(self, *args, **kwargs):
+        with self._maintenance_operation():
+            return await method(self, *args, **kwargs)
+    return admitted
 
 
 class SchedulerLoop:
@@ -71,11 +83,95 @@ class SchedulerLoop:
         self.running = False
         self._tick_count = 0
         self._reload_requested = False
+        self._maintenance_closed = False
+        self._maintenance_tasks = {}
+        self._maintenance_db_tasks = set()
+        self._maintenance_changed = asyncio.Event()
+        self._maintenance_open = asyncio.Event()
+        self._maintenance_open.set()
         self.queue = PriorityQueue(
             db,
             watchlist_projection=watchlist_projection,
             briefing_projection=briefing_projection,
         )
+
+    @contextmanager
+    def _maintenance_operation(self):
+        task = asyncio.current_task()
+        depth = self._maintenance_tasks.get(task, 0)
+        if self._maintenance_closed and not depth:
+            raise RuntimeError("scheduler_maintenance_paused")
+        self._maintenance_tasks[task] = depth + 1
+        try:
+            yield
+        finally:
+            if depth:
+                self._maintenance_tasks[task] = depth
+            else:
+                del self._maintenance_tasks[task]
+            self._maintenance_changed.set()
+
+    def _maintenance_close_admission(self) -> None:
+        """Fence new ticks/manual dispatch; admitted work finishes naturally."""
+        self._maintenance_closed = True
+        self._maintenance_open.clear()
+
+    async def _maintenance_drain(self, deadline: float) -> bool:
+        """Wait without cancelling a dispatch or its persisted outcome."""
+        if not self._maintenance_closed:
+            raise RuntimeError("scheduler_maintenance_not_closed")
+        while self._maintenance_tasks or self._maintenance_db_tasks:
+            self._maintenance_changed.clear()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            try:
+                await asyncio.wait_for(self._maintenance_changed.wait(), remaining)
+            except TimeoutError:
+                return False
+        return True
+
+    def _maintenance_resume(self) -> None:
+        """Reopen after the capture coordinator releases storage maintenance."""
+        self._maintenance_closed = False
+        self._maintenance_open.set()
+
+    async def _offload(self, callback, *args, **kwargs):
+        """Retain ownership of worker work even when its awaiter is cancelled."""
+        task = asyncio.create_task(asyncio.to_thread(callback, *args, **kwargs))
+        self._maintenance_db_tasks.add(task)
+
+        def finished(completed):
+            self._maintenance_db_tasks.discard(completed)
+            self._maintenance_changed.set()
+            if not completed.cancelled():
+                # Observe errors if the original awaiter was cancelled. An
+                # ordinary await still receives the original exception.
+                completed.exception()
+
+        task.add_done_callback(finished)
+        return await asyncio.shield(task)
+
+    async def _load_queue(self) -> None:
+        """Materialize installed projections and retire their worker caches."""
+        from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+
+        queue = self.queue
+        databases = set()
+        if type(queue) is PriorityQueue:
+            for projection in (queue.watchlist_projection, queue.briefing_projection):
+                if type(projection) in (WatchlistProjection, BriefingProjection):
+                    db = projection.subscriptions_db
+                    if type(db) is SubscriptionsDB and not db.is_memory_db:
+                        databases.add(db)
+
+        def load():
+            with ExitStack() as retirement:
+                for db in databases:
+                    retirement.callback(db.close)
+                queue.load()
+
+        await self._offload(load)
 
     def request_reload(self) -> None:
         """Ask the loop to reload the queue before its next tick.
@@ -151,21 +247,32 @@ class SchedulerLoop:
     async def run(self) -> None:
         """Run the scheduler until :meth:`stop` is called."""
         self.running = True
-        await asyncio.to_thread(self.queue.load)
-        self.report_configuration()
+        initial = True
         while self.running:
-            if (
-                self._tick_count > 0
-                and self._tick_count % self.queue_reload_interval_ticks == 0
-            ):
-                await asyncio.to_thread(self.queue.load)
-            if self._reload_requested:
-                self._reload_requested = False
-                await asyncio.to_thread(self.queue.load)
-            self._tick_count += 1
-            await self.tick()
+            await self._maintenance_open.wait()
+            if not self.running:
+                break
+            if self._maintenance_closed:
+                self._maintenance_open.clear()
+                continue
+            with self._maintenance_operation():
+                if initial:
+                    await self._load_queue()
+                    self.report_configuration()
+                    initial = False
+                if (
+                    self._tick_count > 0
+                    and self._tick_count % self.queue_reload_interval_ticks == 0
+                ):
+                    await self._load_queue()
+                if self._reload_requested:
+                    self._reload_requested = False
+                    await self._load_queue()
+                self._tick_count += 1
+                await self.tick()
             await asyncio.sleep(self.poll_interval)
 
+    @_admitted_dispatch
     async def tick(self) -> None:
         """Evaluate once and dispatch any due tasks."""
         now = self.clock()
@@ -191,6 +298,7 @@ class SchedulerLoop:
                 continue
             await self.dispatch_reminder(task, handler, task_type, now)
 
+    @_admitted_dispatch
     async def dispatch_reminder(
         self,
         task: dict[str, Any],
@@ -247,7 +355,7 @@ class SchedulerLoop:
                 task_id=task_id,
             )
             if task_type == "reminder" and task_id:
-                await asyncio.to_thread(
+                await self._offload(
                     self.db.mark_reminder_dispatched,
                     task_id,
                     now,
@@ -257,7 +365,7 @@ class SchedulerLoop:
             return False
 
         if task_type == "reminder" and task_id:
-            await asyncio.to_thread(
+            await self._offload(
                 self.db.mark_reminder_dispatched,
                 task_id,
                 now,
@@ -288,6 +396,7 @@ class SchedulerLoop:
             return None
         return float(default)
 
+    @_admitted_dispatch
     async def run_reminder_now(self, task_id: str) -> bool:
         """Dispatch one reminder immediately, bypassing the poll wait.
 
@@ -317,16 +426,17 @@ class SchedulerLoop:
             return False
 
         self.queue.remove(task_id)
-        row = await asyncio.to_thread(self.db.get_reminder_task, task_id)
+        row = await self._offload(self.db.get_reminder_task, task_id)
         if row is None:
             return False
 
         succeeded = await self.dispatch_reminder(
             row, handler, "reminder", self.clock()
         )
-        await asyncio.to_thread(self.queue.load)
+        await self._load_queue()
         return succeeded
 
     def stop(self) -> None:
         """Signal the loop to exit after the current tick."""
         self.running = False
+        self._maintenance_open.set()
