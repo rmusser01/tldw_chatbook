@@ -103,6 +103,9 @@ class _Prepared(_Evidence):
     mode: Literal["isolated", "replace"]
     artifacts: list[_Artifact] = Field(default_factory=list, max_length=MAX_EVENTS)
     publication: _PublicationContext | None = None
+    installed_paths: list[_Directory] = Field(
+        default_factory=list, max_length=MAX_EVENTS
+    )
 
 
 def observe_artifact(path: Path, *, metadata: bool = False) -> dict:
@@ -311,6 +314,13 @@ def _states(prepared: _Prepared, *, logical_id: str | None = None) -> dict[str, 
     return result
 
 
+class _Installed(_Evidence):
+    plan_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    descriptor_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    artifacts: list[_Object] = Field(max_length=MAX_EVENTS)
+
+
 class _Event(_Evidence):
     version: Literal[1] = 1
     operation_id: str
@@ -323,6 +333,7 @@ class _Event(_Evidence):
         "publication_started",
         "artifact_retired",
         "artifact_published",
+        "installed_validated",
     ]
     evidence: dict
 
@@ -347,7 +358,7 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
             if lifecycle == ["prepared"]
             else {"publication_started"}
             if lifecycle == ["prepared", "rollback_verified"]
-            else {"artifact_retired", "artifact_published"}
+            else {"artifact_retired", "artifact_published", "installed_validated"}
             if "publication_started" in events
             else set()
         )
@@ -366,10 +377,40 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
         "rollback_verified": _Rollback,
         "artifact_retired": _Progress,
         "artifact_published": _Progress,
+        "installed_validated": _Installed,
     }.get(event, _Evidence)
     try:
         validated = model.model_validate(dict(evidence))
-        if isinstance(validated, _Prepared):
+        if isinstance(validated, _Installed):
+            receipt = next(
+                (row for row in prior if row.event == "candidate_staged"), None
+            )
+            if receipt is None:
+                raise ValueError("installed_context_invalid")
+            if (
+                any(
+                    getattr(validated, key) != receipt.evidence[key]
+                    for key in ("plan_digest", "manifest_digest")
+                )
+                or validated.descriptor_digest
+                != receipt.evidence["descriptor"]["sha256"]
+            ):
+                raise ValueError("installed_context_invalid")
+            prepared = _Prepared.model_validate(prepared_record.evidence)
+            expected = {
+                item.path: (item.device, item.inode)
+                for item in prepared.installed_paths
+            }
+            observed = {
+                item.path: (item.device, item.inode) for item in validated.artifacts
+            }
+            if (
+                not expected
+                or expected != observed
+                or len(observed) != len(validated.artifacts)
+            ):
+                raise ValueError("installed_objects_invalid")
+        elif isinstance(validated, _Prepared):
             artifacts = validated.artifacts
             if len({item.logical_id for item in artifacts}) != len(artifacts) or len(
                 {item.target for item in artifacts}
@@ -486,7 +527,11 @@ class Journal:
                 os.close(lock)
 
     def _records(self, parent: int) -> list[_Event]:
-        names = sorted(name for name in os.listdir(parent) if name != "journal.lock")
+        names = sorted(
+            name
+            for name in os.listdir(parent)
+            if name not in {"journal.lock", "verified-manifest.json"}
+        )
         if len(names) > MAX_EVENTS:
             raise ValueError("journal_limit")
         records = []
@@ -589,6 +634,26 @@ class Journal:
         with self._locked(exclusive=True) as parent:
             recheck_targets(plan)
             _descriptor(stage, plan)
+            from .limits import ArchiveLimits
+
+            if len(archive.manifest_bytes) > ArchiveLimits().manifest_bytes:
+                raise ValueError("manifest_limit")
+            try:
+                Admission._write_new_record(
+                    parent, "verified-manifest.json", archive.manifest_bytes
+                )
+            except FileExistsError:
+                from .archive_reader import _regular
+
+                with _regular(self.root / "verified-manifest.json") as stream:
+                    if (
+                        stream.read(ArchiveLimits().manifest_bytes + 1)
+                        != archive.manifest_bytes
+                    ):
+                        raise ValueError("verified_manifest_changed") from None
+                    os.fsync(stream.fileno())
+                    fcntl.fcntl(stream.fileno(), fcntl.F_FULLFSYNC)
+            flush_directory(parent)
             self._append(
                 parent,
                 "candidate_staged",
@@ -602,6 +667,12 @@ class Journal:
                     "plan_digest": _plan_digest(plan),
                 },
             )
+
+    def validate_installed(self, candidate, plan):
+        """Prove installed bytes and metadata without releasing recovery admission."""
+        from .publication import _validate_installed
+
+        return _validate_installed(self, candidate, plan)
 
     def verify_rollback(self, path, *, password, work_root, cancel, coverage):
         """Authenticate exact raw rollback coverage without persisting its secret."""

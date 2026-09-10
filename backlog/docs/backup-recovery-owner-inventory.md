@@ -234,6 +234,10 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Backup_Recovery/journal.py | observe_artifact.recheck | open | 1 | generic_boundary | backup_recovery_journal |
 | tldw_chatbook/Backup_Recovery/publication.py | _flush_original | open | 1 | generic_boundary | backup_recovery_publication |
 | tldw_chatbook/Backup_Recovery/publication.py | _retire | open | 1 | generic_boundary | backup_recovery_publication |
+| tldw_chatbook/Backup_Recovery/publication.py | _installed_metadata | open | 1 | generic_boundary | backup_recovery_publication |
+| tldw_chatbook/Backup_Recovery/publication.py | _validate_installed | mkdir | 2 | generic_boundary | backup_recovery_publication |
+| tldw_chatbook/Backup_Recovery/publication.py | _validate_installed | open | 1 | generic_boundary | backup_recovery_publication |
+| tldw_chatbook/Backup_Recovery/publication.py | _validate_installed | write | 1 | generic_boundary | backup_recovery_publication |
 | tldw_chatbook/Backup_Recovery/staging.py | _copy | create_private_file | 1 | disposable | backup_restore_staging |
 | tldw_chatbook/Backup_Recovery/staging.py | _copy | write | 1 | disposable | backup_restore_staging |
 | tldw_chatbook/Backup_Recovery/staging.py | stage_restore | ZipFile | 1 | disposable | backup_restore_staging |

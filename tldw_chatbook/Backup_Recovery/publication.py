@@ -398,6 +398,23 @@ def _prepare(
                     ],
                 }
             )
+        installed_paths = []
+        for row in [*document["artifacts"], *document.get("containers", [])]:
+            target = Path(row["destination"])
+            moved = any(
+                item["candidate"] is not None
+                and (
+                    target == Path(item["target"])
+                    or Path(item["target"]) in target.parents
+                )
+                and item["action"] != "container"
+                for item in artifacts
+            ) or row in document.get("containers", [])
+            source = Path(row["candidate"]) if moved else target
+            info = source.lstat()
+            installed_paths.append(
+                {"path": str(target), "device": info.st_dev, "inode": info.st_ino}
+            )
         journal._append(
             parent,
             "prepared",
@@ -406,6 +423,7 @@ def _prepare(
                 "mode": plan.mode,
                 "artifacts": artifacts,
                 "publication": context.model_dump(),
+                "installed_paths": installed_paths,
             },
         )
 
@@ -605,3 +623,325 @@ def publish_candidate(
                         "observed": observe_artifact(Path(item.target)),
                     },
                 )
+
+
+def _installed_file_digest(path, size):
+    with reader._regular(path) as stream:
+        before = os.fstat(stream.fileno())
+        if (
+            before.st_size != size
+            or before.st_nlink != 1
+            or before.st_uid != os.geteuid()
+        ):
+            raise ValueError("installed_content_changed")
+        remaining = size
+        digest = hashlib.sha256()
+        while remaining:
+            block = stream.read(min(remaining, 64 * 1024))
+            if not block:
+                raise ValueError("installed_content_changed")
+            digest.update(block)
+            remaining -= len(block)
+        if stream.read(1) or reader._identity(before) != reader._identity(
+            os.fstat(stream.fileno())
+        ):
+            raise ValueError("installed_content_changed")
+        return digest.hexdigest()
+
+
+def _installed_metadata(path, expected, metadata):
+    """Apply supported metadata only through the checked object's native handle."""
+    with pinned_directory(path.parent) as parent:
+        fd = os.open(
+            path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent
+        )
+        try:
+            before = os.fstat(fd)
+            if (
+                before.st_dev,
+                before.st_ino,
+            ) != expected or before.st_uid != os.geteuid():
+                raise ValueError("installed_identity_changed")
+            if not (stat.S_ISREG(before.st_mode) or stat.S_ISDIR(before.st_mode)):
+                raise ValueError("installed_kind_changed")
+            os.fchmod(fd, metadata["mode"])
+            os.utime(fd, ns=(before.st_atime_ns, metadata["mtime_ns"]))
+            os.fsync(fd)
+            fcntl.fcntl(fd, fcntl.F_FULLFSYNC)
+            named = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+            if (named.st_dev, named.st_ino) != expected:
+                raise ValueError("installed_identity_changed")
+            flush_directory(parent)
+        finally:
+            os.close(fd)
+
+
+def _validate_installed(journal, candidate, plan):
+    """Recheck published objects, validate disposable copies, then persist proof."""
+    import shutil
+    import tempfile
+    from types import MappingProxyType
+
+    from .owner_registry import install_adapters
+    from .sqlite_validation import validate_candidate
+    from .staging import _items
+    from .storage_admission import _preview_reads
+
+    with journal._locked(exclusive=True) as parent:
+        records = journal._records(parent)
+        receipt_row = next(
+            (row for row in records if row.event == "candidate_staged"), None
+        )
+        prepared_row = next((row for row in records if row.event == "prepared"), None)
+        if (
+            receipt_row is None
+            or prepared_row is None
+            or not any(row.event == "publication_started" for row in records)
+        ):
+            raise ValueError("publication_incomplete")
+        receipt = _CandidateReceipt.model_validate(receipt_row.evidence)
+        prepared = _Prepared.model_validate(prepared_row.evidence)
+        context = prepared.publication
+        if (
+            context is None
+            or receipt.plan_digest != _plan_digest(plan)
+            or context.plan_digest != receipt.plan_digest
+            or receipt.stage.path != str(candidate)
+            or context.descriptor != receipt.descriptor
+        ):
+            raise ValueError("publication_context_unverified")
+        if not _matches(receipt.descriptor, str(candidate / "candidate.json")):
+            raise ValueError("candidate_receipt_changed")
+        with pinned_directory(candidate) as fd:
+            descriptor = _read(fd, "candidate.json")
+        with reader._regular(journal.root / "verified-manifest.json") as stream:
+            info = os.fstat(stream.fileno())
+            if (
+                info.st_uid != os.geteuid()
+                or info.st_nlink != 1
+                or stat.S_IMODE(info.st_mode) != 0o600
+            ):
+                raise ValueError("verified_manifest_changed")
+            manifest = stream.read(ArchiveLimits().manifest_bytes + 1)
+            if reader._identity(info) != reader._identity(os.fstat(stream.fileno())):
+                raise ValueError("verified_manifest_changed")
+        if (
+            len(manifest) > ArchiveLimits().manifest_bytes
+            or hashlib.sha256(manifest).hexdigest() != receipt.manifest_digest
+        ):
+            raise ValueError("verified_manifest_changed")
+        doc = reader._manifest(manifest, ArchiveLimits(), True)
+        rows = [*descriptor["artifacts"], *descriptor.get("containers", [])]
+        expected = {
+            item.path: (item.device, item.inode) for item in prepared.installed_paths
+        }
+        if set(expected) != {row["destination"] for row in rows}:
+            raise ValueError("installed_identity_required")
+
+        owners = {owner.owner_id: owner for owner in install_adapters()}
+        items = _items(doc, plan)
+        sqlite_paths = []
+        for key, item in items.items():
+            owner = owners[item.owner]
+            role_check = getattr(owner, "restore_role", None)
+            policy = owner.schema_policy()
+            role = (
+                role_check(item)
+                if callable(role_check)
+                else "sqlite"
+                if policy is not None and policy.schema_sql
+                else "file"
+            )
+            if item.metadata.kind == "file" and role == "sqlite":
+                sqlite_paths.append(dict(plan.restore)[key])
+
+        def verify():
+            for path in sqlite_paths:
+                if any(
+                    os.path.lexists(str(path) + suffix)
+                    for suffix in ("-wal", "-shm", "-journal")
+                ):
+                    raise ValueError("installed_sqlite_sidecar_present")
+            _pending(
+                journal,
+                context,
+                targets=[Path(item.target) for item in prepared.artifacts],
+            )
+            states = _states(prepared)
+            for item in prepared.artifacts:
+                _check_parents(item)
+                required = "retired" if item.action == "retire" else "published"
+                if states[item.logical_id] != required:
+                    raise ValueError("installed_objects_changed")
+            for row in rows:
+                path = Path(row["destination"])
+                info = path.lstat()
+                if (info.st_dev, info.st_ino) != expected[str(path)]:
+                    raise ValueError("installed_identity_changed")
+                if row["kind"] == "file" and (
+                    info.st_size != row["size"]
+                    or _installed_file_digest(path, row["size"]) != row["sha256"]
+                ):
+                    raise ValueError("installed_content_changed")
+
+        verify()
+        if any(
+            row["kind"] == "directory"
+            and expected[row["destination"]] != tuple(row["identity"][:2])
+            for row in rows
+        ):
+            # Existing owned directories can preserve unrelated children. Their
+            # metadata needs its own rollback coverage, not tree retirement.
+            raise ValueError("installed_directory_rollback_required")
+        prior_validation = next(
+            (row for row in reversed(records) if row.event == "installed_validated"),
+            None,
+        )
+        if prior_validation is not None:
+            from .journal import _Object
+
+            for evidence in prior_validation.evidence["artifacts"]:
+                if not _matches(
+                    _Object.model_validate(evidence), evidence["path"], metadata=True
+                ):
+                    raise ValueError("installed_metadata_changed")
+        _pending(
+            journal,
+            context,
+            targets=[Path(item.target) for item in prepared.artifacts],
+            durable=True,
+        )
+        journal._flush_records(parent)
+        # The existing SQLite seam accepts disposable candidates, never live WAL
+        # readers. Copy exact installed bytes, then check installed evidence again.
+        work = Path(tempfile.mkdtemp(prefix="installed-check-", dir=candidate))
+        try:
+            candidates = {}
+            topology = {}
+            directories = {row.logical_id for row in doc.directories}
+            for record in (*doc.directories, *doc.files):
+                kind = "directory" if record.logical_id in directories else "file"
+                topology[record.logical_id] = (
+                    record.root_id,
+                    record.parent_id,
+                    record.relative_path,
+                    kind,
+                )
+                if record.logical_id not in dict(plan.restore):
+                    continue
+                destination = work / record.root_id / record.relative_path
+                destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                if kind == "directory":
+                    destination.mkdir(mode=0o700, exist_ok=True)
+                else:
+                    source = dict(plan.restore)[record.logical_id]
+                    row = next(
+                        row for row in rows if row["logical_id"] == record.logical_id
+                    )
+                    remaining = row["size"]
+                    digest = hashlib.sha256()
+                    with (
+                        reader._regular(source) as stream,
+                        destination.open("xb") as output,
+                    ):
+                        while remaining:
+                            block = stream.read(min(remaining, 64 * 1024))
+                            if not block:
+                                raise ValueError("installed_content_changed")
+                            output.write(block)
+                            digest.update(block)
+                            remaining -= len(block)
+                        if stream.read(1) or digest.hexdigest() != row["sha256"]:
+                            raise ValueError("installed_content_changed")
+                    destination.chmod(0o600)
+                candidates[record.logical_id] = destination
+            verify()
+            synthetic = {row.logical_id for row in doc.directories if row.synthetic}
+            with _preview_reads():
+                for key, item in items.items():
+                    owner = owners[item.owner]
+                    if item.metadata.kind == "file":
+                        role_check = getattr(owner, "restore_role", None)
+                        policy = owner.schema_policy()
+                        role = (
+                            role_check(item)
+                            if callable(role_check)
+                            else "sqlite"
+                            if policy is not None and policy.schema_sql
+                            else "file"
+                        )
+                        if role == "sqlite":
+                            source = dict(plan.restore)[key]
+                            if any(
+                                Path(str(source) + suffix).exists()
+                                for suffix in ("-wal", "-shm", "-journal")
+                            ):
+                                raise ValueError("installed_sqlite_sidecar_present")
+                            issues = validate_candidate(
+                                owner, candidates[key], Event(), migrate=False
+                            )
+                        else:
+                            validator = getattr(owner, "validate_restore", None)
+                            issues = (
+                                validator(item, candidates[key])
+                                if callable(validator)
+                                else owner.validate(candidates[key])
+                            )
+                        if issues:
+                            raise ValueError(issues[0])
+                    if key in synthetic:
+                        continue
+                    validator = getattr(owner, "validate_restore_dependencies", None)
+                    legacy = getattr(owner, "validate_dependencies", None)
+                    if callable(validator):
+                        issues = validator(
+                            item,
+                            candidates[key],
+                            MappingProxyType(candidates),
+                            topology=MappingProxyType(topology),
+                        )
+                    elif callable(legacy):
+                        issues = legacy(
+                            item, candidates[key], MappingProxyType(candidates)
+                        )
+                    else:
+                        issues = ()
+                    if issues:
+                        raise ValueError(issues[0])
+            verify()
+            for row in sorted(
+                rows,
+                key=lambda row: (
+                    row["kind"] == "directory",
+                    -len(Path(row["destination"]).parts),
+                ),
+            ):
+                _installed_metadata(
+                    Path(row["destination"]),
+                    expected[row["destination"]],
+                    row["applied_metadata"],
+                )
+            verify()
+            for row in rows:
+                info = Path(row["destination"]).lstat()
+                applied = row["applied_metadata"]
+                if (
+                    stat.S_IMODE(info.st_mode) != applied["mode"]
+                    or info.st_mtime_ns != applied["mtime_ns"]
+                ):
+                    raise ValueError("installed_metadata_changed")
+            evidence = [
+                observe_artifact(Path(path), metadata=True) for path in sorted(expected)
+            ]
+            journal._append(
+                parent,
+                "installed_validated",
+                {
+                    "plan_digest": receipt.plan_digest,
+                    "descriptor_digest": receipt.descriptor.sha256,
+                    "manifest_digest": receipt.manifest_digest,
+                    "artifacts": evidence,
+                },
+            )
+        finally:
+            shutil.rmtree(work)
