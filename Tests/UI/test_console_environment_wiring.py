@@ -1922,3 +1922,37 @@ async def test_fleet_section_sync_yields_to_a_focus_move_outside_the_rail():
         assert screen.focused is composer, (
             "the fleet sync fought the user for focus they had just moved"
         )
+
+
+def test_environment_poll_tick_is_a_no_op_once_the_screen_stack_is_empty():
+    """task-32297: the poll timer can fire after the app's last screen is gone.
+
+    ``App.screen`` raises ``ScreenStackError`` on an empty stack; the tick
+    (and the owner's rail-open accessor) must read that as "not active"
+    instead of propagating -- the Perf Guard tour tests failed on exactly
+    this teardown race three times in one day.
+    """
+    from types import SimpleNamespace
+
+    from textual.app import ScreenStackError
+
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    class _EmptyStackApp:
+        @property
+        def screen(self):
+            raise ScreenStackError("No screens on stack")
+
+    ticks: list[str] = []
+    fake = SimpleNamespace(
+        app=_EmptyStackApp(),
+        _console_environment_owner=object(),
+        _console_environment=SimpleNamespace(poll_tick=lambda: ticks.append("tick")),
+        _is_console_widget_displayed=lambda _id: True,
+    )
+    fake._is_active_console_screen = lambda: ChatScreen._is_active_console_screen(fake)
+
+    ChatScreen._poll_console_environment(fake)  # must not raise
+
+    assert ticks == []
+    assert ChatScreen._is_active_console_screen(fake) is False
