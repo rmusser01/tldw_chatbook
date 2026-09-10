@@ -20,6 +20,7 @@ from tldw_chatbook.Character_Chat.artwork_attribution import (
     MAX_NOTICE_BYTES,
     artwork_context,
 )
+from tldw_chatbook.Utils.filesystem_identity import directory_identity_from_stat
 
 MAX_METADATA_BYTES = 2 * 1024 * 1024
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
@@ -339,7 +340,7 @@ def _snapshot_directories(
     snapshot = []
     for directory in directories:
         info = os.lstat(directory)
-        if not stat.S_ISDIR(info.st_mode):
+        if not stat.S_ISDIR(info.st_mode) or directory_identity_from_stat(info).reparse:
             raise _invalid()
         snapshot.append((directory, _identity(info)))
     return tuple(snapshot)
@@ -348,7 +349,11 @@ def _snapshot_directories(
 def _verify_directory_snapshot(snapshot: tuple[tuple[Path, tuple], ...]) -> None:
     for directory, identity in snapshot:
         info = os.lstat(directory)
-        if not stat.S_ISDIR(info.st_mode) or _identity(info) != identity:
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or directory_identity_from_stat(info).reparse
+            or _identity(info) != identity
+        ):
             raise ValueError("petdex_source_stale")
 
 
@@ -357,6 +362,7 @@ def _verify_fallback_leaf(path: Path, expected: tuple, opened: os.stat_result) -
     if (
         not stat.S_ISREG(opened.st_mode)
         or not stat.S_ISREG(named.st_mode)
+        or directory_identity_from_stat(named).reparse
         or _identity(opened) != expected
         or _identity(named) != expected
     ):
@@ -368,7 +374,11 @@ def _read_path_fallback(path: Path, cap: int) -> tuple[bytes, tuple]:
     snapshot = _snapshot_directories(_fallback_directories(path))
     before = os.lstat(path)
     expected = _identity(before)
-    if not stat.S_ISREG(before.st_mode) or not 0 <= before.st_size <= cap:
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or directory_identity_from_stat(before).reparse
+        or not 0 <= before.st_size <= cap
+    ):
         raise _invalid()
     _verify_directory_snapshot(snapshot)
 
@@ -467,7 +477,10 @@ def _folder_inventory_fallback(root: Path) -> dict[str, tuple]:
         if depth > 16:
             raise _invalid()
         before = os.lstat(directory)
-        if not stat.S_ISDIR(before.st_mode):
+        if (
+            not stat.S_ISDIR(before.st_mode)
+            or directory_identity_from_stat(before).reparse
+        ):
             raise _invalid()
         with os.scandir(directory) as children:
             for child in children:
@@ -477,7 +490,9 @@ def _folder_inventory_fallback(root: Path) -> dict[str, tuple]:
                 child_path = directory / child.name
                 info = os.lstat(child_path)
                 is_directory = stat.S_ISDIR(info.st_mode)
-                if not is_directory and not stat.S_ISREG(info.st_mode):
+                if (
+                    not is_directory and not stat.S_ISREG(info.st_mode)
+                ) or directory_identity_from_stat(info).reparse:
                     raise _invalid()
                 entries[name] = (_identity(info), is_directory)
                 if is_directory:
@@ -487,7 +502,11 @@ def _folder_inventory_fallback(root: Path) -> dict[str, tuple]:
                     if total_bytes > MAX_PACKAGE_BYTES:
                         raise _invalid()
         after = os.lstat(directory)
-        if not stat.S_ISDIR(after.st_mode) or _identity(after) != _identity(before):
+        if (
+            not stat.S_ISDIR(after.st_mode)
+            or directory_identity_from_stat(after).reparse
+            or _identity(after) != _identity(before)
+        ):
             raise ValueError("petdex_source_stale")
 
     visit(root, "", 0)

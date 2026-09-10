@@ -1,6 +1,6 @@
 # Integrate the approved Buddy character and Petdex work
 
-Status: In progress
+Status: Implementation and qualification complete; PR integration pending
 Creator: tldw-project
 
 ## Scope and authority
@@ -139,4 +139,8 @@ Completed the history-preserving reconciliation onto dev 16c72b5b1e. Playback an
 Petdex ADRs are now 144 and 145 after cached-ref collision checks. Fresh targeted
 evidence, baseline limitations, preserved ownership, and exact Task 2 seams are
 recorded in [the integration verification](../reviews/2026-09-10-buddy-feature-integration-verification.md).
-Task 2 and live installation/server qualification remain pending with the root task.
+Task 2 and the downloaded-source headless application qualification are complete;
+see [the journey verification](../reviews/2026-09-10-independent-buddy-journey-verification.md)
+for final review fixes, exact results, rulings and native/physical acceptance limits.
+Server follow-ups landed in PRs 2940 and 2941. Root owns final Chatbook PR integration
+and the dependent collection installer PR 19.

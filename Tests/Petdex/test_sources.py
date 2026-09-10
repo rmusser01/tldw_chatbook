@@ -4,6 +4,8 @@ import io
 import json
 import os
 import zipfile
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image
@@ -110,6 +112,54 @@ def test_capability_fallback_rejects_linked_sources(tmp_path, monkeypatch, kind)
 
     with pytest.raises(ValueError, match="petdex_source_invalid"):
         read_local_package(link)
+
+
+@pytest.mark.parametrize(
+    ("kind", "location"),
+    [
+        (kind, location)
+        for kind in ("folder", "json", "zip")
+        for location in ("ancestor", "root_or_leaf")
+    ]
+    + [(kind, "nested") for kind in ("folder", "json")],
+)
+def test_capability_fallback_rejects_windows_reparse_points(
+    tmp_path, monkeypatch, kind, location
+):
+    from tldw_chatbook.Petdex import sources
+    from tldw_chatbook.Utils import filesystem_identity
+
+    entry = local_package_entry(tmp_path, kind)
+    root = entry.parent if kind == "json" else entry
+    if location == "ancestor":
+        target = tmp_path
+    elif location == "nested" and kind != "zip":
+        target = root / "notices"
+        target.mkdir()
+        (target / "NOTICE").write_text("Do not follow this directory.")
+    else:
+        target = entry
+    real_lstat = os.lstat
+    blocked = set()
+
+    def windows_lstat(path, *args, **kwargs):
+        info = real_lstat(path, *args, **kwargs)
+        values = {
+            name: getattr(info, name) for name in dir(info) if name.startswith("st_")
+        }
+        values["st_file_attributes"] = 1024 if Path(path) in blocked else 0
+        return SimpleNamespace(**values)
+
+    monkeypatch.setattr(sources, "_supports_secure_descriptor_walk", lambda: False)
+    monkeypatch.setattr(filesystem_identity, "_WINDOWS", True)
+    monkeypatch.setattr(filesystem_identity, "_REPARSE_POINT", 1024)
+    monkeypatch.setattr(os, "lstat", windows_lstat)
+    source = read_local_package(entry)
+    blocked.add(target)
+
+    assert not source.is_current()
+    with pytest.raises(ValueError, match="petdex_source_invalid"):
+        read_local_package(entry)
 
 
 def test_folder_source_preserves_terms_is_immutable_and_catches_replacement(tmp_path):

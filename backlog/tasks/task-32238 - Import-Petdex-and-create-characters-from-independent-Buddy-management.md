@@ -1,14 +1,14 @@
 ---
 id: TASK-32238
 title: Import Petdex and create characters from independent Buddy management
-status: In Progress
+status: Done
 created_date: 2026-09-10 15:16
 assignee:
 - '@codex'
 labels:
 - buddy
 - petdex
-updated_date: 2026-09-10 17:51
+updated_date: 2026-09-10 18:04
 ---
 
 ## Description
@@ -35,13 +35,13 @@ ADR required: yes. ADR path: backlog/decisions/146-independent-buddy-petdex-publ
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Implemented independent management Petdex staging/publication and selected-Buddy character creation through existing guarded native services. Final review fixes add capability-probed local folder, pet.json and ZIP reads with bounded lstat/open/recheck fallback; shared path-free native/staged publication recovery; accurate publication-before-settings partial-Apply guidance and retry reuse; the reviewed diagnostic inventory pin; and only the named Buddy formatting hunks. Accepted ADR-139 is restored exactly. Supplemental Accepted ADR-146 extends its management entry points and partially supersedes only ADR-145 saved-Persona-only destination restriction; saved Persona authoring and every ADR-145 source, transport, review and attribution decision remain in force. Fresh targeted tests: Petdex sources/conversion/publication 39 passed; management Petdex/import/modal 57 passed; coordinator 17 passed. Scoped Ruff checks pass, CSS generated assets reproduce, diagnostic inventory has no drift, and git diff --check passes. Earlier live-source qualification passed on af85f8a854 and remains recorded in Docs/superpowers/reviews/2026-09-10-independent-buddy-journey-verification.md. Root owns final current-dev integration, combined-head downloaded-source app rerun and closeout; task remains In Progress.
+Root closeout: current dev 5a9371c4f3 integrated as 8aaadb56f1; 113 targeted Buddy/Petdex checks and 30 shell/CSS checks passed. Actual downloaded archive production-app journey passed in 37.04 seconds, retaining 14 independent expressions, Dynamic/Static behavior, credits and offline restart. All seven required preflight checks passed. Scoped final re-review addressed all six original findings; root fixed the remaining Windows reparse-point gap using shared filesystem identity checks, with eight discriminating cases and 47 Petdex source/conversion/publication tests passing. Scoped Ruff and diff checks pass. ADR146 and the committed journey verification record final contracts, evidence, rulings and actual-Windows/native/physical limits. Implementation and self/independent review complete; root continues authorized PR publication and merge.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+Independent Buddy management now supports reviewed Petdex installation and editable character copies without a Persona, retaining credits and Dynamic/Static expressions. Current-dev targeted and real-archive headless application checks pass; native terminal and physical voice acceptance remain separate tracked tasks.
 <!-- SECTION:FINAL_SUMMARY:END -->
-
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
