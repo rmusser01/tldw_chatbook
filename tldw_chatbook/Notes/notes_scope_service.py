@@ -1943,20 +1943,26 @@ class NotesScopeService:
         Args:
             scope: The note scope to read; only ``ScopeType.LOCAL_NOTE``
                 carries the ``note://`` link form the Obsidian importer
-                writes, so every other scope answers with no backlinks
-                rather than raising into a caller that only wants to fill
-                one Info panel.
+                writes.
             note_id: The linked-to note.
             user_id: The local user whose database to read.
             limit: Maximum rows to return.
 
         Returns:
             ``{"id", "title"}`` rows for the linking notes, ordered by title.
+
+        Raises:
+            ValueError: If the scope is not local -- the same refusal
+                ``list_deleted_notes`` gives, and for the same reason. An
+                empty list would reach Info as "(0) — no notes link here
+                yet", which asserts something this service never checked;
+                raising lands in the caller's ``failed`` path, where the
+                header honestly reads "couldn't check".
         """
         normalized_scope = self._normalize_scope(scope)
         self._enforce_policy(self._note_action_id(normalized_scope, "list"))
-        if normalized_scope != ScopeType.LOCAL_NOTE:
-            return []
+        if normalized_scope is not ScopeType.LOCAL_NOTE:
+            raise ValueError("Backlinks are only listed for local notes.")
         return await asyncio.to_thread(
             self.local_notes_service.get_notes_linking_to,
             self._require_user_id(user_id),

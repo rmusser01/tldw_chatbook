@@ -130,6 +130,25 @@ async def test_a_wildcard_in_the_note_id_is_matched_literally(notes_scope_servic
 
 
 @pytest.mark.asyncio
+async def test_backlinks_refuse_every_scope_but_local(notes_scope_service):
+    """A scope with no ``note://`` links must refuse, not answer zero.
+
+    Only local notes carry the importer's link form. Answering ``[]`` would
+    reach Info as "Linked from (0) — no notes link here yet", a claim nothing
+    checked; the raise lands in the controller's ``failed`` path, whose
+    header copy is pinned by
+    ``Tests/UI/test_library_notes_riders_backlinks.py::
+    test_a_failed_backlink_lookup_does_not_claim_there_are_none``. Same
+    refusal ``list_deleted_notes`` gives for the same condition.
+    """
+    for scope in ("server_note", "workspace"):
+        with pytest.raises(ValueError):
+            await notes_scope_service.list_note_backlinks(
+                scope=scope, note_id="anything", user_id=USER_ID
+            )
+
+
+@pytest.mark.asyncio
 async def test_a_prefix_of_another_note_id_is_not_a_backlink(notes_scope_service):
     """``note://abc`` must not match a link to ``note://abcdef``."""
     target = await _add(notes_scope_service, "Target", "hub")
