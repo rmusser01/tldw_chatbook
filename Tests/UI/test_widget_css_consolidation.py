@@ -433,6 +433,36 @@ def test_generated_stylesheet_parses(filename: str):
     stylesheet.parse()
 
 
+def test_rule_less_streams_are_not_emitted() -> None:
+    """A block contributing no RULES to a stream costs that sheet nothing.
+
+    TASK-32187: ``split_scoped_css`` preserves line positions, so the stream
+    a block contributes nothing to still carries the block's comments and
+    the blank lines standing in for the other stream's rules. Those were
+    emitted with a full banner into both boot-parsed widget-defaults sheets
+    (measured 10,618 B of pure dead text, 7,901 B of it in the scoped
+    sheet). Only the rule-bearing stream may name the class -- and the rule
+    that IS there must survive, or the elision is over-eager.
+    """
+    block = widget_css.BundledBlock(
+        module="a.py",
+        class_name="SelfOnly",
+        lineno=1,
+        # A comment plus a self-selector rule: nothing needs scoping, so the
+        # scoped stream gets the comment and blank lines and no rule at all.
+        css="/* why this widget is 40 wide */\nSelfOnly { width: 40; }\n",
+    )
+    own, scoped = widget_css.render_stylesheets([block], "fixture")
+    assert "===== WIDGET: SelfOnly" in own, (
+        "the rule-bearing stream must still carry the block"
+    )
+    assert "width: 40" in own
+    assert "SelfOnly" not in scoped, (
+        "the scoped stream carries no SelfOnly rule, so it must not carry a "
+        f"SelfOnly banner or its comments either:\n{scoped}"
+    )
+
+
 def _stream_order(path: Path) -> dict[str, int]:
     """Banner index of each class's block within ONE generated sheet.
 

@@ -91,7 +91,20 @@ from tldw_chatbook.css import build_css
 #: measured 779,320 B. Pinned at measured + the standard 25,000 B slack,
 #: rounded down. This guard now also runs in `perf-guard.yml` (task-24461's
 #: join step), so the NEXT breach fails the PR that causes it, in minutes.
-MAX_BOOT_PARSED_CSS_BYTES = 804_000
+#:
+#: TIGHTENED 2026-09-09 (TASK-32187): dev breached at 805,625 B, named by
+#: the per-segment diff on `LibraryNoteImportCanvas` (1,094 -> 2,239 B).
+#: Two paydowns, both structural rather than a trim of the widget that
+#: happened to breach. `features/_watchlists.tcss` -- the largest remaining
+#: un-split bundle module -- became the fourth `ScreenOwnedSplit`: 51,369 B
+#: moved to `screen_feature_watchlists.tcss`, parsed on first navigation to
+#: Watchlists. And `widget_css.render_stylesheets` stopped emitting
+#: RULE-LESS segments into the two widget-defaults sheets: 10,618 B of
+#: banners, comments and placeholder blank lines for blocks that contribute
+#: no rules to that stream (the Import canvas's own 393 B scoped stanza was
+#: one of them). Landed at a measured 743,638 B. Pinned at measured + the
+#: standard 25,000 B slack, rounded down. Lowering needs no ledger row.
+MAX_BOOT_PARSED_CSS_BYTES = 768_000
 
 #: Anti-vacuity floor: the app bundle alone is ~470 KB post-split, so a
 #: census that comes in under this did not measure the real boot-parsed set

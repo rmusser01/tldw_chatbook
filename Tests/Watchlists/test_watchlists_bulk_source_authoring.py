@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, Mock
 from textual.app import ComposeResult
 from textual.widgets import Button, DataTable, Input, Select, Static, TextArea
 
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_destination_shells import DestinationHarness
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
@@ -30,7 +30,7 @@ from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope
 
 
 class BulkSourcesHarness(ConsolidatedCSSApp):
-    CSS_PATH = [str(BUNDLED_STYLESHEET)]
+    CSS_PATH = [str(sheet) for sheet in APP_STYLESHEETS]
 
     def __init__(self) -> None:
         super().__init__()
@@ -55,11 +55,11 @@ class BulkSourcesHarness(ConsolidatedCSSApp):
 
 
 class BulkSourcesScreenHarness(DestinationHarness):
-    CSS_PATH = str(BUNDLED_STYLESHEET)
+    CSS_PATH = [str(sheet) for sheet in APP_STYLESHEETS]
 
 
 class ConfiguredWatchlistsHarness(ConsolidatedCSSApp):
-    CSS_PATH = [str(BUNDLED_STYLESHEET)]
+    CSS_PATH = [str(sheet) for sheet in APP_STYLESHEETS]
 
     def __init__(self, screen: WatchlistsCollectionsScreen) -> None:
         super().__init__()
