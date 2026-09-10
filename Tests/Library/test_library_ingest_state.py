@@ -13,8 +13,13 @@ from tldw_chatbook.Library.ingest_capabilities import (
 )
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState, LibraryIngestJob
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_GLYPH_OUTCOME_SKIPPED,
+)
 from tldw_chatbook.Library.library_ingest_state import (
     INGEST_UNAVAILABLE_COPY,
+    _GLYPH_CANCELLED,
+    _GLYPH_FAILED,
     MEDIA_DB_UNAVAILABLE_COPY,
     IngestQueueRow,
     LibraryIngestFormState,
@@ -2325,8 +2330,8 @@ def test_skipped_jobs_render_neutral_and_count_separately():
         clear_finished_armed=True,
     )
     row = next(r for r in state.queue_rows if r.job_id == "ingest-job-1")
-    assert row.glyph == "○"
-    assert row.line.startswith("○ skipped · photo.xyz")
+    assert row.glyph == "–"
+    assert row.line.startswith("– skipped · photo.xyz")
     assert row.can_retry is False
     assert row.can_dismiss is True
     assert state.queue_counts_line == "This queue: 1 done · 1 skipped"
@@ -4383,10 +4388,13 @@ def _failed_row(
 ) -> IngestQueueRow:
     """One settled queue row, shaped the way the state builder shapes it."""
     word = state.value
+    # Read the shipped constants, never a copy of the glyph: task-32235
+    # changed the skipped glyph from "○" to "–" on a sibling branch and a
+    # duplicated literal here would have gone stale silently.
     glyph = {
-        IngestJobState.FAILED: "✗",
-        IngestJobState.SKIPPED: "○",
-        IngestJobState.CANCELLED: "⊘",
+        IngestJobState.FAILED: _GLYPH_FAILED,
+        IngestJobState.SKIPPED: LIBRARY_GLYPH_OUTCOME_SKIPPED,
+        IngestJobState.CANCELLED: _GLYPH_CANCELLED,
     }[state]
     return IngestQueueRow(
         job_id=job_id,
@@ -4468,8 +4476,8 @@ def test_skipped_and_cancelled_group_under_their_own_word_and_glyph():
     )
     groups = group_ingest_queue_rows(skipped + cancelled)
     assert [group.line for group in groups] == [
-        "○ skipped · 2 files · Already in the Library",
-        "⊘ cancelled · 3 files · You stopped this import",
+        f"{LIBRARY_GLYPH_OUTCOME_SKIPPED} skipped · 2 files · Already in the Library",
+        f"{_GLYPH_CANCELLED} cancelled · 3 files · You stopped this import",
     ]
 
 

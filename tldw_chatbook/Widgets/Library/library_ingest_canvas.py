@@ -1172,9 +1172,9 @@ class StateGlyphCheckbox(Checkbox):
 
 
 def _toggle_label(*, enabled: bool, text: str) -> str:
-    """Return a toggle Button's visible label, ``✓``/``○`` convention."""
-    marker = "✓" if enabled else "○"
-    return f"{marker} {text}"
+    """Return a toggle Button's visible label, ``☐``/``☑`` convention (task-32235)."""
+    from ...Library.library_shell_state import LIBRARY_GLYPH_SELECTED, LIBRARY_GLYPH_UNSELECTED
+    return f"{LIBRARY_GLYPH_SELECTED if enabled else LIBRARY_GLYPH_UNSELECTED} {text}"
 
 
 #: (task-3304, MI-08) The task-1623 fold-indicator convention: a reserved
