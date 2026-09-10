@@ -11,7 +11,7 @@ authors = [
 ]
 description = "A Textual TUI for chatting with LLMs, and interacting with the tldw server."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 keywords = ["tui", "cli", "llm", "textual", "ai", "chat", "rag", "embeddings", "terminal"]
@@ -25,7 +25,6 @@ classifiers = [
     "Topic :: Communications :: Chat",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Environment :: Console",
@@ -251,6 +250,7 @@ chatterbox = [
 ]
 local_tts = [
     "kokoro-onnx",
+    "kokoro>=0.9.4,<0.10; python_version < '3.13'",  # Official PyTorch runtime
     "scipy",
     "numpy",
     "nltk",
@@ -422,6 +422,7 @@ all-tools = [
     "setuptools<82",  # Perth runtime compatibility; see the chatterbox extra above
     "torchaudio",
     "kokoro-onnx",
+    "kokoro>=0.9.4,<0.10; python_version < '3.13'",
     "onnxruntime",
     "av",
     # Note: higgs_tts requires manual installation of boson-multimodal from GitHub
@@ -537,8 +538,23 @@ exclude = [
     "static/quickjs-runtime.js",
     "static/canvas_renderer.js",
     "static/canvas_runtime_worker.js",
+    "static/canvas_runtime_worker_v2.js",
+    "static/canvas_renderer_v2.js",
     "static/runtime-manifest.json",
     "static/THIRD_PARTY_LICENSES.txt",
+    "static/profile-catalog.json",
+    "static/mermaid-subset.json",
+    "static/mermaid-runtime-manifest.json",
+    "static/MERMAID_THIRD_PARTY_LICENSES.txt",
+    "static/mermaid-authoring.txt",
+    "mermaid/inputs.json",
+    "mermaid/budget.js",
+    "mermaid/text.js",
+    "mermaid/semantic.js",
+    "mermaid/entry.js",
+    "mermaid/scene.js",
+    "mermaid/flow_layout.js",
+    "mermaid/sequence_layout.js",
 ]
 "tldw_chatbook.Web_Server" = [
     "static/served_shell.html",
@@ -664,7 +680,7 @@ markers = [
 ]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 ignore_missing_imports = true
 warn_return_any = false
 warn_unused_configs = true

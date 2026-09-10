@@ -7,7 +7,6 @@ from dataclasses import replace
 import pytest
 
 from tldw_chatbook.Utils.adaptive_reader_state import (
-    LAYOUT_HYSTERESIS_WIDTH,
     PANE_GRIP_WIDTH,
     READER_COMFORT_WIDTH,
     AdaptiveReaderEffectiveLayout,
@@ -49,7 +48,7 @@ def test_media_compatibility_names_reexport_shared_layout_types() -> None:
 def test_adaptive_profile_exposes_approved_widths() -> None:
     assert MEDIA_PROFILE == AdaptiveReaderLayoutProfile(
         list_min_width=32,
-        list_target_width=40,
+        list_target_width=50,
         list_comfort_width=56,
         list_max_width=72,
         work_min_width=44,
@@ -83,17 +82,13 @@ def test_shared_normalization_matches_current_media_custom_width_behavior() -> N
 @pytest.mark.parametrize(
     ("width", "expected_geometry", "expected_media_geometry"),
     [
-        # task-31633: the Media profile shares the Reader's surplus with its
-        # Items column, so it diverges from the generic profile wherever the
-        # Reader sits above its 46-cell minimum -- and AC#2 narrowed Media's
-        # two grips from five cells each to one, so every Media row below also
-        # carries the eight cells they gave back. The generic column is
-        # untouched by both.
-        (160, (True, True, 30, 40, 80), (True, True, 30, 56, 72)),
-        (120, (True, True, 24, 40, 46), (True, True, 24, 44, 50)),
-        (100, (False, True, 0, 46, 44), (False, True, 0, 52, 46)),
-        (80, (False, False, 0, 0, 70), (False, False, 0, 0, 78)),
-        (60, (False, False, 0, 0, 50), (False, False, 0, 0, 58)),
+        # Five-cell controls remain reserved; extra default pane width yields
+        # before a pane collapses. Media still shares reader surplus.
+        (160, (True, True, 35, 50, 65), (True, True, 35, 56, 59)),
+        (120, (True, True, 26, 40, 44), (True, True, 24, 40, 46)),
+        (100, (False, True, 0, 46, 44), (False, True, 0, 44, 46)),
+        (80, (False, False, 0, 0, 70), (False, False, 0, 0, 70)),
+        (60, (False, False, 0, 0, 50), (False, False, 0, 0, 50)),
     ],
 )
 def test_shared_resolution_uses_adaptive_width_classes(
@@ -196,11 +191,9 @@ def test_media_profile_protects_the_rendered_toolbar_work_minimum() -> None:
     assert MEDIA_READER_LAYOUT_PROFILE.work_min_width == 46
     assert layout.library_open is False
     assert layout.items_open is True
-    # 44 / 90 while Media's two grips still cost five cells each; the eight
-    # they gave back land on the list, because the Reader is on its minimum.
-    assert layout.items_width == 52
+    assert layout.items_width == 44
     assert layout.reader_width >= 46
-    assert layout.items_width + layout.reader_width == 98
+    assert layout.items_width + layout.reader_width == 90
 
 
 @pytest.mark.parametrize(
@@ -232,7 +225,7 @@ def test_explicit_open_priority_protects_the_requested_pane_when_possible(
     priority: str,
 ) -> None:
     layout = resolve_adaptive_reader_layout(
-        120,
+        140,
         AdaptiveReaderLayoutPreferences(),
         MEDIA_PROFILE,
         priority=priority,  # type: ignore[arg-type]
@@ -245,22 +238,22 @@ def test_explicit_open_priority_protects_the_requested_pane_when_possible(
 def test_shared_resolution_preserves_hysteresis() -> None:
     preferences = AdaptiveReaderLayoutPreferences()
     collapsed = resolve_adaptive_reader_layout(117, preferences, MEDIA_PROFILE)
-
-    boundary = resolve_adaptive_reader_layout(
-        118,
-        preferences,
-        MEDIA_PROFILE,
-        previous=collapsed,
-    )
-    reopened = resolve_adaptive_reader_layout(
-        118 + LAYOUT_HYSTERESIS_WIDTH,
-        preferences,
-        MEDIA_PROFILE,
-        previous=boundary,
-    )
+    boundary = resolve_adaptive_reader_layout(118, preferences, MEDIA_PROFILE, previous=collapsed)
+    still_collapsed = resolve_adaptive_reader_layout(121, preferences, MEDIA_PROFILE, previous=boundary)
+    reopened = resolve_adaptive_reader_layout(122, preferences, MEDIA_PROFILE, previous=boundary)
 
     assert boundary.library_open is False
+    assert still_collapsed.library_open is False
     assert reopened.library_open is True
+
+
+@pytest.mark.parametrize("pane,width", [("library", 120), ("items", 96)])
+def test_explicit_reopen_is_not_delayed_by_resize_hysteresis(pane, width):
+    preferences = AdaptiveReaderLayoutPreferences(library_open=pane == "library")
+    previous = resolve_media_reader_layout(width - 4, preferences)
+    assert not getattr(previous, f"{pane}_open")
+    reopened = resolve_media_reader_layout(width, preferences, previous=previous, priority=pane)
+    assert getattr(reopened, f"{pane}_open")
 
 
 @pytest.mark.parametrize("width", [10, 11, 59, 60, 80, 100, 120, 122, 160])
@@ -355,7 +348,7 @@ def test_notes_navigator_explicit_items_priority_uses_projected_library_request(
 
 @pytest.mark.parametrize(
     ("width", "items_open"),
-    [(116, True), (100, True), (80, False), (60, False)],
+    [(116, True), (100, True), (98, True), (97, False), (80, False), (60, False)],
 )
 def test_notes_editor_preserves_work_before_items_at_production_widths(
     width: int, items_open: bool
@@ -418,9 +411,9 @@ def test_custom_mode_preserves_every_normalized_library_request_across_profiles(
     [
         (1, 24),
         (999, 48),
-        ("not-a-number", 31),
-        (True, 31),
-        (None, 31),
+        ("not-a-number", 36),
+        (True, 36),
+        (None, 36),
     ],
 )
 def test_custom_width_normalization_uses_explicit_range_not_default_ceiling(
@@ -455,14 +448,6 @@ SIBLING_PROFILES = {
     "skills": LIBRARY_SKILLS_READER_PROFILE,
     "collections": LIBRARY_COLLECTIONS_READER_PROFILE,
 }
-# task-31951: the three sibling readers joined Media on the one-cell grip.
-# Notes, File Notes and Prompts keep the five-cell default, so this is the
-# opt-in list, not "everything but Media".
-ONE_CELL_GRIP_PROFILE_NAMES = {
-    "LIBRARY_CONVERSATION_READER_PROFILE",
-    "LIBRARY_SKILLS_READER_PROFILE",
-    "LIBRARY_COLLECTIONS_READER_PROFILE",
-}
 DECLARED_PROFILES = {
     name: value
     for name, value in vars(screen_constants).items()
@@ -491,14 +476,9 @@ LIST_GROWTH_PROFILE_NAMES = {"LIBRARY_NOTES_READER_PROFILE"}
 
 def test_only_the_media_profile_opts_into_list_growth() -> None:
     assert MEDIA_READER_LAYOUT_PROFILE.list_grows is True
-    # task-31633 AC#2: the one-cell grip is opt-in the same way. task-31951
-    # opted the three sibling readers in as well (each was PANE_GRIP_WIDTH);
-    # the default and the destinations that did not opt in stay at five.
-    assert MEDIA_READER_LAYOUT_PROFILE.grip_width == 1
+    assert MEDIA_READER_LAYOUT_PROFILE.grip_width == PANE_GRIP_WIDTH == 5
     for name, profile in DECLARED_PROFILES.items():
-        expected = 1 if name in ONE_CELL_GRIP_PROFILE_NAMES else PANE_GRIP_WIDTH
-        assert profile.grip_width == expected, name
-    assert ONE_CELL_GRIP_PROFILE_NAMES <= set(DECLARED_PROFILES)
+        assert profile.grip_width == PANE_GRIP_WIDTH, name
     assert AdaptiveReaderLayoutProfile().grip_width == PANE_GRIP_WIDTH
     assert set(SIBLING_PROFILES.values()) <= set(DECLARED_PROFILES.values())
     assert len(DECLARED_PROFILES) >= 6, sorted(DECLARED_PROFILES)
@@ -538,35 +518,25 @@ def test_every_profile_reserves_exactly_the_grip_columns_it_paints(width: int) -
 @pytest.mark.parametrize(
     ("surface", "width", "expected"),
     [
-        # Recorded from the resolver at badff73f1, before list growth existed,
-        # and RE-ANCHORED by task-31951: the three siblings joined Media on
-        # the one-cell grip, so each row gained the eight cells their two
-        # five-cell grips used to hold back. Growth is still off for all
-        # three -- every cell below lands on the pane the resolver already
-        # gave the surplus to. Old value beside each row.
-        #
-        # `required_width()` counts the grips, so the rail-open threshold
-        # moved down by eight on every sibling as well: 118 -> 110 on
-        # Conversations, 122 -> 114 on Skills and Collections. Both edges of
-        # each moved band are pinned underneath.
-        ("conversations", 100, (False, True, 0, 54, 44)),  # was (…, 0, 46, 44)
-        ("conversations", 109, (False, True, 0, 56, 51)),  # was (…, 0, 55, 44)
-        ("conversations", 110, (True, True, 24, 40, 44)),  # was (False, …, 56, 44)
-        ("conversations", 117, (True, True, 24, 40, 51)),  # was (False, …, 56, 51)
-        ("conversations", 118, (True, True, 24, 40, 52)),  # was (…, 24, 40, 44)
-        ("conversations", 235, (True, True, 34, 40, 159)),  # was (…, 34, 40, 151)
-        ("skills", 100, (False, True, 0, 50, 48)),  # was (…, 0, 42, 48)
-        ("skills", 113, (False, True, 0, 56, 55)),  # was (…, 0, 55, 48)
-        ("skills", 114, (True, True, 24, 40, 48)),  # was (False, …, 56, 48)
-        ("skills", 121, (True, True, 24, 40, 55)),  # was (False, …, 56, 55)
-        ("skills", 122, (True, True, 24, 40, 56)),  # was (…, 24, 40, 48)
-        ("skills", 235, (True, True, 34, 40, 159)),  # was (…, 34, 40, 151)
-        ("collections", 100, (False, True, 0, 50, 48)),  # was (…, 0, 42, 48)
-        ("collections", 113, (False, True, 0, 56, 55)),  # was (…, 0, 55, 48)
-        ("collections", 114, (True, True, 24, 40, 48)),  # was (False, …, 56, 48)
-        ("collections", 121, (True, True, 24, 40, 55)),  # was (False, …, 56, 55)
-        ("collections", 122, (True, True, 24, 40, 56)),  # was (…, 24, 40, 48)
-        ("collections", 235, (True, True, 34, 40, 159)),  # was (…, 34, 40, 151)
+        # Preserve the pre-increase collapse boundaries with five-cell controls.
+        ("conversations", 100, (False, True, 0, 46, 44)),
+        ("conversations", 117, (False, True, 0, 56, 51)),
+        ("conversations", 118, (True, True, 24, 40, 44)),
+        ("conversations", 119, (True, True, 25, 40, 44)),
+        ("conversations", 122, (True, True, 28, 40, 44)),
+        ("conversations", 235, (True, True, 39, 50, 136)),
+        ("skills", 100, (False, True, 0, 42, 48)),
+        ("skills", 121, (False, True, 0, 56, 55)),
+        ("skills", 122, (True, True, 24, 40, 48)),
+        ("skills", 123, (True, True, 25, 40, 48)),
+        ("skills", 126, (True, True, 28, 40, 48)),
+        ("skills", 235, (True, True, 39, 50, 136)),
+        ("collections", 100, (False, True, 0, 42, 48)),
+        ("collections", 121, (False, True, 0, 56, 55)),
+        ("collections", 122, (True, True, 24, 40, 48)),
+        ("collections", 123, (True, True, 25, 40, 48)),
+        ("collections", 126, (True, True, 28, 40, 48)),
+        ("collections", 235, (True, True, 39, 50, 136)),
     ],
 )
 def test_sibling_reader_layouts_are_untouched_by_media_list_growth(
@@ -584,27 +554,11 @@ def test_sibling_reader_layouts_are_untouched_by_media_list_growth(
 @pytest.mark.parametrize(
     ("width", "expected"),
     [
-        # ``required_width()`` counts the grips, so the eight cells Media's
-        # one-cell grips gave back (task-31633 AC#2) moved the open-all-three
-        # threshold down from 120 to 112. These rows pin BOTH edges of the
-        # band that moved, with the pre-AC#2 layout beside each:
-        #
-        #   100  was (False, 0, 44, 46)  -- rail closed either way, and the
-        #        Reader is on its 46-cell minimum, so this is the one row with
-        #        no surplus: all eight cells go to the list.
-        #   111  was (False, 0, 55, 46)  -- still below the threshold, so the
-        #        rail stays closed and the list takes its comfort ceiling.
-        #   112  was (False, 0, 56, 46)  -- the new threshold: the rail OPENS
-        #        here now, and the list drops from its 56-cell ceiling to 40.
-        #   119  was (False, 0, 56, 53)  -- inside the band, rail open.
-        #   120  was (True, 24, 40, 46)  -- the old threshold; the rail was
-        #        already open, so here the eight cells are a plain surplus,
-        #        split 4/4 between list and Reader by ``surplus // 2``.
-        (100, (False, True, 0, 52, 46)),
-        (111, (False, True, 0, 56, 53)),
-        (112, (True, True, 24, 40, 46)),
-        (119, (True, True, 24, 43, 50)),
-        (120, (True, True, 24, 44, 50)),
+        (100, (False, True, 0, 44, 46)),
+        (119, (False, True, 0, 56, 53)),
+        (120, (True, True, 24, 40, 46)),
+        (121, (True, True, 25, 40, 46)),
+        (127, (True, True, 29, 42, 46)),
     ],
 )
 def test_media_layout_across_the_rail_open_threshold(
@@ -618,13 +572,10 @@ def test_media_layout_across_the_rail_open_threshold(
 @pytest.mark.parametrize(
     ("width", "expected"),
     [
-        # 235: was (True, True, 34, 40, 151) -- 105 surplus cells all went to
-        # the Reader. 122 is the narrowest width where growth moves a cell:
-        # was (True, True, 24, 40, 48). Both rows then gained the eight cells
-        # the one-cell grips gave back (task-31633 AC#2): 135 -> 143 on the
-        # Reader at 235, and 41 -> 45 on the list at 122.
-        (235, (True, True, 34, 56, 143)),
-        (122, (True, True, 24, 45, 51)),
+        # At 235 the list reaches its comfort ceiling; 139 is the first
+        # open-rail width with two surplus cells, shared between both panes.
+        (235, (True, True, 39, 56, 130)),
+        (139, (True, True, 31, 51, 47)),
     ],
 )
 def test_media_items_column_grows_once_the_reader_is_comfortable(
@@ -659,7 +610,9 @@ def test_a_typed_custom_items_width_is_obeyed_by_the_growth_gate(
     )
 
     grown = resolve_media_reader_layout(width, custom)
-    ungrown = resolve_adaptive_reader_layout(width, custom, MEDIA_PROFILE_WITHOUT_GROWTH)
+    ungrown = resolve_adaptive_reader_layout(
+        width, custom, MEDIA_PROFILE_WITHOUT_GROWTH
+    )
 
     assert grown.items_width == custom_items_width
     assert grown == ungrown
@@ -690,9 +643,9 @@ def test_a_typed_custom_items_width_is_still_widened_once_the_library_closes(
 
     layout = resolve_media_reader_layout(100, custom, priority=priority)
 
-    # A typed 32 paints 52: 100 cells less the two one-cell grips and the
+    # A typed 32 paints 44: 100 cells less the two five-cell grips and the
     # 46-cell Reader minimum.
-    assert (layout.library_open, layout.items_width) == (False, 52)
+    assert (layout.library_open, layout.items_width) == (False, 44)
 
 
 def test_media_items_column_is_wider_at_235_than_at_100() -> None:
@@ -751,11 +704,11 @@ def test_empty_reader_gives_freed_columns_to_the_items_list_at_235() -> None:
     no_item = resolve_media_reader_layout(235, prefs, reader_has_item=False)
 
     # Item open: exactly the pre-task split (do not regress it).
-    assert _pane_widths(with_item) == (True, True, 34, 56, 143)
+    assert _pane_widths(with_item) == (True, True, 39, 56, 130)
     # No item open: the Items pane absorbs the freed Reader columns down to
     # the Reader's floor, so a 98-char title stops truncating at ~56 cells.
     assert no_item.reader_width == MEDIA_READER_LAYOUT_PROFILE.work_min_width
-    assert no_item.items_width == 153
+    assert no_item.items_width == 140
     assert no_item.items_width > with_item.items_width
     # Both panes and the two grips still tile the full terminal width.
     assert (

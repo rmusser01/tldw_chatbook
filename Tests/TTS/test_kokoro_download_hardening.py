@@ -107,9 +107,7 @@ def test_interrupted_download_leaves_no_file_the_next_run_would_trust(
     # Scoped to this download's own artefacts: the shared tmp_path may hold
     # unrelated fixture directories.
     strays = [
-        item.name
-        for item in tmp_path.iterdir()
-        if item.name.startswith(dest.name)
+        item.name for item in tmp_path.iterdir() if item.name.startswith(dest.name)
     ]
     assert strays == [], f"partial artefacts left behind: {strays}"
 
@@ -139,6 +137,39 @@ def test_download_is_atomic_final_path_appears_only_when_complete(
     assert dest.read_bytes() == b"aabbcc"
 
 
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_download_cannot_follow_a_preexisting_partial_file_symlink(
+    tmp_path, fake_requests, interrupted
+):
+    _, holder = fake_requests
+    holder["response"] = _FakeResponse(
+        [b"aa", b"bb"], raise_on_chunk=1 if interrupted else None
+    )
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(b"preserve this file")
+    directory = tmp_path / "voices"
+    directory.mkdir()
+    dest = directory / "af_new.pt"
+    stale_partial = directory / "af_new.pt.part"
+    stale_partial.symlink_to(outside)
+
+    def download():
+        kokoro_module._kokoro_stream_download(
+            "https://example.invalid/voice", str(dest), label="test"
+        )
+
+    if interrupted:
+        with pytest.raises(OSError):
+            download()
+    else:
+        download()
+        assert dest.read_bytes() == b"aabb"
+    assert outside.read_bytes() == b"preserve this file"
+    assert stale_partial.is_symlink()
+    expected = {stale_partial} if interrupted else {stale_partial, dest}
+    assert set(directory.iterdir()) == expected
+
+
 def test_hasher_sees_every_byte(tmp_path, fake_requests):
     """The checksum must cover the whole body, not just the first chunk.
 
@@ -153,8 +184,10 @@ def test_hasher_sees_every_byte(tmp_path, fake_requests):
     hasher = hashlib.sha256()
 
     kokoro_module._kokoro_stream_download(
-        "https://example.invalid/m", str(tmp_path / "m.bin"),
-        label="test", hasher=hasher,
+        "https://example.invalid/m",
+        str(tmp_path / "m.bin"),
+        label="test",
+        hasher=hasher,
     )
     assert hasher.hexdigest() == hashlib.sha256(b"aabb").hexdigest()
 
@@ -174,10 +207,13 @@ async def test_model_download_does_not_run_on_the_event_loop(
 
     holder["response"] = _ThreadRecordingResponse([b"data"])
 
-    backend = kokoro_module.KokoroTTSBackend.__new__(
-        kokoro_module.KokoroTTSBackend
+    backend = kokoro_module.KokoroTTSBackend(
+        {
+            "KOKORO_USE_ONNX": False,
+            "KOKORO_MODEL_PATH": str(tmp_path / "kokoro.pth"),
+            "KOKORO_VOICE_BLENDS_DIR": str(tmp_path / "blends"),
+        }
     )
-    backend.model_path = str(tmp_path / "kokoro.pth")
     monkeypatch.setattr(backend, "_load_pytorch_model", lambda: None, raising=False)
 
     loop_thread = threading.get_ident()

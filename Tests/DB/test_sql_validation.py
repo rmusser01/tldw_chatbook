@@ -6,14 +6,14 @@ from tldw_chatbook.DB import sql_validation
 from tldw_chatbook.DB.sql_validation import (
     VALID_COLUMNS,
     VALID_TABLES,
-    validate_identifier,
-    validate_table_name,
-    validate_column_name,
-    validate_column_list,
-    validate_link_table,
-    get_safe_table_name,
-    get_safe_column_name,
     escape_identifier,
+    get_safe_column_name,
+    get_safe_table_name,
+    validate_column_list,
+    validate_column_name,
+    validate_identifier,
+    validate_link_table,
+    validate_table_name,
 )
 
 
@@ -502,3 +502,15 @@ class TestChachanotesValidTablesMatchesLiveSchema:
             f"Delete these lines from the set:\n{remove}"
             f"{self._WHERE_TO_FIX}"
         )
+
+
+def test_identifier_leaf_preserves_public_grammar_and_escaping():
+    from tldw_chatbook.DB import sql_identifier_core, sql_validation
+
+    for identifier in ["", "SELECT", "hello_world", "é声", "a" * 65, 'a"b', "x\n"]:
+        assert sql_identifier_core.validate_identifier(
+            identifier
+        ) == sql_validation.validate_identifier(identifier)
+        assert sql_identifier_core.escape_identifier(
+            identifier
+        ) == sql_validation.escape_identifier(identifier)

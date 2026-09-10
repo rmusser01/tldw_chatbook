@@ -1,0 +1,71 @@
+[
+    {
+        "Id": "sha256:596934820d0c869610526649be433cefcdce0b9b4abdbd8040fc6b2894b83bcd",
+        "RepoTags": [
+            "tldw-task32164-sanitizer-arm64:20260909073358"
+        ],
+        "RepoDigests": [
+            "tldw-task32164-sanitizer-arm64@sha256:596934820d0c869610526649be433cefcdce0b9b4abdbd8040fc6b2894b83bcd"
+        ],
+        "Comment": "buildkit.dockerfile.v0",
+        "Created": "2026-09-09T07:34:16.46361138Z",
+        "Config": {
+            "Env": [
+                "PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "GPG_KEY=7169605F62C751356D054A26A821E680E5FA6305",
+                "PYTHON_VERSION=3.13.15",
+                "PYTHON_SHA256=1e66a7945a48390ee4c2a4268a0e4185884059a13c4aab6d148aa208deea4a76",
+                "PIP_NO_CACHE_DIR=1",
+                "PYTHONDONTWRITEBYTECODE=1",
+                "PYTHONUNBUFFERED=1",
+                "OMP_NUM_THREADS=4",
+                "OPENBLAS_NUM_THREADS=4",
+                "MKL_NUM_THREADS=4"
+            ],
+            "Cmd": [
+                "python",
+                "--version"
+            ],
+            "WorkingDir": "/workspace",
+            "Labels": {
+                "org.opencontainers.image.title": "TASK-32153 Linux ARM ONNX qualification",
+                "tldw.validation.scope": "model-free-native-transport-sanitizers",
+                "tldw.validation.task": "32164"
+            },
+            "ArgsEscaped": true
+        },
+        "Architecture": "arm64",
+        "Os": "linux",
+        "Size": 489548858,
+        "RootFS": {
+            "Type": "layers",
+            "Layers": [
+                "sha256:13a56b6535801be2adde694dabaf1c2df1d862a390661907dac821c42cd565cc",
+                "sha256:e768ad7c531711e886b0fb43de5d0aeb924a20a204f546120b60cf8d6159b4cb",
+                "sha256:f3d0adb45e3563b173da6251d9d3b24925f1ae0c6e2f17a5ef5c78a0557745bb",
+                "sha256:d21a265ccf0833ec8b966745c090151c265e454ce9e713b7a3a0c6114f9e117b",
+                "sha256:0dfa2132c93024ba58e17f9cee8e40f358a2b063c78cf63abfb5b8d19422ea9b",
+                "sha256:b12c240bfe2c031d516670dcee5aec3edc11e861ee3f041ad9df6258109490ce",
+                "sha256:e433f94568e5b1d2225ce3937eb2cc47177996b9bf9b135027384e5b02d19200",
+                "sha256:ebed67ea77cd2c55c0ed5beff66dc746bf1718d3e86704c862e49b851a8559f5",
+                "sha256:0417a9ecbe7aaec3d8f778a17fcab8e96dd5dfe5f3946e450e5ea1672fcb90f7"
+            ]
+        },
+        "Metadata": {
+            "LastTagTime": "2026-09-09T07:34:21.9855593Z"
+        },
+        "Descriptor": {
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "digest": "sha256:596934820d0c869610526649be433cefcdce0b9b4abdbd8040fc6b2894b83bcd",
+            "size": 856
+        },
+        "Identity": {
+            "Build": [
+                {
+                    "Ref": "shb40725438wjafu2f32jc94r",
+                    "CreatedAt": "2026-09-09T07:34:22.959866217Z"
+                }
+            ]
+        }
+    }
+]

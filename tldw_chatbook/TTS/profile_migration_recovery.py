@@ -15,7 +15,11 @@ from typing import Final
 
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite_descriptor
 from tldw_chatbook.TTS import profile_schema
-from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_errors import (
+    ProfileRepositoryError,
+    _migration_cleanup_owner,
+    _ProfileMigrationValidationOwner,
+)
 from tldw_chatbook.TTS.profile_migration_journal import (
     MAX_PROFILE_MIGRATION_ARTIFACT_BYTES,
     MAX_PROFILE_MIGRATION_JOURNAL_BYTES,
@@ -28,6 +32,8 @@ from tldw_chatbook.TTS.profile_migration_namespace import (
     MigrationTombstoneKey,
     ParentAuthority,
     move_exact_noreplace,
+)
+from tldw_chatbook.TTS.profile_migration_namespace import (
     remove_exact as remove_exact_namespace,
 )
 from tldw_chatbook.Utils import private_paths
@@ -36,7 +42,6 @@ from tldw_chatbook.Utils.private_paths import (
     lexical_path,
     secure_private_directory,
 )
-
 
 _SIDECARS: Final = ("-wal", "-shm", "-journal")
 _RECOVERY_LOCK = Lock()
@@ -649,6 +654,7 @@ def _validate_authoritative_targets(
         if before is None or before.kind != kind or before.identity.st_nlink != 1:
             raise ValueError
         file_fd = _open_leaf(parent_fd, row.target)
+        owner = _ProfileMigrationValidationOwner(file_fd)
         try:
             opened_before = os.fstat(file_fd)
             if not private_paths._same_identity(opened_before, before.identity):
@@ -658,6 +664,8 @@ def _validate_authoritative_targets(
                 file_fd,
                 isolation_level=None,
             )
+            owner.connection = connection
+            body_error = None
             try:
                 connection.row_factory = sqlite3.Row
                 connection.execute("PRAGMA foreign_keys = ON")
@@ -668,14 +676,23 @@ def _validate_authoritative_targets(
                 profile_schema.validate_profile_store_version(
                     connection, version_row[0]
                 )
-            finally:
-                connection.close()
+            except BaseException as error:  # noqa: BLE001 - preserve control flow and the retained SQL view
+                body_error = error
+            try:
+                owner.close_sqlite(body_error)
+            except BaseException:
+                # Transfer the invocation's borrowed directory on failure only.
+                owner.parent_fd = parent_fd
+                raise
+            if body_error is not None:
+                raise body_error
             _hash_sqlite(file_fd)
             opened_after = os.fstat(file_fd)
             if not private_paths._same_identity(opened_before, opened_after):
                 raise ValueError
         finally:
-            os.close(file_fd)
+            if owner.connection is None:
+                owner.close()
         _require_configured_parent(
             selected, parent_authority.identity, exact_links=True
         )
@@ -875,6 +892,18 @@ def recover_profile_migration_publication(
                     settled = True
             except BaseException as error:
                 attempt_error = error
+
+            cleanup_owner = _migration_cleanup_owner(attempt_error)
+            if cleanup_owner is not None:
+                if deferred is not None:
+                    from tldw_chatbook.TTS.profile_errors import (
+                        _raise_migration_cleanup_failure,
+                    )
+
+                    _raise_migration_cleanup_failure(
+                        cleanup_owner, deferred, attempt_error
+                    )
+                raise attempt_error
 
             if attempt_error is None and settled:
                 break

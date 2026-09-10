@@ -1,0 +1,139 @@
+"""Pinned AllTalk server with observation-only model counters; explicit launch only."""
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+import time
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--events", type=Path, required=True)
+    args = parser.parse_args()
+    source = Path("/private/tmp/tts-macos-burndown/alltalk/source")
+    sys.path.insert(0, str(source))
+    os.chdir(source)
+    os.environ.update(
+        HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1", HF_HUB_DISABLE_TELEMETRY="1"
+    )
+
+    def deny_network(event, arguments):
+        if event in {"socket.connect", "socket.getaddrinfo"}:
+            raise RuntimeError("AllTalk server validation forbids outbound network")
+
+    sys.addaudithook(deny_network)
+
+    def emit(event, **data):
+        row = {"event": event, "at": time.monotonic(), "pid": os.getpid(), **data}
+        with args.events.open("a") as output:
+            output.write(json.dumps(row, default=str) + "\n")
+
+    import torch
+    from TTS.utils.synthesizer import Synthesizer
+    import tts_server
+    import uvicorn
+
+    # Configure the same engine field read by the actual OpenAI endpoint.
+    # This separate qualification tuple does not rewrite any source/config file.
+    selection_path = Path(
+        "/private/tmp/tts-macos-burndown/alltalk/p226/engine-selection.json"
+    )
+    selection = json.loads(selection_path.read_text())
+    settings_path = source / "system/tts_engines/vits/model_settings.json"
+    if (
+        hashlib.sha256(settings_path.read_bytes()).hexdigest()
+        != selection["pinned_source_settings_sha256"]
+    ):
+        raise RuntimeError(
+            "Selected-engine source settings changed before the p226 control"
+        )
+    if (
+        tts_server.model_engine.openai_alloy != "p225"
+        or selection["selected_native_voice"] != "p226"
+    ):
+        raise RuntimeError(
+            "The separate p226 tuple no longer matches its pinned baseline"
+        )
+    tts_server.model_engine.openai_alloy = "p226"
+    emit(
+        "selected_voice_tuple",
+        request_alias="alloy",
+        native_speaker="p226",
+        selection_sha256=hashlib.sha256(selection_path.read_bytes()).hexdigest(),
+    )
+    torch.set_num_threads(6)
+    original_tts = Synthesizer.tts
+    calls = 0
+
+    def observed_tts(model, *positional, **keywords):
+        nonlocal calls
+        calls += 1
+        call_id = f"{os.getpid()}:{calls}"
+        speaker = keywords.get("speaker_name")
+        if speaker != "p226":
+            raise RuntimeError(
+                f"Actual Synthesizer speaker differs from selected p226: {speaker!r}"
+            )
+        first = next(model.tts_model.parameters())
+        emit(
+            "generation_enter",
+            id=call_id,
+            device=str(first.device),
+            dtype=str(first.dtype),
+            generation_count=calls,
+            actual_native_speaker=speaker,
+        )
+        try:
+            result = original_tts(model, *positional, **keywords)
+            emit("generation_exit", id=call_id, samples=len(result))
+            return result
+        except BaseException as error:
+            emit("generation_exit", id=call_id, failure_type=type(error).__name__)
+            raise
+
+    Synthesizer.tts = observed_tts
+    original_setup = tts_server.model_engine.setup
+
+    async def observed_setup():
+        emit("setup_enter", engine=tts_server.model_engine.engine_loaded)
+        try:
+            await original_setup()
+            engine = tts_server.model_engine
+            if not engine.is_tts_model_loaded or engine.model is None:
+                raise RuntimeError(
+                    "Pinned AllTalk setup returned without a loaded VITS model"
+                )
+            first = next(engine.model.tts_model.parameters())
+            if engine.openai_alloy != "p226":
+                raise RuntimeError("Engine setup replaced the selected p226 tuple")
+            if str(first.device) != "cpu":
+                raise RuntimeError("AllTalk selected a non-CPU device")
+            emit(
+                "setup_exit",
+                model=engine.current_model_loaded,
+                loaded=True,
+                device=str(first.device),
+                dtype=str(first.dtype),
+            )
+        except BaseException as error:
+            emit(
+                "setup_exit",
+                loaded=False,
+                failure_type=type(error).__name__,
+                message=str(error),
+            )
+            raise
+
+    tts_server.model_engine.setup = observed_setup
+    try:
+        uvicorn.run(tts_server.app, host="127.0.0.1", port=args.port, log_level="info")
+    finally:
+        emit("server_exit", generation_count=calls)
+
+
+if __name__ == "__main__":
+    main()

@@ -10,7 +10,7 @@ across such an oscillation at the management-mode RIGHT_RAIL boundary
 `_recompute_effective_layout` -> `request_region_layout` -> mount/remove
 pipeline with only the width *measurement* stubbed. The screen opens on its
 default Read section (`active_section = "items"`), whose all-open
-requirement is 145 = 44 centre + 3*5 grips + 24 + 32 + 30; RIGHT_RAIL is
+requirement is 155 = 44 centre + 3*5 grips + 24 + 42 + 30; RIGHT_RAIL is
 the first collapse candidate below it.
 
 The conftest `isolate_test_environment` fixture patches
@@ -35,7 +35,7 @@ from tldw_chatbook.UI.Watchlists_Modules.watchlists_workbench import (
 pytestmark = pytest.mark.asyncio
 
 #: Read mode all-open requirement: RIGHT_RAIL collapses below this.
-READ_BOUNDARY_WIDTH = 145
+READ_BOUNDARY_WIDTH = 155
 
 
 class _RegionBuildCounter:
@@ -93,7 +93,7 @@ async def test_one_cell_resize_oscillation_at_the_boundary_causes_no_churn():
         width_box = {"value": READ_BOUNDARY_WIDTH}
         screen._available_layout_width = lambda: width_box["value"]
 
-        # Settle exactly at the boundary: everything still fits at 145.
+        # Settle exactly at the boundary: everything still fits at 155.
         await _resize_to(screen, pilot, width_box, READ_BOUNDARY_WIDTH)
         assert workbench._mounted_region_body(Region.RIGHT_RAIL) is not None
 
@@ -106,10 +106,10 @@ async def test_one_cell_resize_oscillation_at_the_boundary_causes_no_churn():
                     screen, pilot, width_box, READ_BOUNDARY_WIDTH
                 )
 
-            # The first 144 collapses the rail; every later +/-1 step must
+            # The first 154 collapses the rail; every later +/-1 step must
             # be absorbed: NO region body is ever rebuilt during the
             # oscillation, and the rail stays collapsed (no re-mount at
-            # 145, which is inside the hysteresis band).
+            # 155, which is inside the hysteresis band).
             assert builds.regions == [], (
                 "a +/-1-cell oscillation must cause zero region-body "
                 f"rebuilds; got {builds.regions!r}"

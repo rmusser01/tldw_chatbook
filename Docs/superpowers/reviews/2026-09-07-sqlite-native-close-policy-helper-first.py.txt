@@ -1,0 +1,351 @@
+"""THROWAWAY feasibility probes; not production integration or release gates."""
+
+from __future__ import annotations
+
+import json
+import os
+import select
+import signal
+import sqlite3
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_store_lock import ProfileStoreLease, ProfileStoreLockMode
+
+SEED = r"""
+import asyncio, sys
+from pathlib import Path
+import Tests.conftest
+from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
+from tldw_chatbook.TTS.profile_types import TTSProfileDraft
+async def main():
+    repository = TTSProfileRepository(Path(sys.argv[1]))
+    await repository.open()
+    try:
+        await repository.create_profile(TTSProfileDraft(
+            "Seed", "openai", "tts-1", "alloy", "mp3", 1.0,
+        ))
+    finally:
+        await repository.close()
+asyncio.run(main())
+"""
+
+
+CHILD = r"""
+import atexit, json, os, sqlite3, sys
+from pathlib import Path
+import Tests.conftest
+from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+from tldw_chatbook.DB.private_sqlite_process import (
+    HELPER_ADMISSION, HelperLease, HelperProtocolError, HelperUnavailableError,
+    OperationDeadline,
+)
+from tldw_chatbook.DB.private_sqlite_protocol import PrepareRequest
+from tldw_chatbook.TTS.profile_store_lock import ProfileStoreLease, ProfileStoreLockMode
+
+path = Path(sys.argv[1])
+policy, transaction, count = sys.argv[2], sys.argv[3], int(sys.argv[4])
+connections, helpers, leases = [], [], []
+flag = sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE
+budget = OperationDeadline(None)
+
+def say(phase, **fields):
+    print(json.dumps(dict(phase=phase, **fields)), flush=True)
+
+def observe_exit():
+    say("atexit", connections=len(connections),
+        wal_exists=Path(str(path) + "-wal").exists(),
+        shm_exists=Path(str(path) + "-shm").exists())
+
+atexit.register(observe_exit)
+
+# A separate seed process has closed all original handles. This process never
+# opens/closes any raw main/WAL/SHM descriptors, nor an immutable evidence view.
+for index in range(count):
+    leases.append(ProfileStoreLease(path, ProfileStoreLockMode.SHARED).acquire())
+    with HELPER_ADMISSION.reserve(transient=1, retained=1, deadline=budget) as reservation:
+        helper = HelperLease.start(
+            PrepareRequest(str(path), False, False, False),
+            operation="tts_exact_current", reservation=reservation, deadline=budget,
+        )
+        assert helper.initial_response["status"] == "ok", helper.initial_response
+        helpers.append(helper)
+        connection = connect_private_sqlite(
+            "tts.profile_store", path, must_exist=True, isolation_level=None,
+        )
+        connection.setconfig(flag, policy == "native")
+        assert connection.getconfig(flag) == (policy == "native")
+        connections.append(connection)
+        assert connection.execute("PRAGMA journal_mode").fetchone() == ("wal",)
+        assert connection.execute("SELECT speed FROM tts_generation_profiles").fetchone() == (1.0,)
+        assert helper.request("tts_pin_sidecars", deadline=budget)["status"] == "ok"
+        assert helper.request("tts_recheck", deadline=budget)["status"] == "ok"
+        reservation.handoff_retained(helper)
+
+writer = connections[-1]
+writer.execute("UPDATE tts_generation_profiles SET speed=2.0")  # Committed frame.
+if transaction == "read":
+    writer.execute("BEGIN")
+    assert writer.execute("SELECT speed FROM tts_generation_profiles").fetchone() == (2.0,)
+elif transaction == "write":
+    writer.execute("BEGIN IMMEDIATE")
+    writer.execute("UPDATE tts_generation_profiles SET speed=3.0")  # Uncommitted.
+    assert writer.execute("SELECT speed FROM tts_generation_profiles").fetchone() == (3.0,)
+assert writer.in_transaction == (transaction != "idle")
+say("ready")
+command = sys.stdin.readline().strip()
+
+if command == "substituted":
+    for helper in helpers:
+        helper.retain_terminal_owner()
+        helper._child.kill()  # Only a captured helper created by this probe.
+        helper._child.wait(timeout=5)
+        try:
+            helper.request("tts_recheck", deadline=budget)
+        except (HelperUnavailableError, HelperProtocolError):
+            pass
+        else:
+            raise AssertionError("dead helper accepted proof")
+        helper.close()
+        assert helper.cleanup_state == "terminal_retained"
+    assert HELPER_ADMISSION._used == {"transient": 0, "retained": count}
+    say("retained")
+    assert sys.stdin.readline().strip() == "exit"
+    # No more SQL or explicit SQLite close after proof loss. Module-level
+    # references deliberately survive until ordinary interpreter finalization.
+elif command in {"healthy_close", "healthy_checkpoint"}:
+    for helper in helpers:
+        assert helper.request("tts_recheck", deadline=budget)["status"] == "ok"
+    writer.rollback()
+    if command == "healthy_checkpoint":
+        assert writer.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone() == (0, 0, 0)
+    for connection in reversed(connections):
+        connection.close()
+    for helper in helpers:
+        helper.close()
+    for lease in leases:
+        lease.release()
+    assert HELPER_ADMISSION._used == {"transient": 0, "retained": 0}
+    say("closed")
+else:
+    raise AssertionError(command)
+"""
+
+
+def phase(child, expected):
+    assert select.select([child.stdout], [], [], 15)[0], "probe child phase timeout"
+    line = child.stdout.readline()
+    assert line, f"child exited {child.poll()}: {child.communicate(timeout=5)[1]}"
+    assert json.loads(line) == {"phase": expected}, child.communicate(timeout=5)[1]
+
+
+def send(child, command):
+    child.stdin.write(command + "\n")
+    child.stdin.flush()
+
+
+def finish(child):
+    if child.poll() is None:
+        child.kill()  # Failed probe containment, never application policy.
+        child.wait(timeout=5)
+    for stream in (child.stdin, child.stdout, child.stderr):
+        stream.close()
+
+
+def launch(path, policy, transaction, count):
+    subprocess.run(
+        [sys.executable, "-c", SEED, str(path)],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=20,
+    )
+    return subprocess.Popen(
+        [sys.executable, "-c", CHILD, str(path), policy, transaction, str(count)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def contender(path):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            r"""
+import sqlite3, sys
+c = sqlite3.connect(sys.argv[1], isolation_level=None, timeout=0.05)
+try:
+    c.execute("BEGIN IMMEDIATE")
+except sqlite3.OperationalError as error:
+    print(error.sqlite_errorcode)
+else:
+    print(0)
+    c.rollback()
+finally:
+    c.close()
+""",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=5,
+    )
+    code = int(result.stdout.strip())
+    assert code in (0, sqlite3.SQLITE_BUSY)
+    return code
+
+
+@pytest.mark.parametrize("policy", ["default", "native"])
+@pytest.mark.parametrize("transaction", ["idle", "read", "write"])
+@pytest.mark.parametrize("count", [1, 2])
+@pytest.mark.parametrize("exit_kind", ["orderly", "abrupt"])
+def test_pristine_helper_first_foreign_preservation(
+    tmp_path, policy, transaction, count, exit_kind
+):
+    path = tmp_path / "profiles.sqlite3"
+    child = launch(path, policy, transaction, count)
+    observers = []
+    try:
+        phase(child, "ready")
+        assert contender(path) == (sqlite3.SQLITE_BUSY if transaction == "write" else 0)
+        for suffix in ("-wal", "-shm"):
+            selected = Path(str(path) + suffix)
+            selected.rename(tmp_path / ("owned-original" + suffix))
+            payload = b"foreign sentinel" + suffix.encode()
+            with selected.open("xb") as stream:
+                stream.write(payload)
+            selected.chmod(0o600)
+            fd = os.open(selected, os.O_RDONLY)
+            observers.append((selected, fd, os.fstat(fd), payload))
+        send(child, "substituted")
+        phase(child, "retained")
+        with pytest.raises(ProfileRepositoryError):
+            ProfileStoreLease(
+                path, ProfileStoreLockMode.EXCLUSIVE, timeout_seconds=0.1
+            ).acquire()
+        for selected, fd, identity, payload in observers:
+            assert selected.stat().st_ino == identity.st_ino
+            assert os.fstat(fd).st_nlink == 1
+            assert os.pread(fd, len(payload) + 1, 0) == payload
+        if exit_kind == "orderly":
+            send(child, "exit")
+            assert child.wait(timeout=15) == 0, child.stderr.read()
+            assert json.loads(child.stdout.read()) == {
+                "phase": "atexit",
+                "connections": count,
+                "wal_exists": True,
+                "shm_exists": True,
+            }
+        else:
+            child.kill()
+            assert child.wait(timeout=5) == -signal.SIGKILL
+        exclusive = ProfileStoreLease(
+            path, ProfileStoreLockMode.EXCLUSIVE, timeout_seconds=0.1
+        ).acquire()
+        exclusive.release()
+        observed = {
+            selected.name: {
+                "named_exists": selected.exists(),
+                "same_inode": selected.exists()
+                and selected.stat().st_ino == identity.st_ino,
+                "nlink": os.fstat(fd).st_nlink,
+                "bytes_unchanged": os.pread(fd, len(payload) + 1, 0) == payload,
+            }
+            for selected, fd, identity, payload in observers
+        }
+        assert all(
+            item["named_exists"]
+            and item["same_inode"]
+            and item["nlink"] == 1
+            and item["bytes_unchanged"]
+            for item in observed.values()
+        ), observed
+    finally:
+        finish(child)
+        for _, fd, _, _ in observers:
+            os.close(fd)
+
+
+@pytest.mark.parametrize("policy", ["default", "native"])
+@pytest.mark.parametrize("transaction", ["idle", "read", "write"])
+@pytest.mark.parametrize("checkpoint", [False, True])
+def test_healthy_close_and_committed_data_recovery(
+    tmp_path, policy, transaction, checkpoint
+):
+    path = tmp_path / "profiles.sqlite3"
+    child = launch(path, policy, transaction, 2)
+    try:
+        phase(child, "ready")
+        send(child, "healthy_checkpoint" if checkpoint else "healthy_close")
+        phase(child, "closed")
+        assert child.wait(timeout=15) == 0, child.stderr.read()
+        assert json.loads(child.stdout.read())["phase"] == "atexit"
+        assert Path(str(path) + "-wal").exists() == (policy == "native")
+        if policy == "native" and checkpoint:
+            assert Path(str(path) + "-wal").stat().st_size == 0
+        exclusive = ProfileStoreLease(
+            path, ProfileStoreLockMode.EXCLUSIVE, timeout_seconds=0.1
+        ).acquire()
+        exclusive.release()
+        connection = sqlite3.connect(path)
+        try:
+            assert connection.execute(
+                "SELECT speed FROM tts_generation_profiles"
+            ).fetchall() == [(2.0,)]
+            assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        finally:
+            connection.close()
+    finally:
+        finish(child)
+
+
+@pytest.mark.parametrize("policy", ["default", "native"])
+def test_closing_one_helper_owner_preserves_sibling_writer(
+    tmp_path, policy, monkeypatch
+):
+    sibling_script = CHILD.replace(
+        'if command == "substituted":',
+        """if command == "sibling_close":
+    assert count == 2 and transaction == "write"
+    assert helpers[0].request("tts_recheck", deadline=budget)["status"] == "ok"
+    connections[0].close()
+    helpers[0].close()
+    leases[0].release()
+    assert writer.in_transaction
+    assert writer.execute("SELECT speed FROM tts_generation_profiles").fetchone() == (3.0,)
+    say("sibling_closed")
+    assert sys.stdin.readline().strip() == "finish"
+    assert helpers[1].request("tts_recheck", deadline=budget)["status"] == "ok"
+    writer.rollback()
+    writer.close()
+    helpers[1].close()
+    leases[1].release()
+    assert HELPER_ADMISSION._used == {"transient": 0, "retained": 0}
+    say("closed")
+elif command == "substituted":""",
+    )
+    monkeypatch.setattr(sys.modules[__name__], "CHILD", sibling_script)
+    path = tmp_path / "profiles.sqlite3"
+    child = launch(path, policy, "write", 2)
+    try:
+        phase(child, "ready")
+        assert contender(path) == sqlite3.SQLITE_BUSY
+        send(child, "sibling_close")
+        phase(child, "sibling_closed")
+        assert contender(path) == sqlite3.SQLITE_BUSY
+        send(child, "finish")
+        phase(child, "closed")
+        assert child.wait(timeout=15) == 0, child.stderr.read()
+        assert json.loads(child.stdout.read())["phase"] == "atexit"
+        assert contender(path) == 0
+    finally:
+        finish(child)

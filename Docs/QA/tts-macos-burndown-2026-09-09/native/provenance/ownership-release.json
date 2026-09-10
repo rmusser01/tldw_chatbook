@@ -1,0 +1,21 @@
+{
+  "checked_utc": "2026-09-09T06:45:37.716914+00:00",
+  "checked_pids": [
+    81227,
+    83728,
+    83819,
+    84059,
+    85245,
+    85304,
+    87222,
+    87342,
+    91254,
+    91269,
+    91327,
+    92291
+  ],
+  "remaining_exact_pids": [],
+  "asr_exited_zero": true,
+  "all_application_owners_released": true,
+  "slot_released": true
+}

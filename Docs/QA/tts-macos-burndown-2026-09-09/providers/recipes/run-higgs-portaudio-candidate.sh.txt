@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+# Start only after the root grants the exclusive CPU/audio slot.
+cd /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown
+export PYTHONDONTWRITEBYTECODE=1
+export DYLD_LIBRARY_PATH=/private/tmp/tts-macos-burndown/portaudio/prefix/lib
+export TLDW_VALIDATION_PORTAUDIO_PREFIX=/private/tmp/tts-macos-burndown/portaudio/prefix/lib
+export TLDW_VALIDATION_PORTAUDIO_SHA256=48d9fcaff582ff65c8a51d67570bf69ce900d51278841d563e19b7ef73746586
+export PATH=/opt/homebrew/bin:$PATH
+export PYTHONPATH=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown:/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/packages/tldw_profile_core/src:/private/tmp/tts-macos-burndown/higgs/source
+exec /private/tmp/tts-macos-burndown/higgs/venv/bin/python -B /private/tmp/tts-macos-burndown/higgs/qualify_providers.py --provider higgs --format wav --scenarios playback,cancel --phase-timeout 600 --cleanup-timeout 300 --run-timeout 1800 --expected-package-root /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook --output "${1:?Supply a new private run directory}" --play-audio

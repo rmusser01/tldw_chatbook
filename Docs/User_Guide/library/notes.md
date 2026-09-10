@@ -343,7 +343,8 @@ reusable lessons (empty)".
 | "‹ Notes" / "‹ Back to list" | Returns to the list (your text is already saved — see autosave below). One wording across Edit, Preview, and Info: "‹ Notes" at wide sizes, "‹ Back to list" on a compact terminal. |
 | **Edit** | Shows the editable title and body. This is the default view when you open a note. |
 | **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. |
-| **Info** | Shows Properties (including comma-separated keywords and note dates/version), Reuse & Export, and Danger sections. |
+| **Info** | Shows Properties (including comma-separated keywords, note dates/version, and **Linked from**), Reuse & Export, and Danger sections. |
+| **Linked from (N)** (Info → Properties) | Lists the notes whose bodies link to this one, newest import or not — the `[title](note://…)` links Import once writes for an Obsidian vault's `[[wikilinks]]` (see "Obsidian vaults"). Click an entry to open that note. While the lookup runs the line reads "Linked from — checking…", and "Linked from — couldn't check" if it failed, so a count is only claimed once the answer is in. When nothing points here the line reads "Linked from (0) — no notes link here yet". The list is capped at 50 entries; past that the count reads "50+". Links you type by hand in the body count too, as long as they use the same `note://` form. |
 | Status line | Shows the autosave state: "Saved", "Saving…", "Unsaved changes", "Conflict — …", "Save failed — …", or "Unavailable — …". It does not carry a word count. Created/Modified/version details are under Info → Properties, each with an absolute local timestamp beside its relative age and the word count (e.g. "Created 2026-09-08 21:14 · 3m ago · Modified … · v1 · 6 words"). "Saved" appears once per view, not repeated in Info. |
 | **Save** | Saves immediately, without waiting for autosave. It remains visible beside the mode controls. |
 | **Use in Console** | Hands the note to the Console as staged context, with the suggested prompt "Use this note as context and help me work with it." It remains visible beside **Save**. |
@@ -404,6 +405,10 @@ in its folder, or under Unfiled — along with the Notes rail count, and moves
 the selection to the restored row. **Dismiss** removes only the receipt; the
 note remains deleted. Notes do not currently expose a separate Trash browser,
 so the receipt is the in-Library recovery action.
+
+*Verified against fix/library-notes-list — 2026-09-09 (task-32123: the
+receipt's actions are no longer composed off the pane; task-32124: Undo
+returns the row to the folder tree, not only the count).*
 
 ### New note view
 
@@ -920,6 +925,13 @@ the re-merged wave: an unterminated ``` or ~~~ fence now keeps the rest of a
 note as code, so a `[[link]]` after it is neither recorded nor rewritten;
 Obsidian vault detection is stated as POSIX-only, since the Windows
 discovery adapter never reports a vault (task-32178).)*
+
+*Verified against fix/library-notes-i-backlinks — 2026-09-09 (task-32145:
+Info → Properties now lists "Linked from (N)" — the notes whose bodies carry
+this note's `note://` link — and each entry opens that note. Checked live on a
+fresh profile after importing the review vault: "Zettelkasten — overview" read
+"Linked from (2)" and listed both linking notes, activating one opened it, and
+an unlinked note read "Linked from (0) — no notes link here yet".)*
 
 *Verified against fix/library-notes-r-file-notes — 2026-09-09 (task-32173:
 Folder files now keeps the Library rail before a folder is linked as well as

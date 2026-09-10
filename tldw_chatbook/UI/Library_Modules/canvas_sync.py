@@ -20,6 +20,9 @@ from textual.widgets import Button, Static
 
 from ...Library.library_notes_state import LibraryNotesFocusIdentity
 from ...Library.library_shell_state import (
+    LIBRARY_ROW_BROWSE_MEDIA,
+    LIBRARY_ROW_BROWSE_NOTES,
+    LIBRARY_ROW_CREATE_NOTE,
     LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_DELETE_SELECTED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
@@ -357,6 +360,116 @@ def _apply_library_row_toggle(
         screen.refresh(recompose=True)
 
 
+#: TASK-32089 (phase C): the kinds whose canvas is RESIDENT under the browse
+#: shell, mapped to the rail rows that own them. Before phase C, calling
+#: ``_sync_library_canvas(screen, "media")`` while Media was not the route
+#: raised ``NoMatches`` from its ``query_one``, was swallowed by the blanket
+#: ``except`` below, and fell back to a whole-screen recompose. With both
+#: browse canvases resident that query now SUCCEEDS: measured, the same call
+#: returned ``True`` and rebuilt the hidden canvas's 28 children. There is no
+#: exception left for the ``except`` to swallow, so the ownership test has to
+#: be explicit -- otherwise residency silently redirects the sync storm onto
+#: invisible canvases.
+#:
+#: Deliberately narrow: only these two kinds can be found off-route, so every
+#: other kind keeps its pre-phase-C behaviour exactly (query raises, existing
+#: fallback runs).
+_LIBRARY_RESIDENT_CANVAS_OWNER_ROWS: dict[str, frozenset[str]] = {
+    "media": frozenset({LIBRARY_ROW_BROWSE_MEDIA}),
+    "notes": frozenset({LIBRARY_ROW_BROWSE_NOTES, LIBRARY_ROW_CREATE_NOTE}),
+}
+
+#: Sentinel for "this receiver does not expose the selection at all".
+_NO_SELECTED_ROW = object()
+
+#: The same two resident kinds as above, mapped to the canvas id residency
+#: parks in the canvas host. Kept beside the owner rows so the two halves of
+#: the residency guard cannot drift; ``library_browse_route_swap.
+#: LIBRARY_RESIDENT_CANVAS_IDS`` holds the same set from the swap's side and
+#: deliberately is NOT imported here (that module imports this one). The two
+#: are pinned equal by ``Tests/UI/test_library_phase_c_switch_storm.py::
+#: test_the_two_residency_guards_agree_on_which_canvases_are_resident``.
+_LIBRARY_RESIDENT_CANVAS_IDS: dict[str, str] = {
+    "media": "library-media-canvas",
+    "notes": "library-notes-canvas",
+}
+_LIBRARY_RESIDENT_CANVAS_ID_SET = frozenset(_LIBRARY_RESIDENT_CANVAS_IDS.values())
+
+#: The container residency parks hidden canvases in.
+LIBRARY_CANVAS_HOST_ID = "library-canvas"
+
+
+def _library_resident_canvas_awaits_display(canvas: Widget) -> bool:
+    """Whether this canvas is resident but has not been shown yet.
+
+    TASK-32089 (phase C, task 2.5) -- the DISPLAY half of the residency guard;
+    its three siblings carry the same marker so a grep finds all four.
+
+    The second half of the phase-C residency guard, and the same argument as
+    the route-ownership half above: with both browse canvases permanently
+    mounted, a sync can now land on one that is parked in the canvas host with
+    ``display`` False. The route STATE flips several tens of milliseconds
+    before the route SWAP shows the canvas, so syncs land in that window --
+    phase-C task 2.5 measured **five of them on a resident Notes switch,
+    25 of its 62 mounts**, every one superseded by the swap's own adopt-sync
+    before anything was ever visible.
+
+    Refusing is safe because showing a resident canvas is exactly what
+    re-paints it: ``library_browse_route_swap._adopt_library_browse_canvas``
+    syncs every resident canvas at the moment it displays it, and the route
+    swap is the only writer that leaves a browse canvas **hidden and alive**.
+    Three other sites do write ``child.display = False`` over canvas-host
+    children (``library_screen.py:10341``, ``:10512``, ``:10959``) -- each one
+    microseconds before ``remove_children`` on the same tuple, so the canvas
+    they hide does not survive to be refused, and any sync landing in that
+    window is caught by the projection-depth block below the refusal and
+    replayed through ``_library_canvas_resync_pending``.
+
+    Args:
+        canvas: The mounted canvas the dispatcher just resolved.
+
+    Returns:
+        True when the sync must be refused and left to the swap.
+    """
+    if canvas.display or canvas.id not in _LIBRARY_RESIDENT_CANVAS_ID_SET:
+        return False
+    if getattr(canvas.parent, "id", None) != LIBRARY_CANVAS_HOST_ID:
+        return False
+    logger.debug(
+        f"Library {canvas.id} sync refused: the canvas is resident but not "
+        "displayed; the route swap repaints it when it shows it."
+    )
+    return True
+
+
+def _library_canvas_kind_owns_route(screen: "LibraryScreen", kind: str) -> bool:
+    """Whether ``kind``'s canvas is the one the current route owns.
+
+    Reads ``_library_selected_row_id`` rather than the DOM on purpose: the
+    dispatcher is handed EITHER the screen or a bare controller ``self`` by
+    its seven forwarding controllers (conversations, ingest, media, notes,
+    prompts, rag_search, skills), and all seven expose that field, while DOM
+    presence stopped meaning "this route is active" the moment the canvases
+    became resident.
+
+    Args:
+        screen: The receiver the dispatcher was handed.
+        kind: The canvas kind requested.
+
+    Returns:
+        True when the sync may proceed.
+    """
+    owners = _LIBRARY_RESIDENT_CANVAS_OWNER_ROWS.get(kind)
+    if owners is None:
+        return True
+    selected = getattr(screen, "_library_selected_row_id", _NO_SELECTED_ROW)
+    if selected is _NO_SELECTED_ROW:
+        # Fail open: a receiver without the selection cannot be judged, and
+        # refusing would be a silent no-op rather than a guarded one.
+        return True
+    return selected in owners
+
+
 def _sync_library_canvas(
     screen: "LibraryScreen",
     kind: str,
@@ -424,6 +537,16 @@ def _sync_library_canvas(
     Returns:
         True when the mounted canvas accepted the state; otherwise False.
     """
+    if not _library_canvas_kind_owns_route(screen, kind):
+        # TASK-32089: an off-route sync for a RESIDENT canvas. Before phase C
+        # this could not happen (the canvas was not mounted); now it can, and
+        # doing the work would repaint an invisible canvas with state the
+        # route it belongs to has not re-entered yet. Refuse, and do NOT take
+        # the whole-screen fallback -- there is nothing to recover from.
+        logger.debug(
+            f"Library {kind} canvas sync refused: the route does not own it."
+        )
+        return False
     if (
         not projection_owned
         and getattr(screen, "_library_canvas_projection_depth", 0) > 0
@@ -453,6 +576,8 @@ def _sync_library_canvas(
             sync_args = (screen._build_library_conversations_state(),)
         elif kind == "media":
             canvas = screen.query_one("#library-media-canvas", LibraryMediaCanvas)
+            if _library_resident_canvas_awaits_display(canvas):
+                return False
             media_state = screen._build_library_media_state()
             # The state builder RESOLVES the selection -- a requested id the
             # active type filter no longer renders falls back to the first
@@ -476,11 +601,16 @@ def _sync_library_canvas(
             sync_kwargs = screen._library_media_trash_canvas_presentation()
         elif kind == "notes":
             canvas = screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
+            if _library_resident_canvas_awaits_display(canvas):
+                return False
             # task-32127 (review round 2): BEFORE the kwargs are built. The
             # canvas composes its toolbar from the Items width this resolves,
             # and the caller has already flipped the notes view, so building
             # first handed the new view the previous one's geometry (measured:
-            # the editor's 58 columns for a 77-column list after Back).
+            # the editor's 58 columns for a 77-column list after Back). It sits
+            # AFTER the residency refusal above: an off-route canvas has no
+            # `.library-notes-route` shell to resolve, and the route swap's
+            # adopt-sync re-enters here once the canvas is displayed.
             screen._sync_library_notes_reader_layout_from_shell()
             sync_kwargs = screen._library_notes_list_canvas_kwargs()
             sync_kwargs["deferred_guard"] = deferred_guard
@@ -761,7 +891,30 @@ def _sync_library_canvas(
         # gone; the coupling itself is recorded in the task file's residuals.
 
     except Exception:
-        logger.debug(f"Library {kind} canvas sync failed.")
+        # TASK-32089 (phase C): the design record's second ruling was to NARROW
+        # this to ``(NoMatches, QueryError)`` so a genuinely unexpected failure
+        # raises instead of becoming a silent whole-screen recompose. It was
+        # implemented, measured against the suites, and REVERTED here: the
+        # narrowing reds
+        # ``test_library_canvas_sync_defects.py::
+        #  test_strict_failure_retry_retains_original_semantic_focus``,
+        # which forces a ``RuntimeError`` out of ``canvas.sync_state`` and
+        # requires this handler to swallow it, recompose, and let the reconcile
+        # RETRY the sync (``assert attempts == 2``) with the original focus
+        # capture intact. So the swallow is not merely incidental: one existing
+        # behaviour is pinned on it. Narrowing therefore needs its own task
+        # that decides what that retry path should do with a non-DOM failure --
+        # it is not something the residency mechanism requires, and phase C's
+        # scope rule is "only as the mechanism requires".
+        #
+        # What the mechanism DID require is above the ``try``: the
+        # route-ownership guard, which is what stops residency from silently
+        # redirecting the sync storm onto invisible canvases.
+        #
+        # Kept from that round: the traceback. It used to be discarded, so an
+        # AttributeError inside a state builder left one debug line and no
+        # clue -- the exact shape wave 8 spent a round finding.
+        logger.opt(exception=True).debug(f"Library {kind} canvas sync failed.")
         if kind == "prompts" and prompt_work is not None:
             try:
                 prompt_work.sync_state(**prompt_work_kwargs)

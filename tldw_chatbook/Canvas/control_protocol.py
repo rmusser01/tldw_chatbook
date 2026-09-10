@@ -24,7 +24,7 @@ from uuid import uuid4
 
 from .limits import CanvasLimits, validate_opaque_identifier
 
-CONTROL_PROTOCOL_VERSION = 1
+CONTROL_PROTOCOL_VERSION = 2
 # A generated download may carry 10 MiB of decoded bytes as a base64 data URL.
 # Keep the private frame closed to that documented V1 ceiling plus a small JSON
 # envelope allowance; this is not an unbounded general-purpose transport.
@@ -58,7 +58,10 @@ _REQUEST_REPLY = {
 _RESPONSE_TYPES = frozenset(_REQUEST_REPLY.values())
 _REQUEST_TYPES = frozenset(_REQUEST_REPLY)
 _MESSAGE_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
-    "auth.request": (frozenset({"child_id", "secret"}), frozenset()),
+    "auth.request": (
+        frozenset({"child_id", "secret", "runtime_snapshot_id"}),
+        frozenset(),
+    ),
     "auth.response": (frozenset({"status"}), frozenset()),
     "scope.snapshot.request": (frozenset(), frozenset()),
     "scope.snapshot.response": (
@@ -95,7 +98,15 @@ _MESSAGE_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
         frozenset(),
     ),
     "selection.request": (
-        frozenset({"action", "expected_session_id", "expected_canvas_id", "expected_revision_id", "expected_selection_generation"}),
+        frozenset(
+            {
+                "action",
+                "expected_session_id",
+                "expected_canvas_id",
+                "expected_revision_id",
+                "expected_selection_generation",
+            }
+        ),
         frozenset({"canvas_id", "revision_id", "title"}),
     ),
     "selection.response": (
@@ -155,6 +166,16 @@ def _secret_bytes(value: object) -> bytes | None:
         return value.encode("ascii")
     except UnicodeEncodeError:
         return None
+
+
+def _snapshot_identity(value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ControlProtocolError("invalid_runtime_snapshot_id")
+    return value
 
 
 def _validate_json(value: object, *, depth: int = 0) -> None:
@@ -228,6 +249,8 @@ def _validate_typed_fields(payload: Mapping[str, Any]) -> None:
     }
     mapping_fields = {"render_metadata", "metadata", "request", "presentation"}
     for key, value in payload.items():
+        if key == "runtime_snapshot_id":
+            _snapshot_identity(value)
         if key in {
             "selection_generation",
             "expected_selection_generation",
@@ -407,6 +430,7 @@ class CanvasControlBroker:
     def __init__(
         self,
         *,
+        runtime_snapshot_id: str,
         max_pending_requests: int = DEFAULT_MAX_PENDING_REQUESTS,
         max_queued_events: int = DEFAULT_MAX_QUEUED_EVENTS,
     ) -> None:
@@ -414,6 +438,7 @@ class CanvasControlBroker:
             raise ValueError("invalid pending-request limit")
         if not 1 <= max_queued_events <= 1024:
             raise ValueError("invalid event-queue limit")
+        self._runtime_snapshot_id = _snapshot_identity(runtime_snapshot_id)
         self._max_pending_requests = max_pending_requests
         self._max_queued_events = max_queued_events
         self._server: asyncio.AbstractServer | None = None
@@ -604,6 +629,8 @@ class CanvasControlBroker:
                 or state.writer is not None
             ):
                 raise ControlProtocolError("authentication_failed")
+            if auth.payload["runtime_snapshot_id"] != self._runtime_snapshot_id:
+                raise ControlProtocolError("runtime_snapshot_mismatch")
             # A launch capability authenticates exactly one connection. A
             # reconnect requires AppService to mint a fresh incarnation.
             state.secret = ""
@@ -711,6 +738,7 @@ class CanvasControlClient:
         self,
         environment: Mapping[str, str],
         *,
+        runtime_snapshot_id: str,
         handler: ControlRequestHandler | None = None,
         max_active_requests: int = DEFAULT_MAX_PENDING_REQUESTS,
     ) -> None:
@@ -736,6 +764,7 @@ class CanvasControlClient:
             raise ControlProtocolError("invalid_spawn_environment")
         if not 1 <= max_active_requests <= 256:
             raise ValueError("invalid active-request limit")
+        self._runtime_snapshot_id = _snapshot_identity(runtime_snapshot_id)
         self._host = host
         self._port = port
         self._child_id = child_id
@@ -755,6 +784,7 @@ class CanvasControlClient:
         cls,
         environment: Mapping[str, str],
         *,
+        runtime_snapshot_id: str,
         handler: ControlRequestHandler | None = None,
     ) -> CanvasControlClient | None:
         """Return no client outside textual-serve child processes."""
@@ -767,7 +797,9 @@ class CanvasControlClient:
             return None
         if not all(present):
             raise ControlProtocolError("invalid_spawn_environment")
-        return cls(environment, handler=handler)
+        return cls(
+            environment, runtime_snapshot_id=runtime_snapshot_id, handler=handler
+        )
 
     @property
     def child_id(self) -> str:
@@ -790,7 +822,11 @@ class CanvasControlClient:
                 "auth.request",
                 auth_id,
                 None,
-                {"child_id": self._child_id, "secret": self._secret},
+                {
+                    "child_id": self._child_id,
+                    "secret": self._secret,
+                    "runtime_snapshot_id": self._runtime_snapshot_id,
+                },
             ),
         )
         try:

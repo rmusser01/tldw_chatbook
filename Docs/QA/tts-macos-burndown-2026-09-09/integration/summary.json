@@ -1,0 +1,107 @@
+{
+  "status": "complete",
+  "source_commit": "1a92c851839f239b0b0794c7024cb96f8ba95ad6",
+  "wheel_sha256": "df325ea04b2af82d392de3e2f38ce3aa6820c1137beada42726fe2036ad7a2d9",
+  "source_wheel_install_python_file_matches": 2274,
+  "static_lint_new_findings": 0,
+  "static_lint_baseline": 160,
+  "static_lint_current_inherited": 152,
+  "installed_wheel_live": {
+    "status": "complete_records_packaged",
+    "tuples": [
+      {
+        "name": "pytorch-cpu-wav",
+        "runtime_exit": 0,
+        "status": "runtime_passed_content_pending",
+        "content_exit": 0,
+        "content_status": "content_passed",
+        "exact": 3,
+        "clips": 3,
+        "cleanup_joined": true,
+        "source_unchanged": true,
+        "imported_package_root": "/private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/tldw_chatbook",
+        "phases": [
+          {
+            "id": "speech-lab",
+            "outcome": "success"
+          },
+          {
+            "id": "console-warmup",
+            "outcome": "success"
+          },
+          {
+            "id": "console-cancel",
+            "outcome": "cancelled"
+          },
+          {
+            "id": "console-successor",
+            "outcome": "success"
+          }
+        ]
+      },
+      {
+        "name": "pytorch-mps-wav",
+        "runtime_exit": 0,
+        "status": "runtime_passed_content_pending",
+        "content_exit": 0,
+        "content_status": "content_passed",
+        "exact": 3,
+        "clips": 3,
+        "cleanup_joined": true,
+        "source_unchanged": true,
+        "imported_package_root": "/private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/tldw_chatbook",
+        "phases": [
+          {
+            "id": "speech-lab",
+            "outcome": "success"
+          },
+          {
+            "id": "console-warmup",
+            "outcome": "success"
+          },
+          {
+            "id": "console-cancel",
+            "outcome": "cancelled"
+          },
+          {
+            "id": "console-successor",
+            "outcome": "success"
+          }
+        ]
+      },
+      {
+        "name": "onnx-cpu-mp3",
+        "runtime_exit": 0,
+        "status": "runtime_passed_content_pending",
+        "content_exit": 0,
+        "content_status": "content_passed",
+        "exact": 3,
+        "clips": 3,
+        "cleanup_joined": true,
+        "source_unchanged": true,
+        "imported_package_root": "/private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/tldw_chatbook",
+        "phases": [
+          {
+            "id": "speech-lab",
+            "outcome": "success"
+          },
+          {
+            "id": "console-warmup",
+            "outcome": "success"
+          },
+          {
+            "id": "console-cancel",
+            "outcome": "cancelled"
+          },
+          {
+            "id": "console-successor",
+            "outcome": "success"
+          }
+        ]
+      }
+    ],
+    "release": "wheel/ownership-release.json"
+  },
+  "test_scopes": "Separate overlapping targeted runs; original failed run and skipped tests preserved; no full-suite claim.",
+  "sqlite_scope": "Runtime capability probe and static harness compatibility audit; current Lab/Console harness does not qualify full-app profile-store shutdown."
+}

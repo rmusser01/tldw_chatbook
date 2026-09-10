@@ -577,6 +577,7 @@ from ...Widgets.Library.library_notes_add_from_files_canvas import (
     LibraryNotesAddFromFilesCanvas,
 )
 from ...Widgets.Library.library_notes_canvas import (
+    LIBRARY_NOTE_BACKLINK_DISPLAY_CAP,
     LibraryNotePresentationState,
     resolve_database_note_status_channels,
 )
@@ -1469,6 +1470,8 @@ class LibraryNotesController:
                 snapshot.note_id
             ),
             status_channels=status_channels,
+            backlinks=self._library_notes_backlinks,
+            backlinks_status=self._library_notes_backlinks_status,
         )
     def _library_notes_active_region(
         self,
@@ -1664,7 +1667,7 @@ class LibraryNotesController:
             )
         try:
             return self.query_one(
-                "#library-notes-reader-shell", LibraryAdaptiveReaderShell
+                ".library-notes-route", LibraryAdaptiveReaderShell
             )
         except (NoMatches, QueryError):
             return None
@@ -2182,16 +2185,16 @@ class LibraryNotesController:
         rail_handle = rail_handles.first(Widget) if rail_handles else None
         adaptive_reader = bool(
             self.query(
-                "#library-media-reader-shell, "
+                ".library-media-route, "
                 "#library-collections-reader-shell, "
                 "#library-conversations-reader-shell, "
-                "#library-notes-reader-shell, "
+                ".library-notes-route, "
                 "#library-prompts-reader-shell, "
                 "#library-skills-reader-shell"
             )
         )
-        adaptive_notes = bool(self.query("#library-notes-reader-shell"))
-        adaptive_media = bool(self.query("#library-media-reader-shell"))
+        adaptive_notes = bool(self.query(".library-notes-route"))
+        adaptive_media = bool(self.query(".library-media-route"))
         # Only the grid and canvas host participate in compact CSS selectors;
         # tagging the rail and inner Notes canvas forced two needless global
         # stylesheet matches on every breakpoint crossing. Apply these before
@@ -2240,7 +2243,7 @@ class LibraryNotesController:
             pass
         else:
             if (
-                not self.query("#library-media-reader-shell")
+                not self.query(".library-media-route")
                 and media_canvas.compact != self._library_notes_compact
             ):
                 media_canvas.apply_compact_presentation(self._library_notes_compact)
@@ -2320,7 +2323,7 @@ class LibraryNotesController:
                 )
             else:
                 shell = self.query_one(
-                    "#library-notes-reader-shell",
+                    ".library-notes-route",
                     LibraryAdaptiveReaderShell,
                 )
         except (NoMatches, QueryError):
@@ -2976,7 +2979,7 @@ class LibraryNotesController:
         self._library_notes_stage = "rail"
         self._library_notes_explicit_stage_intent = False
         self._supersede_library_notes_navigation()
-        if self.query("#library-notes-reader-shell"):
+        if self.query(".library-notes-route"):
             # The adaptive shell keeps all three owners mounted, so Escape
             # from Navigator moves toward Library by granting that pane one
             # effective-layout priority. This is deliberately not persisted:
@@ -3251,6 +3254,8 @@ class LibraryNotesController:
         self._library_note_delete_origin_context = False
         self._library_note_delete_origin_preview = False
         self._library_note_editor_armed = False
+        self._library_notes_backlinks = ()
+        self._library_notes_backlinks_status = "loading"
         self._apply_library_notes_stage_visibility()
         self.run_worker(
             self._refresh_library_note_detail(
@@ -3261,6 +3266,11 @@ class LibraryNotesController:
             group="library_note_detail",
         )
         self.run_worker(
+            self._load_library_note_backlinks(note_id),
+            exclusive=True,
+            group="library_note_backlinks",
+        )
+        self.run_worker(
             self._locate_library_notes_tree_target(
                 note_id=note_id,
                 focus=False,
@@ -3269,6 +3279,73 @@ class LibraryNotesController:
             exclusive=True,
             group="library_notes_locator",
         )
+    async def _load_library_note_backlinks(self, note_id: str) -> None:
+        """Fill Info's "Linked from" list for one opening note (task-32145).
+
+        Its own worker, not part of the detail load: the detail load owns
+        how fast the editor appears, and a bounded containment query over
+        note bodies has no business delaying that. The query itself runs in
+        a thread inside the service seam.
+
+        Args:
+            note_id: The note whose inbound links to list.
+        """
+        if not note_id:
+            return
+        service = getattr(self.app_instance, "notes_scope_service", None)
+        method = getattr(service, "list_note_backlinks", None)
+        rows: Any = ()
+        # A lookup that did not answer must not read as "no notes link here
+        # yet" -- no service to ask and a raising query are both `failed`.
+        status = "ready" if callable(method) else "failed"
+        if callable(method):
+            try:
+                rows = await method(
+                    scope="local_note",
+                    note_id=note_id,
+                    user_id=self._library_notes_user_id(),
+                    limit=LIBRARY_NOTE_BACKLINK_DISPLAY_CAP + 1,
+                )
+            except Exception:  # noqa: BLE001 - one Info panel, never the note
+                logger.opt(exception=True).debug(
+                    "library_note_backlinks_failed", note_id=note_id
+                )
+                rows = ()
+                status = "failed"
+        if note_id != self._selected_note_id or self._library_notes_view != "editor":
+            return
+        self._library_notes_backlinks = tuple(
+            (str(row.get("id") or ""), str(row.get("title") or ""))
+            for row in rows or ()
+            if str(row.get("id") or "")
+        )
+        self._library_notes_backlinks_status = status
+        self._apply_library_note_presentation_state()
+    @on(Button.Pressed, ".library-note-backlink")
+    async def handle_library_note_backlink(self, event: Button.Pressed) -> None:
+        """Open the note an Info "Linked from" row names (task-32145).
+
+        The same flush-then-open contract ``handle_library_notes_row`` uses,
+        minus the list-only concerns (select mode, the row marker, the tree
+        placement): a backlink row is only reachable from an open note's Info
+        panel, where none of those apply.
+
+        Args:
+            event: Press of one ``.library-note-backlink`` row button.
+        """
+        event.stop()
+        note_id = str(getattr(event.button, "note_id", "") or "")
+        if not note_id or self._library_notes_mutation_fenced():
+            return
+        note_flush = await self._flush_library_note_save()
+        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
+            return
+        self._library_notes_notice = ""
+        self._library_note_pending_blank_gc_id = None
+        self._library_note_session_blank_id = None
+        self._library_note_title_user_edited = False
+        self._begin_library_note_load(note_id)
+        _sync_library_canvas(self, "notes")
     @on(LibraryNoteWorkPane.EditorReady)
     def handle_library_note_work_pane_editor_ready(
         self, event: LibraryNoteWorkPane.EditorReady
@@ -4094,7 +4171,7 @@ class LibraryNotesController:
         self._register_footer_shortcuts()
         try:
             database_shell = self.query_one(
-                "#library-notes-reader-shell", LibraryAdaptiveReaderShell
+                ".library-notes-route", LibraryAdaptiveReaderShell
             )
             shell_grid = self.query_one("#library-shell-grid", Horizontal)
         except (NoMatches, QueryError):
@@ -4262,7 +4339,7 @@ class LibraryNotesController:
         ):
             return False
         try:
-            self.query_one("#library-notes-reader-shell", LibraryAdaptiveReaderShell)
+            self.query_one(".library-notes-route", LibraryAdaptiveReaderShell)
             rail = self.query_one("#library-rail", LibraryRail)
             header = self.query_one("#library-header-line", Static)
         except (NoMatches, QueryError):

@@ -425,6 +425,51 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
         prefixes={"scheduling": ("scheduling", "schedules")},
         pinned=frozenset(),
     ),
+    # TASK-32187: the largest un-split bundle module (57,721 B). Its token
+    # vocabulary is NOT a single `watchlists-*` prefix -- the screen's panes
+    # and modals each carry their own (`sources-*` on the sources pane,
+    # `items-*` on the items pane, `artifacts-*` on the artifacts pane,
+    # `bpm-*`/`kbm-*`/`svm-*` on the briefing-preset / kept-briefings /
+    # snapshot-view modals, `wl-*`, `inspector-*`, `overview-*`, `rules-*`),
+    # which is why a naive single-prefix split moves almost nothing here.
+    # Every one of those prefixes is spelled out instead, exactly as the
+    # scheduling split already spells `("scheduling", "schedules")`.
+    #
+    # Owner audit 2026-09-09, repo-relative paths, all 132 moved tokens:
+    # every compose site is under `tldw_chatbook/UI/Watchlists_Modules/` or
+    # `tldw_chatbook/UI/Screens/watchlists_collections_screen.py`. Two
+    # substring false positives were run down and cleared --
+    # `library-collections-items-toolbar`
+    # (`Widgets/Library/library_collections_capture_reader.py`) and
+    # `settings-overview-card` (`UI/Screens/settings_screen.py`) are longer
+    # ids that merely CONTAIN a moved token, not the token itself. The
+    # Console's `watchlists-operation-*` cards are styled by
+    # `features/_chat.tcss`, not this module, so they never enter the moved
+    # set. The audit's filter was negative-controlled first (an owner glob
+    # matching nothing flagged 128/132), because an earlier cross-surface
+    # audit filtered ABSOLUTE paths and was silently vacuous
+    # (see AGENTIC_SPLIT_PINNED_TOKENS).
+    ScreenOwnedSplit(
+        module="features/_watchlists.tcss",
+        sheets={"watchlists": "screen_feature_watchlists.tcss"},
+        prefixes={
+            "watchlists": (
+                "watchlists",
+                "watchlist",
+                "wl",
+                "artifacts",
+                "sources",
+                "items",
+                "inspector",
+                "overview",
+                "rules",
+                "bpm",
+                "kbm",
+                "svm",
+            )
+        },
+        pinned=frozenset(),
+    ),
 )
 
 _SPLITS_BY_MODULE: dict[str, ScreenOwnedSplit] = {

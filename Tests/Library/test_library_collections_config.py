@@ -22,10 +22,10 @@ def test_collections_reader_defaults_are_source_neutral_and_fixed(
 
     assert library["collections_reader"] == {
         "items_open": True,
-        "items_width": 40,
+        "items_width": 50,
     }
     assert appearance.library_collections_items_open is True
-    assert appearance.library_collections_items_width == 40
+    assert appearance.library_collections_items_width == 50
     assert appearance.library_reader_custom_widths_enabled is False
 
 
