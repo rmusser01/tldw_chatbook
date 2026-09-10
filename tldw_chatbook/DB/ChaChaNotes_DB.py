@@ -17274,6 +17274,17 @@ UPDATE db_schema_version
                     "SELECT COUNT(*) AS cnt FROM notes WHERE deleted = 1"
                 ).fetchone()["cnt"]
             )
+            # Raw string ordering, NOT julianday(). `last_modified` is
+            # DATETIME DEFAULT CURRENT_TIMESTAMP, whose space-separated shape
+            # sorts against the ISO `T...Z` shape application writers stamp --
+            # which is why the ACTIVE notes list wraps its date ordering in
+            # `julianday()` (task-32172). Tombstones cannot mix: the ONE
+            # statement that sets `notes.deleted = 1` (`soft_delete_note`)
+            # overwrites `last_modified` with
+            # `_get_current_utc_timestamp_iso()` in the same UPDATE, so every
+            # row this query sees carries the one ISO shape. Do not copy
+            # this to a query over active rows, and do not "fix" it to match
+            # them unless a soft-delete writer starts stamping something else.
             rows = conn.execute(
                 "SELECT id, title, last_modified, version FROM notes"
                 " WHERE deleted = 1"

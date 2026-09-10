@@ -402,8 +402,10 @@ them, so **Undo** and **Dismiss** stay reachable however narrow the list is.
 **Undo** restores that exact database note and immediately returns its row —
 in its folder, or under Unfiled — along with the Notes rail count, and moves
 the selection to the restored row. **Dismiss** removes only the receipt; the
-note remains deleted. Notes do not currently expose a separate Trash browser,
-so the receipt is the in-Library recovery action.
+note remains deleted. *(This page previously said Notes expose no separate
+Trash browser, so the receipt was the only in-Library recovery action —
+superseded by task-32144: see "Recently deleted" below, which recovers a note
+whose receipt was dismissed.)*
 
 ### New note view
 
