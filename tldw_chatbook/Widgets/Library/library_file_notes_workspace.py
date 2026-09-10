@@ -2699,9 +2699,16 @@ class LibraryFileNotesWorkspace(Vertical):
             )
         except NoMatches:
             structural_cancel = None
-        if structural_cancel is not None:
-            structural_cancel.display = wait is not None and wait.cancel is not None
         slow = wait is not None and wait.is_slow(monotonic())
+        if structural_cancel is not None:
+            # task-32102: the way out arrives when the row first admits it
+            # is slow -- the same patience boundary Keep waiting and Choose
+            # another already use. Revealed at t=0 it offered an escape from
+            # an operation that had not yet claimed to be stuck, while the
+            # line still read a bare "Changing folder…".
+            structural_cancel.display = (
+                wait is not None and wait.cancel is not None and slow
+            )
         self._show_root_row_button(
             "#file-notes-root-keep-waiting",
             slow and not self._root_change_extension_used,
@@ -2735,6 +2742,11 @@ class LibraryFileNotesWorkspace(Vertical):
             # an unlinked state. Same reasoning as the ``_root is None``
             # branch below, which already excludes its own reason line.
             status.set_class(False, "-empty-root")
+            # task-32102: and never the tint of the state the wait replaced
+            # -- this branch returns before the resets below, so a warning
+            # or offline colour stayed under the wait line.
+            status.set_class(False, "-warning")
+            status.set_class(False, "-offline")
             # task-32180: the row belongs to the wait's own three controls
             # while it runs. Details would open a dialog showing this very
             # line, and Change… is disabled for the whole transition while
@@ -6469,12 +6481,31 @@ class LibraryFileNotesWorkspace(Vertical):
         self._root_generation += 1
         self._root_transitioning = False
 
-    def _abandon_root_change(self, wait: StructuralWait, reason: str) -> None:
-        """Report why a folder change ended and keep the current folder."""
+    def _abandon_root_change(
+        self,
+        wait: StructuralWait,
+        reason: str,
+        *,
+        leaving: bool = False,
+    ) -> None:
+        """Report why a folder change ended and keep the current folder.
+
+        Args:
+            wait: The wait being abandoned.
+            reason: What to tell the user.
+            leaving: Whether the user is leaving this surface. task-32102:
+                the reason line owns the root row, which is exactly the
+                canvas being torn down on the way out -- nobody ever read
+                it. A toast is app-wide, so it follows the user to wherever
+                they land instead.
+        """
         self._end_structural_wait(wait)
+        if leaving:
+            self.app.notify(reason)
+            return
         self._report_root_change_reason(reason)
 
-    def cancel_structural_wait(self) -> bool:
+    def cancel_structural_wait(self, *, leaving: bool = False) -> bool:
         """Abandon the in-flight structural wait, keeping the current folder.
 
         The single seam for every exit: the Cancel button, Escape, the back
@@ -6482,13 +6513,18 @@ class LibraryFileNotesWorkspace(Vertical):
         wait can gate the WRITE (a second folder change) without ever
         gating the way out.
 
+        Args:
+            leaving: Whether this exit also leaves the surface, in which
+                case the outcome is announced rather than written to the
+                row the user is walking away from (task-32102).
+
         Returns:
             True when a wait was actually abandoned.
         """
         wait = self._structural_wait
         if wait is None or not wait.request_cancel():
             return False
-        self._abandon_root_change(wait, ROOT_CHANGE_CANCELLED_COPY)
+        self._abandon_root_change(wait, ROOT_CHANGE_CANCELLED_COPY, leaving=leaving)
         return True
 
     @on(Button.Pressed, "#library-structural-wait-cancel")

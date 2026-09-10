@@ -99,17 +99,18 @@ Using compact **Back to navigator** does not reset it.
 |---|---|
 | **Choose folder…** / **Change…** | Opens the "Choose File Notes Folder" picker; the choice is saved to `[file_notes] root` in config.toml. Type into the **Folder path** field and either press Enter (browses into it) or click **Select** (uses it right away, without needing Enter first); an invalid path shows an inline reason and leaves the picker open |
 | **Details** | Opens "File Notes folder details" — a read-only status report; **Close** or **Esc** dismisses it |
-| **Cancel** (folder change) | Replaces **Details** and **Change…** for as long as a folder change is running. Press it to stop waiting: the status reads "Folder change cancelled · previous folder kept" and the folder you already had stays linked |
+| **Cancel** (folder change) | Appears once a folder change has been running about three seconds — the same moment the line stops being a bare "Changing folder…". Press it to stop waiting: the status reads "Folder change cancelled · previous folder kept" and the folder you already had stays linked |
 | **Keep waiting** (folder change) | Appears beside **Cancel** once a folder change has been running about three seconds. Grants the change one more full 30-second budget; it can be used once per change, then the control goes away |
 | **Choose another** (folder change) | Appears with **Keep waiting**. Abandons the change, keeps the folder you already had, and reopens the folder picker in one step |
 | **Use \<folder\>** | Appears only before a folder is linked, and only when a configured folder still exists. It reads `[file_notes] root` — the key **Choose folder…** writes — and falls back to the legacy `[notes] sync_directory`; either must name an existing folder by absolute path in config.toml. Links that folder without opening the picker |
 
-While a folder change runs, the folder line reads `Changing folder…`. If it
-is still going after about three seconds it starts reporting how far the
-scan has got — `Changing folder… · 1,240 entries so far` (or `· still
-working` before the first count) — and **Keep waiting** and **Choose
-another** appear beside **Cancel**. Those three are the whole row while the
-change runs: **Details** and **Change…** step aside, because **Details**
+While a folder change runs, the folder line reads `Changing folder…` and the
+row holds nothing else. If it is still going after about three seconds it
+starts reporting how far the scan has got — `Changing folder… · 1,240
+entries so far` (or `· still working` before the first count) — and that is
+when **Cancel**, **Keep waiting** and **Choose another** arrive: the way out
+appears with the line that admits one is needed. Those three are then the
+whole row: **Details** and **Change…** step aside, because **Details**
 would only repeat the line you are already reading and **Change…** is
 inert until the change ends, which is what **Choose another** is for.
 After 30 seconds the change gives up on
@@ -124,6 +125,11 @@ folder." and the new folder is the one in use.
 Abandoning a folder change — by **Cancel**, by **Choose another**, or by
 letting it time out — also stops the folder scan itself. Picking a different
 folder afterwards works normally; you do not have to restart the app.
+
+Leaving Folder files while a change is running abandons it as well — Esc,
+the "‹ Library / Notes" cue and moving to another screen all do. The folder
+line goes with the surface you left, so that outcome arrives as a
+notification instead: "Folder change cancelled · previous folder kept".
 
 ### Edit and Manage
 
@@ -517,3 +523,11 @@ the empty state's hug-your-own-width status, so at 60 columns **Keep
 waiting** and **Choose another** were pushed off the row. The busy line now
 elides in that state too. The pre-link Library rail has no collapse grip;
 the grip arrives with the folder.)*
+
+*Verified against fix/library-notes-r-file-notes — 2026-09-10 (task-32102,
+landed on this branch so the workspace lands once: **Cancel** now arrives
+with the still-working line rather than at t=0, leaving Folder files during
+a folder change reports the cancellation as a notification rather than into
+the row being torn down, and the wait line no longer carries the warning or
+offline tint of the state it replaced. Pinned by tests, not by a live
+capture.)*

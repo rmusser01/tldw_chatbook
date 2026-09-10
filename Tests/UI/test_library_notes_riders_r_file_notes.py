@@ -12,9 +12,10 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from pathlib import Path
+from time import monotonic
 
 import pytest
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 # Stubs first in the local group: it registers the optional MLX modules the
 # application imports below would otherwise probe.
@@ -27,10 +28,12 @@ from Tests.UI.test_library_crit8_waits import (  # noqa: F401
 )
 from Tests.UI.test_library_file_notes_workspace import (
     _production_workspace_context,
+    _static_text,
     _wait_until,
 )
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
 from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
+    ROOT_CHANGE_CANCELLED_COPY,
     LibraryFileNotesWorkspace,
 )
 
@@ -210,6 +213,103 @@ async def test_use_folder_offers_the_modern_file_notes_root(
         workspace._update_root_surface()
         await pilot.pause()
         assert str(button.label) == "Use legacy-sync"
+
+
+@pytest.mark.asyncio
+async def test_cancel_appears_only_once_the_wait_admits_it_is_slow(
+    blocked_root_change,  # noqa: F811  (the imported fixture, by name)
+) -> None:
+    """task-32102: the way out arrives with the line that needs one.
+
+    Revealed at t=0, Cancel offered an escape from an operation the row had
+    not yet said anything about -- it read a bare ``Changing folder…``.
+
+    Args:
+        blocked_root_change: the crit-8 fixture; its new root's scan never
+            returns, so the wait stays in flight for the whole test.
+    """
+    old_root, new_root, blocked = blocked_root_change
+    async with _mounted_workspace(root=old_root, size=WIDE) as (pilot, workspace):
+        wait = await _start_blocked_root_change(pilot, workspace, blocked, new_root)
+        cancel = workspace.query_one("#library-structural-wait-cancel", Button)
+        assert not wait.is_slow(monotonic()), "the patience window closed too early"
+        assert not cancel.display
+        assert _static_text(workspace, "#file-notes-root-status") == "Changing folder…"
+
+        # task-32121's patience repaint, not a clock of this test's own.
+        await _wait_until(
+            pilot,
+            lambda: "still working"
+            in _static_text(workspace, "#file-notes-root-status"),
+            "the wait never admitted it was still working",
+            attempts=400,
+        )
+        assert cancel.display and not cancel.disabled
+        # The line still keeps the word to the button (task-32121 AC4/AC5).
+        assert _busy_row_cancel_labels(workspace) == ["Cancel"]
+
+
+@pytest.mark.asyncio
+async def test_leaving_during_a_folder_change_announces_the_cancellation(
+    blocked_root_change,  # noqa: F811  (the imported fixture, by name)
+) -> None:
+    """task-32102: the outcome must survive the surface it happened on.
+
+    Escape, the back cue and the app's navigation flush all reach the same
+    seam, which wrote the outcome into the root row -- part of the canvas
+    being torn down, so nobody ever read it.
+
+    Args:
+        blocked_root_change: the crit-8 fixture; the folder change is still
+            running when the user leaves.
+    """
+    old_root, new_root, blocked = blocked_root_change
+    async with _mounted_workspace(root=old_root, size=WIDE) as (pilot, workspace):
+        screen = pilot.app.screen
+        await _start_blocked_root_change(pilot, workspace, blocked, new_root)
+
+        await pilot.press("escape")
+        await _wait_until(
+            pilot,
+            lambda: screen._notes_state.source == "database",
+            "Escape was swallowed while a folder change was running",
+        )
+
+        assert ROOT_CHANGE_CANCELLED_COPY in [
+            notification.message for notification in pilot.app._notifications
+        ]
+        # Not into the row the user just walked away from.
+        assert workspace._root_action_reason != ROOT_CHANGE_CANCELLED_COPY
+        assert workspace.root == old_root.resolve()
+
+
+@pytest.mark.asyncio
+async def test_the_wait_line_carries_no_tint_from_the_state_it_replaced(
+    blocked_root_change,  # noqa: F811  (the imported fixture, by name)
+) -> None:
+    """task-32102: the wait branch returned before the tint resets.
+
+    Args:
+        blocked_root_change: the crit-8 fixture; the wait it starts is what
+            has to repaint the status clean.
+    """
+    old_root, new_root, blocked = blocked_root_change
+    async with _mounted_workspace(root=old_root, size=WIDE) as (pilot, workspace):
+        workspace._runtime_warning = "Folder is read-only"
+        workspace._root_offline = True
+        workspace._update_root_surface()
+        await pilot.pause()
+        status = workspace.query_one("#file-notes-root-status", Static)
+        assert status.has_class("-warning")
+        assert status.has_class("-offline")
+
+        await _start_blocked_root_change(pilot, workspace, blocked, new_root)
+        await pilot.pause()
+
+        assert not status.has_class("-warning")
+        assert not status.has_class("-offline")
+        # And still not the empty state's hug (task-32180 fix round 1).
+        assert not status.has_class("-empty-root")
 
 
 def test_configured_sync_folder_picks_a_key_and_refuses_an_unusable_path(
