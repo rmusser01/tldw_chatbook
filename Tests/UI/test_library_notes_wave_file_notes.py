@@ -277,6 +277,11 @@ async def test_folder_files_remembers_the_picked_root(tmp_path) -> None:
             lambda: real_get_cli_setting("file_notes", "browse", None)
             == str(picked),
             "the picked root was never remembered as the browse directory",
+            # The only wait in this wave that crosses a worker thread AND a
+            # real config read-modify-write, which serializes on the shared
+            # write lock and grows with the accumulated bootstrap config.
+            # The default ~3s budget failed once in a whole-file run.
+            attempts=500,
         )
     await workspace.shutdown()
     replica.close()
