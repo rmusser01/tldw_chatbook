@@ -27518,6 +27518,18 @@ class LibraryScreen(BaseAppScreen):
     def _on_ingest_job_details(self, event: Button.Pressed) -> None:
         return self._ingest_controller._on_ingest_job_details(event)
 
+    @on(Button.Pressed, ".library-ingest-group-expand")
+    def handle_library_ingest_group_expand(self, event: Button.Pressed) -> None:
+        return self._ingest_controller.handle_library_ingest_group_expand(event)
+
+    @on(Button.Pressed, ".library-ingest-group-retry")
+    def handle_library_ingest_group_retry(self, event: Button.Pressed) -> None:
+        return self._ingest_controller.handle_library_ingest_group_retry(event)
+
+    @on(Button.Pressed, ".library-ingest-group-dismiss")
+    def handle_library_ingest_group_dismiss(self, event: Button.Pressed) -> None:
+        return self._ingest_controller.handle_library_ingest_group_dismiss(event)
+
     @on(Button.Pressed, "#library-ingest-analyze-skipped")
     def handle_library_ingest_analyze_skipped(self, event: Button.Pressed) -> None:
         """Analyze every import row this queue still shows analysis-skipped.

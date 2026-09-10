@@ -5358,7 +5358,54 @@ def test_a_document_mixing_notes_with_other_records_is_not_called_config(
     issue = batch.issues[0]
     assert issue.classification is ImportClassification.FAILED
     assert issue.reason_code == "invalid_content"
-    assert issue.user_message == "This source could not be parsed as notes."
+    # task-32176 appends which record failed; the sentence this test exists
+    # for -- not "app configuration" -- still leads it.
+    assert issue.user_message.startswith("This source could not be parsed as notes.")
+    assert "Record 2 of 2 has no note content." in issue.user_message
+
+
+@pytest.mark.parametrize(
+    ("filename", "content", "detail"),
+    [
+        (
+            "records.json",
+            '[{"content": "One"}, {"title": "Two"}, {"content": "Three"}]',
+            "Record 2 of 3 has no note content.",
+        ),
+        (
+            "records.yaml",
+            "- content: One\n- title: Two\n- content: Three\n",
+            "Record 2 of 3 has no note content.",
+        ),
+        (
+            "records.json",
+            '[{"content": "One"}, {"content": ""}, {"content": "Three"}]',
+            "Record 2 of 3 could not be read as a note.",
+        ),
+        (
+            "records.csv",
+            "title,content\nOne,body\nTwo,\nThree,body\n",
+            "Row 3 could not be read as a note.",
+        ),
+    ],
+)
+def test_a_mostly_valid_structured_source_names_the_record_that_failed(
+    tmp_path: Path,
+    filename: str,
+    content: str,
+    detail: str,
+) -> None:
+    """task-32176: one bad record must not read as a whole file of config."""
+    source = tmp_path / filename
+    source.write_text(content, encoding="utf-8")
+
+    batch = _parse_selection([source], destination=("Imported",))
+
+    issue = batch.issues[0]
+    assert issue.classification is ImportClassification.FAILED
+    assert issue.user_message == (
+        f"This source could not be parsed as notes. {detail}"
+    )
 
 
 def test_issue_items_keep_the_parser_reason_instead_of_one_generic_sentence(
