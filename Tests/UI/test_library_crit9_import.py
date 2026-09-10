@@ -194,8 +194,10 @@ async def _seed_four_identical_failures(harness, pilot, tmp_path):
     await _open_library_ingest_canvas(screen, pilot)
     rows = screen._build_library_ingest_state().queue_rows
     assert len({row.reason for row in rows}) == 1, [row.line for row in rows]
-    # Newest-first: the group's key is whichever row leads the run.
-    return screen, rows[0].job_id, jobs
+    # The group's own key -- derived from the outcome, not from whichever
+    # row happens to lead the run (Qodo 5). Newest-first, so ``rows[0]`` is
+    # the leading MEMBER, which per-row actions still address by job id.
+    return screen, group_ingest_queue_rows(rows)[0].key, rows[0].job_id, jobs
 
 
 @pytest.mark.asyncio
@@ -205,10 +207,10 @@ async def test_four_identical_failures_paint_one_row_with_three_actions(tmp_path
     harness = _LibraryIngestCanvasHarness(db)
 
     async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen, leader, jobs = await _seed_four_identical_failures(
+        screen, group_key, leader, jobs = await _seed_four_identical_failures(
             harness, pilot, tmp_path
         )
-        await _wait_for_selector(screen, pilot, f"#library-ingest-group-{leader}")
+        await _wait_for_selector(screen, pilot, f"#library-ingest-group-{group_key}")
 
         assert len(screen.query(".library-ingest-row")) == 1, [
             str(node.renderable) for node in screen.query(".library-ingest-row")
@@ -235,10 +237,10 @@ async def test_show_the_files_expands_the_members_and_collapses_again(tmp_path):
     harness = _LibraryIngestCanvasHarness(db)
 
     async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen, leader, jobs = await _seed_four_identical_failures(
+        screen, group_key, leader, jobs = await _seed_four_identical_failures(
             harness, pilot, tmp_path
         )
-        expand_id = f"library-ingest-group-expand-{leader}"
+        expand_id = f"library-ingest-group-expand-{group_key}"
         await _wait_for_selector(screen, pilot, f"#{expand_id}")
 
         screen.query_one(f"#{expand_id}", Button).press()
@@ -280,10 +282,10 @@ async def test_dismiss_all_clears_the_whole_group(tmp_path):
     harness = _LibraryIngestCanvasHarness(db)
 
     async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen, leader, jobs = await _seed_four_identical_failures(
+        screen, group_key, leader, jobs = await _seed_four_identical_failures(
             harness, pilot, tmp_path
         )
-        dismiss_id = f"library-ingest-group-dismiss-{leader}"
+        dismiss_id = f"library-ingest-group-dismiss-{group_key}"
         await _wait_for_selector(screen, pilot, f"#{dismiss_id}")
 
         screen.query_one(f"#{dismiss_id}", Button).press()
@@ -323,14 +325,14 @@ async def test_retry_all_requeues_every_member(tmp_path):
     harness = _LibraryIngestCanvasHarness(db)
 
     async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen, leader, jobs = await _seed_four_identical_failures(
+        screen, group_key, leader, jobs = await _seed_four_identical_failures(
             harness, pilot, tmp_path
         )
         retried: list[str] = []
         harness.retry_library_ingest_job = retried.append
-        await _wait_for_selector(screen, pilot, f"#library-ingest-group-retry-{leader}")
+        await _wait_for_selector(screen, pilot, f"#library-ingest-group-retry-{group_key}")
 
-        screen.query_one(f"#library-ingest-group-retry-{leader}", Button).press()
+        screen.query_one(f"#library-ingest-group-retry-{group_key}", Button).press()
         # Wait for the calls rather than one pump turn: a single `pause`
         # lost the race once under load and reported an empty list.
         await _wait_for_condition(
@@ -346,7 +348,7 @@ async def test_retry_all_requeues_every_member(tmp_path):
         await _wait_for_condition(
             pilot,
             lambda: getattr(screen.focused, "id", None)
-            in (f"library-ingest-group-retry-{leader}", "library-ingest-path"),
+            in (f"library-ingest-group-retry-{group_key}", "library-ingest-path"),
             message=lambda: (
                 f"Retry all stranded focus: {screen.focused!r}"
             ),
@@ -394,10 +396,10 @@ async def test_a_group_of_stt_failures_offers_no_bare_retry_all():
 
     host = _QueuePanelHost(state)
     async with host.run_test(size=LIBRARY_TEST_SIZE):
-        leader = rows[0].job_id
-        assert host.query_one(f"#library-ingest-group-expand-{leader}", Button)
-        assert host.query_one(f"#library-ingest-group-dismiss-{leader}", Button)
-        assert not host.query(f"#library-ingest-group-retry-{leader}"), (
+        group_key = group_ingest_queue_rows(rows)[0].key
+        assert host.query_one(f"#library-ingest-group-expand-{group_key}", Button)
+        assert host.query_one(f"#library-ingest-group-dismiss-{group_key}", Button)
+        assert not host.query(f"#library-ingest-group-retry-{group_key}"), (
             "the grouped row offers a bare Retry all for failures whose own "
             "rows deliberately withhold Retry"
         )
@@ -424,8 +426,8 @@ async def test_a_group_of_research_owned_stt_failures_still_offers_retry_all():
 
     host = _QueuePanelHost(state)
     async with host.run_test(size=LIBRARY_TEST_SIZE):
-        leader = rows[0].job_id
-        assert host.query_one(f"#library-ingest-group-retry-{leader}", Button), (
+        group_key = group_ingest_queue_rows(rows)[0].key
+        assert host.query_one(f"#library-ingest-group-retry-{group_key}", Button), (
             "the group withheld Retry all from rows that each offer a plain "
             "retry of their own"
         )
@@ -472,3 +474,89 @@ async def test_a_toggle_never_steals_focus_back_from_the_user(tmp_path):
             "the toggle stole focus back from the field the user moved to: "
             f"{screen.focused!r}"
         )
+
+
+@pytest.mark.asyncio
+async def test_dismissing_the_leading_member_keeps_the_group_expanded(tmp_path):
+    """(Qodo 5) An open group survives losing the row it was keyed by.
+
+    Keyed by the leading job id, the per-row Dismiss on the first visible
+    member re-keyed the whole run, and the panel's expansion set -- which
+    holds keys -- no longer matched, so the rows the user had just opened
+    collapsed under them mid-task.
+    """
+    db = MediaDatabase(tmp_path / "crit9-import.db", client_id="crit9-rekey")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen, group_key, leader, jobs = await _seed_four_identical_failures(
+            harness, pilot, tmp_path
+        )
+        expand_id = f"library-ingest-group-expand-{group_key}"
+        await _wait_for_selector(screen, pilot, f"#{expand_id}")
+
+        screen.query_one(f"#{expand_id}", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: len(screen.query(".library-ingest-row")) == 5,
+            message="expanding never revealed the members",
+        )
+
+        # The user dismisses the first visible member from its own row.
+        screen.query_one(f"#library-ingest-dismiss-{leader}", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query(f"#library-ingest-dismiss-{leader}"),
+            message="the leading member was never dismissed",
+        )
+        await pilot.pause()
+
+        # 1 group row + the 3 surviving members, still open.
+        assert len(screen.query(".library-ingest-row")) == 4, (
+            "the group collapsed when it lost the member it was keyed by"
+        )
+
+
+@pytest.mark.asyncio
+async def test_dismiss_all_really_clears_a_skipped_group(tmp_path):
+    """(Qodo 1, declined) Skipped rows ARE dismissible -- proof, not prose.
+
+    The bot read ``LibraryIngestJobRegistry.dismiss``'s docstring ("Hide a
+    FAILED or CANCELLED job"), which is stale: ``_DISMISSIBLE_STATES``
+    (library_ingest_jobs.py) has included ``SKIPPED`` since task-2220. This
+    pins the behaviour end to end so the claim cannot be re-raised from the
+    same stale sentence.
+    """
+    db = MediaDatabase(tmp_path / "crit9-import.db", client_id="crit9-skip")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        jobs = await _seed_failed_jobs(
+            harness, pilot, [tmp_path / f"skip{n}.md" for n in range(3)]
+        )
+        for job in jobs:
+            harness.library_ingest_jobs.mark_skipped(
+                job.job_id, reason="Unsupported file type: .md."
+            )
+        await _open_library_ingest_canvas(screen, pilot)
+
+        rows = screen._build_library_ingest_state().queue_rows
+        assert all(row.state is IngestJobState.SKIPPED for row in rows)
+        group = group_ingest_queue_rows(rows)[0]
+        assert len(group.members) == 3, [row.line for row in rows]
+
+        dismiss_id = f"library-ingest-group-dismiss-{group.key}"
+        await _wait_for_selector(screen, pilot, f"#{dismiss_id}")
+        screen.query_one(f"#{dismiss_id}", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query(".library-ingest-row"),
+            message=lambda: (
+                "Dismiss all left skipped rows behind: "
+                f"{len(screen.query('.library-ingest-row'))}"
+            ),
+        )
+        visible = {job.job_id for job in harness.library_ingest_jobs.jobs()}
+        assert not visible & {job.job_id for job in jobs}

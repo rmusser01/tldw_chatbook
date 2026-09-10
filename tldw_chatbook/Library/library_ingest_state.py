@@ -10,6 +10,7 @@ booting the TUI, mirroring ``library_notes_sync_state.py``.
 from __future__ import annotations
 
 import errno
+import hashlib
 import math
 import re
 import time
@@ -1430,6 +1431,12 @@ class IngestQueueRow:
     #: gate the action on ``error_detail`` alone, which hid the raw error on
     #: exactly the failures that carry none (a parse pool that never started).
     can_show_details: bool = False
+    #: (Qodo 2 on PR #2577) The submitting batch, mirrored from the job the
+    #: same way ``origin`` is. Part of the outcome-group key: the canvas
+    #: emits only a group's LEADING member's task-2221 batch header, so a
+    #: group spanning two submissions hides the second header and puts a
+    #: per-batch count above a row counting both.
+    batch_id: str | None = None
     #: (task-32231) The settled row's plain-language cause, WITHOUT the
     #: basename -- the group key for collapsing identical outcomes. Empty
     #: for active rows (queued/parsing/writing), which never group because
@@ -1475,23 +1482,42 @@ class IngestOutcomeGroup:
 
     @property
     def key(self) -> str:
-        """Stable, id-safe handle for the group: its leading row's job id.
+        """Stable, id-safe handle for the group, derived from its identity.
 
-        Widget ids and the actions keyed off them (expand/retry/dismiss)
-        use this rather than a hash of ``(state, reason)`` -- a job id is
-        already unique, already id-safe, and already how every per-row
-        action addresses its target.
+        (Qodo 5 on PR #2577) Keyed by the LEADING member's job id, a group
+        was re-keyed the moment that member left it -- dismissing the first
+        row of an expanded group changed the key the panel's expansion set
+        holds, so the remaining members collapsed under the user. The key
+        is now the group's own identity (what makes those rows one group),
+        so losing a member cannot change it.
+
+        Hashed because a reason string is not a valid widget id; truncated
+        because these ids only have to be unique among the handful of
+        groups one queue can show at once.
+
+        Returns:
+            A 12-character hex token, stable for as long as the group's
+            state/reason/batch identity is.
         """
-        return self.members[0].job_id
+        return _outcome_group_id(self.members[0])
 
     @property
     def can_retry(self) -> bool:
-        """Whether "Retry all" is honest -- true only if EVERY member is."""
+        """Whether "Retry all" is honest -- true only if EVERY member is.
+
+        Returns:
+            ``True`` when every member row offers Retry on its own, so the
+            bulk action cannot promise more than the rows behind it.
+        """
         return all(row.can_retry for row in self.members)
 
     @property
     def can_dismiss(self) -> bool:
-        """Whether "Dismiss all" is honest -- true only if EVERY member is."""
+        """Whether "Dismiss all" is honest -- true only if EVERY member is.
+
+        Returns:
+            ``True`` when every member row offers Dismiss on its own.
+        """
         return all(row.can_dismiss for row in self.members)
 
 
@@ -1503,8 +1529,24 @@ def _outcome_group_key(row: IngestQueueRow) -> tuple[Any, ...]:
     it can never join a run.
     """
     if row.state in _GROUPABLE_ROW_STATES and row.reason:
-        return (row.state, row.reason)
-    return (row.job_id,)
+        # (Qodo 2) ...and the submission, so a collapse can never span two
+        # batch headers.
+        return ("outcome", row.state.value, row.reason, row.batch_id or "")
+    return ("row", row.job_id)
+
+
+def _outcome_group_id(row: IngestQueueRow) -> str:
+    """Hash one row's group key into a widget-id-safe token.
+
+    Args:
+        row: Any member of the group -- every member hashes identically,
+            which is the property that survives losing the leading one.
+
+    Returns:
+        12 hex characters.
+    """
+    joined = "\x00".join(_outcome_group_key(row))
+    return hashlib.sha1(joined.encode("utf-8")).hexdigest()[:12]
 
 
 def group_ingest_queue_rows(
@@ -1551,7 +1593,7 @@ def group_ingest_queue_rows(
                     f"· {leader.reason}"
                 ),
                 members=members,
-                expanded=leader.job_id in expanded,
+                expanded=_outcome_group_id(leader) in expanded,
             )
         )
 
@@ -2196,6 +2238,7 @@ def _build_queue_row(
         row = replace(
             row,
             origin=job.origin,
+            batch_id=job.batch_id,
             can_cancel=can_cancel,
             can_force_stop=can_force_stop,
             research_owned=bool(job.research_source_operation_id),
@@ -2207,6 +2250,7 @@ def _build_queue_row(
         row = replace(
             row,
             origin=job.origin,
+            batch_id=job.batch_id,
             can_cancel=can_cancel,
             line=f"{row.line}{_SERVER_ROW_SUFFIX}",
             research_owned=bool(job.research_source_operation_id),

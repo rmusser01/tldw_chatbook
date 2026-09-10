@@ -4480,9 +4480,12 @@ def test_expanded_keys_mark_only_their_own_group():
         _failed_row("c", reason="Unsupported file type: .json."),
         _failed_row("d", reason="Unsupported file type: .json."),
     )
-    groups = group_ingest_queue_rows(rows, expanded={"c"})
+    # The key is the group's own identity, not a member's job id (Qodo 5),
+    # so the expansion set is addressed with it.
+    second = group_ingest_queue_rows(rows)[1]
+    groups = group_ingest_queue_rows(rows, expanded={second.key})
     assert [group.expanded for group in groups] == [False, True]
-    assert [group.key for group in groups] == ["a", "c"]
+    assert groups[0].key != groups[1].key
 
 
 def test_a_group_is_retryable_only_when_every_member_is():
@@ -4560,3 +4563,53 @@ def test_identical_successes_never_collapse():
     assert [group.line for group in groups] == [
         row.line for row in state.queue_rows
     ]
+
+
+def test_two_batches_with_identical_failures_stay_two_rows():
+    """(Qodo 2) A collapsed group must never span two submissions.
+
+    The canvas emits only the LEADING member's task-2221 batch header, so a
+    cross-batch collapse puts a per-submission count ("four-md — 4 files")
+    directly above a row counting both submissions ("5 files") and hides the
+    second header entirely. Observed live during task-32231's verification
+    and reported then as intended; it is a contradiction on screen.
+    """
+    jobs = tuple(
+        _job(
+            job_id=f"ingest-job-{n}",
+            source_path=f"/tmp/inbox/note{n}.md",
+            state=IngestJobState.FAILED,
+            error="Ingest worker pool could not start: [Errno 28]",
+            finished_at=120.0,
+            batch_id="batch-a" if n < 2 else "batch-b",
+        )
+        for n in range(4)
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    groups = group_ingest_queue_rows(state.queue_rows)
+
+    assert len(groups) == 2, [group.line for group in groups]
+    assert all(" · 2 files · " in group.line for group in groups), [
+        group.line for group in groups
+    ]
+    assert groups[0].key != groups[1].key
+
+
+def test_a_groups_key_survives_losing_its_leading_member():
+    """(Qodo 5) The key identifies the OUTCOME, not the first row in it.
+
+    Keyed by the leading job id, dismissing that one member re-keys the
+    whole run, and the panel's expansion set -- which stores keys -- then
+    collapses a group the user had open. The key is derived from what makes
+    the rows a group in the first place, so losing a member cannot change
+    it.
+    """
+    rows = tuple(
+        _failed_row(f"job-{n}", basename=f"note{n}.md", reason="Timed out")
+        for n in range(4)
+    )
+    whole = group_ingest_queue_rows(rows)
+    without_leader = group_ingest_queue_rows(rows[1:])
+
+    assert len(whole) == len(without_leader) == 1
+    assert whole[0].key == without_leader[0].key
