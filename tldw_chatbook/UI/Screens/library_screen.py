@@ -9274,11 +9274,8 @@ class LibraryScreen(BaseAppScreen):
             ("library_export_last_bytes", "last_bytes"),
         ):
             value = state.get(key)
-            setattr(
-                self._export_state,
-                field,
-                int(value) if isinstance(value, int) and not isinstance(value, bool) else None,
-            )
+            usable = isinstance(value, int) and not isinstance(value, bool)
+            setattr(self._export_state, field, int(value) if usable else None)
         # task-15459: re-seed from the cache now that ``_selected_
         # conversation_id`` above reflects the RESTORED id, not ``__init__``'s
         # empty default -- ``_apply_local_source_snapshot``'s carry-forward
