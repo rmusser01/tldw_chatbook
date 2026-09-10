@@ -15117,12 +15117,12 @@ async def test_library_shell_scope_toggle_deselect_sends_only_selected_types():
 
         assert str(
             screen.query_one("#library-rag-scope-toggle-media", Button).label
-        ).startswith("✓")
+        ).startswith("☑")
 
         screen.query_one("#library-rag-scope-toggle-media", Button).press()
         for _ in range(120):
             toggles = list(screen.query("#library-rag-scope-toggle-media"))
-            if toggles and str(toggles[0].label).startswith("○"):
+            if toggles and str(toggles[0].label).startswith("☐"):
                 break
             await pilot.pause(0.02)
         else:
@@ -15146,7 +15146,7 @@ async def test_library_shell_scope_toggle_deselect_sends_only_selected_types():
         screen.query_one("#library-rag-scope-toggle-notes", Button).press()
         for _ in range(120):
             toggles = list(screen.query("#library-rag-scope-toggle-notes"))
-            if toggles and str(toggles[0].label).startswith("○"):
+            if toggles and str(toggles[0].label).startswith("☐"):
                 break
             await pilot.pause(0.02)
         else:
@@ -15315,7 +15315,7 @@ def test_library_rag_panel_state_scope_hides_a_row_whose_source_count_drops_to_z
     (`_refresh_local_source_snapshot` recounts it to zero), and the Search
     canvas is revisited without re-querying. The Sources toggle strip's
     own marker is already count-intersected
-    (`LibraryRagScopeState.from_source_counts`) and would read "○ Notes
+    (`LibraryRagScopeState.from_source_counts`) and would read "☐ Notes
     (0)" in that state -- the evidence list must follow that SAME signal,
     or the toggle-vs-evidence lie D4 exists to close just gets a
     different trigger (count drift instead of a toggle press). Filtering
@@ -15619,7 +15619,7 @@ async def test_library_shell_scope_toggle_off_hides_rendered_rows_and_keeps_inde
         screen.query_one("#library-rag-scope-toggle-media", Button).press()
         for _ in range(120):
             toggles = list(screen.query("#library-rag-scope-toggle-media"))
-            if toggles and str(toggles[0].label).startswith("○"):
+            if toggles and str(toggles[0].label).startswith("☐"):
                 break
             await pilot.pause(0.02)
         else:
@@ -15670,7 +15670,7 @@ async def test_library_shell_scope_toggle_off_hides_rendered_rows_and_keeps_inde
         screen.query_one("#library-rag-scope-toggle-media", Button).press()
         for _ in range(120):
             toggles = list(screen.query("#library-rag-scope-toggle-media"))
-            if toggles and str(toggles[0].label).startswith("✓"):
+            if toggles and str(toggles[0].label).startswith("☑"):
                 break
             await pilot.pause(0.02)
         else:
@@ -30039,7 +30039,7 @@ async def test_library_search_rag_canvas_survives_ingest_done_count_growth(tmp_p
 
         media_toggle = screen.query_one("#library-rag-scope-toggle-media", Button)
         media_label_before = str(media_toggle.label)
-        assert media_label_before == "✓ Media (1)", (
+        assert media_label_before == "☑ Media (1)", (
             f"unexpected pre-event toggle label: {media_label_before!r}"
         )
 
@@ -30140,7 +30140,7 @@ async def test_library_search_rag_canvas_survives_ingest_done_count_growth(tmp_p
         media_label_after = str(
             screen.query_one("#library-rag-scope-toggle-media", Button).label
         )
-        assert media_label_after == "✓ Media (2)", (
+        assert media_label_after == "☑ Media (2)", (
             f"scope-toggle count went stale: {media_label_before!r} -> "
             f"{media_label_after!r} (expected the Media count to grow "
             "from 1 to 2)"

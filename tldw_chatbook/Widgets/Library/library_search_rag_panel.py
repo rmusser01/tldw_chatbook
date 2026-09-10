@@ -46,6 +46,10 @@ from ...Library.library_rechunk_service import (
     format_rechunk_summary,
     release_bulk_rag_slot,
 )
+from ...Library.library_shell_state import (
+    LIBRARY_GLYPH_SELECTED,
+    LIBRARY_GLYPH_UNSELECTED,
+)
 from .library_rail import SelectAllOnFocusingClickInput
 
 
@@ -480,7 +484,9 @@ def scope_toggle_label(option: LibraryRagSourceOption) -> str:
     concurrently with the other refresh callers -- see that method's
     docstring).
     """
-    marker = "✓" if option.selected else "○"
+    # task-32235: these toggles are a selection the user makes, so they wear
+    # the checkbox pair -- "○" is the disabled-action marker and nothing else.
+    marker = LIBRARY_GLYPH_SELECTED if option.selected else LIBRARY_GLYPH_UNSELECTED
     return f"{marker} {option.label} ({option.count})"
 
 
