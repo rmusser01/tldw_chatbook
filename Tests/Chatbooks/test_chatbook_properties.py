@@ -203,13 +203,25 @@ class TestChatbookProperties:
         # Create chatbook creator with mocked dependencies
         creator = ChatbookCreator(mock_db_paths)
 
-        # Mock the collection methods to avoid database calls
+        # Mock the collection methods to avoid database calls. task-32232:
+        # each double must still RECORD its item -- ``create_chatbook``
+        # refuses to write an archive when a non-empty selection collects
+        # nothing, and a bare no-op collector collects nothing by
+        # construction.
+        def _collect(ids, work_dir, manifest, content, *args, **kwargs):
+            for item_id in ids:
+                manifest.content_items.append(
+                    ContentItem(
+                        id=str(item_id), type=ContentType.CONVERSATION, title="stub"
+                    )
+                )
+
         with (
-            patch.object(creator, "_collect_conversations"),
-            patch.object(creator, "_collect_notes"),
-            patch.object(creator, "_collect_characters"),
-            patch.object(creator, "_collect_media"),
-            patch.object(creator, "_collect_prompts"),
+            patch.object(creator, "_collect_conversations", side_effect=_collect),
+            patch.object(creator, "_collect_notes", side_effect=_collect),
+            patch.object(creator, "_collect_characters", side_effect=_collect),
+            patch.object(creator, "_collect_media", side_effect=_collect),
+            patch.object(creator, "_collect_prompts", side_effect=_collect),
         ):
             output_path = tmp_path / f"test_{hash(name)}.zip"
 
