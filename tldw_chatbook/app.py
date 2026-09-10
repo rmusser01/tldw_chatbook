@@ -8847,7 +8847,12 @@ class TldwCli(
     def open_conversation_archive(
         self, query: str = "", archive_scope: str = "archived"
     ) -> None:
-        """Open Library conversation search with an explicit archive scope."""
+        """Open Library conversation search with an explicit archive scope.
+
+        Args:
+            query: Initial title/message search text; empty lists the scope.
+            archive_scope: "active", "archived" (default), or "all" saved chats.
+        """
         self.post_message(
             NavigateToScreen(
                 TAB_LIBRARY,

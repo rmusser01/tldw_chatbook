@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-10 15:35'
-updated_date: '2026-09-10 20:43'
+updated_date: '2026-09-10 21:08'
 labels: []
 dependencies: []
 priority: high
@@ -40,6 +40,7 @@ PR #2576 review corrections: reproduce stale Console composer guards, workspace 
 PR #2576 wave 2 backend: use shared Pydantic name validation matching the existing strict-text/nonblank WorkspaceRecord contract; reject concurrent zero-row restore updates without publishing mutation success; verify a real SQLite restore race and name compatibility.
 
 PR #2576 second review: reproduce registry-read error escapes and UI-thread storage in Console Restore/Settings Undo; dispatch recovery through asynchronous storage calls, fence delayed UI publication, retain failed receipts, and assert replacement rename-input identity before the next action. Verify blocking-storage responsiveness and targeted mounted lifecycle flows.
+PR #2576 third review: preserve deleted conversation discovery independently of archive scope; prevent failed new mutations from exposing prior Undo; recheck durable state before existing-session Resume; serialize Unicode name checks with restore writes; align workspace-archive action copy and navigation contracts. Add focused regressions and verify affected integrations. ADR required: no new ADR; implements existing ADR147 lifecycle/recovery boundaries.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -61,4 +62,5 @@ PR #2576 wave 2 UI corrections (#3983108330, #3983108367, #3983108378, #39831083
 
 UI verification: 4 focused reproductions failed before implementation and then passed. Final targeted runs cover 29 distinct cases: 25 recovery/lifecycle tests passed, plus 4 Settings archive/restore/rename cases in the preceding 22-pass run. Coverage includes blocked storage with a responsive event loop, read/write failure feedback, delayed navigation, newer receipt preservation, and mounted Restore as at both viewport sizes. New/changed ranges pass Ruff (existing unrelated file diagnostics remain), range formatting and diff whitespace checks pass, and self-review completed. This implements ADR-147 without changing the registry ownership boundary.
 Final integrated review verification and baseline limits are recorded in Docs/superpowers/qa/console/2026-09-10-archive-recovery.md. All modified archive flows pass their targeted tests; the unrelated compact Overview assertion reproduces with the prior Settings implementation. Started-write cancellation preserves storage completion publication. Existing ADR147 applies.
+PR #2576 third review: fixed Trash archive independence, failed-mutation Undo ownership, durable existing-tab Resume checks, serialized Unicode restore names, workspace recovery labels, and archive navigation contracts. Targeted real SQLite, recovery and mounted checks pass; third-review evidence and temporary host-disk interruption are recorded in the QA report. ADR147 applies and documents deletion-oriented scope. Self-review and scoped static checks complete.
 <!-- SECTION:NOTES:END -->

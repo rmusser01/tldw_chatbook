@@ -1148,3 +1148,44 @@ def test_concurrent_restore_rejects_stale_name_and_does_not_publish_success(
     assert loser.mutation_generation == generation
     winner.db.close()
     loser.db.close()
+
+
+def test_concurrent_unicode_restore_names_remain_unique(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    first = build_test_registry(tmp_path)
+    second = build_test_registry(tmp_path)
+    for cid in ("first", "second"):
+        first.create_workspace(workspace_id=cid, name=cid)
+        first.archive_workspace(cid)
+    ready = Barrier(2)
+    for service in (first, second):
+        original = service.db.transaction
+
+        @contextmanager
+        def synchronized_transaction(*, immediate=False, transaction=original):
+            ready.wait(timeout=5)
+            with transaction(immediate=immediate) as conn:
+                yield conn
+
+        monkeypatch.setattr(service.db, "transaction", synchronized_transaction)
+
+    def restore(service, cid, name):
+        try:
+            return service.unarchive_workspace(cid, name=name)
+        except WorkspaceRegistryServiceError:
+            return None
+        finally:
+            service.db.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        pending = [
+            pool.submit(restore, first, "first", "É"),
+            pool.submit(restore, second, "second", "é"),
+        ]
+        results = [future.result(timeout=8) for future in pending]
+    assert sum(result is not None for result in results) == 1
+    assert len([w for w in first.list_workspaces() if w.name.casefold() == "é"]) == 1
+    first.db.close()
+    second.db.close()

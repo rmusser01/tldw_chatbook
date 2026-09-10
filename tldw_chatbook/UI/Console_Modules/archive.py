@@ -63,21 +63,20 @@ async def request_conversation_resume(app: Any, conversation_id: str) -> None:
         try:
             # A confirmation (including Restore as) may outlive its metadata.
             # Refuse a changed identity/scope/version before either store writes.
-            if row.get("archived") or (workspace and workspace.archived):
-                current_row = await storage_call(
-                    service, "get_conversation_metadata", conversation_id
+            current_row = await storage_call(
+                service, "get_conversation_metadata", conversation_id
+            )
+            if (
+                not current_row
+                or current_row.get("version") != row.get("version")
+                or current_row.get("workspace_id") != workspace_id
+                or bool(current_row.get("archived")) != bool(row.get("archived"))
+            ):
+                app.notify(
+                    "This conversation changed or is no longer available. Refresh Library and try Resume again.",
+                    severity="warning",
                 )
-                if (
-                    not current_row
-                    or current_row.get("version") != row.get("version")
-                    or current_row.get("workspace_id") != workspace_id
-                    or bool(current_row.get("archived")) != bool(row.get("archived"))
-                ):
-                    app.notify(
-                        "This conversation changed or is no longer available. Refresh Library and try Resume again.",
-                        severity="warning",
-                    )
-                    return
+                return
             if workspace and workspace.archived:
                 current_workspace = await storage_call(
                     registry, "get_workspace", workspace_id
@@ -211,7 +210,46 @@ async def consume_conversation_resume(screen: Any) -> None:
                 return screen.app.screen is screen and handoffs.is_current_claim(claim)
 
             if existing is not None:
-                workspace_id = getattr(existing, "workspace_id", None)
+                row = await storage_call(
+                    local_conversation_service(screen.app_instance),
+                    "get_conversation_metadata",
+                    conversation_id,
+                )
+                if not resume_is_current():
+                    handoffs.release(claim)
+                    return
+                if not row:
+                    handoffs.release(claim)
+                    screen.app_instance.notify(
+                        "This conversation is no longer available. Refresh Library.",
+                        severity="warning",
+                    )
+                    return
+                workspace_id = row.get("workspace_id")
+                registry = getattr(
+                    screen.app_instance, "workspace_registry_service", None
+                )
+                workspace = (
+                    await storage_call(registry, "get_workspace", workspace_id)
+                    if workspace_id and registry is not None
+                    else None
+                )
+                if not resume_is_current():
+                    handoffs.release(claim)
+                    return
+                if row.get("archived") or (workspace and workspace.archived):
+                    handoffs.release(claim)
+                    await request_conversation_resume(
+                        screen.app_instance, conversation_id
+                    )
+                    return
+                if workspace_id and workspace is None:
+                    handoffs.release(claim)
+                    screen.app_instance.notify(
+                        "This workspace is no longer available. Refresh Library.",
+                        severity="warning",
+                    )
+                    return
                 await screen._session._activate_native_console_session(
                     existing.id, activate_if=resume_is_current
                 )

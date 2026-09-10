@@ -605,7 +605,8 @@ async def test_stale_list_resume_dispatches_original_and_checks_current_storage(
     await request_conversation_resume(
         app, app.resume_console_conversation.call_args.args[0]
     )
-    read_metadata.assert_called_once_with("chat-a")
+    assert read_metadata.call_count == (2 if exists_now else 1)
+    assert all(call.args == ("chat-a",) for call in read_metadata.call_args_list)
     claim = app.pending_handoffs.claim(HandoffChannel.CONSOLE_CONVERSATION_RESUME)
     if exists_now:
         read_workspace.assert_called_once_with("current-workspace")

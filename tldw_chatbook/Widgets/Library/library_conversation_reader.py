@@ -222,7 +222,10 @@ class LibraryConversationReader(Vertical):
         with Vertical(classes="ds-toolbar library-conversation-reader-actions"):
             open_console = Button(
                 "Restore and resume"
-                if self.loaded_metadata.get("archived")
+                if (
+                    self.loaded_metadata.get("archived")
+                    or self.loaded_metadata.get("workspace_archived")
+                )
                 else "Resume conversation",
                 id="library-conversation-open-console",
                 classes="library-canvas-action",
@@ -548,7 +551,10 @@ class LibraryConversationReader(Vertical):
 
         open_console.label = (
             "Restore and resume"
-            if self.loaded_metadata.get("archived")
+            if (
+                self.loaded_metadata.get("archived")
+                or self.loaded_metadata.get("workspace_archived")
+            )
             else "Resume conversation"
         )
         open_console.disabled = not state.loaded_actions_eligible

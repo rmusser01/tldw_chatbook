@@ -97,7 +97,12 @@ async def test_resume_reuses_open_session_and_acknowledges_after_activation():
     activate = AsyncMock()
     hydrate = AsyncMock()
     screen = SimpleNamespace(
-        app_instance=SimpleNamespace(pending_handoffs=handoffs),
+        app_instance=SimpleNamespace(
+            pending_handoffs=handoffs,
+            local_chat_conversation_service=SimpleNamespace(
+                get_conversation_metadata=lambda cid: {"id": cid, "archived": False}
+            ),
+        ),
         _ensure_console_chat_store=lambda: SimpleNamespace(sessions=lambda: [session]),
         _session=SimpleNamespace(_activate_native_console_session=activate),
         _workspace=SimpleNamespace(_resume_console_workspace_conversation=hydrate),

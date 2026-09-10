@@ -493,6 +493,9 @@ readable; restore it before sending again.
 5. Console opens the original conversation and saved branch. If already open,
    its existing tab and draft are reused. Type the next message in the composer.
 
+Deleting an archived chat moves it to Trash; its archive flag does not hide it
+from deleted-conversation recovery.
+
 **Restore only** returns a chat to active history without switching Console.
 **Use as source** adds the selected conversation as source context; use **Resume**
 when you want to continue its own history.

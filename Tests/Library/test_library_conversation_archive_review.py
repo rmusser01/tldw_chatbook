@@ -125,3 +125,55 @@ def test_scope_event_validates_before_changing_recovery(button_id):
         recovery.set_scope.assert_called_once_with(button_id.rsplit("-", 1)[-1])
     else:
         recovery.set_scope.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_failed_new_change_does_not_offer_previous_undo(monkeypatch):
+    from unittest.mock import AsyncMock, Mock
+
+    from tldw_chatbook.UI.Library_Modules import library_conversation_recovery as module
+
+    change = AsyncMock(side_effect=RuntimeError("unavailable"))
+    monkeypatch.setattr(module, "change_conversation_archive", change)
+    screen = SimpleNamespace(
+        app_instance=object(),
+        _sync_library_conversation_canvas=Mock(),
+        _library_conversation_requested_page=1,
+        _library_conversation_requested_query="",
+        _start_library_conversation_page_request=Mock(),
+    )
+    recovery = module.LibraryConversationRecovery(screen)
+    recovery.receipt_versions = {"old": 4}
+    recovery.receipt_archived = True
+    await recovery.change(("new",), archived=False, expected_versions={"new": 2})
+    assert recovery.receipt_versions == {}
+    await recovery.undo()
+    assert change.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_reader_discloses_workspace_restore_on_compose_and_sync():
+    from textual.app import App
+    from textual.widgets import Button
+
+    from tldw_chatbook.Library.library_conversation_reader_state import (
+        ConversationReaderState,
+    )
+    from tldw_chatbook.Widgets.Library.library_conversation_reader import (
+        LibraryConversationReader,
+    )
+
+    class Host(App):
+        def compose(self):
+            yield LibraryConversationReader(
+                ConversationReaderState(), loaded_metadata={"workspace_archived": True}
+            )
+
+    async with Host().run_test() as pilot:
+        reader = pilot.app.query_one(LibraryConversationReader)
+        button = reader.query_one("#library-conversation-open-console", Button)
+        assert str(button.label) == "Restore and resume"
+        reader.sync_state(reader.state, loaded_metadata={})
+        assert str(button.label) == "Resume conversation"
+        reader.sync_state(reader.state, loaded_metadata={"workspace_archived": True})
+        assert str(button.label) == "Restore and resume"

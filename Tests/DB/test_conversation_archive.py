@@ -473,3 +473,17 @@ def test_conversation_retention_removes_late_superseded_payload(db, deleted):
         tuple(row)
         for row in connection.execute("SELECT * FROM sync_log ORDER BY change_id")
     ] == before
+
+
+@pytest.mark.parametrize("query", [None, "Needle"])
+@pytest.mark.parametrize("deleted_only", [False, True])
+def test_trash_includes_chats_archived_before_deletion(db, query, deleted_only):
+    cid, _, version = seed(db)
+    db.set_conversations_archived(
+        [cid], archived=True, expected_versions={cid: version}
+    )
+    db.soft_delete_conversation(cid, version + 1)
+    rows, total, _ = db.search_conversations_page(
+        query, include_deleted=not deleted_only, deleted_only=deleted_only
+    )
+    assert total == 1 and [row["id"] for row in rows] == [cid]

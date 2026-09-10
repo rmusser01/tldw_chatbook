@@ -11314,7 +11314,12 @@ UPDATE db_schema_version
         query_workspace_ids_by_term: Optional[Sequence[Sequence[str]]] = None,
         query_include_global_scope_by_term: Optional[Sequence[bool]] = None,
     ) -> Tuple[str, List[Any]]:
-        clauses: List[str] = [self._conversation_archive_scope_clause(archive_scope)]
+        archive_clause = self._conversation_archive_scope_clause(archive_scope)
+        # Archive scopes govern saved live chats. Trash must retain every
+        # deleted chat, including those archived before deletion.
+        if include_deleted or deleted_only:
+            archive_clause = f"(deleted = 1 OR {archive_clause})"
+        clauses: List[str] = [archive_clause]
         params: List[Any] = []
         if not isinstance(include_global_scope, bool):
             raise InputError("include_global_scope must be a boolean.")

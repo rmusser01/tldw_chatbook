@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-10 15:33'
-updated_date: '2026-09-10 20:43'
+updated_date: '2026-09-10 21:08'
 labels: []
 dependencies: []
 priority: high
@@ -44,6 +44,7 @@ PR review corrections (2026-09-10):
 7. Preserve the latest shared sync payload through archive-only version bumps in both trigger and maintenance retention.
 8. Run targeted DB/service checks and self-review before restoring Done status.
 PR #2576 wave 2: include archived conversations in import conflict and unique-name checks; document all public archive-scope arguments; verify focused import/service tests.
+PR #2576 third review: preserve deleted conversation discovery independently of archive scope; prevent failed new mutations from exposing prior Undo; recheck durable state before existing-session Resume; serialize Unicode name checks with restore writes; align workspace-archive action copy and navigation contracts. Add focused regressions and verify affected integrations. ADR required: no new ADR; implements existing ADR147 lifecycle/recovery boundaries.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -61,4 +62,5 @@ Verification: 82 targeted DB archive/service tests passed. The retention follow-
 
 PR #2576 wave 2 backend corrections: importer conflict detection and generated-name probes explicitly include archived non-deleted conversations. Real SQLite import tests prove Skip preserves an archived title and Rename avoids both its base title and archived numbered suffix. All public Chat service methods carrying archive_scope now document active/archived/all, defaults, and pre-pagination filtering. Existing ADR-147 applies. Verification: new import cases and existing import/service neighbors passed; no new lint diagnostics or whitespace errors.
 Final integrated review verification and baseline limits are recorded in Docs/superpowers/qa/console/2026-09-10-archive-recovery.md. All modified archive flows pass their targeted tests; the unrelated compact Overview assertion reproduces with the prior Settings implementation. Started-write cancellation preserves storage completion publication. Existing ADR147 applies.
+PR #2576 third review: fixed Trash archive independence, failed-mutation Undo ownership, durable existing-tab Resume checks, serialized Unicode restore names, workspace recovery labels, and archive navigation contracts. Targeted real SQLite, recovery and mounted checks pass; third-review evidence and temporary host-disk interruption are recorded in the QA report. ADR147 applies and documents deletion-oriented scope. Self-review and scoped static checks complete.
 <!-- SECTION:NOTES:END -->

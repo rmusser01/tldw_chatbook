@@ -114,7 +114,13 @@ async def test_existing_resume_releases_claim_after_navigation():
     screen = SimpleNamespace()
     app = SimpleNamespace(screen=screen)
     screen.app = app
-    screen.app_instance = SimpleNamespace(pending_handoffs=handoffs, notify=Mock())
+    screen.app_instance = SimpleNamespace(
+        pending_handoffs=handoffs,
+        notify=Mock(),
+        local_chat_conversation_service=SimpleNamespace(
+            get_conversation_metadata=lambda cid: {"id": cid, "archived": False}
+        ),
+    )
     screen._ensure_console_chat_store = lambda: SimpleNamespace(
         sessions=lambda: [
             SimpleNamespace(id="session-a", persisted_conversation_id="chat-a")
@@ -217,7 +223,13 @@ async def test_superseded_existing_resume_drains_latest_request():
     handoffs.stage(channel, ConsoleConversationResumeIntent("chat-a"))
     screen = SimpleNamespace()
     screen.app = SimpleNamespace(screen=screen)
-    screen.app_instance = SimpleNamespace(pending_handoffs=handoffs, notify=Mock())
+    screen.app_instance = SimpleNamespace(
+        pending_handoffs=handoffs,
+        notify=Mock(),
+        local_chat_conversation_service=SimpleNamespace(
+            get_conversation_metadata=lambda cid: {"id": cid, "archived": False}
+        ),
+    )
     screen._ensure_console_chat_store = lambda: SimpleNamespace(
         sessions=lambda: [
             SimpleNamespace(id="session-a", persisted_conversation_id="chat-a"),
@@ -268,6 +280,8 @@ async def test_recovery_error_logs_bind_only_identity_context(monkeypatch, phase
             if phase == "recovery":
                 await confirm_recovery(app)
         elif phase == "resume":
+            row["archived"] = False
+            _workspace.archived = False
             app.pending_handoffs.stage(
                 HandoffChannel.CONSOLE_CONVERSATION_RESUME,
                 ConsoleConversationResumeIntent("chat-a"),
@@ -328,3 +342,48 @@ async def test_recovery_error_logs_bind_only_identity_context(monkeypatch, phase
         assert "PRIVATE" not in records[0]["message"]
     finally:
         logger.remove(sink)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("archived", [True, False])
+async def test_existing_resume_rechecks_durable_archive_before_activation(
+    monkeypatch, archived
+):
+    app, row, workspace = recovery_app()
+    row["archived"] = archived
+    workspace.archived = False
+    screen = SimpleNamespace(app_instance=app)
+    screen.app = SimpleNamespace(screen=screen)
+    screen._ensure_console_chat_store = lambda: SimpleNamespace(
+        sessions=lambda: [
+            SimpleNamespace(id="open", persisted_conversation_id="chat-a")
+        ]
+    )
+    activate = AsyncMock()
+    screen._session = SimpleNamespace(_activate_native_console_session=activate)
+    request = AsyncMock()
+    monkeypatch.setattr(archive, "request_conversation_resume", request)
+    channel = HandoffChannel.CONSOLE_CONVERSATION_RESUME
+    app.pending_handoffs.stage(channel, ConsoleConversationResumeIntent("chat-a"))
+    await archive.consume_conversation_resume(screen)
+    if archived:
+        activate.assert_not_called()
+        request.assert_awaited_once_with(app, "chat-a")
+        assert app.pending_handoffs.claim(channel) is not None
+    else:
+        activate.assert_awaited_once()
+        assert app.pending_handoffs.claim(channel) is None
+
+
+@pytest.mark.asyncio
+async def test_initially_active_resume_revalidates_before_staging():
+    app, row, workspace = recovery_app()
+    workspace.archived = False
+    row["archived"] = False
+    app.local_chat_conversation_service.get_conversation_metadata.side_effect = [
+        dict(row), {**row, "archived": True, "version": 5},
+    ]
+    await archive.request_conversation_resume(app, "chat-a")
+    app.post_message.assert_not_called()
+    assert app.pending_handoffs.claim(HandoffChannel.CONSOLE_CONVERSATION_RESUME) is None
+    assert "changed" in app.notify.call_args.args[0]

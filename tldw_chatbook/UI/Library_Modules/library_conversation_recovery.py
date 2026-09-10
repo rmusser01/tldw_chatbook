@@ -117,9 +117,14 @@ class LibraryConversationRecovery:
                 )
             if not archived:
                 self.receipt_copy += " Current Console context is unchanged."
-        except Exception:  # noqa: BLE001 - retain reader/receipt state at the UI boundary
+        except Exception:  # noqa: BLE001 - retain reader state at the UI boundary
+            if not undo:
+                self.receipt_versions = {}
+                self.receipt_archived = False
             self.receipt_copy = (
-                "Could not update conversations. Refresh the list and retry."
+                "Undo did not complete. Retry Undo or refresh the list."
+                if undo
+                else "Could not update conversations. Refresh the list and retry."
             )
         finally:
             self.busy = False

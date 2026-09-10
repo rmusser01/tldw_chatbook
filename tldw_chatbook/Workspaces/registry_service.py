@@ -803,10 +803,12 @@ class LocalWorkspaceRegistryService:
             safe_name = validate_workspace_name(record.name if name is None else name)
         except ValueError as exc:
             raise WorkspaceRegistryServiceError(str(exc)) from exc
-        self._reject_duplicate_name(safe_name, exclude_workspace_id=safe_workspace_id)
         now = self._now_factory()
         try:
-            with self.db.transaction() as conn:
+            with self.db.transaction(immediate=True) as conn:
+                self._reject_duplicate_name(
+                    safe_name, exclude_workspace_id=safe_workspace_id
+                )
                 cursor = conn.execute(
                     """
                     UPDATE workspace_records
