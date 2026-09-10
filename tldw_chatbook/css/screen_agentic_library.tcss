@@ -3810,3 +3810,24 @@ LibraryIngestCanvas #library-ingest-latest-batch {
 #library-shell-grid.library-notes-compact .library-notes-lasting-sync-canvas {
     padding: 0;
 }
+
+/* task-32217 (critique #9 row 14): the screen-wide density rule.
+   A pane with nothing open gives its columns to its sibling. The horizontal
+   half is not CSS -- it is the resolver's own empty-work-pane branch
+   (Utils/adaptive_reader_state.py, the ``reader_has_item`` block Media and
+   Notes already used); Prompts, Skills, Collections and Conversations now
+   pass that flag, so no per-canvas width rule can drift from it. The
+   vertical half (a primary content box takes the pane's remaining height,
+   its actions directly beneath) is already shipped for the surfaces this
+   branch owns: #library-prompt-editor-content and
+   #library-media-viewer-content both carry `height: 1fr` above. The note
+   editor's Body box (#library-note-body) is the one clause still bounded,
+   and it belongs to the Notes branch of this wave.
+
+   The landing is the third case: at 235 columns it painted a ten-line hub
+   across ~190 cells, so its lines ran far past a readable measure. Capped
+   here rather than given invented content -- what the hub should GROW is a
+   product decision this wave does not own. */
+#library-landing-canvas {
+    max-width: 96;
+}

@@ -28,6 +28,9 @@ from tldw_chatbook.Library.library_skills_state import (
 )
 from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
 from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
+from tldw_chatbook.UI.Library_Modules.screen_constants import (
+    LIBRARY_SKILLS_READER_PROFILE,
+)
 from tldw_chatbook.Widgets.Library import LibraryAdaptiveReaderShell
 from tldw_chatbook.Widgets.Library.library_skills_canvas import (
     LibrarySkillsListCanvas,
@@ -566,9 +569,18 @@ async def test_items_projection_cannot_consume_work_scroll_receipt(tmp_path) -> 
 
 
 @pytest.mark.asyncio
-async def test_skills_manual_pane_collapses_are_independent_and_expand_work(
+async def test_skills_manual_pane_collapses_are_independent_and_expand_the_sibling(
     tmp_path,
 ) -> None:
+    """Collapsing one pane hands its columns to whichever sibling is in use.
+
+    task-32217 (critique #9 row 14): this used to assert the freed columns went
+    to the WORK pane even while that pane was showing only "Select a skill to
+    edit it here." -- the exact defect the wave's density rule closes (Skills
+    now passes ``reader_has_item`` like Media and Notes). With nothing open the
+    list is the pane that grows and the work pane holds its own floor; collapse
+    the list too and the work pane takes the whole stage, as before.
+    """
     app = _build_test_app()
     _wire_skills(app, tmp_path)
     host = LibraryHarness(app)
@@ -580,13 +592,15 @@ async def test_skills_manual_pane_collapses_are_independent_and_expand_work(
         shell = screen.query_one(
             "#library-skills-reader-shell", LibraryAdaptiveReaderShell
         )
-        initial_work_width = shell.work.region.width
+        initial_items_width = shell.items.region.width
+        work_floor = LIBRARY_SKILLS_READER_PROFILE.work_min_width
 
         shell.library_grip.press()
         await pilot.pause()
         assert shell.library.display is False
         assert shell.items.display is True
-        assert shell.work.region.width > initial_work_width
+        assert shell.items.region.width > initial_items_width
+        assert shell.work.region.width == work_floor
         library_collapsed_width = shell.work.region.width
 
         shell.items_grip.press()

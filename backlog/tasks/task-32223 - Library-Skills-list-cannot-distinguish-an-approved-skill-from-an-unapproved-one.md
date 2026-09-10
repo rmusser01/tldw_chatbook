@@ -3,9 +3,10 @@ id: TASK-32223
 title: >-
   Library Skills list cannot distinguish an approved skill from an unapproved
   one
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-10 14:55'
+updated_date: '2026-09-10 17:20'
 labels:
   - library
   - skills
@@ -25,3 +26,12 @@ Rows for a trust-approved and an unapproved skill paint identically in the list;
 <!-- AC:BEGIN -->
 - [ ] #1 The list row carries the trust state as a text label or glyph from the legend
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Failing test: an approved and an unapproved skill row paint the same text.
+2. Add SkillListRow.trust_label (trusted / needs review / locked) in Library/library_skills_state.py, derived from the record's trust_status with the trust_blocked flag as the fallback.
+3. Render it on the row label in library_skills_canvas.py.
+4. Docs + live-verify.
+<!-- SECTION:PLAN:END -->
