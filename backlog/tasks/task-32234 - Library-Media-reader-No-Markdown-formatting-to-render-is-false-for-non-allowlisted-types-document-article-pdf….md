@@ -3,9 +3,10 @@ id: TASK-32234
 title: >-
   Library Media reader: 'No Markdown formatting to render' is false for
   non-allowlisted types (document, article, pdf…)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-10 14:52'
+updated_date: '2026-09-10 16:55'
 labels:
   - library
   - media
@@ -26,3 +27,12 @@ priority: high
 - [ ] #1 The rendered-view decision sniffs content for every media type, or the Info sentence names the real rule ('Rendered view is available for markdown, transcripts and plain-text items — this is a document')
 - [ ] #2 A test covers a `document` item with real Markdown
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Failing test: a 'document' item with real Markdown renders + drops the false note.
+2. Delete the _MARKDOWN_MEDIA_TYPES gate; the bounded content sniff decides alone.
+3. Update the two stale comments that reference the allowlist.
+4. Docs + live verify.
+<!-- SECTION:PLAN:END -->

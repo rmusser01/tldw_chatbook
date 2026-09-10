@@ -1071,3 +1071,10 @@ with nothing on screen to link into.)*
 line beneath it, so it no longer truncates in a narrow reader pane; `c` now
 consults the workspace gate the button consults; a block linking cannot
 resolve says so and withholds the link.)*
+
+*Verified against fix/library-crit9-media-reader — 2026-09-10 (task-32237:
+the Reader's More strip paints "Move to trash" in full at 235x52, 100x30 and
+60x24. The grid column now holds the longest label, the button's own
+auto-width, and the danger action's 2-cell separation together — at 16 cells
+that separation came out of the button's box and Textual wrapped the label to
+"Move to".)*

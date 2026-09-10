@@ -3,9 +3,10 @@ id: TASK-32237
 title: >-
   Library Media reader: the More strip clips 'Move to trash' to 'Move to' at the
   3-column layout
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-10 15:15'
+updated_date: '2026-09-10 16:55'
 labels:
   - library
   - media
@@ -27,3 +28,12 @@ Critique #7 recorded the clip as a minor; the critique-8 test-health pass (task-
 - [ ] #1 The More strip paints every action label in full ('Move to trash') at 235x52, 100x30 and 60x24, wrapping to a second row when needed
 - [ ] #2 The red media_render_fixes pins that cover the More row are green with no assertion weakened
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Run the two red More pins, record the clip.
+2. Widen the More ItemGrid columns 16 -> 17 so the danger action's own 2-cell margin fits inside its column.
+3. Add 60x24 coverage in Tests/UI/test_library_crit9_media_reader.py.
+4. Live-verify at 235x52 / 100x30 / 60x24.
+<!-- SECTION:PLAN:END -->

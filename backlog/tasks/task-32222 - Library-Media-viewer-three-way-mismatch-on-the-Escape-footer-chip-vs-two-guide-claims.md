@@ -3,9 +3,10 @@ id: TASK-32222
 title: >-
   Library Media viewer: three-way mismatch on the Escape footer chip vs two
   guide claims
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-10 14:55'
+updated_date: '2026-09-10 16:55'
 labels:
   - library
   - media
@@ -25,3 +26,11 @@ The viewer's Escape chip reads 'esc focus Library' while the guide claims two di
 <!-- AC:BEGIN -->
 - [ ] #1 One chip text, one guide sentence, matching the real target
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Read _library_media_escape_label per viewer state; compare against the pins and the live chip.
+2. Fix the two contradicting guide sentences to one sentence quoting the chip.
+3. Pin the chip text against the guide string in a test.
+<!-- SECTION:PLAN:END -->

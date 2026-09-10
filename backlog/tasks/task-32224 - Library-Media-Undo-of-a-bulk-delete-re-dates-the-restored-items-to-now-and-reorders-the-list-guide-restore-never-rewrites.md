@@ -3,9 +3,10 @@ id: TASK-32224
 title: >-
   Library Media: Undo of a bulk delete re-dates the restored items to now and
   reorders the list (guide: 'restore never rewrites')
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-10 14:55'
+updated_date: '2026-09-10 16:55'
 labels:
   - library
   - media
@@ -24,3 +25,10 @@ After Undo the restored items read 'now' and jump to the top of Newest; the guid
 <!-- AC:BEGIN -->
 - [ ] #1 Restore preserves the item's modified time and position, or the guide states the real behaviour
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Test: seed two items with old last_modified, delete, Undo, assert stored time unchanged.
+2. Trace the restore write; if it is a dedicated statement, drop last_modified from its SET list; if a shared helper stamps it for all writers, correct the guide sentence instead.
+<!-- SECTION:PLAN:END -->
