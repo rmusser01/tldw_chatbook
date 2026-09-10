@@ -10,7 +10,7 @@ import pytest
 
 from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
 from tldw_chatbook.Chat.prompt_history import PromptHistory
-from Tests.Backup_Recovery.test_participant_lifetimes import local_root
+from Tests.Backup_Recovery.test_participant_lifetimes import local_root as local_root  # noqa: PLC0414 - exported pytest fixture
 
 
 @pytest.mark.asyncio
@@ -33,7 +33,7 @@ async def test_history_pause_does_not_change_cache_or_create_parent(
 
 @pytest.mark.asyncio
 async def test_history_running_cancel_keeps_serialization_and_cache(
-    tmp_path, local_root, monkeypatch
+    tmp_path, local_root, monkeypatch, installed_history
 ):
     history = PromptHistory(tmp_path / "prompt_history.jsonl", max_entries=1)
     await history.append("first")
@@ -71,7 +71,9 @@ async def test_history_running_cancel_keeps_serialization_and_cache(
 
 
 @pytest.mark.asyncio
-async def test_history_queued_cancel_retires_without_cache_loss(tmp_path, local_root):
+async def test_history_queued_cancel_retires_without_cache_loss(
+    tmp_path, local_root, installed_history
+):
     history = PromptHistory(tmp_path / "new" / "prompt_history.jsonl")
     history._loaded = True
     loop = asyncio.get_running_loop()
@@ -116,9 +118,13 @@ from Tests.Backup_Recovery.test_bootstrap import local_scope
 
 @pytest.fixture
 def installed_history(tmp_path, local_root, monkeypatch):
+    from Tests.Backup_Recovery.config_test_support import install_config_source
     from tldw_chatbook.Chat import prompt_history
 
-    selected = tmp_path / "prompt_history.jsonl"
+    install_config_source(monkeypatch)
+    selected = prompt_history.default_prompt_history_path()
+    # This cohort observes source lifetimes, not app startup enrollment.
+    storage._startups.pop((os.getpid(), str(local_root))).close()
     monkeypatch.setattr(prompt_history, "default_prompt_history_path", lambda: selected)
     return PromptHistory(selected, max_entries=2)
 
@@ -305,16 +311,25 @@ async def test_history_fixed_selection_does_not_follow_retarget(
 
 @pytest.mark.asyncio
 async def test_exact_file_binding_refuses_missing_sidecar(local_scope, monkeypatch):
+    from Tests.Backup_Recovery.config_test_support import install_config_source
     from tldw_chatbook.Backup_Recovery.control_records import bind_profile
     from tldw_chatbook.Chat import prompt_history
 
     root, config, data, authority = local_scope
+    config.write_text(
+        '[general]\nusers_name = "data"\n[paths]\ndata_dir = '
+        + json.dumps(str(data.parent))
+        + "\n"
+    )
+    install_config_source(monkeypatch)
+    storage._startups.pop((os.getpid(), str(root))).close()
     selected = data / "prompt_history.jsonl"
     selected.write_text('{"input":"before","timestamp":0}\n')
     monkeypatch.setattr(prompt_history, "default_prompt_history_path", lambda: selected)
+    history = PromptHistory(selected, max_entries=1)
+    assert raw._raw_participant(history).owner_id == "chat.prompt_history"
     authority.register("file-only", (selected, config))
     bind_profile(root, config, ("file-only",), root / "admission")
-    history = PromptHistory(selected, max_entries=1)
     assert await history.append("no") is False
     assert "before" in selected.read_text()
     assert not selected.with_suffix(".jsonl.tmp").exists()
@@ -430,8 +445,9 @@ from tldw_chatbook.Backup_Recovery import bootstrap, raw_participants as raw, st
 from tldw_chatbook.Chat import prompt_history
 root, destination, failure = sys.argv[1:]
 bootstrap.default_bootstrap_root = lambda: Path(root)
-prompt_history.default_prompt_history_path = lambda: Path(destination)
-history = prompt_history.PromptHistory(destination)
+from loguru import logger
+logger.remove()
+history = prompt_history.PromptHistory(prompt_history.default_prompt_history_path())
 original_file = raw._file
 original_close = os.close
 target = None
@@ -656,3 +672,91 @@ async def test_read_scope_cannot_append_or_accept_unknown_native_mode(
             with raw._file(operation, installed_history.path, "r+"):
                 pytest.fail("unknown native mode opened")
     assert installed_history.path.read_bytes() == b"original durable bytes"
+
+
+def test_history_participant_validation_does_not_invert_config_storage_locks(
+    local_root,
+    monkeypatch,
+):
+    """A config owner can reacquire storage while history closes admission."""
+    from Tests.Backup_Recovery.config_test_support import install_config_source
+    from tldw_chatbook.Chat import prompt_history
+
+    config = install_config_source(monkeypatch)
+    history = PromptHistory(prompt_history.default_prompt_history_path())
+    participant = raw._raw_participant(history)
+    validating = threading.Event()
+    failures = []
+    original = raw._participant_state
+
+    def observed(candidate):
+        if candidate is participant:
+            validating.set()
+        return original(candidate)
+
+    monkeypatch.setattr(raw, "_participant_state", observed)
+
+    def close_history():
+        try:
+            participant.close_admission()
+        except BaseException as error:  # noqa: BLE001 - return the actual worker failure
+            failures.append(error)
+
+    worker = threading.Thread(target=close_history)
+    acquired = False
+    try:
+        with config._config_file_lock():
+            worker.start()
+            assert validating.wait(2)
+            acquired = storage._lock.acquire(timeout=0.5)
+            if acquired:
+                storage._lock.release()
+    finally:
+        # Release config before joining, even on red: no stranded deadlock thread.
+        worker.join(3)
+    assert not worker.is_alive()
+    assert not failures
+    assert acquired, "history holds storage while waiting on the config owner"
+
+
+@pytest.mark.asyncio
+async def test_real_config_history_append_retires_without_config_reentry(
+    local_root,
+    monkeypatch,
+):
+    from Tests.Backup_Recovery.config_test_support import install_config_source
+    from tldw_chatbook.Chat import prompt_history
+
+    install_config_source(monkeypatch)
+    history = PromptHistory(prompt_history.default_prompt_history_path())
+    assert await history.append("committed prompt")
+    assert json.loads(history.path.read_text())["input"] == "committed prompt"
+    assert not storage._raw_operations
+
+
+@pytest.mark.parametrize("change", ["path", "profile", "config_source"])
+def test_bound_history_rechecks_actual_mapping_during_io(
+    installed_history,
+    monkeypatch,
+    tmp_path,
+    change,
+):
+    from tldw_chatbook import config
+
+    history = installed_history
+    with (
+        raw._scope(history, "prompt_history") as operation,
+        monkeypatch.context() as changed,
+    ):
+        if change == "path":
+            changed.setattr(history, "path", tmp_path / "other.jsonl")
+        elif change == "profile":
+            changed.setattr(
+                config, "_CONFIG_CACHE", {"general": {"users_name": "other"}}
+            )
+        else:
+            changed.setenv("TLDW_CONFIG_PATH", str(tmp_path / "other.toml"))
+        with pytest.raises(
+            bootstrap.RecoveryRequired, match="raw_source_selection_changed"
+        ):
+            raw._check(operation)

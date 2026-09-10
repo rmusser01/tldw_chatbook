@@ -16,7 +16,7 @@ import time
 import weakref
 
 from . import bootstrap, storage_admission as storage
-from .profile_paths import lexical_path
+from .profile_paths import lexical_path, user_data_dir
 from . import settings_file_participants as settings_files
 from . import config_participants as config_files
 from . import chat_source_participants as chat_sources
@@ -133,13 +133,23 @@ def _participant_state(participant):
         binding = settings_files.binding(source)
         if binding is None or not binding[2] or binding[1] != state.selected:
             raise bootstrap.RecoveryRequired("raw_source_selection_changed")
-    if state.owner in {"chat.prompt_history", "ui.state"}:
-        route = (
-            "prompt_history"
-            if state.owner == "chat.prompt_history"
-            else "sidebar_state"
-        )
-        selected, installed = _async_source_selection(source, route)
+    if state.owner == "chat.prompt_history":
+        # Bound-state checks run under the storage lock and during active IO.
+        # The default resolver opens a guarded config operation (and creates
+        # directories), so calling it here inverts config -> storage locking
+        # and reenters the current raw operation. Validate the same canonical
+        # mapping from the current bound cache, as the MCP sources do.
+        config = sys.modules.get("tldw_chatbook.config")
+        data = getattr(config, "_CONFIG_CACHE", None)
+        if (
+            data is None
+            or config._CONFIG_CACHE_SOURCE != config._get_effective_config_path()
+            or lexical_path(source.path) != state.selected
+            or user_data_dir(data) / "prompt_history.jsonl" != state.selected
+        ):
+            raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+    if state.owner == "ui.state":
+        selected, installed = _async_source_selection(source, "sidebar_state")
         if not installed or selected != state.selected:
             raise bootstrap.RecoveryRequired("raw_source_selection_changed")
     if state.owner == "notes.file_notes_replica" and source.db_path != state.selected:
