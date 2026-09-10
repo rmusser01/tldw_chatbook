@@ -34,6 +34,9 @@ from Tests.UI.test_library_shell import (
     _wait_for_library_shell,
     _wait_for_selector,
 )
+from tldw_chatbook.Library.library_notes_lasting_sync_state import (
+    initial_lasting_sync_snapshot,
+)
 from tldw_chatbook.Library.library_notes_state import (
     LibraryNoteDeleteReceipt,
     LibraryNotesListRow,
@@ -64,6 +67,7 @@ from tldw_chatbook.Utils.adaptive_reader_state import (
 )
 from tldw_chatbook.Widgets.Library.library_notes_canvas import (
     LibraryNotesCanvas,
+    _TOOLBAR_MERGE_MIN_WIDTH,
     _toolbar_shape,
 )
 
@@ -247,14 +251,28 @@ def _folder_selected_projection() -> LibraryNotesTreeProjection:
 
 
 @pytest.mark.asyncio
-def _toolbar_app(pane_width: int) -> _CanvasApp:
-    """The heaviest toolbar the list can compose, at one pane width."""
+def _toolbar_app(pane_width: int, *, sync_roots: bool = False) -> _CanvasApp:
+    """The heaviest toolbar the list can compose, at one pane width.
+
+    ``sync_roots`` adds "Manage sync folders" (23 cells), which composes
+    whenever a sync root or a second root page exists. It is OFF by default
+    because the widest transfer group (67 cells) does not fit the 62-column
+    pane these cases pin, and that has nothing to do with Sort -- Sort is in
+    the browse group. See task-32172's report for that observation; the
+    merge-threshold pin below is the one case that needs the real widest
+    frame.
+    """
     return _CanvasApp(
         pane_width=pane_width,
         list_state=_list_state(),
         tree_projection=_folder_selected_projection(),
         tree_selected_placement_id=FolderPlacementId.folder("work"),
         import_receipt_available=True,
+        lasting_sync_snapshot=(
+            replace(initial_lasting_sync_snapshot(), root_page_count=2)
+            if sync_roots
+            else None
+        ),
     )
 
 
@@ -289,6 +307,30 @@ async def test_notes_toolbar_fits_two_rows_with_every_action_visible() -> None:
         ):
             assert app.query(selector), f"{selector} is not composed"
         assert_every_action_fits(app)
+
+
+@pytest.mark.asyncio
+async def test_notes_toolbar_fits_at_the_exact_width_it_starts_merging() -> None:
+    """task-32172: the merge threshold must clear the WIDEST composition.
+
+    The three widths pinned around this one (137, 62, 38) all sit clear of
+    the 100-108 band where merging is on but "Last import" fell off the
+    pane once Sort rejoined the browse group -- the same clipping
+    `_TOOLBAR_MERGE_MIN_WIDTH` exists to prevent (task-32127 review 1).
+    Pinned at the threshold itself, and one column under it, so raising
+    the constant without re-measuring cannot pass.
+    """
+    merged_app = _toolbar_app(_TOOLBAR_MERGE_MIN_WIDTH, sync_roots=True)
+    async with merged_app.run_test(size=WIDE) as pilot:
+        await pilot.pause()
+        assert merged_app.query("#library-notes-action-rows"), "not merged here"
+        assert_every_action_fits(merged_app)
+
+    stacked_app = _toolbar_app(_TOOLBAR_MERGE_MIN_WIDTH - 1, sync_roots=True)
+    async with stacked_app.run_test(size=WIDE) as pilot:
+        await pilot.pause()
+        assert not stacked_app.query("#library-notes-action-rows")
+        assert_every_action_fits(stacked_app)
 
 
 @pytest.mark.asyncio
@@ -537,17 +579,11 @@ async def _passthrough_service_call(call, *, isolate_in_worker=False, **kwargs):
 # -- task-32128: the Sort control tells the truth -------------------------
 
 
-@pytest.mark.asyncio
-async def test_sort_control_is_absent_from_the_folder_tree() -> None:
-    """task-32128 AC#1: the tree's order is a repository contract, so no Sort."""
-    app = _CanvasApp(
-        pane_width=143,
-        list_state=_list_state(),
-        tree_projection=_folder_selected_projection(),
-    )
-    async with app.run_test(size=WIDE) as pilot:
-        await pilot.pause()
-        assert not app.query("#library-notes-sort")
+# task-32172 retired `test_sort_control_is_absent_from_the_folder_tree`: the
+# repository order is a parameter of BOTH paging and the deep-link locator
+# now, so the tree offers Sort again. Its replacement, and the blocked state
+# that took over for the filter window, live in
+# Tests/UI/test_library_notes_riders_r_list.py.
 
 
 @pytest.mark.asyncio
@@ -609,6 +645,9 @@ async def test_pressing_a_sort_option_applies_that_sort(monkeypatch) -> None:
         _library_notes_row_selection=SimpleNamespace(
             clear=lambda: cleared.append(True)
         ),
+        # task-32172: a new sort value re-pages the tree rather than
+        # re-sorting the loaded window.
+        _request_library_notes_tree_initial_load=lambda: None,
     )
 
     async with app.run_test(size=WIDE) as pilot:
@@ -976,21 +1015,10 @@ def _kwargs_fake(*, tree_projection, sort_choices_visible: bool):
     )
 
 
-def test_the_tree_taking_over_closes_the_flat_sort_chooser() -> None:
-    """Qodo review 6: the tree hides the chooser, so the STATE must go too.
-
-    Sort is only composed on the flat fallback. Opening it there and then
-    letting the tree arrive left the footer offering "choose sort" and
-    spent the first Escape on a mode nothing was rendering.
-    """
-    fake = _kwargs_fake(
-        tree_projection=_folder_selected_projection(), sort_choices_visible=True
-    )
-
-    values = LibraryNotesController._library_notes_canvas_kwargs(fake)
-
-    assert values["tree_projection"] is not None
-    assert fake._library_notes_sort_choices_visible is False
+# task-32172 retired `test_the_tree_taking_over_closes_the_flat_sort_chooser`
+# with the behaviour it pinned: the tree arriving no longer has to close the
+# chooser, because the tree composes Sort itself now. See
+# Tests/UI/test_library_notes_riders_r_list.py.
 
 
 def test_the_flat_list_keeps_its_open_sort_chooser() -> None:

@@ -96,9 +96,16 @@ editor's own Back control returns to its list.
   area's own **‹ Notes** / **‹ Back to list** control, below), which always
   repaints immediately; no filter re-query is needed once you are back.
 
-  The folder tree is ordered by title, which is the order the database pages
-  notes in, so it carries no sort control; the sort control belongs to the
-  flat list shown before any folder tree has loaded.
+  The folder tree lists notes **newest first by default** — every folder's
+  notes, and the automatic **Unfiled** group, in the order they were last
+  changed. **Sort** switches that to **Oldest** or to **Title** (by name),
+  and your choice is remembered. The order you pick is the order the
+  database pages notes in, so choosing one reloads the tree — including
+  the folders you have open — and a note really does move between pages
+  rather than only shuffling within the page you can see; jumping straight
+  to a note lands on the page that order puts it on. While a filter is
+  active, results come back in the search's own order (grouped by folder),
+  so **Sort** is disabled there and says so.
 
   In a narrow list pane the toolbar's action groups stack one action per
   line rather than running off the pane edge, so every action stays
@@ -321,7 +328,7 @@ both stay closed until you choose to reopen one.
 | Folder selected: "Rename" / "Move" / "Remove" | Act on the selected folder. Same two disabled reasons as **New folder**. |
 | Note selected: "Add to folder" / "Move note" / "Remove placement" | File the selected note into a folder, move its placement, or take it out again. A sync-managed placement is refused with "This placement is managed by sync; change its sync root instead."; a note sitting in the automatic **Unfiled** group cannot have its placement removed ("Unfiled is shown automatically; move the note into a folder."). |
 | "Restore folder" | Appears after a folder removal, to put it back. |
-| "Sort: Newest" | Opens a one-row strip of Newest / Oldest / Title (✓ on the active one) in place of the action row; pick one directly, or press Escape to cancel. Only offered for the flat list shown before a folder tree has loaded — the folder tree itself (the default view once any folder exists) carries no Sort control, per "The folder tree is ordered by title" above, so this control is not part of ordinary browsing. |
+| "Sort: Newest" | Opens a one-row strip of Newest / Oldest / Title (✓ on the active one) in place of the action row; pick one directly, or press Escape to cancel. **Newest is the default.** The value is the order the folder tree is paged in, so choosing a new one reloads the tree (open folders included). Disabled while a filter is showing, with "Filter results keep their own order. Clear the filter to sort." |
 | "Add from files…" | Choose **Import once** or **Keep a folder synced** before selecting a source. |
 | "Manage sync folders" | Appears only when roots or paused migration candidates exist; opens root status and contextual controls. |
 | "Last import" | Reopens the latest import receipt from this app session after you return to the Notes list. |
@@ -920,3 +927,11 @@ the re-merged wave: an unterminated ``` or ~~~ fence now keeps the rest of a
 note as code, so a `[[link]]` after it is neither recorded nor rewritten;
 Obsidian vault detection is stated as POSIX-only, since the Windows
 discovery adapter never reports a vault (task-32178).)*
+
+*Verified against fix/library-notes-r-list — 2026-09-09 (task-32172: the
+placement order is a repository parameter now — folder paging AND the
+deep-link locator's page arithmetic both take it — so Sort is offered on the
+folder tree again and Newest/Oldest really re-page it; it stays disabled,
+with its reason, while a filter window is showing. The folder tree's default
+order changes from title to newest-first with this, which is what the Sort
+control has always claimed.)*
