@@ -7,6 +7,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
+from tldw_chatbook.Chat.character_expression_playback import normalize_expression_mode
 from tldw_chatbook.Chat.console_roleplay_identity import (
     DEFAULT_CONSOLE_TRANSCRIPT_STYLE,
     ConsoleTranscriptStyle,
@@ -25,7 +26,6 @@ from tldw_chatbook.Utils.library_rail_width import (
 )
 
 from .settings_config_models import SettingsValidationResult
-
 
 DEFAULT_THEME = "textual-dark"
 DEFAULT_PALETTE_THEME_LIMIT = 1
@@ -57,6 +57,7 @@ class SettingsAppearanceDefaults:
     palette_theme_limit: int = DEFAULT_PALETTE_THEME_LIMIT
     font_size: int = DEFAULT_FONT_SIZE
     density: str = DEFAULT_DENSITY
+    character_expression_mode: str = "dynamic"
     animations_enabled: bool = DEFAULT_ANIMATIONS_ENABLED
     smooth_scrolling: bool = DEFAULT_SMOOTH_SCROLLING
     reduce_motion: bool = DEFAULT_REDUCE_MOTION
@@ -217,6 +218,9 @@ def load_appearance_defaults(
     )
 
     return SettingsAppearanceDefaults(
+        character_expression_mode=normalize_expression_mode(
+            appearance.get("character_expression_mode")
+        ),
         default_theme=_normalise_theme(general.get("default_theme", DEFAULT_THEME)),
         palette_theme_limit=_coerce_int(
             general.get("palette_theme_limit", DEFAULT_PALETTE_THEME_LIMIT),
@@ -255,9 +259,7 @@ def load_appearance_defaults(
         library_media_items_open=destination_readers["media"].items_open,
         library_media_items_width=destination_readers["media"].items_width,
         library_collections_items_open=destination_readers["collections"].items_open,
-        library_collections_items_width=destination_readers[
-            "collections"
-        ].items_width,
+        library_collections_items_width=destination_readers["collections"].items_width,
         library_conversations_items_open=(
             destination_readers["conversations"].items_open
         ),
@@ -314,6 +316,10 @@ def validate_appearance_defaults(
         return SettingsValidationResult(
             False,
             "Density must be compact, normal, or comfortable.",
+        )
+    if values.character_expression_mode not in {"dynamic", "static"}:
+        return SettingsValidationResult(
+            False, "Character expressions must be Dynamic or Static."
         )
     if _strict_bool(values.animations_enabled) is None:
         return SettingsValidationResult(
@@ -437,6 +443,7 @@ def build_appearance_save_sections(
     appearance.update(
         {
             "density": str(values.density).strip().lower(),
+            "character_expression_mode": values.character_expression_mode,
             "animations_enabled": bool(values.animations_enabled),
             "smooth_scrolling": bool(values.smooth_scrolling),
             "reduce_motion": bool(values.reduce_motion),

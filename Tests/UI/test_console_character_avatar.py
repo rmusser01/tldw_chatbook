@@ -1092,6 +1092,60 @@ async def test_reactive_avatar_never_raises_on_corrupt_expression(
     assert screen._last_console_avatar_scope[1:] == ("speaking", None)
 
 
+@pytest.mark.asyncio
+async def test_transient_animated_header_failure_retries_same_identity(
+    console_screen_with_db, monkeypatch
+):
+    from Tests.UI.test_character_expression_avatar import animation
+
+    _app, screen, db = console_screen_with_db
+    character_id = db.add_character_card({"name": "Animated"})
+    _set_active_console_character(screen, character_id, "Animated")
+    identity_suffix = "pack_version_id=1|asset_id=1|sha256=transient"
+    resolution = replace(
+        _resolution(
+            character_id,
+            requested="thinking",
+            manual=None,
+            source="pack_operational",
+            identity_suffix=identity_suffix,
+            image=animation(),
+        ),
+        content_type="image/gif",
+        is_animated=True,
+    )
+    resolve_calls = []
+
+    def resolve(*_args):
+        resolve_calls.append(None)
+        return resolution
+
+    monkeypatch.setattr(screen._session, "_resolve_visual_identity", resolve)
+    monkeypatch.setattr(
+        character_module,
+        "resolve_console_expression_state",
+        lambda *_args, **_kwargs: "thinking",
+    )
+    real_size = character_module.expression_image_size
+    size_calls = []
+
+    def transient_size(data):
+        size_calls.append(None)
+        if len(size_calls) == 1:
+            raise OSError("transient decoder failure")
+        return real_size(data)
+
+    monkeypatch.setattr(character_module, "expression_image_size", transient_size)
+
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+    assert resolution.cache_identity not in screen._console_expression_spec_cache
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+
+    assert len(size_calls) == 2
+    assert len(resolve_calls) >= 2
+    assert screen._active_character_avatar["animation_bytes"] == resolution.image_bytes
+
+
 @pytest.mark.parametrize(
     ("second_source", "second_identity_suffix"),
     (
@@ -1273,7 +1327,12 @@ async def test_decode_completion_live_fences_every_avatar_request_input(
         replacement_store = type(
             "ReplacementStore",
             (),
-            {"active_session_id": original_store.active_session_id},
+            {
+                "active_session_id": original_store.active_session_id,
+                # The normal sync worker may run while A is blocked. Preserve
+                # the store API while changing the identity under test.
+                "__getattr__": lambda _self, name: getattr(original_store, name),
+            },
         )()
         controller.store = replacement_store
 
@@ -1291,7 +1350,9 @@ async def test_decode_completion_live_fences_every_avatar_request_input(
     assert tuple(screen._active_character_avatar["resolution_cache_identity"]) == (
         current_identity
     )
-    assert painted[current_paint:] == []
+    # A legitimate geometry reconciliation may rebuild B after release;
+    # the invariant is that A's superseded identity never paints again.
+    assert all(identity == current_identity for identity in painted[current_paint:])
 
 
 @pytest.mark.parametrize("blocked_await", ("remove", "mount"))
@@ -2503,3 +2564,121 @@ async def test_avatar_placeholder_paints_nonzero_region_in_auto_holder():
         # Same 0x0 collapse hit the placeholder; width auto is the guard.
         assert widget.region.width > 0
         assert widget.region.height > 0
+
+
+@pytest.mark.asyncio
+async def test_animated_character_uses_mounted_playback_and_same_asset_mode_change(
+    console_screen_with_db_and_pilot,
+    tmp_path,
+):
+    from Tests.UI.test_character_expression_avatar import animation
+    from tldw_chatbook.Widgets.Console.character_expression_avatar import (
+        CharacterExpressionAvatar,
+    )
+
+    app, screen, db, pilot = console_screen_with_db_and_pilot
+
+    async def mounted_avatar():
+        previous = None
+        for _ in range(100):
+            await pilot.pause(0.03)
+            candidate = screen.query_one(CharacterExpressionAvatar)
+            if candidate is previous and candidate.current_image is not None:
+                return candidate
+            previous = candidate
+        pytest.fail("current Console avatar did not paint")
+
+    store = screen._ensure_console_chat_store()
+    store.append_message(
+        store.active_session_id, role=ConsoleMessageRole.USER, content="Hello"
+    )
+    await screen._sync_native_console_chat_ui()
+    assert not screen._console_setup_modal_blocking()
+    data = animation()
+    character_id = db.add_character_card({"name": "Animated", "image": data})
+    from tldw_chatbook.Actor_Packs.export import (
+        ActorPackExportService,
+        write_actor_pack_archive,
+    )
+    from tldw_chatbook.Actor_Packs.repository import ActorPackRepository
+    from tldw_chatbook.Character_Chat.local_character_persona_service import (
+        LocalCharacterPersonaService,
+    )
+
+    exporter = ActorPackExportService(
+        db,
+        LocalCharacterPersonaService(db, persona_store_path=tmp_path / "personas.json"),
+        ActorPackRepository(db),
+    )
+
+    def export_bytes():
+        snapshot = exporter.capture_snapshot(
+            "character", str(character_id), source="local"
+        )
+        output = BytesIO()
+        write_actor_pack_archive(snapshot, output)
+        return output.getvalue()
+
+    original_export = await asyncio.to_thread(export_bytes)
+    _set_active_console_character(screen, character_id, "Animated")
+    screen._session._active_native_console_session().assistant_authority_id = (
+        db.get_local_authority_id()
+    )
+    await screen._sync_native_console_chat_ui()
+    app.app_config.setdefault("appearance", {})["character_expression_mode"] = "dynamic"
+    app.app_config.setdefault("console", {})["react_character_expressions"] = True
+    await screen._character._refresh_active_character_avatar_if_scope_changed(
+        force=True
+    )
+    avatar = await mounted_avatar()
+    assert len(avatar._prepared.frames) == 2
+    # This assertion controls elapsed time explicitly. Stop automatic ticks and
+    # drain any in-flight paint before asking for a particular frame.
+    assert avatar._timer is not None
+    avatar._timer.pause()
+    for _ in range(100):
+        await pilot.pause(0.01)
+        if not avatar._painting:
+            break
+    assert not avatar._painting
+    # Optional product evidence uses the real mounted rail, with a disposable DB.
+    import os
+
+    evidence_dir = os.environ.get("TLDW_PLAYBACK_EVIDENCE_DIR")
+    if evidence_dir:
+        Path(evidence_dir).mkdir(parents=True, exist_ok=True)
+        avatar._elapsed_ms = 0
+        avatar._last_tick = None
+        await avatar._tick()
+        await pilot.pause(0.01)
+        Path(evidence_dir, "console-dynamic-first.svg").write_text(
+            screen.app.export_screenshot()
+        )
+    avatar._elapsed_ms = 150
+    avatar._last_tick = None
+    await avatar._tick()
+    assert avatar.current_image.getpixel((0, 0)) == (0, 0, 255, 255)
+    if evidence_dir:
+        await pilot.pause(0.01)
+        Path(evidence_dir, "console-dynamic-second.svg").write_text(
+            screen.app.export_screenshot()
+        )
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+    assert screen.query_one(CharacterExpressionAvatar) is avatar
+    await screen._character._refresh_active_character_avatar_if_scope_changed(
+        force=True
+    )
+    assert screen.query_one(CharacterExpressionAvatar) is avatar
+    app.app_config["appearance"]["character_expression_mode"] = "static"
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+    static = await mounted_avatar()
+    assert static is not avatar
+    assert len(static._prepared.frames) == 1
+    assert static.current_image.getpixel((0, 0)) == (255, 0, 0, 255)
+    if evidence_dir:
+        await pilot.pause(0.01)
+        Path(evidence_dir, "console-static.svg").write_text(
+            screen.app.export_screenshot()
+        )
+    assert db.get_character_card_by_id(character_id)["image"] == data
+    assert await asyncio.to_thread(export_bytes) == original_export

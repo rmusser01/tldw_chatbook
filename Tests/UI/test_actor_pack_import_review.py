@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 from pathlib import Path
 
 import pytest
@@ -137,3 +138,37 @@ async def test_compact_terminal_keyboard_confirms_focused_safe_action(
         await pilot.pause()
 
         assert result == ["create_new"]
+
+
+@pytest.mark.asyncio
+async def test_full_artwork_notice_is_plain_scrollable_and_keeps_actions_reachable(
+    review_material,
+) -> None:
+    review, preview = review_material
+    notice = "[bold]Literal attribution[/bold]\n" * 200 + "END OF NOTICE"
+    carrier = {
+        "version": 1,
+        "pack": {
+            "version": 1,
+            "creator": "Original artist",
+            "license": None,
+            "source_url": None,
+            "notices": notice,
+        },
+        "assets": {},
+    }
+    review = dataclasses.replace(
+        review, artwork_attribution=json.dumps(carrier).encode()
+    )
+    app = _ReviewApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.push_screen(ActorPackImportReviewDialog(review, preview))
+        await pilot.pause()
+        metadata = app.screen.query_one("#actor-pack-import-provenance", Static)
+        assert notice in str(metadata.renderable)
+        assert "[bold]Literal attribution[/bold]" in str(metadata.render())
+        app.screen.query_one("#actor-pack-import-scroll").scroll_end(animate=False)
+        await pilot.pause()
+        for selector in ("#actor-pack-import-cancel", "#actor-pack-import-create-new"):
+            button = app.screen.query_one(selector, Button)
+            assert 0 < button.region.height and button.region.bottom <= 24
