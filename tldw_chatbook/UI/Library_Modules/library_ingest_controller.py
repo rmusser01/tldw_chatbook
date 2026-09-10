@@ -442,7 +442,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
@@ -2570,6 +2570,56 @@ class LibraryIngestController:
         # queue the user was working in.
         self._update_library_ingest_dynamic_regions()
 
+    def _refocus_library_ingest_control(
+        self, control_id: str | None, update: Callable[[], object]
+    ) -> None:
+        """Run ``update``, keeping focus on the control that triggered it.
+
+        (task-32216) Every queue-row toggle repaints through
+        ``_update_library_ingest_dynamic_regions``, which recomposes the
+        queue panel and PRUNES the pressed Button; Textual then re-picks
+        focus from what survives, which is the form 25 rows up (live: the
+        ``Keywords (optional)`` input, i.e. the metadata field for the NEXT
+        import). Two halves, both required:
+
+        - Focus the control SYNCHRONOUSLY first (``Screen.set_focus``, never
+          ``Widget.focus()``, which defers through ``app.call_later``). This
+          is the discipline ``Tests/UI/test_library_ingest_clear_focus.py``
+          documents: the structural branch's
+          ``_refresh_library_ingest_canvas_preserving_context`` captures
+          ``app.focused`` to restore afterwards, and a deferred focus loses
+          that race.
+        - Re-resolve the id and focus it again once the repaint has landed,
+          the way the Reader's More disclosure does
+          (``test_more_toggle_leaves_focus_on_the_more_button``): the
+          non-structural branch replaces the Button object, so the
+          pre-update focus is on a widget that no longer exists.
+
+        A vanished id degrades silently -- the row may have been dismissed
+        or finished between the press and the repaint.
+
+        Args:
+            control_id: Id of the control the user pressed.
+            update: The repaint to run between the two focus landings.
+
+        Returns:
+            None.
+        """
+        if not control_id:
+            update()
+            return
+
+        def _focus_now() -> None:
+            try:
+                widget = self.query_one(f"#{control_id}")
+            except (NoMatches, QueryError):
+                return
+            self.set_focus(widget, scroll_visible=False)
+
+        _focus_now()
+        update()
+        self.call_after_refresh(_focus_now)
+
     @on(Button.Pressed, ".library-ingest-details")
     def _on_ingest_job_details(self, event: Button.Pressed) -> None:
         """Toggle a failed row's inline error-detail lines (task-2043).
@@ -2592,7 +2642,9 @@ class LibraryIngestController:
             self._library_ingest_expanded_details.discard(job_id)
         else:
             self._library_ingest_expanded_details.add(job_id)
-        self._update_library_ingest_dynamic_regions()
+        self._refocus_library_ingest_control(
+            event.button.id, self._update_library_ingest_dynamic_regions
+        )
 
     @on(Button.Pressed, "#library-ingest-clear-finished")
     def handle_library_ingest_clear_finished(self, event: Button.Pressed) -> None:
