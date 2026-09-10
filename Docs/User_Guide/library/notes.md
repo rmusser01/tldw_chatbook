@@ -343,7 +343,8 @@ reusable lessons (empty)".
 | "‹ Notes" / "‹ Back to list" | Returns to the list (your text is already saved — see autosave below). One wording across Edit, Preview, and Info: "‹ Notes" at wide sizes, "‹ Back to list" on a compact terminal. |
 | **Edit** | Shows the editable title and body. This is the default view when you open a note. |
 | **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. |
-| **Info** | Shows Properties (including comma-separated keywords and note dates/version), Reuse & Export, and Danger sections. |
+| **Info** | Shows Properties (including comma-separated keywords, note dates/version, and **Linked from**), Reuse & Export, and Danger sections. |
+| **Linked from (N)** (Info → Properties) | Lists the notes whose bodies link to this one, newest import or not — the `[title](note://…)` links Import once writes for an Obsidian vault's `[[wikilinks]]` (see "Obsidian vaults"). Click an entry to open that note. While the lookup runs the line reads "Linked from — checking…", and "Linked from — couldn't check" if it failed, so a count is only claimed once the answer is in. When nothing points here the line reads "Linked from (0) — no notes link here yet". The list is capped at 50 entries; past that the count reads "50+". Links you type by hand in the body count too, as long as they use the same `note://` form. |
 | Status line | Shows the autosave state: "Saved", "Saving…", "Unsaved changes", "Conflict — …", "Save failed — …", or "Unavailable — …". It does not carry a word count. Created/Modified/version details are under Info → Properties, each with an absolute local timestamp beside its relative age and the word count (e.g. "Created 2026-09-08 21:14 · 3m ago · Modified … · v1 · 6 words"). "Saved" appears once per view, not repeated in Info. |
 | **Save** | Saves immediately, without waiting for autosave. It remains visible beside the mode controls. |
 | **Use in Console** | Hands the note to the Console as staged context, with the suggested prompt "Use this note as context and help me work with it." It remains visible beside **Save**. |
@@ -402,8 +403,10 @@ them, so **Undo** and **Dismiss** stay reachable however narrow the list is.
 **Undo** restores that exact database note and immediately returns its row —
 in its folder, or under Unfiled — along with the Notes rail count, and moves
 the selection to the restored row. **Dismiss** removes only the receipt; the
-note remains deleted. Notes do not currently expose a separate Trash browser,
-so the receipt is the in-Library recovery action.
+note remains deleted. *(This page previously said Notes expose no separate
+Trash browser, so the receipt was the only in-Library recovery action —
+superseded by task-32144: see "Recently deleted" below, which recovers a note
+whose receipt was dismissed.)*
 
 *Verified against fix/library-notes-list — 2026-09-09 (task-32123: the
 receipt's actions are no longer composed off the pane; task-32124: Undo
@@ -647,13 +650,31 @@ automatic-sync setting.
 2. In the Notes list, find the "✓ deleted · \<title\>" receipt.
 3. Click **Undo** to restore the note, or **Dismiss** to leave it deleted.
 
+### Recently deleted
+
+The receipt is the immediate way back, but it is not the only one. Under the
+folder tree, **Recently deleted (N)** counts the notes that have been deleted
+and not yet restored; it is absent while that count is zero.
+
+1. Click **Recently deleted (N)** to open the list, newest deletion first.
+   Each row shows the note's title and how long ago it went.
+2. Click that row's **Restore** — or press **r** on the focused row — to put
+   the note back in its folder (or Unfiled). The rail count and the tree row
+   return exactly as **Undo** returns them; it is the same restore.
+3. Press **Escape** (or **‹ Notes**) to go back to the list.
+
+The view holds the 20 most recent deletions and says so when there are more.
+Nothing here deletes anything for good: the Trash offers **Restore** and no
+permanent delete.
+
 ## Keyboard & commands
 
 | Key | Action |
 |---|---|
 | **Ctrl+N** | New note. Works on the Library landing (no row selected yet) as well as inside the Notes workflow — the landing's bare **n** still works too, but the footer advertises Ctrl+N in both places now. |
 | **/** | Focus the note filter ("find note"), without typing a literal "/" into it. Once the filter has focus, "/" is an ordinary typeable character rather than an accelerator — a second "/" adds a literal slash, since a filter can legitimately target a folder-style path such as "Work/Q3". |
-| **Escape** | Focus the rail |
+| **Escape** | Focus the rail (in **Recently deleted**, go back to the list) |
+| **r** (in **Recently deleted**) | Restore the focused row |
 | Enter (in "Filter notes… (Enter)") | Apply the filter |
 | ↑ / ↓ (New note view) | Move between **Blank note** and the template rows |
 | Enter (New note view) | Create from the focused row |
@@ -924,3 +945,17 @@ the re-merged wave: an unterminated ``` or ~~~ fence now keeps the rest of a
 note as code, so a `[[link]]` after it is neither recorded nor rewritten;
 Obsidian vault detection is stated as POSIX-only, since the Windows
 discovery adapter never reports a vault (task-32178).)*
+
+*Verified against fix/library-notes-i-trash — 2026-09-09 (task-32144: a
+"Recently deleted (N)" row under the folder tree opens a Trash view of the
+soft-deleted notes, newest first, with a per-row Restore and `r` on the
+focused row. Restore commits through the same seam the delete receipt's Undo
+uses, so the row returns to its folder and the rail count moves identically.
+The view offers no permanent delete.)*
+
+*Verified against fix/library-notes-i-backlinks — 2026-09-09 (task-32145:
+Info → Properties now lists "Linked from (N)" — the notes whose bodies carry
+this note's `note://` link — and each entry opens that note. Checked live on a
+fresh profile after importing the review vault: "Zettelkasten — overview" read
+"Linked from (2)" and listed both linking notes, activating one opened it, and
+an unlinked note read "Linked from (0) — no notes link here yet".)*
