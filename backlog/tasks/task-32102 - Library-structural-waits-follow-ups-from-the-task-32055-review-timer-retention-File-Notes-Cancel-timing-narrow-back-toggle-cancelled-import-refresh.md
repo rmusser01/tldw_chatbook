@@ -4,11 +4,11 @@ title: >-
   Library structural waits: follow-ups from the task-32055 review (timer
   retention, File Notes Cancel timing, narrow back toggle, cancelled-import
   refresh)
-status: Done
+status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-09-08 22:42'
-updated_date: '2026-09-10 15:29'
+updated_date: '2026-09-10 17:06'
 labels:
   - library
   - file-notes
@@ -27,7 +27,7 @@ Found by the task-32055 reviews (PR #2524): the patience `set_timer` in `_begin_
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 Each of the seven items is fixed or closed with a recorded reason
+- [ ] #1 Each of the seven items is fixed or closed with a recorded reason (2 of 7 fixed here; the other 5 are implemented on task-32180 / PR #2557 and land with it -- tick on that merge)
 - [ ] #2 The File Notes Cancel affordance and its copy appear at the same moment (lands with #2557: implemented on task-32180 / branch fix/library-notes-r-file-notes at 203f4dc633, tick on that merge)
 <!-- AC:END -->
 
@@ -81,7 +81,7 @@ RED/GREEN tests in `Tests/UI/test_library_notes_riders_r_file_notes.py`:
   `if not wait.cancelled` → `change.cancelled()` condition live in the same
   file and are that PR's to land.
 
-AC#2 stays unticked here: it lands with #2557.
+AC#2 stays unticked here: it lands with #2557. **Fix round 1 (PR #2569 review, finding 7): AC#1 is now unticked and the task back In Progress for the same reason** -- it covers all seven items, four of which exist only on that peer branch, so ticking it here would have left them untracked if #2557 slipped. Both ACs tick, and this task goes Done, on that merge; the two items owned here are complete and shipped in PR #2569.
 
 Fixed here, both outside that file:
 - **Patience timer retained and stopped** (`library_screen.py`). The one-shot

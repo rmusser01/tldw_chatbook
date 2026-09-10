@@ -3444,10 +3444,19 @@ class LibraryScreen(BaseAppScreen):
         # has ever been opened. ``None`` until the first prefetch lands, so
         # the row's ``count_pending`` placeholder rule still applies.
         self._library_collections_prefetched_total: int | None = None
-        #: task-32103: True when the last count read FAILED or timed out
-        #: (never merely "no captures authority"), so the row can say so
-        #: instead of dropping its number silently.
-        self._library_collections_count_unavailable: bool = False
+        #: task-32103: which authority ``_library_collections_prefetched_total``
+        #: was read from. The prefetch outlives an authority switch
+        #: (``_activate_collections_capture_authority``), so without this the
+        #: rail painted the previous authority's total under the new one's
+        #: name -- the same defect the controller-state path is fenced
+        #: against (fix round 1).
+        self._library_collections_prefetched_authority: str | None = None
+        #: task-32103: why the last count read produced no number --
+        #: ``"timeout"``, ``"error"``, or ``""`` for success and for "no
+        #: captures authority" (which is not a failure). The row says so
+        #: instead of dropping its number silently, and only the deadline
+        #: kind claims a wait (fix round 1).
+        self._library_collections_count_failure: str = ""
         self._collections_state.reader_layout = resolve_adaptive_reader_layout(
             0,
             self._collections_state.reader_preferences,
@@ -10292,7 +10301,8 @@ class LibraryScreen(BaseAppScreen):
         authority = getattr(scope_service, "active_authority", None)
         if authority is None:
             self._library_collections_prefetched_total = None
-            self._library_collections_count_unavailable = False
+            self._library_collections_prefetched_authority = None
+            self._library_collections_count_failure = ""
             return
         try:
             # (task-32103) The shared unfiltered page-1 read: the
@@ -10315,10 +10325,17 @@ class LibraryScreen(BaseAppScreen):
                 _retry_failure_reason(exc),
             )
             self._library_collections_prefetched_total = None
-            self._library_collections_count_unavailable = True
+            self._library_collections_prefetched_authority = None
+            # (fix round 1) A read that failed in 20 ms must not tell the
+            # user it waited five seconds, so the KIND is recorded, not just
+            # the fact.
+            self._library_collections_count_failure = (
+                "timeout" if isinstance(exc, TimeoutError) else "error"
+            )
             return
         self._library_collections_prefetched_total = page.total
-        self._library_collections_count_unavailable = False
+        self._library_collections_prefetched_authority = authority.key
+        self._library_collections_count_failure = ""
 
     def _carry_selected_conversation_into_snapshot(self, records: dict[str, tuple[Mapping[str, Any], ...]]) -> dict[str, tuple[Mapping[str, Any], ...]]:
         return self._conversations_controller._carry_selected_conversation_into_snapshot(records)
@@ -14170,6 +14187,18 @@ class LibraryScreen(BaseAppScreen):
         # default -- the only scope the unfiltered prefetch answers for.
         if self._collections_state.active_scope != "all":
             return None
+        # (fix round 1) ...and the prefetch is fenced to the authority it
+        # was READ from, exactly like the controller-state branch above.
+        # ``_activate_collections_capture_authority`` swaps the authority on
+        # every committed source switch while this number survives, and the
+        # Collections row is deliberately excluded from ``counts_loading``,
+        # so the gap between the switch and the next read painted the old
+        # authority's total under the new one's name.
+        if (
+            authority is None
+            or self._library_collections_prefetched_authority != authority.key
+        ):
+            return None
         return self._library_collections_prefetched_total
 
     def _build_library_shell_input(self) -> LibraryShellInput:
@@ -14200,6 +14229,15 @@ class LibraryScreen(BaseAppScreen):
                 runtime_state, "last_known_server_label", None
             ) or getattr(runtime_state, "active_server_id", None)
         collections_count = self._library_collections_rail_count()
+        # (fix round 1) ONE gated value behind both the row's "(—)" and the
+        # Details sentence: read separately, the Details line went on telling
+        # the user to open Collections while the row beside it already showed
+        # the count that opening it had produced.
+        collections_count_failure = (
+            self._library_collections_count_failure
+            if collections_count is None
+            else ""
+        )
         counts = self._local_source_counts
         known = self._local_source_total_known
         counts_loading = not self._library_loaded and not self._library_lookup_error
@@ -14236,13 +14274,14 @@ class LibraryScreen(BaseAppScreen):
             skills_count=skills_count if counts_available else None,
             skills_known=True,
             collections_count=collections_count,
-            collections_count_unavailable=(
-                collections_count is None
-                and self._library_collections_count_unavailable
-            ),
+            collections_count_unavailable=bool(collections_count_failure),
             runtime_source=active_source,
             server_label=str(server_label) if server_label else None,
-            details_lines=self._library_details_lines(active_source, server_label),
+            details_lines=self._library_details_lines(
+                active_source,
+                server_label,
+                collections_count_failure=collections_count_failure,
+            ),
             study_decks_count=(
                 self._library_study_counts.get("study_decks")
                 if counts_available
@@ -14260,7 +14299,11 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def _library_details_lines(
-        self, active_source: str, server_label: Any
+        self,
+        active_source: str,
+        server_label: Any,
+        *,
+        collections_count_failure: str = "",
     ) -> tuple[str, ...]:
         """Build the Status group's Details disclosure lines for the rail.
 
@@ -14287,13 +14330,19 @@ class LibraryScreen(BaseAppScreen):
                 f"Conversations {counts.get('conversations', 0)}"
             )
         lines = [runtime_value, counts_or_error]
-        if self._library_collections_count_unavailable:
+        if collections_count_failure:
             # task-32103: a count read that failed or ran out of deadline is
             # said out loud -- a silently absent number reads exactly like a
-            # source whose count is off by design.
+            # source whose count is off by design. The caller passes the same
+            # gated value the row's "(—)" uses, so the two can never
+            # disagree, and only a genuine deadline claims a wait.
+            waited = (
+                f" (waited {LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS:g} s)"
+                if collections_count_failure == "timeout"
+                else ""
+            )
             lines.append(
-                "Collections count unavailable (waited "
-                f"{LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS:g} s) — "
+                f"Collections count unavailable{waited} — "
                 "open Collections to load it."
             )
         sizes_line = self._library_db_sizes_line()

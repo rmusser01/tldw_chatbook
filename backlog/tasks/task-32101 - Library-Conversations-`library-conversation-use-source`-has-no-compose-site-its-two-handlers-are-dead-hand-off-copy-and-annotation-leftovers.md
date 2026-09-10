@@ -72,6 +72,11 @@ Deleted the dead pair and collapsed the blocked hand-off onto one control.
 - **Annotation**: `library_conversation_workspace_block` was already
   `Callable[[], tuple[str, bool, str]]` with a matching docstring (fixed in
   a later PR #2523 round) -- no change needed.
+- **AC#2 was likewise already satisfied**: the `link_offered` gate that
+  withholds "Press 'Link to workspace'" when the button is hidden landed in
+  a PR #2523 round too. This PR only carries it verbatim into
+  `library_conversation_block_sentence()` -- there is no AC#2 fix to find in
+  this diff.
 - **Guide**: `media-and-conversations.md` -- dropped the stale "'Open in
   Console' sits below the transcript" rough edge, replaced the two blocked-copy
   quotes with the shipped sentence, and rewrote the 'c refuses in exactly the

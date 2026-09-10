@@ -76,6 +76,30 @@ Four fixes, one of them a shared read.
   was gone; it was not, on the re-entry path. The old stamp now says so and
   the new one records what actually closed it.
 
+**Fix round 1 (PR #2569 review).** Four gaps closed, all in the AC#3 half:
+
+- The authority fence covered only the controller-state path. The prefetch
+  carried no authority tag while `_activate_collections_capture_authority`
+  swaps authority on every committed source switch -- and the Collections row
+  is excluded from `counts_loading` -- so the rail painted the old total under
+  the new authority's name until the next read landed.
+  `_library_collections_prefetched_authority` fences it the same way.
+- The row's `(—)` and the Details sentence read different gates, so once the
+  canvas supplied a count the row showed it while Details still said the count
+  was unavailable and told the user to open Collections. The gated value is now
+  computed once in `_build_library_shell_input` and passed into
+  `_library_details_lines`.
+- A read that failed in 20 ms claimed "waited 5 s". The failure KIND is
+  recorded (`"timeout"`/`"error"`) and only a real deadline claims a wait.
+- The shared read had no age-out: a wedged request owned the slot for its whole
+  300 s client budget while every 5 s consumer joined the wedge instead of
+  retrying. `FIRST_PAGE_READ_MAX_AGE_SECONDS` (5.0, local to the service --
+  it sits below the UI layer that owns the snapshot deadline) makes the next
+  caller start its own read instead.
+
+Also pinned the `shield` property the sharing rests on (a count deadline must
+not cancel the evidence read), which nothing covered.
+
 Trade-off: the shared read is scoped to the unfiltered page-1 question
 only. A general `list_page` cache would have needed invalidation; this
 needs none because nothing survives the read.

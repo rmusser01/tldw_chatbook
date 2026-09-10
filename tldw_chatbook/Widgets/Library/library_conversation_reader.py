@@ -232,7 +232,12 @@ class LibraryConversationReader(Vertical):
                 classes="library-conversation-reader-block-reason",
                 markup=False,
             )
-            blocked_reason.display = bool(self._workspace_block())
+            # (fix round 1) Visibility and content come from ONE predicate:
+            # the line answers the load fence first, so gating display on
+            # the workspace block alone showed "Wait for the selected
+            # conversation to finish loading." under a button that was on
+            # screen for a different reason.
+            blocked_reason.display = bool(self._blocked_reason_line())
             yield blocked_reason
             link = Button(
                 "Link to workspace",
@@ -477,7 +482,7 @@ class LibraryConversationReader(Vertical):
         open_console.label = self._open_console_label()
         open_console.tooltip = self._open_console_tooltip()
         blocked_reason.update(self._blocked_reason_line())
-        blocked_reason.display = bool(self._workspace_block())
+        blocked_reason.display = bool(self._blocked_reason_line())
         link.display = self._workspace_link_offered()
         retry.display = bool(state.error or state.unavailable)
 

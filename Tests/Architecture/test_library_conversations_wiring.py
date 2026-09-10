@@ -147,7 +147,7 @@ def test_screen_delegates_reader_handlers() -> None:
 
 #: Every method Task 8 moved into `LibraryConversationsController` (the
 #: browse cluster: list/paging, row selection/multiselect, export, filter,
-#: empty/retry states, and the "Use in Console"/"Use as source" handoff),
+#: empty/retry states, and the "Use in Console" handoff),
 #: under its original `LibraryScreen` name. Same shape as
 #: `_READER_CLUSTER_METHOD_NAMES` above -- one full-cluster ownership test
 #: plus one full-cluster delegator test, both driven off this one

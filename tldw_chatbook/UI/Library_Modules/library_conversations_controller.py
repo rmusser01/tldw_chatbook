@@ -8,18 +8,17 @@ Owns the browse cluster moved verbatim out of ``LibraryScreen`` in
 ``conversation``-named method NOT already moved to
 ``LibraryConversationReaderController`` (task 7) -- list paging, row
 selection/multiselect, export, filter, empty/retry states, and the
-"Use in Console"/"Use as source" handoff -- plus the record-lookup and
+"Use in Console" handoff -- plus the record-lookup and
 label helpers those clusters share. ``LibraryScreen`` keeps one-line
 delegators under every one of these original names.
 
-Note: the ``@on(...)`` decorators kept on this controller's own ten moved
+Note: the ``@on(...)`` decorators kept on this controller's own nine moved
 methods (``handle_library_conversations_select_toggle``/``_select_all``/
 ``_select_clear``, ``handle_library_conversations_export``,
 ``handle_library_conversations_filter_submitted``,
 ``handle_library_conversations_retry``,
 ``handle_library_conversations_previous``/``_next``,
-``open_selected_conversation_in_console``,
-``use_selected_conversation_as_source``) are inert here -- Textual
+``open_selected_conversation_in_console``) are inert here -- Textual
 dispatches ``@on`` handlers against the mounted widget/screen that receives
 the message, and this controller is neither. Real dispatch happens on
 ``LibraryScreen``'s own ``@on``-decorated delegator (the copy that actually

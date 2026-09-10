@@ -445,9 +445,19 @@ def test_use_as_source_handler_is_gone() -> None:
     assert not hasattr(
         LibraryConversationsController, "use_selected_conversation_as_source"
     )
+    # (fix round 1) The id alone let a docstring keep naming the method and
+    # its "Use as source" copy three lines below the deleted handler, which
+    # is what task-32101 AC#3 is about -- so the pin greps for all three.
     for module in (LibraryScreen, LibraryConversationsController):
         source = inspect.getsource(sys.modules[module.__module__])
-        assert "library-conversation-use-source" not in source
+        for leftover in (
+            "library-conversation-use-source",
+            "use_selected_conversation_as_source",
+            "Use as source",
+        ):
+            assert leftover not in source, (
+                f"{module.__module__} still names {leftover!r}"
+            )
 
 
 @pytest.mark.asyncio
@@ -525,8 +535,13 @@ def test_blocked_c_key_says_what_the_control_says() -> None:
     app.open_chat_with_handoff.assert_not_called()
     app.notify.assert_called_once()
     said = app.notify.call_args.args[0]
-    assert said == screen._library_conversation_block_sentence()
-    assert "not in this workspace" in said
+    # (fix round 1) The literal shipped sentence -- the one the reader's
+    # blocked line and media-and-conversations.md both quote -- not a second
+    # call to the helper the action itself calls, which could not fail.
+    assert said == (
+        "This conversation is not in this workspace. Press 'Link to "
+        "workspace' to add it to the active workspace."
+    )
 
     # The key is still scoped to the Conversations canvas.
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA

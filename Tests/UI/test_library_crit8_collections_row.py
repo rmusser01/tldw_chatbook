@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from types import SimpleNamespace
 from dataclasses import replace
 from unittest.mock import patch
 
@@ -507,5 +508,211 @@ async def test_a_count_that_times_out_says_so_on_the_row() -> None:
             if row.row_id == "browse-collections"
         )
         assert row.count_display == " (—)"
-        details = screen._library_details_lines("local", None)
-        assert any("Collections count" in line for line in details), details
+        # The Details sentence comes from the SAME gated value as the row's
+        # "(—)" -- ``_build_library_shell_input`` computes it once -- so the
+        # rail's two lines cannot contradict each other (fix round 1).
+        deadline_line = next(
+            line for line in shell_input.details_lines if "Collections count" in line
+        )
+        assert deadline_line == (
+            "Collections count unavailable (waited "
+            f"{library_screen.LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS:g} s) — "
+            "open Collections to load it."
+        )
+
+
+async def test_details_stops_saying_unavailable_once_the_canvas_supplies_a_count() -> None:
+    """task-32103 AC#3 (fix round 1): the row and Details share one gate.
+
+    The row's "(—)" was gated on "no count AND the read failed" while the
+    Details sentence read the raw failure flag, which only a later count
+    read clears. So after a failed prefetch, opening Collections gave the
+    row a real number while the line directly beneath it still said the
+    count was unavailable and told the user to open Collections -- the
+    thing they had just done.
+    """
+    app = _build_test_app()
+    scope = app.collections_capture_scope_service
+    authority = scope.active_authority
+    assert authority is not None
+    await scope.save_capture(
+        CaptureSaveRequest(
+            authority.key,
+            "https://example.test/one",
+            title="One",
+            text_content="Body.",
+        )
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        # A failed prefetch: the row says so, and so does Details.
+        screen._library_collections_prefetched_total = None
+        screen._library_collections_prefetched_authority = None
+        screen._library_collections_count_failure = "error"
+        shell_input = screen._build_library_shell_input()
+        assert shell_input.collections_count_unavailable is True
+        assert any(
+            "Collections count unavailable" in line
+            for line in shell_input.details_lines
+        )
+        # ...and a non-deadline failure never claims a wait that did not
+        # happen.
+        assert not any("waited" in line for line in shell_input.details_lines)
+
+        # Opening the canvas supplies a real count. The flag is still set
+        # (only a later read clears it), so the two must agree via the gate.
+        screen.query_one("#library-row-browse-collections", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
+        controller = screen._library_collections_capture_controller
+        assert controller is not None
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.state.exact_total == 1,
+            message="The Collections canvas never loaded its first page.",
+        )
+
+        shell_input = screen._build_library_shell_input()
+        assert shell_input.collections_count == 1
+        assert shell_input.collections_count_unavailable is False
+        assert not any(
+            "Collections count unavailable" in line
+            for line in shell_input.details_lines
+        ), shell_input.details_lines
+
+
+async def test_the_prefetched_total_is_fenced_to_the_authority_it_was_read_from() -> None:
+    """task-32103 AC#3 (fix round 1): fence the PREFETCH path too.
+
+    The controller-state branch already refused a page whose authority had
+    gone, but the fallback returned the prefetch, which carried no authority
+    tag. ``_activate_collections_capture_authority`` swaps the authority on
+    every committed source switch and the Collections row is excluded from
+    ``counts_loading``, so between the switch and the next read the rail
+    painted the previous authority's total under the new authority's name.
+    """
+    from tldw_chatbook.Library.collections_capture_service import (
+        build_local_capture_authority,
+    )
+
+    app = _build_test_app()
+    scope = app.collections_capture_scope_service
+    authority = scope.active_authority
+    assert authority is not None
+    for index in range(2):
+        await scope.save_capture(
+            CaptureSaveRequest(
+                authority.key,
+                f"https://example.test/fenced-{index}",
+                title=f"Capture {index}",
+                text_content="Body.",
+            )
+        )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_collections_prefetched_total == 2,
+            message="The rail count prefetch never settled.",
+        )
+        assert screen._build_library_shell_input().collections_count == 2
+
+        # The authority is swapped without a new count read (the window a
+        # committed source switch opens). Only the authority matters here --
+        # nothing reads through this backend before the assertion.
+        other = build_local_capture_authority("other-profile", "other-db")
+        scope.activate(other, SimpleNamespace(authority=other))
+
+        assert screen._library_collections_prefetched_total == 2
+        assert screen._build_library_shell_input().collections_count is None
+
+
+async def test_a_count_deadline_never_cancels_the_evidence_read() -> None:
+    """task-32103 AC#1 (fix round 1): the shield is what makes sharing safe.
+
+    Both consumers await the SAME task, and the rail count read wraps its
+    await in a 5 s ``wait_for``. Without ``asyncio.shield`` that timeout
+    would cancel the shared task out from under the evidence read, which
+    would then degrade to UNKNOWN -- indistinguishable from an empty
+    Library. Nothing pinned that property.
+    """
+    from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
+
+    app = _build_test_app()
+    scope = app.collections_capture_scope_service
+    authority = scope.active_authority
+    assert authority is not None
+    await scope.save_capture(
+        CaptureSaveRequest(
+            authority.key,
+            "https://example.test/shielded",
+            title="Shielded",
+            text_content="Body.",
+        )
+    )
+    backend = scope._backend
+    assert backend is not None
+    original_list_page = backend.list_page
+
+    async def slow_list_page(request):
+        await asyncio.sleep(0.2)
+        return await original_list_page(request)
+
+    backend.list_page = slow_list_page
+
+    evidence_task = asyncio.ensure_future(scope.get_library_user_content_evidence())
+    await asyncio.sleep(0)  # let the evidence read claim the shared slot
+
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(scope.read_unfiltered_first_page(), timeout=0.05)
+
+    assert await evidence_task is LibraryContentEvidence.HAS_USER_CONTENT
+
+
+async def test_a_wedged_shared_read_is_not_inherited_by_the_next_pass() -> None:
+    """task-32103 (fix round 1): the shared slot ages out.
+
+    Every awaiter shields the in-flight read, so nothing cancels it. The
+    consumer's budget is 5 s but the client's per-request budget is 300 s,
+    so one wedged request owned the slot for up to five minutes and every
+    later snapshot pass joined the same dead read instead of retrying.
+    """
+    from tldw_chatbook.Library import collections_capture_service
+
+    app = _build_test_app()
+    scope = app.collections_capture_scope_service
+    authority = scope.active_authority
+    assert authority is not None
+    backend = scope._backend
+    assert backend is not None
+    original_list_page = backend.list_page
+    started = 0
+
+    async def wedged_first_call(request):
+        nonlocal started
+        started += 1
+        if started == 1:
+            await asyncio.sleep(60)
+        return await original_list_page(request)
+
+    backend.list_page = wedged_first_call
+
+    with patch.object(
+        collections_capture_service, "FIRST_PAGE_READ_MAX_AGE_SECONDS", 0.05
+    ):
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(scope.read_unfiltered_first_page(), timeout=0.05)
+        await asyncio.sleep(0.06)
+        # The next pass starts its OWN read rather than joining the wedge.
+        page = await asyncio.wait_for(
+            scope.read_unfiltered_first_page(), timeout=1.0
+        )
+
+    assert started == 2
+    assert page.total == 0
