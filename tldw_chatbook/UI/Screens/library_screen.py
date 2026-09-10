@@ -6738,6 +6738,17 @@ class LibraryScreen(BaseAppScreen):
         ever set when NO reader shell is mounted, see
         ``_apply_library_emergency_geometry``).
 
+        Fix round 1 (review finding 1): this is also the LAST of the Escape
+        contexts, not a width-only one. Eleven Escape bindings are declared
+        above ``library_narrow_stage_return`` -- viewer back, the three editor
+        backs, trash back, an armed delete confirm, ... -- and Textual gives
+        the key to the first gate that passes, so at 60x24 in the Media viewer
+        the footer read "back to Library" while Escape went to the media list
+        and the Library pane stayed shut. The gate now stands down whenever an
+        earlier Escape action is live, which is the same stand-down the
+        ``emergency.enabled`` branch beside it performs through its own
+        ``guarded`` projection ("an editor/viewer/confirm is open").
+
         Returns:
             Whether Escape should reopen the Library pane instead of hopping.
         """
@@ -6747,7 +6758,24 @@ class LibraryScreen(BaseAppScreen):
         # step-back through the visible roles ("focus Items", then "focus
         # Library"); taking the key from that would break the contract
         # test_conversations_escape_moves_to_nearest_visible_prior_role holds.
-        if not ordinary_emergency_required(self.size.width):
+        #
+        # ``self.size`` is ``Size(0, 0)`` before the screen is in the layout
+        # map (first compose, or while another screen is active) and
+        # ``ordinary_emergency_required`` REFUSES a non-positive width, so the
+        # guard is the same one its five older call sites carry.
+        width = self.size.width
+        if width <= 0 or not ordinary_emergency_required(width):
+            return False
+        # Read off BINDINGS rather than a second hand-written list of those
+        # eleven names: ``library_blur_text_field`` learned the same lesson
+        # (task-32051), and every hard-coded roster of Escape bindings in this
+        # file has gone stale at least once.
+        if any(
+            self.check_action(earlier, ())
+            for earlier in self._library_escape_actions_before(
+                "library_narrow_stage_return"
+            )
+        ):
             return False
         shells = self.query(_LIBRARY_READER_SHELL_SELECTOR)
         if not shells:

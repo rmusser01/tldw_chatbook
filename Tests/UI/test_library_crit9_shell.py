@@ -6,6 +6,8 @@ critique-9 fix wave.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from textual.widget import Widget
 
@@ -290,3 +292,62 @@ async def test_the_conversations_footer_advertises_the_filter_key_it_honours() -
         await pilot.pause()
         # By id: the canvas recomposes, so the mounted box is a new instance.
         assert getattr(screen.focused, "id", None) == "library-conversations-filter"
+
+
+async def test_the_return_chip_stands_down_where_escape_belongs_to_the_surface() -> None:
+    """task-32225 fix round 1: the chip may not override an earlier Escape.
+
+    Eleven Escape bindings are declared ABOVE ``library_narrow_stage_return``
+    (viewer back, editor back, trash back, an armed delete confirm, ...), and
+    Textual gives the key to the first gate that passes. Below 64 columns the
+    Media viewer therefore painted "esc back to Library" while Escape went to
+    the media list and the Library pane stayed shut -- exactly the dishonest
+    chip this wave exists to remove. The gate now stands down whenever an
+    earlier Escape action is live, the way the ``emergency.enabled`` branch
+    beside it stands down through its own ``guarded`` projection.
+    """
+    from Tests.UI.test_library_media_reader_flow import _flow_app, _load_row_0
+    from Tests.UI.test_library_media_side_by_side import _open_media_list
+    from Tests.UI.test_library_shell import LibraryProductionCSSHarness
+
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=NARROW_TEST_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _load_row_0(screen, service, pilot)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._media_state.view == "viewer"
+            and screen.check_action("library_media_viewer_back", ()),
+            message="The Media viewer never took Escape at 60 columns.",
+        )
+
+        chips = screen._library_footer_shortcuts_for_current_state()
+        assert ("esc", "back to Library") not in chips, chips
+        assert screen._library_narrow_stage_return_active() is False
+
+        # ...and the key still does what the surface's own chip promises.
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._media_state.view == "list",
+            message="Escape did not return the Media viewer to its list.",
+        )
+
+
+def test_the_narrow_stage_gate_survives_an_unmeasured_screen() -> None:
+    """task-32225 fix round 1: a not-yet-measured width is not an emergency.
+
+    ``Widget.size`` is ``Size(0, 0)`` until the screen is in the layout map --
+    the first ``compose_content`` (which registers the footer, which reads this
+    gate) and any frame where Library is not the active screen. The width
+    contract REFUSES a non-positive width with ``ValueError``, so the gate
+    needs the same ``width > 0`` guard its five older siblings carry.
+    """
+    from textual.geometry import Size
+
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    fake = SimpleNamespace(size=Size(0, 0))
+    assert LibraryScreen._library_narrow_stage_return_active(fake) is False
