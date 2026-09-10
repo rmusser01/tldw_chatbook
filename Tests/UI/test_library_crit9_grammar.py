@@ -177,21 +177,24 @@ def test_the_structured_record_survives_in_the_log() -> None:
     """AC#2: what left the screen is still recorded once for diagnosis."""
     from loguru import logger
 
-    from tldw_chatbook.Widgets.Library.library_search_rag_panel import (
-        library_rag_query_status_children,
-    )
+    from tldw_chatbook.Widgets.Library import library_search_rag_panel as panel
 
     state = _blocked_state()
     assert "Owner: LLM provider credential." in state.query_state.recovery_copy
 
+    panel._last_logged_query_recovery = ""
     records: list[str] = []
     sink = logger.add(lambda message: records.append(message), level="INFO")
     try:
-        library_rag_query_status_children(state)
+        panel.library_rag_query_status_children(state)
+        logged_once = len(records)
+        # The builder runs on every keystroke; the record is logged once.
+        panel.library_rag_query_status_children(state)
     finally:
         logger.remove(sink)
 
     assert any("LLM provider credential" in record for record in records), records
+    assert len(records) == logged_once, records
 
 
 def test_a_quiet_gate_still_renders_no_callout_at_all() -> None:

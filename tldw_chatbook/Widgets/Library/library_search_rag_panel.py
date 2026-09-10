@@ -25,6 +25,7 @@ from ...Library.library_rag_answer_service import (
     LibraryRagAnswer,
 )
 from ...Library.library_rag_state import (
+    LIBRARY_RAG_NO_PROVIDER_BLOCKED_REASON,
     LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
     LibraryRagPanelState,
     LibraryRagQueryState,
@@ -234,6 +235,24 @@ class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
     def _handle_rechunk_legacy_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self._trigger_rechunk_legacy()
+
+    @on(Button.Pressed, "#library-rag-open-provider-settings")
+    def _handle_open_provider_settings(self, event: Button.Pressed) -> None:
+        """Take the blocked user to the remedy the callout names (task-32236).
+
+        The same deep-link the Personas readout gate uses (`personas_
+        preview_controller.open_provider_settings`) -- a `NavigateToScreen`
+        that bubbles to the app, not a second navigation path.
+        """
+        event.stop()
+        from ...UI.Navigation.main_navigation import NavigateToScreen
+        from ...UI.Screens.settings_config_models import SettingsCategoryId
+
+        self.post_message(
+            NavigateToScreen(
+                "settings", {"category": SettingsCategoryId.PROVIDERS_MODELS}
+            )
+        )
 
     def _trigger_rechunk_legacy(self) -> None:
         """Guard, then launch the re-chunk worker (spec §10.3).
@@ -862,6 +881,25 @@ def _query_blocked_is_quiet(query_state: LibraryRagQueryState) -> bool:
     return query_state.blocked_is_empty_query or query_state.blocked_is_no_scope
 
 
+#: The last record this process logged, so a blocker that survives a
+#: keystroke is not logged once per keystroke (this builder runs on every
+#: query edit). ponytail: per-process, not per-panel -- two Library screens
+#: showing the same blocker log it once between them, which is what a
+#: diagnostic wants anyway.
+_last_logged_query_recovery = ""
+
+
+def _log_query_recovery_record(recovery_copy: str) -> None:
+    """Record the structured blocker the panel no longer paints (task-32236)."""
+    global _last_logged_query_recovery
+    if not recovery_copy or recovery_copy == _last_logged_query_recovery:
+        return
+    _last_logged_query_recovery = recovery_copy
+    logger.info(
+        "Library Search/RAG blocked: {}", " | ".join(recovery_copy.splitlines())
+    )
+
+
 def library_rag_query_shows_full_recovery(query_state: LibraryRagQueryState) -> bool:
     """True when the query region should render the callout + recovery dump.
 
@@ -943,16 +981,28 @@ def library_rag_query_status_children(state: LibraryRagPanelState) -> list[Widge
     children: list[Widget] = [quiet_line]
     if library_rag_query_shows_full_recovery(query_state):
         reason = query_state.run_action.disabled_reason
-        children.extend(
-            (
-                Static(
-                    f"Blocked | {reason}",
-                    id="library-rag-query-blocked-callout",
-                    classes="library-rag-callout is-blocked",
-                ),
-                Static(query_state.recovery_copy, id="library-rag-query-recovery"),
+        # task-32236: the reason alone, in the Media reader's "reason ·
+        # next step" grammar. The "Blocked | " prefix restated the state
+        # the callout's own styling already carries, and the Why / Next /
+        # Recovery / Owner block below it restated the reason twice more
+        # -- once in TOML. That record now goes to the log instead.
+        _log_query_recovery_record(query_state.recovery_copy)
+        children.append(
+            Static(
+                reason,
+                id="library-rag-query-blocked-callout",
+                classes="library-rag-callout is-blocked",
             )
         )
+        if reason == LIBRARY_RAG_NO_PROVIDER_BLOCKED_REASON:
+            children.append(
+                Button(
+                    "Open Settings ▸ Providers",
+                    id="library-rag-open-provider-settings",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+            )
     return children
 
 

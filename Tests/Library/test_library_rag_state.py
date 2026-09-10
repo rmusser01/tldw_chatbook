@@ -9,6 +9,7 @@ from tldw_chatbook.Library import library_rag_state as _rag_state_module
 from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_EMPTY_STATE_SELECTOR,
     LIBRARY_RAG_FALLBACK_TOP_K,
+    LIBRARY_RAG_NO_PROVIDER_BLOCKED_REASON,
     LIBRARY_RAG_NO_SOURCES_GATE_COPY,
     LIBRARY_RAG_ROUTE_NOTES_KEY,
     LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY,
@@ -2192,18 +2193,28 @@ def test_named_but_uncredentialed_provider_shows_the_real_remedy() -> None:
 
     assert state.run_action.enabled is False
     assert "Select a provider/model" not in state.run_action.disabled_reason
-    assert "ANTHROPIC_API_KEY" in state.run_action.disabled_reason
-    assert "api_settings.anthropic" in state.run_action.disabled_reason
+    # task-32236 turned the SURFACED half of this into the Media reader's
+    # one sentence: the user is told what is missing and where to fix it,
+    # once. The env var and the TOML table -- accurate, but a second remedy
+    # for one missing key -- moved into the structured record, which is now
+    # logged instead of painted. The owner and the "not Console controls"
+    # half of I1 are unchanged.
+    assert state.run_action.disabled_reason == LIBRARY_RAG_NO_PROVIDER_BLOCKED_REASON
+    assert "ANTHROPIC_API_KEY" not in state.run_action.disabled_reason
+    assert "api_settings.anthropic" not in state.run_action.disabled_reason
     assert "Console controls" not in state.recovery_copy
     assert "Owner: LLM provider credential." in state.recovery_copy
     assert "ANTHROPIC_API_KEY" in state.recovery_copy
 
 
 def test_credential_remedy_is_markup_escaped_for_its_rendering_sinks() -> None:
-    """The remedy embeds a TOML table name in brackets, and both sinks --
-    the run button's tooltip and the blocked callout / recovery `Static`s
-    -- render Rich markup, which would swallow `[api_settings.anthropic]`
-    and leave a sentence pointing at nothing.
+    """The remedy embeds a TOML table name in brackets, so it is escaped
+    before it is stored.
+
+    Since task-32236 its only sink is the logged record (the panel paints
+    the one-sentence reason instead), but the sanitizer still runs over it
+    -- dropping it would let a config-sourced string through unescaped the
+    day something renders `recovery_copy` again.
     """
     state = LibraryRagQueryState.from_values(
         query="summarize the policy",
@@ -2212,7 +2223,8 @@ def test_credential_remedy_is_markup_escaped_for_its_rendering_sinks() -> None:
         provider_credential_recovery=_ANTHROPIC_CREDENTIAL_REMEDY,
     )
 
-    assert r"\[api_settings.anthropic]" in state.run_action.disabled_reason
+    assert r"\[api_settings.anthropic]" in state.recovery_copy
+    assert "api_settings" not in state.run_action.disabled_reason
 
 
 def test_credential_remedy_cannot_make_a_blocked_state_look_ready() -> None:
@@ -2255,7 +2267,13 @@ def test_panel_state_threads_the_credential_remedy_into_query_state() -> None:
         provider_credential_recovery=_ANTHROPIC_CREDENTIAL_REMEDY,
     )
 
-    assert "ANTHROPIC_API_KEY" in panel.query_state.run_action.disabled_reason
+    # task-32236: what has to survive the panel layer is the BLOCKED state
+    # and its one remedy sentence; the credential detail rides the record.
+    assert (
+        panel.query_state.run_action.disabled_reason
+        == LIBRARY_RAG_NO_PROVIDER_BLOCKED_REASON
+    )
+    assert "ANTHROPIC_API_KEY" in panel.query_state.recovery_copy
 
 
 # --------------------------------------------------------------------------

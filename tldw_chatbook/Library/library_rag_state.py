@@ -19,6 +19,10 @@ from typing import Any, Mapping, Sequence
 from loguru import logger
 from rich.markup import escape as escape_markup
 
+from tldw_chatbook.Library.ingest_analysis import (
+    NO_ANALYSIS_PROVIDER_NEXT_STEP,
+    NO_ANALYSIS_PROVIDER_REASON,
+)
 from tldw_chatbook.Library.library_rag_answer_service import LibraryRagAnswer
 from tldw_chatbook.Library.library_rag_score_kinds import (
     LIBRARY_RAG_SCORE_KIND_HYBRID_FUSION,
@@ -36,6 +40,15 @@ from tldw_chatbook.Utils.input_validation import (
     validate_url,
 )
 
+
+#: task-32236: what a Library provider gate says when no analysis provider
+#: can be called -- resolved from `ingest_analysis`'s two constants so the
+#: Media reader's gate and this one can never grow two different remedies
+#: for one missing key. The panel shows the sentence alone; the env var and
+#: the `[api_settings.*]` table stay in the logged record.
+LIBRARY_RAG_NO_PROVIDER_BLOCKED_REASON = (
+    f"{NO_ANALYSIS_PROVIDER_REASON.capitalize()} · {NO_ANALYSIS_PROVIDER_NEXT_STEP}."
+)
 
 LIBRARY_RAG_SOURCE_TYPES: tuple[tuple[str, str], ...] = (
     ("notes", "Notes"),
@@ -1300,10 +1313,11 @@ class LibraryRagQueryState:
             # config table -- because telling that user to "select a
             # provider/model" names a step they already completed.
             if credential_recovery:
-                disabled_reason = (
-                    f"The configured provider has no usable API key. "
-                    f"{credential_recovery}"
-                )
+                # task-32236 (critique #9 row 5): the Media reader's identical
+                # condition already says this sentence; one missing key must not
+                # produce two remedies, one of them TOML. The structured record
+                # (owner, the config-table remedy) still reaches the log.
+                disabled_reason = LIBRARY_RAG_NO_PROVIDER_BLOCKED_REASON
                 owner = "LLM provider credential"
                 next_action = "Add the provider credential, then run again"
                 recovery_action = credential_recovery
