@@ -232,6 +232,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Backup_Recovery/journal.py | observe_artifact | open | 1 | generic_boundary | backup_recovery_journal |
 | tldw_chatbook/Backup_Recovery/journal.py | observe_artifact.read | open | 1 | generic_boundary | backup_recovery_journal |
 | tldw_chatbook/Backup_Recovery/journal.py | observe_artifact.recheck | open | 1 | generic_boundary | backup_recovery_journal |
+| tldw_chatbook/Backup_Recovery/profile_catalog.py | ProfileCatalog.register | open | 1 | generic_boundary | backup_recovery_profile_catalog |
 | tldw_chatbook/Backup_Recovery/publication.py | _flush_original | open | 1 | generic_boundary | backup_recovery_publication |
 | tldw_chatbook/Backup_Recovery/publication.py | _retire | open | 1 | generic_boundary | backup_recovery_publication |
 | tldw_chatbook/Backup_Recovery/publication.py | _installed_metadata | open | 1 | generic_boundary | backup_recovery_publication |
