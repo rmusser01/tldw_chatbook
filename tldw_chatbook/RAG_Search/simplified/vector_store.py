@@ -21,6 +21,7 @@ except ImportError:
 
 import json
 import time
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Collection, Dict, List, Mapping, Optional, Protocol, Union
@@ -34,6 +35,10 @@ from tldw_chatbook.Metrics.metrics_logger import (
     log_gauge,
     timeit,
 )
+from tldw_chatbook.Backup_Recovery.rag_projection_lifetime import (
+    participant as projection_lifetime, store_operation,
+)
+from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
 from .citations import Citation, CitationType, SearchResultWithCitations
 from .config import validate_chroma_persist_directory
 
@@ -180,6 +185,7 @@ class ChromaVectorStore:
     Provides persistent vector storage with metadata support for citations.
     """
 
+    @projection_lifetime.sync_operation
     def __init__(
         self,
         persist_directory: Union[str, Path],
@@ -208,9 +214,11 @@ class ChromaVectorStore:
         self.collection_metadata = dict(collection_metadata or {})
         self._client = None
         self._collection = None
+        self._projection_lock = threading.RLock()
 
-        # Ensure persist directory exists
-        self.persist_directory.mkdir(parents=True, exist_ok=True)
+        # Admission precedes the constructor's first filesystem mutation.
+        with acquire_storage(self.persist_directory):
+            self.persist_directory.mkdir(parents=True, exist_ok=True)
 
         # Log initialization
         logger.info(
@@ -267,6 +275,7 @@ class ChromaVectorStore:
         return memory_mb
 
     @property
+    @store_operation
     def client(self):
         """Lazy load ChromaDB client."""
         if self._client is None:
@@ -275,9 +284,11 @@ class ChromaVectorStore:
                 from chromadb.config import Settings
 
                 settings = Settings(anonymized_telemetry=False, allow_reset=True)
-                self._client = chromadb.PersistentClient(
-                    path=str(self.persist_directory), settings=settings
-                )
+                with projection_lifetime.opening(self.persist_directory) as borrower:
+                    self._client = chromadb.PersistentClient(
+                        path=str(self.persist_directory), settings=settings
+                    )
+                    borrower.attach(self._client, self)
                 logger.info(
                     f"Initialized ChromaDB PersistentClient at {self.persist_directory}"
                 )
@@ -289,6 +300,7 @@ class ChromaVectorStore:
         return self._client
 
     @property
+    @store_operation
     def collection(self):
         """Get or create collection."""
         if self._collection is None:
@@ -312,6 +324,7 @@ class ChromaVectorStore:
         return self._collection
 
     @timeit("vector_store_add_documents")
+    @store_operation
     def add(
         self,
         ids: List[str],
@@ -443,6 +456,7 @@ class ChromaVectorStore:
             raise
 
     @timeit("vector_store_search")
+    @store_operation
     def search(
         self,
         query_embedding: Union[np.ndarray, List[float]],
@@ -539,6 +553,7 @@ class ChromaVectorStore:
             logger.opt(exception=True).error(f"Search failed: {e}")
             return []
 
+    @store_operation
     def search_with_citations(
         self,
         query_embedding: Union[np.ndarray, List[float]],
@@ -644,6 +659,7 @@ class ChromaVectorStore:
 
         return citations
 
+    @store_operation
     def delete_collection(self, name: str) -> bool:
         """Delete a collection.
 
@@ -667,6 +683,7 @@ class ChromaVectorStore:
             logger.error(f"Failed to delete collection: {e}")
             return False
 
+    @store_operation
     def delete_document(self, doc_id: str) -> None:
         """Delete all chunks belonging to a document (no-op when absent).
 
@@ -682,6 +699,7 @@ class ChromaVectorStore:
             f"Deleted chunks for document {doc_id} from collection {self.collection_name}"
         )
 
+    @store_operation
     def clear(self) -> None:
         """Clear all data from the current collection."""
         try:
@@ -694,6 +712,7 @@ class ChromaVectorStore:
             logger.error(f"Failed to clear collection: {e}")
 
     @timeit("vector_store_get_stats")
+    @store_operation
     def get_collection_stats(self) -> dict:
         """Get collection statistics."""
         try:
@@ -751,6 +770,7 @@ class ChromaVectorStore:
             logger.error(f"Failed to get collection stats: {e}")
             return {"name": self.collection_name, "count": 0, "error": str(e)}
 
+    @store_operation
     def add_documents(
         self,
         collection_name: str,
@@ -789,6 +809,7 @@ class ChromaVectorStore:
             logger.error(f"Failed to add documents: {e}")
             return False
 
+    @store_operation
     def list_collections(self) -> List[str]:
         """List all collection names."""
         try:
@@ -800,20 +821,12 @@ class ChromaVectorStore:
             return []
 
     def close(self) -> None:
-        """Close the ChromaDB client and clean up resources."""
-        client = self._client
-        self._collection = None
-        self._client = None
-        if client is None:
-            return
-
-        try:
-            close = getattr(client, "close", None)
-            if callable(close):
-                close()
-            logger.info("ChromaVectorStore closed")
-        except Exception as e:
-            logger.error(f"Error closing ChromaVectorStore: {e}")
+        """Close the native borrower, retaining failed retirement for maintenance."""
+        with self._projection_lock:
+            client = self._client
+            if client is not None and projection_lifetime.close_client(client):
+                self._collection = None
+                self._client = None
 
 
 class InMemoryVectorStore:

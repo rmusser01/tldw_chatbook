@@ -33,6 +33,10 @@ from typing import (
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery.rag_projection_lifetime import (
+    participant as projection_lifetime,
+)
+
 # Optional numpy import
 try:
     import numpy as np
@@ -830,6 +834,7 @@ class RAGService:
     # === Indexing Methods ===
 
     @timeit("rag_indexing_document")
+    @projection_lifetime.async_operation
     async def index_document(
         self,
         doc_id: str,
@@ -1010,6 +1015,7 @@ class RAGService:
         """Synchronous version of index_document."""
         return asyncio.run(self.index_document(doc_id, content, **kwargs))
 
+    @projection_lifetime.async_operation
     async def index_batch(
         self,
         documents: List[Dict[str, Any]],
@@ -1065,6 +1071,7 @@ class RAGService:
 
         return results
 
+    @projection_lifetime.async_operation
     async def index_batch_optimized(
         self,
         documents: List[Dict[str, Any]],
@@ -1153,6 +1160,7 @@ class RAGService:
     # === Search Methods ===
 
     @timeit("rag_search_operation")
+    @projection_lifetime.async_operation
     async def search(
         self,
         query: str,
@@ -2999,6 +3007,7 @@ class RAGService:
 
         return chunks
 
+    @projection_lifetime.async_operation
     async def _store_chunks(
         self,
         ids: List[str],
@@ -3007,9 +3016,10 @@ class RAGService:
         metadata: List[dict],
     ) -> None:
         """Store chunks in vector database asynchronously."""
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(
-            None, self.vector_store.add, ids, embeddings, documents, metadata
+        # to_thread explicitly transfers this accepted operation context.
+        # The outer retained coroutine joins native completion before retirement.
+        await asyncio.to_thread(
+            self.vector_store.add, ids, embeddings, documents, metadata
         )
 
     # === Management Methods ===

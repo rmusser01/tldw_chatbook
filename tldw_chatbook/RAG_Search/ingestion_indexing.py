@@ -61,6 +61,10 @@ from typing import (
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery.rag_projection_lifetime import (
+    participant as projection_lifetime,
+)
+
 from ..config import get_cli_setting
 from ..Utils.optional_deps import embeddings_rag_deps_installed
 
@@ -677,6 +681,7 @@ def _default_indexing_db() -> Optional[Any]:
         return None
 
 
+@projection_lifetime.async_operation
 async def index_entries(
     service: Any,
     indexing_db: Optional[Any],
@@ -818,6 +823,7 @@ async def _clear_service_search_cache(service: Any) -> None:
         clear()
 
 
+@projection_lifetime.async_operation
 async def remove_entries(
     service: Any,
     indexing_db: Optional[Any],
@@ -888,6 +894,12 @@ async def remove_entries(
 # =============================================================================
 
 
+@dataclass(frozen=True)
+class _AcceptedIndexWork:
+    entry: Any
+    token: object
+
+
 class IngestionIndexer:
     """Background indexing worker: a daemon thread draining a queue of IndexEntry.
 
@@ -949,35 +961,46 @@ class IngestionIndexer:
         """
         if entry is None:
             return False
+        token = None
+        queued = False
         try:
             with self._thread_lock:
                 if self._stopped:
                     return False
+                token = projection_lifetime.reserve()
                 self._ensure_thread_locked()
                 with self._state_lock:
                     self._stats["submitted"] += 1
                     self._pending += 1
-                self._queue.put(entry)
+                self._queue.put(_AcceptedIndexWork(entry, token))
+                queued = True
             return True
         except Exception as e:
             logger.error(
                 f"Failed to enqueue {getattr(entry, 'item_type', '?')} for indexing: {e}"
             )
             return False
+        finally:
+            if token is not None and not queued:
+                projection_lifetime.release(token)
 
     def submit_removal(self, removal: Optional[IndexRemoval]) -> bool:
         """Enqueue a derived-index removal. Never blocks or raises."""
         if removal is None:
             return False
+        token = None
+        queued = False
         try:
             with self._thread_lock:
                 if self._stopped:
                     return False
+                token = projection_lifetime.reserve()
                 self._ensure_thread_locked()
                 with self._state_lock:
                     self._stats["submitted"] += 1
                     self._pending += 1
-                self._queue.put(removal)
+                self._queue.put(_AcceptedIndexWork(removal, token))
+                queued = True
             return True
         except Exception as e:
             logger.error(
@@ -985,6 +1008,9 @@ class IngestionIndexer:
                 f"for index removal: {e}"
             )
             return False
+        finally:
+            if token is not None and not queued:
+                projection_lifetime.release(token)
 
     def wait_until_idle(self, timeout: float = 30.0) -> bool:
         """Block until all submitted entries have been processed (tests/backpressure).
@@ -1099,8 +1125,11 @@ class IngestionIndexer:
                         break
                     batch.append(nxt)
 
+                accepted = batch
+                batch = [work.entry for work in accepted]
                 try:
-                    loop.run_until_complete(self._process_batch(batch))
+                    with projection_lifetime.accepted(accepted[0].token):
+                        loop.run_until_complete(self._process_batch(batch))
                 except Exception as e:
                     # Last-resort guard: even loop/setup crashes must not kill the worker.
                     self._record_batch_failure(batch, f"indexing batch crashed: {e}")
@@ -1108,8 +1137,17 @@ class IngestionIndexer:
                         f"RAG ingestion indexing batch crashed: {e}"
                     )
                 finally:
-                    with self._state_lock:
-                        self._pending -= len(batch)
+                    try:
+                        # Retire only this worker's exact installed SQLite cache.
+                        from ..DB.RAG_Indexing_DB import RAGIndexingDB
+
+                        if type(self._indexing_db) is RAGIndexingDB:
+                            RAGIndexingDB.close(self._indexing_db)
+                    finally:
+                        with self._state_lock:
+                            self._pending -= len(batch)
+                        for work in accepted:
+                            projection_lifetime.release(work.token)
 
                 if stop_after_batch:
                     return
@@ -1542,6 +1580,7 @@ def _batched(
         yield batch
 
 
+@projection_lifetime.async_operation
 async def backfill_semantic_index(
     *,
     media_db: Optional[Any] = None,

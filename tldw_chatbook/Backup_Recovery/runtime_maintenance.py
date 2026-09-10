@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from .bootstrap import RecoveryRequired
 from .rag_definition_participant import participant as definition_participant
 from .rag_definition_participant import retained_issues
+from .rag_projection_lifetime import participant as projection_lifetime
 
 
 @dataclass(frozen=True)
@@ -355,6 +356,19 @@ class RuntimeMaintenance:
             ],
         ):
             await _settle_stage(hooks, self.closed, deadline)
+        # Definitions/queued Settings and upstream producers have completed.
+        # Stop the exact installed Chroma borrowers before storage admission seals.
+        await _settle_stage(
+            [
+                _bind(
+                    projection_lifetime,
+                    "Backup_Recovery.rag_projection_lifetime",
+                    "ChromaLifetime",
+                )
+            ],
+            self.closed,
+            deadline,
+        )
         if tuple(app.screen_stack) != self.screens:
             raise RecoveryRequired("runtime_screens_changed")
         if self._owner_snapshot() != self._owners:

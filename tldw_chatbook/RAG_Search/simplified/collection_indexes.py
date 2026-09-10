@@ -10,6 +10,8 @@ from typing import Any
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery.rag_projection_lifetime import participant
+
 from .config import RAGConfig, validate_chroma_persist_directory
 from .collection_fingerprint import fingerprinted_collection_name, collection_provenance
 
@@ -24,16 +26,10 @@ def _close_client(client: Any) -> None:
     """
     if client is None:
         return
-    try:
-        close = getattr(client, "close", None)
-        if not callable(close):
-            logger.warning("chroma_retirement_unqualified: public close unavailable")
-            return
-        close()
-    except Exception:  # noqa: BLE001 - cleanup must preserve the operation's result/error.
-        logger.warning("chroma_retirement_unqualified: client close failed")
+    participant.close_client(client)
 
 
+@participant.sync_operation
 def _client(persist_directory) -> Any:
     import chromadb
     from chromadb.config import Settings
@@ -55,10 +51,13 @@ def _client(persist_directory) -> Any:
     # with the SharedSystemClient cache above even for the same physical
     # directory.
     validated = validate_chroma_persist_directory(persist_directory)
-    return chromadb.PersistentClient(
-        path=str(validated),
-        settings=Settings(anonymized_telemetry=False, allow_reset=True),
-    )
+    with participant.opening(validated) as borrower:
+        client = chromadb.PersistentClient(
+            path=str(validated),
+            settings=Settings(anonymized_telemetry=False, allow_reset=True),
+        )
+        borrower.attach(client)
+        return client
 
 
 def _is_persistent_chroma(config: RAGConfig) -> bool:
@@ -76,6 +75,7 @@ def _is_persistent_chroma(config: RAGConfig) -> bool:
     )
 
 
+@participant.sync_operation
 def adopt_legacy_collection(
     persist_directory, legacy_name: str, target_name: str, provenance: dict
 ) -> bool:
@@ -178,6 +178,7 @@ def maybe_adopt_legacy_collection(config: RAGConfig) -> None:
     )
 
 
+@participant.sync_operation
 def list_indexes(persist_directory) -> list[dict]:
     """List on-disk collections with provenance + document count."""
     out: list[dict] = []
@@ -199,6 +200,7 @@ def list_indexes(persist_directory) -> list[dict]:
     return out
 
 
+@participant.sync_operation
 def delete_index(persist_directory, name: str) -> bool:
     """Delete the collection ``name``. False when absent or on error."""
     client = None
