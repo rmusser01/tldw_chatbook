@@ -182,15 +182,18 @@ from ...Widgets.Persona_Widgets.personas_policy_rules_editor import (
     PersonaPolicyRulesChanged,
 )
 from ...Widgets.Persona_Widgets.personas_persona_visual_pack_widget import (
+    BuddyCharacterCreateRequested,
     PersonaVisualAddCustomRequested,
     PersonaVisualCancelRequested,
     PersonaVisualClearRequested,
     PersonaVisualCustomStateDialog,
+    PersonaVisualExportRequested,
     PersonaVisualImportRequested,
     PersonaVisualPreviewRequested,
     PersonaVisualReplaceRequested,
     PersonaVisualSaveRequested,
     PersonasPersonaVisualPackWidget,
+    PetdexImportRequested,
 )
 from ...Widgets.Persona_Widgets.personas_character_card_widget import (
     PersonasCharacterCardWidget,
@@ -565,8 +568,9 @@ def _character_import_filters() -> Any:
     return Filters(
         (
             "Character Cards",
-            lambda p: p.suffix.lower() in (".json", ".png", ".webp"),
+            lambda p: p.suffix.lower() in (".json", ".png", ".webp", ".tldw-persona-vpack"),
         ),
+        ("Buddy Packs", lambda p: p.suffix.lower() == ".tldw-persona-vpack"),
         ("JSON Files", lambda p: p.suffix.lower() == ".json"),
         (
             "Card Images (PNG/WebP)",
@@ -8821,9 +8825,13 @@ class PersonasScreen(BaseAppScreen):
             )
             for asset in graph.assets
         }
+        exported = repository.get_active_persona_pack_for_export(snapshot.persona_id)
+        if exported is None or exported.graph.identity != graph.identity:
+            raise ValueError("persona_visual_source_changed")
         return persona_visual_draft_from_graph(
             graph,
             source_storage_keys=source_keys,
+            source_context=dict(exported.source_context),
         )
 
     async def _configure_persona_visual(
@@ -9273,7 +9281,10 @@ class PersonasScreen(BaseAppScreen):
             if cancellation is not None:
                 raise cancellation
 
-    async def _import_persona_visual_from_path(self, path: str) -> bool:
+    async def _import_persona_visual_from_path(
+        self, path: str, *, source_guard: Callable[[], bool] | None = None,
+        destination_guard: Callable[[], bool] | None = None,
+    ) -> bool:
         state = self._persona_visual_authoring
         if state is None or Path(path).suffix.lower() != ".tldw-persona-vpack":
             if state is not None:
@@ -9351,6 +9362,22 @@ class PersonasScreen(BaseAppScreen):
                 or event.is_set()
                 or not self._persona_visual_snapshot_is_current(state.snapshot)
             ):
+                await cleanup_review(review)
+                return False
+            if source_guard is not None:
+                checked = await _drain_to_thread(
+                    source_guard, task_name="personas-persona-visual-source-guard"
+                )
+                cancellation = cancellation or checked.cancellation
+                if (
+                    checked.error is not None or checked.value is not True
+                    or cancellation is not None or event.is_set()
+                    or not self._persona_visual_snapshot_is_current(state.snapshot)
+                    or (destination_guard is not None and not destination_guard())
+                ):
+                    await cleanup_review(review)
+                    return False
+            if destination_guard is not None and not destination_guard():
                 await cleanup_review(review)
                 return False
             old_workspace = state.workspace
@@ -9738,6 +9765,51 @@ class PersonasScreen(BaseAppScreen):
             await self._stage_persona_visual_custom(state_key, label, kind)
         finally:
             self._io_dialog_active = False
+
+    @on(BuddyCharacterCreateRequested)
+    def _handle_buddy_character_create(
+        self, message: BuddyCharacterCreateRequested
+    ) -> None:
+        message.stop()
+        if self._io_dialog_active:
+            return
+        from ..Persona_Modules.buddy_conversion import review_buddy_character
+
+        self._io_dialog_active = True
+        self.run_worker(
+            review_buddy_character(self, archive=message.archive),
+            group="personas-buddy-character",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    @on(PetdexImportRequested)
+    def _handle_petdex_import_requested(self, message: PetdexImportRequested) -> None:
+        message.stop()
+        if self._io_dialog_active:
+            return
+        from ...Petdex.review import review_petdex_import
+
+        self._io_dialog_active = True
+        self.run_worker(
+            review_petdex_import(self), group="personas-petdex",
+            exclusive=True, exit_on_error=False,
+        )
+
+    @on(PersonaVisualExportRequested)
+    def _handle_persona_visual_export_requested(
+        self, message: PersonaVisualExportRequested
+    ) -> None:
+        message.stop()
+        if self._io_dialog_active:
+            return
+        from ...Petdex.review import export_native_buddy
+
+        self._io_dialog_active = True
+        self.run_worker(
+            export_native_buddy(self), group="personas-native-export",
+            exclusive=True, exit_on_error=False,
+        )
 
     @on(PersonaVisualImportRequested)
     def _handle_persona_visual_import_requested(
@@ -13114,13 +13186,15 @@ class PersonasScreen(BaseAppScreen):
         # Same dialog family as the legacy CCP import route
         # (ccp_character_handler.handle_import).
         from ...Widgets.enhanced_file_picker import EnhancedFileOpen
+        from ..Persona_Modules.buddy_conversion import capture_buddy_import_guard
 
         durable_import_started = False
         try:
             if not self._local_character_actions_allowed():
                 return
+            buddy_import_guard = capture_buddy_import_guard(self)
             picker = EnhancedFileOpen(
-                title="Import Character Card",
+                title="Import Character Card or Buddy",
                 filters=_character_import_filters(),
                 context="character_import",
             )
@@ -13137,6 +13211,20 @@ class PersonasScreen(BaseAppScreen):
                 if self._active_character_import_worker() is not None:
                     self._notify(
                         "A character import is already in progress.", "information"
+                    )
+                    return
+                if Path(file_path).suffix.lower() == ".tldw-persona-vpack":
+                    from ..Persona_Modules.buddy_conversion import (
+                        review_buddy_character,
+                    )
+
+                    if not buddy_import_guard():
+                        self._notify(
+                            "Destination changed. Start a fresh Buddy import.", "warning"
+                        )
+                        return
+                    await review_buddy_character(
+                        self, archive=True, archive_path=Path(file_path)
                     )
                     return
                 durable_import_started = (

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import zipfile
 from collections.abc import Callable, Mapping
@@ -12,11 +13,14 @@ from types import MappingProxyType
 from typing import Any
 
 from . import importer
+from .artwork import artwork_from_pack
 from .assets import (
     PersonaVisualAssetMetadata,
     _decode_selected_frame,
+    load_persona_visual_asset,
     validate_persona_visual_asset_set,
 )
+from .repository import PersonaVisualRepository
 from .validation import validate_persona_visual_manifest
 
 
@@ -173,6 +177,97 @@ def read_buddy_archive(path: os.PathLike[str] | str) -> BuddySnapshot:
                     {**pack["source_context"], "provenance": "untrusted-import"}.items()
                 )
             ),
+        )
+        if not snapshot.is_current():
+            raise importer.PersonaVisualImportError("persona_visual_import_stale")
+        return snapshot
+    except importer.PersonaVisualImportError:
+        raise
+    except Exception:  # noqa: BLE001 - public boundary must fail closed without paths
+        raise importer.PersonaVisualImportError(
+            "persona_visual_import_invalid"
+        ) from None
+
+
+def read_saved_buddy(
+    repository: PersonaVisualRepository,
+    persona_id: str,
+    profile_root: os.PathLike[str] | str,
+) -> BuddySnapshot:
+    """Pin an active saved graph and verified bytes; retain no runtime binding.
+
+    The guard re-reads the graph and asset bytes, catching binding/version changes,
+    metadata edits, file corruption and deletion before character publication.
+    """
+    try:
+        exported = repository.get_active_persona_pack_for_export(persona_id)
+        if exported is None:
+            raise ValueError
+        assets = []
+        for item in exported.assets:
+            record = item.record
+            metadata = PersonaVisualAssetMetadata(
+                **{
+                    key: getattr(record, key)
+                    for key in (
+                        "asset_key",
+                        "role",
+                        "mime_type",
+                        "byte_count",
+                        "sha256",
+                        "width",
+                        "height",
+                        "frame_count",
+                        "duration_ms",
+                    )
+                }
+            )
+            loaded = load_persona_visual_asset(
+                profile_root, storage_key=item.storage_key, metadata=metadata
+            )
+            assets.append(BuddyAssetSnapshot(loaded.metadata, loaded.data))
+        frozen_assets = tuple(assets)
+        manifest_json = exported.manifest_bytes.decode("utf-8")
+        _validate_manifest(manifest_json, frozen_assets)
+        artwork = artwork_from_pack({"source_context": dict(exported.source_context)})
+        # A portable content digest excludes local identity, paths and timestamps.
+        digest = hashlib.sha256(
+            importer._canonical_text(
+                {
+                    "title": exported.graph.pack.title,
+                    "manifest": json.loads(manifest_json),
+                    "assets": sorted(
+                        (asset.metadata.asset_key, asset.metadata.sha256)
+                        for asset in frozen_assets
+                    ),
+                    "artwork": artwork,
+                }
+            ).encode()
+        ).hexdigest()
+
+        def current() -> bool:
+            if repository.get_active_persona_pack_for_export(persona_id) != exported:
+                return False
+            for item, asset in zip(exported.assets, frozen_assets, strict=True):
+                loaded = load_persona_visual_asset(
+                    profile_root,
+                    storage_key=item.storage_key,
+                    metadata=asset.metadata,
+                )
+                if loaded.data != asset.data:
+                    return False
+            return True
+
+        snapshot = BuddySnapshot(
+            exported.graph.pack.title,
+            manifest_json,
+            frozen_assets,
+            artwork,
+            digest,
+            current,
+            source_context=exported.source_context,
+            description=exported.graph.pack.description,
+            source_kind=exported.graph.pack.source_kind,
         )
         if not snapshot.is_current():
             raise importer.PersonaVisualImportError("persona_visual_import_stale")

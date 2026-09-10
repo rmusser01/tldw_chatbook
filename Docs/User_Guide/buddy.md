@@ -166,6 +166,71 @@ to preview it; use **Replace…**, **Clear**, **Add Custom State**, or
 runtime pack. See [Characters and Personas](roleplay-chat-dictionaries/characters-and-personas.md)
 for the surrounding editor and import/export workflow.
 
+## Import a Petdex companion
+
+In a saved active local Persona's **Persona Visual** editor, save or cancel any
+pending edits and choose **Petdex…**. Paste a public `petdex.dev/pets/...` URL or
+exact slug and choose **Fetch URL / slug**. For a downloaded ZIP or `pet.json`, use
+**Choose package…**; a folder path can be entered with **Read local path**.
+
+Review the creator, source, and artwork terms. Missing terms remain **unspecified**.
+The import retains source statements and package LICENSE, NOTICE, and COPYING
+files, including nested notices. Source descriptions and files are data; importing
+never runs a downloaded installer or requires the Petdex CLI.
+
+Classic nine-row sheets have a known state map. Eleven-row sheets need explicit
+state declarations or an edited state list: each state specifies its name,
+zero-based row, frame count, total loop duration in milliseconds, and loop flag.
+Choose **Apply state list** after editing. Conflicting version declarations and
+ambiguous sprite files are rejected; they cannot be repaired by guessing rows.
+
+Review the idle, thinking, error, listening, and speaking mappings, then select
+**Prepare preview**. Choose each source state to inspect it and read the listed
+fallbacks. Classic sheets use idle for speaking unless you select another state.
+Global motion preferences apply; if the animated preview encoder is unavailable,
+a static preview is shown with an explanation, while the imported native timeline
+retains its animation.
+
+After reviewing terms and mappings, choose **Use draft**, then **Save Pack** in the
+Persona editor to publish it. Cancelling or merely previewing leaves the saved
+Buddy unchanged. If the source files or selected Persona change during review,
+start a fresh review. A saved import uses local copies and works offline.
+
+Use **Export saved pack…** to download a `.tldw-persona-vpack` with the original
+images and carried notices. Reimport it using **Import Pack…**. When an Actor Pack
+export cannot retain native Buddy notices, it directs you to this native export.
+To chat with the imported companion, use **Create character…** after saving.
+
+## Create a character from a Buddy
+
+In a saved local Persona's **Persona Visual** editor, choose **Create character…**.
+Save or cancel pending pack edits first. You can also choose **From Buddy archive…**,
+or import a `.tldw-persona-vpack` from **Characters → Import** without creating a
+Persona first.
+
+The review shows the original creator and artwork terms when the source includes
+them. Missing metadata is shown as **unspecified**. Name the new character, optionally
+add personality and a greeting, and review each expression mapping. Leave a key
+blank to exclude it; at least one expression must map to `neutral`. Conflicting
+keys need distinct names or an explicit exclusion.
+
+Choose a portrait state and, optionally, a frame number. The portrait is independent
+of the character's expressions. **Preserve animation in created expressions** keeps
+supported source timelines; turn it off to create static images. Select **Prepare
+preview**, inspect the expressions in Dynamic or Static mode, and review any
+conversion warnings before choosing **Create character**. Global animation and
+reduced-motion preferences still apply to previews and Console playback.
+
+Creation makes an independent editable local character. Updating or deleting the
+source Buddy does not change that copy. Creation leaves the active conversation
+and floating Buddy alone. Choose **Open in Console** when you want to start chatting
+with the new character, or **Done** to return to the workbench.
+
+Chatbook Actor Pack export preserves the carried artwork terms and conversion
+history. The inspected server importer does not support this metadata carrier;
+do not rely on a server image import to preserve that history. This workflow accepts
+native Buddy archives; save a Petdex import as a Buddy before using this conversion.
+
 ## Troubleshooting
 
 | Symptom | Next step |
@@ -181,7 +246,14 @@ for the surrounding editor and import/export workflow.
 
 ## Verification scope and related guides
 
-This guide was checked against Chatbook `dev` **307df6c79** on **2026-09-07**
+The Buddy-to-character workflow above was verified with mounted UI and real local
+publication tests on `codex/buddy-import-design`; see the
+[conversion verification record](../superpowers/reviews/2026-09-07-buddy-character-conversion-verification.md).
+
+Petdex URL acquisition, reviewed drafts, native export/reimport and offline character
+conversion were verified separately; see the [Petdex verification record](../superpowers/reviews/2026-09-07-petdex-import-verification.md).
+
+The earlier setup and voice guidance was checked against Chatbook `dev` **307df6c79** on **2026-09-07**
 using current controls, existing mounted UI coverage, and recorded September 5
 Migu UAT. It is not a claim that every instruction was re-executed in a fresh
 physical session for this documentation update. Native dragging and local Kokoro
@@ -194,3 +266,10 @@ its own configured voice test.
 - [Agent runs and tools](console/agent-runs-and-tools.md)
 - [Recorded live-verification lessons](../../backlog/docs/lessons-live-verification.md)
 - [Buddy implementation and verification record](<../../backlog/tasks/task-19055 - Add-opt-in-app-wide-floating-Persona-Buddy.md>)
+
+### Current import entry points
+
+Petdex review and saved Buddy-to-character conversion currently open through the
+Personas workbench. Independent Buddy management accepts native Buddy archives; it
+does not yet expose Petdex review or Create character. The ordinary Characters
+Import path also accepts a native Buddy archive for independent character creation.

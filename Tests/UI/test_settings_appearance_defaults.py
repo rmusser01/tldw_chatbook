@@ -164,6 +164,7 @@ def test_build_appearance_save_sections_preserves_unrelated_config():
             "font_size": 14,
         },
         "appearance": {
+            "character_expression_mode": "dynamic",
             "accent_color": "#00ffaa",
             "density": "comfortable",
             "animations_enabled": False,
@@ -438,3 +439,22 @@ def test_build_appearance_save_sections_deep_merges_shared_and_destinations():
         "prompts_reader": {"items_open": False, "items_width": 60},
         "skills_reader": {"items_open": True, "items_width": 68},
     }
+
+
+def test_character_expression_mode_roundtrip_and_invalid_default():
+    values = load_appearance_defaults(
+        {"appearance": {"character_expression_mode": "static"}}
+    )
+    assert values.character_expression_mode == "static"
+    assert (
+        load_appearance_defaults(build_appearance_save_sections({}, values)) == values
+    )
+    assert (
+        load_appearance_defaults(
+            {"appearance": {"character_expression_mode": "oops"}}
+        ).character_expression_mode
+        == "dynamic"
+    )
+    assert not validate_appearance_defaults(
+        SettingsAppearanceDefaults(character_expression_mode="oops")
+    ).valid
