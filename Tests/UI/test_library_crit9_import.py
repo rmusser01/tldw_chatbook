@@ -20,6 +20,8 @@ any pool work.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from textual.widgets import Button, Input
 
@@ -398,4 +400,75 @@ async def test_a_group_of_stt_failures_offers_no_bare_retry_all():
         assert not host.query(f"#library-ingest-group-retry-{leader}"), (
             "the grouped row offers a bare Retry all for failures whose own "
             "rows deliberately withhold Retry"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_group_of_research_owned_stt_failures_still_offers_retry_all():
+    """(re-review finding A) The mirror image of the gate above.
+
+    A Research-Workspace-owned job never gets the GGUF picker: its row shows
+    a plain "Retry Research source" whatever its ``error_detail`` says. So a
+    run of research-owned STT failures must still offer "Retry all" -- the
+    group has to match the row's gate for that ownership too, not just for
+    the category.
+    """
+    jobs = tuple(
+        replace(_stt_failed_job(n), research_source_operation_id="op-1")
+        for n in range(3)
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    rows = state.queue_rows
+    assert len(group_ingest_queue_rows(rows)) == 1, [row.line for row in rows]
+    assert all(row.research_owned and row.can_retry for row in rows)
+
+    host = _QueuePanelHost(state)
+    async with host.run_test(size=LIBRARY_TEST_SIZE):
+        leader = rows[0].job_id
+        assert host.query_one(f"#library-ingest-group-retry-{leader}", Button), (
+            "the group withheld Retry all from rows that each offer a plain "
+            "retry of their own"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_toggle_never_steals_focus_back_from_the_user(tmp_path):
+    """(re-review finding B) The chained fallback honours the stand-down.
+
+    ``preserve_same_id_focus_after_recompose`` refuses to restore the
+    captured id when the user has already moved focus to a different,
+    still-attached widget -- but it then calls whatever was chained behind
+    it unconditionally. The chained fallback therefore has to make the same
+    decision itself, or a toggle re-steals focus out from under a user who
+    Tabbed away in the window between the press and the repaint.
+    """
+    db = MediaDatabase(tmp_path / "crit9-import.db", client_id="crit9-steal")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        (job,) = await _seed_failed_jobs(harness, pilot, [tmp_path / "gone.md"])
+        await _open_library_ingest_canvas(screen, pilot)
+
+        button_id = f"library-ingest-details-{job.job_id}"
+        await _wait_for_selector(screen, pilot, f"#{button_id}")
+
+        # Run the handler to completion -- focus is now parked and the
+        # restore is queued -- then move focus the way a user would before
+        # the repaint has landed.
+        screen._on_ingest_job_details(
+            Button.Pressed(screen.query_one(f"#{button_id}", Button))
+        )
+        keywords = screen.query_one("#library-ingest-keywords", Input)
+        screen.set_focus(keywords)
+        assert screen.focused is keywords
+
+        await _wait_for_selector(
+            screen, pilot, f"#library-ingest-detail-{job.job_id}-0"
+        )
+        await pilot.pause()
+        assert getattr(screen.focused, "id", None) == "library-ingest-keywords", (
+            "the toggle stole focus back from the field the user moved to: "
+            f"{screen.focused!r}"
         )

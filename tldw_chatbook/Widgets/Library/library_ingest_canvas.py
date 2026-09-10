@@ -620,8 +620,7 @@ class LibraryIngestQueuePanel(PostRecomposeCallback, Vertical):
                 # per-file (a GGUF picker addresses one job), so they stay
                 # behind "Show the N files" rather than being lifted here.
                 if group.can_retry and not any(
-                    _stt_recovery_actions(member.error_detail)
-                    for member in group.members
+                    _stt_recovery_actions(member) for member in group.members
                 ):
                     yield Button(
                         "Retry all",
@@ -752,9 +751,7 @@ class LibraryIngestQueuePanel(PostRecomposeCallback, Vertical):
             row_classes += " library-ingest-row-failed"
         elif row.state == IngestJobState.SKIPPED:
             row_classes += " library-ingest-row-skipped"
-        stt_actions = (
-            () if row.research_owned else _stt_recovery_actions(row.error_detail)
-        )
+        stt_actions = _stt_recovery_actions(row)
         has_actions = (
             row.can_open
             or row.can_open_on_server
@@ -924,8 +921,22 @@ _STT_RECOVERY_ACTIONS = frozenset(
 )
 
 
-def _stt_recovery_actions(error_detail: dict[str, Any] | None) -> frozenset[str]:
-    """Return only the bounded STT recovery actions implemented here."""
+def _stt_recovery_actions(row: IngestQueueRow) -> frozenset[str]:
+    """Return the bounded STT recovery actions this row offers.
+
+    Takes the ROW, not its ``error_detail``, so the two conditions that
+    withhold a plain Retry live together (re-review finding A). They were
+    split across the two call sites -- the row applied the ``research_owned``
+    exemption, the grouped row did not -- and a run of research-owned STT
+    failures hid "Retry all" while every one of its own member rows offered
+    "Retry Research source". One owner, one rule, both callers.
+
+    A Research-Workspace-owned job is exempt: its recovery is the durable
+    source's own re-run, not a model this screen can pick for it.
+    """
+    if row.research_owned:
+        return frozenset()
+    error_detail = row.error_detail
     if not error_detail or error_detail.get("category") != "stt_failure":
         return frozenset()
     actions = error_detail.get("actions")
