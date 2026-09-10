@@ -1312,6 +1312,7 @@ def _with_storage_admission(function):
             return function(owner_id, database, **kwargs)
         from tldw_chatbook.Backup_Recovery.storage_admission import (
             _acquire_capture_storage,
+            _CaptureLease,
         )
 
         try:
@@ -1325,6 +1326,7 @@ def _with_storage_admission(function):
                 outcome.admission_refused = True
             raise
         factory = kwargs.get("factory", sqlite3.Connection)
+        capture_lease = type(lease) is _CaptureLease
         if lease is not None and factory is not sqlite3.Connection:
             # Custom __new__/__init__ may retain a native handle then raise before
             # the seam receives it. Capture qualifies only the native constructor;
@@ -1352,6 +1354,15 @@ def _with_storage_admission(function):
             class AdmittedConnection(factory):
                 _admission_close_attempted = False
 
+                if capture_lease:
+
+                    def __init__(self, *args, **options):
+                        lease.resource_closed = False
+                        super().__init__(*args, **options)
+                        # Bind the actual native handle before connector-level
+                        # post-open validation can reject it.
+                        lease.attach(self)
+
                 def __new__(cls, *args, **options):
                     nonlocal allocation_started
                     # A custom __new__ can allocate/retain self before raising.
@@ -1361,6 +1372,8 @@ def _with_storage_admission(function):
                     return factory.__new__(cls, *args, **options)
 
                 def close(self):
+                    if capture_lease and lease.resource_close_failed:
+                        raise RecoveryRequired("capture_resources_not_retired")
                     self._admission_close_attempted = True
                     try:
                         super().close()
@@ -1370,6 +1383,8 @@ def _with_storage_admission(function):
                         if hasattr(lease, "resource_close_failed"):
                             lease.resource_close_failed = True
                         raise
+                    if capture_lease:
+                        lease.native_closed()
                     if not constructing:
                         lease.close()
                         from tldw_chatbook.Backup_Recovery import (
@@ -1415,7 +1430,9 @@ def _with_storage_admission(function):
             return connection
         except BaseException:
             constructing = False
-            if allocation_started and hasattr(lease, "resource_close_failed"):
+            if capture_lease and lease.resource_closed:
+                lease.close()
+            elif allocation_started and hasattr(lease, "resource_close_failed"):
                 # No constructor-time close proves final retirement: a factory
                 # may subsequently reinitialize self, retain it and then raise.
                 # Ambiguous default-init errors also conservatively need restart.
@@ -1488,8 +1505,24 @@ def _connect_registered_sqlite(
 
     connection_target = raw
     use_uri = False
+    capture_path = None
     if target_kind is not SQLiteTargetKind.MEMORY:
         selected = lexical_path(raw)
+        if read_only and policy.recovery_capture_allowed:
+            from tldw_chatbook.Backup_Recovery.storage_admission import (
+                _capture_sqlite_target,
+                _verify_capture_sqlite_target,
+            )
+
+            capture_target = _capture_sqlite_target(owner_id, selected)
+            if capture_target is not None:
+                if expected_identity is not None and not private_paths._same_identity(
+                    selected.lstat(), expected_identity
+                ):
+                    raise ValueError("capture_sqlite_source_changed")
+                selected = capture_target
+                expected_identity = None
+            capture_path = selected
         directory_result = verify_trusted_directory(
             selected.parent,
             allow_shared_sticky=False,
@@ -1548,7 +1581,18 @@ def _connect_registered_sqlite(
         if directory_result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
             _warn_unverified_platform(owner_id)
 
-    return sqlite3.connect(connection_target, uri=use_uri, **kwargs)
+    if capture_path is not None:
+        _verify_capture_sqlite_target(capture_path)
+    connection = sqlite3.connect(connection_target, uri=use_uri, **kwargs)
+    verified = False
+    try:
+        if capture_path is not None:
+            _verify_capture_sqlite_target(capture_path)
+        verified = True
+        return connection
+    finally:
+        if not verified:
+            _close_owned_connections((("capture source", connection),))
 
 
 def connect_private_sqlite(
@@ -3275,12 +3319,17 @@ def copy_private_sqlite(
         owner_id,
         required_kinds=_PRIVATE_AND_READ_ONLY,
     )
+    from tldw_chatbook.Backup_Recovery.storage_admission import _capture_sqlite_source
+
     destination_path = _private_destination(target_path)
-    with _pin_sqlite_source(
-        owner_id,
-        source_path,
-        allow_memory=False,
-    ) as source_pin:
+    with (
+        _capture_sqlite_source(owner_id, source_path, progress_guard) as copy_source,
+        _pin_sqlite_source(
+            owner_id,
+            copy_source,
+            allow_memory=False,
+        ) as source_pin,
+    ):
         assert source_pin is not None
         _reject_unsafe_or_aliased_destination(source_pin, destination_path)
         _reverify_source(source_pin)

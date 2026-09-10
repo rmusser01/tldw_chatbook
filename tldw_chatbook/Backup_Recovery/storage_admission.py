@@ -787,30 +787,55 @@ class _CaptureLease:
     def __init__(self, scope):
         self.scope = scope
         self.connection = None
+        self.resource_close_failed = False
+        self.resource_closed = False
         scope.resources.append(self)
 
     def attach(self, connection):
         self.connection = connection
+        self.resource_closed = False
+
+    def native_closed(self):
+        self.connection = None
+        self.resource_closed = True
 
     def close(self):
+        if self.resource_close_failed:
+            raise bootstrap.RecoveryRequired("capture_resources_not_retired")
         if self in self.scope.resources:
             self.scope.resources.remove(self)
 
     def retire(self):
+        if self.resource_close_failed:
+            raise bootstrap.RecoveryRequired("capture_resources_not_retired")
         if self.connection is not None:
             # Retire the native handle before releasing its capture authority.
-            sqlite3.Connection.close(self.connection)
+            closed = False
+            try:
+                sqlite3.Connection.close(self.connection)
+                closed = True
+            finally:
+                if not closed:
+                    self.resource_close_failed = True
+            self.native_closed()
         self.close()
 
 
 class _CaptureScope:
-    def __init__(self, session, sources, staging):
+    def __init__(self, session, sources, staging, limits, byte_budget):
         self.session = session
         self.sources = sources
         self.staging = staging
         self.staging_identity = staging.stat()
         self.resources = []
         self.active = True
+        self.limits = limits
+        self.byte_budget = byte_budget
+        self.copied_bytes = 0
+        self.sqlite_snapshots = {}
+        self.sqlite_targets = {}
+        self.sqlite_directory = None
+        self.sqlite_directory_identity = None
 
     def check(self):
         self.session._check()
@@ -824,9 +849,271 @@ class _CaptureScope:
             raise bootstrap.RecoveryRequired("capture_staging_changed")
 
     def retire(self):
-        self.active = False
-        for resource in tuple(self.resources):
-            resource.retire()
+        try:
+            if self.active and self.sqlite_snapshots:
+                self.verify_sqlite_sources()
+        finally:
+            self.active = False
+            for resource in tuple(self.resources):
+                resource.retire()
+            if self.sqlite_directory is not None:
+                import shutil
+
+                info = self.sqlite_directory.lstat()
+                if (info.st_dev, info.st_ino) != self.sqlite_directory_identity:
+                    raise ValueError("capture_sqlite_staging_changed")
+                shutil.rmtree(self.sqlite_directory)
+                self.sqlite_directory = None
+
+    @staticmethod
+    def _sqlite_identity(info):
+        return (
+            info.st_dev,
+            info.st_ino,
+            info.st_mode,
+            info.st_nlink,
+            info.st_uid,
+            info.st_size,
+            info.st_mtime_ns,
+            info.st_ctime_ns,
+        )
+
+    def _sqlite_state(self, source):
+        self.check()
+        resources = _CaptureFileDescriptors(self)
+        try:
+            with resources.pinned_directory(source.parent) as parent:
+                parent_info = os.fstat(parent)
+                result = []
+                for suffix in ("", "-wal", "-shm", "-journal"):
+                    try:
+                        info = os.stat(
+                            source.name + suffix, dir_fd=parent, follow_symlinks=False
+                        )
+                    except FileNotFoundError:
+                        result.append(None)
+                        continue
+                    if (
+                        not stat.S_ISREG(info.st_mode)
+                        or info.st_nlink != 1
+                        or info.st_uid != os.geteuid()
+                    ):
+                        raise ValueError("capture_sqlite_source_changed")
+                    result.append(self._sqlite_identity(info))
+                if result[0] is None or (source, *result[0][:2]) not in self.sources:
+                    raise ValueError("capture_sqlite_source_changed")
+                if result[3] is not None and result[3][5]:
+                    raise ValueError("capture_sqlite_hot_journal")
+                return (self._sqlite_identity(parent_info), tuple(result))
+        finally:
+            resources.retire()
+
+    def verify_sqlite_sources(self):
+        for source, (before, target) in self.sqlite_snapshots.items():
+            if self._sqlite_state(source) != before:
+                raise ValueError("capture_sqlite_source_changed")
+            if target is not None:
+                self.verify_sqlite_target(target)
+
+    def verify_sqlite_target(self, target):
+        """Check materialized authority, excluding SQLite's private SHM work."""
+        self.check()
+        expected = self.sqlite_targets.get(target)
+        if expected is None:
+            return
+        root = self.sqlite_directory.lstat()
+        if (root.st_dev, root.st_ino) != self.sqlite_directory_identity:
+            raise ValueError("capture_sqlite_staging_changed")
+        resources = _CaptureFileDescriptors(self)
+        try:
+            with resources.pinned_directory(target.parent) as parent:
+                info = os.fstat(parent)
+                if (info.st_dev, info.st_ino) != expected[0]:
+                    raise ValueError("capture_sqlite_target_changed")
+                for suffix, identity in zip(("", "-wal"), expected[1], strict=True):
+                    try:
+                        info = os.stat(
+                            target.name + suffix, dir_fd=parent, follow_symlinks=False
+                        )
+                    except FileNotFoundError:
+                        info = None
+                    actual = None if info is None else self._sqlite_identity(info)
+                    if actual != identity:
+                        raise ValueError("capture_sqlite_target_changed")
+        finally:
+            resources.retire()
+
+    def sqlite_target(self, owner_id, source, progress_guard=None):
+        """Materialize only a native-qualified main/WAL set, never live SHM."""
+        from tldw_chatbook.DB.private_sqlite import SQLITE_OWNER_REGISTRY
+
+        from .space import require_capacity
+
+        self.check()
+        if not SQLITE_OWNER_REGISTRY[owner_id].recovery_capture_allowed:
+            raise bootstrap.RecoveryRequired("capture_owner_not_registered")
+        source = lexical_path(source)
+        if self.staging in source.parents:
+            self.verify_sqlite_target(source)
+            return None
+        if progress_guard is not None:
+            progress_guard()
+        before = self._sqlite_state(source)
+        if source in self.sqlite_snapshots:
+            original, target = self.sqlite_snapshots[source]
+            if original != before:
+                raise ValueError("capture_sqlite_source_changed")
+            if target is None:
+                raise ValueError("capture_sqlite_copy_incomplete")
+            self.verify_sqlite_target(target)
+            return target
+        required = sum(info[5] for info in before[1][:2] if info is not None)
+        if (
+            any(
+                info is not None and info[5] > self.limits.member_bytes
+                for info in before[1][:2]
+            )
+            or self.copied_bytes + required > self.byte_budget
+        ):
+            raise ValueError("capture_sqlite_limit")
+        require_capacity({self.staging: required * 2})
+        resources = _CaptureFileDescriptors(self)
+        try:
+            if self.sqlite_directory is None:
+                from uuid import uuid4
+
+                name = "sqlite-sources-" + uuid4().hex
+                with resources.pinned_directory(self.staging) as parent:
+                    info = os.fstat(parent)
+                    if (info.st_dev, info.st_ino) != (
+                        self.staging_identity.st_dev,
+                        self.staging_identity.st_ino,
+                    ):
+                        raise ValueError("capture_sqlite_staging_changed")
+                    os.mkdir(name, mode=0o700, dir_fd=parent)
+                    self.sqlite_directory = self.staging / name
+                    created = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                    self.sqlite_directory_identity = created.st_dev, created.st_ino
+            target_root = self.sqlite_directory / str(len(self.sqlite_snapshots))
+            with resources.pinned_directory(self.sqlite_directory) as parent:
+                info = os.fstat(parent)
+                if (info.st_dev, info.st_ino) != self.sqlite_directory_identity:
+                    raise ValueError("capture_sqlite_staging_changed")
+                os.mkdir(target_root.name, mode=0o700, dir_fd=parent)
+                created = os.stat(
+                    target_root.name, dir_fd=parent, follow_symlinks=False
+                )
+                target_identity = created.st_dev, created.st_ino
+            target = target_root / "source.sqlite3"
+            # Failed attempts remain unqualified until scope retirement.
+            self.sqlite_snapshots[source] = before, None
+            private_identities = [None, None]
+            wal_header = False
+            main_header = bytearray()
+            with resources.pinned_directory(source.parent) as parent:
+                if self._sqlite_identity(os.fstat(parent)) != before[0]:
+                    raise ValueError("capture_sqlite_source_changed")
+                for suffix, expected in zip(("", "-wal"), before[1][:2], strict=True):
+                    if expected is None and not (suffix == "-wal" and wal_header):
+                        continue
+                    if expected is not None:
+                        descriptor = os.open(
+                            source.name + suffix,
+                            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                            dir_fd=parent,
+                        )
+                        resources.fds.append(descriptor)
+                        if self._sqlite_identity(os.fstat(descriptor)) != expected:
+                            raise ValueError("capture_sqlite_source_changed")
+                    with resources.pinned_directory(target_root) as output_parent:
+                        info = os.fstat(output_parent)
+                        if (info.st_dev, info.st_ino) != target_identity:
+                            raise ValueError("capture_sqlite_staging_changed")
+                        output = os.open(
+                            target.name + suffix,
+                            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                            0o600,
+                            dir_fd=output_parent,
+                        )
+                        resources.fds.append(output)
+                    count = 0
+                    while expected is not None:
+                        if progress_guard is not None:
+                            progress_guard()
+                        self.check()
+                        chunk = os.read(
+                            descriptor, min(1024**2, expected[5] - count + 1)
+                        )
+                        if not chunk:
+                            break
+                        if not suffix and len(main_header) < 20:
+                            # WAL-header databases need an empty WAL even when
+                            # the original was cleanly checkpointed. Create and
+                            # bind it now; never adopt a later replacement.
+                            main_header.extend(chunk[: 20 - len(main_header)])
+                            wal_header = (
+                                main_header[:16] == b"SQLite format 3\x00"
+                                and main_header[18:20] == b"\x02\x02"
+                            )
+                        count += len(chunk)
+                        if count > expected[5]:
+                            raise ValueError("capture_sqlite_source_changed")
+                        view = memoryview(chunk)
+                        while view:
+                            written = os.write(output, view)
+                            if not written:
+                                raise OSError("capture_sqlite_write_failed")
+                            view = view[written:]
+                    if expected is not None and (
+                        count != expected[5]
+                        or self._sqlite_identity(os.fstat(descriptor)) != expected
+                    ):
+                        raise ValueError("capture_sqlite_source_changed")
+                    current_parent = target_root.lstat()
+                    current = (target_root / (target.name + suffix)).lstat()
+                    held = os.fstat(output)
+                    if (
+                        current_parent.st_dev,
+                        current_parent.st_ino,
+                    ) != target_identity or (current.st_dev, current.st_ino) != (
+                        held.st_dev,
+                        held.st_ino,
+                    ):
+                        raise ValueError("capture_sqlite_staging_changed")
+                    private_identities[bool(suffix)] = self._sqlite_identity(held)
+        finally:
+            try:
+                self.verify_sqlite_sources()
+            finally:
+                resources.retire()
+        self.copied_bytes += required
+        self.sqlite_targets[target] = target_identity, tuple(private_identities)
+        self.sqlite_snapshots[source] = before, target
+        return target
+
+
+def _capture_sqlite_target(owner_id, source):
+    scope = getattr(_local, "capture_scope", None)
+    return None if scope is None else scope.sqlite_target(owner_id, source)
+
+
+def _verify_capture_sqlite_target(target):
+    scope = getattr(_local, "capture_scope", None)
+    if scope is not None:
+        scope.verify_sqlite_target(target)
+
+
+@contextmanager
+def _capture_sqlite_source(owner_id, source, progress_guard):
+    scope = getattr(_local, "capture_scope", None)
+    if scope is None:
+        yield source
+        return
+    try:
+        target = scope.sqlite_target(owner_id, source, progress_guard)
+        yield source if target is None else target
+    finally:
+        scope.verify_sqlite_sources()
 
 
 class _DiscoveryScope:
@@ -1117,7 +1404,17 @@ class MaintenanceSession:
                 _local.discovery_scope = None
 
     @contextmanager
-    def capture_scope(self, sources: tuple[Path, ...], staging: Path):
+    def capture_scope(
+        self, sources: tuple[Path, ...], staging: Path, *, limits=None, byte_budget=None
+    ):
+        from .limits import ArchiveLimits
+
+        limits = ArchiveLimits() if limits is None else limits
+        if type(limits) is not ArchiveLimits:
+            raise TypeError("invalid_capture_limits")
+        byte_budget = limits.expanded_bytes if byte_budget is None else byte_budget
+        if type(byte_budget) is not int or not 0 < byte_budget <= limits.expanded_bytes:
+            raise ValueError("invalid_capture_budget")
         self._check()
         if getattr(_local, "capture_scope", None) is not None:
             raise bootstrap.RecoveryRequired("nested_capture_scope")
@@ -1178,7 +1475,7 @@ class MaintenanceSession:
             root = root.resolve(strict=True)
             if root == staging or root in staging.parents or staging in root.parents:
                 raise bootstrap.RecoveryRequired("capture_staging_overlaps_source")
-        scope = _CaptureScope(self, tuple(selected), staging)
+        scope = _CaptureScope(self, tuple(selected), staging, limits, byte_budget)
         self._scopes.append(scope)
         _local.capture_scope = scope
         try:

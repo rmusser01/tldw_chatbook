@@ -373,7 +373,7 @@ def _capture_under_maintenance(
         create_private_directory(stage / "payload")
         sources = tuple(dict.fromkeys(item.path for item in entries))
         staged, physical, aliases, versions = [], {}, {}, {}
-        with session.capture_scope(sources, stage):
+        with session.capture_scope(sources, stage, limits=limits, byte_budget=budget):
             for item in entries:
                 reader._check(cancel)
                 path = (

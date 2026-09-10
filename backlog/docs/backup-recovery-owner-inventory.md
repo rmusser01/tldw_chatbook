@@ -2896,6 +2896,9 @@ private staged copies. Model lease rows retain their existing cohort status.
 | tldw_chatbook/Backup_Recovery/credentials.py | _rewrite_database | os.replace | 1 | disposable | staged credential reconstruction |
 | tldw_chatbook/Backup_Recovery/credentials.py | _write | atomic_private_write_text | 1 | disposable | staged credential rewrite |
 | tldw_chatbook/Backup_Recovery/sqlite_validation.py | _reference | connect_private_sqlite | 1 | memory | installed schema reference |
+| tldw_chatbook/Backup_Recovery/storage_admission.py | _CaptureScope.sqlite_target | mkdir | 2 | disposable | private native capture SQLite copy |
+| tldw_chatbook/Backup_Recovery/storage_admission.py | _CaptureScope.sqlite_target | open | 2 | generic_boundary | native-domain-recovery |
+| tldw_chatbook/Backup_Recovery/storage_admission.py | _CaptureScope.sqlite_target | write | 1 | disposable | private native capture SQLite copy |
 | tldw_chatbook/Backup_Recovery/storage_admission.py | _PreviewScope.sqlite_target | create_private_file | 1 | disposable | private preview SQLite copy |
 | tldw_chatbook/Backup_Recovery/storage_admission.py | _PreviewScope.sqlite_target | open | 1 | generic_boundary | identity-bound live SQLite copy input |
 | tldw_chatbook/Backup_Recovery/storage_admission.py | _PreviewScope.sqlite_target | write | 1 | disposable | private preview SQLite copy |
