@@ -282,9 +282,12 @@ def _read_export_artifact_facts(output_path: str) -> tuple[int | None, int | Non
             manifest = json.loads(archive.read("manifest.json"))
         return len(manifest.get("content_items") or []), size_bytes
     except Exception:
+        # No path in the message: this file's path-privacy inventory keeps
+        # user paths out of the persistent log sink, and the receipt on
+        # screen already names the archive.
         logger.opt(exception=True).warning(
-            f"Library export wrote {output_path!r} but its manifest could not "
-            "be read back for the receipt."
+            "Library export wrote its archive, but the manifest could not be "
+            "read back for the receipt."
         )
         return None, None
 
