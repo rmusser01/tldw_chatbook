@@ -1,5 +1,5 @@
 ---
-id: TASK-32172
+id: TASK-32203
 title: Accept pasted Buddy pack paths and clarify import failures
 status: Done
 assignee:
@@ -52,3 +52,23 @@ PR #2551 Qodo follow-up: rebased on dev 04f6ae4eca. Reproduced duplicate install
 
 Verification after review fixes: 108 targeted tests passed; mounted Trenchcoat import/preview passed again for all four path forms. Ruff format, compilation and diff checks passed. The five Buddy-specific Python files have no Ruff findings; input_validation.py retains the same 8 unrelated pre-existing findings as the rebased base, with zero new findings. Independent read-only review found no remaining issues.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+This task previously held id TASK-32172, colliding with the older
+"Library-Notes-Database-Notes-offers-no-date-ordering-after-Sort-left-the-folder-tree"
+task (created 2026-09-09 09:10, on `origin/fix/library-notes-docs` and the
+other Library ▸ Notes critique-9 branches, PR #2558), which arrived first.
+This task was created 2026-09-09 17:02 (add commit 401e344f30 on
+`codex/buddy-import-trenchcoat`, merged to dev as PR #2551). Per the owner
+rule decided 2026-08-21 in TASK-19601 (**the older arrival by
+`created_date` keeps the id regardless of status; the younger task
+renumbers with a provenance note**), it renumbered to TASK-32203. The other
+TASK-32172 holder is the older arrival and keeps the id.
+
+The renumber landed on 32203 rather than the next free id above the swept
+remote maximum (32198): a concurrent session already held an uncommitted
+`task-32199` in the `test-health` worktree, and `task-32201`/`task-32202`
+were held in another, so 32199-32202 would have traded one collision for
+another. No inbound reference to TASK-32172 existed anywhere in the tree
+outside this file's own front matter, so nothing else moved.

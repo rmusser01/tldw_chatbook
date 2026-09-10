@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import time
+from typing import ClassVar
 
 import pytest
 from textual.app import App, ComposeResult
@@ -25,13 +26,21 @@ from tldw_chatbook.Notes.notes_sync_conflicts import (
 from tldw_chatbook.Widgets.Library.library_notes_add_from_files_canvas import (
     LibraryNotesAddFromFilesCanvas,
 )
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.app import TldwCli
 
 pytestmark = pytest.mark.asyncio
 
 
 class _Host(App[None]):
-    CSS_PATH = TldwCli.CSS_PATH
+    #: "Production CSS" now means two loads, not one. TASK-25812 moved the
+    #: Library rules -- including `.library-notes-sync-history-row`'s
+    #: `height: auto` -- out of the boot bundle into
+    #: `screen_agentic_library.tcss`, which the real app parses on first
+    #: visit via `LibraryScreen.CSS_PATH`. With the bundle alone the history
+    #: rows kept Vertical's default `height: 1fr`, overlapped each other
+    #: inside the scroller, and the body never gained a scroll extent.
+    CSS_PATH: ClassVar[list[str]] = [*TldwCli.CSS_PATH, *LibraryScreen.CSS_PATH]
 
     def __init__(self, snapshot) -> None:
         super().__init__()
