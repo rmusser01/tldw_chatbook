@@ -25,7 +25,8 @@ every policy row against the allowlist below, so the two cannot drift: WHICH
 workers may start is pinned here, WHEN and HOW MANY AT ONCE is pinned there.
 No allowlist row changed for that task -- the four staggered members kept
 their (name, group) identity and merely moved from ``on_mount`` to the
-post-``_ui_ready`` tier, which is still inside this census's settle window.
+post-``_ui_ready`` tier. They remain allowed, but may start after this
+census's settle window if preceding workers are still running.
 
 Raising/extending: when this fails, the message prints the unlisted
 starters. Name the feature that added each, decide whether it must really
@@ -121,9 +122,10 @@ ALLOWED_BOOT_THREADS: frozenset[tuple[str, str, str]] = frozenset(
 #: Anti-vacuity: a real boot MUST start these. If none are recorded the
 #: probe instrumented nothing (or never reached _ui_ready) and the census
 #: is measuring an empty list, which must fail rather than pass.
+# Staggered workers may still be queued behind recovery at the one-second
+# cutoff. Keep them allowed above, but use only immediate workers as sentinels.
 EXPECTED_BOOT_WORKERS: frozenset[tuple[str, str]] = frozenset(
     {
-        ("_backfill_chachanotes_messages_fts", "chachanotes-fts-backfill"),
         ("load", "console-prompt-history"),
         ("run", "scheduling"),
     }

@@ -1,0 +1,167 @@
+{
+  "status": "headless_linux_runtime_and_content_passed",
+  "scope": "Headless Linux ARM production Kokoro backend inference and complete WAV decoding. No Lab, Console, physical playback, device drain or acoustic loopback claim.",
+  "task": "TASK-32153",
+  "acceptance_criteria_achieved": [
+    1,
+    2
+  ],
+  "acceptance_criteria_open": [
+    3
+  ],
+  "physical_playback_qualified": false,
+  "dev_snd_present": false,
+  "remaining_prerequisite": "A Linux host with an actual output device, complete Speech Lab and Console playback, device drain, and shutdown evidence.",
+  "image_id": "sha256:c758cd09229cf4e17bb799063d5213f784b37d74ea8e2e312c9b438ac3fec08b",
+  "python": "3.13.15 (main, Aug 31 2026, 23:46:42) [GCC 12.2.0]",
+  "platform": "Linux-6.12.67-linuxkit-aarch64-with-glibc2.36",
+  "machine": "aarch64",
+  "versions": {
+    "kokoro-onnx": "0.6.1",
+    "onnxruntime": "1.29.0",
+    "numpy": "2.5.3",
+    "soundfile": "0.14.0",
+    "pydub": "0.25.1",
+    "av": "18.1.0"
+  },
+  "execution_providers": [
+    "CPUExecutionProvider"
+  ],
+  "torch_present": false,
+  "source_revision": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+  "source_file_count": 2253,
+  "source_unchanged": true,
+  "validator_files": {
+    "/probe/validate_linux_onnx.py": "c3149dbd2b7360186c48d0895acd876a3e5b7835501f4909de2d99e601c9d6ac",
+    "/workspace/scripts/validate_live_tts.py": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2"
+  },
+  "assets": {
+    "/assets/kokoro.onnx": "7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5",
+    "/assets/voices.bin": "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d"
+  },
+  "successful_clips": [
+    {
+      "path": "/private/tmp/tts-macos-burndown/linux/evidence/linux-onnx-live-20260909-02/audio/linux-warmup.wav",
+      "sha256": "8210f6331c1a3729049b9c3781877e722b673eccbfd7294b6459f67ac4967afe",
+      "pcm_sha256": "b450229750105ed4231abe661ecf32b9976a4355ada3a65d4e47f9a4b114984a",
+      "sample_rate": 24000,
+      "channels": 1,
+      "frames": 201728,
+      "seconds": 8.405333333333333,
+      "rms": 0.0774014169202708,
+      "peak": 0.736907958984375,
+      "container_path": "/evidence/linux-onnx-live-20260909-02/audio/linux-warmup.wav",
+      "phase_id": "linux-warmup"
+    },
+    {
+      "path": "/private/tmp/tts-macos-burndown/linux/evidence/linux-onnx-live-20260909-02/audio/linux-successor.wav",
+      "sha256": "8210f6331c1a3729049b9c3781877e722b673eccbfd7294b6459f67ac4967afe",
+      "pcm_sha256": "b450229750105ed4231abe661ecf32b9976a4355ada3a65d4e47f9a4b114984a",
+      "sample_rate": 24000,
+      "channels": 1,
+      "frames": 201728,
+      "seconds": 8.405333333333333,
+      "rms": 0.0774014169202708,
+      "peak": 0.736907958984375,
+      "container_path": "/evidence/linux-onnx-live-20260909-02/audio/linux-successor.wav",
+      "phase_id": "linux-successor"
+    }
+  ],
+  "content": {
+    "status": "content_passed",
+    "success_audio_count": 2,
+    "normalized_exact_count": 2,
+    "anchors_complete_count": 2,
+    "case_sensitive_raw_exact_count": 0,
+    "distinct_audio_sha256_count": 1,
+    "raw_difference": "ASR capitalizes Compass; no lexical difference.",
+    "runtime": {
+      "faster-whisper": "1.2.1",
+      "ctranslate2": "4.8.2"
+    },
+    "device": "cpu",
+    "compute_type": "int8"
+  },
+  "cancellation": {
+    "id": "linux-cancel",
+    "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.\nSilver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.\nSilver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.\nSilver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+    "content_anchors": [
+      "silver compass",
+      "quiet orchard",
+      "amber sunrise"
+    ],
+    "outcome": "cancelled",
+    "native_calls": [
+      {
+        "request_id": "linux-cancel",
+        "class": "onnxruntime.capi.onnxruntime_inference_collection.InferenceSession",
+        "execution_providers": [
+          "CPUExecutionProvider"
+        ],
+        "model_path": "/assets/kokoro.onnx",
+        "enter_at": 143478.846792056,
+        "thread_id": 281471713464704,
+        "exit_at": 143488.136880519
+      }
+    ],
+    "started_at": 143478.842724931,
+    "stop_requested_at": 143478.863096181,
+    "resources_at_stop": {
+      "native_tasks": 0,
+      "onnx_workers": 1,
+      "native_calls": 1
+    },
+    "settled_at": 143488.142793352,
+    "resources": {
+      "native_tasks": 0,
+      "onnx_workers": 0,
+      "native_calls": 0
+    },
+    "partial_bytes": 0,
+    "native_duration_seconds": 9.290088463021675,
+    "stop_after_native_entry_seconds": 0.01630412501981482,
+    "stop_to_settlement_seconds": 9.279697170975851,
+    "native_exit_before_settlement_seconds": 0.005912832973990589,
+    "post_stop_native_entries": 0
+  },
+  "cleanup_joined": true,
+  "final_resources": {
+    "native_tasks": 0,
+    "onnx_workers": 0,
+    "native_calls": 0
+  },
+  "initial_attempt": {
+    "outcome": "setup_failure_before_first_session_run",
+    "error": "Kokoro ONNX generation failed.",
+    "native_calls": 0,
+    "cleanup_joined": true,
+    "correction": "Explicit exec on the private /tmp tmpfs so phonemizer can dlopen its copied eSpeak library. Read-only root and network none retained."
+  },
+  "slot_release": {
+    "verified_utc": "2026-09-09T07:33:21.790638+00:00",
+    "content_status": "content_passed",
+    "success_audio_count": 2,
+    "normalized_exact_count": 2,
+    "anchors_complete_count": 2,
+    "asr_pid": 21749,
+    "asr_pid_absent": true,
+    "asr_joined": true,
+    "asr_elapsed_seconds": 4.089287250302732,
+    "task_container_count": 0,
+    "preexisting_containers_untouched": [
+      {
+        "id": "1275d55568b50d5860eb2827dce1964fa90bd982aa954a75be2158bd41a67345",
+        "name": "tldw_postgres_test",
+        "image": "postgres:18",
+        "state": "running"
+      }
+    ],
+    "runtime_cleanup_joined": true,
+    "runtime_final_resources": {
+      "native_tasks": 0,
+      "onnx_workers": 0,
+      "native_calls": 0
+    },
+    "scope": "Headless Linux ARM inference and local macOS ASR; no Linux physical playback qualification"
+  }
+}

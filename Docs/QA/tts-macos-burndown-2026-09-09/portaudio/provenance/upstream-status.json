@@ -1,0 +1,20 @@
+{
+  "observed_utc": "2026-09-09T07:54:37.451290+00:00",
+  "pull_request": {
+    "url": "https://github.com/PortAudio/portaudio/pull/1175",
+    "state": "open",
+    "merge_status": "unmerged",
+    "review_panel": "No reviews",
+    "observed_head_commit": "1240f06f0227ae3d0b4967f41012221c3d7cb6cf"
+  },
+  "issue": {
+    "url": "https://github.com/PortAudio/portaudio/issues/1174",
+    "state": "open"
+  },
+  "source_repository": "https://github.com/PortAudio/portaudio",
+  "local_source_commit": "1240f06f0227ae3d0b4967f41012221c3d7cb6cf",
+  "local_source_clean": true,
+  "compiler": "AppleClang 17.0.0.17000013",
+  "architecture": "arm64",
+  "qualification_scope": "Private candidate only; no default runtime/library change or upstream merge approval."
+}

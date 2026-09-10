@@ -641,6 +641,40 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         next_action = "" if running else "Create a note or add from files."
         return line(status, f"Next: {next_action}" if next_action else "")
 
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Refuse row/action presses while this canvas is resident but hidden.
+
+        Phase C keeps both browse canvases mounted and toggles ``display``
+        (``UI/Library_Modules/library_browse_route_swap.py``). Textual 8.2.8's
+        ``Button.press()`` consults the BUTTON's own ``disabled``/``display``
+        and nothing above it, so a press aimed at a hidden canvas's row still
+        bubbles to the screen and would act on a route the user has left --
+        the design record's verified finding #3. Stop it here, at the canvas
+        that owns the residency state, rather than in each of the screen's
+        row handlers.
+
+        **Scope, stated because it is narrower than it looks.** This gates
+        ``Button.Pressed`` and nothing else. Still ungated, deliberately:
+        ``Input.Changed`` / ``Input.Submitted`` (a hidden widget is not in the
+        focus chain, so a user cannot type into one, and no code drives these
+        programmatically off-route). Unlike ``LibraryMediaCanvas``, this
+        canvas has no row-geometry message of its own -- there is no Notes
+        analogue of ``LibraryMediaRowGeometryChanged`` to gate or fence
+        (verified: that message is defined and posted only in
+        ``library_media_canvas.py``). If a future change makes a hidden
+        canvas focusable, drives its Inputs from code, or adds a Notes
+        geometry message, this gate does NOT cover it.
+
+        Args:
+            event: The bubbling press.
+
+        Returns:
+            None.
+        """
+        if not self.display:
+            event.stop()
+            event.prevent_default()
+
     def sync_state(
         self,
         *,

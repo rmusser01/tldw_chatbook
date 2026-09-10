@@ -71,15 +71,33 @@ def _validate_manifest(
 def read_buddy_archive(path: os.PathLike[str] | str) -> BuddySnapshot:
     """Read a pinned native archive without staging files or creating a Persona.
 
+    Args:
+        path: Absolute native archive filename. The source must be a regular,
+            singly linked file; no-follow checks reject a symbolic link.
+
+    Returns:
+        Immutable validated artwork, assets and metadata with a private guard
+        that revalidates the source before publication.
+
     Raises:
-        PersonaVisualImportError: Native validation fails or the source changes.
+        PersonaVisualImportError: Source access or reading fails (the
+            ``persona_visual_import_failed`` category), path or native archive
+            validation fails, the format is unsupported, or the source changes
+            during review. Exception categories contain no private path text.
     """
     from tldw_chatbook.Utils.path_validation import validate_path_simple
 
     try:
         # The importer owns no-follow identity checks; do not resolve links here.
         validated_path = validate_path_simple(path, probe_existing=False)
-        source = importer._pin_source(validated_path)
+        try:
+            source = importer._pin_source(validated_path)
+        except OSError:
+            # A source read failure says nothing about the archive's validity.
+            # Keep this narrow: decoder errors later still mean invalid content.
+            raise importer.PersonaVisualImportError(
+                "persona_visual_import_failed"
+            ) from None
         with zipfile.ZipFile(BytesIO(source.data)) as archive:
             members, pack, records = importer._validated_archive(archive, lambda: False)
             assets = []

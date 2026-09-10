@@ -1,0 +1,24 @@
+{
+  "checked_utc": "2026-09-09T07:55:11.265246+00:00",
+  "status": "released",
+  "worker_pid": 28566,
+  "worker_exit_code": 0,
+  "owned_child_joined": true,
+  "exact_pid_ps_exit_code": 1,
+  "exact_pid_ps_stdout": "",
+  "exact_pid_ps_stderr": "",
+  "phases_passed": 6,
+  "phases_with_zero_owned_resources": 6,
+  "profile_isolation_passed": true,
+  "source_unchanged": true,
+  "models_initialized": 0,
+  "owned_servers": 0,
+  "owned_playback_processes_remaining": 0,
+  "audio_slot_released": true,
+  "artifacts": {
+    "controller.json": "d3aa568504e4e86246d61993a9b77eb265e5bb4cca65684c9df60c23cffcee1d",
+    "evidence.json": "782aab2d5a413895882dbcd5832335666761b73dde09502caeb1c30a8226a942",
+    "stderr.log": "b1e12a6c205ee623ce56820d1908044d1e88c0730b9a4f04212d7aab6586f11a",
+    "stdout.log": "ee4505d8373f1fd860d6c80b9e166bf466612d263e1b2b51b562a25459e8effc"
+  }
+}

@@ -18,7 +18,7 @@ def test_load_appearance_defaults_uses_safe_defaults():
     assert defaults.animations_enabled is True
     assert defaults.smooth_scrolling is True
     assert defaults.console_transcript_style == "role_accents"
-    assert defaults.library_reader_library_width == 31
+    assert defaults.library_reader_library_width == 36
 
 
 def test_load_appearance_defaults_reads_general_web_and_appearance_sections():
@@ -176,22 +176,22 @@ def test_build_appearance_save_sections_preserves_unrelated_config():
             "reader": {
                 "library_open": True,
                 "custom_widths_enabled": False,
-                "library_width": 31,
+                "library_width": 36,
             },
             "media_reader": {
                 "items_open": True,
-                "items_width": 40,
+                "items_width": 50,
             },
-            "collections_reader": {"items_open": True, "items_width": 40},
-            "conversations_reader": {"items_open": True, "items_width": 40},
+            "collections_reader": {"items_open": True, "items_width": 50},
+            "conversations_reader": {"items_open": True, "items_width": 50},
             "notes_reader": {
                 "items_open": True,
-                "items_width": 40,
+                "items_width": 50,
                 "files_tree_open": True,
-                "files_tree_width": 40,
+                "files_tree_width": 50,
             },
-            "prompts_reader": {"items_open": True, "items_width": 40},
-            "skills_reader": {"items_open": True, "items_width": 40},
+            "prompts_reader": {"items_open": True, "items_width": 50},
+            "skills_reader": {"items_open": True, "items_width": 50},
         },
     }
 

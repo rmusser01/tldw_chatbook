@@ -1667,7 +1667,7 @@ class LibraryNotesController:
             )
         try:
             return self.query_one(
-                "#library-notes-reader-shell", LibraryAdaptiveReaderShell
+                ".library-notes-route", LibraryAdaptiveReaderShell
             )
         except (NoMatches, QueryError):
             return None
@@ -2185,16 +2185,16 @@ class LibraryNotesController:
         rail_handle = rail_handles.first(Widget) if rail_handles else None
         adaptive_reader = bool(
             self.query(
-                "#library-media-reader-shell, "
+                ".library-media-route, "
                 "#library-collections-reader-shell, "
                 "#library-conversations-reader-shell, "
-                "#library-notes-reader-shell, "
+                ".library-notes-route, "
                 "#library-prompts-reader-shell, "
                 "#library-skills-reader-shell"
             )
         )
-        adaptive_notes = bool(self.query("#library-notes-reader-shell"))
-        adaptive_media = bool(self.query("#library-media-reader-shell"))
+        adaptive_notes = bool(self.query(".library-notes-route"))
+        adaptive_media = bool(self.query(".library-media-route"))
         # Only the grid and canvas host participate in compact CSS selectors;
         # tagging the rail and inner Notes canvas forced two needless global
         # stylesheet matches on every breakpoint crossing. Apply these before
@@ -2243,7 +2243,7 @@ class LibraryNotesController:
             pass
         else:
             if (
-                not self.query("#library-media-reader-shell")
+                not self.query(".library-media-route")
                 and media_canvas.compact != self._library_notes_compact
             ):
                 media_canvas.apply_compact_presentation(self._library_notes_compact)
@@ -2323,7 +2323,7 @@ class LibraryNotesController:
                 )
             else:
                 shell = self.query_one(
-                    "#library-notes-reader-shell",
+                    ".library-notes-route",
                     LibraryAdaptiveReaderShell,
                 )
         except (NoMatches, QueryError):
@@ -2979,7 +2979,7 @@ class LibraryNotesController:
         self._library_notes_stage = "rail"
         self._library_notes_explicit_stage_intent = False
         self._supersede_library_notes_navigation()
-        if self.query("#library-notes-reader-shell"):
+        if self.query(".library-notes-route"):
             # The adaptive shell keeps all three owners mounted, so Escape
             # from Navigator moves toward Library by granting that pane one
             # effective-layout priority. This is deliberately not persisted:
@@ -4171,7 +4171,7 @@ class LibraryNotesController:
         self._register_footer_shortcuts()
         try:
             database_shell = self.query_one(
-                "#library-notes-reader-shell", LibraryAdaptiveReaderShell
+                ".library-notes-route", LibraryAdaptiveReaderShell
             )
             shell_grid = self.query_one("#library-shell-grid", Horizontal)
         except (NoMatches, QueryError):
@@ -4339,7 +4339,7 @@ class LibraryNotesController:
         ):
             return False
         try:
-            self.query_one("#library-notes-reader-shell", LibraryAdaptiveReaderShell)
+            self.query_one(".library-notes-route", LibraryAdaptiveReaderShell)
             rail = self.query_one("#library-rail", LibraryRail)
             header = self.query_one("#library-header-line", Static)
         except (NoMatches, QueryError):

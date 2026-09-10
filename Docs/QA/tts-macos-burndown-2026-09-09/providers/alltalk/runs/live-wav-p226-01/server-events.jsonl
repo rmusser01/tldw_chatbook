@@ -1,0 +1,9 @@
+{"event": "selected_voice_tuple", "at": 2177274.781505208, "pid": 35488, "request_alias": "alloy", "native_speaker": "p226", "selection_sha256": "69ef13d2a6d922968ca24ee28d48e63539907b28371bbd2cd5d6ac192b46a1c7"}
+{"event": "setup_enter", "at": 2177274.797832416, "pid": 35488, "engine": "vits"}
+{"event": "setup_exit", "at": 2177275.018699666, "pid": 35488, "model": "vits - tts_models--en--vctk--vits", "loaded": true, "device": "cpu", "dtype": "torch.float32"}
+{"event": "generation_enter", "at": 2177276.381363708, "pid": 35488, "id": "35488:1", "device": "cpu", "dtype": "torch.float32", "generation_count": 1, "actual_native_speaker": "p226"}
+{"event": "generation_exit", "at": 2177276.82333175, "pid": 35488, "id": "35488:1", "samples": 76304}
+{"event": "generation_enter", "at": 2177281.708873125, "pid": 35488, "id": "35488:2", "device": "cpu", "dtype": "torch.float32", "generation_count": 2, "actual_native_speaker": "p226"}
+{"event": "generation_exit", "at": 2177282.036766041, "pid": 35488, "id": "35488:2", "samples": 70672}
+{"event": "generation_enter", "at": 2177285.415802458, "pid": 35488, "id": "35488:3", "device": "cpu", "dtype": "torch.float32", "generation_count": 3, "actual_native_speaker": "p226"}
+{"event": "generation_exit", "at": 2177285.858131916, "pid": 35488, "id": "35488:3", "samples": 75280}

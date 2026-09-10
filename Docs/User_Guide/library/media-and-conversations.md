@@ -22,7 +22,7 @@ fills the center of the screen.
 ```text
 Wide (Media)
 
-+ Library ----+‹+ Items ------+‹+ Reader ---------------------------+
++ Library ----+<---+ Items ------+<---+ Reader ---------------------------+
 | Browse       | Filter        | title · source · date              |
 | Media        | item rows     | Find · Read later · Use in Console |
 | ...          | ...           | Read · Analysis · Highlights · Info|
@@ -30,14 +30,13 @@ Wide (Media)
 
 Narrow (Media)
 
-+›+ Items ----------------------------------+›+ Reader -------------+
++--->+ Items ----------------------------------+--->+ Reader -------------+
 | ‹ Library                                  | Select a media item  |
 | filter · type · sort · item rows           | to read it here.     |
 ```
 
-Media's two grips are one column each — the `‹` (open pane) and `›`
-(collapsed pane) above. Conversations, Skills and Collections use the same
-one-column grips; Notes, File Notes and Prompts keep the wider `+--->+` grip.
+Every Library reader uses two full-height, five-column collapse controls.
+The full width is clickable, including the space around the arrows.
 
 Media has three stable roles:
 
@@ -49,21 +48,16 @@ Media has three stable roles:
 - **Reader** — a permanent reading surface. Selecting another row updates
   Reader in place; the Items list is not replaced.
 
-Library and Items each have a full-height grip. On Media, Conversations,
-Skills and Collections the grip is **one column** and paints **`‹`** to
-collapse the pane to its left and **`›`** to expand it; Notes, File Notes and
-Prompts keep the five-column **`<---`** / **`--->`** grip. Because the screen
-holds back exactly the columns a grip paints, the narrow grip also moves the
-width at which the navigation rail joins: on Conversations it now appears at
-110 columns (was 118) and on Skills and Collections at 114 (was 122). The
-grips are clickable and keyboard-operable. Reader has no grip and never
-collapses. Your manual pane choices are remembered. If the terminal is too
-narrow, the screen temporarily collapses Library first and then Items;
-widening the terminal restores the remembered layout instead of saving the
-temporary responsive state.
+Library and Items each have a full-height, five-column grip. **`<---`**
+collapses the pane to its left and **`--->`** expands it. The grips support
+clicks, Enter, and Space. Reader has no grip and never collapses. Your manual
+pane choices are remembered.
 
-On Media nothing sits between the panes but those two one-cell grips, and the
-list uses the width that frees up:
+The default Library and Items columns prefer five and ten extra cells,
+respectively. At narrower widths those additions yield before the screen
+collapses Library, then Items. This preserves the earlier collapse boundaries
+with the five-column controls. Widening restores the preferred widths without
+rewriting your settings. Explicitly reopening a pane takes effect immediately.
 
 - **The Items column grows with the terminal.** Once the Reader is
   comfortable the surplus is split between them, up to a 56-cell ceiling, so
@@ -154,7 +148,7 @@ full stored keyword but drops a dangling half-flag so that surface's frame
 does not drift either (the edit form still prefills the stored keyword
 verbatim).
 
-*Verified against fix/media-riders-n — 2026-09-07 (task-31951: Conversations,
+*Historical verification (grip sizes and thresholds superseded by the five-column restoration, TASK-32200). Verified against fix/media-riders-n — 2026-09-07 (task-31951: Conversations,
 Skills and Collections opened live at 235x52. Each painted one-cell `‹` grips
 — the Library grip at columns 37 on two rows, the Items grip at column 78 on
 one — and no `<---`/`--->` run appeared anywhere on the three surfaces.
@@ -559,10 +553,9 @@ displaced the tab row and body by 19 rows behind ~16 blank ones. The
 button paints "More ▴" while open and "More" once closed, and focus stays
 on it across both toggles. AC#1/AC#2 layout numbers -- the 56-cell Items
 ceiling and its 46 painted title characters at 235x52, 15 items in a
-52-row terminal, the one-cell grips, and the 112- and 88-column
-thresholds -- are the resolver's own answers and the painted pins that
-hold them, cross-checked against the live captures in the task 1 and
-task 2 reports.)*
+52-row terminal, the then-one-cell grips, and the then-112- and 88-column
+thresholds were cross-checked against that revision. Grip sizes and collapse
+thresholds are superseded by the five-column restoration (TASK-32200).)*
 
 ### Review sets
 
@@ -795,12 +788,13 @@ Escape's return to the list live at 100x30).*
 ## Related settings & docs
 
 - Appearance settings remember the preferred Library/Items pane states.
-  Automatic Library-rail width follows 3:13, bounded to 24–34 cells. When
+  Automatic Library-rail width follows 3:13 plus five cells, bounded to 29–39
+  cells when space allows. When
   explicitly enabled, custom widths remain Library 24–48 and Items 32–72;
   ordinary layouts may temporarily compress the rail to preserve 40 content
   cells, while these adaptive readers may collapse or prioritize panes.
   **Reset layout** restores both panes open, automatic width, a dormant
-  31-cell Library preference, and 40-cell Items preferences. Below 64 columns,
+  36-cell Library preference, and 50-cell Items preferences. Below 64 columns,
   ordinary Library routes switch between full-width rail and canvas stages via
   **‹ Library** (or **< Library** with ASCII glyphs). Responsive changes never
   overwrite saved preferences.
@@ -976,6 +970,47 @@ including the receipt string above. Added the Analysis tab's
 description (AC#5) — it was previously undocumented. Verified in
 real-screen tests for the choice row's painted text and its scope-change
 invalidation.)*
+
+*Verified against feat/library-phase-c-resident-canvas — 2026-09-08 (Library
+phase C, task 2: switching the rail between **Browse Media** and **Browse
+Notes** no longer rebuilds the whole Library screen — the rail, navigation
+bar, footer and both browse canvases stay put and are shown or hidden
+instead. **No on-screen copy, control, or layout changes**; this page is
+re-stamped rather than edited because the switch is now cheaper, not
+different. Measured: the whole-screen rebuild is gone and per-switch widget
+churn more than halves (179 -> 81 mounts on a switch back into Media). The
+switch's *perceived* pause is unchanged so far — what remains of it is the
+canvas repaint, tracked separately. (That "so far" was closed by task 2.5,
+the next stamp: the perceived pause is now roughly halved.)*
+
+*Verified against feat/library-phase-c-resident-canvas — 2026-09-08 (Library
+phase C, task 2.5: the rail switch between **Browse Media** and **Browse
+Notes** is now roughly twice as fast to settle — the main thread blocks for
+55–73 ms where it blocked for 97–148 ms, measured paired on one machine, six
+runs per side. **One visible change, and it is a removal**: the first time you
+open a route in a session, the Library and Items panes no longer collapse and
+snap back open a moment later. Nothing else on this page moves; the switch is
+cheaper and steadier, not different.)*
+
+*Verified against feat/library-phase-c-resident-canvas — 2026-09-09 (Library
+phase C, task 3: sixteen of the Media list's controls — the filter box and
+its Clear, Sort and its chooser, the pager's Previous/Next/Retry, select
+mode's All/None and **Review selected**, **Open in viewer**, **Export**,
+**Review these**, and the review-sets control — are now handled by the Media
+list itself rather than by the Library screen. **No on-screen copy, control,
+or layout changes**; this page is re-stamped rather than edited because
+nothing about how these controls look or behave moved. What changed is which
+part of the code answers the press, which also closes a phase-C hazard: a
+control on the Media list you have switched away from can no longer act on
+your behalf.)*
+
+*Verified against feat/library-phase-c-resident-canvas — 2026-09-09 (Library
+phase C, task 4 — graduation close: **no production or on-screen change; this
+is the net result.** Switching the rail between **Browse Media** and **Browse
+Notes** blocks the main thread for **51–78 ms** where the pre-phase-C screen
+blocked for the 139–380 ms freeze the redesign set out to remove — measured
+base-vs-current on one machine, six interleaved runs per side. Media has
+graduated to a resident canvas; nothing on this page moved.)*
 
 *Verified against fix/library-crit8-docs — 2026-09-08 (task-32073,
 docs-vs-live pass from critique #8; live at 235x52 and 100x30 on a seeded

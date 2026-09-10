@@ -189,7 +189,7 @@ enabled = false
 default_tts_provider = "kokoro"  # Options: "openai", "kokoro", "elevenlabs", "chatterbox", "alltalk", "higgs"
 default_tts_voice = "af_sky"  # Default voice for TTS
 ALLTALK_TTS_URL_DEFAULT = "http://127.0.0.1:7851"
-ALLTALK_TTS_VOICE_DEFAULT = "female_01.wav"
+ALLTALK_TTS_VOICE_DEFAULT = "alloy"
 ALLTALK_TTS_LANGUAGE_DEFAULT = "en"
 ALLTALK_TTS_OUTPUT_FORMAT_DEFAULT = "wav"
 

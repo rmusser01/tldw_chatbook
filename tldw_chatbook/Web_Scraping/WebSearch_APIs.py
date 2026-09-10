@@ -48,7 +48,7 @@ import time
 from functools import wraps
 from html import unescape
 from typing import Any, Callable, Dict, List, NotRequired, Optional, TypedDict, Union
-from urllib.parse import unquote, urlencode, urlparse
+from urllib.parse import parse_qsl, unquote, urlencode, urlparse
 
 #
 # 3rd-Party Imports
@@ -83,10 +83,14 @@ from tldw_chatbook.config import load_settings
 from tldw_chatbook.Internal_Prompts import render_internal_prompt
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.Utils.egress import is_public_http_url
-from tldw_chatbook.Utils.log_sanitizer import sanitize_string
 from tldw_chatbook.Utils.tls_trust import requests_verify
 from tldw_chatbook.Web_Scraping import deep_search_citations
 from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
+from tldw_chatbook.Web_Scraping.search_backend_settings import (
+    BACKENDS,
+    resolve_backend_fields,
+    searx_url_issue,
+)
 
 # Handle optional defusedxml (Yandex XML parsing)
 try:
@@ -100,72 +104,69 @@ except ImportError:
     )
 
 
+def _search_error_kind(error: Exception) -> str:
+    """Classify failures using types/status only; never parse provider bodies."""
+    if isinstance(error, (requests.exceptions.Timeout, TimeoutError)):
+        return "timeout"
+    if isinstance(error, (requests.exceptions.ConnectionError, ConnectionError)):
+        return "connection"
+    response = getattr(error, "response", None)
+    status = getattr(response, "status_code", None)
+    if status in (401, 403):
+        return "auth"
+    if status == 429:
+        return "rate_limit"
+    if isinstance(error, requests.exceptions.HTTPError):
+        return "http"
+    return "request"
+
+
+class _SearchChallengeError(ValueError):
+    """An observed provider challenge, independent of untrusted response text."""
+
+
+def _safe_search_error(error: Exception) -> str:
+    """Closed messages keep endpoint URLs, credentials and bodies out of diagnostics."""
+    if isinstance(error, _SearchChallengeError):
+        return "DuckDuckGo returned an anti-bot challenge; automated search is unavailable."
+    return {
+        "auth": "Authentication failed. Check API key and account permissions.",
+        "rate_limit": "Provider rate limit or quota reached. Try again later.",
+        "connection": "Could not connect to the search provider.",
+        "timeout": "Search request timed out.",
+        "http": "Search provider returned an HTTP error.",
+    }.get(_search_error_kind(error), "Search request failed. Check the configured backend.")
+
+
+def _set_search_processing_error(output: dict) -> None:
+    """Discard partial provider data and retain only a closed error classification."""
+    kind = output.get("error_kind", "response")
+    if kind not in ("auth", "rate_limit", "connection", "timeout", "http", "request"):
+        kind = "response"
+    output.clear()
+    output.update({
+        "results": [],
+        "processing_error": "Search provider returned an invalid response.",
+        "error_kind": kind,
+    })
+
+
 # Common error handling and retry mechanisms
 def handle_search_error(error, search_engine_name):
     """
-    Common error handling function for search engine errors.
+    Log a safe failure category while preserving exception status for the dispatcher.
 
     Args:
         error: The exception that was raised
         search_engine_name: Name of the search engine (e.g., 'Bing', 'Google')
 
     Returns:
-        Appropriate exception with detailed error message
+        Original exception, retaining HTTP response/status for safe classification
 
-    This function categorizes errors and provides consistent error handling
-    across all search engine implementations.
+    Provider exception text is deliberately excluded from diagnostic logs.
     """
-    logger.error(f"{search_engine_name} search error: {error}")
-
-    # Handle timeout errors
-    if isinstance(error, requests.exceptions.Timeout):
-        return TimeoutError(
-            f"{search_engine_name} search request timed out. Please try again later."
-        )
-
-    # Handle connection errors
-    if isinstance(error, requests.exceptions.ConnectionError):
-        return ConnectionError(
-            f"Network error while connecting to {search_engine_name}: {error}"
-        )
-
-    # Handle HTTP errors
-    if isinstance(error, requests.exceptions.HTTPError):
-        status_code = (
-            error.response.status_code
-            if hasattr(error, "response") and error.response
-            else "unknown"
-        )
-
-        if status_code == 401:
-            return ValueError(
-                f"Invalid {search_engine_name} API key. Please check your configuration."
-            )
-        elif status_code == 403:
-            return ValueError(
-                f"Access denied. Your {search_engine_name} API key may not have permission for this operation."
-            )
-        elif status_code == 429:
-            return ValueError(
-                f"{search_engine_name} API rate limit exceeded. Please try again later."
-            )
-        else:
-            return RequestException(
-                f"HTTP error during {search_engine_name} search: {error}"
-            )
-
-    # Handle value errors
-    if isinstance(error, ValueError):
-        return ValueError(f"Invalid parameter for {search_engine_name} search: {error}")
-
-    # Handle JSON decode errors
-    if isinstance(error, json.JSONDecodeError):
-        return ValueError(
-            f"Invalid response from {search_engine_name} (not valid JSON): {error}"
-        )
-
-    # Handle any other errors
-    return Exception(f"Error performing {search_engine_name} search: {error}")
+    logger.error("{} search failed ({})", search_engine_name, _search_error_kind(error))
+    return error
 
 
 # Retry decorator for transient errors
@@ -198,7 +199,7 @@ def retry_on_transient_error(max_tries=3, backoff_factor=1.5):
             def should_retry(exception):
                 if isinstance(exception, requests.exceptions.HTTPError):
                     # Only retry on 5xx errors (server errors) and 429 (rate limit)
-                    if hasattr(exception, "response") and exception.response:
+                    if getattr(exception, "response", None) is not None:
                         status_code = exception.response.status_code
                         return status_code >= 500 or status_code == 429
                     return False
@@ -221,7 +222,7 @@ def retry_on_transient_error(max_tries=3, backoff_factor=1.5):
                     # Calculate delay with exponential backoff
                     delay = backoff_factor ** (retry_count - 1)
                     logger.warning(
-                        f"Retrying {func.__name__} after error: {e} (attempt {retry_count}/{max_tries}, delay: {delay:.2f}s)"
+                        f"Retrying {func.__name__} after {_search_error_kind(e)} (attempt {retry_count}/{max_tries}, delay: {delay:.2f}s)"
                     )
 
                     # Wait before retrying
@@ -243,42 +244,26 @@ def retry_on_transient_error(max_tries=3, backoff_factor=1.5):
 # Functions:
 
 
-# Initialize configuration data
-def initialize_config():
-    """
-    Initialize the configuration data from config.py.
+def initialize_config() -> dict[str, dict[str, Any]]:
+    """Return current search configuration, resolving credentials per request.
 
-    Returns:
-        Dict: A dictionary containing the configuration data.
+    Normalized settings supply noncredential defaults. The config owner supplies
+    current saved values; environment overrides use the same resolver as Settings.
+    No request modifies a module-global configuration snapshot.
     """
+    from tldw_chatbook.config import load_cli_config_and_ensure_existence
+
     config_data = load_settings()
-
-    # Create a search_engines section that matches the expected structure
+    raw = load_cli_config_and_ensure_existence()
     search_engines = {}
-
-    # Copy settings from SearchEngines section
-    if "SearchEngines" in config_data:
-        for key, value in config_data["SearchEngines"].items():
-            search_engines[key] = value
-
-    # Copy settings from search_engine_specific_settings section
-    if "search_engine_specific_settings" in config_data:
-        for key, value in config_data["search_engine_specific_settings"].items():
-            search_engines[key] = value
-
-    # Copy settings from search_engines_keys section
-    if "search_engines_keys" in config_data:
-        for key, value in config_data["search_engines_keys"].items():
-            search_engines[key] = value
-
-    # Create a new config dictionary with the search_engines section
-    result = {"search_engines": search_engines}
-
-    return result
+    for section in ("search_engine_specific_settings", "search_engines_keys", "SearchEngines"):
+        search_engines.update(config_data.get(section, {}))
+    search_engines.update(raw.get("SearchEngines", {}))
+    for backend in BACKENDS:
+        search_engines.update(resolve_backend_fields(backend, raw))
+    return {"search_engines": search_engines}
 
 
-# Load configuration data
-loaded_config_data = initialize_config()
 ######################### Main Orchestration Workflow #########################
 #
 # FIXME - Add Logging
@@ -2080,9 +2065,6 @@ def perform_websearch(
                 "bing_lang": search_lang,
                 "bing_country": content_country,
                 "result_count": result_count,
-                "bing_api_key": loaded_config_data["search_engines"].get(
-                    "bing_api_key"
-                ),  # Fetch Bing API key from config
                 "date_range": date_range,
             }
 
@@ -2096,9 +2078,8 @@ def perform_websearch(
                 search_lang,
                 output_lang,
                 result_count,
-                safesearch,
-                site_blacklist,
-                date_range,
+                safesearch=safesearch,
+                date_range=date_range,
             )
 
         elif search_engine.lower() == "duckduckgo":
@@ -2126,12 +2107,6 @@ def perform_websearch(
             # Prepare the arguments for search_web_google
             google_args = {
                 "search_query": search_query,
-                "google_search_api_key": loaded_config_data["search_engines"][
-                    "google_search_api_key"
-                ],
-                "google_search_engine_id": loaded_config_data["search_engines"][
-                    "google_search_engine_id"
-                ],
                 "result_count": result_count,
                 "c2coff": "1",  # Default value
                 "results_origin_country": content_country,
@@ -2189,10 +2164,12 @@ def perform_websearch(
                 labels={"engine": "google", "result_count": str(result_count)},
             )
 
+            if web_search_results_dict.get("processing_error"):
+                web_search_results_dict["processing_error"] = "Search provider returned an invalid response."
             return web_search_results_dict
 
         elif search_engine.lower() == "kagi":
-            web_search_results = search_web_kagi(search_query, content_country)
+            web_search_results = search_web_kagi(search_query, result_count)
 
         elif search_engine.lower() == "exa":
             web_search_results = search_web_exa(search_query, result_count)
@@ -2204,7 +2181,7 @@ def perform_websearch(
 
         elif search_engine.lower() == "tavily":
             web_search_results = search_web_tavily(
-                search_query, result_count, site_blacklist
+                search_query, result_count, site_blacklist=site_blacklist
             )
 
         elif search_engine.lower() == "searx":
@@ -2248,6 +2225,8 @@ def perform_websearch(
             labels={"engine": search_engine.lower(), "result_count": str(result_count)},
         )
 
+        if web_search_results_dict.get("processing_error"):
+            web_search_results_dict["processing_error"] = "Search provider returned an invalid response."
         return web_search_results_dict
 
     except Exception as e:
@@ -2267,7 +2246,7 @@ def perform_websearch(
             labels={"engine": search_engine.lower(), "error_type": type(e).__name__},
         )
 
-        return {"processing_error": f"Error performing web search: {str(e)}"}
+        return {"processing_error": _safe_search_error(e), "error_kind": _search_error_kind(e)}
 
 
 def test_perform_websearch_google():
@@ -2500,9 +2479,9 @@ def process_web_search_results(search_results: Union[Dict, str], search_engine: 
         "processing_error": None
         ]
     """
-    # Validate input parameters. Every backend but tavily/searx always
-    # returns a dict; a string payload for those two is a valid input too
-    # (tavily: a request-error message; searx: its ENTIRE payload, success
+    # Validate input parameters. Most adapters return dictionaries; string
+    # payloads remain valid for Tavily's legacy errors and SearX's JSON-encoded
+    # results (tavily: a legacy request-error message; searx: its payload, success
     # or failure, is JSON-encoded as a string), deferred to the
     # engine-specific parser below, which raises ValueError to surface it as
     # processing_error (task-2990). The str allowance is deliberately scoped
@@ -2571,12 +2550,12 @@ def process_web_search_results(search_results: Union[Dict, str], search_engine: 
         else:
             raise ValueError(f"Error: Invalid Search Engine Name {search_engine}")
 
-    except Exception as e:
-        web_search_results_dict["processing_error"] = (
-            f"Error processing search results: {str(e)}"
-        )
-        logger.error(f"Error in process_web_search_results: {str(e)}")
+    except Exception:  # noqa: BLE001 - public parser boundary receives untrusted provider data.
+        _set_search_processing_error(web_search_results_dict)
 
+    if web_search_results_dict.get("processing_error") or web_search_results_dict.get("error"):
+        _set_search_processing_error(web_search_results_dict)
+        logger.error("Search provider returned an invalid response")
     return web_search_results_dict
 
 
@@ -2669,26 +2648,27 @@ def search_web_bing(
         This function uses the retry_on_transient_error decorator to automatically
         retry on transient errors like network issues or server errors.
     """
+    search_settings = initialize_config()["search_engines"]
     # Load Search API URL from config file
-    search_url = loaded_config_data["search_engines"]["bing_search_api_url"]
+    search_url = search_settings["bing_search_api_url"]
 
     if not bing_api_key:
         # load key from config file
-        bing_api_key = loaded_config_data["search_engines"]["bing_search_api_key"]
+        bing_api_key = search_settings["bing_search_api_key"]
         if not bing_api_key:
             raise ValueError("Please Configure a valid Bing Search API key")
 
     # Get default result count from config if not provided
     if not result_count:
-        result_count = loaded_config_data["search_engines"].get("search_result_max", 10)
+        result_count = search_settings.get("search_result_max", 10)
 
     # Get default language from config if not provided
     if not bing_lang:
-        bing_lang = loaded_config_data["search_engines"].get("bing_language_code", "en")
+        bing_lang = search_settings.get("bing_language_code", "en")
 
     # Get default country from config if not provided
     if not bing_country:
-        bing_country = loaded_config_data["search_engines"].get(
+        bing_country = search_settings.get(
             "bing_country_code", "US"
         )
 
@@ -2713,7 +2693,7 @@ def search_web_bing(
 
     # Call the API with better error handling
     try:
-        logger.debug(f"Sending Bing search request: URL={search_url}, params={params}")
+        logger.debug("Sending Bing search request")
 
         # Create a session with retry capability
         session = requests.Session()
@@ -2730,8 +2710,6 @@ def search_web_bing(
         response = session.get(search_url, headers=headers, params=params, timeout=10)
         response.raise_for_status()
 
-        logger.debug("Bing search response headers:")
-        logger.debug(response.headers)
 
         try:
             bing_search_results = response.json()
@@ -2856,7 +2834,6 @@ def parse_bing_results(raw_results: Dict, output_dict: Dict) -> None:
         raw_results (Dict): Raw Bing API response
         output_dict (Dict): Dictionary to store processed results
     """
-    logger.info(f"Raw Bing results received: {json.dumps(raw_results, indent=2)}")
     try:
         # Initialize results list if not present
         if "results" not in output_dict:
@@ -2914,9 +2891,8 @@ def parse_bing_results(raw_results: Dict, output_dict: Dict) -> None:
                 for item in raw_results["relatedSearches"].get("value", [])
             ]
 
-    except Exception as e:
-        logger.error(f"Error processing Bing results: {str(e)}")
-        output_dict["processing_error"] = f"Error processing Bing results: {str(e)}"
+    except Exception:  # noqa: BLE001 - keep malformed provider payload out of diagnostics.
+        _set_search_processing_error(output_dict)
 
 
 ######################### Brave Search #########################
@@ -2932,50 +2908,37 @@ def search_web_brave(
     safesearch="moderate",
     brave_api_key=None,
     result_filter=None,
-    search_type="ai",
+    search_type="web",
     date_range=None,
 ):
+    search_settings = initialize_config()["search_engines"]
     search_url = "https://api.search.brave.com/res/v1/web/search"
-    if not brave_api_key and search_type == "web":
-        # load key from config file
-        brave_api_key = loaded_config_data["search_engines"]["brave_search_api_key"]
-        if not brave_api_key:
-            raise ValueError("Please provide a valid Brave Search API subscription key")
-    if not country:
-        loaded_config_data["search_engines"]["search_engine_country_code_brave"]
-    else:
-        country = "US"
-    if not search_lang:
-        search_lang = "en"
-    if not ui_lang:
-        ui_lang = "en"
-    if not result_count:
-        result_count = 10
-    # if not date_range:
-    #     date_range = "month"
-    if not result_filter:
-        result_filter = "webpages"
-    if search_type == "ai":
-        brave_api_key = loaded_config_data["search_engines"]["brave_search_ai_api_key"]
-    else:
+    if search_type not in ("web", "ai"):
         raise ValueError("Invalid search type. Please choose 'ai' or 'web'.")
-
+    if not brave_api_key:
+        key_name = "brave_search_api_key" if search_type == "web" else "brave_search_ai_api_key"
+        brave_api_key = search_settings.get(key_name, "")
+    if not brave_api_key:
+        raise ValueError("Please provide a valid Brave Search API subscription key")
+    country = country or search_settings.get("search_engine_country_code_brave") or "US"
     headers = {
         "Accept": "application/json",
         "Accept-Encoding": "gzip",
         "X-Subscription-Token": brave_api_key,
     }
-
-    # https://api.search.brave.com/app/documentation/web-search/query#WebSearchAPIQueryParameters
+    # https://api-dashboard.search.brave.com/api-reference/web/search/get
     params = {
         "q": search_term,
-        "textDecorations": True,
-        "textFormat": "HTML",
-        "count": result_count,
-        "freshness": date_range,
-        "promote": "webpages",
-        "safeSearch": "Moderate",
+        "country": country,
+        "search_lang": search_lang or "en",
+        "count": result_count or 10,
+        "safesearch": "moderate" if safesearch == "active" else safesearch or "moderate",
+        "result_filter": result_filter or "web",
     }
+    if ui_lang and "-" in ui_lang:
+        params["ui_lang"] = ui_lang
+    if date_range:
+        params["freshness"] = date_range
 
     # task-3060: bound worst-case latency -- an unresponsive Brave endpoint
     # must not hang perform_websearch (and the deep-search pipeline) indefinitely.
@@ -3074,9 +3037,8 @@ def parse_brave_results(raw_results: Dict, output_dict: Dict) -> None:
         if "mixed" in raw_results:
             output_dict["family_friendly"] = raw_results.get("family_friendly", True)
 
-    except Exception as e:
-        logger.error(f"Error processing Brave results: {str(e)}")
-        output_dict["processing_error"] = f"Error processing Brave results: {str(e)}"
+    except Exception:  # noqa: BLE001 - keep malformed provider payload out of diagnostics.
+        _set_search_processing_error(output_dict)
 
 
 def test_parse_brave_results():
@@ -3106,10 +3068,9 @@ def search_web_duckduckgo(
     assert keywords, "keywords is mandatory"
 
     if not LXML_AVAILABLE:
-        logger.error(
+        raise ImportError(
             "lxml not available for DuckDuckGo search. Install with: pip install tldw_chatbook[websearch]"
         )
-        return []
 
     payload = {
         "q": keywords,
@@ -3140,11 +3101,17 @@ def search_web_duckduckgo(
         # task-3060: bound worst-case latency per bootstrap/pagination call
         # (this loop can issue up to 5 requests.post calls, all this one site).
         response = requests.post("https://html.duckduckgo.com/html", data=payload, timeout=SEARCH_BACKEND_TIMEOUT_S, verify=requests_verify())
+        response.raise_for_status()
         resp_content = response.content
+        tree = document_fromstring(resp_content)
+        if tree.xpath(
+            '//form[@id="challenge-form" or contains(@action, "anomaly.js")]'
+        ):
+            raise _SearchChallengeError(
+                "DuckDuckGo returned an anti-bot challenge; automated search is unavailable."
+            )
         if b"No  results." in resp_content:
             return results
-
-        tree = document_fromstring(resp_content)
         elements = tree.xpath("//div[h2]")
         if not isinstance(elements, list):
             return results
@@ -3280,11 +3247,8 @@ def parse_duckduckgo_results(raw_results: Dict, output_dict: Dict) -> None:
         # Update total results count
         output_dict["total_results_found"] = len(output_dict["results"])
 
-    except Exception as e:
-        logger.error(f"Error processing DuckDuckGo results: {str(e)}")
-        output_dict["processing_error"] = (
-            f"Error processing DuckDuckGo results: {str(e)}"
-        )
+    except Exception:  # noqa: BLE001 - keep malformed provider payload out of diagnostics.
+        _set_search_processing_error(output_dict)
 
 
 def extract_domain(url: str) -> str:
@@ -3307,7 +3271,7 @@ def extract_domain(url: str) -> str:
         # ImportError if urllib.parse not available (very unlikely)
         # ValueError if URL is malformed
         # AttributeError if parsed_uri doesn't have expected attributes
-        logger.debug(f"Failed to parse domain from URL '{url}': {e}")
+        logger.debug("Failed to parse a result domain")
         return url
 
 
@@ -3382,35 +3346,41 @@ def search_web_google(
     :param sort_results_by: Sorting criteria for results
     :return: JSON response from Google Search API
     """
+    search_settings = initialize_config()["search_engines"]
     try:
         # Load Search API URL from config file
-        search_url = loaded_config_data["search_engines"]["google_search_api_url"]
-        logger.info(f"Using search URL: {search_url}")
+        search_url = search_settings["google_search_api_url"]
+        logger.info("Using configured Google search endpoint")
 
         # Initialize params dictionary
         params: Dict[str, Any] = {"q": search_query}
 
         # Handle c2coff
         if c2coff is None:
-            c2coff = loaded_config_data["search_engines"]["google_simp_trad_chinese"]
+            c2coff = search_settings["google_simp_trad_chinese"]
         if c2coff is not None:
             params["c2coff"] = c2coff
 
         # Handle results_origin_country
         if results_origin_country is None:
-            limit_country_search = loaded_config_data["search_engines"][
+            limit_country_search = search_settings[
                 "limit_google_search_to_country"
             ]
             if limit_country_search:
-                results_origin_country = loaded_config_data["search_engines"][
+                results_origin_country = search_settings[
                     "google_search_country"
                 ]
         if results_origin_country:
+            # Google cr uses countryXX tokens; gl is the separate bare country code.
+            # Keep existing cr expressions (including boolean combinations) intact.
+            if len(results_origin_country) == 2 and results_origin_country.isascii() and results_origin_country.isalpha():
+                country_code = results_origin_country.upper()
+                results_origin_country = "country" + ("UK" if country_code == "GB" else country_code)
             params["cr"] = results_origin_country
 
         # Handle google_search_engine_id
         if google_search_engine_id is None:
-            google_search_engine_id = loaded_config_data["search_engines"][
+            google_search_engine_id = search_settings[
                 "google_search_engine_id"
             ]
         if not google_search_engine_id:
@@ -3421,7 +3391,7 @@ def search_web_google(
 
         # Handle google_search_api_key
         if google_search_api_key is None:
-            google_search_api_key = loaded_config_data["search_engines"][
+            google_search_api_key = search_settings[
                 "google_search_api_key"
             ]
         if not google_search_api_key:
@@ -3448,7 +3418,7 @@ def search_web_google(
         if search_result_language:
             params["lr"] = search_result_language
         if safesearch is None:
-            safesearch = loaded_config_data["search_engines"]["google_safe_search"]
+            safesearch = search_settings["google_safe_search"]
         if safesearch:
             params["safe"] = safesearch
         if sort_results_by:
@@ -3481,7 +3451,7 @@ def search_web_google(
         # by `response.json()` above) is ALSO a ValueError and is caught
         # here rather than below -- sanitize defensively so nothing that
         # lands in this branch, now or later, can carry the credential.
-        logger.error(f"Configuration error: {sanitize_string(str(ve))}")
+        logger.error("Configuration error: {}", _safe_search_error(ve))
         raise
 
     except RequestException as re:
@@ -3490,20 +3460,21 @@ def search_web_google(
         # `requests`'s own HTTPError/ConnectionError text embeds the full
         # request URL -- including the key -- via `response.url`. Redact at
         # the formatting point rather than trust the exception's shape.
-        logger.error(f"Error during API request: {sanitize_string(str(re))}")
+        logger.error("Error during API request: {} (HTTP {})", _safe_search_error(re), getattr(getattr(re, "response", None), "status_code", "unknown"))
         raise
 
     except Exception as e:
-        logger.error(f"Unexpected error occurred: {sanitize_string(str(e))}")
+        logger.error("Unexpected error occurred: {}", _safe_search_error(e))
         raise
 
 
 def test_search_google():
+    search_settings = initialize_config()["search_engines"]
     search_query = "How can I bake a cherry cake?"
-    google_search_api_key = loaded_config_data["search_engines"][
+    google_search_api_key = search_settings[
         "google_search_api_key"
     ]
-    google_search_engine_id = loaded_config_data["search_engines"][
+    google_search_engine_id = search_settings[
         "google_search_engine_id"
     ]
     result_count = 10
@@ -3549,10 +3520,7 @@ def parse_google_results(raw_results: Dict, output_dict: Dict) -> None:
         raw_results (Dict): Raw Google API response.
         output_dict (Dict): Dictionary to store processed results.
     """
-    logger.info(f"Raw results received: {json.dumps(raw_results, indent=2)}")
     # For debugging only FIXME
-    logger.debug("Raw web_search_results from Google:")
-    logger.debug(json.dumps(raw_results, indent=2))
     try:
         # Initialize results list if not present
         if "results" not in output_dict:
@@ -3641,9 +3609,8 @@ def parse_google_results(raw_results: Dict, output_dict: Dict) -> None:
             .get("startIndex", 1),
         }
 
-    except Exception as e:
-        logger.error(f"Error processing Google results: {str(e)}")
-        output_dict["processing_error"] = f"Error processing Google results: {str(e)}"
+    except Exception:  # noqa: BLE001 - keep malformed provider payload out of diagnostics.
+        _set_search_processing_error(output_dict)
 
 
 def test_parse_google_results():
@@ -3659,28 +3626,23 @@ def test_parse_google_results():
 #
 # https://help.kagi.com/kagi/api/search.html
 def search_web_kagi(query: str, limit: int = 10) -> Dict:
+    """Query the documented legacy v0 endpoint with a numeric result limit."""
+    search_settings = initialize_config()["search_engines"]
     search_url = "https://kagi.com/api/v0/search"
 
     # load key from config file
-    kagi_api_key = loaded_config_data["search_engines"]["kagi_search_api_key"]
+    kagi_api_key = search_settings["kagi_search_api_key"]
     if not kagi_api_key:
         raise ValueError("Please provide a valid Kagi Search API subscription key")
 
-    """
-    Queries the Kagi Search API with the given query and limit.
-    """
-    if kagi_api_key is None:
-        raise ValueError("API key is required.")
-
     headers = {"Authorization": f"Bot {kagi_api_key}"}
-    endpoint = f"{search_url}/search"
-    params = {"q": query, "limit": limit}
+    endpoint = search_url
+    params = {"q": query, "limit": int(limit or 10)}
 
     # task-3060: bound worst-case latency -- an unresponsive Kagi endpoint
     # must not hang perform_websearch indefinitely.
     response = requests.get(endpoint, headers=headers, params=params, timeout=SEARCH_BACKEND_TIMEOUT_S, verify=requests_verify())
     response.raise_for_status()
-    logger.debug(response.json())
     return response.json()
 
 
@@ -3743,8 +3705,8 @@ def parse_kagi_results(raw_results: Dict, output_dict: Dict) -> None:
                 [item for item in raw_results["data"] if item.get("t") == 0]
             )
 
-    except Exception as e:
-        output_dict["processing_error"] = f"Error processing Kagi results: {str(e)}"
+    except Exception:  # noqa: BLE001 - keep malformed provider payload out of diagnostics.
+        _set_search_processing_error(output_dict)
 
 
 def test_parse_kagi_results():
@@ -3797,9 +3759,10 @@ def search_web_searx(
     Returns:
         str: JSON string containing the search results or an error message.
     """
+    search_settings = initialize_config()["search_engines"]
     # Use the provided Searx URL or fall back to the configured one
     if not searx_url:
-        searx_url = loaded_config_data["search_engines"]["searx_search_api_url"]
+        searx_url = search_settings["searx_search_api_url"]
     if not searx_url:
         return json.dumps(
             {
@@ -3807,80 +3770,35 @@ def search_web_searx(
             }
         )
 
-    # Validate and construct URL
+    issue = searx_url_issue(searx_url)
+    if issue:
+        return json.dumps({"error": issue})
+    parsed_url = urlparse(searx_url)
+    params = dict(parse_qsl(parsed_url.query, keep_blank_values=True))
+    params.update({
+        "q": search_query,
+        "format": "json",
+        "language": language,
+        "time_range": time_range,
+        "safesearch": safesearch,
+        "pageno": pageno,
+        "categories": categories,
+    })
+    search_url = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}?{urlencode(params)}"
+    session = searx_create_session()
     try:
-        parsed_url = urlparse(searx_url)
-        params = {
-            "q": search_query,
-            "language": language,
-            "time_range": time_range,
-            "safesearch": safesearch,
-            "pageno": pageno,
-            "categories": categories,
-        }
-        search_url = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}?{urlencode(params)}"
-        logger.info(f"Search URL: {search_url}")
-    except Exception as e:
-        return json.dumps({"error": f"Invalid URL configuration: {str(e)}"})
-
-    # Perform the search request
-    try:
-        # Mimic browser headers
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-            "Referer": "https://www.google.com/",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-        }
-
-        # Add a random delay to mimic human behavior
-        delay = random.uniform(2, 5)  # Random delay between 2 and 5 seconds
-        time.sleep(delay)
-
-        session = searx_create_session()
-        # task-3060: bound worst-case latency -- Session.get() does not
-        # inherit a timeout from the Session itself, so it must be passed
-        # per-request like every other engine here.
-        response = session.get(search_url, headers=headers, timeout=SEARCH_BACKEND_TIMEOUT_S)
+        response = session.get(search_url, headers={"Accept": "application/json"}, timeout=SEARCH_BACKEND_TIMEOUT_S)
         response.raise_for_status()
-
-        # Check if the response is JSON
-        content_type = response.headers.get("Content-Type", "")
-        if "application/json" in content_type:
-            search_data = response.json()
-        else:
-            # If not JSON, assume it's HTML and parse it
-            from bs4 import BeautifulSoup
-
-            soup = BeautifulSoup(response.text, "html.parser")
-            search_data = parse_html_search_results_generic(soup)
-
-        # Process results
-        data = []
-        for result in search_data:
-            data.append(
-                {
-                    "title": result.get("title"),
-                    "link": result.get("url"),
-                    "snippet": result.get("content"),
-                    "publishedDate": result.get("publishedDate"),
-                }
-            )
-
-        if not data:
-            return json.dumps(
-                {"error": "No information was found online for the search query."}
-            )
-
-        return json.dumps(data)
-
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error searching for content: {str(e)}")
-        return json.dumps(
-            {"error": f"There was an error searching for content. {str(e)}"}
-        )
+        payload = response.json()
+        hits = payload.get("results") if isinstance(payload, dict) else payload
+        if not isinstance(hits, list):
+            raise TypeError("Unexpected SearX response: expected results list")
+        # The parser validates each result; malformed results remain explicit failures.
+        return json.dumps(hits)
+    except requests.exceptions.RequestException as error:
+        return json.dumps({"error": _safe_search_error(error), "error_kind": _search_error_kind(error)})
+    finally:
+        session.close()
 
 
 def test_search_searx():
@@ -3898,9 +3816,9 @@ def parse_searx_results(searx_search_results: "list | dict | str", web_search_re
     Unlike every other backend in this file, the local `search_web_searx`
     always returns a JSON-encoded STRING: `json.dumps(hits)` on success
     (a list of `{title, link, snippet, publishedDate}` dicts), or
-    `json.dumps({"error": ...})` when nothing was found or the request
-    failed. A string is decoded first; an already-parsed list is also
-    accepted defensively for direct/test callers. Only a decoded list is
+    `json.dumps({"error": ...})` when setup or the request failed.
+    Empty searches return an encoded empty list. A string is decoded first;
+    an already-parsed list is also accepted for direct/test callers. Only a decoded list is
     tolerated as real results -- a decoded dict never is: `{"error": ...}`
     re-raises with that message, and any other dict (or any non-list
     scalar) raises a generic shape error, both surfacing via the
@@ -3931,6 +3849,7 @@ def parse_searx_results(searx_search_results: "list | dict | str", web_search_re
             raise ValueError(f"Invalid Searx response: {e}") from e
 
     if isinstance(searx_search_results, dict) and "error" in searx_search_results:
+        web_search_results_dict["error_kind"] = searx_search_results.get("error_kind", "request")
         raise ValueError(searx_search_results["error"])
 
     if not isinstance(searx_search_results, list):
@@ -3983,7 +3902,8 @@ def search_web_serper(
         ValueError: when no Serper API key is configured.
         requests.exceptions.HTTPError: on non-2xx responses.
     """
-    serper_api_key = loaded_config_data["search_engines"].get("serper_search_api_key", "")
+    search_settings = initialize_config()["search_engines"]
+    serper_api_key = search_settings.get("serper_search_api_key", "")
     if not serper_api_key:
         raise ValueError("Please provide a valid Serper API key ([SearchEngines] serper_search_api_key)")
     headers = {"X-API-KEY": serper_api_key, "Content-Type": "application/json"}
@@ -4053,7 +3973,8 @@ def search_web_exa(search_query: str, result_count: Optional[int] = None) -> dic
         ValueError: when no Exa API key is configured.
         requests.exceptions.HTTPError: on non-2xx responses.
     """
-    exa_api_key = loaded_config_data["search_engines"].get("exa_search_api_key", "")
+    search_settings = initialize_config()["search_engines"]
+    exa_api_key = search_settings.get("exa_search_api_key", "")
     if not exa_api_key:
         raise ValueError("Please provide a valid Exa API key ([SearchEngines] exa_search_api_key)")
     headers = {"x-api-key": exa_api_key, "Content-Type": "application/json"}
@@ -4125,11 +4046,14 @@ def search_web_tavily(
         site_blacklist: Optional list of domains to exclude.
 
     Returns:
-        Tavily's decoded JSON response, or a human-readable error string on
-        a request failure. The key is not in the URL, so ``str(exc)`` --
-        which carries the URL, not the body -- cannot carry it either.
+        Tavily's decoded JSON response.
+
+    Raises:
+        requests.exceptions.RequestException: handled by the shared dispatch
+            boundary, which returns a closed credential-safe diagnostic.
     """
     # Check if API URL is configured
+    search_settings = initialize_config()["search_engines"]
     tavily_api_url = "https://api.tavily.com/search"
 
     # Prepare the request payload. No credential belongs in this dict: it is
@@ -4146,29 +4070,20 @@ def search_web_tavily(
         payload["exclude_domains"] = site_blacklist
 
     # Perform the search request
-    try:
-        headers = {
-            "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
-            # Read at the point of use and never bound to a local name, so
-            # there is no `tavily_api_key` variable for a debug log to reach
-            # for either.
-            "Authorization": (
-                "Bearer "
-                f"{loaded_config_data['search_engines']['tavily_search_api_key']}"
-            ),
-        }
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {search_settings['tavily_search_api_key']}",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+    }
 
-        # task-3060: bound worst-case latency -- an unresponsive Tavily
-        # endpoint must not hang perform_websearch indefinitely.
-        response = requests.post(
-            tavily_api_url, headers=headers, data=json.dumps(payload), timeout=SEARCH_BACKEND_TIMEOUT_S,
-            verify=requests_verify(),
-        )
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        return f"There was an error searching for content. {str(e)}"
+    # task-3060: bound worst-case latency -- an unresponsive Tavily
+    # endpoint must not hang perform_websearch indefinitely.
+    response = requests.post(
+        tavily_api_url, headers=headers, data=json.dumps(payload), timeout=SEARCH_BACKEND_TIMEOUT_S,
+        verify=requests_verify(),
+    )
+    response.raise_for_status()
+    return response.json()
 
 
 def test_search_tavily():
@@ -4179,13 +4094,10 @@ def test_search_tavily():
 def parse_tavily_results(tavily_search_results: "dict | str", web_search_results_dict: dict) -> None:
     """Parse Tavily results into the standardized shape.
 
-    The local `search_web_tavily` backend returns `response.json()` (a
-    dict with hits under "results") on success, or a plain error STRING
-    on request failure (e.g. "There was an error searching for content.
-    ...") -- unlike every other backend in this file, which always
-    returns a dict. A string input is re-raised as ValueError so its text
-    survives the `process_web_search_results` seam as `processing_error`,
-    instead of silently producing zero results (task-2990).
+    The backend returns a dict with hits under "results" and raises request
+    errors so the dispatcher retains HTTP status for setup probes (TASK-32188).
+    Legacy string error payloads remain accepted defensively and are raised as
+    ValueError rather than silently producing zero results (task-2990).
 
     Tavily's `score` is a real 0-1 relevance score (unlike serper's
     `position`, which is a SERP rank and would invert the meaning of
@@ -4255,10 +4167,11 @@ def search_web_yandex(search_query: str, result_count: Optional[int] = None) -> 
         ValueError: when the API key or folder id is not configured.
         requests.exceptions.HTTPError: on non-2xx responses.
     """
-    yandex_api_key = loaded_config_data["search_engines"].get("yandex_search_api_key", "")
+    search_settings = initialize_config()["search_engines"]
+    yandex_api_key = search_settings.get("yandex_search_api_key", "")
     if not yandex_api_key:
         raise ValueError("Please provide a valid Yandex Search API key ([SearchEngines] yandex_search_api_key)")
-    folder_id = loaded_config_data["search_engines"].get("yandex_search_folder_id", "")
+    folder_id = search_settings.get("yandex_search_folder_id", "")
     if not folder_id:
         raise ValueError("Please provide the Yandex Cloud folder id ([SearchEngines] yandex_search_folder_id)")
     headers = {"Authorization": f"Api-Key {yandex_api_key}", "Content-Type": "application/json"}
@@ -4278,9 +4191,10 @@ def search_web_yandex(search_query: str, result_count: Optional[int] = None) -> 
 def parse_yandex_results(yandex_search_results: dict, web_search_results_dict: dict) -> None:
     """Decode rawData base64 XML and parse docs into the standardized shape.
 
-    Raises on an in-XML <error> element (quota/auth/malformed-query arrive
-    inside HTTP 200): a quota error must never render as "No results found"
-    for a query that was never searched (spec 2026-08-06 §2). The raise is
+    Raises on an in-XML <error> element except code 15 (no matches).
+    Quota/auth/malformed-query errors can arrive inside HTTP 200 and must
+    never render as "No results found" for a query that was never searched
+    (spec 2026-08-06 §2). The raise is
     caught by process_web_search_results and lands in processing_error.
 
     Args:
@@ -4291,7 +4205,7 @@ def parse_yandex_results(yandex_search_results: dict, web_search_results_dict: d
 
     Raises:
         ValueError: when rawData is missing, or the decoded XML contains
-            an <error> element (quota/auth/malformed-query).
+            an <error> element other than no-matches code 15.
     """
     if "results" not in web_search_results_dict:
         web_search_results_dict["results"] = []
@@ -4303,6 +4217,8 @@ def parse_yandex_results(yandex_search_results: dict, web_search_results_dict: d
     error_el = root.find(".//error")
     if error_el is not None:
         code = error_el.get("code", "?")
+        if code == "15":
+            return
         text = "".join(error_el.itertext()).strip()
         raise ValueError(f"Yandex API error (code {code}): {text}")
     for doc in root.findall(".//group/doc"):

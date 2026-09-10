@@ -13,7 +13,7 @@ from textual.geometry import Size
 from textual.widgets import Button, Input, ListView, Static, TextArea
 
 from Tests.UI.app_factory import _build_test_app
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import DestinationHarness, _static_text
 from tldw_chatbook.Subscriptions.watchlist_item_page import WatchlistItemPage
 from tldw_chatbook.UI.Screens import watchlists_collections_screen as collections_module
@@ -57,7 +57,7 @@ from tldw_chatbook.Utils.input_validation import validate_url as real_validate_u
 class BundledWatchlistsDestinationHarness(DestinationHarness):
     """Destination host with the same app-tier stylesheet as production."""
 
-    CSS_PATH = str(BUNDLED_STYLESHEET)
+    CSS_PATH = [str(sheet) for sheet in APP_STYLESHEETS]
 
 
 def _controller_double() -> AsyncMock:

@@ -873,6 +873,32 @@ def iter_blocks(package_root: Path, attr: str) -> list[BundledBlock]:
     return blocks
 
 
+#: A generated stream carries rules only if a brace survives comment
+#: stripping. TCSS has no at-rules and ``isolate_local_variables`` has
+#: already removed the block's ``$var`` definitions, so "no ``{``" means
+#: "nothing that can style anything".
+_RULE_BRACE_RE = re.compile(r"/\*.*?\*/", re.S)
+
+
+def _stream_has_rules(text: str) -> bool:
+    """Whether one split stream contains at least one real CSS rule.
+
+    ``split_scoped_css`` preserves line positions, so the stream a block
+    contributes nothing to still carries that block's comments and the blank
+    lines standing in for the other stream's rules. Emitting those costs the
+    boot-parsed sheets a banner plus dead text per widget for no styling
+    (TASK-32187 measured 10,618 B across the two widget-defaults sheets --
+    7,901 B of the scoped sheet was rule-less segments).
+
+    Args:
+        text: One stream of a block's ``split_scoped_css`` output.
+
+    Returns:
+        ``True`` when a ``{`` survives comment stripping.
+    """
+    return "{" in _RULE_BRACE_RE.sub("", text)
+
+
 def render_stylesheets(
     blocks: list[BundledBlock], title: str, *, scope_every_selector: bool = False
 ) -> tuple[str, str]:
@@ -914,7 +940,7 @@ def render_stylesheets(
             isolated_css, block.class_name, scope_every_selector=scope_every_selector
         )
         for stream, text in enumerate(split):
-            if not text.strip():
+            if not _stream_has_rules(text):
                 continue
             # Class-body indentation appears on otherwise blank lines before
             # a closing triple quote. Never publish that Python indentation as

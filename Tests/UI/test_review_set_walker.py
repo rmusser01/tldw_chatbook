@@ -1592,6 +1592,11 @@ class _ReviewSelectedControllerFake:
         return self._screen.run_worker
 
     def handle_library_media_review_selected(self, event) -> None:
+        # Phase C task 3: the two callers below enter through this fake
+        # controller rather than `LibraryScreen`, because the screen's
+        # delegator is gone -- the `@on` row now lives on
+        # `LibraryMediaCanvas`, which forwards to this same controller
+        # method. An attribute-path retarget; every assertion is unchanged.
         return LibraryMediaController.handle_library_media_review_selected(
             self, event
         )
@@ -1625,8 +1630,8 @@ def test_review_selected_handler_shares_the_one_id_coercion():
     )
     fake._media_controller = _ReviewSelectedControllerFake(fake)
 
-    LibraryScreen.handle_library_media_review_selected(
-        fake, SimpleNamespace(stop=lambda: None)
+    fake._media_controller.handle_library_media_review_selected(
+        SimpleNamespace(stop=lambda: None)
     )
 
     assert captured["ids"] == (7, 3)
@@ -1650,8 +1655,8 @@ def test_review_selected_handler_starts_nothing_when_no_id_coerces():
     )
     fake._media_controller = _ReviewSelectedControllerFake(fake)
 
-    LibraryScreen.handle_library_media_review_selected(
-        fake, SimpleNamespace(stop=lambda: None)
+    fake._media_controller.handle_library_media_review_selected(
+        SimpleNamespace(stop=lambda: None)
     )
 
     assert started == []

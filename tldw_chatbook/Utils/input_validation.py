@@ -777,6 +777,59 @@ class BuddyManagementInput(BaseModel):
         return validate_bounded_integer(value, minimum=minimum, maximum=maximum)
 
 
+class BuddyImportPathInput(BaseModel):
+    """Strict raw input for a Buddy pack path before lexical normalization."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    path: str = Field(min_length=1, max_length=4096)
+
+
+def validate_buddy_import_path(value: object) -> str:
+    """Return a stable lexical pack path without probing files or resolving links.
+
+    Args:
+        value: Pasted absolute or current-home-relative path, optionally quoted.
+
+    Returns:
+        Validated absolute path text for both archive review and retry identity.
+
+    Raises:
+        ValueError: Input has an invalid type, length or unsafe path syntax, is a
+            URL, or remains relative after expanding the current home shorthand.
+    """
+    import os
+    from pathlib import Path
+
+    from .path_validation import validate_path_simple
+
+    invalid_path = "Check the path. Enter a local Buddy pack filename."
+    try:
+        entered = BuddyImportPathInput.model_validate({"path": value}).path
+    except PydanticValidationError:
+        raise ValueError(invalid_path) from None
+    entered = entered.strip()
+    if len(entered) >= 2 and entered[0] in {"'", '"'} and entered[-1] == entered[0]:
+        entered = entered[1:-1]
+    if entered.lower().startswith(("http://", "https://", "file://")):
+        raise ValueError(
+            "Download the pack first, then enter its local filesystem path."
+        )
+    # Concatenation preserves the home prefix even for ~// paths. Do not resolve
+    # links or collapse parent components: the native reader owns file authority.
+    if entered.startswith("~/") or (os.name == "nt" and entered.startswith("~\\")):
+        entered = str(Path.home()) + entered[1:]
+    try:
+        path = validate_path_simple(entered, probe_existing=False)
+    except ValueError:
+        raise ValueError(invalid_path) from None
+    if not path.is_absolute():
+        raise ValueError(
+            "Enter an absolute path or a path starting with ~/ to the downloaded pack."
+        )
+    return str(path)
+
+
 def validate_port(port: Union[str, int]) -> bool:
     """Validate port number."""
     log_counter("input_validation_port_attempt")

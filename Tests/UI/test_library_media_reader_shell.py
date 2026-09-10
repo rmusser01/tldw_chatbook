@@ -28,12 +28,6 @@ from tldw_chatbook.Library.library_media_reader_state import (
     resolve_media_reader_layout,
 )
 
-# task-31633 AC#2: Media's grips are one cell each -- what they paint and what
-# the resolver holds back for them -- while every sibling reader keeps the
-# shared five (Tests/Library/test_library_adaptive_reader_state.py pins that).
-MEDIA_GRIP_WIDTH = MEDIA_READER_LAYOUT_PROFILE.grip_width
-MEDIA_GRIP_COLLAPSE = "‹"
-MEDIA_GRIP_EXPAND = "›"
 from tldw_chatbook.Library.library_media_viewer_state import (
     build_library_media_viewer_state,
 )
@@ -43,8 +37,7 @@ from tldw_chatbook.Widgets.Library import (
     AdaptiveReaderShellResized,
     LibraryAdaptiveReaderShell,
     LibraryMediaCanvas,
-    LibraryMediaPaneGrip,
-    LibraryMediaReaderShell,
+    LibraryBrowseReaderShell,
     LibraryMediaViewer,
     LibraryNavigationRailHandle,
     MediaShellResized,
@@ -55,14 +48,10 @@ from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
 )
 from tldw_chatbook.app import TldwCli
 
-
-def test_media_grip_preserves_legacy_constructor_signature():
-    grip = LibraryMediaPaneGrip("library", open=True, id="legacy-media-grip")
-
-    assert grip.id == "legacy-media-grip"
-    assert grip.has_class("library-media-pane-grip")
-    assert grip.name == "Collapse Library pane"
-    assert str(grip.tooltip) == "Collapse Library pane"
+# The profile reserves the same five-cell controls that the shell paints.
+MEDIA_GRIP_WIDTH = MEDIA_READER_LAYOUT_PROFILE.grip_width
+MEDIA_GRIP_COLLAPSE = "<---"
+MEDIA_GRIP_EXPAND = "--->"
 
 
 def _painted_text_in_region(app, region) -> str:
@@ -95,15 +84,15 @@ def _build_media_test_app():
 
 async def _open_media_shell(
     host, pilot
-) -> tuple[LibraryScreen, LibraryMediaReaderShell]:
+) -> tuple[LibraryScreen, LibraryBrowseReaderShell]:
     screen = _active_library_screen(host)
     await _wait_for_library_shell(screen, pilot)
     screen.query_one("#library-row-browse-media", Button).press()
-    await _wait_for_selector(screen, pilot, "#library-media-reader-shell")
+    await _wait_for_selector(screen, pilot, ".library-media-route")
     await _wait_for_selector(screen, pilot, "#library-media-row-0")
     await pilot.pause()
     return screen, screen.query_one(
-        "#library-media-reader-shell", LibraryMediaReaderShell
+        ".library-media-route", LibraryBrowseReaderShell
     )
 
 
@@ -141,13 +130,14 @@ async def test_media_wrapper_preserves_shell_ids_classes_messages_and_aliases():
         _, shell = await _open_media_shell(host, pilot)
 
         assert isinstance(shell, LibraryAdaptiveReaderShell)
-        assert shell.id == "library-media-reader-shell"
+        assert shell.id == "library-browse-reader-shell"
+        assert shell.has_class("library-media-route")
         assert shell.reader is shell.work
         assert shell.library.id == "library-rail"
         assert shell.items.id == "library-canvas"
         assert shell.reader.id == "library-media-viewer"
-        assert shell.library_grip.id == "library-media-library-grip"
-        assert shell.items_grip.id == "library-media-items-grip"
+        assert shell.library_grip.id == "library-browse-library-grip"
+        assert shell.items_grip.id == "library-browse-items-grip"
         assert all(
             grip.has_class("library-media-pane-grip")
             for grip in (shell.library_grip, shell.items_grip)
@@ -163,7 +153,7 @@ async def test_expanded_and_collapsed_grip_copy_names_its_action():
     async with host.run_test(size=(170, 48)) as pilot:
         _, shell = await _open_media_shell(host, pilot)
         for pane in ("library", "items"):
-            grip = shell.query_one(f"#library-media-{pane}-grip", Button)
+            grip = shell.query_one(f"#library-browse-{pane}-grip", Button)
             assert str(grip.label) == MEDIA_GRIP_COLLAPSE
             assert str(grip.tooltip) == f"Collapse {pane.title()} pane"
             assert grip.name == f"Collapse {pane.title()} pane"
@@ -183,8 +173,8 @@ async def test_grips_are_focusable_clickable_and_geometry_stable():
 
     async with host.run_test(size=(170, 48)) as pilot:
         _, shell = await _open_media_shell(host, pilot)
-        library_grip = shell.query_one("#library-media-library-grip", Button)
-        items_grip = shell.query_one("#library-media-items-grip", Button)
+        library_grip = shell.query_one("#library-browse-library-grip", Button)
+        items_grip = shell.query_one("#library-browse-items-grip", Button)
 
         for grip in (library_grip, items_grip):
             before = grip.region
@@ -249,8 +239,8 @@ async def test_reader_is_never_a_collapse_target():
         _, shell = await _open_media_shell(host, pilot)
         reader = shell.query_one("#library-media-viewer", LibraryMediaViewer)
 
-        shell.query_one("#library-media-library-grip", Button).press()
-        shell.query_one("#library-media-items-grip", Button).press()
+        shell.query_one("#library-browse-library-grip", Button).press()
+        shell.query_one("#library-browse-items-grip", Button).press()
         await pilot.pause()
 
         assert reader.display
@@ -416,7 +406,7 @@ async def test_non_media_library_routes_keep_the_existing_shell():
 
         assert screen.query_one("#library-rail-handle", LibraryNavigationRailHandle)
         assert screen.query_one("#library-canvas")
-        assert not screen.query("#library-media-reader-shell")
+        assert not screen.query(".library-media-route")
         assert not screen.query(".library-media-pane-grip")
 
 
@@ -500,7 +490,7 @@ class _SixtyColumnMediaShellApp(ConsolidatedCSSApp):
         # This direct host pins the Media shell's own allocation to the design
         # floor independently of application chrome.
         layout = resolve_media_reader_layout(60, MediaReaderLayoutPreferences())
-        shell = LibraryMediaReaderShell(
+        shell = LibraryBrowseReaderShell(
             Horizontal(id="library-rail"),
             Horizontal(id="library-media-canvas"),
             LibraryMediaViewer(
@@ -508,24 +498,23 @@ class _SixtyColumnMediaShellApp(ConsolidatedCSSApp):
                 id="library-media-viewer",
             ),
             layout,
-            id="library-media-reader-shell",
+            id="library-browse-reader-shell",
         )
         shell.styles.width = 60
         yield shell
 
 
 @pytest.mark.asyncio
-async def test_two_grips_leave_fifty_eight_columns_for_reader_at_sixty_shell_columns():
+async def test_two_grips_leave_fifty_columns_for_reader_at_sixty_shell_columns():
     app = _SixtyColumnMediaShellApp()
 
     async with app.run_test(size=(60, 24)) as pilot:
         await pilot.pause()
-        shell = app.query_one("#library-media-reader-shell", LibraryMediaReaderShell)
+        shell = app.query_one(".library-media-route", LibraryBrowseReaderShell)
         reader = shell.query_one("#library-media-viewer", LibraryMediaViewer)
 
         assert shell.region.width == 60
-        # 50 while Media's two grips still cost five cells each.
-        assert reader.region.width == 58
+        assert reader.region.width == 50
         assert reader.region.right <= shell.region.right
         assert (
             sum(grip.region.width for grip in shell.query(".library-media-pane-grip"))
@@ -633,7 +622,7 @@ async def test_shared_library_pane_choice_round_trips_between_media_and_conversa
 
         screen.query_one("#library-row-browse-media", Button).press()
         media_shell = await _wait_for_selector(
-            screen, pilot, "#library-media-reader-shell"
+            screen, pilot, ".library-media-route"
         )
         assert not media_shell.effective_layout.library_open
 
@@ -824,7 +813,7 @@ async def test_shared_library_pane_writes_settle_latest_across_destinations(
         await asyncio.to_thread(older_started.wait, 10)
 
         screen.query_one("#library-row-browse-media", Button).press()
-        media = await _wait_for_selector(screen, pilot, "#library-media-reader-shell")
+        media = await _wait_for_selector(screen, pilot, ".library-media-route")
         assert not media.effective_layout.library_open
         media.library_grip.press()
         try:
@@ -878,7 +867,7 @@ async def test_shared_library_pane_double_failure_restores_durable_choice(
         try:
             screen.query_one("#library-row-browse-media", Button).press()
             media = await _wait_for_selector(
-                screen, pilot, "#library-media-reader-shell"
+                screen, pilot, ".library-media-route"
             )
             assert not media.effective_layout.library_open
             media.library_grip.press()
@@ -1493,7 +1482,7 @@ async def test_failed_library_pane_write_resyncs_mounted_peer_shell(monkeypatch)
         try:
             screen.query_one("#library-row-browse-media", Button).press()
             media = await _wait_for_selector(
-                screen, pilot, "#library-media-reader-shell"
+                screen, pilot, ".library-media-route"
             )
             assert not media.effective_layout.library_open
         finally:
@@ -1542,7 +1531,7 @@ async def test_settings_refresh_reconciles_panes_without_media_reads(
         await screen.workers.wait_for_complete()
         await pilot.pause()
 
-        assert screen.query_one("#library-media-reader-shell") is shell
+        assert screen.query_one(".library-media-route") is shell
         assert screen._media_state.reader_preferences == MediaReaderLayoutPreferences(
             library_open=False,
             items_open=False,
@@ -1564,3 +1553,29 @@ async def test_settings_refresh_reconciles_panes_without_media_reads(
         assert shell.effective_layout.items_open
         assert (len(service.search_calls), len(service.detail_calls)) == reads
         assert writes == []
+
+
+@pytest.mark.asyncio
+async def test_apply_route_rejects_an_unknown_route_before_mutating() -> None:
+    """Qodo #6: ``apply_route`` validates against the two route constants.
+
+    ``apply_route`` is the single writer of the ``.library-media-route`` /
+    ``.library-notes-route`` markers every "is this route active?" probe reads.
+    An unhandled string used to flip both markers off and mislabel the grips,
+    leaving the shell in a state no probe answers. The guard rejects it BEFORE
+    any mutation, so a bad route cannot half-apply.
+    """
+    app = _SixtyColumnMediaShellApp()
+    async with app.run_test(size=(60, 24)) as pilot:
+        await pilot.pause()
+        shell = app.query_one(".library-media-route", LibraryBrowseReaderShell)
+        assert shell.route == "media"
+
+        with pytest.raises(ValueError):
+            shell.apply_route("collections")
+
+        # Untouched: still the media route it was constructed on, markers and
+        # all -- the guard ran before the first ``set_class``.
+        assert shell.route == "media"
+        assert shell.has_class("library-media-route")
+        assert not shell.has_class("library-notes-route")

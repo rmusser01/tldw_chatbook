@@ -1,0 +1,476 @@
+{
+  "run_id": "cpu-shutdown-recovery-01",
+  "pid": 83728,
+  "started_utc": "2026-09-09T06:34:07.731325+00:00",
+  "source_root": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown",
+  "source_revision": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+  "source_relevant_before": "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/source-relevant-before.json",
+  "native_base": "238ab6a9e321c17de8e120559f57efeedaeb1345",
+  "source_file_count": 98,
+  "imported_package": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook/__init__.py",
+  "working_checkout_revision_informational": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+  "working_checkout_status_informational": "M Tests/TTS/test_kokoro_pytorch_runtime.py\n M Tests/TTS/test_kokoro_validation.py\n M tldw_chatbook/TTS/backends/alltalk.py\n M tldw_chatbook/TTS/backends/higgs.py\n M tldw_chatbook/TTS/backends/kokoro.py\n M tldw_chatbook/TTS/kokoro_pytorch.py\n M tldw_chatbook/TTS/legacy_catalogs.py\n M tldw_chatbook/UI/Speech/speech_playground_pane.py\n?? Docs/Development/TTS/Live_Validation.md\n?? Tests/TTS/test_kokoro_onnx_lifecycle.py\n?? Tests/TTS/test_live_validation_harness.py\n?? Tests/TTS/test_local_provider_contracts.py\n?? Tests/UI/test_speech_kokoro_defaults.py\n?? \"backlog/tasks/task-32147 - Repair-active-request-shutdown-in-the-native-audio.cpp-server.md\"\n?? \"backlog/tasks/task-32148 - Add-repeatable-opt-in-live-TTS-cancellation-and-playback-validation.md\"\n?? \"backlog/tasks/task-32149 - Qualify-non-English-Kokoro-speech-on-macOS-ARM.md\"\n?? \"backlog/tasks/task-32150 - Retain-Kokoro-ONNX-native-workers-through-cancellation-and-close.md\"\n?? \"backlog/tasks/task-32151 - Qualify-registered-Higgs-Audio-V2-on-macOS-CPU.md\"\n?? \"backlog/tasks/task-32152 - Qualify-AllTalk-V2-with-a-local-ARM-CPU-engine.md\"\n?? \"backlog/tasks/task-32153 - Qualify-Kokoro-ONNX-on-Linux-ARM-and-physical-Linux-playback.md\"\n?? \"backlog/tasks/task-32154 - Qualify-real-OpenAI-cloud-TTS-delivery.md\"\n?? \"backlog/tasks/task-32155 - Qualify-real-ElevenLabs-cloud-TTS-delivery.md\"\n?? \"backlog/tasks/task-32156 - Qualify-Kokoro-ONNX-on-Windows-CPU.md\"\n?? \"backlog/tasks/task-32157 - Qualify-Kokoro-on-a-real-CUDA-host.md\"\n?? \"backlog/tasks/task-32158 - Qualify-Chatterbox-on-a-real-CUDA-host.md\"\n?? \"backlog/tasks/task-32159 - Honor-configured-Kokoro-engine-and-voices-in-the-Speech-Lab.md\"\n?? \"backlog/tasks/task-32162 - Stop-Kokoro-PyTorch-between-internal-synthesis-segments.md\"\n?? scripts/validate_live_tts.py\n?? scripts/verify_live_tts_content.py",
+  "device": "cpu",
+  "python": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+  "executable": "/private/tmp/tts-macos-burndown/runtime-python312/bin/python",
+  "phases": [
+    {
+      "name": "01-owned-sigterm-during-native-compute",
+      "started_monotonic": 2171753.153158625,
+      "sink_events": [],
+      "http": [
+        {
+          "url": "http://127.0.0.1:18951/v1/audio/speech",
+          "started": 2171753.614642666,
+          "body_sha256": "c2594be02ad987b15db41952a76d8ab1f7f403e8ec5036fa4838ad81c2d15275",
+          "body_sent": 2171753.615425458,
+          "response_wait_started": 2171753.615427375,
+          "exception": "RemoteProtocolError",
+          "send_terminal": 2171758.8500525
+        }
+      ],
+      "sink_runs": [],
+      "states": [
+        "failed"
+      ],
+      "outcomes": [
+        false
+      ],
+      "stop_outcomes": [],
+      "expected_text": "A silver compass marks the beginning of this deliberate native shutdown check. The local speech server is preparing a complete spoken passage while the application waits for its response. The observer must find the actual synthesis and graph computation on a sampled stack before sending the shutdown signal. Owned request threads must finish before their model resources are released. A fresh server will then speak a separate short reply, and the output device must consume that whole reply. This pending request ends with emerald forest.",
+      "message_id": "f2ead9bf-db8e-45e6-8d44-b63475c514a6",
+      "request_id": 1,
+      "destination_fingerprint": "sha256:2093b985001381eee1cc248db82497e6f1160c00f0e8dcb7638aab348b4442cf",
+      "retry_failed_auto": false,
+      "sample_attempts": [
+        {
+          "command": [
+            "/usr/bin/sample",
+            "83819",
+            "1",
+            "1",
+            "-file",
+            "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/01-owned-sigterm-during-native-compute-sample-1.txt"
+          ],
+          "started": 2171753.654846375,
+          "ended": 2171754.934566208,
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "Sampling process 83819 for 1 second with 1 millisecond of run time between samples\nSampling completed, processing symbols...\nSample analysis of process 83819 written to file /private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/01-owned-sigterm-during-native-compute-sample-1.txt\n",
+          "path": "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/01-owned-sigterm-during-native-compute-sample-1.txt",
+          "sha256": "01bd420b240c6d5944be1c8e8ed0225aa58fa51e068bc54179081cb9c31e5a28",
+          "not_compute_yet": "Sample has no simultaneous synthesis and ggml computation frames"
+        },
+        {
+          "command": [
+            "/usr/bin/sample",
+            "83819",
+            "1",
+            "1",
+            "-file",
+            "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/01-owned-sigterm-during-native-compute-sample-2.txt"
+          ],
+          "started": 2171755.037485166,
+          "ended": 2171756.207175125,
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "Sampling process 83819 for 1 second with 1 millisecond of run time between samples\nSampling completed, processing symbols...\nSample analysis of process 83819 written to file /private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/01-owned-sigterm-during-native-compute-sample-2.txt\n",
+          "path": "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/01-owned-sigterm-during-native-compute-sample-2.txt",
+          "sha256": "fc40996bf591f509315e6fb89f0c2d9424f7ccfdd509b3ef6f2b6a0db56e1068",
+          "not_compute_yet": "Sample has no simultaneous synthesis and ggml computation frames"
+        },
+        {
+          "command": [
+            "/usr/bin/sample",
+            "83819",
+            "1",
+            "1",
+            "-file",
+            "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/01-owned-sigterm-during-native-compute-sample-3.txt"
+          ],
+          "started": 2171756.309723833,
+          "ended": 2171757.471895958,
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "Sampling process 83819 for 1 second with 1 millisecond of run time between samples\nSampling completed, processing symbols...\nSample analysis of process 83819 written to file /private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/01-owned-sigterm-during-native-compute-sample-3.txt\n",
+          "path": "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/01-owned-sigterm-during-native-compute-sample-3.txt",
+          "sha256": "1a7b3ac1c9a9d46e01c0527fafd1effc1cef0c4e95aa1fa92d6b3935a47e7652",
+          "not_compute_yet": "Sample has no simultaneous synthesis and ggml computation frames"
+        },
+        {
+          "command": [
+            "/usr/bin/sample",
+            "83819",
+            "1",
+            "1",
+            "-file",
+            "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/01-owned-sigterm-during-native-compute-sample-4.txt"
+          ],
+          "started": 2171757.574323666,
+          "ended": 2171758.816705625,
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "Sampling process 83819 for 1 second with 1 millisecond of run time between samples\nSampling completed, processing symbols...\nSample analysis of process 83819 written to file /private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/01-owned-sigterm-during-native-compute-sample-4.txt\n",
+          "path": "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/01-owned-sigterm-during-native-compute-sample-4.txt",
+          "sha256": "7560280c8e654efb9781e1c62ee3ad4ace4c8874cf66ef4e727e082908199cc4"
+        }
+      ],
+      "inflight_barrier": {
+        "pid": 83819,
+        "ppid": 83728,
+        "command": "/private/tmp/tts-macos-burndown/native/build-cpu/bin/audiocpp_server --config /private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/server.json",
+        "process_generation": 1,
+        "kind": "pending_http_plus_exact_pid_sampled_synthesis_and_ggml_compute",
+        "sample_path": "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/01-owned-sigterm-during-native-compute-sample-4.txt",
+        "sample_sha256": "7560280c8e654efb9781e1c62ee3ad4ace4c8874cf66ef4e727e082908199cc4",
+        "sample_ended": 2171758.816705625,
+        "at": 2171758.819637333,
+        "resources": {
+          "generation_owner": true,
+          "stream_owner": false,
+          "file_owner": false,
+          "active_tasks": 1,
+          "retained_io": 0,
+          "retained_cleanup": 0,
+          "admitted_operations": 1,
+          "responses": 0,
+          "adapter_leases": 1
+        },
+        "model_frames": [
+          "+             762 engine::models::supertonic::SupertonicSession::run(engine::runtime::TaskRequest const&)  (in audiocpp_server) + 200  [0x100509f04]",
+          "+               762 engine::models::supertonic::SupertonicNativeRuntime::synthesize(std::basic_string<char> const&, engine::models::supertonic::SupertonicGenerationOptions const&, engine::models::supertonic::SupertonicTextTokenizer const&)  (in audiocpp_server) + 440  [0x1004eda3c]"
+        ],
+        "compute_frames": [
+          "+                   762 ggml_backend_graph_compute  (in audiocpp_server) + 32  [0x1005c778c]",
+          "+                     762 ggml_backend_cpu_graph_compute(ggml_backend*, ggml_cgraph*)  (in audiocpp_server) + 120  [0x100518080]",
+          "+                       761 ggml_graph_compute  (in audiocpp_server) + 424  [0x1005151a0]",
+          "+                       ! 529 ggml_graph_compute_thread  (in audiocpp_server) + 736  [0x100515bb4]",
+          "+                       ! : 474 ggml_compute_forward_mul_mat  (in audiocpp_server) + 2116  [0x100514050]",
+          "+                       ! : 46 ggml_compute_forward_mul_mat  (in audiocpp_server) + 2144,2112,...  [0x10051406c,0x10051404c,...]",
+          "+                       ! : 6 ggml_compute_forward_mul_mat  (in audiocpp_server) + 692  [0x100513ac0]",
+          "+                       ! : 3 ggml_compute_forward_mul_mat  (in audiocpp_server) + 2220  [0x1005140b8]",
+          "+                       ! 48 ggml_graph_compute_thread  (in audiocpp_server) + 312,120,...  [0x100515a0c,0x10051594c,...]",
+          "+                       ! 44 ggml_graph_compute_thread  (in audiocpp_server) + 864  [0x100515c34]",
+          "+                       ! : 44 ggml_compute_forward_unary  (in audiocpp_server) + 440  [0x100593368]",
+          "+                       ! :   6 ggml_compute_forward_unary  (in audiocpp_server) + 452,428  [0x100593374,0x10059335c]",
+          "+                       ! 38 ggml_graph_compute_thread  (in audiocpp_server) + 1264  [0x100515dc4]",
+          "+                       ! : 38 ggml_compute_forward_repeat  (in audiocpp_server) + 1004,1012,...  [0x1005750e8,0x1005750f0,...]",
+          "+                       ! 33 ggml_graph_compute_thread  (in audiocpp_server) + 1424  [0x100515e64]",
+          "+                       ! : 33 ggml_compute_forward_im2col  (in audiocpp_server) + 1056,1128,...  [0x100584034,0x10058407c,...]",
+          "+                       ! 28 ggml_graph_compute_thread  (in audiocpp_server) + 1876  [0x100516028]",
+          "+                       ! : 23 ggml_compute_forward_dup  (in audiocpp_server) + 3980  [0x100569258]",
+          "+                       ! : 4 ggml_compute_forward_dup  (in audiocpp_server) + 3980,3960,...  [0x100569258,0x100569244,...]",
+          "+                       ! : 1 ggml_compute_forward_dup  (in audiocpp_server) + 1124  [0x100568730]",
+          "+                       ! 17 ggml_graph_compute_thread  (in audiocpp_server) + 1072  [0x100515d04]",
+          "+                       ! : 16 ggml_compute_forward_concat  (in audiocpp_server) + 4400,4424,...  [0x100577004,0x10057701c,...]",
+          "+                       ! : 1 ggml_compute_forward_concat  (in audiocpp_server) + 504  [0x1005760cc]",
+          "+                       ! 12 ggml_graph_compute_thread  (in audiocpp_server) + 1504  [0x100515eb4]"
+        ]
+      },
+      "terminated_owned_child": {
+        "pid": 83819,
+        "ppid": 83728,
+        "generation": 1,
+        "command": "/private/tmp/tts-macos-burndown/native/build-cpu/bin/audiocpp_server --config /private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/server.json",
+        "signal": "SIGTERM"
+      },
+      "signal_sent": 2171758.848111541,
+      "child_exit_at": 2171766.246362833,
+      "child_exit_code": 0,
+      "shutdown_seconds": 7.398251291830093,
+      "released_resources": {
+        "generation_owner": false,
+        "stream_owner": false,
+        "file_owner": false,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "adapter_leases": 0
+      },
+      "runtime_passed": true
+    },
+    {
+      "name": "02-fresh-server-successor-playback",
+      "started_monotonic": 2171766.28277475,
+      "sink_events": [
+        {
+          "event": "SinkStarted",
+          "at": 2171772.246911625
+        },
+        {
+          "event": "SinkDrained",
+          "at": 2171778.670149041
+        }
+      ],
+      "http": [
+        {
+          "url": "http://127.0.0.1:18951/v1/audio/speech",
+          "started": 2171766.38135675,
+          "body_sha256": "dba19bf410a31eb2ed2448d4039a1787bc1aaa70b0d2359d8cec73f8bdec92c5",
+          "body_sent": 2171766.383245916,
+          "response_wait_started": 2171766.38325025,
+          "response_headers": 2171772.173054791,
+          "status": 200,
+          "send_terminal": 2171772.173215791
+        }
+      ],
+      "sink_runs": [
+        {
+          "started": 2171772.176579541,
+          "outcome": "success",
+          "elapsed_seconds": 6.3361636670306325,
+          "audio": {
+            "path": "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/artifacts/02-fresh-server-successor-playback-source.wav",
+            "sha256": "545bc8dcd1b1813ce5046a19d6dfa55409aa3db7ff118472318d16a925db2bb6",
+            "frames": 277425,
+            "sample_rate": 44100,
+            "channels": 1,
+            "seconds": 6.290816326530612,
+            "rms": 0.046756355883023154,
+            "peak": 0.372711181640625
+          },
+          "declared_pcm_bytes": 554850,
+          "captured_pcm_bytes": 554850
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "stop_outcomes": [],
+      "expected_text": "The recovered server speaks this complete reply. It finishes with the words amber sunrise.",
+      "message_id": "fc227070-3f43-4cd7-951e-ef28347daea9",
+      "request_id": 2,
+      "destination_fingerprint": "sha256:2093b985001381eee1cc248db82497e6f1160c00f0e8dcb7638aab348b4442cf",
+      "retry_failed_auto": false,
+      "released_resources": {
+        "generation_owner": false,
+        "stream_owner": false,
+        "file_owner": false,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "adapter_leases": 0
+      },
+      "runtime_passed": true
+    }
+  ],
+  "processes": [
+    {
+      "state": "stopped",
+      "process_generation": 0,
+      "observation_version": 0,
+      "endpoint": null,
+      "tts_capability": "unknown",
+      "consecutive_health_failures": 0,
+      "last_failure": null,
+      "diagnostics": [],
+      "dropped_diagnostic_lines": 0,
+      "label": "cold before destination resolution"
+    },
+    {
+      "state": "running",
+      "process_generation": 1,
+      "observation_version": 3,
+      "endpoint": "http://127.0.0.1:18951",
+      "tts_capability": "available",
+      "consecutive_health_failures": 0,
+      "last_failure": null,
+      "diagnostics": [
+        {
+          "stream": "stderr",
+          "text": "audio.cpp is optimized for CUDA. The cpu server backend is intended for portability and testing, but performance and model coverage may be lower than CUDA."
+        }
+      ],
+      "dropped_diagnostic_lines": 0,
+      "label": "01-owned-sigterm-during-native-compute admitted",
+      "pid": 83819,
+      "returncode": null
+    },
+    {
+      "state": "unavailable",
+      "process_generation": 1,
+      "observation_version": 6,
+      "endpoint": null,
+      "tts_capability": "unknown",
+      "consecutive_health_failures": 0,
+      "last_failure": {
+        "process_generation": 1,
+        "code": "process_exited",
+        "message": "The audio.cpp server exited unexpectedly",
+        "retryable": true,
+        "recovery_action": "open_diagnostics"
+      },
+      "diagnostics": [
+        {
+          "stream": "stderr",
+          "text": "audio.cpp is optimized for CUDA. The cpu server backend is intended for portability and testing, but performance and model coverage may be lower than CUDA."
+        },
+        {
+          "stream": "stdout",
+          "text": "audiocpp_server listening on http://127.0.0.1:18951"
+        },
+        {
+          "stream": "stderr",
+          "text": "audiocpp_server failed to send error response: socket send failed"
+        },
+        {
+          "stream": "stdout",
+          "text": "audiocpp_server stopped"
+        }
+      ],
+      "dropped_diagnostic_lines": 0,
+      "label": "after unexpected child exit"
+    },
+    {
+      "state": "running",
+      "process_generation": 2,
+      "observation_version": 9,
+      "endpoint": "http://127.0.0.1:18951",
+      "tts_capability": "available",
+      "consecutive_health_failures": 0,
+      "last_failure": null,
+      "diagnostics": [
+        {
+          "stream": "stderr",
+          "text": "audio.cpp is optimized for CUDA. The cpu server backend is intended for portability and testing, but performance and model coverage may be lower than CUDA."
+        }
+      ],
+      "dropped_diagnostic_lines": 0,
+      "label": "02-fresh-server-successor-playback admitted",
+      "pid": 84059,
+      "returncode": null
+    },
+    {
+      "state": "running",
+      "process_generation": 2,
+      "observation_version": 9,
+      "endpoint": "http://127.0.0.1:18951",
+      "tts_capability": "available",
+      "consecutive_health_failures": 0,
+      "last_failure": null,
+      "diagnostics": [
+        {
+          "stream": "stderr",
+          "text": "audio.cpp is optimized for CUDA. The cpu server backend is intended for portability and testing, but performance and model coverage may be lower than CUDA."
+        }
+      ],
+      "dropped_diagnostic_lines": 0,
+      "label": "after successful fresh-message recovery",
+      "pid": 84059,
+      "returncode": null
+    },
+    {
+      "state": "stopped",
+      "process_generation": 2,
+      "observation_version": 17,
+      "endpoint": null,
+      "tts_capability": "unknown",
+      "consecutive_health_failures": 0,
+      "last_failure": null,
+      "diagnostics": [],
+      "dropped_diagnostic_lines": 0,
+      "label": "final owned shutdown"
+    }
+  ],
+  "scope": "Mounted production Speech pane; trusted Console store/admission/handler; real HTTP and output device. Not a full Console shell navigation test.",
+  "content_validation": "Full WAV and real device drain checked; independently transcribe every success WAV against expected_text before claiming linguistic completeness.",
+  "status": "runtime_passed_content_transcription_pending",
+  "original_harness_sha256": "66f95e1db668e4634e89d8f54cd5d25ad0a47ead8c4caea0dbbe57ba2472a977",
+  "binary_sha256": "8dbc2c8b9d87fe1d4f55002b3a6d55db4d508cba33e11048085d2dcf06f18760",
+  "native_source_and_patch_verified": true,
+  "server_config_sha256": "89481436640eee49db17c9f555b4b27d26589040168ccfbe1f82ef7a5fd0b9dd",
+  "model_sha256": "b312b57797d40ac5c09d915893dbdbaf6405b7dc043f544776c5c95712dff88c",
+  "model_path": "/private/tmp/tts-macos-live-validation/audio-cpp/models/supertonic-3-f16/supertonic-3-f16.gguf",
+  "model_spec_path": "/private/tmp/tts-macos-burndown/native/source/model_specs/supertonic.json",
+  "model_spec_sha256": "5b794553c086b111b741b6a2a9d91c7cd09da862b346b8b2b48d36d94b36fcc6",
+  "native_patch_sha256": "faa692effa31ef5b7836e2b727fda0a9452a19008a8c679686dceda1c1831dac",
+  "binary_uuid": "UUID: F855480F-080A-3240-BBE9-163F0176B5E3 (arm64) /private/tmp/tts-macos-burndown/native/build-cpu/bin/audiocpp_server",
+  "output_device": {
+    "name": "MacBook Pro Speakers",
+    "index": 1,
+    "hostapi": 0,
+    "max_input_channels": 0,
+    "max_output_channels": 2,
+    "default_low_input_latency": 0.01,
+    "default_low_output_latency": 0.017958333333333333,
+    "default_high_input_latency": 0.1,
+    "default_high_output_latency": 0.027291666666666665,
+    "default_samplerate": 48000.0
+  },
+  "native_shutdown_exit_zero": true,
+  "fresh_server_generation": 2,
+  "cleanup_errors": [],
+  "final_resources": {
+    "generation_owner": false,
+    "stream_owner": false,
+    "file_owner": false,
+    "active_tasks": 0,
+    "retained_io": 0,
+    "retained_cleanup": 0,
+    "admitted_operations": 0,
+    "responses": 0,
+    "adapter_leases": 0
+  },
+  "owned_process_exits": {
+    "83819": 0,
+    "84059": 0
+  },
+  "shutdown_joined": true,
+  "notices": [
+    {
+      "message": "TTS failed: TTS generation failed; retry",
+      "severity": "error"
+    }
+  ],
+  "completions": [
+    {
+      "message_id": "f2ead9bf-db8e-45e6-8d44-b63475c514a6",
+      "error": "TTS generation failed; retry",
+      "audio_file": null
+    },
+    {
+      "message_id": "fc227070-3f43-4cd7-951e-ef28347daea9",
+      "error": null,
+      "audio_file": null
+    }
+  ],
+  "device_streams": [
+    {
+      "phase": "02-fresh-server-successor-playback",
+      "sample_rate": 44100,
+      "channels": 1,
+      "frames": 277830,
+      "audible_frames": 244534,
+      "callbacks": 315,
+      "callback_errors": [],
+      "first_audible": 2171772.54065325,
+      "last_audible": 2171778.512562875,
+      "rendered_audio": {
+        "path": "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/artifacts/02-fresh-server-successor-playback-device-0.wav",
+        "sha256": "8986a25971922508f4d24c86e632c7d17f58dd14b14d81658c7af30708b9e7f9",
+        "frames": 277830,
+        "sample_rate": 44100,
+        "channels": 1,
+        "seconds": 6.3,
+        "rms": 0.046722264477919585,
+        "peak": 0.372711181640625
+      }
+    }
+  ],
+  "ended_utc": "2026-09-09T06:34:34.388403+00:00",
+  "working_checkout_revision_at_end_informational": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+  "working_checkout_status_at_end_informational": "M Tests/TTS/test_kokoro_pytorch_runtime.py\n M Tests/TTS/test_kokoro_validation.py\n M tldw_chatbook/TTS/backends/alltalk.py\n M tldw_chatbook/TTS/backends/higgs.py\n M tldw_chatbook/TTS/backends/kokoro.py\n M tldw_chatbook/TTS/kokoro_pytorch.py\n M tldw_chatbook/TTS/legacy_catalogs.py\n M tldw_chatbook/UI/Speech/speech_playground_pane.py\n?? Docs/Development/TTS/Live_Validation.md\n?? Tests/TTS/test_kokoro_onnx_lifecycle.py\n?? Tests/TTS/test_live_validation_harness.py\n?? Tests/TTS/test_local_provider_contracts.py\n?? Tests/UI/test_speech_kokoro_defaults.py\n?? \"backlog/tasks/task-32147 - Repair-active-request-shutdown-in-the-native-audio.cpp-server.md\"\n?? \"backlog/tasks/task-32148 - Add-repeatable-opt-in-live-TTS-cancellation-and-playback-validation.md\"\n?? \"backlog/tasks/task-32149 - Qualify-non-English-Kokoro-speech-on-macOS-ARM.md\"\n?? \"backlog/tasks/task-32150 - Retain-Kokoro-ONNX-native-workers-through-cancellation-and-close.md\"\n?? \"backlog/tasks/task-32151 - Qualify-registered-Higgs-Audio-V2-on-macOS-CPU.md\"\n?? \"backlog/tasks/task-32152 - Qualify-AllTalk-V2-with-a-local-ARM-CPU-engine.md\"\n?? \"backlog/tasks/task-32153 - Qualify-Kokoro-ONNX-on-Linux-ARM-and-physical-Linux-playback.md\"\n?? \"backlog/tasks/task-32154 - Qualify-real-OpenAI-cloud-TTS-delivery.md\"\n?? \"backlog/tasks/task-32155 - Qualify-real-ElevenLabs-cloud-TTS-delivery.md\"\n?? \"backlog/tasks/task-32156 - Qualify-Kokoro-ONNX-on-Windows-CPU.md\"\n?? \"backlog/tasks/task-32157 - Qualify-Kokoro-on-a-real-CUDA-host.md\"\n?? \"backlog/tasks/task-32158 - Qualify-Chatterbox-on-a-real-CUDA-host.md\"\n?? \"backlog/tasks/task-32159 - Honor-configured-Kokoro-engine-and-voices-in-the-Speech-Lab.md\"\n?? \"backlog/tasks/task-32162 - Stop-Kokoro-PyTorch-between-internal-synthesis-segments.md\"\n?? scripts/validate_live_tts.py\n?? scripts/verify_live_tts_content.py",
+  "relevant_source_changes": [],
+  "checkout_patch_changed": false,
+  "process_exit_record": {
+    "pid": 83728,
+    "run_id": "cpu-shutdown-recovery-01",
+    "intended_exit_code": 0
+  }
+}

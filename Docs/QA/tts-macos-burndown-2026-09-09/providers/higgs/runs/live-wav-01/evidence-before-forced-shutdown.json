@@ -1,0 +1,335 @@
+{
+  "schema_version": 1,
+  "upstream_runner": "scripts/validate_live_tts.py",
+  "derived_runner_note": "Task-local provider specialization; exact production mounted Lab and Console lifecycle, no synthesis/playback replacements.",
+  "status": "failed",
+  "pid": 4020,
+  "started_utc": "2026-09-09T07:05:39.106563+00:00",
+  "phases": [
+    {
+      "id": "speech-lab",
+      "expected_text": "Silver compass rests by the quiet orchard under an amber sunrise.",
+      "language": "en",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2173653.235762875,
+      "native_calls": [
+        {
+          "class": "HiggsAudioServeEngine.generate",
+          "device": "cpu",
+          "dtype": "torch.float32",
+          "max_new_tokens": 512,
+          "enter_at": 2173671.665299125,
+          "thread_id": 6154956800,
+          "exit_at": 2173706.818147083
+        }
+      ],
+      "states": [],
+      "outcomes": [],
+      "sink_events": [],
+      "devices": [],
+      "outcome": "success",
+      "request": {
+        "model_id": "higgs-audio-v2",
+        "voice_id": "professional_female",
+        "speed": 1.0
+      },
+      "actual_forward_calls": 126,
+      "actual_format": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "pcm_s16le",
+            "sample_rate": "24000",
+            "channels": 1
+          }
+        ],
+        "format": {
+          "format_name": "wav"
+        }
+      },
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/higgs/live-wav-01/audio/speech-lab.wav",
+        "sha256": "99328d305fbc3342e0fb1e45225c5a5aabc913aaa53abec8fa64f50c9f7932f0",
+        "pcm_sha256": "795dfa8fd428ffb3e7b537b1b40721949146c7c8c1016cf6812f18ec86a0b719",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 111360,
+        "seconds": 4.64,
+        "rms": 0.08066575979554766,
+        "peak": 0.665679931640625
+      },
+      "playback": {
+        "kind": "file",
+        "pid": 4749,
+        "player": "afplay",
+        "started_at": 2173707.261022958,
+        "exit_code": 0,
+        "elapsed_seconds": 5.6001521670259535
+      },
+      "settled_at": 2173712.861296375,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2173712.861297083,
+        "threads": 3,
+        "rss_bytes": 28638380032,
+        "peak_rss_bytes": 28638429184,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    },
+    {
+      "id": "console-warmup",
+      "expected_text": "Silver compass rests by the quiet orchard under an amber sunrise.",
+      "language": "en",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2173712.879492666,
+      "native_calls": [
+        {
+          "class": "HiggsAudioServeEngine.generate",
+          "device": "cpu",
+          "dtype": "torch.float32",
+          "max_new_tokens": 512,
+          "enter_at": 2173712.886011,
+          "thread_id": 6154956800,
+          "exit_at": 2173739.868446625
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "sink_events": [
+        {
+          "event": "SinkStarted",
+          "at": 2173739.930527916
+        }
+      ],
+      "devices": [
+        {
+          "frames": 117120,
+          "audible_frames": 113414,
+          "callbacks": 244,
+          "sample_rate": 24000,
+          "sha256": "01502b5274cdd43250c9c0d38e7dad8cbf08b830967c4ecee4bebde313a1b659"
+        }
+      ],
+      "outcome": "running",
+      "message_id": "a185f8b1-7ce4-492c-8019-7e502971cbeb",
+      "destination_fingerprint": "sha256:4e0f2f6799a0cbc78305d25924268a2df6fc312ee51bc5c16537f3eb5f1eef1e",
+      "disposition": "speak",
+      "actual_forward_calls": 132,
+      "playback": {
+        "kind": "sink",
+        "outcome": "success",
+        "elapsed_seconds": 4.921686334069818
+      },
+      "actual_format": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "pcm_s16le",
+            "sample_rate": "24000",
+            "channels": 1
+          }
+        ],
+        "format": {
+          "format_name": "wav"
+        }
+      },
+      "source_bytes": 234284,
+      "source_sha256": "43cdbf8f3d4d449c99513a7f3247dc88b95b9a223420b80a4cc6cb5646305cd4",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/higgs/live-wav-01/audio/console-warmup.wav",
+        "sha256": "43cdbf8f3d4d449c99513a7f3247dc88b95b9a223420b80a4cc6cb5646305cd4",
+        "pcm_sha256": "01502b5274cdd43250c9c0d38e7dad8cbf08b830967c4ecee4bebde313a1b659",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 117120,
+        "seconds": 4.88,
+        "rms": 0.08278766636879269,
+        "peak": 0.616363525390625
+      }
+    }
+  ],
+  "arguments": {
+    "provider": "higgs",
+    "format": "wav",
+    "port": 17851,
+    "phase_timeout": 600.0,
+    "cleanup_timeout": 300.0,
+    "run_timeout": 1800.0,
+    "output": "/private/tmp/tts-macos-burndown/higgs/live-wav-01",
+    "expected_package_root": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook",
+    "scenarios": [
+      "playback",
+      "cancel"
+    ],
+    "repeats": 1,
+    "play_audio": true,
+    "worker": true,
+    "voice": "professional_female",
+    "model": "higgs-audio-v2",
+    "language": "en",
+    "speed": 1.0,
+    "device": "cpu",
+    "text_file": null,
+    "cancel_text_file": null
+  },
+  "python": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+  "executable": "/private/tmp/tts-macos-burndown/higgs/venv/bin/python",
+  "platform": "darwin",
+  "scope": "Mounted Speech pane and trusted Console handler, real models/codecs/device; no full-shell or acoustic loopback claim.",
+  "imported_package_root": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook",
+  "runner_sha256": "7d0fb5e47b1c4197017a1477f619d06ea38c8155aa151f85fc91ce0ac29a3ecb",
+  "assets": {
+    "/private/tmp/tts-macos-burndown/higgs/asset-manifest.json": "c3a78105a29217005ec6201d3b0340e3fd5e8cca732041f9a72a11a5c318184d"
+  },
+  "source_revision_if_git": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+  "versions": {
+    "tldw_chatbook": null,
+    "textual": "8.2.8",
+    "numpy": "1.26.4",
+    "sounddevice": "0.5.5",
+    "soundfile": "0.14.0",
+    "kokoro": null,
+    "kokoro-onnx": null,
+    "torch": "2.6.0",
+    "onnxruntime": null,
+    "misaki": null,
+    "spacy": null,
+    "en-core-web-sm": null
+  },
+  "output_device": {
+    "name": "MacBook Pro Speakers",
+    "index": 1,
+    "hostapi": 0,
+    "max_input_channels": 0,
+    "max_output_channels": 2,
+    "default_low_input_latency": 0.01,
+    "default_low_output_latency": 0.017958333333333333,
+    "default_high_input_latency": 0.1,
+    "default_high_output_latency": 0.027291666666666665,
+    "default_samplerate": 48000.0
+  },
+  "memory_before_model": {
+    "at": 2173647.8841525,
+    "threads": 2,
+    "rss_bytes": 364544000,
+    "peak_rss_bytes": 364544000,
+    "mps_allocated_bytes": 0,
+    "mps_driver_bytes": 458752
+  },
+  "runtime_files": {
+    "torch._C": {
+      "path": "/private/tmp/tts-macos-burndown/higgs/venv/lib/python3.12/site-packages/torch/_C.cpython-312-darwin.so",
+      "sha256": "7c6abb308da78d9bf7d5653711cc90c3ab66b88a30b49943808e3ab2e36767c8"
+    },
+    "boson_multimodal.model.higgs_audio.modeling_higgs_audio": {
+      "path": "/private/tmp/tts-macos-burndown/higgs/source/boson_multimodal/model/higgs_audio/modeling_higgs_audio.py",
+      "sha256": "c086fe4d8ce6d9a42558e64a5e5a322c986bb752c272fef5beb35f74a598f49d"
+    },
+    "boson_multimodal.serve.serve_engine": {
+      "path": "/private/tmp/tts-macos-burndown/higgs/source/boson_multimodal/serve/serve_engine.py",
+      "sha256": "712c594ae1cbb9aafede4d99a54920287764afc77ae4aba32d4430d0c19e0885"
+    }
+  },
+  "backend_assets": [
+    {
+      "provider": "higgs",
+      "initialize_start": 2173653.297721083,
+      "initialize_exit": 2173671.662858458,
+      "device": "cpu",
+      "dtype": "torch.float32",
+      "model": "/private/tmp/tts-macos-burndown/higgs/assets/model"
+    }
+  ],
+  "cleanup_errors": [],
+  "final_resources": {
+    "generation_owner": 0,
+    "stream_owner": 0,
+    "file_owner": 0,
+    "active_tasks": 0,
+    "retained_io": 0,
+    "retained_cleanup": 0,
+    "admitted_operations": 0,
+    "responses": 0,
+    "leases": 0,
+    "backend_tasks": 0,
+    "native_calls": 0,
+    "player_processes": 0
+  },
+  "notices": [
+    {
+      "message": "TTS generation complete!",
+      "severity": "information"
+    },
+    {
+      "message": "Playback complete",
+      "severity": "information"
+    }
+  ],
+  "completions": [
+    {
+      "message_id": "a185f8b1-7ce4-492c-8019-7e502971cbeb",
+      "error": null
+    }
+  ],
+  "memory_after_cleanup": {
+    "at": 2173755.555396541,
+    "threads": 3,
+    "rss_bytes": 2777202688,
+    "peak_rss_bytes": 28824190976,
+    "mps_allocated_bytes": 0,
+    "mps_driver_bytes": 458752
+  },
+  "source_unchanged": true,
+  "cleanup_joined": true,
+  "failure": {
+    "type": "TimeoutError",
+    "message": "Deadline exceeded: actual sink drain",
+    "traceback": "Traceback (most recent call last):\n  File \"/private/tmp/tts-macos-burndown/higgs/qualify_providers.py\", line 1245, in main\n    asyncio.run(run_live(args, evidence))\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/runners.py\", line 195, in run\n    return runner.run(main)\n           ^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/runners.py\", line 118, in run\n    return self._loop.run_until_complete(task)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/base_events.py\", line 691, in run_until_complete\n    return future.result()\n           ^^^^^^^^^^^^^^^\n  File \"/private/tmp/tts-macos-burndown/higgs/qualify_providers.py\", line 1068, in run_live\n    await complete(row)\n  File \"/private/tmp/tts-macos-burndown/higgs/qualify_providers.py\", line 927, in complete\n    await wait_until(\n  File \"/private/tmp/tts-macos-burndown/higgs/qualify_providers.py\", line 570, in wait_until\n    raise TimeoutError(f\"Deadline exceeded: {label}\")\nTimeoutError: Deadline exceeded: actual sink drain\n"
+  },
+  "ended_utc": "2026-09-09T07:07:31.365192+00:00",
+  "_packaging": {
+    "original_path": "/private/tmp/tts-macos-burndown/higgs/live-wav-01/evidence-before-forced-shutdown.json",
+    "original_sha256": "870fd085ef6133ae506f068d1440f7d587ea856a7411ff33c70c01e10f1d681a",
+    "source_maps": {
+      "source_hashes": {
+        "path": "../../../../kokoro-english/provenance/source-hashes.json",
+        "shared_sha256": "4738467d0515a205f79b6243f740f901d515682d0a2e50eec747a495511fad75",
+        "overrides": {},
+        "removed": []
+      },
+      "source_hashes_after": {
+        "path": "../../../../kokoro-english/provenance/source-hashes.json",
+        "shared_sha256": "4738467d0515a205f79b6243f740f901d515682d0a2e50eec747a495511fad75",
+        "overrides": {},
+        "removed": []
+      }
+    }
+  }
+}

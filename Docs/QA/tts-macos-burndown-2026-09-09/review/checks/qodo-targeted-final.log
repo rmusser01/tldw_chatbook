@@ -1,0 +1,921 @@
+........................................................................ [ 17%]
+......................s................................................. [ 35%]
+.................F.....FFFFFFFF.FFFFFFFFF..F............................ [ 53%]
+........................................................................ [ 71%]
+........................................................................ [ 88%]
+.............................................                            [100%]
+=================================== FAILURES ===================================
+______ test_content_denominator_includes_every_success_and_checks_hashes _______
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:642: in complete_model_class
+    cls.__pydantic_fields__, cls.__pydantic_extra_info__ = rebuild_model_fields(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:464: in rebuild_model_fields
+    new_field = _recreate_field_info(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:502: in _recreate_field_info
+    ann = _typing_extra.eval_type(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:442: in eval_type
+    return eval_type_backport(value, globalns, localns)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:474: in eval_type_backport
+    return _eval_type_backport(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:511: in _eval_type_backport
+    return _eval_type(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:564: in _eval_type
+    return typing._eval_type(  # type: ignore
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:415: in _eval_type
+    return t._evaluate(globalns, localns, type_params, recursive_guard=recursive_guard)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:947: in _evaluate
+    eval(self.__forward_code__, globalns, localns),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'Literal' is not defined
+
+The above exception was the direct cause of the following exception:
+Tests/TTS/test_live_validation_harness.py:292: in test_content_denominator_includes_every_success_and_checks_hashes
+    assert len(verifier.success_audio(evidence, tmp_path.resolve())) == 6
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:166: in success_audio
+    rows = _validated_clips(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:80: in _validated_clips
+    PhaseEvidence.model_rebuild(_types_namespace={"AudioEvidence": AudioEvidence})
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/main.py:683: in model_rebuild
+    return _model_construction.complete_model_class(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:652: in complete_model_class
+    raise exc from e
+E   pydantic.errors.PydanticUndefinedAnnotation: name 'Literal' is not defined
+E   
+E   For further information visit https://errors.pydantic.dev/2.13/u/undefined-annotation
+____ test_missing_success_audio_fails_instead_of_shrinking_the_denominator _____
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:642: in complete_model_class
+    cls.__pydantic_fields__, cls.__pydantic_extra_info__ = rebuild_model_fields(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:464: in rebuild_model_fields
+    new_field = _recreate_field_info(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:502: in _recreate_field_info
+    ann = _typing_extra.eval_type(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:442: in eval_type
+    return eval_type_backport(value, globalns, localns)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:474: in eval_type_backport
+    return _eval_type_backport(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:511: in _eval_type_backport
+    return _eval_type(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:564: in _eval_type
+    return typing._eval_type(  # type: ignore
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:415: in _eval_type
+    return t._evaluate(globalns, localns, type_params, recursive_guard=recursive_guard)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:947: in _evaluate
+    eval(self.__forward_code__, globalns, localns),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'Literal' is not defined
+
+The above exception was the direct cause of the following exception:
+Tests/TTS/test_live_validation_harness.py:336: in test_missing_success_audio_fails_instead_of_shrinking_the_denominator
+    verifier.success_audio(
+scripts/verify_live_tts_content.py:166: in success_audio
+    rows = _validated_clips(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:80: in _validated_clips
+    PhaseEvidence.model_rebuild(_types_namespace={"AudioEvidence": AudioEvidence})
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/main.py:683: in model_rebuild
+    return _model_construction.complete_model_class(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:652: in complete_model_class
+    raise exc from e
+E   pydantic.errors.PydanticUndefinedAnnotation: name 'Literal' is not defined
+E   
+E   For further information visit https://errors.pydantic.dev/2.13/u/undefined-annotation
+____ test_malformed_evidence_returns_consistent_cli_error_before_asr[None] _____
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:642: in complete_model_class
+    cls.__pydantic_fields__, cls.__pydantic_extra_info__ = rebuild_model_fields(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:464: in rebuild_model_fields
+    new_field = _recreate_field_info(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:502: in _recreate_field_info
+    ann = _typing_extra.eval_type(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:442: in eval_type
+    return eval_type_backport(value, globalns, localns)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:474: in eval_type_backport
+    return _eval_type_backport(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:511: in _eval_type_backport
+    return _eval_type(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:564: in _eval_type
+    return typing._eval_type(  # type: ignore
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:415: in _eval_type
+    return t._evaluate(globalns, localns, type_params, recursive_guard=recursive_guard)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:947: in _evaluate
+    eval(self.__forward_code__, globalns, localns),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'Literal' is not defined
+
+The above exception was the direct cause of the following exception:
+Tests/TTS/test_live_tts_input_validation.py:87: in test_malformed_evidence_returns_consistent_cli_error_before_asr
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:347: in main
+    return _verify(args)
+           ^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:242: in _verify
+    rows = success_audio(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:166: in success_audio
+    rows = _validated_clips(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:80: in _validated_clips
+    PhaseEvidence.model_rebuild(_types_namespace={"AudioEvidence": AudioEvidence})
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/main.py:683: in model_rebuild
+    return _model_construction.complete_model_class(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:652: in complete_model_class
+    raise exc from e
+E   pydantic.errors.PydanticUndefinedAnnotation: name 'Literal' is not defined
+E   
+E   For further information visit https://errors.pydantic.dev/2.13/u/undefined-annotation
+____ test_malformed_evidence_returns_consistent_cli_error_before_asr[data1] ____
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:642: in complete_model_class
+    cls.__pydantic_fields__, cls.__pydantic_extra_info__ = rebuild_model_fields(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:464: in rebuild_model_fields
+    new_field = _recreate_field_info(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:502: in _recreate_field_info
+    ann = _typing_extra.eval_type(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:442: in eval_type
+    return eval_type_backport(value, globalns, localns)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:474: in eval_type_backport
+    return _eval_type_backport(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:511: in _eval_type_backport
+    return _eval_type(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:564: in _eval_type
+    return typing._eval_type(  # type: ignore
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:415: in _eval_type
+    return t._evaluate(globalns, localns, type_params, recursive_guard=recursive_guard)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:947: in _evaluate
+    eval(self.__forward_code__, globalns, localns),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'Literal' is not defined
+
+The above exception was the direct cause of the following exception:
+Tests/TTS/test_live_tts_input_validation.py:87: in test_malformed_evidence_returns_consistent_cli_error_before_asr
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:347: in main
+    return _verify(args)
+           ^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:242: in _verify
+    rows = success_audio(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:166: in success_audio
+    rows = _validated_clips(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:80: in _validated_clips
+    PhaseEvidence.model_rebuild(_types_namespace={"AudioEvidence": AudioEvidence})
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/main.py:683: in model_rebuild
+    return _model_construction.complete_model_class(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:652: in complete_model_class
+    raise exc from e
+E   pydantic.errors.PydanticUndefinedAnnotation: name 'Literal' is not defined
+E   
+E   For further information visit https://errors.pydantic.dev/2.13/u/undefined-annotation
+____ test_malformed_evidence_returns_consistent_cli_error_before_asr[data2] ____
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:642: in complete_model_class
+    cls.__pydantic_fields__, cls.__pydantic_extra_info__ = rebuild_model_fields(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:464: in rebuild_model_fields
+    new_field = _recreate_field_info(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:502: in _recreate_field_info
+    ann = _typing_extra.eval_type(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:442: in eval_type
+    return eval_type_backport(value, globalns, localns)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:474: in eval_type_backport
+    return _eval_type_backport(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:511: in _eval_type_backport
+    return _eval_type(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:564: in _eval_type
+    return typing._eval_type(  # type: ignore
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:415: in _eval_type
+    return t._evaluate(globalns, localns, type_params, recursive_guard=recursive_guard)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:947: in _evaluate
+    eval(self.__forward_code__, globalns, localns),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'Literal' is not defined
+
+The above exception was the direct cause of the following exception:
+Tests/TTS/test_live_tts_input_validation.py:87: in test_malformed_evidence_returns_consistent_cli_error_before_asr
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:347: in main
+    return _verify(args)
+           ^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:242: in _verify
+    rows = success_audio(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:166: in success_audio
+    rows = _validated_clips(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:80: in _validated_clips
+    PhaseEvidence.model_rebuild(_types_namespace={"AudioEvidence": AudioEvidence})
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/main.py:683: in model_rebuild
+    return _model_construction.complete_model_class(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:652: in complete_model_class
+    raise exc from e
+E   pydantic.errors.PydanticUndefinedAnnotation: name 'Literal' is not defined
+E   
+E   For further information visit https://errors.pydantic.dev/2.13/u/undefined-annotation
+____ test_malformed_evidence_returns_consistent_cli_error_before_asr[data3] ____
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:642: in complete_model_class
+    cls.__pydantic_fields__, cls.__pydantic_extra_info__ = rebuild_model_fields(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:464: in rebuild_model_fields
+    new_field = _recreate_field_info(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:502: in _recreate_field_info
+    ann = _typing_extra.eval_type(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:442: in eval_type
+    return eval_type_backport(value, globalns, localns)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:474: in eval_type_backport
+    return _eval_type_backport(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:511: in _eval_type_backport
+    return _eval_type(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:564: in _eval_type
+    return typing._eval_type(  # type: ignore
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:415: in _eval_type
+    return t._evaluate(globalns, localns, type_params, recursive_guard=recursive_guard)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:947: in _evaluate
+    eval(self.__forward_code__, globalns, localns),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'Literal' is not defined
+
+The above exception was the direct cause of the following exception:
+Tests/TTS/test_live_tts_input_validation.py:87: in test_malformed_evidence_returns_consistent_cli_error_before_asr
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:347: in main
+    return _verify(args)
+           ^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:242: in _verify
+    rows = success_audio(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:166: in success_audio
+    rows = _validated_clips(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:80: in _validated_clips
+    PhaseEvidence.model_rebuild(_types_namespace={"AudioEvidence": AudioEvidence})
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/main.py:683: in model_rebuild
+    return _model_construction.complete_model_class(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:652: in complete_model_class
+    raise exc from e
+E   pydantic.errors.PydanticUndefinedAnnotation: name 'Literal' is not defined
+E   
+E   For further information visit https://errors.pydantic.dev/2.13/u/undefined-annotation
+____ test_malformed_evidence_returns_consistent_cli_error_before_asr[data4] ____
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:642: in complete_model_class
+    cls.__pydantic_fields__, cls.__pydantic_extra_info__ = rebuild_model_fields(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:464: in rebuild_model_fields
+    new_field = _recreate_field_info(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:502: in _recreate_field_info
+    ann = _typing_extra.eval_type(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:442: in eval_type
+    return eval_type_backport(value, globalns, localns)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:474: in eval_type_backport
+    return _eval_type_backport(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:511: in _eval_type_backport
+    return _eval_type(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:564: in _eval_type
+    return typing._eval_type(  # type: ignore
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:415: in _eval_type
+    return t._evaluate(globalns, localns, type_params, recursive_guard=recursive_guard)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:947: in _evaluate
+    eval(self.__forward_code__, globalns, localns),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'Literal' is not defined
+
+The above exception was the direct cause of the following exception:
+Tests/TTS/test_live_tts_input_validation.py:87: in test_malformed_evidence_returns_consistent_cli_error_before_asr
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:347: in main
+    return _verify(args)
+           ^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:242: in _verify
+    rows = success_audio(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:166: in success_audio
+    rows = _validated_clips(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:80: in _validated_clips
+    PhaseEvidence.model_rebuild(_types_namespace={"AudioEvidence": AudioEvidence})
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/main.py:683: in model_rebuild
+    return _model_construction.complete_model_class(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:652: in complete_model_class
+    raise exc from e
+E   pydantic.errors.PydanticUndefinedAnnotation: name 'Literal' is not defined
+E   
+E   For further information visit https://errors.pydantic.dev/2.13/u/undefined-annotation
+____ test_malformed_evidence_returns_consistent_cli_error_before_asr[data5] ____
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:642: in complete_model_class
+    cls.__pydantic_fields__, cls.__pydantic_extra_info__ = rebuild_model_fields(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:464: in rebuild_model_fields
+    new_field = _recreate_field_info(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:502: in _recreate_field_info
+    ann = _typing_extra.eval_type(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:442: in eval_type
+    return eval_type_backport(value, globalns, localns)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:474: in eval_type_backport
+    return _eval_type_backport(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:511: in _eval_type_backport
+    return _eval_type(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:564: in _eval_type
+    return typing._eval_type(  # type: ignore
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:415: in _eval_type
+    return t._evaluate(globalns, localns, type_params, recursive_guard=recursive_guard)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:947: in _evaluate
+    eval(self.__forward_code__, globalns, localns),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'Literal' is not defined
+
+The above exception was the direct cause of the following exception:
+Tests/TTS/test_live_tts_input_validation.py:87: in test_malformed_evidence_returns_consistent_cli_error_before_asr
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:347: in main
+    return _verify(args)
+           ^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:242: in _verify
+    rows = success_audio(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:166: in success_audio
+    rows = _validated_clips(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:80: in _validated_clips
+    PhaseEvidence.model_rebuild(_types_namespace={"AudioEvidence": AudioEvidence})
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/main.py:683: in model_rebuild
+    return _model_construction.complete_model_class(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:652: in complete_model_class
+    raise exc from e
+E   pydantic.errors.PydanticUndefinedAnnotation: name 'Literal' is not defined
+E   
+E   For further information visit https://errors.pydantic.dev/2.13/u/undefined-annotation
+____ test_malformed_evidence_returns_consistent_cli_error_before_asr[data6] ____
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:642: in complete_model_class
+    cls.__pydantic_fields__, cls.__pydantic_extra_info__ = rebuild_model_fields(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:464: in rebuild_model_fields
+    new_field = _recreate_field_info(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:502: in _recreate_field_info
+    ann = _typing_extra.eval_type(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:442: in eval_type
+    return eval_type_backport(value, globalns, localns)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:474: in eval_type_backport
+    return _eval_type_backport(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:511: in _eval_type_backport
+    return _eval_type(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:564: in _eval_type
+    return typing._eval_type(  # type: ignore
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:415: in _eval_type
+    return t._evaluate(globalns, localns, type_params, recursive_guard=recursive_guard)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:947: in _evaluate
+    eval(self.__forward_code__, globalns, localns),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'Literal' is not defined
+
+The above exception was the direct cause of the following exception:
+Tests/TTS/test_live_tts_input_validation.py:87: in test_malformed_evidence_returns_consistent_cli_error_before_asr
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:347: in main
+    return _verify(args)
+           ^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:242: in _verify
+    rows = success_audio(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:166: in success_audio
+    rows = _validated_clips(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:80: in _validated_clips
+    PhaseEvidence.model_rebuild(_types_namespace={"AudioEvidence": AudioEvidence})
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/main.py:683: in model_rebuild
+    return _model_construction.complete_model_class(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:652: in complete_model_class
+    raise exc from e
+E   pydantic.errors.PydanticUndefinedAnnotation: name 'Literal' is not defined
+E   
+E   For further information visit https://errors.pydantic.dev/2.13/u/undefined-annotation
+_ test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files[absolute] _
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:642: in complete_model_class
+    cls.__pydantic_fields__, cls.__pydantic_extra_info__ = rebuild_model_fields(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:464: in rebuild_model_fields
+    new_field = _recreate_field_info(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:502: in _recreate_field_info
+    ann = _typing_extra.eval_type(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:442: in eval_type
+    return eval_type_backport(value, globalns, localns)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:474: in eval_type_backport
+    return _eval_type_backport(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:511: in _eval_type_backport
+    return _eval_type(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:564: in _eval_type
+    return typing._eval_type(  # type: ignore
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:415: in _eval_type
+    return t._evaluate(globalns, localns, type_params, recursive_guard=recursive_guard)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:947: in _evaluate
+    eval(self.__forward_code__, globalns, localns),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'Literal' is not defined
+
+The above exception was the direct cause of the following exception:
+Tests/TTS/test_live_tts_input_validation.py:129: in test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:347: in main
+    return _verify(args)
+           ^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:242: in _verify
+    rows = success_audio(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:166: in success_audio
+    rows = _validated_clips(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:80: in _validated_clips
+    PhaseEvidence.model_rebuild(_types_namespace={"AudioEvidence": AudioEvidence})
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/main.py:683: in model_rebuild
+    return _model_construction.complete_model_class(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:652: in complete_model_class
+    raise exc from e
+E   pydantic.errors.PydanticUndefinedAnnotation: name 'Literal' is not defined
+E   
+E   For further information visit https://errors.pydantic.dev/2.13/u/undefined-annotation
+_ test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files[relative] _
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:642: in complete_model_class
+    cls.__pydantic_fields__, cls.__pydantic_extra_info__ = rebuild_model_fields(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:464: in rebuild_model_fields
+    new_field = _recreate_field_info(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:502: in _recreate_field_info
+    ann = _typing_extra.eval_type(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:442: in eval_type
+    return eval_type_backport(value, globalns, localns)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:474: in eval_type_backport
+    return _eval_type_backport(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:511: in _eval_type_backport
+    return _eval_type(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:564: in _eval_type
+    return typing._eval_type(  # type: ignore
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:415: in _eval_type
+    return t._evaluate(globalns, localns, type_params, recursive_guard=recursive_guard)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:947: in _evaluate
+    eval(self.__forward_code__, globalns, localns),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'Literal' is not defined
+
+The above exception was the direct cause of the following exception:
+Tests/TTS/test_live_tts_input_validation.py:129: in test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:347: in main
+    return _verify(args)
+           ^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:242: in _verify
+    rows = success_audio(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:166: in success_audio
+    rows = _validated_clips(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:80: in _validated_clips
+    PhaseEvidence.model_rebuild(_types_namespace={"AudioEvidence": AudioEvidence})
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/main.py:683: in model_rebuild
+    return _model_construction.complete_model_class(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:652: in complete_model_class
+    raise exc from e
+E   pydantic.errors.PydanticUndefinedAnnotation: name 'Literal' is not defined
+E   
+E   For further information visit https://errors.pydantic.dev/2.13/u/undefined-annotation
+_ test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files[leaf_link] _
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:642: in complete_model_class
+    cls.__pydantic_fields__, cls.__pydantic_extra_info__ = rebuild_model_fields(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:464: in rebuild_model_fields
+    new_field = _recreate_field_info(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:502: in _recreate_field_info
+    ann = _typing_extra.eval_type(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:442: in eval_type
+    return eval_type_backport(value, globalns, localns)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:474: in eval_type_backport
+    return _eval_type_backport(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:511: in _eval_type_backport
+    return _eval_type(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:564: in _eval_type
+    return typing._eval_type(  # type: ignore
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:415: in _eval_type
+    return t._evaluate(globalns, localns, type_params, recursive_guard=recursive_guard)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:947: in _evaluate
+    eval(self.__forward_code__, globalns, localns),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'Literal' is not defined
+
+The above exception was the direct cause of the following exception:
+Tests/TTS/test_live_tts_input_validation.py:129: in test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:347: in main
+    return _verify(args)
+           ^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:242: in _verify
+    rows = success_audio(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:166: in success_audio
+    rows = _validated_clips(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:80: in _validated_clips
+    PhaseEvidence.model_rebuild(_types_namespace={"AudioEvidence": AudioEvidence})
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/main.py:683: in model_rebuild
+    return _model_construction.complete_model_class(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:652: in complete_model_class
+    raise exc from e
+E   pydantic.errors.PydanticUndefinedAnnotation: name 'Literal' is not defined
+E   
+E   For further information visit https://errors.pydantic.dev/2.13/u/undefined-annotation
+_ test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files[parent_link] _
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:642: in complete_model_class
+    cls.__pydantic_fields__, cls.__pydantic_extra_info__ = rebuild_model_fields(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:464: in rebuild_model_fields
+    new_field = _recreate_field_info(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:502: in _recreate_field_info
+    ann = _typing_extra.eval_type(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:442: in eval_type
+    return eval_type_backport(value, globalns, localns)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:474: in eval_type_backport
+    return _eval_type_backport(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:511: in _eval_type_backport
+    return _eval_type(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:564: in _eval_type
+    return typing._eval_type(  # type: ignore
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:415: in _eval_type
+    return t._evaluate(globalns, localns, type_params, recursive_guard=recursive_guard)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:947: in _evaluate
+    eval(self.__forward_code__, globalns, localns),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'Literal' is not defined
+
+The above exception was the direct cause of the following exception:
+Tests/TTS/test_live_tts_input_validation.py:129: in test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:347: in main
+    return _verify(args)
+           ^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:242: in _verify
+    rows = success_audio(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:166: in success_audio
+    rows = _validated_clips(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:80: in _validated_clips
+    PhaseEvidence.model_rebuild(_types_namespace={"AudioEvidence": AudioEvidence})
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/main.py:683: in model_rebuild
+    return _model_construction.complete_model_class(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:652: in complete_model_class
+    raise exc from e
+E   pydantic.errors.PydanticUndefinedAnnotation: name 'Literal' is not defined
+E   
+E   For further information visit https://errors.pydantic.dev/2.13/u/undefined-annotation
+_ test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files[fifo] __
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:642: in complete_model_class
+    cls.__pydantic_fields__, cls.__pydantic_extra_info__ = rebuild_model_fields(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:464: in rebuild_model_fields
+    new_field = _recreate_field_info(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:502: in _recreate_field_info
+    ann = _typing_extra.eval_type(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:442: in eval_type
+    return eval_type_backport(value, globalns, localns)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:474: in eval_type_backport
+    return _eval_type_backport(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:511: in _eval_type_backport
+    return _eval_type(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:564: in _eval_type
+    return typing._eval_type(  # type: ignore
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:415: in _eval_type
+    return t._evaluate(globalns, localns, type_params, recursive_guard=recursive_guard)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:947: in _evaluate
+    eval(self.__forward_code__, globalns, localns),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'Literal' is not defined
+
+The above exception was the direct cause of the following exception:
+Tests/TTS/test_live_tts_input_validation.py:129: in test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:347: in main
+    return _verify(args)
+           ^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:242: in _verify
+    rows = success_audio(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:166: in success_audio
+    rows = _validated_clips(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:80: in _validated_clips
+    PhaseEvidence.model_rebuild(_types_namespace={"AudioEvidence": AudioEvidence})
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/main.py:683: in model_rebuild
+    return _model_construction.complete_model_class(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:652: in complete_model_class
+    raise exc from e
+E   pydantic.errors.PydanticUndefinedAnnotation: name 'Literal' is not defined
+E   
+E   For further information visit https://errors.pydantic.dev/2.13/u/undefined-annotation
+________________ test_duplicate_success_ids_cannot_hide_a_clip _________________
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:642: in complete_model_class
+    cls.__pydantic_fields__, cls.__pydantic_extra_info__ = rebuild_model_fields(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:464: in rebuild_model_fields
+    new_field = _recreate_field_info(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:502: in _recreate_field_info
+    ann = _typing_extra.eval_type(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:442: in eval_type
+    return eval_type_backport(value, globalns, localns)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:474: in eval_type_backport
+    return _eval_type_backport(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:511: in _eval_type_backport
+    return _eval_type(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:564: in _eval_type
+    return typing._eval_type(  # type: ignore
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:415: in _eval_type
+    return t._evaluate(globalns, localns, type_params, recursive_guard=recursive_guard)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:947: in _evaluate
+    eval(self.__forward_code__, globalns, localns),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'Literal' is not defined
+
+The above exception was the direct cause of the following exception:
+Tests/TTS/test_live_tts_input_validation.py:138: in test_duplicate_success_ids_cannot_hide_a_clip
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:347: in main
+    return _verify(args)
+           ^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:242: in _verify
+    rows = success_audio(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:166: in success_audio
+    rows = _validated_clips(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:80: in _validated_clips
+    PhaseEvidence.model_rebuild(_types_namespace={"AudioEvidence": AudioEvidence})
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/main.py:683: in model_rebuild
+    return _model_construction.complete_model_class(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:652: in complete_model_class
+    raise exc from e
+E   pydantic.errors.PydanticUndefinedAnnotation: name 'Literal' is not defined
+E   
+E   For further information visit https://errors.pydantic.dev/2.13/u/undefined-annotation
+__________ test_asr_uses_verified_open_stream_and_offline_constructor __________
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:642: in complete_model_class
+    cls.__pydantic_fields__, cls.__pydantic_extra_info__ = rebuild_model_fields(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:464: in rebuild_model_fields
+    new_field = _recreate_field_info(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:502: in _recreate_field_info
+    ann = _typing_extra.eval_type(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:442: in eval_type
+    return eval_type_backport(value, globalns, localns)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:474: in eval_type_backport
+    return _eval_type_backport(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:511: in _eval_type_backport
+    return _eval_type(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:564: in _eval_type
+    return typing._eval_type(  # type: ignore
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:415: in _eval_type
+    return t._evaluate(globalns, localns, type_params, recursive_guard=recursive_guard)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:947: in _evaluate
+    eval(self.__forward_code__, globalns, localns),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'Literal' is not defined
+
+The above exception was the direct cause of the following exception:
+Tests/TTS/test_live_tts_input_validation.py:156: in test_asr_uses_verified_open_stream_and_offline_constructor
+    assert v.verifier.main(v.argv) == 0
+           ^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:347: in main
+    return _verify(args)
+           ^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:242: in _verify
+    rows = success_audio(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:166: in success_audio
+    rows = _validated_clips(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:80: in _validated_clips
+    PhaseEvidence.model_rebuild(_types_namespace={"AudioEvidence": AudioEvidence})
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/main.py:683: in model_rebuild
+    return _model_construction.complete_model_class(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:652: in complete_model_class
+    raise exc from e
+E   pydantic.errors.PydanticUndefinedAnnotation: name 'Literal' is not defined
+E   
+E   For further information visit https://errors.pydantic.dev/2.13/u/undefined-annotation
+________ test_audio_swap_after_admission_cannot_redirect_transcription _________
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:642: in complete_model_class
+    cls.__pydantic_fields__, cls.__pydantic_extra_info__ = rebuild_model_fields(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:464: in rebuild_model_fields
+    new_field = _recreate_field_info(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:502: in _recreate_field_info
+    ann = _typing_extra.eval_type(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:442: in eval_type
+    return eval_type_backport(value, globalns, localns)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:474: in eval_type_backport
+    return _eval_type_backport(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:511: in _eval_type_backport
+    return _eval_type(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:564: in _eval_type
+    return typing._eval_type(  # type: ignore
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:415: in _eval_type
+    return t._evaluate(globalns, localns, type_params, recursive_guard=recursive_guard)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:947: in _evaluate
+    eval(self.__forward_code__, globalns, localns),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'Literal' is not defined
+
+The above exception was the direct cause of the following exception:
+Tests/TTS/test_live_tts_input_validation.py:180: in test_audio_swap_after_admission_cannot_redirect_transcription
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:347: in main
+    return _verify(args)
+           ^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:242: in _verify
+    rows = success_audio(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:166: in success_audio
+    rows = _validated_clips(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:80: in _validated_clips
+    PhaseEvidence.model_rebuild(_types_namespace={"AudioEvidence": AudioEvidence})
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/main.py:683: in model_rebuild
+    return _model_construction.complete_model_class(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:652: in complete_model_class
+    raise exc from e
+E   pydantic.errors.PydanticUndefinedAnnotation: name 'Literal' is not defined
+E   
+E   For further information visit https://errors.pydantic.dev/2.13/u/undefined-annotation
+______ test_missing_optional_asr_has_project_guidance_before_model_start _______
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:642: in complete_model_class
+    cls.__pydantic_fields__, cls.__pydantic_extra_info__ = rebuild_model_fields(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:464: in rebuild_model_fields
+    new_field = _recreate_field_info(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:502: in _recreate_field_info
+    ann = _typing_extra.eval_type(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:442: in eval_type
+    return eval_type_backport(value, globalns, localns)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:474: in eval_type_backport
+    return _eval_type_backport(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:511: in _eval_type_backport
+    return _eval_type(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:564: in _eval_type
+    return typing._eval_type(  # type: ignore
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:415: in _eval_type
+    return t._evaluate(globalns, localns, type_params, recursive_guard=recursive_guard)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:947: in _evaluate
+    eval(self.__forward_code__, globalns, localns),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'Literal' is not defined
+
+The above exception was the direct cause of the following exception:
+Tests/TTS/test_live_tts_input_validation.py:199: in test_missing_optional_asr_has_project_guidance_before_model_start
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:347: in main
+    return _verify(args)
+           ^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:242: in _verify
+    rows = success_audio(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:166: in success_audio
+    rows = _validated_clips(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:80: in _validated_clips
+    PhaseEvidence.model_rebuild(_types_namespace={"AudioEvidence": AudioEvidence})
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/main.py:683: in model_rebuild
+    return _model_construction.complete_model_class(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:652: in complete_model_class
+    raise exc from e
+E   pydantic.errors.PydanticUndefinedAnnotation: name 'Literal' is not defined
+E   
+E   For further information visit https://errors.pydantic.dev/2.13/u/undefined-annotation
+________ test_unknown_phase_outcome_cannot_silently_reduce_denominator _________
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:642: in complete_model_class
+    cls.__pydantic_fields__, cls.__pydantic_extra_info__ = rebuild_model_fields(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:464: in rebuild_model_fields
+    new_field = _recreate_field_info(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_fields.py:502: in _recreate_field_info
+    ann = _typing_extra.eval_type(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:442: in eval_type
+    return eval_type_backport(value, globalns, localns)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:474: in eval_type_backport
+    return _eval_type_backport(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:511: in _eval_type_backport
+    return _eval_type(value, globalns, localns, type_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_typing_extra.py:564: in _eval_type
+    return typing._eval_type(  # type: ignore
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:415: in _eval_type
+    return t._evaluate(globalns, localns, type_params, recursive_guard=recursive_guard)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/typing.py:947: in _evaluate
+    eval(self.__forward_code__, globalns, localns),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'Literal' is not defined
+
+The above exception was the direct cause of the following exception:
+Tests/TTS/test_live_tts_input_validation.py:228: in test_unknown_phase_outcome_cannot_silently_reduce_denominator
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:347: in main
+    return _verify(args)
+           ^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:242: in _verify
+    rows = success_audio(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:166: in success_audio
+    rows = _validated_clips(evidence, run_root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:80: in _validated_clips
+    PhaseEvidence.model_rebuild(_types_namespace={"AudioEvidence": AudioEvidence})
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/main.py:683: in model_rebuild
+    return _model_construction.complete_model_class(
+/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydantic/_internal/_model_construction.py:652: in complete_model_class
+    raise exc from e
+E   pydantic.errors.PydanticUndefinedAnnotation: name 'Literal' is not defined
+E   
+E   For further information visit https://errors.pydantic.dev/2.13/u/undefined-annotation
+=============================== warnings summary ===============================
+../../../../../../../private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydub/utils.py:14
+  /private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/pydub/utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+SKIPPED [1] Tests/TTS/test_kokoro_pytorch_runtime.py:463: Requires real MPS
+FAILED Tests/TTS/test_live_validation_harness.py::test_content_denominator_includes_every_success_and_checks_hashes
+FAILED Tests/TTS/test_live_validation_harness.py::test_missing_success_audio_fails_instead_of_shrinking_the_denominator
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_malformed_evidence_returns_consistent_cli_error_before_asr[None]
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_malformed_evidence_returns_consistent_cli_error_before_asr[data1]
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_malformed_evidence_returns_consistent_cli_error_before_asr[data2]
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_malformed_evidence_returns_consistent_cli_error_before_asr[data3]
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_malformed_evidence_returns_consistent_cli_error_before_asr[data4]
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_malformed_evidence_returns_consistent_cli_error_before_asr[data5]
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_malformed_evidence_returns_consistent_cli_error_before_asr[data6]
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files[absolute]
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files[relative]
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files[leaf_link]
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files[parent_link]
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files[fifo]
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_duplicate_success_ids_cannot_hide_a_clip
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_asr_uses_verified_open_stream_and_offline_constructor
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_audio_swap_after_admission_cannot_redirect_transcription
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_missing_optional_asr_has_project_guidance_before_model_start
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_unknown_phase_outcome_cannot_silently_reduce_denominator
+19 failed, 385 passed, 1 skipped, 1 warning in 12.36s

@@ -1,0 +1,45 @@
+{
+  "scope": "device enumeration only; no stream/model",
+  "library": "/private/tmp/tts-macos-burndown/portaudio/prefix/lib/libportaudio.dylib",
+  "default_device": [
+    0,
+    1
+  ],
+  "host_apis": [
+    {
+      "name": "Core Audio",
+      "devices": [
+        0,
+        1
+      ],
+      "default_input_device": 0,
+      "default_output_device": 1
+    }
+  ],
+  "devices": [
+    {
+      "name": "MacBook Pro Microphone",
+      "index": 0,
+      "hostapi": 0,
+      "max_input_channels": 1,
+      "max_output_channels": 0,
+      "default_low_input_latency": 0.05285416666666667,
+      "default_low_output_latency": 0.01,
+      "default_high_input_latency": 0.0621875,
+      "default_high_output_latency": 0.1,
+      "default_samplerate": 48000.0
+    },
+    {
+      "name": "MacBook Pro Speakers",
+      "index": 1,
+      "hostapi": 0,
+      "max_input_channels": 0,
+      "max_output_channels": 2,
+      "default_low_input_latency": 0.01,
+      "default_low_output_latency": 0.017958333333333333,
+      "default_high_input_latency": 0.1,
+      "default_high_output_latency": 0.027291666666666665,
+      "default_samplerate": 48000.0
+    }
+  ]
+}
