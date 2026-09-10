@@ -132,6 +132,40 @@ async def test_a_zero_result_filter_keeps_the_type_facet_and_names_it():
         assert len(screen.query("#library-media-status")) == 1
 
 
+async def _enter_select_mode(screen, pilot):
+    """Enter Select mode the way the footer advertises it."""
+    await pilot.press("s")
+    await _wait_for_condition(
+        pilot,
+        lambda: screen._media_state.select_mode is True,
+        message="Select mode never armed",
+    )
+    await pilot.pause()
+
+
+@pytest.mark.parametrize("size", ((235, 52), (100, 30)))
+@pytest.mark.asyncio
+async def test_the_select_count_never_touches_the_first_action(size):
+    """task-32227: the count and the next action shared a cell.
+
+    Critique #9 register row 26: the select strip painted
+    ``2 selected┃ Select all`` — the counter's last cell and the focused
+    button's heavy border touched, so the two read as one control. Fixed on
+    the shared ``.library-toolbar-count`` class, which every canvas's
+    counter already carries, so this holds at both widths.
+    """
+    host = _host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _enter_select_mode(screen, pilot)
+        count = screen.query_one("#library-media-selected-count", Static)
+        first = screen.query_one("#library-media-select-all", Button)
+        assert first.region.x - count.region.right >= 1, (
+            count.region,
+            first.region,
+        )
+
+
 @pytest.mark.asyncio
 async def test_the_chooser_cursor_keeps_the_active_marker_and_the_pick_payload():
     """``█`` rides in front of ``✓``; ``choice_value`` survives the rewrite."""
