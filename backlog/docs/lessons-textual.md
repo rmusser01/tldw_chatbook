@@ -643,7 +643,9 @@ over mid-sentence needs its own `priority=True` Tab binding — namespaced (`scr
 `action_focus_next`, and the binding then silently never fires. It belongs on every
 field of the form, `TextArea` included (a peer hit the same symptom on the note body),
 and on a `TextArea` it is correct only while `tab_behavior == "focus"` — assert that
-rather than trusting the default. (ii) `pilot.press` is
+rather than trusting the default. Put it on the FIELDS, not on the screen: a
+priority Tab at screen level preempts every `on_key` Tab trap the screen owns (here,
+the note delete prompt's). (ii) `pilot.press` is
 the OPPOSITE of a burst: `App._press_keys` awaits `wait_for_idle(0)` twice plus the
 animator between every key, so the loop fully drains between keystrokes (~200 ms each
 here). Any defect whose trigger is "faster than the event loop" is invisible to it, and
