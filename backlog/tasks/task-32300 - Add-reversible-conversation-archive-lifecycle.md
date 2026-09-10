@@ -1,5 +1,5 @@
 ---
-id: TASK-32273
+id: TASK-32300
 title: Add reversible conversation archive lifecycle
 status: Done
 assignee:
@@ -64,3 +64,7 @@ PR #2576 wave 2 backend corrections: importer conflict detection and generated-n
 Final integrated review verification and baseline limits are recorded in Docs/superpowers/qa/console/2026-09-10-archive-recovery.md. All modified archive flows pass their targeted tests; the unrelated compact Overview assertion reproduces with the prior Settings implementation. Started-write cancellation preserves storage completion publication. Existing ADR147 applies.
 PR #2576 third review: fixed Trash archive independence, failed-mutation Undo ownership, durable existing-tab Resume checks, serialized Unicode restore names, workspace recovery labels, and archive navigation contracts. Targeted real SQLite, recovery and mounted checks pass; third-review evidence and temporary host-disk interruption are recorded in the QA report. ADR147 applies and documents deletion-oriented scope. Self-review and scoped static checks complete.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+Renumbered the unmerged archive lifecycle task from TASK-32273 to TASK-32300 after PR #2575 landed the reasoning-history task with the same ID. The landed task keeps its external references under the 2026-09-08 landed-keeps-ID clarification in lessons-backlog-hygiene.md. Its add commit is f043db12b7 (2026-09-10 19:28 UTC); the archive task entered this PR at 19:30 UTC. A fresh all-ref/object and live-worktree sweep found maximum 32299 before selecting 32300. The archive plan and ADR references move with this task; reasoning-history references remain unchanged.

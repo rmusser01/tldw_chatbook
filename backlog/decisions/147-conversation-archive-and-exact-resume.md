@@ -31,4 +31,4 @@ The archive UX review found that workspace archive could preserve chats but Libr
 
 The database and service own lifecycle truth; widgets do not maintain competing archive lists. Cross-screen navigation must preserve original conversation ownership. Targeted migration, real SQLite, mounted UI, branch/draft and compact keyboard checks are required.
 
-Tasks: TASK-32273, TASK-32274, TASK-32275, TASK-32276.
+Tasks: TASK-32300, TASK-32274, TASK-32275, TASK-32276.
