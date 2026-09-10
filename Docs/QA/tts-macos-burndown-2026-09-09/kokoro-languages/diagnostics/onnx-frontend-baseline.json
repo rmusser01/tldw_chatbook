@@ -1,0 +1,19 @@
+[
+  {
+    "language": "fr",
+    "text": "Une aube dorée.",
+    "error_type": "RuntimeError",
+    "error": "language \"fr\" is not supported by the espeak backend"
+  },
+  {
+    "language": "zh",
+    "text": "银色的指南针。",
+    "error_type": "RuntimeError",
+    "error": "language \"zh\" is not supported by the espeak backend"
+  },
+  {
+    "language": "ja",
+    "text": "銀色のコンパス。",
+    "phonemes": "(en)tʃˈaɪniːz(ja)lˈetə (en)tʃˈaɪniːz(ja)lˈetə nˈo kˈo ɴ hˈ (en)dʒˈapəniːz(ja)lˈetə sˈɯᵝ"
+  }
+]

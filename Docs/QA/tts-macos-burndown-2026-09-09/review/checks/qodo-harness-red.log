@@ -1,0 +1,211 @@
+FFFFFFFFFFFFFFFFFFF                                                      [100%]
+=================================== FAILURES ===================================
+____ test_malformed_evidence_returns_consistent_cli_error_before_asr[None] _____
+Tests/TTS/test_live_tts_input_validation.py:55: in test_malformed_evidence_returns_consistent_cli_error_before_asr
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:97: in main
+    rows = success_audio(evidence)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:25: in success_audio
+    for row in evidence["phases"]:
+               ^^^^^^^^^^^^^^^^^^
+E   TypeError: 'NoneType' object is not subscriptable
+---------------------------- Captured stderr setup -----------------------------
+2026-09-09 07:08:19.868 | DEBUG    | tldw_chatbook.config:<module>:100 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-09-09 07:08:19.875 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6027 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_30achq9q/config/config.toml
+2026-09-09 07:08:19.876 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6051 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_30achq9q/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-09 07:08:19.877 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6060 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_30achq9q/config/config.toml
+2026-09-09 07:08:19.877 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6125 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-09 07:08:19.877 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-09 07:08:19.878 | INFO     | tldw_chatbook.config:_load_settings_uncached:1841 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook
+2026-09-09 07:08:19.878 | INFO     | tldw_chatbook.config:_load_settings_uncached:1844 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook
+2026-09-09 07:08:19.879 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1867 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-09-09 07:08:19.879 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2172 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-09-09 07:08:19.881 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3386 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_30achq9q/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-09-09 07:08:19.882 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3396 - load_settings: Configuration cached for future use
+2026-09-09 07:08:19.882 | INFO     | tldw_chatbook.config:<module>:9430 - Default API Endpoint (from config.py global scope): openai
+2026-09-09 07:08:19.882 | DEBUG    | tldw_chatbook.config:<module>:9453 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-09-09 07:08:20.005 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-09 07:08:20.106 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-09-09 07:08:20.208 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available
+2026-09-09 07:08:20.218 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-09-09 07:08:20.218 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+____ test_malformed_evidence_returns_consistent_cli_error_before_asr[data1] ____
+Tests/TTS/test_live_tts_input_validation.py:55: in test_malformed_evidence_returns_consistent_cli_error_before_asr
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:97: in main
+    rows = success_audio(evidence)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:25: in success_audio
+    for row in evidence["phases"]:
+               ^^^^^^^^^^^^^^^^^^
+E   TypeError: list indices must be integers or slices, not str
+____ test_malformed_evidence_returns_consistent_cli_error_before_asr[data2] ____
+Tests/TTS/test_live_tts_input_validation.py:55: in test_malformed_evidence_returns_consistent_cli_error_before_asr
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:97: in main
+    rows = success_audio(evidence)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:25: in success_audio
+    for row in evidence["phases"]:
+               ^^^^^^^^^^^^^^^^^^
+E   KeyError: 'phases'
+____ test_malformed_evidence_returns_consistent_cli_error_before_asr[data3] ____
+Tests/TTS/test_live_tts_input_validation.py:55: in test_malformed_evidence_returns_consistent_cli_error_before_asr
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:97: in main
+    rows = success_audio(evidence)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:38: in success_audio
+    raise ValueError("No successful audio to transcribe")
+E   ValueError: No successful audio to transcribe
+____ test_malformed_evidence_returns_consistent_cli_error_before_asr[data4] ____
+Tests/TTS/test_live_tts_input_validation.py:55: in test_malformed_evidence_returns_consistent_cli_error_before_asr
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:97: in main
+    rows = success_audio(evidence)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:26: in success_audio
+    if row.get("outcome") != "success":
+       ^^^^^^^
+E   AttributeError: 'NoneType' object has no attribute 'get'
+____ test_malformed_evidence_returns_consistent_cli_error_before_asr[data5] ____
+Tests/TTS/test_live_tts_input_validation.py:55: in test_malformed_evidence_returns_consistent_cli_error_before_asr
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:97: in main
+    rows = success_audio(evidence)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:30: in success_audio
+    raise ValueError(f"Successful phase {row['id']} has no audio evidence")
+E   ValueError: Successful phase 1 has no audio evidence
+____ test_malformed_evidence_returns_consistent_cli_error_before_asr[data6] ____
+Tests/TTS/test_live_tts_input_validation.py:55: in test_malformed_evidence_returns_consistent_cli_error_before_asr
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:97: in main
+    rows = success_audio(evidence)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:30: in success_audio
+    raise ValueError(f"Successful phase {row['id']} has no audio evidence")
+E   ValueError: Successful phase reply has no audio evidence
+________________ test_invalid_json_returns_consistent_cli_error ________________
+Tests/TTS/test_live_tts_input_validation.py:64: in test_invalid_json_returns_consistent_cli_error
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:96: in main
+    evidence = json.loads(args.evidence.read_text())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/json/__init__.py:346: in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/json/decoder.py:338: in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/json/decoder.py:354: in raw_decode
+    obj, end = self.scan_once(s, idx)
+               ^^^^^^^^^^^^^^^^^^^^^^
+E   json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)
+_ test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files[absolute] _
+Tests/TTS/test_live_tts_input_validation.py:91: in test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files
+    with pytest.raises(SystemExit) as error:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE SystemExit
+----------------------------- Captured stdout call -----------------------------
+{"transcript": "First middle last.", "expected_text": "First middle last.", "anchors": ["first", "middle", "last"], "anchor_positions": [0, 5, 11], "anchors_complete": true, "normalized_exact": true, "phase_id": "reply", "audio_sha256": "cf3e9862a101b7cc29f6b011c0c4181263c327c5549c490c05bb7b65bbd7559e", "segments": [{"start": 0.0, "end": 1.0, "text": "First middle last."}], "detected_language": "en"}
+_ test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files[relative] _
+Tests/TTS/test_live_tts_input_validation.py:92: in test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:97: in main
+    rows = success_audio(evidence)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:33: in success_audio
+    raise ValueError(
+E   ValueError: Audio hash changed or file is missing for phase reply
+_ test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files[leaf_link] _
+Tests/TTS/test_live_tts_input_validation.py:91: in test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files
+    with pytest.raises(SystemExit) as error:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE SystemExit
+----------------------------- Captured stdout call -----------------------------
+{"transcript": "First middle last.", "expected_text": "First middle last.", "anchors": ["first", "middle", "last"], "anchor_positions": [0, 5, 11], "anchors_complete": true, "normalized_exact": true, "phase_id": "reply", "audio_sha256": "cf3e9862a101b7cc29f6b011c0c4181263c327c5549c490c05bb7b65bbd7559e", "segments": [{"start": 0.0, "end": 1.0, "text": "First middle last."}], "detected_language": "en"}
+_ test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files[parent_link] _
+Tests/TTS/test_live_tts_input_validation.py:91: in test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files
+    with pytest.raises(SystemExit) as error:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE SystemExit
+----------------------------- Captured stdout call -----------------------------
+{"transcript": "First middle last.", "expected_text": "First middle last.", "anchors": ["first", "middle", "last"], "anchor_positions": [0, 5, 11], "anchors_complete": true, "normalized_exact": true, "phase_id": "reply", "audio_sha256": "cf3e9862a101b7cc29f6b011c0c4181263c327c5549c490c05bb7b65bbd7559e", "segments": [{"start": 0.0, "end": 1.0, "text": "First middle last."}], "detected_language": "en"}
+_ test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files[fifo] __
+Tests/TTS/test_live_tts_input_validation.py:92: in test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files
+    v.verifier.main(v.argv)
+scripts/verify_live_tts_content.py:97: in main
+    rows = success_audio(evidence)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:33: in success_audio
+    raise ValueError(
+E   ValueError: Audio hash changed or file is missing for phase reply
+________________ test_duplicate_success_ids_cannot_hide_a_clip _________________
+Tests/TTS/test_live_tts_input_validation.py:100: in test_duplicate_success_ids_cannot_hide_a_clip
+    with pytest.raises(SystemExit) as error:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE SystemExit
+----------------------------- Captured stdout call -----------------------------
+{"transcript": "First middle last.", "expected_text": "First middle last.", "anchors": ["first", "middle", "last"], "anchor_positions": [0, 5, 11], "anchors_complete": true, "normalized_exact": true, "phase_id": "reply", "audio_sha256": "cf3e9862a101b7cc29f6b011c0c4181263c327c5549c490c05bb7b65bbd7559e", "segments": [{"start": 0.0, "end": 1.0, "text": "First middle last."}], "detected_language": "en"}
+{"transcript": "First middle last.", "expected_text": "First middle last.", "anchors": ["first", "middle", "last"], "anchor_positions": [0, 5, 11], "anchors_complete": true, "normalized_exact": true, "phase_id": "reply", "audio_sha256": "cf3e9862a101b7cc29f6b011c0c4181263c327c5549c490c05bb7b65bbd7559e", "segments": [{"start": 0.0, "end": 1.0, "text": "First middle last."}], "detected_language": "en"}
+__________ test_asr_uses_verified_open_stream_and_offline_constructor __________
+Tests/TTS/test_live_tts_input_validation.py:119: in test_asr_uses_verified_open_stream_and_offline_constructor
+    assert v.verifier.main(v.argv) == 0
+           ^^^^^^^^^^^^^^^^^^^^^^^
+scripts/verify_live_tts_content.py:133: in main
+    segments, info = model.transcribe(
+Tests/TTS/test_live_tts_input_validation.py:113: in transcribe
+    assert hasattr(source, 'read'), 'ASR must receive the verified file handle'
+E   AssertionError: ASR must receive the verified file handle
+E   assert False
+E    +  where False = hasattr('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-35781/test_asr_uses_verified_open_st0/run/reply.wav', 'read')
+________ test_audio_swap_after_admission_cannot_redirect_transcription _________
+Tests/TTS/test_live_tts_input_validation.py:136: in test_audio_swap_after_admission_cannot_redirect_transcription
+    with pytest.raises(SystemExit) as error:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE SystemExit
+----------------------------- Captured stdout call -----------------------------
+{"transcript": "First middle last.", "expected_text": "First middle last.", "anchors": ["first", "middle", "last"], "anchor_positions": [0, 5, 11], "anchors_complete": true, "normalized_exact": true, "phase_id": "reply", "audio_sha256": "cf3e9862a101b7cc29f6b011c0c4181263c327c5549c490c05bb7b65bbd7559e", "segments": [{"start": 0.0, "end": 1.0, "text": "First middle last."}], "detected_language": "en"}
+______ test_missing_optional_asr_has_project_guidance_before_model_start _______
+Tests/TTS/test_live_tts_input_validation.py:150: in test_missing_optional_asr_has_project_guidance_before_model_start
+    with pytest.raises(SystemExit) as error:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE SystemExit
+----------------------------- Captured stdout call -----------------------------
+{"transcript": "First middle last.", "expected_text": "First middle last.", "anchors": ["first", "middle", "last"], "anchor_positions": [0, 5, 11], "anchors_complete": true, "normalized_exact": true, "phase_id": "reply", "audio_sha256": "cf3e9862a101b7cc29f6b011c0c4181263c327c5549c490c05bb7b65bbd7559e", "segments": [{"start": 0.0, "end": 1.0, "text": "First middle last."}], "detected_language": "en"}
+_________ test_live_runner_uses_central_path_validation_before_reading _________
+Tests/TTS/test_live_tts_input_validation.py:162: in test_live_runner_uses_central_path_validation_before_reading
+    with pytest.raises(ValueError, match='dangerous'):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE ValueError
+________________ test_live_runner_rejects_dangling_output_link _________________
+Tests/TTS/test_live_tts_input_validation.py:170: in test_live_runner_rejects_dangling_output_link
+    with pytest.raises(ValueError, match='exists|symlink'):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE ValueError
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_malformed_evidence_returns_consistent_cli_error_before_asr[None]
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_malformed_evidence_returns_consistent_cli_error_before_asr[data1]
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_malformed_evidence_returns_consistent_cli_error_before_asr[data2]
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_malformed_evidence_returns_consistent_cli_error_before_asr[data3]
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_malformed_evidence_returns_consistent_cli_error_before_asr[data4]
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_malformed_evidence_returns_consistent_cli_error_before_asr[data5]
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_malformed_evidence_returns_consistent_cli_error_before_asr[data6]
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_invalid_json_returns_consistent_cli_error
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files[absolute]
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files[relative]
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files[leaf_link]
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files[parent_link]
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_audio_cannot_escape_run_or_follow_links_or_open_nonregular_files[fifo]
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_duplicate_success_ids_cannot_hide_a_clip
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_asr_uses_verified_open_stream_and_offline_constructor
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_audio_swap_after_admission_cannot_redirect_transcription
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_missing_optional_asr_has_project_guidance_before_model_start
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_live_runner_uses_central_path_validation_before_reading
+FAILED Tests/TTS/test_live_tts_input_validation.py::test_live_runner_rejects_dangling_output_link
+19 failed in 0.94s

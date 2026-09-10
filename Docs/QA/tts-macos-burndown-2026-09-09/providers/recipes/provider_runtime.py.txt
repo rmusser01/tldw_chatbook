@@ -1,0 +1,163 @@
+"""Task-owned AllTalk process lifecycle and real server-generation observations."""
+
+import asyncio
+import json
+import os
+from pathlib import Path
+import socket
+import subprocess
+import time
+import httpx
+
+ALLTALK = Path("/private/tmp/tts-macos-burndown/alltalk")
+HIGGS = Path("/private/tmp/tts-macos-burndown/higgs")
+
+
+class AllTalkServer:
+    def __init__(self, output, port, timeout):
+        self.output = output
+        self.port = port
+        self.timeout = timeout
+        self.process = None
+        self.events = output / "server-events.jsonl"
+        self.events.touch()
+        self.runs = []
+        self._log = None
+
+    async def start(self):
+        if self.process is not None and self.process.poll() is None:
+            raise RuntimeError("Owned server already running")
+        with socket.socket() as probe:
+            # Match Uvicorn: an owned stopped listener can leave TCP TIME_WAIT.
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind(("127.0.0.1", self.port))
+        env = dict(
+            os.environ,
+            HF_HOME=str(ALLTALK / "runtime-home/huggingface"),
+            TORCH_HOME=str(ALLTALK / "runtime-home/torch"),
+            TTS_HOME=str(ALLTALK / "assets"),
+            HF_HUB_OFFLINE="1",
+            TRANSFORMERS_OFFLINE="1",
+            MPLCONFIGDIR=str(ALLTALK / "runtime-home/matplotlib"),
+            NUMBA_CACHE_DIR=str(ALLTALK / "runtime-home/numba"),
+            PATH="/opt/homebrew/bin:" + os.environ.get("PATH", ""),
+        )
+        self._log = (self.output / f"server-{len(self.runs) + 1}.log").open("w")
+        selected_speaker = os.environ.get("ALLTALK_VALIDATION_SPEAKER", "p225")
+        if selected_speaker not in {"p225", "p226"}:
+            raise ValueError("Only the prepared p225/p226 control tuples are supported")
+        server_script = ALLTALK / (
+            "p226/observed_server.py"
+            if selected_speaker == "p226"
+            else "observed_server.py"
+        )
+        command = [
+            str(ALLTALK / "venv/bin/python"),
+            "-B",
+            str(server_script),
+            "--port",
+            str(self.port),
+            "--events",
+            str(self.events),
+        ]
+        self.process = subprocess.Popen(
+            command,
+            cwd=ALLTALK / "source",
+            env=env,
+            stdout=self._log,
+            stderr=subprocess.STDOUT,
+        )
+        row = {
+            "pid": self.process.pid,
+            "command": command,
+            "start_at": time.monotonic(),
+            "selected_native_speaker": selected_speaker,
+        }
+        self.runs.append(row)
+        deadline = time.monotonic() + self.timeout
+        async with httpx.AsyncClient(trust_env=False) as client:
+            while time.monotonic() < deadline:
+                if self.process.poll() is not None:
+                    raise RuntimeError(
+                        f"Owned AllTalk server exited during startup: {self.process.returncode}"
+                    )
+                loaded = any(
+                    e.get("event") == "setup_exit"
+                    and e.get("loaded")
+                    and e["pid"] == self.process.pid
+                    for e in self.read_events()
+                )
+                if loaded:
+                    try:
+                        response = await client.get(
+                            f"http://127.0.0.1:{self.port}/api/ready", timeout=2
+                        )
+                        if response.is_success:
+                            row["ready_at"] = time.monotonic()
+                            return
+                    except httpx.HTTPError:
+                        pass
+                await asyncio.sleep(0.05)
+        raise TimeoutError(
+            "Bounded AllTalk startup did not load the selected VITS model"
+        )
+
+    def read_events(self):
+        result = []
+        for line in self.events.read_text().splitlines():
+            try:
+                result.append(json.loads(line))
+            except json.JSONDecodeError:
+                break
+        return result
+
+    def sync(self, phases):
+        known = {
+            call["server_call_id"]: call
+            for phase in phases
+            for call in phase["native_calls"]
+            if "server_call_id" in call
+        }
+        for event in self.read_events():
+            if event["event"] == "generation_enter" and event["id"] not in known:
+                owners = [
+                    phase for phase in phases if phase["started_at"] <= event["at"]
+                ]
+                if owners:
+                    owner = owners[-1]
+                    call = {
+                        "server_call_id": event["id"],
+                        "enter_at": event["at"],
+                        "pid": event["pid"],
+                        "device": event["device"],
+                        "dtype": event["dtype"],
+                        "class": "TTS.utils.synthesizer.Synthesizer.tts",
+                    }
+                    owner["native_calls"].append(call)
+                    known[event["id"]] = call
+            elif event["event"] == "generation_exit" and event["id"] in known:
+                known[event["id"]].update(
+                    exit_at=event["at"],
+                    samples=event.get("samples"),
+                    failure_type=event.get("failure_type"),
+                )
+
+    async def stop(self):
+        if self.process is None:
+            return
+        if self.process.poll() is None:
+            self.process.terminate()
+            try:
+                await asyncio.wait_for(asyncio.to_thread(self.process.wait), timeout=30)
+            except asyncio.TimeoutError:
+                self.process.kill()
+                await asyncio.to_thread(self.process.wait)
+                self.runs[-1]["forced_exit"] = True
+        self.runs[-1].update(
+            exit_code=self.process.returncode, exit_at=time.monotonic()
+        )
+        if self._log:
+            self._log.close()
+            self._log = None
+        if self.runs[-1].get("forced_exit"):
+            raise RuntimeError("Owned AllTalk server required forced shutdown")

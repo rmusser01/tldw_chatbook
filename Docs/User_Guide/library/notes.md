@@ -405,6 +405,10 @@ the selection to the restored row. **Dismiss** removes only the receipt; the
 note remains deleted. Notes do not currently expose a separate Trash browser,
 so the receipt is the in-Library recovery action.
 
+*Verified against fix/library-notes-list — 2026-09-09 (task-32123: the
+receipt's actions are no longer composed off the pane; task-32124: Undo
+returns the row to the folder tree, not only the count).*
+
 ### New note view
 
 "Blank note" drops you straight into the editor with an empty title (shown

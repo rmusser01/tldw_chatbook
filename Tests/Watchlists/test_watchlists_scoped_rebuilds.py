@@ -1096,7 +1096,7 @@ async def test_resize_hysteresis_suppresses_sub_band_layout_requests(
 ) -> None:
     app = _build_test_app()
     async with _open(app) as (screen, pilot, host):
-        await pilot.resize_terminal(144, 50)
+        await pilot.resize_terminal(154, 50)
         await _settle(pilot, host)
 
         workbench = screen.query_one(WatchlistsWorkbench)
@@ -1117,7 +1117,7 @@ async def test_resize_hysteresis_suppresses_sub_band_layout_requests(
 
         monkeypatch.setattr(workbench, "request_region_layout", record_request)
 
-        for width in (145, 146, 147, 148, 147, 148, 147, 148):
+        for width in (155, 156, 157, 158, 157, 158, 157, 158):
             await pilot.resize_terminal(width, 50)
             await _settle(pilot, host)
             assert screen._responsive_region_layout.is_collapsed(
@@ -1130,7 +1130,7 @@ async def test_resize_hysteresis_suppresses_sub_band_layout_requests(
 
         assert requests == []
 
-        await pilot.resize_terminal(149, 50)
+        await pilot.resize_terminal(159, 50)
         await _settle(pilot, host)
         assert len(requests) == 1
         assert not screen._responsive_region_layout.is_collapsed(
@@ -1142,7 +1142,7 @@ async def test_resize_hysteresis_suppresses_sub_band_layout_requests(
         ) is grip
         assert screen.focused is focused
 
-        await pilot.resize_terminal(145, 50)
+        await pilot.resize_terminal(155, 50)
         await _settle(pilot, host)
         assert len(requests) == 1
         assert not screen._responsive_region_layout.is_collapsed(
@@ -1151,7 +1151,7 @@ async def test_resize_hysteresis_suppresses_sub_band_layout_requests(
         assert screen.query_one("#wl-region-right_rail") is right_rail_body
         assert screen.focused is focused
 
-        await pilot.resize_terminal(144, 50)
+        await pilot.resize_terminal(154, 50)
         await _settle(pilot, host)
         assert len(requests) == 2
         assert screen._responsive_region_layout.is_collapsed(Region.RIGHT_RAIL)
@@ -1195,7 +1195,7 @@ async def test_zero_width_never_seeds_or_replaces_responsive_history(
         ) == before_zero
         assert requests == []
 
-        monkeypatch.setattr(screen, "_available_layout_width", lambda: 144)
+        monkeypatch.setattr(screen, "_available_layout_width", lambda: 154)
         screen.on_resize(None)
         await _settle(pilot, host)
         baseline = screen._responsive_region_layout
@@ -1266,9 +1266,9 @@ async def test_responsive_grip_open_protects_preferred_open_pane(
     )
     app = _build_test_app()
     async with _open(app) as (screen, pilot, host):
-        await pilot.resize_terminal(144, 50)
+        await pilot.resize_terminal(154, 50)
         await _settle(pilot, host)
-        await pilot.resize_terminal(145, 50)
+        await pilot.resize_terminal(155, 50)
         await _settle(pilot, host)
         assert screen._effective_region_layout.is_collapsed(Region.RIGHT_RAIL)
         assert not screen.region_layout.is_collapsed(Region.RIGHT_RAIL)
@@ -1297,9 +1297,9 @@ async def test_article_focus_preserves_priority_lease_and_hidden_baseline(
 ) -> None:
     app = _build_test_app()
     async with _open(app) as (screen, pilot, host):
-        await pilot.resize_terminal(144, 50)
+        await pilot.resize_terminal(154, 50)
         await _settle(pilot, host)
-        await pilot.resize_terminal(145, 50)
+        await pilot.resize_terminal(155, 50)
         await _settle(pilot, host)
         screen.query_one("#wl-grip-right_rail", Button).press()
         await _settle(pilot, host)
@@ -1358,9 +1358,9 @@ async def test_article_focus_preserves_priority_lease_and_hidden_baseline(
 async def test_priority_lease_parks_across_management_and_replaces_in_read() -> None:
     app = _build_test_app()
     async with _open(app) as (screen, pilot, host):
-        await pilot.resize_terminal(144, 50)
+        await pilot.resize_terminal(154, 50)
         await _settle(pilot, host)
-        await pilot.resize_terminal(145, 50)
+        await pilot.resize_terminal(155, 50)
         await _settle(pilot, host)
         screen.query_one("#wl-grip-right_rail", Button).press()
         await _settle(pilot, host)
@@ -1395,20 +1395,20 @@ async def test_priority_lease_parks_across_management_and_replaces_in_read() -> 
 async def test_priority_lease_clears_only_after_origin_mode_fits_past_dead_band() -> None:
     app = _build_test_app()
     async with _open(app) as (screen, pilot, host):
-        await pilot.resize_terminal(144, 50)
+        await pilot.resize_terminal(154, 50)
         await _settle(pilot, host)
-        await pilot.resize_terminal(145, 50)
+        await pilot.resize_terminal(155, 50)
         await _settle(pilot, host)
         screen.query_one("#wl-grip-right_rail", Button).press()
         await _settle(pilot, host)
         lease = screen._responsive_priority_lease
 
-        for width in (145, 146, 147, 148, 147, 148):
+        for width in (155, 156, 157, 158, 157, 158):
             await pilot.resize_terminal(width, 50)
             await _settle(pilot, host)
             assert screen._responsive_priority_lease == lease
 
-        await pilot.resize_terminal(149, 50)
+        await pilot.resize_terminal(159, 50)
         await _settle(pilot, host)
         assert screen._responsive_priority_lease is None
 
@@ -1934,9 +1934,9 @@ async def test_failed_responsive_inspector_open_restores_layout_snapshots(
     )
     app = _build_test_app()
     async with _open(app) as (screen, pilot, host):
-        await pilot.resize_terminal(144, 50)
+        await pilot.resize_terminal(154, 50)
         await _settle(pilot, host)
-        await pilot.resize_terminal(145, 50)
+        await pilot.resize_terminal(155, 50)
         await _settle(pilot, host)
 
         workbench = screen.query_one(WatchlistsWorkbench)
@@ -2463,9 +2463,9 @@ async def test_section_factory_failure_rolls_back_mode_and_can_retry(
     app = _build_test_app()
     watchlist_id = _seed(app)
     async with _open(app, watchlist_id) as (screen, pilot, host):
-        await pilot.resize_terminal(144, 50)
+        await pilot.resize_terminal(154, 50)
         await _settle(pilot, host)
-        await pilot.resize_terminal(145, 50)
+        await pilot.resize_terminal(155, 50)
         await _settle(pilot, host)
         screen.query_one("#wl-grip-right_rail", Button).press()
         await _settle(pilot, host)

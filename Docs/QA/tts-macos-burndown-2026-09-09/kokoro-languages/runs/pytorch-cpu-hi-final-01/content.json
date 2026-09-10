@@ -1,0 +1,74 @@
+{
+  "evidence_path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-hi-final-01/evidence.json",
+  "evidence_sha256": "4769a0307aff8f286780343d40c0f3d4507ea9a14dfe1a82dea7879f235bf83c",
+  "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+  "model_files": {
+    "config.json": "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828",
+    "model.bin": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671",
+    "tokenizer.json": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+    "vocabulary.txt": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913"
+  },
+  "runtime": {
+    "faster-whisper": "1.2.1",
+    "ctranslate2": "4.8.2"
+  },
+  "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+  "device": "cpu",
+  "compute_type": "int8",
+  "success_audio_count": 2,
+  "clips": [
+    {
+      "transcript": "चान्दिका कमपास इस उत्तर की शुर्वात करता है, बीज में एक शाद बगीचा है, यह उत्तर सुनहरी सुबह के साथ समाप्त होता है.",
+      "expected_text": "चाँदी का कम्पास इस उत्तर की शुरुआत करता है। बीच में एक शांत बगीचा है। यह उत्तर सुनहरी सुबह के साथ समाप्त होता है।",
+      "anchors": [
+        "चाँदी",
+        "शांत बगीचा",
+        "सुनहरी सुबह"
+      ],
+      "anchor_positions": [
+        -1,
+        -1,
+        60
+      ],
+      "anchors_complete": false,
+      "normalized_exact": false,
+      "phase_id": "speech-lab",
+      "audio_sha256": "d5b57aaa0cefc25583425897f8f09fb5972cdfc2a193920fb5f9895ce0ba8707",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 10.0,
+          "text": " चान्दिका कमपास इस उत्तर की शुर्वात करता है, बीज में एक शाद बगीचा है, यह उत्तर सुनहरी सुबह के साथ समाप्त होता है."
+        }
+      ],
+      "detected_language": "hi"
+    },
+    {
+      "transcript": "चान्दिका कंपास इस उत्तर की शुर्वात करता है, बीज में एक शाद बगीचा है, यह उत्तर सुनहरी सुबह कि साथ समाप्त होता है.",
+      "expected_text": "चाँदी का कम्पास इस उत्तर की शुरुआत करता है। बीच में एक शांत बगीचा है। यह उत्तर सुनहरी सुबह के साथ समाप्त होता है।",
+      "anchors": [
+        "चाँदी",
+        "शांत बगीचा",
+        "सुनहरी सुबह"
+      ],
+      "anchor_positions": [
+        -1,
+        -1,
+        60
+      ],
+      "anchors_complete": false,
+      "normalized_exact": false,
+      "phase_id": "console-warmup",
+      "audio_sha256": "394b6873bad3aea7464ab2a0c1c830d955f360d69c93212bea170330fdc2318b",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 10.0,
+          "text": " चान्दिका कंपास इस उत्तर की शुर्वात करता है, बीज में एक शाद बगीचा है, यह उत्तर सुनहरी सुबह कि साथ समाप्त होता है."
+        }
+      ],
+      "detected_language": "hi"
+    }
+  ],
+  "status": "content_review_required"
+}

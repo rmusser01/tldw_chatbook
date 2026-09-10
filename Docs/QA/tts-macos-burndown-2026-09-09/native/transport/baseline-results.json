@@ -1,0 +1,101 @@
+[
+  {
+    "case": "active-handler",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/baseline/http_shutdown_test",
+      "active-handler",
+      "64196"
+    ],
+    "returncode": 1,
+    "stdout": "audiocpp_server listening on http://127.0.0.1:64196\naudiocpp_server stopped\nFAIL active-handler: serve_http returned while the accepted request was still blocked\n",
+    "stderr": ""
+  },
+  {
+    "case": "stream-callback",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/baseline/http_shutdown_test",
+      "stream-callback",
+      "64199"
+    ],
+    "returncode": 1,
+    "stdout": "audiocpp_server listening on http://127.0.0.1:64199\naudiocpp_server stopped\nFAIL stream-callback: serve_http returned while the accepted request was still blocked\n",
+    "stderr": ""
+  },
+  {
+    "case": "accept-loop-exception",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/baseline/http_shutdown_test",
+      "accept-loop-exception",
+      "64202"
+    ],
+    "returncode": 1,
+    "stdout": "audiocpp_server listening on http://127.0.0.1:64202\nFAIL accept-loop-exception: serve_http returned while the accepted request was still blocked\n",
+    "stderr": ""
+  },
+  {
+    "case": "idle-client",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/baseline/http_shutdown_test",
+      "idle-client",
+      "64204"
+    ],
+    "returncode": 1,
+    "stdout": "audiocpp_server listening on http://127.0.0.1:64204\naudiocpp_server stopped\nFAIL idle-client: serve_http returned but the incomplete client socket remained open\n",
+    "stderr": ""
+  },
+  {
+    "case": "partial-header",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/baseline/http_shutdown_test",
+      "partial-header",
+      "64207"
+    ],
+    "returncode": 1,
+    "stdout": "audiocpp_server listening on http://127.0.0.1:64207\naudiocpp_server stopped\nFAIL partial-header: serve_http returned but the incomplete client socket remained open\n",
+    "stderr": ""
+  },
+  {
+    "case": "partial-body",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/baseline/http_shutdown_test",
+      "partial-body",
+      "64215"
+    ],
+    "returncode": 1,
+    "stdout": "audiocpp_server listening on http://127.0.0.1:64215\naudiocpp_server stopped\nFAIL partial-body: serve_http returned but the incomplete client socket remained open\n",
+    "stderr": ""
+  },
+  {
+    "case": "idle",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/baseline/http_shutdown_test",
+      "idle",
+      "64235"
+    ],
+    "returncode": 0,
+    "stdout": "audiocpp_server listening on http://127.0.0.1:64235\naudiocpp_server stopped\nPASS idle\n",
+    "stderr": ""
+  },
+  {
+    "case": "completed-request",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/baseline/http_shutdown_test",
+      "completed-request",
+      "64237"
+    ],
+    "returncode": 0,
+    "stdout": "audiocpp_server listening on http://127.0.0.1:64237\naudiocpp_server stopped\nPASS completed-request\n",
+    "stderr": ""
+  },
+  {
+    "case": "handler-exception",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/baseline/http_shutdown_test",
+      "handler-exception",
+      "64240"
+    ],
+    "returncode": 0,
+    "stdout": "audiocpp_server listening on http://127.0.0.1:64240\naudiocpp_server stopped\nPASS handler-exception\n",
+    "stderr": ""
+  }
+]

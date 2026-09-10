@@ -44,6 +44,51 @@ def _scope(session_id: str) -> CanvasScope:
     )
 
 
+@pytest.mark.asyncio
+async def test_native_candidate_import_removal_and_exact_history(
+    candidate_snapshot, monkeypatch
+):
+    import html5lib
+
+    parse = html5lib.HTMLParser.parse
+    parses = []
+
+    def counting_parse(parser, *args, **kwargs):
+        parses.append(1)
+        return parse(parser, *args, **kwargs)
+
+    monkeypatch.setattr(html5lib.HTMLParser, "parse", counting_parse)
+    controller = ConsoleCanvasController(profile_snapshot=candidate_snapshot)
+    controller.activate_session("candidate")
+    current = _scope("candidate")
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=lambda _: current, canvas_controller=controller
+    )
+    created = authority.import_html(
+        session_id="candidate",
+        source='<pre data-canvas-diagram="mermaid">flowchart TD\nA[Start]</pre>',
+    )
+    current = replace(current, run_id="replacement")
+    changed = authority.import_html(session_id="candidate", source="<p>Summary</p>")
+    assert len(parses) == 2
+    assert changed.runtime_profile == "canvas-v2-mermaid-1"
+    assert changed.parent_revision_id == created.revision_id
+    for info in (created, changed):
+        scope = authority.gateway_scope(
+            session_id="candidate",
+            browser_session_id="browser",
+            canvas_id=info.canvas_id,
+            revision_id=info.revision_id,
+            follow_latest=False,
+        )
+        plan = await authority.resolve_render_plan(scope)
+        assert plan.runtime_profile == "canvas-v2-mermaid-1"
+        assert plan.source_identity.sha256 == info.content_sha256
+    assert len(parses) == 4
+    controller.discard_session("candidate")
+    assert controller.promotion_contribution("candidate") is None
+
+
 def _branch_scope(
     session_id: str,
     conversation_id: str,
@@ -491,6 +536,51 @@ def test_parsed_block_identity_is_idempotent_branch_bound_and_preserves_origin()
     assert "<p>one</p>" not in str(error.value)
 
 
+def test_same_turn_html_and_mermaid_replay_and_promote_separately(candidate_snapshot):
+    from tldw_chatbook.Canvas.authoring import wrap_mermaid_document
+
+    controller = ConsoleCanvasController(profile_snapshot=candidate_snapshot)
+    controller.activate_session("mixed-fences")
+    scope = _scope("mixed-fences")
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=lambda _: scope, canvas_controller=controller
+    )
+    common = {
+        "session_id": scope.session_id,
+        "source_message_id": "assistant-1",
+        "origin_message_id": "assistant-1",
+        "source_turn_id": "assistant-turn",
+        "block_index": 0,
+    }
+    html = dict(
+        common, source="<p>HTML</p>", block_identity="assistant-1:canvas-html:0"
+    )
+    mermaid = dict(
+        common,
+        source=wrap_mermaid_document("flowchart TD\nA --> B"),
+        block_identity="assistant-1:canvas-mermaid:0",
+    )
+    try:
+        first = authority.import_html(**html)
+        scope = replace(scope, run_id="interaction-2")
+        second = authority.import_html(**mermaid)
+        assert first.revision_id != second.revision_id
+        assert first.origin.run_id == second.origin.run_id == "assistant-turn"
+        assert authority.import_html(**html) == first
+        assert authority.import_html(**mermaid) == second
+        scope = replace(scope, run_id="interaction-3")
+        third = authority.import_html(**mermaid, create_new=True)
+        assert third.canvas_id not in {first.canvas_id, second.canvas_id}
+        contribution = controller.promotion_contribution(scope.session_id)
+        assert contribution.revision_count == 3
+        assert {row.source for row in contribution.turn.revisions} == {
+            html["source"],
+            mermaid["source"],
+        }
+    finally:
+        controller.discard_session(scope.session_id)
+
+
 def test_durable_parsed_block_identity_survives_real_store_hydration(tmp_path):
     db = CharactersRAGDB(tmp_path / "canvas-native-hydration.sqlite", "canvas-native")
     try:
@@ -653,9 +743,13 @@ def test_temporary_canvas_history_is_destroyed_with_session():
 
 def test_temporary_rename_and_selection_survive_atomic_promotion_and_restart(
     tmp_path,
+    candidate_snapshot,
+    monkeypatch,
 ):
     db = CharactersRAGDB(tmp_path / "canvas-native-promotion.sqlite", "canvas-native")
-    controller = ConsoleCanvasController(durable_service=CanvasService(db))
+    controller = ConsoleCanvasController(
+        durable_service=CanvasService(db, profile_snapshot=candidate_snapshot)
+    )
     store = ConsoleChatStore(
         persistence=ChatPersistenceService(db),
         canvas_promotion_participant=controller,
@@ -684,7 +778,7 @@ def test_temporary_rename_and_selection_survive_atomic_promotion_and_restart(
         )
         created = authority.import_html(
             session_id=session.id,
-            source="<!doctype html><title>Imported</title><main>private</main>",
+            source='<!doctype html><pre data-canvas-diagram="mermaid">flowchart TD\nA[Start]</pre><main>private</main>',
             create_new=True,
         )
         scopes[session.id] = replace(scopes[session.id], run_id="user-rename")
@@ -696,6 +790,39 @@ def test_temporary_rename_and_selection_survive_atomic_promotion_and_restart(
         )
         renamed = authority.navigate(selected, action="rename", title="Final title")
 
+        from tldw_chatbook.Chat.console_canvas_controller import (
+            CanvasSessionPromotionContribution,
+        )
+
+        original_write = CanvasSessionPromotionContribution.write_exact
+
+        def fail_after_canvas_write(self, **kwargs):
+            original_write(self, **kwargs)
+            raise RuntimeError("forced Canvas promotion rollback")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                CanvasSessionPromotionContribution,
+                "write_exact",
+                fail_after_canvas_write,
+            )
+            with pytest.raises(RuntimeError, match="forced Canvas promotion rollback"):
+                store.promote_ephemeral_session(session.id)
+        assert (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM canvas_revisions")
+            .fetchone()[0]
+            == 0
+        )
+        assert (
+            db.get_connection().execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+            == 0
+        )
+        retry = controller.promotion_contribution(session.id)
+        assert [row.info.runtime_profile for row in retry.turn.revisions] == [
+            "canvas-v2-mermaid-1"
+        ] * 2
+        assert controller.abort_contribution(session.id, retry)
         conversation_id = store.promote_ephemeral_session(session.id)
         persisted_message_id = store._message_or_raise(
             assistant.id
@@ -742,6 +869,7 @@ def test_temporary_rename_and_selection_survive_atomic_promotion_and_restart(
         restarted = CanvasService(db).read_canvas(restarted_scope, created.canvas_id)
         assert restarted.revision.revision_id == renamed.scope.revision_id
         assert restarted.revision.title == "Final title"
+        assert restarted.revision.runtime_profile == "canvas-v2-mermaid-1"
         assert restarted.source.endswith("<main>private</main>")
 
         restarted_authority = NativeConsoleCanvasAuthority(
@@ -756,7 +884,7 @@ def test_temporary_rename_and_selection_survive_atomic_promotion_and_restart(
         )
         reopened = restarted_authority.import_html(
             session_id="restarted-session",
-            source="<!doctype html><title>Imported</title><main>private</main>",
+            source='<!doctype html><pre data-canvas-diagram="mermaid">flowchart TD\nA[Start]</pre><main>private</main>',
             source_message_id=persisted_message_id,
             origin_message_id=persisted_message_id,
             source_turn_id="user-import",

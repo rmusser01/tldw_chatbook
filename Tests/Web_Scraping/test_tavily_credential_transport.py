@@ -76,11 +76,7 @@ class _FakeResponse:
 
 @pytest.fixture
 def tavily_key(monkeypatch: pytest.MonkeyPatch) -> str:
-    monkeypatch.setitem(
-        WebSearch_APIs.loaded_config_data["search_engines"],
-        "tavily_search_api_key",
-        SENTINEL_KEY,
-    )
+    monkeypatch.setenv("TAVILY_API_KEY", SENTINEL_KEY)
     return SENTINEL_KEY
 
 
@@ -177,11 +173,12 @@ def test_tavily_error_string_carries_no_credential(
             response.raise_for_status()
 
     monkeypatch.setattr(WebSearch_APIs, "requests", _FailingRequests())
-    result = WebSearch_APIs.search_web_tavily("cherry cake")
+    result = WebSearch_APIs.perform_websearch(
+        "tavily", "cherry cake", "US", "en", "en", 1
+    )
 
-    assert isinstance(result, str)
-    assert "error searching for content" in result
-    assert SENTINEL_KEY not in result, f"the error string leaked the key: {result}"
+    assert result["error_kind"] == "auth"
+    assert SENTINEL_KEY not in str(result), f"the error leaked the key: {result}"
 
 
 # ---------------------------------------------------------------------------

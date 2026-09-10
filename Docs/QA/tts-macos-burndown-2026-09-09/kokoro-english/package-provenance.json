@@ -1,0 +1,93 @@
+{
+  "created_utc": "2026-09-09T07:18:35.658999+00:00",
+  "capture_root": "/private/tmp/tts-macos-burndown",
+  "source_manifest_count": 2253,
+  "common_final_source_manifest_canonical_sha256": "7038b5b7779d66c6fe66a15eafb0204de2fcca2d0cd41c437f33ce17290bd188",
+  "curation_policy": "Matrix and content receipts are copied byte-for-byte. Runtime receipts retain every original JSON value except the two large source hash maps, which are replaced by relative shared-map references plus exact override/removal sets. Restore each map from its reference, apply removals then overrides, and remove the packaging field to reconstruct the original JSON object. This semantic round trip is verified for every runtime receipt. Raw original paths, byte hashes and field names remain explicit.",
+  "excluded": "Audio, models, binaries, private profiles, application source archives, and large raw logs are not packaged.",
+  "artifacts": [
+    {
+      "path": "matrix.json",
+      "original_path": "/private/tmp/tts-macos-burndown/matrix-english-all-all-final-01.json",
+      "original_sha256": "3dc5650e822e220883d15888add7f8bc7b4824149ac2029a04304537338fa4ba",
+      "packaged_sha256": "3dc5650e822e220883d15888add7f8bc7b4824149ac2029a04304537338fa4ba",
+      "bytes": 3692,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "runs/cpu-initial/evidence.json",
+      "original_path": "/private/tmp/tts-macos-burndown/harness/cpu-initial/evidence.json",
+      "original_sha256": "97ba0d5467b79a6ea60531288477e46bf74f97b4887b4e87151e933723f93164",
+      "packaged_sha256": "ba56f0abe2c45b9f73c7b7b96cf3f72bf39abc9cbb678e441863db49b9d9d646",
+      "bytes": 8904,
+      "method": "semantically lossless source-map factoring",
+      "round_trip_original_json_equal": true
+    },
+    {
+      "path": "runs/cpu-fixed/evidence.json",
+      "original_path": "/private/tmp/tts-macos-burndown/harness/cpu-fixed/evidence.json",
+      "original_sha256": "f1107b8af46d3b1123ee9309506e926113174ed56cce8a7c631db641a4e9b070",
+      "packaged_sha256": "1e57d4ad4fc84679e9f40005308819b87df7b31897d6ef8132e6a3602ed2e7d3",
+      "bytes": 16386,
+      "method": "semantically lossless source-map factoring",
+      "round_trip_original_json_equal": true
+    },
+    {
+      "path": "runs/pytorch-cpu-en-us-final-01/evidence.json",
+      "original_path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-en-us-final-01/evidence.json",
+      "original_sha256": "ea932ccebb58b6b71d93ad935d2c17138d34f0d56a6389db86b94c20ad8b58fa",
+      "packaged_sha256": "706298cad19a5b12bd41fed8b8045cb42cae77f1389ef7c07d3088215c062819",
+      "bytes": 52421,
+      "method": "semantically lossless source-map factoring",
+      "round_trip_original_json_equal": true
+    },
+    {
+      "path": "runs/pytorch-cpu-en-us-final-01/content.json",
+      "original_path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-en-us-final-01/content.json",
+      "original_sha256": "e73a3d0fdd501f0c613ac09487304abf44e82f92ffaa4ad217eecf2c4769289d",
+      "packaged_sha256": "e73a3d0fdd501f0c613ac09487304abf44e82f92ffaa4ad217eecf2c4769289d",
+      "bytes": 17889,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "runs/pytorch-mps-en-us-final-01/evidence.json",
+      "original_path": "/private/tmp/tts-macos-burndown/harness/pytorch-mps-en-us-final-01/evidence.json",
+      "original_sha256": "ccbf8b4ddc8c706181ff28f4fe95dc4c32fbc68522b0307fcd366a9184adfac7",
+      "packaged_sha256": "e81c599ad71537a07b12b077537b7d417aba80eb5144f35afa7b332c4d651458",
+      "bytes": 34399,
+      "method": "semantically lossless source-map factoring",
+      "round_trip_original_json_equal": true
+    },
+    {
+      "path": "runs/pytorch-mps-en-us-final-01/content.json",
+      "original_path": "/private/tmp/tts-macos-burndown/harness/pytorch-mps-en-us-final-01/content.json",
+      "original_sha256": "8389238fdee366967a4e799e6b69b7f3e8be849a9b12d2241b9726694cc0456a",
+      "packaged_sha256": "8389238fdee366967a4e799e6b69b7f3e8be849a9b12d2241b9726694cc0456a",
+      "bytes": 11120,
+      "method": "byte-preserving copy"
+    },
+    {
+      "path": "runs/onnx-cpu-en-us-final-01/evidence.json",
+      "original_path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-en-us-final-01/evidence.json",
+      "original_sha256": "09d71817df055a6ac486f648e9b5bfb66ae3f636dffef8a0e252e6ae515b3297",
+      "packaged_sha256": "78f392bd65083561281510f10797afdc21697d86da0c7f9201e008a23600fd16",
+      "bytes": 33696,
+      "method": "semantically lossless source-map factoring",
+      "round_trip_original_json_equal": true
+    },
+    {
+      "path": "runs/onnx-cpu-en-us-final-01/content.json",
+      "original_path": "/private/tmp/tts-macos-burndown/harness/onnx-cpu-en-us-final-01/content.json",
+      "original_sha256": "ef4397b48336ea25747e8a7003bd1f7871f7e8f51aa2ea41e530cc680f3dffb8",
+      "packaged_sha256": "ef4397b48336ea25747e8a7003bd1f7871f7e8f51aa2ea41e530cc680f3dffb8",
+      "bytes": 11144,
+      "method": "byte-preserving copy"
+    }
+  ],
+  "shared_source_manifest": {
+    "path": "provenance/source-hashes.json",
+    "packaged_sha256": "4738467d0515a205f79b6243f740f901d515682d0a2e50eec747a495511fad75",
+    "derived_from": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-en-us-final-01/evidence.json",
+    "original_field": "source_hashes"
+  }
+}

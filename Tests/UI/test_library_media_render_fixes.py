@@ -41,8 +41,8 @@ from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
     LIBRARY_ADAPTIVE_READER_GRIP_CLASS,
 )
-from tldw_chatbook.Widgets.Library.library_media_reader_shell import (
-    LibraryMediaReaderShell,
+from tldw_chatbook.Widgets.Library.library_browse_reader_shell import (
+    LibraryBrowseReaderShell,
 )
 
 from Tests.UI.test_library_media_side_by_side import (
@@ -1014,7 +1014,7 @@ async def test_space_in_select_mode_never_reaches_the_pane_grip():
         assert screen._media_state.select_mode is True
 
         shell = screen.query_one(
-            "#library-media-reader-shell", LibraryMediaReaderShell
+            ".library-media-route", LibraryBrowseReaderShell
         )
         before = shell.effective_layout
         shell.library_grip.focus()
@@ -1025,7 +1025,7 @@ async def test_space_in_select_mode_never_reaches_the_pane_grip():
         await pilot.pause()
 
         shell = screen.query_one(
-            "#library-media-reader-shell", LibraryMediaReaderShell
+            ".library-media-route", LibraryBrowseReaderShell
         )
         assert shell.effective_layout.library_open is before.library_open
         assert screen._media_state.row_selection.count == 0
@@ -1088,7 +1088,7 @@ async def test_space_in_select_mode_is_claimed_from_rows_and_grips_only():
         assert claim() is True
 
         shell = screen.query_one(
-            "#library-media-reader-shell", LibraryMediaReaderShell
+            ".library-media-route", LibraryBrowseReaderShell
         )
         shell.library_grip.focus()
         await pilot.pause()
@@ -1126,7 +1126,7 @@ def _global_key_host() -> LibraryGlobalKeyProductionCSSHarness:
 
 def _media_layout(screen):
     return screen.query_one(
-        "#library-media-reader-shell", LibraryMediaReaderShell
+        ".library-media-route", LibraryBrowseReaderShell
     ).effective_layout
 
 
@@ -1564,7 +1564,7 @@ async def test_no_join_artifact_after_find_closes():
         def join_slices() -> list[str]:
             """The grip's own columns left of the Reader, top three rows."""
             viewer = screen.query_one("#library-media-viewer")
-            grip = screen.query_one("#library-media-items-grip")
+            grip = screen.query_one("#library-browse-items-grip")
             title = screen.query_one("#library-media-viewer-title")
             # The sample must actually cover the header: Back, title, toolbar.
             assert title.region.y - viewer.region.y <= 2, (
@@ -1718,16 +1718,12 @@ async def test_reader_body_wraps_at_a_reading_measure():
         await _open_first_reader_row(screen, pilot)
         box = screen.query_one("#library-media-viewer-content")
         body = screen.query_one("#library-media-viewer-content-text")
-        # task-31633: the Items column now takes half of the Reader's surplus
-        # and each grip costs one cell instead of five, so the Reader pane of
-        # the 231-cell shell is 139 cells rather than 147. The box still spans
-        # the whole pane -- only the prose inside it is capped.
+        # The box spans the full pane while the text retains its reading
+        # measure. Wider navigation and five-cell controls reduce the pane's
+        # spare columns without changing the prose cap.
         work = screen.query_one(".library-adaptive-reader-work")
         assert box.region.width == work.region.width, (box.region, work.region)
-        # The equality alone would also hold if the pane itself collapsed, so
-        # keep an absolute floor now that the pane width is dynamic. 139 is the
-        # measured pane width here, not a comfort minimum.
-        assert work.region.width >= 139, work.region
+        assert work.region.width > 92, work.region
         assert body.region.width <= 92, (body.region, box.region)
         # Painted proof the wrap index was built at the capped width: the
         # long line's tail lands on the row below it, not off at column 150.

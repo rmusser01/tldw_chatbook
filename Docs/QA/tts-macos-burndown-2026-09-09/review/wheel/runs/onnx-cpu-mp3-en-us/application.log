@@ -1,0 +1,118 @@
+2026-09-09 07:36:35.081 | DEBUG    | tldw_chatbook.config:<module>:100 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-09-09 07:36:35.096 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6027 - Attempting to load CLI config from: /private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-mp3-en-us/profile/config.toml
+2026-09-09 07:36:35.097 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6043 - Successfully loaded and merged CLI config from /private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-mp3-en-us/profile/config.toml
+2026-09-09 07:36:35.097 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6125 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'paths', 'first_run', 'app_tts']
+2026-09-09 07:36:35.097 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-09 07:36:35.097 | INFO     | tldw_chatbook.config:_load_settings_uncached:1841 - Determined ACTUAL_PROJECT_ROOT for general paths: /private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/tldw_chatbook
+2026-09-09 07:36:35.097 | INFO     | tldw_chatbook.config:_load_settings_uncached:1844 - Determined APP_COMPONENT_ROOT for config files: /private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/tldw_chatbook
+2026-09-09 07:36:35.098 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1867 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-09-09 07:36:35.098 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2172 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-09-09 07:36:35.101 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3386 - Ensured chat dictionaries folder exists: /private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-mp3-en-us/data/tts_live_validation/chat_dicts
+2026-09-09 07:36:35.101 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3396 - load_settings: Configuration cached for future use
+2026-09-09 07:36:35.101 | INFO     | tldw_chatbook.config:<module>:9430 - Default API Endpoint (from config.py global scope): openai
+2026-09-09 07:36:35.101 | DEBUG    | tldw_chatbook.config:<module>:9453 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-09-09 07:36:35.982 | INFO     | tldw_chatbook.Utils.optional_deps:<module>:1539 - Lazy dependency checking enabled (default). Dependencies will be checked on first use.
+2026-09-09 07:36:36.084 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-09-09 07:36:36.791 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+2026-09-09 07:36:37.371 | DEBUG    | tldw_chatbook.UI.Speech.speech_playback_mixin:on_button_pressed:268 - Playground received button press: tts-generate-btn
+2026-09-09 07:36:37.374 | INFO     | tldw_chatbook.config:_load_settings_uncached:1841 - Determined ACTUAL_PROJECT_ROOT for general paths: /private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/tldw_chatbook
+2026-09-09 07:36:37.374 | INFO     | tldw_chatbook.config:_load_settings_uncached:1844 - Determined APP_COMPONENT_ROOT for config files: /private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/tldw_chatbook
+2026-09-09 07:36:37.375 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6027 - Attempting to load CLI config from: /private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-mp3-en-us/profile/config.toml
+2026-09-09 07:36:37.376 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6043 - Successfully loaded and merged CLI config from /private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-mp3-en-us/profile/config.toml
+2026-09-09 07:36:37.376 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6125 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'paths', 'first_run', 'app_tts']
+2026-09-09 07:36:37.376 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-09 07:36:37.377 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1867 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-09-09 07:36:37.377 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2172 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-09-09 07:36:37.377 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3386 - Ensured chat dictionaries folder exists: /private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-mp3-en-us/data/tts_live_validation/chat_dicts
+2026-09-09 07:36:37.378 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3396 - load_settings: Configuration cached for future use
+2026-09-09 07:36:37.865 | WARNING  | tldw_chatbook.TTS.backends.higgs:<module>:41 - torchaudio not available. Voice cloning features will be limited.
+2026-09-09 07:36:37.865 | WARNING  | tldw_chatbook.TTS.backends.higgs:<module>:50 - librosa not available. Advanced audio analysis features will be limited.
+2026-09-09 07:36:37.865 | INFO     | tldw_chatbook.TTS.TTS_Backends:get_backend:155 - TTSBackendManager: Creating backend for ID: local_kokoro_default_onnx
+2026-09-09 07:36:37.866 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1727 - Saved 1 voice blends
+2026-09-09 07:36:37.866 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1840 - Saved voice blend 'professional_female' with 2 voices
+2026-09-09 07:36:37.867 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1727 - Saved 2 voice blends
+2026-09-09 07:36:37.867 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1840 - Saved voice blend 'professional_male' with 2 voices
+2026-09-09 07:36:37.867 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1727 - Saved 3 voice blends
+2026-09-09 07:36:37.868 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1840 - Saved voice blend 'warm_storyteller' with 2 voices
+2026-09-09 07:36:37.868 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1727 - Saved 4 voice blends
+2026-09-09 07:36:37.868 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1840 - Saved voice blend 'dynamic_narrator' with 3 voices
+2026-09-09 07:36:37.868 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1727 - Saved 5 voice blends
+2026-09-09 07:36:37.868 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1840 - Saved voice blend 'english_blend' with 3 voices
+2026-09-09 07:36:37.868 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1727 - Saved 6 voice blends
+2026-09-09 07:36:37.868 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1840 - Saved voice blend 'male_chorus' with 4 voices
+2026-09-09 07:36:37.869 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1727 - Saved 7 voice blends
+2026-09-09 07:36:37.869 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1840 - Saved voice blend 'soft_whisper' with 2 voices
+2026-09-09 07:36:37.869 | INFO     | tldw_chatbook.TTS.backends.kokoro:_save_blends:1727 - Saved 8 voice blends
+2026-09-09 07:36:37.869 | INFO     | tldw_chatbook.TTS.backends.kokoro:save_voice_blend:1840 - Saved voice blend 'energetic' with 2 voices
+2026-09-09 07:36:37.869 | INFO     | tldw_chatbook.TTS.backends.kokoro:_create_default_blends:1790 - Created 8 default voice blends
+2026-09-09 07:36:37.869 | INFO     | tldw_chatbook.TTS.TTS_Backends:get_backend:179 - TTSBackendManager: Initializing backend: local_kokoro_default_onnx
+2026-09-09 07:36:37.869 | INFO     | tldw_chatbook.TTS.backends.kokoro:initialize:369 - KokoroTTSBackend: Initializing (ONNX: True, Device: cpu)
+2026-09-09 07:36:37.996 | INFO     | tldw_chatbook.TTS.backends.kokoro:kokoro_onnx_module:598 - Successfully imported kokoro_onnx module
+2026-09-09 07:36:38.265 | INFO     | tldw_chatbook.TTS.backends.kokoro:_initialize_onnx:568 - KokoroTTSBackend: ONNX backend initialized successfully
+2026-09-09 07:36:38.265 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:843 - KokoroTTSBackend: Generating audio for 124 characters, voice={'primary_voice': 'af_heart', 'is_mixed': False, 'voices': [('af_heart', 1.0)]}, lang=en-us, format=mp3
+2026-09-09 07:36:39.821 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:999 - KokoroTTSBackend: Generated 8.41s of mp3 audio in 1.56s (5.4x realtime)
+2026-09-09 07:36:39.826 | WARNING  | tldw_chatbook.Event_Handlers.STTS_Events.stts_events:_build_requested_selection:1188 - Playground result is not profile-save eligible (provider=kokoro).
+2026-09-09 07:36:39.833 | DEBUG    | tldw_chatbook.UI.Speech.speech_playback_mixin:on_button_pressed:268 - Playground received button press: audio-play-btn
+2026-09-09 07:36:39.833 | DEBUG    | tldw_chatbook.UI.Speech.speech_playback_mixin:_play_audio:603 - _play_audio called, current_audio_file: /var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/stts_playground_mi8lcerx.mp3
+2026-09-09 07:36:39.834 | DEBUG    | tldw_chatbook.UI.Speech.speech_playback_mixin:_play_audio:626 - Audio path: /var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/stts_playground_mi8lcerx.mp3, exists: True
+2026-09-09 07:36:39.834 | INFO     | tldw_chatbook.UI.Speech.speech_playback_mixin:_ensure_audio_player:819 - Audio player initialized on first use
+2026-09-09 07:36:39.834 | DEBUG    | tldw_chatbook.TTS.audio_player:_get_executor:597 - Created AudioPlayer thread pool executor
+2026-09-09 07:36:39.835 | DEBUG    | tldw_chatbook.UI.Speech.speech_playback_mixin:_play_audio_async:692 - Current player state before play: PlaybackState.IDLE
+2026-09-09 07:36:39.835 | DEBUG    | tldw_chatbook.TTS.audio_player:stop:390 - Stop called - current state: PlaybackState.IDLE, process exists: False
+2026-09-09 07:36:39.835 | DEBUG    | tldw_chatbook.TTS.audio_player:stop:457 - Cannot stop - process exists: False, state: PlaybackState.IDLE
+2026-09-09 07:36:39.835 | DEBUG    | tldw_chatbook.UI.Speech.speech_playback_mixin:_play_audio_async:696 - Stop result: False
+2026-09-09 07:36:40.035 | DEBUG    | tldw_chatbook.UI.Speech.speech_playback_mixin:_play_audio_async:706 - Player state after stop: PlaybackState.IDLE
+2026-09-09 07:36:40.035 | INFO     | tldw_chatbook.UI.Speech.speech_playback_mixin:_play_audio_async:751 - Attempting to play audio file: /var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/stts_playground_mi8lcerx.mp3
+2026-09-09 07:36:40.078 | DEBUG    | tldw_chatbook.TTS.audio_player:play:127 - SimpleAudioPlayer.play called with: /var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/stts_playground_mi8lcerx.mp3
+2026-09-09 07:36:40.078 | DEBUG    | tldw_chatbook.TTS.audio_player:play:128 - Current state before stop: PlaybackState.IDLE, process: None
+2026-09-09 07:36:40.078 | DEBUG    | tldw_chatbook.TTS.audio_player:stop:390 - Stop called - current state: PlaybackState.IDLE, process exists: False
+2026-09-09 07:36:40.078 | DEBUG    | tldw_chatbook.TTS.audio_player:stop:457 - Cannot stop - process exists: False, state: PlaybackState.IDLE
+2026-09-09 07:36:40.078 | DEBUG    | tldw_chatbook.TTS.audio_player:play:136 - State after stop: PlaybackState.IDLE, process: None
+2026-09-09 07:36:40.192 | INFO     | tldw_chatbook.TTS.audio_player:play:249 - Started playback of stts_playground_mi8lcerx.mp3 using afplay
+2026-09-09 07:36:40.192 | DEBUG    | tldw_chatbook.UI.Speech.speech_playback_mixin:_play_audio_async:753 - Play result: True
+2026-09-09 07:36:40.193 | DEBUG    | tldw_chatbook.UI.Speech.speech_playback_mixin:_play_audio_async:773 - Started new progress timer
+2026-09-09 07:36:40.293 | DEBUG    | tldw_chatbook.UI.Speech.speech_playback_mixin:_play_audio_async:780 - Player is_playing check after start: True
+2026-09-09 07:36:49.442 | DEBUG    | tldw_chatbook.TTS.audio_player:_monitor_playback:534 - Playback process finished (exit_code=0)
+2026-09-09 07:36:49.485 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:843 - KokoroTTSBackend: Generating audio for 124 characters, voice={'primary_voice': 'af_heart', 'is_mixed': False, 'voices': [('af_heart', 1.0)]}, lang=en-us, format=mp3
+2026-09-09 07:36:50.522 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:999 - KokoroTTSBackend: Generated 8.41s of mp3 audio in 1.04s (8.1x realtime)
+2026-09-09 07:36:50.533 | INFO     | tldw_chatbook.app:handle_tts_complete_event:14265 - TTS complete for message a121e431-bd18-47b0-a1d7-cca70c7a4dd3
+2026-09-09 07:36:50.535 | INFO     | tldw_chatbook.Event_Handlers.TTS_Events.tts_events:handle_tts_playback:3443 - TTS playback action: play for message a121e431-bd18-47b0-a1d7-cca70c7a4dd3
+2026-09-09 07:36:50.579 | DEBUG    | tldw_chatbook.TTS.audio_player:play:127 - SimpleAudioPlayer.play called with: /var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tts_audio_h3xg5dkf.mp3
+2026-09-09 07:36:50.579 | DEBUG    | tldw_chatbook.TTS.audio_player:play:128 - Current state before stop: PlaybackState.FINISHED, process: <Popen: returncode: 0 args: ['/usr/bin/afplay', '/var/folders/sn/m80n2j152t9...>
+2026-09-09 07:36:50.579 | DEBUG    | tldw_chatbook.TTS.audio_player:stop:390 - Stop called - current state: PlaybackState.FINISHED, process exists: True
+2026-09-09 07:36:50.579 | INFO     | tldw_chatbook.TTS.audio_player:stop:454 - Playback stopped/cleaned up - all state reset
+2026-09-09 07:36:50.579 | DEBUG    | tldw_chatbook.TTS.audio_player:play:136 - State after stop: PlaybackState.IDLE, process: None
+2026-09-09 07:36:50.691 | INFO     | tldw_chatbook.TTS.audio_player:play:249 - Started playback of tts_audio_h3xg5dkf.mp3 using afplay
+2026-09-09 07:36:59.935 | DEBUG    | tldw_chatbook.TTS.audio_player:_monitor_playback:534 - Playback process finished (exit_code=0)
+2026-09-09 07:36:59.965 | DEBUG    | tldw_chatbook.Event_Handlers.TTS_Events.tts_events:_cleanup_audio_file:3869 - Cleaned up audio file for message a121e431-bd18-47b0-a1d7-cca70c7a4dd3
+2026-09-09 07:36:59.986 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:843 - KokoroTTSBackend: Generating audio for 499 characters, voice={'primary_voice': 'af_heart', 'is_mixed': False, 'voices': [('af_heart', 1.0)]}, lang=en-us, format=mp3
+2026-09-09 07:37:00.007 | INFO     | tldw_chatbook.Event_Handlers.TTS_Events.tts_events:handle_tts_playback:3443 - TTS playback action: stop for message 0c166dbf-6d85-4ddf-b491-0814d58ef3df
+2026-09-09 07:37:01.882 | INFO     | tldw_chatbook.Event_Handlers.TTS_Events.tts_events:_generate_tts_with_rate_limit:1699 - TTS generation cancelled
+2026-09-09 07:37:01.882 | INFO     | tldw_chatbook.Event_Handlers.TTS_Events.tts_events:handle_tts_playback:3799 - Stopped playback for message 0c166dbf-6d85-4ddf-b491-0814d58ef3df
+2026-09-09 07:37:01.907 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:843 - KokoroTTSBackend: Generating audio for 124 characters, voice={'primary_voice': 'af_heart', 'is_mixed': False, 'voices': [('af_heart', 1.0)]}, lang=en-us, format=mp3
+2026-09-09 07:37:02.963 | INFO     | tldw_chatbook.TTS.backends.kokoro:_generate_onnx_stream:999 - KokoroTTSBackend: Generated 8.41s of mp3 audio in 1.06s (8.0x realtime)
+2026-09-09 07:37:02.964 | INFO     | tldw_chatbook.app:handle_tts_complete_event:14265 - TTS complete for message f0ddf7a6-2d5a-493e-a658-dd5165022dff
+2026-09-09 07:37:02.966 | INFO     | tldw_chatbook.Event_Handlers.TTS_Events.tts_events:handle_tts_playback:3443 - TTS playback action: play for message f0ddf7a6-2d5a-493e-a658-dd5165022dff
+2026-09-09 07:37:03.007 | DEBUG    | tldw_chatbook.TTS.audio_player:play:127 - SimpleAudioPlayer.play called with: /var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tts_audio_qjnu1lje.mp3
+2026-09-09 07:37:03.008 | DEBUG    | tldw_chatbook.TTS.audio_player:play:128 - Current state before stop: PlaybackState.FINISHED, process: <Popen: returncode: 0 args: ['/usr/bin/afplay', '/var/folders/sn/m80n2j152t9...>
+2026-09-09 07:37:03.008 | DEBUG    | tldw_chatbook.TTS.audio_player:stop:390 - Stop called - current state: PlaybackState.FINISHED, process exists: True
+2026-09-09 07:37:03.008 | INFO     | tldw_chatbook.TTS.audio_player:stop:454 - Playback stopped/cleaned up - all state reset
+2026-09-09 07:37:03.008 | DEBUG    | tldw_chatbook.TTS.audio_player:play:136 - State after stop: PlaybackState.IDLE, process: None
+2026-09-09 07:37:03.123 | INFO     | tldw_chatbook.TTS.audio_player:play:249 - Started playback of tts_audio_qjnu1lje.mp3 using afplay
+2026-09-09 07:37:12.360 | DEBUG    | tldw_chatbook.TTS.audio_player:_monitor_playback:534 - Playback process finished (exit_code=0)
+2026-09-09 07:37:12.404 | DEBUG    | tldw_chatbook.Event_Handlers.TTS_Events.tts_events:_cleanup_audio_file:3869 - Cleaned up audio file for message f0ddf7a6-2d5a-493e-a658-dd5165022dff
+2026-09-09 07:37:12.428 | DEBUG    | tldw_chatbook.TTS.audio_player:stop:390 - Stop called - current state: PlaybackState.FINISHED, process exists: True
+2026-09-09 07:37:12.428 | INFO     | tldw_chatbook.TTS.audio_player:stop:454 - Playback stopped/cleaned up - all state reset
+2026-09-09 07:37:12.428 | DEBUG    | tldw_chatbook.UI.Speech.speech_playback_mixin:on_unmount:1289 - Playground cleanup completed
+2026-09-09 07:37:12.430 | INFO     | tldw_chatbook.TTS.TTS_Backends:close_all_backends:351 - TTSBackendManager: Closing all backends.
+2026-09-09 07:37:12.430 | INFO     | tldw_chatbook.TTS.TTS_Backends:close_all_backends:354 - Closing backend: local_kokoro_default_onnx
+2026-09-09 07:37:12.430 | INFO     | tldw_chatbook.TTS.backends.kokoro:_close_resources:1985 - KokoroTTSBackend: Final performance stats - Avg: 647.9 tokens/s, Total: 3 generations in 3.6s
+2026-09-09 07:37:12.430 | DEBUG    | tldw_chatbook.TTS.audio_player:stop:390 - Stop called - current state: PlaybackState.IDLE, process exists: False
+2026-09-09 07:37:12.430 | DEBUG    | tldw_chatbook.TTS.audio_player:stop:457 - Cannot stop - process exists: False, state: PlaybackState.IDLE
+2026-09-09 07:37:12.431 | DEBUG    | tldw_chatbook.TTS.audio_player:stop:390 - Stop called - current state: PlaybackState.IDLE, process exists: False
+2026-09-09 07:37:12.431 | DEBUG    | tldw_chatbook.TTS.audio_player:stop:457 - Cannot stop - process exists: False, state: PlaybackState.IDLE
+2026-09-09 07:37:12.431 | DEBUG    | tldw_chatbook.TTS.audio_player:cleanup:549 - Audio player cleaned up
+2026-09-09 07:37:12.431 | DEBUG    | tldw_chatbook.TTS.audio_player:cleanup:668 - AsyncAudioPlayer cleaned up successfully
+2026-09-09 07:37:12.431 | DEBUG    | tldw_chatbook.TTS.audio_player:stop:390 - Stop called - current state: PlaybackState.IDLE, process exists: False
+2026-09-09 07:37:12.431 | DEBUG    | tldw_chatbook.TTS.audio_player:stop:457 - Cannot stop - process exists: False, state: PlaybackState.IDLE
+2026-09-09 07:37:12.431 | DEBUG    | tldw_chatbook.TTS.audio_player:cleanup:549 - Audio player cleaned up

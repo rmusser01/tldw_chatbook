@@ -1,0 +1,45 @@
+{
+  "started_utc": "2026-09-09T07:00:25.059303+00:00",
+  "cases": [],
+  "case_denominator": [
+    "active-handler",
+    "stream-callback",
+    "accept-loop-exception",
+    "idle-client",
+    "partial-header",
+    "partial-body",
+    "idle",
+    "completed-request",
+    "handler-exception"
+  ],
+  "asan_options": "detect_leaks=1:halt_on_error=1",
+  "ubsan_options": "halt_on_error=1:print_stacktrace=1",
+  "owned_pids": [
+    7
+  ],
+  "platform": {
+    "label": "uname",
+    "command": [
+      "uname",
+      "-a"
+    ],
+    "timeout_seconds": 5,
+    "pid": 7,
+    "returncode": 0,
+    "elapsed_seconds": 0.004011749988421798,
+    "stdout": "Linux e026898eb7f8 6.12.67-linuxkit #1 SMP Sun Jan 25 02:26:28 UTC 2026 aarch64 GNU/Linux\n",
+    "stderr": "",
+    "sanitizer_diagnostic": false
+  },
+  "os_release": "PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"12\"\nVERSION=\"12 (bookworm)\"\nVERSION_CODENAME=bookworm\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\n",
+  "compilers": {
+    "cc": null,
+    "c++": null
+  },
+  "status": "compiler_prerequisite_unavailable",
+  "missing_compilers": [
+    "cc",
+    "c++"
+  ],
+  "prerequisite": "An image with a C/C++ compiler and ASan/UBSan runtimes is required. No packages were installed, no compilation or transport scenarios were attempted."
+}

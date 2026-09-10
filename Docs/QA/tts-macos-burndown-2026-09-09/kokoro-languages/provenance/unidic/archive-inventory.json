@@ -1,0 +1,122 @@
+[
+  {
+    "path": "unidic/",
+    "bytes": 0,
+    "compressed_bytes": 0,
+    "crc32": "00000000"
+  },
+  {
+    "path": "unidic/unk.def",
+    "bytes": 1977,
+    "compressed_bytes": 523,
+    "crc32": "0d1a1add"
+  },
+  {
+    "path": "unidic/right-id.def",
+    "bytes": 1767025,
+    "compressed_bytes": 160652,
+    "crc32": "39dafa5b"
+  },
+  {
+    "path": "unidic/rewrite.def",
+    "bytes": 5076,
+    "compressed_bytes": 1067,
+    "crc32": "6428f319"
+  },
+  {
+    "path": "unidic/dicrc",
+    "bytes": 1785,
+    "compressed_bytes": 661,
+    "crc32": "f7d9c0fb"
+  },
+  {
+    "path": "unidic/sys.dic",
+    "bytes": 243373840,
+    "compressed_bytes": 34151519,
+    "crc32": "1ca83bd1"
+  },
+  {
+    "path": "unidic/char.bin",
+    "bytes": 262496,
+    "compressed_bytes": 663,
+    "crc32": "83e9a35d"
+  },
+  {
+    "path": "unidic/model.bin",
+    "bytes": 83718788,
+    "compressed_bytes": 78483233,
+    "crc32": "4ffb97a6"
+  },
+  {
+    "path": "unidic/left-id.def",
+    "bytes": 1556924,
+    "compressed_bytes": 146668,
+    "crc32": "d1555133"
+  },
+  {
+    "path": "unidic/README",
+    "bytes": 4490,
+    "compressed_bytes": 1766,
+    "crc32": "bf17bccb"
+  },
+  {
+    "path": "unidic/licenses/",
+    "bytes": 0,
+    "compressed_bytes": 0,
+    "crc32": "00000000"
+  },
+  {
+    "path": "unidic/licenses/COPYING",
+    "bytes": 210,
+    "compressed_bytes": 137,
+    "crc32": "d6de2300"
+  },
+  {
+    "path": "unidic/licenses/AUTHORS",
+    "bytes": 22,
+    "compressed_bytes": 22,
+    "crc32": "5627ca37"
+  },
+  {
+    "path": "unidic/licenses/BSD",
+    "bytes": 1515,
+    "compressed_bytes": 782,
+    "crc32": "13f54197"
+  },
+  {
+    "path": "unidic/licenses/LGPL",
+    "bytes": 26428,
+    "compressed_bytes": 9354,
+    "crc32": "67e378ea"
+  },
+  {
+    "path": "unidic/licenses/GPL",
+    "bytes": 17991,
+    "compressed_bytes": 6830,
+    "crc32": "f3c5362f"
+  },
+  {
+    "path": "unidic/feature.def",
+    "bytes": 8715,
+    "compressed_bytes": 1509,
+    "crc32": "372f94fd"
+  },
+  {
+    "path": "unidic/matrix.bin",
+    "bytes": 480905780,
+    "compressed_bytes": 412971920,
+    "crc32": "85e67b46"
+  },
+  {
+    "path": "unidic/char.def",
+    "bytes": 4292,
+    "compressed_bytes": 1749,
+    "crc32": "0b1a4c42"
+  },
+  {
+    "path": "unidic/unk.dic",
+    "bytes": 5481,
+    "compressed_bytes": 743,
+    "crc32": "b3c05899"
+  }
+]

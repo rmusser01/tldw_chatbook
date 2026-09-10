@@ -151,3 +151,59 @@ async def test_research_worker_survives_a_corrupt_research_store(tmp_path):
     # The user-facing start message was already posted; the run simply
     # never delivers -- same degrade as any failed research run.
     assert any("Deep research started" in text for text in screen.system_messages)
+
+
+@pytest.mark.asyncio
+async def test_invalid_saved_backend_is_shown_before_console_research_launch(
+    monkeypatch,
+):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_destination_shells import _wait_for_selector
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_command_grammar import CommandParse
+    from tldw_chatbook.Research_Interop.local_research_engine import LocalResearchEngine
+    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    launches = Mock(return_value={"id": "unexpected-run"})
+    # Keep an accidental baseline launch offline; dispatch itself must be absent.
+    monkeypatch.setattr(LocalResearchEngine, "execute_run", AsyncMock())
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        monkeypatch.setattr(
+            host,
+            "local_research_service",
+            SimpleNamespace(launch_run=launches),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            console, "_current_console_conversation_id", lambda: "conversation-1"
+        )
+        assert SettingsConfigAdapter().save_values(
+            "SearchSettings", {"search_provider_default": "brvae"}
+        )
+
+        await console._console_command_research(
+            CommandParse(kind="command", name="research", args="routing")
+        )
+        await pilot.pause()
+        store = console._ensure_console_chat_store()
+        messages = [
+            m.content
+            for m in store.messages_for_session(store.active_session_id)
+            if m.role is ConsoleMessageRole.SYSTEM
+        ]
+        assert any(
+            "search_provider_default" in message and "brvae" in message
+            for message in messages
+        ), (messages, launches.call_count)
+        assert not any("Deep research started" in message for message in messages)
+        launches.assert_not_called()
