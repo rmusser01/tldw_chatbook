@@ -27,8 +27,10 @@ from .assets import (
     validate_persona_visual_asset_set,
 )
 from .authoring import (
+    _MAX_DESCRIPTION,
     PersonaVisualAuthoringDraft,
     PersonaVisualDraftAsset,
+    _text,
     create_persona_visual_import_draft,
 )
 from .contracts import (
@@ -183,7 +185,7 @@ def import_persona_visual_pack(
                 persona_revision=persona_revision,
                 expected_identity=expected_identity,
                 title=pack["title"],
-                description="Imported Persona Visual pack",
+                description=pack.get("description", "Imported Persona Visual pack"),
                 manifest_json=manifest_json,
                 assets=draft_assets,
                 source_context=pack["source_context"],
@@ -441,12 +443,17 @@ def _pack(value: object) -> dict[str, Any]:
     context.pop("tldw/artwork", None)
     context["artwork"] = encode_native_artwork(artwork_from_pack(pack))
     _source_context_json(context)
-    return {
+    result = {
         "title": title,
         "visual_manifest": manifest,
         "policy_rule_count": rule_count,
         "source_context": context,
     }
+    if "description" in pack:
+        result["description"] = _text(
+            pack["description"], _MAX_DESCRIPTION, allow_empty=True
+        )
+    return result
 
 
 def _assets(value: object) -> tuple[dict[str, Any], ...]:

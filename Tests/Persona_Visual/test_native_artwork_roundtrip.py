@@ -36,6 +36,7 @@ ARTWORK = {
 def _credited_archive(tmp_path):
     payloads = _archive_payloads()
     pack = json.loads(payloads["metadata/pack.json"])
+    pack["pack"]["description"] = "Saved Buddy description"
     pack["pack"]["source_context"] = {
         "artwork": _canonical(ARTWORK).decode(),
         "mapping_source": "declared",
@@ -167,6 +168,7 @@ def test_native_import_save_edit_offline_export_reimport_preserves_terms(tmp_pat
         reopened = read_buddy_archive(output)
         assert reopened.artwork == ARTWORK
         assert reopened.assets == saved.assets
+        assert reopened.description == saved.description == "Saved Buddy description"
         next_review = import_persona_visual_pack(
             output,
             staging_root=staging,
@@ -175,6 +177,7 @@ def test_native_import_save_edit_offline_export_reimport_preserves_terms(tmp_pat
             expected_identity=None,
         )
         assert json.loads(dict(next_review.draft.source_context)["artwork"]) == ARTWORK
+        assert next_review.draft.description == "Saved Buddy description"
         assert dict(next_review.draft.source_context)["mapping_source"] == "declared"
         assert dict(next_review.draft.source_context)["source_id"] == "a" * 64
     finally:
@@ -303,3 +306,77 @@ def test_unknown_credits_native_export_reimport_remains_actor_pack_exportable(tm
         assert section.assets[0].data == original.assets[0].data
     finally:
         db.close_connection()
+
+
+@pytest.mark.parametrize(
+    "override", [None, {}, {"mapping_source": "manual", "source_id": "replacement"}]
+)
+def test_native_export_roundtrip_preserves_description_and_context_defaults(
+    tmp_path, override
+):
+    from tldw_chatbook.Persona_Visual.export import build_native_buddy_archive
+
+    original = read_buddy_archive(_credited_archive(tmp_path))
+    assert original.description == "Saved Buddy description"
+    output = tmp_path / "roundtrip.tldw-persona-vpack"
+    output.write_bytes(build_native_buddy_archive(original, source_context=override))
+    reopened = read_buddy_archive(output)
+    assert reopened.description == original.description
+    assert reopened.artwork == original.artwork
+    expected = dict(original.source_context) if override is None else override
+    context = dict(reopened.source_context)
+    for key in ("mapping_source", "source_id"):
+        assert context.get(key) == expected.get(key)
+    staging = tmp_path / "roundtrip-staging"
+    staging.mkdir(mode=0o700)
+    review = import_persona_visual_pack(
+        output,
+        staging_root=staging,
+        persona_id="roundtrip",
+        persona_revision=1,
+        expected_identity=None,
+    )
+    assert review.draft.description == "Saved Buddy description"
+    assert dict(review.draft.source_context) == context
+
+
+@pytest.mark.parametrize(
+    "description", [None, 42, "x" * 4097], ids=["null", "number", "oversized"]
+)
+def test_native_import_rejects_invalid_description_in_snapshot_and_review(
+    tmp_path, description
+):
+    from tldw_chatbook.Persona_Visual.importer import PersonaVisualImportError
+
+    payloads = _archive_payloads()
+    pack = json.loads(payloads["metadata/pack.json"])
+    pack["pack"]["description"] = description
+    _replace_declared_payload(payloads, "metadata/pack.json", _canonical(pack))
+    path = _write_archive(tmp_path / "bad-description.zip", payloads)
+    with pytest.raises(PersonaVisualImportError):
+        read_buddy_archive(path)
+    staging = tmp_path / "bad-description-staging"
+    staging.mkdir(mode=0o700)
+    with pytest.raises(PersonaVisualImportError):
+        import_persona_visual_pack(
+            path,
+            staging_root=staging,
+            persona_id="invalid",
+            persona_revision=1,
+            expected_identity=None,
+        )
+
+
+def test_native_import_missing_description_keeps_legacy_defaults(tmp_path):
+    path = _write_archive(tmp_path / "legacy.zip", _archive_payloads())
+    assert read_buddy_archive(path).description == ""
+    staging = tmp_path / "legacy-staging"
+    staging.mkdir(mode=0o700)
+    review = import_persona_visual_pack(
+        path,
+        staging_root=staging,
+        persona_id="legacy",
+        persona_revision=1,
+        expected_identity=None,
+    )
+    assert review.draft.description == "Imported Persona Visual pack"

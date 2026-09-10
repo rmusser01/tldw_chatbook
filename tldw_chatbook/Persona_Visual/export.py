@@ -22,6 +22,11 @@ def build_native_buddy_archive(
 ) -> bytes:
     """Encode a current snapshot with original image bytes and public credits.
 
+    Args:
+        snapshot: Pinned source including its description and source context.
+        source_context: Replace the snapshot context when supplied, including an
+            explicitly empty mapping. Original artwork terms always remain attached.
+
     Raises:
         PersonaVisualImportError: Content is invalid or its source is stale.
     """
@@ -29,7 +34,9 @@ def build_native_buddy_archive(
         if not snapshot.is_current():
             raise importer.PersonaVisualImportError("persona_visual_import_stale")
         _validate_manifest(snapshot.manifest_json, snapshot.assets)
-        context = dict(source_context or {})
+        context = dict(
+            snapshot.source_context if source_context is None else source_context
+        )
         artwork_json = encode_native_artwork(dict(snapshot.artwork))
         if "artwork" in context and context["artwork"] != artwork_json:
             raise ValueError
@@ -73,6 +80,7 @@ def build_native_buddy_archive(
             {
                 "pack": {
                     "title": snapshot.title,
+                    "description": snapshot.description,
                     "renderer_type": "sprite_frames",
                     "manifest_version": 1,
                     "visual_manifest": json.loads(snapshot.manifest_json),
@@ -125,12 +133,7 @@ def export_persona_visual_archive(
 ) -> bytes:
     """Export one exact saved active Buddy without exposing local authority paths."""
     snapshot = read_saved_buddy(repository, persona_id, profile_root)
-    exported = repository.get_active_persona_pack_for_export(persona_id)
-    if exported is None or not snapshot.is_current():
-        raise importer.PersonaVisualImportError("persona_visual_import_stale")
-    return build_native_buddy_archive(
-        snapshot, source_context=dict(exported.source_context)
-    )
+    return build_native_buddy_archive(snapshot)
 
 
 def _json(value: object) -> bytes:

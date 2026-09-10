@@ -172,3 +172,44 @@ $PY -m pytest -q Tests/UI/test_settings_configuration_hub.py -k 'appearance and 
 Raw execution logs are retained under `/private/tmp/buddy-integration-*.log`; the
 root handoff report lists their location. No full-suite inference is made from
 these overlapping targeted selections.
+
+## Review fix: native metadata roundtrip
+
+Review baseline: `028f7358b5`. Fixed the native exporter to serialize the snapshot
+description and default to its validated source context. An explicitly supplied
+context, including `{}`, replaces that default; validated artwork terms remain
+attached. The saved exporter now uses that pinned snapshot directly, removing its
+redundant second context read.
+
+Investigation found matching loss at both inbound boundaries: `_pack` discarded
+description, the import draft replaced it with fixed text, and the archive snapshot
+left description unset. The fix carries a present description through all three
+using the existing authoring 4096-character/UTF-8 validation. Missing-description
+archives retain existing defaults: empty snapshot description and the import
+review's `Imported Persona Visual pack` label. Null, non-string and oversized
+values fail before snapshot/review. This narrow expanded scope is necessary for
+an actual roundtrip, and was explicitly authorized by root. No new ADR is required
+for this preservation bug fix. Also removed the blank line breaking the ADR144/145
+index table.
+
+The regression exercises native snapshot reading and review, default context,
+explicit replacement and empty overrides, invalid metadata, missing-description
+compatibility, and real import/save/edit/saved-export/reimport.
+
+Exact commands (same worktree and venv/PYTHONPATH as above):
+
+```sh
+PYTHONPATH=.:packages/tldw_profile_core/src /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/Persona_Visual/test_native_artwork_roundtrip.py -k 'description or native_import_save_edit'
+PYTHONPATH=.:packages/tldw_profile_core/src /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/Persona_Visual/test_native_artwork_roundtrip.py Tests/Persona_Visual/test_buddy_snapshot.py Tests/Persona_Visual/test_persona_visual_importer.py Tests/Petdex Tests/UI/test_petdex_import_review.py
+```
+
+Before implementation: **7 failed, 11 deselected in 3.39s**, reproducing the missing
+metadata and validation. After the fix: **186 passed, 1 skipped in 25.81s**. The
+skip is the optional collection probe; existing requests/temp-cleanup warnings
+remain disclosed. Logs: `/private/tmp/buddy-metadata-red.log` and
+`/private/tmp/buddy-metadata-green.log`.
+
+Ruff check passes for exporter, snapshot and regression test. The importer's five
+pre-existing diagnostics are unchanged (zero added, compared with HEAD). All four
+modified Python files pass `ruff format --check`; the owned diff passes
+`git diff --check`. Root-owned Task32238, integration plan and ADR139 are excluded.

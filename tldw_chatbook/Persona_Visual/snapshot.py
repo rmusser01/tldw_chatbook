@@ -177,6 +177,7 @@ def read_buddy_archive(path: os.PathLike[str] | str) -> BuddySnapshot:
                     {**pack["source_context"], "provenance": "untrusted-import"}.items()
                 )
             ),
+            description=pack.get("description", ""),
         )
         if not snapshot.is_current():
             raise importer.PersonaVisualImportError("persona_visual_import_stale")
