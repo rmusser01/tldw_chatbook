@@ -18884,7 +18884,9 @@ async def test_library_shell_notes_row_opens_notes_list_canvas():
         assert screen.query_one("#library-notes-filter")
         # task-32175: Sort is a flat-list-only control (task-32128) -- the
         # seeded Agent_Lessons folder means this screen always composes the
-        # folder tree, where Sort never mounts.
+        # folder tree, where Sort never mounts. Pin that absence rather than
+        # dropping the line (review round 1, finding 4).
+        assert not screen.query("#library-notes-sort")
         assert screen.query_one("#library-notes-new")
 
 
@@ -18920,6 +18922,9 @@ async def test_library_shell_notes_list_actions_use_two_named_horizontal_rows():
         assert browse_toolbar.has_class("ds-toolbar")
         assert transfer_toolbar.has_class("ds-toolbar")
 
+        # Why "#library-notes-sort" left this group (review round 1,
+        # finding 5): it is not composed at all in tree mode.
+        assert not screen.query("#library-notes-sort")
         browse_selectors = (
             "#library-notes-new",
             "#library-notes-select-toggle",
@@ -20363,12 +20368,17 @@ class _TouchingNotesScopeService(StaticLibraryNotesScopeService):
 
 
 @pytest.mark.asyncio
-async def test_library_shell_note_save_then_back_refreshes_list_title_age_and_order():
+async def test_library_shell_note_save_then_back_refreshes_list_title_and_age():
     """(task-184) After an in-canvas edit persists, returning to the list
     (without leaving the Notes canvas) shows the saved title with a fresh
     "now" relative age -- no app restart. Back also re-kicks the
     local-source snapshot refetch so the DB's own truth confirms the
-    in-memory patch."""
+    in-memory patch.
+
+    The ordering half ("...and_order": the edited note jumping to row 0
+    under Newest) went out of reach with task-32128 -- the folder tree
+    orders rows by the repository's title order, not by recency -- so the
+    name lost it too (task-32175, review round 1, finding 7)."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     app.notes_scope_service = _TouchingNotesScopeService(_two_notes())
@@ -28424,7 +28434,9 @@ async def test_library_notes_list_focuses_first_row_and_arrow_keys_move_it():
         )
         await pilot.pause()
 
-        first_row, second_row = list(screen.query(".library-notes-row").results(Button))
+        rows = list(screen.query(".library-notes-row").results(Button))
+        assert len(rows) >= 2, f"expected at least two note rows, got {len(rows)}"
+        first_row, second_row = rows[0], rows[1]
         assert first_row.has_focus, "entering the list must focus its first row"
 
         await pilot.press("down")
@@ -31792,15 +31804,13 @@ async def test_library_note_editor_back_restores_exact_wide_browse_context() -> 
         screen.query_one("#library-row-browse-notes").press()
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
 
-        screen.query_one("#library-notes-sort", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-notes-sort-title")
-        screen.query_one("#library-notes-sort-title", Button).press()
-        await _wait_for_condition(
-            pilot,
-            lambda: screen._notes_state.sort == "title",
-            message="Notes title scope did not settle.",
-        )
-        await pilot.pause()
+        # task-32175 (review round 1): this used to press #library-notes-sort
+        # ("title") for a deterministic row order. Sort is a flat-list-only
+        # control (task-32128) and this screen's seeded Agent_Lessons folder
+        # means it always composes the folder tree, where Sort never mounts;
+        # the tree's own order is already title-based, so row 18 below is
+        # deterministic without pressing anything.
+        assert not screen.query("#library-notes-sort")
         notes_filter = screen.query_one("#library-notes-filter", Input)
         notes_filter.value = "scope"
         notes_filter.focus()
@@ -31856,7 +31866,10 @@ async def test_library_note_editor_back_restores_exact_wide_browse_context() -> 
 
         assert screen._notes_state.source == "database"
         assert screen._notes_state.filter == "scope"
-        assert screen._notes_state.sort == "title"
+        # The untouched default: the round trip must not scramble the sort
+        # key, which is all this assertion can still pin now that Sort is
+        # unreachable in tree mode (task-32175, review round 1).
+        assert screen._notes_state.sort == "newest"
         assert screen._notes_state.tree_selected_placement_id == placement_id
         assert screen.query_one("#library-notes-filter", Input).value == "scope"
         assert (
@@ -34026,9 +34039,12 @@ async def test_library_note_keyboard_capability_matrix(
             # #library-notes-sort by keyboard, but Sort is a flat-list-only
             # control (task-32128) -- this screen's seeded Agent_Lessons
             # folder means it always composes the folder tree, where Sort
-            # never mounts. The keyboard press -> apply round trip for
-            # Sort is still pinned on the flat list by
-            # Tests/UI/test_library_notes_wave_list.py.
+            # never mounts. Sort's keyboard round trip (Tab to the control,
+            # Enter, Tab to the option, Enter, sort applied) moved to the
+            # flat-list harness in Tests/UI/test_library_notes_wave_list.py
+            # ::test_sort_is_operable_by_keyboard_on_the_flat_list, which is
+            # the only place a real #library-notes-sort Button still mounts
+            # (review round 1, finding 2).
             await _task10_open_notes_navigator(screen, pilot)
             filter_input = await _task10_focus_with_keyboard(
                 screen, pilot, "#library-notes-filter"

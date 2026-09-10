@@ -130,6 +130,9 @@ async def test_database_notes_capability_inventory_and_modes(
                 "#library-notes-export",
             ):
                 assert screen.query_one(selector)
+            # Sort's absence is part of the inventory, not a gap in it
+            # (task-32175, review round 1, findings 4/5).
+            assert not screen.query("#library-notes-sort")
             assert not screen.query("#library-notes-delete-selected")
             filter_input = screen.query_one("#library-notes-filter", Input)
             filter_input.value = "alpha"

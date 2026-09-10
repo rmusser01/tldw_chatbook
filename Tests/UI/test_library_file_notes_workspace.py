@@ -1049,15 +1049,11 @@ async def test_notes_authority_round_trip_retains_both_workspaces(
     async with LibraryHarness(app, screen=screen).run_test(size=(160, 45)) as pilot:
         await _wait_for_library_shell(screen, pilot)
         await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
-        await _wait_until(
-            pilot,
-            lambda: bool(screen.query(".library-notes-row")),
-            "Database Notes did not mount",
-        )
+        database_row = await _wait_for_selector(screen, pilot, ".library-notes-row")
         database_list = screen.query_one("#library-notes-canvas")
         database_list.scroll_to(y=3, animate=False, force=True, immediate=True)
         database_scroll = int(database_list.scroll_y)
-        screen.query_one(".library-notes-row", Button).press()
+        database_row.press()
         await _wait_until(
             pilot,
             lambda: bool(screen.query("#library-note-body")),
@@ -1492,12 +1488,8 @@ async def test_notes_authority_switch_restores_visible_focus_and_typing_owner(
     async with LibraryHarness(app, screen=screen).run_test(size=size) as pilot:
         await _wait_for_library_shell(screen, pilot)
         await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
-        await _wait_until(
-            pilot,
-            lambda: bool(screen.query(".library-notes-row")),
-            "Database Notes did not mount",
-        )
-        screen.query_one(".library-notes-row", Button).press()
+        database_row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+        database_row.press()
         await _wait_until(
             pilot,
             lambda: bool(screen.query("#library-note-body")),
@@ -3742,6 +3734,11 @@ async def test_wide_files_task_return_restores_database_browse_receipt() -> None
         )
         assert int(screen.query_one("#library-rail").scroll_y) == before_rail_scroll
         assert screen.query_one("#library-rail").display is True
+        # The untouched default. `sort == "title"` used to be pinned here
+        # off the Sort press dropped above; this is the same receipt
+        # assertion at the same cost -- the Files round trip must not
+        # scramble the sort key (task-32175, review round 1, finding 6).
+        assert screen._notes_state.sort == "newest"
 
     await workspace.shutdown()
 
