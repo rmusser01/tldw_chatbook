@@ -28,6 +28,7 @@ import pytest
 from textual.widgets import Button, Static
 
 from tldw_chatbook.UI.Screens import library_screen
+from tldw_chatbook.Library.library_shell_state import build_library_shell_state
 from tldw_chatbook.Library.collections_capture_models import CaptureSaveRequest
 from tldw_chatbook.Library.library_collections_service import (
     LegacyCollectionsReadOnlyError,
@@ -255,10 +256,10 @@ async def test_prefetched_total_is_dropped_when_the_capture_authority_goes_away(
         # ACTIVE -- ordered after the ``deactivate()`` case below, the read
         # returned on "no authority" and never reached ``list_page``, so the
         # exception branch went unexercised.
-        async def failing_list_page(_request):
+        async def failing_list_page():
             raise RuntimeError("controlled count read failure")
 
-        scope.list_page = failing_list_page
+        scope.read_unfiltered_first_page = failing_list_page
         assert scope.active_authority is not None
         await screen._read_library_collections_count()
         assert screen._library_collections_prefetched_total is None
@@ -268,10 +269,10 @@ async def test_prefetched_total_is_dropped_when_the_capture_authority_goes_away(
         # round trip with no timeout of its own.
         screen._library_collections_prefetched_total = 99
 
-        async def hanging_list_page(_request):
+        async def hanging_list_page():
             await asyncio.sleep(60)
 
-        scope.list_page = hanging_list_page
+        scope.read_unfiltered_first_page = hanging_list_page
         with patch.object(
             library_screen, "LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS", 0.05
         ):
@@ -318,3 +319,193 @@ async def test_the_collections_count_read_does_not_stack_its_deadline_on_the_gat
         # Generous: this deadline only bounds the FAILING (serial) shape,
         # which hangs outright -- it is not a timing assertion.
         await asyncio.wait_for(screen._list_local_source_snapshot(), timeout=20)
+
+
+async def test_one_page_one_read_serves_both_the_count_and_the_evidence() -> None:
+    """task-32103 AC#1: one page-1 read per snapshot pass, not two.
+
+    ``get_library_user_content_evidence`` and the rail's count prefetch ask
+    the authority the same question -- the unfiltered page-1 total -- and
+    both run in the same pass. In server mode that was two HTTP round trips
+    for one number.
+    """
+    from tldw_chatbook.Library.collections_capture_models import CapturePageRequest
+
+    app = _build_test_app()
+    scope = app.collections_capture_scope_service
+    authority = scope.active_authority
+    assert authority is not None
+    backend = scope._backend
+    assert backend is not None
+    calls: list[CapturePageRequest] = []
+    original_list_page = backend.list_page
+
+    async def counting_list_page(request):
+        calls.append(request)
+        await asyncio.sleep(0.02)
+        return await original_list_page(request)
+
+    backend.list_page = counting_list_page
+
+    count_page, evidence = await asyncio.gather(
+        scope.read_unfiltered_first_page(),
+        scope.get_library_user_content_evidence(),
+    )
+
+    assert len(calls) == 1, f"expected one page-1 read, got {len(calls)}"
+    assert count_page.total == 0
+    assert evidence is not None
+
+    # A settled read is never replayed: the next pass reads again.
+    await scope.read_unfiltered_first_page()
+    assert len(calls) == 2
+
+    # The canvas's own page reads keep their unshared path.
+    await scope.list_page(CapturePageRequest(authority.key, page=1))
+    assert len(calls) == 3
+
+
+async def test_re_entering_a_scoped_canvas_never_flashes_the_unfiltered_total() -> None:
+    """task-32103 AC#2: the scope outlives the page, so the gate must see it.
+
+    ``unmount()`` resets the capture controller's ``page`` while the
+    screen-owned ``active_scope`` persists, so leaving and re-entering a
+    scoped Collections canvas put the rail back on the "never loaded a
+    page" branch and painted the UNFILTERED total for one load window --
+    the exact flash the guide claims is gone.
+    """
+    app = _build_test_app()
+    scope = app.collections_capture_scope_service
+    authority = scope.active_authority
+    assert authority is not None
+    for index in range(3):
+        await scope.save_capture(
+            CaptureSaveRequest(
+                authority.key,
+                f"https://example.test/reentry-{index}",
+                title=f"Capture {index}",
+                text_content="Body.",
+            )
+        )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_collections_prefetched_total == 3,
+            message="The rail count prefetch never settled.",
+        )
+        screen.query_one("#library-row-browse-collections", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
+        controller = screen._library_collections_capture_controller
+        assert controller is not None
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.state.page is not None,
+            message="The Collections canvas never loaded its first page.",
+        )
+        await _wait_for_selector(
+            screen, pilot, "#library-collections-scope-favorites"
+        )
+        screen.query_one("#library-collections-scope-favorites", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._collections_state.active_scope == "favorites",
+            message="The Favorites scope was never applied.",
+        )
+
+        # Leaving the canvas resets the page; the scope stays.
+        controller.unmount()
+        assert controller.state.page is None
+        assert screen._collections_state.active_scope == "favorites"
+        assert screen._library_collections_prefetched_total == 3
+
+        assert screen._build_library_shell_input().collections_count is None
+
+
+async def test_a_page_from_a_departed_authority_is_never_painted() -> None:
+    """task-32103 AC#3: ``exact_total`` outlives its authority; the rail must not.
+
+    ``deactivate()`` nulls the active authority without touching the
+    canvas controller, whose retained page still answers ``exact_total`` --
+    the PREVIOUS authority's number under the new one's name.
+    """
+    app = _build_test_app()
+    scope = app.collections_capture_scope_service
+    authority = scope.active_authority
+    assert authority is not None
+    await scope.save_capture(
+        CaptureSaveRequest(
+            authority.key,
+            "https://example.test/departed",
+            title="Departed",
+            text_content="Body.",
+        )
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-collections", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
+        controller = screen._library_collections_capture_controller
+        assert controller is not None
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.state.exact_total == 1,
+            message="The Collections canvas never loaded its first page.",
+        )
+        assert screen._build_library_shell_input().collections_count == 1
+
+        scope.deactivate()
+        assert controller.state.exact_total == 1
+        assert screen._build_library_shell_input().collections_count is None
+
+
+async def test_a_count_that_times_out_says_so_on_the_row() -> None:
+    """task-32103 AC#3: a deadline is visible, not a silently absent number.
+
+    A timed-out count read cleared the stored total and returned, leaving a
+    bare "Collections" -- identical to a row whose count is off by design.
+    """
+    app = _build_test_app()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_collections_prefetched_total == 0,
+            message="The rail count prefetch never settled.",
+        )
+
+        async def hanging_list_page():
+            await asyncio.sleep(60)
+
+        scope = app.collections_capture_scope_service
+        scope.read_unfiltered_first_page = hanging_list_page
+        with patch.object(
+            library_screen, "LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS", 0.05
+        ):
+            await screen._read_library_collections_count()
+
+        shell_input = screen._build_library_shell_input()
+        assert shell_input.collections_count is None
+        assert shell_input.collections_count_unavailable is True
+
+        shell = build_library_shell_state(
+            shell_input, selected_row_id=screen._library_selected_row_id
+        )
+        row = next(
+            row
+            for section in shell.sections
+            for row in section.rows
+            if row.row_id == "browse-collections"
+        )
+        assert row.count_display == " (—)"
+        details = screen._library_details_lines("local", None)
+        assert any("Collections count" in line for line in details), details

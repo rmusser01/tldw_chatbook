@@ -581,6 +581,9 @@ class CollectionsCaptureScopeService:
         self.detail_snapshot: ResolvedCaptureDetail | None = None
         self.saved_search_snapshot: CaptureSavedSearchPage | None = None
         self._archive_status: dict[tuple[str, str], str] = {}
+        #: task-32103: the in-flight unfiltered page-1 read, shared by the
+        #: rail count prefetch and the onboarding evidence seam.
+        self._first_page_read: "asyncio.Future[CapturePage] | None" = None
 
     def activate(
         self,
@@ -598,6 +601,7 @@ class CollectionsCaptureScopeService:
         self.page_snapshot = None
         self.detail_snapshot = None
         self.saved_search_snapshot = None
+        self._first_page_read = None
 
     def deactivate(self) -> None:
         """Fence the current authority and discard every owner-bound snapshot."""
@@ -607,6 +611,7 @@ class CollectionsCaptureScopeService:
         self.page_snapshot = None
         self.detail_snapshot = None
         self.saved_search_snapshot = None
+        self._first_page_read = None
         self._archive_status.clear()
 
     def _claim(self) -> tuple[int, str, CollectionsCaptureBackend]:
@@ -633,16 +638,59 @@ class CollectionsCaptureScopeService:
         self.page_snapshot = result
         return result
 
+    async def read_unfiltered_first_page(self) -> CapturePage:
+        """Read the unfiltered page-1 total ONCE per pass (task-32103).
+
+        The rail's count prefetch and
+        ``get_library_user_content_evidence`` ask the authority the same
+        question in the same snapshot pass, which in server mode was two
+        HTTP round trips for one number. Concurrent callers share the
+        in-flight read; a settled result is never replayed, so this cannot
+        go stale. Awaiters shield it, so one caller's deadline cannot
+        cancel the other's read.
+
+        Deliberately NOT ``list_page``: the canvas's own page reads keep
+        their unshared path and their ``page_snapshot`` side effect, which
+        a count read has no business writing.
+
+        Returns:
+            The unfiltered first page for the active authority.
+
+        Raises:
+            CollectionsCaptureError: No authority is active, or the read
+                lost its authority while in flight.
+        """
+        authority = self.active_authority
+        if authority is None or self._backend is None:
+            raise CollectionsCaptureError("capture_authority_unavailable")
+        task = self._first_page_read
+        if task is None or task.done():
+            task = asyncio.ensure_future(
+                self._invoke("list_page", CapturePageRequest(authority.key))
+            )
+            self._first_page_read = task
+            task.add_done_callback(self._release_first_page_read)
+        return await asyncio.shield(task)
+
+    def _release_first_page_read(self, task: "asyncio.Future[CapturePage]") -> None:
+        """Forget a settled shared read and consume any orphaned failure."""
+        if self._first_page_read is task:
+            self._first_page_read = None
+        if not task.cancelled():
+            # Every awaiter may have been cancelled by its own deadline;
+            # retrieving the exception here keeps that from surfacing as a
+            # bare "Task exception was never retrieved" warning.
+            task.exception()
+
     async def get_library_user_content_evidence(self) -> LibraryContentEvidence:
         """Return bounded evidence from the active capture authority."""
         authority = self.active_authority
         if authority is None or self._backend is None:
             return LibraryContentEvidence.UNKNOWN
         try:
-            page = await self._invoke(
-                "list_page",
-                CapturePageRequest(authority.key, page=1),
-            )
+            # (task-32103) Shares the rail count prefetch's read rather
+            # than issuing a second one for the same number.
+            page = await self.read_unfiltered_first_page()
         except CollectionsCaptureError:
             return LibraryContentEvidence.UNKNOWN
         return (

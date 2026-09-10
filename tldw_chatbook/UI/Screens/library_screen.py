@@ -3444,6 +3444,10 @@ class LibraryScreen(BaseAppScreen):
         # has ever been opened. ``None`` until the first prefetch lands, so
         # the row's ``count_pending`` placeholder rule still applies.
         self._library_collections_prefetched_total: int | None = None
+        #: task-32103: True when the last count read FAILED or timed out
+        #: (never merely "no captures authority"), so the row can say so
+        #: instead of dropping its number silently.
+        self._library_collections_count_unavailable: bool = False
         self._collections_state.reader_layout = resolve_adaptive_reader_layout(
             0,
             self._collections_state.reader_preferences,
@@ -10288,10 +10292,14 @@ class LibraryScreen(BaseAppScreen):
         authority = getattr(scope_service, "active_authority", None)
         if authority is None:
             self._library_collections_prefetched_total = None
+            self._library_collections_count_unavailable = False
             return
         try:
+            # (task-32103) The shared unfiltered page-1 read: the
+            # onboarding evidence seam asks the same question in the same
+            # pass, and one read now answers both.
             page = await asyncio.wait_for(
-                scope_service.list_page(CapturePageRequest(authority.key)),
+                scope_service.read_unfiltered_first_page(),
                 timeout=LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,
             )
         except Exception as exc:
@@ -10307,8 +10315,10 @@ class LibraryScreen(BaseAppScreen):
                 _retry_failure_reason(exc),
             )
             self._library_collections_prefetched_total = None
+            self._library_collections_count_unavailable = True
             return
         self._library_collections_prefetched_total = page.total
+        self._library_collections_count_unavailable = False
 
     def _carry_selected_conversation_into_snapshot(self, records: dict[str, tuple[Mapping[str, Any], ...]]) -> dict[str, tuple[Mapping[str, Any], ...]]:
         return self._conversations_controller._carry_selected_conversation_into_snapshot(records)
@@ -14120,6 +14130,48 @@ class LibraryScreen(BaseAppScreen):
                             id="library-landing-canvas",
                         )
 
+    def _library_collections_rail_count(self) -> int | None:
+        """Return the Collections rail count, or None when there is none to show.
+
+        task-32057 AC#2: until the canvas has loaded a page at least once,
+        the rail reads the unfiltered prefetched total so the row never
+        paints a countless "Collections" beside its counted siblings.
+
+        Fix round 1, finding 1: the fallback gate is "has NEVER loaded a
+        page", not "has no total right now". ``exact_total`` is also None
+        while a page is loading or stale, so gating on it substituted the
+        UNFILTERED total on every page turn and scope switch -- "Favorites
+        (2)" flashed the whole-library count mid-load -- and gave a stale
+        page a number the canvas deliberately withholds.
+
+        task-32103 closes the two remaining ways a wrong number reached the
+        row:
+
+        * The unfiltered prefetch only answers while the canvas's own scope
+          is unfiltered. ``unmount()`` resets ``page`` but the screen-owned
+          ``active_scope`` persists, so re-entering a scoped canvas landed
+          back on the never-loaded branch and flashed the whole-library
+          total for one load window.
+        * A retained page whose authority is gone is the PREVIOUS
+          authority's total. ``deactivate()`` nulls the active authority
+          without touching this controller, so the number outlived what it
+          counted.
+        """
+        controller = self._library_collections_capture_controller
+        state = controller.state if controller is not None else None
+        authority = getattr(
+            getattr(controller, "scope_service", None), "active_authority", None
+        )
+        if state is not None and state.page is not None:
+            if authority is None or state.authority_key != authority.key:
+                return None
+            return state.exact_total
+        # "all" is ``LibraryCollectionsState.active_scope``'s unfiltered
+        # default -- the only scope the unfiltered prefetch answers for.
+        if self._collections_state.active_scope != "all":
+            return None
+        return self._library_collections_prefetched_total
+
     def _build_library_shell_input(self) -> LibraryShellInput:
         """Build the pure shell input from live counts and runtime state.
 
@@ -14147,26 +14199,7 @@ class LibraryScreen(BaseAppScreen):
             server_label = getattr(
                 runtime_state, "last_known_server_label", None
             ) or getattr(runtime_state, "active_server_id", None)
-        collections_controller = self._library_collections_capture_controller
-        collections_state = (
-            collections_controller.state if collections_controller is not None else None
-        )
-        if collections_state is None or collections_state.page is None:
-            # task-32057 AC#2: until the canvas has loaded a page at least
-            # once, the rail reads the unfiltered prefetched total so the
-            # row never paints a countless "Collections" beside its counted
-            # siblings.
-            #
-            # Fix round 1, finding 1: the gate is "has NEVER loaded a page",
-            # not "has no total right now". ``exact_total`` is also None
-            # while a page is loading or stale, so gating on it substituted
-            # the UNFILTERED total on every page turn and scope switch --
-            # "Favorites (2)" flashed the whole-library count mid-load --
-            # and gave a stale page a number the canvas deliberately
-            # withholds.
-            collections_count = self._library_collections_prefetched_total
-        else:
-            collections_count = collections_state.exact_total
+        collections_count = self._library_collections_rail_count()
         counts = self._local_source_counts
         known = self._local_source_total_known
         counts_loading = not self._library_loaded and not self._library_lookup_error
@@ -14203,6 +14236,10 @@ class LibraryScreen(BaseAppScreen):
             skills_count=skills_count if counts_available else None,
             skills_known=True,
             collections_count=collections_count,
+            collections_count_unavailable=(
+                collections_count is None
+                and self._library_collections_count_unavailable
+            ),
             runtime_source=active_source,
             server_label=str(server_label) if server_label else None,
             details_lines=self._library_details_lines(active_source, server_label),
@@ -14249,10 +14286,20 @@ class LibraryScreen(BaseAppScreen):
                 f"Media {counts.get('media', 0)} · "
                 f"Conversations {counts.get('conversations', 0)}"
             )
+        lines = [runtime_value, counts_or_error]
+        if self._library_collections_count_unavailable:
+            # task-32103: a count read that failed or ran out of deadline is
+            # said out loud -- a silently absent number reads exactly like a
+            # source whose count is off by design.
+            lines.append(
+                "Collections count unavailable (waited "
+                f"{LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS:g} s) — "
+                "open Collections to load it."
+            )
         sizes_line = self._library_db_sizes_line()
         if sizes_line is not None:
-            return (runtime_value, counts_or_error, sizes_line)
-        return (runtime_value, counts_or_error)
+            lines.append(sizes_line)
+        return tuple(lines)
 
     def _library_db_sizes_line(self) -> str | None:
         """Format the Details DB-sizes value from the app-level cache.
