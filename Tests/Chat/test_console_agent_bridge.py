@@ -25,6 +25,7 @@ from tldw_chatbook.Chat.console_agent_bridge import (
     CHANGE_KIND_TURN_CONCURRENT_SUBAGENT,
     CANVAS_DISCOVERY_HINT,
     CONSOLE_AGENT_OPERATING_PROMPT,
+    ConsoleAgentTraceRequestFactory,
     FIND_LOAD_DISCOVERY_HINT,
     ConsoleAgentBridge,
     SubAgentSummary,
@@ -261,6 +262,69 @@ class _ResultMCPProvider(_FakeMCPProvider):
 
 def _fence(name, args):
     return f"{FENCE_OPEN}\n{json.dumps({'name': name, 'arguments': args})}\n```"
+
+
+@pytest.mark.parametrize(
+    ("content", "expected_source", "is_tool_loop"),
+    [
+        (
+            "I will calculate that.\n\n" + _fence("calculator", {"expression": "6*7"}),
+            TraceProvenanceSource.TOOL_CALL,
+            True,
+        ),
+        ("I will calculate that.", TraceProvenanceSource.ACTIVE_REQUEST, False),
+        (
+            "I will calculate that.\n\n```tool_calls\n{}\n```",
+            TraceProvenanceSource.ACTIVE_REQUEST,
+            False,
+        ),
+        ("```tool_calls\n{}\n```", TraceProvenanceSource.ACTIVE_REQUEST, False),
+        (
+            _fence("calculator", {"expression": "6*7"}),
+            TraceProvenanceSource.TOOL_CALL,
+            True,
+        ),
+    ],
+)
+def test_capture_on_agent_artifacts_match_tool_loop_fence_validation(
+    content,
+    expected_source,
+    is_tool_loop,
+):
+    policy = FrozenTracePolicy(
+        policy_id=new_opaque_id(),
+        credential_filter_version="credentials-v1",
+        pii_redaction_enabled=False,
+        pii_ruleset_revision_id=None,
+    )
+    admitted = build_console_request(
+        [{"role": "user", "content": "hi"}],
+        message_provenance=(SavedRevisionTraceProvenance(new_opaque_id()),),
+        memory_provenance=(),
+        mandatory_provenance=(),
+        tool_provenance=(),
+        capture_policy=policy,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+
+    request = ConsoleAgentTraceRequestFactory(admitted).build(
+        [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": content},
+        ],
+        tools=(),
+        route=ConsoleRequestRoute.TOOL_LOOP,
+        actor_id=new_opaque_id(),
+        chain_id=new_opaque_id(),
+    )
+
+    assert bool(request.active_tool_loop) is is_tool_loop
+    assert request.flattened_messages()[-1]["content"] == content
+    assert request.provenance is not None
+    assert request.provenance.active_request[-1].source is expected_source
+    assert [item.source for item in request.provenance.tool_loop] == (
+        [TraceProvenanceSource.TOOL_CALL] if is_tool_loop else []
+    )
 
 
 class _ChunkGateway:

@@ -1508,9 +1508,43 @@ explicit Workspace bindings, not a global confinement-directory field.
 `[mcp] expose_local_tools` is only for external MCP clients and does not enable
 these tools in Console.
 
+**Default search backend.** Basic `web_search` and the opt-in
+`web_deep_search` share one preference. Open **Settings (F9) → Web Search**,
+choose **Default search backend**, complete its fields, and **Save (s)**.
+Use **Test saved settings** to send the displayed sample query and check access.
+For file-based configuration, the equivalent preference is:
+
+```toml
+[SearchSettings]
+search_provider_default = "serper"
+```
+
+Use a backend whose credentials or self-hosted endpoint you have configured.
+The preference is read on the next search; it does not require a restart.
+With no saved preference, both tools use DuckDuckGo, which requires no API key
+but still needs the web-search dependencies and network access. Existing saved
+choices, including Google, are preserved. Deep search remains separately
+opt-in through `[tools] web_deep_search_enabled = true` (restart required) and
+requires its relevance/synthesis LLM configuration.
+
+For a temporary choice, supply `search_engine` to `web_search`, or `engine`
+to `web_deep_search`. That affects only that call. A result line such as
+`Engine: serper (saved default)` shows the effective backend; other sources are
+`call override` and `application default`. Cached results retain the current
+call's source label. Invalid choices fail before searching, and backend
+failures do not automatically switch providers. Web Search shows local setup
+requirements separately from its explicit network test. **Configure backend**
+lets you prepare another provider without changing the shared default.
+
 Web-tool results are ephemeral. To persist a page in Library, use **Library →
 Import…** and submit its URL; Console does not advertise the retired
 `ingest_media` placeholder.
+
+Missing credentials, backend errors, and DuckDuckGo anti-bot challenges produce
+failed tool results. Check the reported error and configure an available search
+engine before retrying. A successful search with no matches remains a normal
+empty result. Three consecutive failures from the same tool stop the run, even
+when the query or search engine changes.
 
 ### Library media chunk tools
 
@@ -1806,12 +1840,11 @@ Setting it to 0 removes the ceiling but not Stop: cancellation is still
 polled every 0.5 s while a tool runs, so pressing Stop interrupts the wait
 (even though the tool's own thread may finish in the background).
 
-**Setting the token budget to 0 means unlimited, and costs you your only
-safety net.** The loop detector only catches a tool called repeatedly with
-*identical* arguments; a loop that varies anything — an incrementing offset,
-a slightly reworded query — walks straight past it. At a 2,000-turn cap the
-token budget is the last thing standing between a stuck agent and an
-unbounded bill.
+**Setting the token budget to 0 means unlimited.** Loop detection stops repeated
+identical calls and three consecutive failures from the same tool, including
+calls with changing arguments. A successful call or a different tool resets
+the failure count. Loops that keep returning successful results with changing
+arguments can still continue, so keep a token budget to bound spending.
 
 **If you lower the step budget, lower it deliberately.** A tool round costs
 3 steps (think, call, result) and the closing reply costs 1, so N turns need

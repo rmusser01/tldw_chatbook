@@ -28,12 +28,6 @@ from tldw_chatbook.Library.library_media_reader_state import (
     resolve_media_reader_layout,
 )
 
-# task-31633 AC#2: Media's grips are one cell each -- what they paint and what
-# the resolver holds back for them -- while every sibling reader keeps the
-# shared five (Tests/Library/test_library_adaptive_reader_state.py pins that).
-MEDIA_GRIP_WIDTH = MEDIA_READER_LAYOUT_PROFILE.grip_width
-MEDIA_GRIP_COLLAPSE = "‹"
-MEDIA_GRIP_EXPAND = "›"
 from tldw_chatbook.Library.library_media_viewer_state import (
     build_library_media_viewer_state,
 )
@@ -53,6 +47,11 @@ from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
     PaneToggleRequested as SharedPaneToggleRequested,
 )
 from tldw_chatbook.app import TldwCli
+
+# The profile reserves the same five-cell controls that the shell paints.
+MEDIA_GRIP_WIDTH = MEDIA_READER_LAYOUT_PROFILE.grip_width
+MEDIA_GRIP_COLLAPSE = "<---"
+MEDIA_GRIP_EXPAND = "--->"
 
 
 def _painted_text_in_region(app, region) -> str:
@@ -506,7 +505,7 @@ class _SixtyColumnMediaShellApp(ConsolidatedCSSApp):
 
 
 @pytest.mark.asyncio
-async def test_two_grips_leave_fifty_eight_columns_for_reader_at_sixty_shell_columns():
+async def test_two_grips_leave_fifty_columns_for_reader_at_sixty_shell_columns():
     app = _SixtyColumnMediaShellApp()
 
     async with app.run_test(size=(60, 24)) as pilot:
@@ -515,8 +514,7 @@ async def test_two_grips_leave_fifty_eight_columns_for_reader_at_sixty_shell_col
         reader = shell.query_one("#library-media-viewer", LibraryMediaViewer)
 
         assert shell.region.width == 60
-        # 50 while Media's two grips still cost five cells each.
-        assert reader.region.width == 58
+        assert reader.region.width == 50
         assert reader.region.right <= shell.region.right
         assert (
             sum(grip.region.width for grip in shell.query(".library-media-pane-grip"))

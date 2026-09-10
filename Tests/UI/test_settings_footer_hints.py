@@ -60,7 +60,7 @@ _ALL_KNOWN_LABELS = (
     frozenset(_HINT_LABELS)
     | _TEST_VERB_LABELS
     | _PROFILE_ACTION_LABELS
-    | {"test category"}
+    | {"test category", "revert raw draft"}
 )
 
 
@@ -84,7 +84,10 @@ def test_category_footer_shortcuts_only_advertise_working_keys():
             or category is SettingsCategoryId.NETWORK
         )
         assert ("s" in keys) == has_save
-        assert ("r" in keys) == (category in GUIDED_SETTINGS_MUTATION_CATEGORIES)
+        assert ("r" in keys) == (
+            category in GUIDED_SETTINGS_MUTATION_CATEGORIES
+            or category is SettingsCategoryId.ADVANCED_CONFIG
+        )
         # t is only advertised where a test action is actually implemented.
         assert ("t" in keys) == (
             category in SettingsScreen.TESTABLE_SETTINGS_CATEGORIES
@@ -97,6 +100,8 @@ def test_category_footer_shortcuts_only_advertise_working_keys():
             expected_labels.append("save category")
         if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
             expected_labels.append("revert category")
+        if category is SettingsCategoryId.ADVANCED_CONFIG:
+            expected_labels.append("revert raw draft")
         if category in SettingsScreen.TESTABLE_SETTINGS_CATEGORIES:
             expected_labels += [
                 SettingsScreen.TEST_ACTION_LABELS.get(category, "test category")
@@ -381,7 +386,7 @@ def test_f1_help_has_contract_content_for_every_category():
     app = _build_test_app()
     screen = SettingsScreen(app)
     members = tuple(SettingsCategoryId)
-    assert len(members) == 28
+    assert len(members) == 30
     for category in members:
         state = screen._workbench_help_state(category)
         body = state.render_text()
