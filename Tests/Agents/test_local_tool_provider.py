@@ -2646,7 +2646,7 @@ def test_web_search_handler_wires_legacy_defaults_and_bounds_results(
     p = make_provider(root=tmp_path)
     r = p.invoke("local:web_search", {"query": "python"})
     assert r.ok
-    # legacy Tools/web_search_tool.py config-default wiring, passed through
+    # With no saved preference, use the shared application fallback.
     assert seen["search_engine"] == "duckduckgo"
     assert seen["search_query"] == "python"
     assert seen["content_country"] == "US"
@@ -2655,7 +2655,9 @@ def test_web_search_handler_wires_legacy_defaults_and_bounds_results(
     assert seen["result_count"] == 5
     assert seen["safesearch"] == "moderate"
     # each result block bounded to ~4 KiB BYTES (provider fit is byte-based)
-    blocks = [b for b in r.content.split("\n\n") if b.strip()]
+    body, backend_note = r.content.rsplit("\n\n", 1)
+    assert "Engine: duckduckgo (application default)" == backend_note
+    blocks = [b for b in body.split("\n\n") if b.strip()]
     assert len(blocks) == 3
     for block in blocks:
         assert len(block.encode("utf-8")) <= 4 * 1024 + len(
@@ -2676,7 +2678,8 @@ def test_web_search_handler_bounds_multibyte_results_by_bytes(tmp_path, monkeypa
     p = make_provider(root=tmp_path)
     r = p.invoke("local:web_search", {"query": "python"})
     assert r.ok
-    blocks = [b for b in r.content.split("\n\n") if b.strip()]
+    body, _ = r.content.rsplit("\n\n", 1)
+    blocks = [b for b in body.split("\n\n") if b.strip()]
     assert len(blocks) == 2
     for block in blocks:
         assert len(block.encode("utf-8")) <= 4 * 1024 + len(
@@ -2755,7 +2758,7 @@ def test_web_search_response_error_keys_surface_as_failure(tmp_path, monkeypatch
     assert "Error processing search results: boom" in r.content
 
 
-def test_web_search_non_string_engine_falls_back_to_default(tmp_path, monkeypatch):
+def test_web_search_non_string_engine_fails_before_dispatch(tmp_path, monkeypatch):
     seen = {}
 
     def fake_perform_websearch(**kwargs):
@@ -2768,8 +2771,8 @@ def test_web_search_non_string_engine_falls_back_to_default(tmp_path, monkeypatc
     )
     p = make_provider(root=tmp_path)
     r = p.invoke("local:web_search", {"query": "python", "search_engine": 123})
-    assert r.ok  # no AttributeError on .strip(); coerced like result_count
-    assert seen["search_engine"] == "duckduckgo"
+    assert not r.ok and "invalid-args" in r.error
+    assert seen == {}
 
 
 # -- stable session task operations (TASK-13216 Task 4) ----------------------

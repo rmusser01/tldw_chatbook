@@ -262,6 +262,10 @@ from ...Widgets.settings_splash_screen_viewer import SettingsSplashScreenViewer
 from ...Widgets.settings_theme_editor import SettingsThemeEditor
 from ...Widgets.settings_internal_prompts_panel import InternalPromptsPanel
 from ...Widgets.settings_agents_panel import AgentsSettingsPanel
+from .settings_web_search import SEARCH_TERMS as WEB_SEARCH_TERMS, WebSearchSettings
+from ...Widgets.settings_web_search_panel import WebSearchSettingsPanel
+from .settings_advanced_config import AdvancedConfigSettings
+from ...Widgets.settings_advanced_config_panel import AdvancedConfigPanel
 from ...Widgets.settings_image_gen_panel import (
     ImageGenSettingsPanel,
     _key_source_line as _image_gen_key_source_line,
@@ -1372,6 +1376,7 @@ GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
     {
         SettingsCategoryId.PROVIDERS_MODELS,
         SettingsCategoryId.SPEECH_TTS,
+        SettingsCategoryId.WEB_SEARCH,
         SettingsCategoryId.APPEARANCE,
         SettingsCategoryId.CONSOLE_BEHAVIOR,
         SettingsCategoryId.LIBRARY_RAG,
@@ -1844,6 +1849,14 @@ _RAG_GROUP_GUIDANCE: dict[str, tuple[tuple[str, str], ...]] = {
 # SettingsCategoryId MUST have an entry: this table is read inside compose, so
 # a missing key would otherwise take down the whole app (see PR #713 / #742).
 _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
+    SettingsCategoryId.WEB_SEARCH: (
+        ("Affected config", "shared search default and backend credentials"),
+        (
+            "Recovery",
+            "Revert discards staged edits; test saved settings to check access",
+        ),
+        ("Boundary", "environment values take precedence; tests send a sample query"),
+    ),
     SettingsCategoryId.OVERVIEW: (
         ("Affected config", "all Settings categories summarized for readiness"),
         ("Recovery", "open the specific category before changing values"),
@@ -2665,6 +2678,8 @@ class SettingsScreen(BaseAppScreen):
             # action_settings_save_category (no SettingsDraft), so `s`
             # works; `r` has no draft to revert and stays unadvertised.
             shortcuts.append(("s", "save category"))
+        if category is SettingsCategoryId.ADVANCED_CONFIG:
+            shortcuts.append(("r", "revert raw draft"))
         if category in SettingsScreen.TESTABLE_SETTINGS_CATEGORIES:
             shortcuts.append(
                 ("t", SettingsScreen.TEST_ACTION_LABELS.get(category, "test category"))
@@ -2809,6 +2824,7 @@ class SettingsScreen(BaseAppScreen):
         self._snapshot_preferences_raw = None
         self._snapshot_preferences_saving = False
         self._snapshot_preferences_unavailable = False
+        self._web_search_settings: WebSearchSettings | None = None
         self._provider_test_result = self._PROVIDER_TEST_NOT_RUN_COPY
         self._provider_test_evidence_store = ProviderTestEvidenceStore()
         self._provider_draft_generation = 0
@@ -3131,9 +3147,7 @@ class SettingsScreen(BaseAppScreen):
         #: awaiting the second (confirming) press. Any selection change
         #: or pane refresh disarms it.
         self._settings_workspace_memory_armed: str | None = None
-        self._advanced_config_result = "Advanced config validation: not run"
-        self._advanced_config_validated_text: str | None = None
-        self._advanced_backup_load_token = 0
+        self._advanced_config_settings: AdvancedConfigSettings | None = None
         self._ownership_by_category_cache = self._build_ownership_by_category()
         # Lazily-memoized cache, NOT a recompose=True reactive (P3 whole-branch
         # review Fix 1 + Fix 2): InternalPromptsPanel.Modified fires on every
@@ -3173,7 +3187,7 @@ class SettingsScreen(BaseAppScreen):
         """Save process-local Settings navigation and draft state.
 
         Returns:
-            A deep-copy-safe state mapping for a fresh Settings screen.
+            Process-local state, including live raw and search editor sessions.
         """
         state = super().save_state()
         if not isinstance(state, dict):
@@ -3182,7 +3196,18 @@ class SettingsScreen(BaseAppScreen):
         state["category_search_query"] = self._sanitize_category_search_query(
             self.category_search_query
         )
+        if self._web_search_settings is not None:
+            self._web_search_settings.capture_pending_input()
+            state["web_search_session"] = self._web_search_settings
         state["settings_drafts"] = copy.deepcopy(self._settings_drafts)
+        if self._advanced_config_settings is not None:
+            try:
+                self._advanced_config_settings.edit(
+                    self.query_one("#settings-advanced-config-editor", TextArea).text
+                )
+            except QueryError:
+                pass
+            state["raw_config_session"] = self._advanced_config_settings
         if self.active_category == SettingsCategoryId.SPEECH_TTS.value:
             try:
                 panel = self.query_one(SpeechTTSSettingsPanel)
@@ -3250,6 +3275,17 @@ class SettingsScreen(BaseAppScreen):
                 self._settings_drafts = copy.deepcopy(valid_drafts)
             except Exception:
                 logger.debug("Ignoring malformed Settings draft state", exc_info=True)
+
+        search_session = state.get("web_search_session")
+        if type(search_session) is WebSearchSettings:
+            self._web_search_settings = search_session
+            self._settings_drafts[SettingsCategoryId.WEB_SEARCH] = search_session.draft
+            self._web_search_model()
+
+        raw_session = state.get("raw_config_session")
+        if type(raw_session) is AdvancedConfigSettings:
+            self._advanced_config_settings = raw_session
+            self._raw_config_model()  # Rebind this live, memory-only session.
 
         snapshot = state.get("speech_tts_panel_draft")
         if type(snapshot) is SpeechTTSPanelDraftSnapshot:
@@ -3348,6 +3384,8 @@ class SettingsScreen(BaseAppScreen):
                 (key, test_label if key == "t" else description)
                 for key, description in shortcuts
             )
+        if active is SettingsCategoryId.ADVANCED_CONFIG:
+            shortcuts = shortcuts + (("r", "revert raw draft"),)
         text_entry_focused = self._text_entry_focused()
         if text_entry_focused:
             # task-1560: s/r/t are real bindings and therefore inert while an
@@ -3783,6 +3821,16 @@ class SettingsScreen(BaseAppScreen):
         """Fence any late Model Library review before this screen is replaced."""
 
         self._rollback_vllm_default_intent()
+        if (
+            self._advanced_config_settings is not None
+            and self._advanced_config_settings.changed == self._raw_config_changed
+        ):
+            self._advanced_config_settings.changed = lambda: None
+        if (
+            self._web_search_settings is not None
+            and self._web_search_settings.changed == self._web_search_changed
+        ):
+            self._web_search_settings.changed = lambda: None
         self._audio_cpp_result_cancellation.set()
         try:
             self._retry_audio_cpp_staged_request_cleanup()
@@ -3914,6 +3962,12 @@ class SettingsScreen(BaseAppScreen):
                 SettingsCategoryId.PROVIDERS_MODELS,
                 "Providers & Models",
                 "Default provider, model, context window, and readiness shared with Console.",
+                "Shared",
+            ),
+            SettingsCategorySummary(
+                SettingsCategoryId.WEB_SEARCH,
+                "Web Search",
+                "Default backend and API keys, credentials, and setup for web search.",
                 "Shared",
             ),
             SettingsCategorySummary(
@@ -4598,6 +4652,7 @@ class SettingsScreen(BaseAppScreen):
                 (
                     SettingsCategoryId.OVERVIEW,
                     SettingsCategoryId.PROVIDERS_MODELS,
+                    SettingsCategoryId.WEB_SEARCH,
                     SettingsCategoryId.SPEECH_TTS,
                 ),
             ),
@@ -4802,6 +4857,18 @@ class SettingsScreen(BaseAppScreen):
 
     def _category_ownership_records(self) -> tuple[SettingsOwnershipRecord, ...]:
         return (
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.WEB_SEARCH,
+                owns_config_sections=(
+                    "SearchSettings.search_provider_default",
+                    "SearchEngines",
+                ),
+                reads_runtime_state_from=("environment variables", "saved config"),
+                writes_allowed=True,
+                runtime_owner="web search tools",
+                boundary_copy="Staged local defaults apply to new basic and deep searches after Save.",
+                recovery_copy="Revert discards edits. Test saved settings sends a visible sample query.",
+            ),
             SettingsOwnershipRecord(
                 category=SettingsCategoryId.OVERVIEW,
                 owns_config_sections=(
@@ -7012,6 +7079,13 @@ class SettingsScreen(BaseAppScreen):
                 return
 
     def _category_has_unsaved_changes(self, category: SettingsCategoryId) -> bool:
+        if category is SettingsCategoryId.ADVANCED_CONFIG:
+            state = (
+                self._advanced_config_settings.state
+                if self._advanced_config_settings is not None
+                else None
+            )
+            return bool(state and state.is_dirty)
         draft = self._settings_drafts.get(category)
         return bool(draft and draft.is_dirty) or (
             category is SettingsCategoryId.PROVIDERS_MODELS
@@ -7646,6 +7720,11 @@ class SettingsScreen(BaseAppScreen):
         return messages.get(category, "Guided edits: read-only.")
 
     def _guided_actions_enabled(self, category: SettingsCategoryId) -> bool:
+        if category is SettingsCategoryId.WEB_SEARCH:
+            return (
+                self._category_has_unsaved_changes(category)
+                and not self._web_search_model().saving
+            )
         if category is SettingsCategoryId.APPEARANCE:
             return self._appearance_save_enabled()
         if category is SettingsCategoryId.LIBRARY_RAG:
@@ -7833,6 +7912,8 @@ class SettingsScreen(BaseAppScreen):
                 self._category_status(summary),
             )
         ).lower()
+        if summary.category is SettingsCategoryId.WEB_SEARCH:
+            secondary_haystack += " " + WEB_SEARCH_TERMS.lower()
         if query in secondary_haystack:
             return 2
         # task-1715: field labels -- typing a setting's visible name
@@ -8228,6 +8309,11 @@ class SettingsScreen(BaseAppScreen):
 
     def _category_state_banner_text(self, category: SettingsCategoryId) -> str:
         if (
+            category is SettingsCategoryId.ADVANCED_CONFIG
+            and self._category_has_unsaved_changes(category)
+        ):
+            return "State: Unsaved raw TOML | Draft kept when you leave; use raw editor controls."
+        if (
             category is SettingsCategoryId.APPEARANCE
             and self._category_has_unsaved_changes(category)
         ):
@@ -8299,6 +8385,8 @@ class SettingsScreen(BaseAppScreen):
 
     def _category_state_scope_text(self, category: SettingsCategoryId) -> str:
         """The category-scope half of the State banner (after the badge)."""
+        if category is SettingsCategoryId.WEB_SEARCH:
+            return "Shared by basic and deep search; changes apply after Save."
         if category is SettingsCategoryId.ADVANCED_CONFIG:
             return "Save blocked until the text validates; backup before overwrite."
         if category is SettingsCategoryId.PROVIDERS_MODELS:
@@ -10099,16 +10187,6 @@ class SettingsScreen(BaseAppScreen):
         filename = config_path.name or "config.toml"
         return f"{filename} — {source.lower()}, {self._config_writable_status()}"
 
-    def _raw_config_text(self) -> str:
-        try:
-            self._config_path()
-        except (OSError, RuntimeError, ValueError) as exc:
-            return f"# Unable to use config path: {redact_secret_text(str(exc))}\n"
-        try:
-            return SettingsConfigAdapter().read_serialized()
-        except OSError as exc:
-            return f"# Unable to read config: {type(exc).__name__}"
-
     @staticmethod
     def _deep_merge_config_values(base: dict, update: Mapping) -> dict:
         merged = copy.deepcopy(base)
@@ -10598,214 +10676,26 @@ class SettingsScreen(BaseAppScreen):
             return "Config reload: loaded"
         return "Config reload: failed - loaded config was not a table"
 
-    def _advanced_editor_text(self) -> str:
-        try:
-            return self.query_one("#settings-advanced-config-editor", TextArea).text
-        except QueryError:
-            return ""
-
-    def _validate_advanced_config_text(self, text: str) -> str:
-        result = SettingsConfigAdapter().validate_raw_toml(text)
-        status = "valid" if result.valid else "invalid"
-        return f"Advanced config validation: {status} - {redact_secret_text(result.message)}"
-
-    def _advanced_validation_status(self, text: str | None = None) -> str:
-        current_text = self._advanced_editor_text() if text is None else text
-        if self._advanced_config_validated_text is None:
-            return "Last validated: not validated"
-        if self._advanced_config_validated_text == current_text:
-            return "Last validated: current text"
-        return "Last validated: stale after edits"
-
-    def _advanced_save_allowed(self, text: str | None = None) -> bool:
-        current_text = self._advanced_editor_text() if text is None else text
-        return self._advanced_config_validated_text == current_text
-
-    def _update_advanced_validation_status(self) -> None:
-        self._set_static_text(
-            "#settings-advanced-config-validation-status",
-            self._advanced_validation_status(),
-        )
-        try:
-            self.query_one(
-                "#settings-advanced-save-config", Button
-            ).disabled = not self._advanced_save_allowed()
-        except QueryError:
-            pass
-
-    def _save_advanced_config_text(self, text: str) -> str:
-        validation = SettingsConfigAdapter().validate_raw_toml(text)
-        if not validation.valid:
-            return f"Advanced config save: blocked - {redact_secret_text(validation.message)}"
-        if self._advanced_config_validated_text != text:
-            return "Advanced config save: blocked - validate current TOML before save"
-
-        try:
-            self._config_path()
-        except ValueError as exc:
-            return f"Advanced config save: failed - {redact_secret_text(str(exc))}"
-        try:
-            _loaded, backup_path = SettingsConfigAdapter().replace_serialized(text)
-            backup_message = (
-                "backup: created"
-                if backup_path is not None
-                else "backup: none (new file)"
+    def _raw_config_model(self) -> AdvancedConfigSettings:
+        if self._advanced_config_settings is None:
+            self._advanced_config_settings = AdvancedConfigSettings(
+                self._raw_config_changed,
+                lambda loaded: setattr(self.app_instance, "app_config", loaded),
             )
-            return f"Advanced config save: saved; {backup_message}"
-        except (OSError, TypeError, ValueError, tomllib.TOMLDecodeError) as exc:
-            return f"Advanced config save: failed - {redact_secret_text(str(exc))}"
-
-    def _read_advanced_backup_preview(self) -> tuple[str, str | None]:
-        try:
-            self._config_path()
-        except (OSError, RuntimeError, ValueError) as exc:
-            return (
-                f"Advanced config recovery: failed - {redact_secret_text(str(exc))}",
-                None,
-            )
-        try:
-            backup_text = SettingsConfigAdapter().read_backup_serialized()
-        except FileNotFoundError:
-            return (
-                "Advanced config recovery: unavailable - no backup found",
-                None,
-            )
-        except (OSError, UnicodeDecodeError) as exc:
-            return (
-                f"Advanced config recovery: failed - {redact_secret_text(str(exc))}",
-                None,
-            )
-        return (
-            "Advanced config recovery: loaded backup preview; validate before save",
-            backup_text,
+        self._advanced_config_settings.changed = self._raw_config_changed
+        self._advanced_config_settings.applied = (
+            lambda loaded, owner=self.app_instance: setattr(owner, "app_config", loaded)
         )
+        return self._advanced_config_settings
 
-    def _load_advanced_backup_preview(self) -> str:
-        result, backup_text = self._read_advanced_backup_preview()
-        if backup_text is None:
-            return result
-        try:
-            self.query_one(
-                "#settings-advanced-config-editor", TextArea
-            ).text = backup_text
-        except QueryError:
-            return "Advanced config recovery: failed - editor unavailable"
-        self._advanced_config_validated_text = None
-        self._update_advanced_validation_status()
-        return result
-
-    @work(exclusive=True, group="settings-advanced-validate-config", thread=True)
-    def _advanced_validate_config_worker(self, text: str) -> None:
-        validation = SettingsConfigAdapter().validate_raw_toml(text)
-        status = "valid" if validation.valid else "invalid"
-        result = f"Advanced config validation: {status} - {redact_secret_text(validation.message)}"
-        self.app.call_from_thread(
-            self._apply_advanced_validation_result,
-            text,
-            validation.valid,
-            result,
-        )
-
-    def _apply_advanced_validation_result(
-        self, text: str, valid: bool, result: str
-    ) -> None:
-        self._advanced_config_result = result
-        self._advanced_config_validated_text = text if valid else None
-        self._set_static_text(
-            "#settings-advanced-config-result", self._advanced_config_result
-        )
-        self._update_advanced_validation_status()
-
-    @work(exclusive=True, group="settings-advanced-save-config", thread=True)
-    def _advanced_save_config_worker(self, text: str) -> None:
-        result = self._save_advanced_config_text(text)
-        loaded_config: dict | None = None
-        if result.startswith("Advanced config save: saved"):
-            try:
-                loaded_config = SettingsConfigAdapter().load(force_reload=True)
-            except Exception as exc:
-                result = f"{result}; reload failed - {redact_secret_text(str(exc))}"
-        self.app.call_from_thread(
-            self._apply_advanced_save_result,
-            result,
-            loaded_config,
-        )
-
-    def _apply_advanced_save_result(
-        self, result: str, loaded_config: dict | None
-    ) -> None:
-        if loaded_config is not None:
-            self.app_instance.app_config = loaded_config
-        self._advanced_config_result = result
-        self._set_static_text(
-            "#settings-advanced-config-result", self._advanced_config_result
-        )
-        self._update_advanced_validation_status()
-
-    @work(exclusive=True, group="settings-advanced-load-backup", thread=True)
-    def _advanced_load_backup_worker(self, dispatch_text: str, load_token: int) -> None:
-        """Read the backup off-loop and retain latest-request ownership.
-
-        TASK-19559: this is a *thread* worker, so `Worker.cancel()` does not
-        prevent its callback: the body runs to completion in the executor and
-        the `call_from_thread` callback below still lands. The dispatch text
-        protects later typing, while the token enforces latest-request
-        ownership when overlapping callbacks arrive.
-
-        Args:
-            dispatch_text: Editor text captured when the request was dispatched.
-            load_token: Monotonic token identifying the request as the latest load.
-        """
-        result, backup_text = self._read_advanced_backup_preview()
-        self.app.call_from_thread(
-            self._apply_advanced_backup_preview_result,
-            result,
-            backup_text,
-            dispatch_text,
-            load_token,
-        )
-
-    def _apply_advanced_backup_preview_result(
-        self,
-        result: str,
-        backup_text: str | None,
-        dispatch_text: str | None = None,
-        load_token: int | None = None,
-    ) -> None:
-        """Apply a backup preview only if the editor is untouched since dispatch.
-
-        TASK-19559: the editor is a live `TextArea`. If the user kept typing
-        while the backup was being read off-loop, writing the backup over the
-        top silently destroys their unsaved edits, so the write is refused and
-        the refusal is reported instead of being swallowed.
-        """
-        if load_token is not None and load_token != self._advanced_backup_load_token:
+    def _raw_config_changed(self) -> None:
+        if not self.is_mounted:
             return
-        final_result = result
-        if backup_text is not None:
-            current_text = self._advanced_editor_text()
-            if dispatch_text is not None and current_text != dispatch_text:
-                self._advanced_config_result = (
-                    "Advanced config recovery: not applied - the editor changed "
-                    "while the backup was loading; unsaved edits were kept"
-                )
-                self._set_static_text(
-                    "#settings-advanced-config-result", self._advanced_config_result
-                )
-                return
-            try:
-                self.query_one(
-                    "#settings-advanced-config-editor", TextArea
-                ).text = backup_text
-            except QueryError:
-                final_result = "Advanced config recovery: failed - editor unavailable"
-            else:
-                self._advanced_config_validated_text = None
-                self._update_advanced_validation_status()
-        self._advanced_config_result = final_result
-        self._set_static_text(
-            "#settings-advanced-config-result", self._advanced_config_result
-        )
+        category = SettingsCategoryId.ADVANCED_CONFIG
+        if self._active_category_id() is category:
+            self._update_draft_status_widgets(category)
+        else:
+            self._refresh_category_button_label(category)
 
     def _provider_readiness_label(self) -> str:
         resolved = self._resolve_provider_model_for_settings()
@@ -19152,6 +19042,27 @@ class SettingsScreen(BaseAppScreen):
                 timeout=6,
             )
 
+    def _web_search_model(self) -> WebSearchSettings:
+        if self._web_search_settings is None:
+            category = SettingsCategoryId.WEB_SEARCH
+            self._web_search_settings = WebSearchSettings(
+                lambda: self._settings_drafts.setdefault(
+                    category, SettingsDraft(category)
+                ),
+                self._web_search_changed,
+            )
+        self._web_search_settings.changed = self._web_search_changed
+        return self._web_search_settings
+
+    def _web_search_changed(self) -> None:
+        if not self.is_mounted:
+            return
+        category = SettingsCategoryId.WEB_SEARCH
+        if self._active_category_id() is category:
+            self._update_draft_status_widgets(category)
+        else:
+            self._refresh_category_button_label(category)
+
     def _render_detail_pane(self) -> ComposeResult:
         category = SettingsCategoryId(self.active_category)
         if category is SettingsCategoryId.OVERVIEW:
@@ -19508,6 +19419,10 @@ class SettingsScreen(BaseAppScreen):
                 "Internal Prompts", classes="destination-section settings-column-title"
             )
             yield InternalPromptsPanel(id="settings-internal-prompts-panel")
+        elif category is SettingsCategoryId.WEB_SEARCH:
+            yield WebSearchSettingsPanel(
+                self._web_search_model(), id="settings-web-search-panel"
+            )
         elif category is SettingsCategoryId.IMAGE_GENERATION:
             yield Static(
                 "Image Gen", classes="destination-section settings-column-title"
@@ -19942,78 +19857,12 @@ class SettingsScreen(BaseAppScreen):
             yield Static(
                 "Advanced Config", classes="destination-section settings-column-title"
             )
-            with Vertical(
-                id="settings-advanced-config-card", classes="settings-focus-card"
-            ):
-                raw_config_text = self._raw_config_text()
-                yield Static("Raw TOML", classes="destination-section")
-                yield self._detail_row(
-                    "Risk level", "expert-only raw configuration editing"
-                )
-                yield self._detail_row(
-                    "Save policy",
-                    "Save blocked until the current text validates",
-                )
-                yield self._detail_row(
-                    "Write mode", "atomic save with .bak backup before overwrite"
-                )
-                yield self._detail_row(
-                    "Required shape", "table-shaped TOML top-level value"
-                )
-                yield self._detail_row(
-                    "Guided path",
-                    "prefer category controls unless raw TOML is required",
-                )
-                yield Static("Guided category paths", classes="destination-section")
-                with Horizontal(
-                    id="settings-advanced-guided-paths", classes="settings-action-row"
-                ):
-                    for target_category, label in ADVANCED_CONFIG_GUIDED_PATHS:
-                        yield Button(
-                            label,
-                            id=f"settings-advanced-open-{target_category.value}",
-                            classes="settings-advanced-guided-path-button",
-                            tooltip=f"Open {label} guided settings instead of editing raw TOML.",
-                        )
-                yield Static(
-                    "Raw TOML bypasses guided validation and should be used only for expert edits."
-                )
-                yield Static(
-                    self._advanced_validation_status(),
-                    id="settings-advanced-config-validation-status",
-                    classes="settings-status-row settings-advanced-safety-status",
-                )
-                with Horizontal(
-                    id="settings-advanced-config-actions", classes="settings-action-row"
-                ):
-                    yield Button(
-                        "Validate Raw TOML",
-                        id="settings-advanced-validate-config",
-                        tooltip="Validate raw TOML before writing it to disk.",
-                    )
-                    yield Button(
-                        "Load Backup",
-                        id="settings-advanced-load-backup",
-                        tooltip="Load the .bak file into the editor without saving.",
-                    )
-                    save_button = Button(
-                        "Save Raw TOML",
-                        id="settings-advanced-save-config",
-                        tooltip="Atomically save raw TOML after validation.",
-                    )
-                    save_button.disabled = not self._advanced_save_allowed(
-                        raw_config_text
-                    )
-                    yield save_button
-                yield Static(
-                    self._advanced_config_result,
-                    id="settings-advanced-config-result",
-                    classes="settings-status-row",
-                )
-                yield TextArea(
-                    raw_config_text,
-                    id="settings-advanced-config-editor",
-                )
+            yield AdvancedConfigPanel(
+                self._raw_config_model(),
+                ADVANCED_CONFIG_GUIDED_PATHS,
+                id="settings-advanced-config-card",
+                classes="settings-focus-card",
+            )
 
     def _mode_line_text(self, summary: SettingsCategorySummary) -> str:
         """Mode-line text for the category strip.
@@ -26305,52 +26154,6 @@ class SettingsScreen(BaseAppScreen):
             self.app_instance.handle_first_run_wizard_result,
         )
 
-    @on(Button.Pressed, "#settings-advanced-validate-config")
-    def handle_advanced_validate_config(self, event: Button.Pressed) -> None:
-        event.stop()
-        current_text = self._advanced_editor_text()
-        self._advanced_config_result = "Advanced config validation: running"
-        self._set_static_text(
-            "#settings-advanced-config-result", self._advanced_config_result
-        )
-        self._update_advanced_validation_status()
-        self._advanced_validate_config_worker(current_text)
-
-    @on(Button.Pressed, "#settings-advanced-save-config")
-    def handle_advanced_save_config(self, event: Button.Pressed) -> None:
-        event.stop()
-        self._advanced_config_result = "Advanced config save: saving"
-        self._set_static_text(
-            "#settings-advanced-config-result", self._advanced_config_result
-        )
-        try:
-            self.query_one("#settings-advanced-save-config", Button).disabled = True
-        except QueryError:
-            pass
-        self._advanced_save_config_worker(self._advanced_editor_text())
-
-    @on(Button.Pressed, "#settings-advanced-load-backup")
-    def handle_advanced_load_backup(self, event: Button.Pressed) -> None:
-        """Advance backup-load ownership and dispatch the newest request.
-
-        Args:
-            event: The Load Backup button press to stop after handling.
-        """
-        event.stop()
-        self._advanced_backup_load_token += 1
-        self._advanced_config_result = (
-            "Advanced config recovery: loading backup preview"
-        )
-        self._set_static_text(
-            "#settings-advanced-config-result", self._advanced_config_result
-        )
-        # TASK-19559: carry the editor text as it stands right now, so the
-        # arrival callback can tell "nothing changed" from "the user typed
-        # while we were reading the backup".
-        self._advanced_load_backup_worker(
-            self._advanced_editor_text(), self._advanced_backup_load_token
-        )
-
     @on(Button.Pressed, ".settings-advanced-guided-path-button")
     def handle_advanced_guided_path(self, event: Button.Pressed) -> None:
         event.stop()
@@ -26358,11 +26161,6 @@ class SettingsScreen(BaseAppScreen):
         target_category = ADVANCED_CONFIG_GUIDED_PATH_BUTTONS.get(button_id)
         if target_category is not None:
             self._select_category(target_category.value, restore_focus=True)
-
-    @on(TextArea.Changed, "#settings-advanced-config-editor")
-    def handle_advanced_config_changed(self, event: TextArea.Changed) -> None:
-        event.stop()
-        self._update_advanced_validation_status()
 
     @staticmethod
     def _save_raw_cli_permitted_value(
@@ -26818,6 +26616,13 @@ class SettingsScreen(BaseAppScreen):
                     copy.deepcopy(dict(section_values))
                 )
                 self._network_pending = {}
+            return
+        if category is SettingsCategoryId.WEB_SEARCH:
+            self.app.run_worker(
+                self._web_search_model().save(),
+                group="web-search-save",
+                exclusive=False,
+            )
             return
         if category not in GUIDED_SETTINGS_MUTATION_CATEGORIES:
             self.app.notify(
@@ -27675,6 +27480,11 @@ class SettingsScreen(BaseAppScreen):
                 exit_on_error=False,
             )
             return
+        if category is SettingsCategoryId.WEB_SEARCH:
+            self._web_search_model().capture_pending_input()
+        if category is SettingsCategoryId.ADVANCED_CONFIG:
+            self.query_one(AdvancedConfigPanel).request_replacement("revert")
+            return
         if category is SettingsCategoryId.SPEECH_TTS:
             try:
                 panel = self.query_one(
@@ -27765,6 +27575,16 @@ class SettingsScreen(BaseAppScreen):
 
     def _revert_category(self, category: SettingsCategoryId) -> None:
         """Discard a dirty category's staged edits (post-confirmation)."""
+        if category is SettingsCategoryId.WEB_SEARCH:
+            try:
+                panel = self.query_one(WebSearchSettingsPanel)
+            except QueryError:
+                self._web_search_model().revert()
+            else:
+                self.run_worker(
+                    panel.revert(), group="web-search-revert", exclusive=False
+                )
+            return
         self._settings_drafts.pop(category, None)
         if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             self._console_behavior_result = (

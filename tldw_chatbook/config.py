@@ -3023,7 +3023,7 @@ def _load_settings_uncached(
         },
         "search_settings_general": {  # Renamed from 'search_settings' to avoid conflict with SearchEngines section for keys
             "default_search_provider": _get_typed_value(
-                search_settings_section, "search_provider_default", "google"
+                search_settings_section, "search_provider_default", "duckduckgo"
             ),
             "search_language_query": _get_typed_value(
                 search_settings_section, "search_language_query", "en"
@@ -3163,8 +3163,8 @@ def _load_settings_uncached(
                 search_engines_section, "search_engine_api_key_baidu", ""
             ),
             "bing_search_api_key": _get_typed_value(
-                search_engines_section, "search_engine_api_key_bing", ""
-            ),
+                search_engines_section, "bing_search_api_key", ""
+            ) or _get_typed_value(search_engines_section, "search_engine_api_key_bing", ""),
             "brave_search_api_key": _get_typed_value(
                 search_engines_section, "brave_search_api_key", ""
             ),
@@ -3181,8 +3181,8 @@ def _load_settings_uncached(
                 search_engines_section, "kagi_search_api_key", ""
             ),
             "searx_search_api_url": _get_typed_value(
-                search_engines_section, "search_engine_searx_api", ""
-            ),
+                search_engines_section, "searx_search_api_url", ""
+            ) or _get_typed_value(search_engines_section, "search_engine_searx_api", ""),
             "tavily_search_api_key": _get_typed_value(
                 search_engines_section, "tavily_search_api_key", ""
             ),
@@ -5088,10 +5088,14 @@ log_unknown_models = true      # Whether to log when an unknown model is queried
 # web_deep_search_enabled = false    # Opt-in deep-search tool; requires app restart; each call makes ~2x-results+3 LLM calls plus page fetches (real money on paid providers)
 
 [SearchSettings]
-# Deep-search (web_deep_search tool) defaults. Enable the tool itself with
+# Default search backend shared by basic web_search and web_deep_search.
+# A per-call engine overrides this preference without changing it. Preference
+# saves apply on the next call. If absent, DuckDuckGo is used (no API key;
+# web-search dependencies and network access are still required).
+# search_provider_default = "duckduckgo"
+# Deep-search-only defaults below. Enable the deep-search tool with
 # [tools] web_deep_search_enabled = true (requires app restart; each call makes
 # ~2x-results+3 LLM calls plus page fetches -- real money on paid providers).
-# search_provider_default = "google"
 # relevance_analysis_llm = "openai"
 # final_answer_llm = "openai"
 # search_enable_subquery = false   # generate sub-questions from the query and
@@ -5161,7 +5165,8 @@ yandex_search_folder_id = ""
 # API URLs
 bing_search_api_url = "https://api.bing.microsoft.com/v7.0/search"
 google_search_api_url = "https://www.googleapis.com/customsearch/v1"
-searx_search_api_url = "https://searx.example.com/search"
+# Set your own SearX / SearXNG instance; it must allow JSON output.
+searx_search_api_url = ""
 
 # General search settings
 search_result_max = 10
@@ -6767,6 +6772,32 @@ def read_cli_config_serialized() -> str:
         return _read_cli_config_serialized_unlocked(get_cli_config_path())
 
 
+@dataclass(frozen=True, repr=False)
+class ConfigFileSnapshot:
+    """Exact in-memory raw file/profile identity; absence differs from empty text."""
+
+    path: Path
+    serialized: str | None
+
+
+class ConfigSnapshotConflictError(ValueError):
+    """The raw editor's file/profile baseline no longer matches the current file."""
+
+    def __init__(self) -> None:
+        super().__init__("The config file or profile changed. Reload it before saving.")
+
+
+def read_cli_config_snapshot() -> ConfigFileSnapshot:
+    """Read exact serialized config without parsing or creating a missing file."""
+
+    with _config_file_lock():
+        config_path = get_cli_config_path()
+        with _config_write_lock(config_path):
+            return ConfigFileSnapshot(
+                config_path, _try_read_cli_config_serialized_unlocked(config_path)
+            )
+
+
 def _advanced_backup_path(config_path: Path) -> Path:
     return config_path.with_suffix(config_path.suffix + ".bak")
 
@@ -6805,13 +6836,60 @@ def replace_cli_config_serialized(
 ) -> tuple[Dict[str, Any], Path | None]:
     """Validate and replace raw TOML without downgrading encryption."""
 
+    loaded, backup_path, _ = _replace_cli_config_serialized(
+        serialized, create_backup=create_backup
+    )
+    return loaded, backup_path
+
+
+def replace_cli_config_snapshot(
+    serialized: str,
+    expected_snapshot: ConfigFileSnapshot,
+    *,
+    create_backup: bool = True,
+) -> tuple[Dict[str, Any], Path | None, ConfigFileSnapshot]:
+    """Replace raw TOML only while its exact file/profile baseline still matches.
+
+    The comparison, backup, replacement and returned on-disk snapshot share one
+    write lock. A conflict leaves both config and backup unchanged. Exceptions
+    during runtime publication can still occur after a successful disk write,
+    as with ``replace_cli_config_serialized``.
+    """
+
+    if not isinstance(expected_snapshot, ConfigFileSnapshot):
+        raise TypeError("A config file snapshot is required for guarded replacement")
+    return _replace_cli_config_serialized(
+        serialized,
+        create_backup=create_backup,
+        expected_snapshot=expected_snapshot,
+    )
+
+
+def _replace_cli_config_serialized(
+    serialized: str,
+    *,
+    create_backup: bool,
+    expected_snapshot: ConfigFileSnapshot | None = None,
+) -> tuple[Dict[str, Any], Path | None, ConfigFileSnapshot]:
+    """Own raw replacements, optionally guarded by an exact editor baseline."""
+
     replacement = tomllib.loads(serialized)
     if not isinstance(replacement, dict):
         raise TypeError("The CLI config must contain a top-level table")
 
     config_path = get_cli_config_path()
     with _config_write_lock(config_path):
+        if expected_snapshot is not None and (
+            expected_snapshot.path != config_path
+            or config_path != get_cli_config_path()
+        ):
+            raise ConfigSnapshotConflictError()
         current_serialized = _try_read_cli_config_serialized_unlocked(config_path)
+        if (
+            expected_snapshot is not None
+            and expected_snapshot.serialized != current_serialized
+        ):
+            raise ConfigSnapshotConflictError()
         if current_serialized is None:
             current_config: Dict[str, Any] = {}
         else:
@@ -6830,7 +6908,11 @@ def replace_cli_config_serialized(
                 config_path=config_path,
             )
         raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
-        return _publish_runtime_config_unlocked(raw_config=raw_written), backup_path
+        loaded = _publish_runtime_config_unlocked(raw_config=raw_written)
+        saved_snapshot = ConfigFileSnapshot(
+            config_path, _try_read_cli_config_serialized_unlocked(config_path)
+        )
+        return loaded, backup_path, saved_snapshot
 
 
 def persist_cli_config_for_shutdown() -> bool:

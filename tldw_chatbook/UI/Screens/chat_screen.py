@@ -18927,6 +18927,7 @@ class ChatScreen(BaseAppScreen):
         from tldw_chatbook.Research_Interop.local_research_engine import (
             LocalResearchEngine,
         )
+        from tldw_chatbook.Tools.local_tool_impls import LocalToolError
 
         search_params: dict = {}
         paper_search_fn = None
@@ -18940,6 +18941,11 @@ class ChatScreen(BaseAppScreen):
                 )
 
                 paper_search_fn = search_papers
+        except LocalToolError as exc:
+            await self._append_native_console_system_message(
+                f"Cannot start deep research: {exc}"
+            )
+            return
         except Exception:
             pass
 
