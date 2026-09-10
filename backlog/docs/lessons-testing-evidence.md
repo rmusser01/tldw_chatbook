@@ -13181,7 +13181,7 @@ new route will silently differ.
 
 ### Archive recovery: canceled workers do not cancel SQLite threads (2026-09-10)
 
-During TASK-32273–32276, sequential archive/Undo checks passed but a simultaneous
+During TASK-32300 and TASK-32274–32276, sequential archive/Undo checks passed but a simultaneous
 writer test exposed SQLite deferred-transaction contention; taking the write
 reservation up front resolved it. Independent review then canceled the UI worker
 while a thread-backed archive write was blocked: its guard cleared while the
