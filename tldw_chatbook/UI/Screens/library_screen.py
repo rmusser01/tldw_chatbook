@@ -8849,6 +8849,8 @@ class LibraryScreen(BaseAppScreen):
         # switches (see the field's own ``__init__`` comment).
         state["library_export_last_path"] = self._export_state.last_path
         state["library_export_last_at"] = self._export_state.last_at
+        state["library_export_last_items"] = self._export_state.last_items
+        state["library_export_last_bytes"] = self._export_state.last_bytes
         return state
 
     @staticmethod
@@ -9330,6 +9332,23 @@ class LibraryScreen(BaseAppScreen):
             and not isinstance(last_export_at, bool)
             else None
         )
+        # task-32232 AC#4: the artifact-read counts ride along, so a
+        # restored session still shows the receipt the run produced. Only a
+        # POSITIVE integer is accepted (PR #2568 review): a real written
+        # archive always has both, so a negative/zero/foreign value can only
+        # be corruption -- and accepting it would render an impossible
+        # receipt AND re-persist it through the next ``save_state``. An
+        # invalid value degrades to the path-only receipt, which still names
+        # the artifact.
+        for key, field in (
+            ("library_export_last_items", "last_items"),
+            ("library_export_last_bytes", "last_bytes"),
+        ):
+            value = state.get(key)
+            usable = (
+                isinstance(value, int) and not isinstance(value, bool) and value > 0
+            )
+            setattr(self._export_state, field, int(value) if usable else None)
         # task-15459: re-seed from the cache now that ``_selected_
         # conversation_id`` above reflects the RESTORED id, not ``__init__``'s
         # empty default -- ``_apply_local_source_snapshot``'s carry-forward
@@ -17907,7 +17926,10 @@ class LibraryScreen(BaseAppScreen):
         form = self._export_state.form
         last_export_line = (
             format_last_export_line(
-                self._export_state.last_path, self._export_state.last_at
+                self._export_state.last_path,
+                self._export_state.last_at,
+                item_count=self._export_state.last_items,
+                size_bytes=self._export_state.last_bytes,
             )
             if self._export_state.last_path
             and self._export_state.last_at is not None
@@ -18119,12 +18141,14 @@ class LibraryScreen(BaseAppScreen):
                 outcome["dependency_info"],
                 bool(outcome["registry_recorded"]),
                 outcome["message"],
+                item_count=outcome.get("item_count"),
+                size_bytes=outcome.get("size_bytes"),
             )
         else:
             self._marshal_library_export_failure(run_id, outcome["message"])
 
-    def _marshal_library_export_success(self, run_id: int, path: str, dependency_info: Any, registry_recorded: bool, message: str='') -> None:
-        return self._export_controller._marshal_library_export_success(run_id, path, dependency_info, registry_recorded, message)
+    def _marshal_library_export_success(self, run_id: int, path: str, dependency_info: Any, registry_recorded: bool, message: str='', *, item_count: int | None=None, size_bytes: int | None=None) -> None:
+        return self._export_controller._marshal_library_export_success(run_id, path, dependency_info, registry_recorded, message, item_count=item_count, size_bytes=size_bytes)
 
     def _marshal_library_export_failure(self, run_id: int, message: str) -> None:
         return self._export_controller._marshal_library_export_failure(run_id, message)
@@ -18153,6 +18177,9 @@ class LibraryScreen(BaseAppScreen):
         dependency_info: Any,
         registry_recorded: bool,
         message: str = "",
+        *,
+        item_count: int | None = None,
+        size_bytes: int | None = None,
     ) -> None:
         """UI-thread completion: notify, clear running/error, update the form.
 
@@ -18207,6 +18234,11 @@ class LibraryScreen(BaseAppScreen):
                 )
         self._export_state.last_path = str(path)
         self._export_state.last_at = time.time()
+        # task-32232 AC#4: the receipt's counts are the ARTIFACT's own
+        # (read back out of the written zip by
+        # ``_read_export_artifact_facts``), never the request's.
+        self._export_state.last_items = item_count
+        self._export_state.last_bytes = size_bytes
         if run_id != self._export_state.run_id:
             return
         self._export_state.running = False
