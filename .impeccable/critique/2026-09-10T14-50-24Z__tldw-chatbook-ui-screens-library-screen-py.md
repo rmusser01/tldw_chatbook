@@ -65,6 +65,8 @@ The screen's authored half is genuinely good and got better; its frame is still 
 
 ## Full issue register
 
+Seven register rows carry P1 (rows 2 to 8, matching `p1_count: 7`); row 8 is folded into the existing rider task 32101 rather than filed anew, which is why the Priority Issues section above lists six P1 bullets.
+
 | # | Sev | Where | Issue | Evidence | Already tracked |
 |---|---|---|---|---|---|
 | 1 | P0 | Export | Selected-media scope writes zero content; success reported; `int('local:media:N')` swallowed | A 43–46 + zip + app log | no |
