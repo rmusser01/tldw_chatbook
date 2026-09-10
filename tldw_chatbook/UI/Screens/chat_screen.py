@@ -11462,9 +11462,23 @@ class ChatScreen(BaseAppScreen):
                         self._land_console_changed_files_empty, conversation_id
                     )
                     return
-                entries, pruned_rows = provider.conversation_changed_files(
-                    row_cache=self._console_changed_files_row_cache
+                from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+                from tldw_chatbook.UI.Screens.change_review_screen import (
+                    AgentRunsChangeReviewProvider,
                 )
+
+                db = getattr(provider, "_db", None)
+                try:
+                    entries, pruned_rows = provider.conversation_changed_files(
+                        row_cache=self._console_changed_files_row_cache
+                    )
+                finally:
+                    if (
+                        type(provider) is AgentRunsChangeReviewProvider
+                        and type(db) is AgentRunsDB
+                        and not db.is_memory_db
+                    ):
+                        db.close()
             except Exception:
                 logger.opt(exception=True).warning(
                     "Console changed-files recompute failed; the rail "

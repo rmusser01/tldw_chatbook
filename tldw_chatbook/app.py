@@ -12302,6 +12302,14 @@ class TldwCli(
             if not self.media_db:
                 self.loguru_logger.warning("Media database not available for cleanup")
                 return
+            db = self.media_db
+
+            def run_cleanup_method(method, days):
+                try:
+                    return method(days)
+                finally:
+                    if type(db) is MediaDatabase and not db.is_memory_db:
+                        db.close_connection()
 
             # Get cleanup configuration
             cleanup_days = get_cli_setting("media_cleanup", "cleanup_days", 30)
@@ -12312,7 +12320,7 @@ class TldwCli(
 
             # Check for candidates first
             candidates = await asyncio.to_thread(
-                self.media_db.get_deletion_candidates, cleanup_days
+                run_cleanup_method, db.get_deletion_candidates, cleanup_days
             )
 
             if not candidates:
@@ -12335,7 +12343,7 @@ class TldwCli(
 
             # Perform the cleanup
             deleted_count = await asyncio.to_thread(
-                self.media_db.hard_delete_old_media, cleanup_days
+                run_cleanup_method, db.hard_delete_old_media, cleanup_days
             )
 
             if deleted_count > 0:

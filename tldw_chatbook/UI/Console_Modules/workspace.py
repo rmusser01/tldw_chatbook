@@ -991,8 +991,28 @@ class ConsoleWorkspaceController:
                         if bool(getattr(db, "is_memory_db", False)):
                             result = list_conversations(**list_kwargs)
                         else:
+                            from tldw_chatbook.Chat.chat_conversation_service import (
+                                ChatConversationService,
+                            )
+                            from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+                            def read_in_worker(
+                                method=list_conversations,
+                                kwargs=list_kwargs,
+                                owner=service,
+                                database=db,
+                            ):
+                                try:
+                                    return method(**kwargs)
+                                finally:
+                                    if (
+                                        type(owner) is ChatConversationService
+                                        and type(database) is CharactersRAGDB
+                                    ):
+                                        database.close_connection()
+
                             result = await asyncio.to_thread(
-                                list_conversations, **list_kwargs
+                                read_in_worker
                             )
                     if inspect.isawaitable(result):
                         result = await result
