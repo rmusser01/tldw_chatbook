@@ -13,10 +13,17 @@ from tldw_chatbook.Library.ingest_capabilities import (
 )
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState, LibraryIngestJob
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_GLYPH_OUTCOME_SKIPPED,
+)
 from tldw_chatbook.Library.library_ingest_state import (
     INGEST_UNAVAILABLE_COPY,
+    _GLYPH_CANCELLED,
+    _GLYPH_FAILED,
     MEDIA_DB_UNAVAILABLE_COPY,
+    IngestQueueRow,
     LibraryIngestFormState,
+    group_ingest_queue_rows,
     _human_size,
     build_estimate_line,
     build_library_ingest_state,
@@ -4366,3 +4373,251 @@ def test_an_all_unsupported_folder_keeps_the_local_sentence_on_both_backends():
     assert state.start_quiet_line == (
         "Nothing in this selection can be imported — 2 unsupported files."
     ), state.start_quiet_line
+
+
+# --- task-32231: identical settled outcomes collapse into one row ---------
+
+
+def _failed_row(
+    job_id: str,
+    *,
+    basename: str = "note.md",
+    reason: str = "Parse pool could not start",
+    state: IngestJobState = IngestJobState.FAILED,
+    can_retry: bool = True,
+) -> IngestQueueRow:
+    """One settled queue row, shaped the way the state builder shapes it."""
+    word = state.value
+    # Read the shipped constants, never a copy of the glyph: task-32235
+    # changed the skipped glyph from "○" to "–" on a sibling branch and a
+    # duplicated literal here would have gone stale silently.
+    glyph = {
+        IngestJobState.FAILED: _GLYPH_FAILED,
+        IngestJobState.SKIPPED: LIBRARY_GLYPH_OUTCOME_SKIPPED,
+        IngestJobState.CANCELLED: _GLYPH_CANCELLED,
+    }[state]
+    return IngestQueueRow(
+        job_id=job_id,
+        glyph=glyph,
+        line=f"{glyph} {word} · {basename} · {reason}",
+        can_open=False,
+        can_retry=can_retry,
+        can_dismiss=True,
+        state=state,
+        source_path=f"/tmp/inbox/{basename}",
+        reason=reason,
+    )
+
+
+def test_identical_failures_group_into_one_row():
+    rows = tuple(
+        _failed_row(f"job-{n}", basename=f"note{n}.md", reason="Parse pool could not start")
+        for n in range(4)
+    )
+    groups = group_ingest_queue_rows(rows)
+    assert len(groups) == 1
+    assert groups[0].line == "✗ failed · 4 files · Parse pool could not start"
+    assert groups[0].members == rows
+    assert groups[0].expanded is False
+
+
+def test_rows_with_different_reasons_never_group():
+    rows = (
+        _failed_row("a", reason="Parse pool could not start"),
+        _failed_row("b", reason="Unsupported file type: .json."),
+    )
+    assert len(group_ingest_queue_rows(rows)) == 2
+
+
+def test_a_single_failure_keeps_its_own_filename_row():
+    row = _failed_row("a", basename="one.md", reason="Parse pool could not start")
+    groups = group_ingest_queue_rows((row,))
+    assert groups[0].line == row.line  # unchanged, no "1 files"
+
+
+def test_active_rows_never_group_however_identical():
+    """Per-file progress is the whole point of an in-flight row."""
+    rows = tuple(
+        IngestQueueRow(
+            job_id=f"job-{n}",
+            glyph="●",
+            line=f"● parsing · note{n}.md",
+            can_open=False,
+            can_retry=False,
+            state=IngestJobState.PARSING,
+        )
+        for n in range(3)
+    )
+    groups = group_ingest_queue_rows(rows)
+    assert len(groups) == 3
+    assert [group.line for group in groups] == [row.line for row in rows]
+
+
+def test_skipped_and_cancelled_group_under_their_own_word_and_glyph():
+    skipped = tuple(
+        _failed_row(
+            f"s{n}",
+            basename=f"s{n}.md",
+            reason="Already in the Library",
+            state=IngestJobState.SKIPPED,
+            can_retry=False,
+        )
+        for n in range(2)
+    )
+    cancelled = tuple(
+        _failed_row(
+            f"c{n}",
+            basename=f"c{n}.md",
+            reason="You stopped this import",
+            state=IngestJobState.CANCELLED,
+            can_retry=False,
+        )
+        for n in range(3)
+    )
+    groups = group_ingest_queue_rows(skipped + cancelled)
+    assert [group.line for group in groups] == [
+        f"{LIBRARY_GLYPH_OUTCOME_SKIPPED} skipped · 2 files · Already in the Library",
+        f"{_GLYPH_CANCELLED} cancelled · 3 files · You stopped this import",
+    ]
+
+
+def test_expanded_keys_mark_only_their_own_group():
+    rows = (
+        _failed_row("a", reason="Parse pool could not start"),
+        _failed_row("b", reason="Parse pool could not start"),
+        _failed_row("c", reason="Unsupported file type: .json."),
+        _failed_row("d", reason="Unsupported file type: .json."),
+    )
+    # The key is the group's own identity, not a member's job id (Qodo 5),
+    # so the expansion set is addressed with it.
+    second = group_ingest_queue_rows(rows)[1]
+    groups = group_ingest_queue_rows(rows, expanded={second.key})
+    assert [group.expanded for group in groups] == [False, True]
+    assert groups[0].key != groups[1].key
+
+
+def test_a_group_is_retryable_only_when_every_member_is():
+    retryable = (
+        _failed_row("a", reason="Timed out"),
+        _failed_row("b", reason="Timed out"),
+    )
+    assert group_ingest_queue_rows(retryable)[0].can_retry is True
+
+    mixed = (
+        _failed_row("a", reason="Timed out"),
+        _failed_row("b", reason="Timed out", can_retry=False),
+    )
+    assert group_ingest_queue_rows(mixed)[0].can_retry is False
+
+
+def test_grouping_never_reorders_the_queue():
+    """Only CONTIGUOUS runs collapse -- a later twin keeps its position."""
+    rows = (
+        _failed_row("a", reason="Timed out"),
+        _failed_row("b", reason="Unsupported file type: .json."),
+        _failed_row("c", reason="Timed out"),
+    )
+    groups = group_ingest_queue_rows(rows)
+    assert [group.members for group in groups] == [
+        (rows[0],),
+        (rows[1],),
+        (rows[2],),
+    ]
+
+
+def test_four_identical_failures_reach_the_canvas_state_as_one_group():
+    """End-to-end from the registry snapshot, not hand-built rows."""
+    jobs = tuple(
+        _job(
+            job_id=f"ingest-job-{n}",
+            source_path=f"/tmp/inbox/note{n}.md",
+            state=IngestJobState.FAILED,
+            error="Ingest worker pool could not start: [Errno 28] No space left on device",
+            finished_at=120.0,
+        )
+        for n in range(4)
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    groups = group_ingest_queue_rows(state.queue_rows)
+
+    assert len(groups) == 1, [row.line for row in state.queue_rows]
+    assert groups[0].line.startswith("✗ failed · 4 files · ")
+    assert "note0.md" not in groups[0].line
+
+
+def test_identical_successes_never_collapse():
+    """(review finding 6) The path this host could not live-exercise.
+
+    Two independent guards keep a successful import out of the grouping:
+    ``DONE`` is not a groupable state, AND the done builder never populates
+    ``reason``, so the key falls through to the per-``job_id`` one. Both are
+    load-bearing and neither is obvious from the call site.
+    """
+    jobs = tuple(
+        _job(
+            job_id=f"ingest-job-{n}",
+            source_path=f"/tmp/inbox/note{n}.md",
+            state=IngestJobState.DONE,
+            media_id=n + 1,
+            finished_at=120.0,
+        )
+        for n in range(4)
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+
+    assert all(row.reason == "" for row in state.queue_rows)
+    groups = group_ingest_queue_rows(state.queue_rows)
+    assert len(groups) == 4, [group.line for group in groups]
+    assert [group.line for group in groups] == [
+        row.line for row in state.queue_rows
+    ]
+
+
+def test_two_batches_with_identical_failures_stay_two_rows():
+    """(Qodo 2) A collapsed group must never span two submissions.
+
+    The canvas emits only the LEADING member's task-2221 batch header, so a
+    cross-batch collapse puts a per-submission count ("four-md — 4 files")
+    directly above a row counting both submissions ("5 files") and hides the
+    second header entirely. Observed live during task-32231's verification
+    and reported then as intended; it is a contradiction on screen.
+    """
+    jobs = tuple(
+        _job(
+            job_id=f"ingest-job-{n}",
+            source_path=f"/tmp/inbox/note{n}.md",
+            state=IngestJobState.FAILED,
+            error="Ingest worker pool could not start: [Errno 28]",
+            finished_at=120.0,
+            batch_id="batch-a" if n < 2 else "batch-b",
+        )
+        for n in range(4)
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    groups = group_ingest_queue_rows(state.queue_rows)
+
+    assert len(groups) == 2, [group.line for group in groups]
+    assert all(" · 2 files · " in group.line for group in groups), [
+        group.line for group in groups
+    ]
+    assert groups[0].key != groups[1].key
+
+
+def test_a_groups_key_survives_losing_its_leading_member():
+    """(Qodo 5) The key identifies the OUTCOME, not the first row in it.
+
+    Keyed by the leading job id, dismissing that one member re-keys the
+    whole run, and the panel's expansion set -- which stores keys -- then
+    collapses a group the user had open. The key is derived from what makes
+    the rows a group in the first place, so losing a member cannot change
+    it.
+    """
+    rows = tuple(
+        _failed_row(f"job-{n}", basename=f"note{n}.md", reason="Timed out")
+        for n in range(4)
+    )
+    whole = group_ingest_queue_rows(rows)
+    without_leader = group_ingest_queue_rows(rows[1:])
+
+    assert len(whole) == len(without_leader) == 1
+    assert whole[0].key == without_leader[0].key
