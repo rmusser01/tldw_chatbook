@@ -19016,7 +19016,15 @@ async def test_library_shell_notes_sort_opens_direct_choices_and_applies_one_val
             lambda: screen._notes_state.sort == "title",
             message="The chosen notes sort never applied.",
         )
-        assert not screen.query("#library-notes-sort-choices")
+        # The state flips inside the handler, so the predicate above can be
+        # satisfied one frame before the recompose that unpaints the chooser
+        # lands -- task-32144's trash read, started from the same reload, is
+        # one more worker between the two. Wait for the DOM, not the flag.
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-notes-sort-choices"),
+            message="The notes sort chooser stayed painted after a choice.",
+        )
 
 
 @pytest.mark.asyncio
