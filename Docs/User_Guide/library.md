@@ -270,7 +270,8 @@ thing, so nothing on the screen relies on colour alone:
 | `✓` / `✗` / `–` | a settled outcome | Import queue rows, receipts (`–` is "never attempted") |
 | `≡` | already in your Library (a duplicate the import matched) | Import queue rows |
 | `⊘` | cancelled on purpose | Import queue rows |
-| `●` | still working | Import queue rows (queued, parsing, writing) |
+| `●` (leading a queue row) | still working | Import queue rows (queued, parsing, writing) |
+| `●` (inside a line) | not a state — it marks a count, or samples a colour | the blocked count on the Workspace ▸ Handoff row; a highlight's colour swatch in the Media reader |
 | `▸` / `▾` | disclosure | trailing on a section header, leading on a folder-tree node |
 | `○` | a blocked or disabled action | any greyed action, always beside its reason or tooltip |
 | `✓` (leading, in a chooser) | the active value of a chooser | choice strips, kept toggles ("mode: ✓ Search ⇄ RAG Answer") |
@@ -839,4 +840,7 @@ meaning per state glyph. "○" had carried three at once — a disabled action,
 an unchecked source toggle and a settled "skipped" outcome; it keeps the
 first (it is the only non-colour cue on tooltip-gated buttons) while
 selection moves to "☐/☑" and the never-attempted outcome to "–". The
-legend is now stated once, under **State glyphs**.)*
+legend is now stated once, under **State glyphs**.
+Fix round 1 adds the Import queue's own `●`/`≡`/`⊘`, and round 2 splits `●`
+by context: leading a queue row it means "still working", inside a line it
+is a count marker or a colour swatch, neither of them a state.)*
