@@ -1,0 +1,256 @@
+{
+  "task": "TASK-32147",
+  "created_utc": "2026-09-09T07:05:31.540936+00:00",
+  "capture_root": "/private/tmp/tts-macos-burndown/native",
+  "package_root_relative_to_repo": "Docs/QA/tts-macos-burndown-2026-09-09/native",
+  "copy_policy": "All listed receipts and the patch are byte-preserving copies. Original absolute capture paths inside receipts are retained as provenance. README links to copied artifacts are relative; full audio, samples, binaries, and large logs stay at their original local paths.",
+  "files": [
+    {
+      "path": "native-shutdown.patch",
+      "original_path": "/private/tmp/tts-macos-burndown/native/native-shutdown.patch",
+      "sha256": "faa692effa31ef5b7836e2b727fda0a9452a19008a8c679686dceda1c1831dac",
+      "bytes": 15611
+    },
+    {
+      "path": "provenance/native-patch-manifest.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/native-patch-manifest.json",
+      "sha256": "77aba003e112c7e20dfefbd3e32ff63fbcf14890135b638b616c17dd4140cf27",
+      "bytes": 731
+    },
+    {
+      "path": "provenance/build-cpu-receipt.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/build-cpu-receipt.json",
+      "sha256": "5b8625d8c82dedbbc40a1d036903b93df31874c4574c6ef580764527fc399deb",
+      "bytes": 1186
+    },
+    {
+      "path": "provenance/build-metal-receipt.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/build-metal-receipt.json",
+      "sha256": "3a1211d0c95e8883632557f0e7357766a32cb0d04fc0a96bc2cde88861287add",
+      "bytes": 1194
+    },
+    {
+      "path": "provenance/ownership-release.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/ownership-release.json",
+      "sha256": "ea130f427b6a70a014ed6cd26b31892f7339c081789537f42eca576b56f7a274",
+      "bytes": 337
+    },
+    {
+      "path": "provenance/native-validation-summary.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/native-validation-summary.json",
+      "sha256": "4d522a9a2b6eda8c46e1e808ffc151387cead8b3655c70c10a11698bae597127",
+      "bytes": 10729
+    },
+    {
+      "path": "content/full-content-input.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/full-content-input.json",
+      "sha256": "24dbfe52427f6033fc96f523bd0a71ec268fdebbaabfde5b3603fb709c107733",
+      "bytes": 3031
+    },
+    {
+      "path": "content/full-content-asr.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/full-content-asr.json",
+      "sha256": "6f1e2aeb2f7f692eda47ca39e31a11d57c4098bd0d90ebf1dfc23cf04ff779dd",
+      "bytes": 4392
+    },
+    {
+      "path": "content/full-content-asr-command.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/full-content-asr-command.json",
+      "sha256": "cfddfa660ba2a30435c80374fa6372dd50bdb8f45e29d83936eb2517ea89938a",
+      "bytes": 1025
+    },
+    {
+      "path": "transport/baseline-results.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/transport-tests/baseline/results.json",
+      "sha256": "fe1a78450815b243c3156880fb0f74da3b6ebbfa5d8b78b23be89d32ed8b983e",
+      "bytes": 3509
+    },
+    {
+      "path": "transport/baseline-build-commands.txt",
+      "original_path": "/private/tmp/tts-macos-burndown/native/transport-tests/baseline/build-commands.txt",
+      "sha256": "19261e495ee21357626ee32257ac2fe92a083f618f29511a1c834cd3bef16a62",
+      "bytes": 766
+    },
+    {
+      "path": "transport/fixed-results.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/transport-tests/fixed/results.json",
+      "sha256": "c69e9664e918efc9c160950d552fdb34ecc1bfb72363a3870f7bc99f813af890",
+      "bytes": 3545
+    },
+    {
+      "path": "transport/fixed-build-commands.txt",
+      "original_path": "/private/tmp/tts-macos-burndown/native/transport-tests/fixed/build-commands.txt",
+      "sha256": "5cf254ddc4a8a2464979cb45e8d7a52447206b8574d13eb2d0ad9d9f67aba283",
+      "bytes": 757
+    },
+    {
+      "path": "transport/targeted-native-tests.log",
+      "original_path": "/private/tmp/tts-macos-burndown/native/targeted-native-tests.log",
+      "sha256": "d878d5742ceef36051c061e50e18bf505556a09a96a8e1bdc51e6284428cce32",
+      "bytes": 1470
+    },
+    {
+      "path": "sanitizer/macos-sandbox-results.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/transport-tests/fixed-sanitized/results.json",
+      "sha256": "03d5b3a5b0ff6ac12f8d26f59afcf77a97d5e5232e9489de3cbdabd40faf6535",
+      "bytes": 2377
+    },
+    {
+      "path": "sanitizer/macos-sandbox-startup.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/transport-tests/fixed-sanitized/startup-diagnostic.json",
+      "sha256": "7b46283996114263f16f69bf861a7cbf46dfaecb032ef95ea3b987fa374b89af",
+      "bytes": 531
+    },
+    {
+      "path": "sanitizer/macos-unsandboxed-startup.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/transport-tests/fixed-sanitized-unsandboxed/results.json",
+      "sha256": "445a11b4423410a9825c33c278327fc9f85f27234d937408122c12c5c2916393",
+      "bytes": 5922
+    },
+    {
+      "path": "sanitizer/linux/results.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/transport-tests/linux-arm-sanitized-01/results.json",
+      "sha256": "2ab0ae48b313b7e7a0a49a618e9a64508c8ca0895e538b3a1a97e2c5a7b497dd",
+      "bytes": 1428
+    },
+    {
+      "path": "sanitizer/linux/controller.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/transport-tests/linux-arm-sanitized-01/controller.json",
+      "sha256": "11a3c2f2cf229be4b7935aa872b6bd6486167259b32f1208a7d4aff1738866a5",
+      "bytes": 127279
+    },
+    {
+      "path": "sanitizer/linux/image-inspect.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/transport-tests/linux-arm-sanitized-01/image-inspect.json",
+      "sha256": "9c53dc65d0072226b00967180e4c9fa63665df5e2831bb92cdf415d1540dbfe7",
+      "bytes": 2906
+    },
+    {
+      "path": "sanitizer/linux/docker-version.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/transport-tests/linux-arm-sanitized-01/docker-version.json",
+      "sha256": "28fb0573103bb3b6b8698392ef35526d252a97fa97964682fbd0cc2be52b26eb",
+      "bytes": 1042
+    },
+    {
+      "path": "runtime/cpu01/evidence.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/evidence.json",
+      "sha256": "b7a9dcb414a752fbf330d6da9083a3c831be77f9b0151280c18e89121fb4ac5f",
+      "bytes": 25478
+    },
+    {
+      "path": "runtime/cpu01/controller.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/controller.json",
+      "sha256": "64d14459e8e51ff27fa728e7b0298e21edb1b601d66b12a89d16702463a72e8b",
+      "bytes": 826
+    },
+    {
+      "path": "runtime/cpu01/source-relevant-before.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/source-relevant-before.json",
+      "sha256": "4a85415c427bd68221bf2c74d760b1105498f3d220170abb6a9af6e3ba6db20e",
+      "bytes": 11302
+    },
+    {
+      "path": "runtime/cpu01/source-relevant-after.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/source-relevant-after.json",
+      "sha256": "4a85415c427bd68221bf2c74d760b1105498f3d220170abb6a9af6e3ba6db20e",
+      "bytes": 11302
+    },
+    {
+      "path": "runtime/cpu01/validator-provenance.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/runs/cpu-shutdown-recovery-01/validator-provenance.json",
+      "sha256": "c7457dfe4379a92ff19b7f913d61bb10d0897d29d3d8bc6fd15c5c4e47f9d34e",
+      "bytes": 720
+    },
+    {
+      "path": "runtime/metal03/evidence.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/evidence.json",
+      "sha256": "94a57829d8301d75f1b22fa420c615cb55c3ccab9eed84130e452938780ef3cd",
+      "bytes": 90557
+    },
+    {
+      "path": "runtime/metal03/controller.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/controller.json",
+      "sha256": "c5336286edd63a5489ab2f7dcb6fae1d2a0b3f69725ad3e74eadbb9b94581c20",
+      "bytes": 832
+    },
+    {
+      "path": "runtime/metal03/source-relevant-before.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/source-relevant-before.json",
+      "sha256": "4a85415c427bd68221bf2c74d760b1105498f3d220170abb6a9af6e3ba6db20e",
+      "bytes": 11302
+    },
+    {
+      "path": "runtime/metal03/source-relevant-after.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/runs/metal-shutdown-recovery-03/source-relevant-after.json",
+      "sha256": "4a85415c427bd68221bf2c74d760b1105498f3d220170abb6a9af6e3ba6db20e",
+      "bytes": 11302
+    },
+    {
+      "path": "sanitizer/linux-qualified-02/results.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/transport-tests/linux-arm-sanitized-02/results.json",
+      "sha256": "0a4698d0553f535bcacbabab7a04e77c8f950dadf76c004bd68fbbe812c9a82f",
+      "bytes": 9938
+    },
+    {
+      "path": "sanitizer/linux-qualified-02/controller.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/transport-tests/linux-arm-sanitized-02/controller.json",
+      "sha256": "30da9e7c76dfe288d2bb9bf93bdfdce43f8d2facf782f5a24d8069366235bace",
+      "bytes": 126848
+    },
+    {
+      "path": "sanitizer/linux-qualified-02/image-inspect.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/transport-tests/linux-arm-sanitized-02/image-inspect.json",
+      "sha256": "addcca73149ec95555a12ab05883c29ff317629dcc174542576028b6cf38cbc8",
+      "bytes": 3026
+    },
+    {
+      "path": "sanitizer/linux-qualified-02/docker-version.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/transport-tests/linux-arm-sanitized-02/docker-version.json",
+      "sha256": "28fb0573103bb3b6b8698392ef35526d252a97fa97964682fbd0cc2be52b26eb",
+      "bytes": 1042
+    },
+    {
+      "path": "sanitizer/linux-qualified-02/build-commands.txt",
+      "original_path": "/private/tmp/tts-macos-burndown/native/transport-tests/linux-arm-sanitized-02/build-commands.txt",
+      "sha256": "55fe5d22e932d5145fa75c5647953830c6b188403b26f9e19f8a46bb3cb3caab",
+      "bytes": 444
+    },
+    {
+      "path": "sanitizer/linux-qualified-02/container-stdout.log",
+      "original_path": "/private/tmp/tts-macos-burndown/native/transport-tests/linux-arm-sanitized-02/container-stdout.log",
+      "sha256": "cd0e59a71a86b1ebb3191fa28fbfee5faa2d23ac8c651015eed84ad35b45818c",
+      "bytes": 7204
+    },
+    {
+      "path": "sanitizer/linux-qualified-02/container-stderr.log",
+      "original_path": "/private/tmp/tts-macos-burndown/native/transport-tests/linux-arm-sanitized-02/container-stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "sanitizer/linux-qualified-02/toolchain-build-receipt.json",
+      "original_path": "/private/tmp/tts-macos-burndown/native/sanitizer-toolchain/build-02/build-receipt.json",
+      "sha256": "8e28107b8ae12ddb08047e730b0f7032bb8a8514f121f3ab2fcb93a7245bdcdb",
+      "bytes": 1069
+    },
+    {
+      "path": "sanitizer/linux-qualified-02/toolchain-build.log",
+      "original_path": "/private/tmp/tts-macos-burndown/native/sanitizer-toolchain/build-02/build.log",
+      "sha256": "2fbfac9a2487c14ba496b00e802e413dbfda5637d2150d68542f986e029997a0",
+      "bytes": 24009
+    },
+    {
+      "path": "sanitizer/linux-qualified-02/Dockerfile",
+      "original_path": "/private/tmp/tts-macos-burndown/native/sanitizer-toolchain/Dockerfile",
+      "sha256": "ec67709636ead1d08e63f42c864fcf9c0390e8db052d8a8359b87ec92f83cc0f",
+      "bytes": 443
+    },
+    {
+      "path": "sanitizer/linux-qualified-02/macos-startup-sample.txt",
+      "original_path": "/private/tmp/tts-macos-burndown/native/transport-tests/fixed-sanitized-unsandboxed/startup-sample.txt",
+      "sha256": "3ac692c5bc7f28a32041133dac778ec4c46db8c7e78c1ca987f2c3a7cc2c653b",
+      "bytes": 6290
+    }
+  ],
+  "updated_utc": "2026-09-09T07:38:19.699412+00:00"
+}

@@ -1,0 +1,78 @@
+{
+  "checked_utc": "2026-09-09T08:09:10.923820+00:00",
+  "processes": [
+    {
+      "pid": 30858,
+      "source": "higgs/live-wav-portaudio-01/ownership-release.json",
+      "absent": true
+    },
+    {
+      "pid": 31849,
+      "source": "higgs/live-wav-portaudio-02/ownership-release.json",
+      "absent": true
+    },
+    {
+      "pid": 32519,
+      "source": "higgs/live-wav-portaudio-02/ownership-release.json",
+      "absent": true
+    },
+    {
+      "pid": 35473,
+      "source": "alltalk/live-wav-p226-01/ownership-release.json",
+      "absent": true
+    },
+    {
+      "pid": 35523,
+      "source": "alltalk/live-wav-p226-01/ownership-release.json",
+      "absent": true
+    },
+    {
+      "pid": 35488,
+      "source": "alltalk/live-wav-p226-01/ownership-release.json",
+      "absent": true
+    },
+    {
+      "pid": 36028,
+      "source": "ASR controller (exec session 72734 exited 0)",
+      "absent": true
+    },
+    {
+      "pid": 36030,
+      "source": "ASR higgs/live-wav-portaudio-02/content.json; wait exit 0",
+      "absent": true
+    },
+    {
+      "pid": 36039,
+      "source": "ASR alltalk/live-wav-p226-01/content.json; wait exit 1",
+      "absent": true
+    },
+    {
+      "pid": 36051,
+      "source": "ASR alltalk/live-wav-p226-01/content-base-en.json; wait exit 1",
+      "absent": true
+    }
+  ],
+  "all_recorded_processes_absent": true,
+  "asr_controller_exec_session": 72734,
+  "asr_controller_exit_code": 0,
+  "asr_processes_joined": true,
+  "receipts": [
+    {
+      "path": "/private/tmp/tts-macos-burndown/higgs/live-wav-portaudio-01/ownership-release.json",
+      "sha256": "ebfc3f4843631bc818cab6444a36e05ce1eeaa9fde3a6851081f3801862d9787"
+    },
+    {
+      "path": "/private/tmp/tts-macos-burndown/higgs/live-wav-portaudio-02/ownership-release.json",
+      "sha256": "c503617d7cd4e3bd4470c46d65a8c56c2a585419e0cc0f51313542eeae8eafec"
+    },
+    {
+      "path": "/private/tmp/tts-macos-burndown/alltalk/live-wav-p226-01/ownership-release.json",
+      "sha256": "61b66260b31c9db2cfa602baa36becd036c202367fe1f2a5f36f03fe78cdb451"
+    },
+    {
+      "path": "/private/tmp/tts-macos-burndown/higgs/candidate-content-controller.json",
+      "sha256": "4a612a0db8d5376423270251dfc1d103d7aa2fb0f5dbe33abdef5fcf11eb0f6c"
+    }
+  ],
+  "exclusive_slot": "released after this check; no native/model/server/audio/ASR remains owned by provider agent"
+}

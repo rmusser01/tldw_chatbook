@@ -2855,7 +2855,6 @@ def _default_specs(
         CRAWL_MAX_DEPTH_CEILING,
         CRAWL_MAX_PAGES_CEILING,
         FETCH_MAX_BYTES,
-        SEARCH_DEFAULT_ENGINE,
         SEARCH_DEFAULT_RESULT_COUNT,
         SEARCH_ENGINES,
         SEARCH_MAX_RESULT_COUNT,
@@ -3367,8 +3366,11 @@ def _default_specs(
                     "search_engine": {
                         "type": "string",
                         "enum": list(SEARCH_ENGINES),
-                        "default": SEARCH_DEFAULT_ENGINE,
-                        "description": "Search engine to use.",
+                        "description": (
+                            "Optional backend for this call only. Omit to use the current "
+                            "[SearchSettings] search_provider_default shared with deep search; "
+                            "DuckDuckGo when no preference is saved."
+                        ),
                     },
                     "result_count": {
                         "type": "integer",
@@ -3382,7 +3384,7 @@ def _default_specs(
             },
             handler=lambda args: web_search(
                 args["query"],
-                search_engine=args.get("search_engine", SEARCH_DEFAULT_ENGINE),
+                search_engine=args.get("search_engine"),
                 result_count=args.get("result_count", SEARCH_DEFAULT_RESULT_COUNT),
             ),
             exposure=LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP,
@@ -4151,7 +4153,11 @@ def _default_specs(
                         "engine": {
                             "type": "string",
                             "enum": list(SEARCH_ENGINES),
-                            "description": "Search engine to use (default: [SearchSettings] search_provider_default).",
+                            "description": (
+                                "Optional backend for this call only. Omit to use the current "
+                                "[SearchSettings] search_provider_default shared with basic search; "
+                                "DuckDuckGo when no preference is saved."
+                            ),
                         },
                         "max_results": {
                             "type": "integer",

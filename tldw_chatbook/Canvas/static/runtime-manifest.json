@@ -112,6 +112,47 @@
       "version": "0.32.0"
     }
   ],
+  "profile_contract": {
+    "engine": {
+      "id": "quickjs-wasm-0.32.0-release-sync",
+      "sha256": "59db482b382f4da0c5d5f616954757a538a09e45bd1fce590e875abc6594b386"
+    },
+    "facade": {
+      "id": "canvas-v1-facade-1",
+      "sha256": "42246dd79d68be0445a81de58d7dc77f6b08bd9b718e4fa617af1488dd88c2e6"
+    },
+    "grammar": {
+      "id": "canvas-html-v1",
+      "sha256": "90bf85f9365542beea79b7048f79d97825d37bb2bc46bba0739b46614ffd7e40"
+    },
+    "layout": {
+      "id": "canvas-v1-layout-1",
+      "sha256": "de26e4be2a38ef2fad687bc33ab34416d805e61791433d8e3c1b614133c94878"
+    },
+    "plan": {
+      "id": "canvas-v1-plan-1",
+      "sha256": "de26e4be2a38ef2fad687bc33ab34416d805e61791433d8e3c1b614133c94878"
+    },
+    "quotas": {
+      "css_rules": 900,
+      "dom_nodes": 1800,
+      "event_milliseconds": 50,
+      "html_bytes": 524288,
+      "id": "canvas-v1-quotas-1",
+      "patches_per_operation": 500,
+      "pending_jobs": 100,
+      "runtime_memory_bytes": 33554432,
+      "script_bytes": 262144,
+      "stack_bytes": 524288,
+      "startup_milliseconds": 250
+    },
+    "unicode": {
+      "segmentation": "ecmascript-code-point",
+      "sha256": "eb4ff11733a5eb96cc3009a581cff2ab00f65bf1957b571b83ef2fb26f30d72f",
+      "version": "15.1.0",
+      "width": "css-authored"
+    }
+  },
   "quickjs": {
     "build_mode": "release-sync",
     "filesystem": false,

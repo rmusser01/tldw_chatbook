@@ -2901,30 +2901,177 @@ class ConsoleTraceService:
         Raises:
             sqlite3.Error: If the ownership or checkpoint query fails.
         """
+        return ConsoleTraceService._closed_turn_assistant(
+            cursor,
+            conversation_id=conversation_id,
+            previous_turn_id=previous_turn_id,
+            current_turn_id=current_turn_id,
+        )
+
+    @staticmethod
+    def _closed_turn_assistant(
+        cursor: sqlite3.Cursor,
+        *,
+        conversation_id: str,
+        previous_turn_id: str,
+        current_turn_id: str,
+        allow_failed: bool = False,
+        complete_assistant_id: str | None = None,
+        untraced: bool = False,
+    ) -> str | None:
+        """Prove one exact closed parent pair without inferring delivery."""
         row = cursor.execute(
-            """SELECT discarded.id FROM messages current
-                 JOIN messages discarded ON discarded.id = current.parent_message_id
-                 JOIN messages prior ON prior.id = discarded.parent_message_id
+            """SELECT closed.id, closed.assistant_generation_state,
+                      coalesce(closed.content, '') = '',
+                      closed.image_data IS NULL AND closed.image_mime_type IS NULL
+                      AND closed.provider_continuation_json IS NULL
+                      AND closed.thinking_blocks_json IS NULL
+                      AND NOT EXISTS (SELECT 1 FROM message_attachments attachment
+                                      WHERE attachment.message_id = closed.id),
+                      closed.metadata_json
+                 FROM messages current
+                 JOIN messages closed ON closed.id = current.parent_message_id
+                 JOIN messages prior ON prior.id = closed.parent_message_id
                 WHERE current.id = ? AND current.conversation_id = ?
                   AND current.role = 'user' AND current.deleted = 0
-                  AND discarded.conversation_id = current.conversation_id
-                  AND discarded.role = 'assistant' AND discarded.deleted = 0
-                  AND discarded.assistant_generation_state = 'discarded'
+                  AND closed.conversation_id = current.conversation_id
+                  AND closed.role = 'assistant' AND closed.deleted = 0
                   AND prior.id = ? AND prior.conversation_id = current.conversation_id
                   AND prior.role = 'user' AND prior.deleted = 0
                   AND NOT EXISTS (
                       SELECT 1 FROM messages sibling
                        WHERE sibling.conversation_id = prior.conversation_id
                          AND sibling.parent_message_id = prior.id
-                         AND sibling.role = 'assistant' AND sibling.id != discarded.id)
+                         AND sibling.role = 'assistant' AND sibling.id != closed.id)
                   AND NOT EXISTS (
                       SELECT 1 FROM console_dispatch_checkpoints checkpoint
                        WHERE checkpoint.conversation_id = current.conversation_id
                          AND checkpoint.user_message_id = prior.id)
+                  AND (? = 0 OR NOT EXISTS (
+                      SELECT 1 FROM console_trace_calls call WHERE call.turn_id = prior.id))
             """,
-            (current_turn_id, conversation_id, previous_turn_id),
+            (current_turn_id, conversation_id, previous_turn_id, int(untraced)),
         ).fetchone()
-        return None if row is None else row[0]
+        if row is None:
+            return None
+        assistant_id, state, empty, no_sidecars, raw_metadata = row
+        if allow_failed or complete_assistant_id is not None:
+            try:
+                metadata = json.loads(raw_metadata or "{}")
+            except (TypeError, ValueError, RecursionError):
+                return None
+            # This narrow recovery carries plain saved messages only. Canvas,
+            # video and unknown metadata cannot silently become an empty owner.
+            if metadata not in ({}, {"canvas_cards": []}):
+                return None
+        if complete_assistant_id is not None:
+            return (
+                assistant_id
+                if (
+                    assistant_id == complete_assistant_id
+                    and state == "complete"
+                    and no_sidecars
+                )
+                else None
+            )
+        if state == "discarded" and (not allow_failed or no_sidecars):
+            return assistant_id
+        if allow_failed and state == "failed" and empty and no_sidecars:
+            return assistant_id
+        return None
+
+    def closed_turn_chain(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        conversation_id: str,
+        previous_turn_id: str,
+        current_turn_id: str,
+        preceding_descriptors: tuple[TraceProvenance, ...],
+    ) -> tuple[str | None, tuple[tuple[str, str, str | None], ...]]:
+        """Find a bounded unanswered owner through exact untraced saved turns.
+
+        Only live saved revisions participate. Each skipped response must be
+        discarded or failed-empty; a complete response needs its own exact
+        assistant descriptor. No intermediate turn may own a captured call.
+
+        Args:
+            cursor: Cursor in the caller's ownership-validation transaction.
+            conversation_id: Conversation owning the saved chain.
+            previous_turn_id: User owning the earlier captured run.
+            current_turn_id: Incoming saved user turn.
+            preceding_descriptors: Provider-visible history before this turn.
+
+        Returns:
+            Original assistant owner and ordered follow-up triples, or
+            (None, ()) when any source, closure or parent is unproven.
+
+        Raises:
+            sqlite3.Error: If a saved-revision or ownership query fails.
+        """
+        remaining = list(preceding_descriptors[-MAX_SURFACE_REPLACEMENT_SPAN:])
+        next_turn_id = current_turn_id
+        followups = []
+        seen = {current_turn_id}
+        while remaining:
+            descriptor = remaining.pop()
+            if type(descriptor) is not SavedRevisionTraceProvenance:
+                break
+            revision = self.repository.get_semantic_revision(
+                cursor, descriptor.revision_id
+            )
+            response = None
+            if revision is not None and revision.normalized_role == "assistant":
+                response = revision
+                if (
+                    not remaining
+                    or type(remaining[-1]) is not SavedRevisionTraceProvenance
+                ):
+                    break
+                revision = self.repository.get_semantic_revision(
+                    cursor, remaining.pop().revision_id
+                )
+            if (
+                revision is None
+                or revision.normalized_role != "user"
+                or revision.source_conversation_id != conversation_id
+                or revision.live_message_id != revision.source_message_id
+                or revision.source_message_id in seen
+                or response is not None
+                and (
+                    response.source_conversation_id != conversation_id
+                    or response.live_message_id != response.source_message_id
+                )
+            ):
+                break
+            original = revision.source_message_id == previous_turn_id
+            if original and response is not None:
+                break
+            assistant_id = self._closed_turn_assistant(
+                cursor,
+                conversation_id=conversation_id,
+                previous_turn_id=revision.source_message_id,
+                current_turn_id=next_turn_id,
+                allow_failed=True,
+                complete_assistant_id=None
+                if response is None
+                else response.source_message_id,
+                untraced=not original,
+            )
+            if assistant_id is None:
+                break
+            if original:
+                return assistant_id, tuple(reversed(followups))
+            followups.append(
+                (
+                    revision.revision_id,
+                    assistant_id,
+                    None if response is None else response.revision_id,
+                )
+            )
+            seen.add(revision.source_message_id)
+            next_turn_id = revision.source_message_id
+        return None, ()
 
     def _validate_completed_tool_turn(
         self,
@@ -2946,8 +3093,10 @@ class ConsoleTraceService:
             restoring_source and witness.assistant_revision_id is None
         )
         discarded = witness.discarded_assistant_message_id is not None
+        closed = witness.closed_assistant_message_id is not None
+        unanswered = discarded or closed
         terminal_states = {TraceCallState.COMPLETE}
-        if restoring_source or discarded:
+        if restoring_source or unanswered:
             terminal_states.update(
                 {
                     TraceCallState.ERROR,
@@ -2955,9 +3104,21 @@ class ConsoleTraceService:
                     TraceCallState.INTERRUPTED,
                 }
             )
-        if source_after_failure and not discarded:
+        if source_after_failure and not unanswered:
             terminal_states.remove(TraceCallState.COMPLETE)
-        if discarded:
+        # Read durable Discard again at final binding. A closed witness may
+        # span completed uncaptured followups and still have a discarded owner.
+        # The full ownership/closure proof below remains mandatory.
+        explicit_discard = discarded or (
+            closed
+            and cursor.execute(
+                "SELECT 1 FROM messages WHERE id = ? "
+                "AND assistant_generation_state = 'discarded'",
+                (witness.closed_assistant_message_id,),
+            ).fetchone()
+            is not None
+        )
+        if explicit_discard:
             # Explicit discard settles the assistant owner separately. A run
             # interrupted during trace construction can leave earlier calls
             # response-bearing but unsettled; do not invent their outcomes.
@@ -3066,8 +3227,11 @@ class ConsoleTraceService:
             or tail is None
             or latest_id != terminal.call_id
             or terminal.state not in terminal_states
+            or closed
+            and not explicit_discard
+            and terminal.response_started_at is None
             or (
-                (restoring_source or discarded)
+                (restoring_source or unanswered)
                 and terminal.state is not TraceCallState.RESPONSE_STARTED
                 and terminal.settled_at is None
             )
@@ -3107,35 +3271,65 @@ class ConsoleTraceService:
             or plan.predecessor_head_id != tail.node_id
         ):
             raise ValueError("completed_tool_turn_unavailable")
-        if discarded:
+        if unanswered:
             next_turn_id = current_turn_id
             seen_turns = {current_turn_id, origin.turn_id}
-            for revision_id, assistant_id in reversed(witness.discarded_followups):
+            followups = (
+                witness.closed_followups
+                if closed
+                else tuple(
+                    (revision_id, assistant_id, None)
+                    for revision_id, assistant_id in witness.discarded_followups
+                )
+            )
+            for revision_id, assistant_id, response_id in reversed(followups):
                 revision = self.repository.get_semantic_revision(cursor, revision_id)
+                response = (
+                    self.repository.get_semantic_revision(cursor, response_id)
+                    if response_id is not None
+                    else None
+                )
                 if (
                     revision is None
                     or revision.normalized_role != "user"
                     or revision.source_conversation_id != owner.conversation_id
                     or revision.source_message_id in seen_turns
-                    or self.discarded_turn_assistant(
+                    or closed
+                    and revision.live_message_id != revision.source_message_id
+                    or response_id is not None
+                    and (
+                        response is None
+                        or response.normalized_role != "assistant"
+                        or response.source_conversation_id != owner.conversation_id
+                        or response.source_message_id != assistant_id
+                        or response.live_message_id != assistant_id
+                    )
+                    or self._closed_turn_assistant(
                         cursor,
                         conversation_id=owner.conversation_id,
                         previous_turn_id=revision.source_message_id,
                         current_turn_id=next_turn_id,
+                        allow_failed=closed,
+                        complete_assistant_id=assistant_id
+                        if response_id is not None
+                        else None,
+                        untraced=True,
                     )
                     != assistant_id
                 ):
                     raise ValueError("completed_turn_discard_owner")
                 seen_turns.add(revision.source_message_id)
                 next_turn_id = revision.source_message_id
-            if (
-                self.discarded_turn_assistant(
-                    cursor,
-                    conversation_id=owner.conversation_id,
-                    previous_turn_id=origin.turn_id,
-                    current_turn_id=next_turn_id,
-                )
-                != witness.discarded_assistant_message_id
+            if self._closed_turn_assistant(
+                cursor,
+                conversation_id=owner.conversation_id,
+                previous_turn_id=origin.turn_id,
+                current_turn_id=next_turn_id,
+                allow_failed=closed,
+            ) != (
+                witness.closed_assistant_message_id
+                if closed
+                else witness.discarded_assistant_message_id
             ):
                 raise ValueError("completed_turn_discard_owner")
         boundary_events = cursor.execute(
@@ -3229,7 +3423,7 @@ class ConsoleTraceService:
         if (
             user is None
             or (
-                not (source_after_failure or discarded)
+                not (source_after_failure or unanswered)
                 and (
                     assistant is None
                     or link is None

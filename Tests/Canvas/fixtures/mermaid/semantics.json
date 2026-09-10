@@ -1,0 +1,565 @@
+[
+  {
+    "name": "flow-rectangle",
+    "source": "flowchart TD\nA[Start] --> B[Finish]",
+    "model": {
+      "kind": "flow",
+      "direction": "TD",
+      "nodes": [
+        {
+          "id": "A",
+          "label": "Start",
+          "shape": "rect"
+        },
+        {
+          "id": "B",
+          "label": "Finish",
+          "shape": "rect"
+        }
+      ],
+      "edges": [
+        {
+          "from": "A",
+          "to": "B",
+          "label": ""
+        }
+      ]
+    }
+  },
+  {
+    "name": "flow-shapes-labels",
+    "source": "flowchart LR\nA(Start) -->|Yes| B{Ready?}\nB --> C[Finish]\nA(Start)",
+    "model": {
+      "kind": "flow",
+      "direction": "LR",
+      "nodes": [
+        {
+          "id": "A",
+          "label": "Start",
+          "shape": "rounded"
+        },
+        {
+          "id": "B",
+          "label": "Ready?",
+          "shape": "diamond"
+        },
+        {
+          "id": "C",
+          "label": "Finish",
+          "shape": "rect"
+        }
+      ],
+      "edges": [
+        {
+          "from": "A",
+          "to": "B",
+          "label": "Yes"
+        },
+        {
+          "from": "B",
+          "to": "C",
+          "label": ""
+        }
+      ]
+    }
+  },
+  {
+    "name": "comments-tb-quoted",
+    "source": "%% ordinary comment\nflowchart TB\nA[\"A & B 😀 é שלום\"] %% comment\nA --> B\n",
+    "model": {
+      "kind": "flow",
+      "direction": "TD",
+      "nodes": [
+        {
+          "id": "A",
+          "label": "A & B 😀 é שלום",
+          "shape": "rect"
+        },
+        {
+          "id": "B",
+          "label": "B",
+          "shape": "rect"
+        }
+      ],
+      "edges": [
+        {
+          "from": "A",
+          "to": "B",
+          "label": ""
+        }
+      ]
+    }
+  },
+  {
+    "name": "safe-prototype-ids",
+    "source": "flowchart TD\n__proto__[First] --> constructor[Second]\nconstructor --> toString[Third]",
+    "model": {
+      "kind": "flow",
+      "direction": "TD",
+      "nodes": [
+        {
+          "id": "__proto__",
+          "label": "First",
+          "shape": "rect"
+        },
+        {
+          "id": "constructor",
+          "label": "Second",
+          "shape": "rect"
+        },
+        {
+          "id": "toString",
+          "label": "Third",
+          "shape": "rect"
+        }
+      ],
+      "edges": [
+        {
+          "from": "__proto__",
+          "to": "constructor",
+          "label": ""
+        },
+        {
+          "from": "constructor",
+          "to": "toString",
+          "label": ""
+        }
+      ]
+    }
+  },
+  {
+    "name": "sequence-notes",
+    "source": "sequenceDiagram\nparticipant A as Alice\nparticipant B\nparticipant C as Carol\nA->>B: Hello\nNote left of A: Left\nNote right of C: Right\nB-->>C: Reply\nNote over B: One\nNote over A,C: Two",
+    "model": {
+      "kind": "sequence",
+      "participants": [
+        {
+          "id": "A",
+          "label": "Alice"
+        },
+        {
+          "id": "B",
+          "label": "B"
+        },
+        {
+          "id": "C",
+          "label": "Carol"
+        }
+      ],
+      "messages": [
+        {
+          "from": "A",
+          "to": "B",
+          "label": "Hello",
+          "dashed": false,
+          "order": 0
+        },
+        {
+          "from": "B",
+          "to": "C",
+          "label": "Reply",
+          "dashed": true,
+          "order": 3
+        }
+      ],
+      "notes": [
+        {
+          "side": "left",
+          "participants": [
+            "A"
+          ],
+          "label": "Left",
+          "order": 1
+        },
+        {
+          "side": "right",
+          "participants": [
+            "C"
+          ],
+          "label": "Right",
+          "order": 2
+        },
+        {
+          "side": "over",
+          "participants": [
+            "B"
+          ],
+          "label": "One",
+          "order": 4
+        },
+        {
+          "side": "over",
+          "participants": [
+            "A",
+            "C"
+          ],
+          "label": "Two",
+          "order": 5
+        }
+      ]
+    }
+  },
+  {
+    "name": "sequence-prototype-unicode",
+    "source": "%% comment\nsequenceDiagram\nparticipant __proto__ as 前\nparticipant constructor as Après\n__proto__->>constructor: 👨‍👩‍👧‍👦 é & שלום",
+    "model": {
+      "kind": "sequence",
+      "participants": [
+        {
+          "id": "__proto__",
+          "label": "前"
+        },
+        {
+          "id": "constructor",
+          "label": "Après"
+        }
+      ],
+      "messages": [
+        {
+          "from": "__proto__",
+          "to": "constructor",
+          "label": "👨‍👩‍👧‍👦 é & שלום",
+          "dashed": false,
+          "order": 0
+        }
+      ],
+      "notes": []
+    }
+  },
+  {
+    "name": "flow-escaped-text",
+    "source": "flowchart TD\nA[\"C:\\\\files & #quot;quotes#quot;\"]",
+    "model": {
+      "kind": "flow",
+      "direction": "TD",
+      "nodes": [
+        {
+          "id": "A",
+          "label": "C:\\\\files & #quot;quotes#quot;",
+          "shape": "rect"
+        }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "name": "empty",
+    "source": "",
+    "error": "empty-diagram"
+  },
+  {
+    "name": "blank",
+    "source": " \n%% hello",
+    "error": "empty-diagram"
+  },
+  {
+    "name": "excluded-flow-0",
+    "source": "flowchart RL\nA-->B",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-1",
+    "source": "flowchart BT\nA-->B",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-2",
+    "source": "graph TD\nA-->B",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-3",
+    "source": "flowchart-elk TD\nA-->B",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-4",
+    "source": "flowchart\nA-->B",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-5",
+    "source": "---\ntitle: Bad\n---\nflowchart TD\nA-->B",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-6",
+    "source": "%%{init: {}}%%\nflowchart TD\nA-->B",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-7",
+    "source": "flowchart TD\nA-->B\n%%{init: {}}%%",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-8",
+    "source": "flowchart TD\nsubgraph x\nA-->B\nend",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-9",
+    "source": "flowchart TD\nA & B --> C",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-10",
+    "source": "flowchart TD\nA --> B --> C",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-11",
+    "source": "flowchart TD\nA-- text -->B",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-12",
+    "source": "flowchart TD\nA==>B",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-13",
+    "source": "flowchart TD\nA-.->B",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-14",
+    "source": "flowchart TD\nA---B",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-15",
+    "source": "flowchart TD\nA e1@-->B",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-16",
+    "source": "flowchart TD\nA:::red",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-17",
+    "source": "flowchart TD\nA\nstyle A fill:red",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-18",
+    "source": "flowchart TD\nA\nclassDef red fill:red",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-19",
+    "source": "flowchart TD\nA\nclass A red",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-20",
+    "source": "flowchart TD\nA\nclick A \"https://example.com\"",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-21",
+    "source": "flowchart TD\nA\nclick A call fn()",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-22",
+    "source": "flowchart TD\nA\nlinkStyle 0 stroke:red",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-23",
+    "source": "flowchart TD\nA@{shape: rect}",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-24",
+    "source": "flowchart TD\nA((Circle))",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-25",
+    "source": "flowchart TD\nA([Stadium])",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-26",
+    "source": "flowchart TD\nA[[Subroutine]]",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-27",
+    "source": "flowchart TD\nA[(Cylinder)]",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-28",
+    "source": "flowchart TD\nA{{Hexagon}}",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-flow-29",
+    "source": "flowchart TD\nA[/Trapezoid/]",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "flow-cycle",
+    "source": "flowchart TD\nA-->B\nB-->A",
+    "error": "cycle"
+  },
+  {
+    "name": "flow-self",
+    "source": "flowchart TD\nA-->A",
+    "error": "cycle"
+  },
+  {
+    "name": "conflicting-label",
+    "source": "flowchart TD\nA[First]\nA[Second]",
+    "error": "conflicting-node"
+  },
+  {
+    "name": "conflicting-shape",
+    "source": "flowchart TD\nA[First]\nA(First)",
+    "error": "conflicting-node"
+  },
+  {
+    "name": "bad-id",
+    "source": "flowchart TD\nbad-id-->B",
+    "error": "invalid-id"
+  },
+  {
+    "name": "excluded-sequence-0",
+    "source": "sequenceDiagram\nparticipant A\nparticipant B\nactor A",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-sequence-1",
+    "source": "sequenceDiagram\nparticipant A\nparticipant B\nA->B: Open",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-sequence-2",
+    "source": "sequenceDiagram\nparticipant A\nparticipant B\nA-->B: Open",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-sequence-3",
+    "source": "sequenceDiagram\nparticipant A\nparticipant B\nA-xB: Cross",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-sequence-4",
+    "source": "sequenceDiagram\nparticipant A\nparticipant B\nactivate A",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-sequence-5",
+    "source": "sequenceDiagram\nparticipant A\nparticipant B\nA->>+B: Activate",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-sequence-6",
+    "source": "sequenceDiagram\nparticipant A\nparticipant B\nautonumber",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-sequence-7",
+    "source": "sequenceDiagram\nparticipant A\nparticipant B\nloop Again\nA->>B: Text\nend",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-sequence-8",
+    "source": "sequenceDiagram\nparticipant A\nparticipant B\nalt Choice\nA->>B: Text\nend",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-sequence-9",
+    "source": "sequenceDiagram\nparticipant A\nparticipant B\npar Both\nA->>B: Text\nend",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-sequence-10",
+    "source": "sequenceDiagram\nparticipant A\nparticipant B\ncritical Region\nA->>B: Text\nend",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-sequence-11",
+    "source": "sequenceDiagram\nparticipant A\nparticipant B\ncreate participant C",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-sequence-12",
+    "source": "sequenceDiagram\nparticipant A\nparticipant B\ndestroy A",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-sequence-13",
+    "source": "sequenceDiagram\nparticipant A\nparticipant B\nlinks A: {\"link\":\"https://example.com\"}",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-sequence-14",
+    "source": "sequenceDiagram\nparticipant A\nparticipant B\nlink A: Test @ https://example.com",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-sequence-15",
+    "source": "sequenceDiagram\nparticipant A\nparticipant B\nrect red\nA->>B: Text\nend",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-sequence-16",
+    "source": "sequenceDiagram\nparticipant A\nparticipant B\nopt Maybe\nA->>B: Text\nend",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-sequence-17",
+    "source": "sequenceDiagram\nparticipant A\nparticipant B\ntitle Something",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "excluded-sequence-18",
+    "source": "sequenceDiagram\nparticipant A\nparticipant B\nparticipant C@{ \"type\":\"actor\" }",
+    "error": "unsupported-syntax"
+  },
+  {
+    "name": "implicit-sequence",
+    "source": "sequenceDiagram\nA->>B: Hi",
+    "error": "missing-endpoint"
+  },
+  {
+    "name": "duplicate-sequence",
+    "source": "sequenceDiagram\nparticipant A\nparticipant A",
+    "error": "duplicate-participant"
+  },
+  {
+    "name": "sequence-self",
+    "source": "sequenceDiagram\nparticipant A\nA->>A: Hi",
+    "error": "self-message"
+  },
+  {
+    "name": "unknown-note",
+    "source": "sequenceDiagram\nparticipant A\nNote over B: Unknown",
+    "error": "missing-endpoint"
+  },
+  {
+    "name": "html-flow",
+    "source": "flowchart TD\nA[\"<b>Bold</b>\"]",
+    "error": "unsupported-label"
+  },
+  {
+    "name": "markdown-flow",
+    "source": "flowchart TD\nA[\"**Bold**\"]",
+    "error": "unsupported-label"
+  },
+  {
+    "name": "html-sequence",
+    "source": "sequenceDiagram\nparticipant A\nparticipant B\nA->>B: <br>",
+    "error": "unsupported-label"
+  },
+  {
+    "name": "markdown-sequence",
+    "source": "sequenceDiagram\nparticipant A\nparticipant B\nA->>B: `code`",
+    "error": "unsupported-label"
+  }
+]

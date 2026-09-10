@@ -1,0 +1,27 @@
+{
+  "verified_utc": "2026-09-09T07:33:21.790638+00:00",
+  "content_status": "content_passed",
+  "success_audio_count": 2,
+  "normalized_exact_count": 2,
+  "anchors_complete_count": 2,
+  "asr_pid": 21749,
+  "asr_pid_absent": true,
+  "asr_joined": true,
+  "asr_elapsed_seconds": 4.089287250302732,
+  "task_container_count": 0,
+  "preexisting_containers_untouched": [
+    {
+      "id": "1275d55568b50d5860eb2827dce1964fa90bd982aa954a75be2158bd41a67345",
+      "name": "tldw_postgres_test",
+      "image": "postgres:18",
+      "state": "running"
+    }
+  ],
+  "runtime_cleanup_joined": true,
+  "runtime_final_resources": {
+    "native_tasks": 0,
+    "onnx_workers": 0,
+    "native_calls": 0
+  },
+  "scope": "Headless Linux ARM inference and local macOS ASR; no Linux physical playback qualification"
+}

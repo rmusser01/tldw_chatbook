@@ -1,0 +1,464 @@
+{
+  "schema_version": 1,
+  "status": "runtime_passed_content_pending",
+  "pid": 32488,
+  "started_utc": "2026-09-09T14:36:34.754545+00:00",
+  "phases": [
+    {
+      "id": "speech-lab",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "language": "en-us",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2200701.56627675,
+      "native_calls": [
+        {
+          "request_id": "speech-lab",
+          "class": "onnxruntime.capi.onnxruntime_inference_collection.InferenceSession",
+          "execution_providers": [
+            "CPUExecutionProvider"
+          ],
+          "model_path": "/private/tmp/kokoro-playback-validation/models/kokoro-v1.0.onnx",
+          "speed_input": [
+            1.0
+          ],
+          "enter_at": 2200702.972161333,
+          "thread_id": 6210727936,
+          "exit_at": 2200703.936305791
+        }
+      ],
+      "states": [],
+      "outcomes": [],
+      "sink_events": [],
+      "devices": [],
+      "outcome": "success",
+      "request": {
+        "model_id": "kokoro",
+        "voice_id": "af_heart",
+        "speed": 1.0
+      },
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-mp3-en-us/audio/speech-lab.mp3",
+        "sha256": "1c80751555239115c73e147e8b7b664040d94136742dea11b66dd7dd3c37919a",
+        "pcm_sha256": "4127d16059a8a062688dc71eba9437c4edc590b5a5099c47c799e2ecf5d9a5d6",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 201728,
+        "seconds": 8.405333333333333,
+        "rms": 0.0734601380676748,
+        "peak": 0.669036865234375,
+        "decoded_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-mp3-en-us/audio/speech-lab.decoded.wav",
+        "decoded_sha256": "7d3790cc5bdd35a3603d0438003870640806756223f048a43fd3cc429ca01aa9"
+      },
+      "playback": {
+        "kind": "file",
+        "pid": 32510,
+        "player": "afplay",
+        "started_at": 2200704.321509583,
+        "exit_code": 0,
+        "elapsed_seconds": 9.372955500148237
+      },
+      "settled_at": 2200713.694614791,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2200713.694618416,
+        "threads": 3,
+        "rss_bytes": 1137197056,
+        "peak_rss_bytes": 1137246208,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    },
+    {
+      "id": "console-warmup",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "language": "en-us",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2200713.718311041,
+      "native_calls": [
+        {
+          "request_id": "console-warmup",
+          "class": "onnxruntime.capi.onnxruntime_inference_collection.InferenceSession",
+          "execution_providers": [
+            "CPUExecutionProvider"
+          ],
+          "model_path": "/private/tmp/kokoro-playback-validation/models/kokoro-v1.0.onnx",
+          "speed_input": [
+            1.0
+          ],
+          "enter_at": 2200713.730645916,
+          "thread_id": 6227554304,
+          "exit_at": 2200714.710286375
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "sink_events": [],
+      "devices": [],
+      "outcome": "success",
+      "message_id": "a121e431-bd18-47b0-a1d7-cca70c7a4dd3",
+      "destination_fingerprint": "sha256:0ae16e4458a31707946e0a45d5a0aedb2a93b0f827836afd43dfcc777a923005",
+      "disposition": "speak",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-mp3-en-us/audio/console-warmup.mp3",
+        "sha256": "1c80751555239115c73e147e8b7b664040d94136742dea11b66dd7dd3c37919a",
+        "pcm_sha256": "4127d16059a8a062688dc71eba9437c4edc590b5a5099c47c799e2ecf5d9a5d6",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 201728,
+        "seconds": 8.405333333333333,
+        "rms": 0.0734601380676748,
+        "peak": 0.669036865234375,
+        "decoded_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-mp3-en-us/audio/console-warmup.decoded.wav",
+        "decoded_sha256": "7d3790cc5bdd35a3603d0438003870640806756223f048a43fd3cc429ca01aa9"
+      },
+      "playback": {
+        "kind": "file",
+        "pid": 32575,
+        "player": "afplay",
+        "started_at": 2200714.822780208,
+        "exit_code": 0,
+        "elapsed_seconds": 9.38749587489292
+      },
+      "settled_at": 2200724.210374208,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2200724.210376791,
+        "threads": 3,
+        "rss_bytes": 1332953088,
+        "peak_rss_bytes": 1333002240,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    },
+    {
+      "id": "console-cancel",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.\nSilver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.\nSilver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.\nSilver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "language": "en-us",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2200724.227127625,
+      "native_calls": [
+        {
+          "request_id": "console-cancel",
+          "class": "onnxruntime.capi.onnxruntime_inference_collection.InferenceSession",
+          "execution_providers": [
+            "CPUExecutionProvider"
+          ],
+          "model_path": "/private/tmp/kokoro-playback-validation/models/kokoro-v1.0.onnx",
+          "speed_input": [
+            1.0
+          ],
+          "enter_at": 2200724.232480583,
+          "thread_id": 6227554304,
+          "exit_at": 2200726.121028833
+        }
+      ],
+      "states": [
+        "stopped"
+      ],
+      "outcomes": [
+        true
+      ],
+      "sink_events": [],
+      "devices": [],
+      "outcome": "cancelled",
+      "message_id": "0c166dbf-6d85-4ddf-b491-0814d58ef3df",
+      "destination_fingerprint": "sha256:0ae16e4458a31707946e0a45d5a0aedb2a93b0f827836afd43dfcc777a923005",
+      "disposition": "speak",
+      "stop_requested_at": 2200724.251251958,
+      "resources_at_stop": {
+        "generation_owner": 1,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 1,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 1,
+        "leases": 1,
+        "backend_tasks": 1,
+        "native_calls": 1,
+        "player_processes": 0
+      },
+      "stop_returned_at": 2200726.126349916,
+      "settled_at": 2200726.126369875,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2200726.126370208,
+        "threads": 3,
+        "rss_bytes": 1422393344,
+        "peak_rss_bytes": 1422540800,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    },
+    {
+      "id": "console-successor",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "language": "en-us",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2200726.145463666,
+      "native_calls": [
+        {
+          "request_id": "console-successor",
+          "class": "onnxruntime.capi.onnxruntime_inference_collection.InferenceSession",
+          "execution_providers": [
+            "CPUExecutionProvider"
+          ],
+          "model_path": "/private/tmp/kokoro-playback-validation/models/kokoro-v1.0.onnx",
+          "speed_input": [
+            1.0
+          ],
+          "enter_at": 2200726.152831125,
+          "thread_id": 6227554304,
+          "exit_at": 2200727.152797125
+        }
+      ],
+      "states": [
+        "playing",
+        "stopped"
+      ],
+      "outcomes": [],
+      "sink_events": [],
+      "devices": [],
+      "outcome": "success",
+      "message_id": "f0ddf7a6-2d5a-493e-a658-dd5165022dff",
+      "destination_fingerprint": "sha256:0ae16e4458a31707946e0a45d5a0aedb2a93b0f827836afd43dfcc777a923005",
+      "disposition": "speak",
+      "audio": {
+        "path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-mp3-en-us/audio/console-successor.mp3",
+        "sha256": "1c80751555239115c73e147e8b7b664040d94136742dea11b66dd7dd3c37919a",
+        "pcm_sha256": "4127d16059a8a062688dc71eba9437c4edc590b5a5099c47c799e2ecf5d9a5d6",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frames": 201728,
+        "seconds": 8.405333333333333,
+        "rms": 0.0734601380676748,
+        "peak": 0.669036865234375,
+        "decoded_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-mp3-en-us/audio/console-successor.decoded.wav",
+        "decoded_sha256": "7d3790cc5bdd35a3603d0438003870640806756223f048a43fd3cc429ca01aa9"
+      },
+      "playback": {
+        "kind": "file",
+        "pid": 32641,
+        "player": "afplay",
+        "started_at": 2200727.251468125,
+        "exit_code": 0,
+        "elapsed_seconds": 9.400811500381678
+      },
+      "settled_at": 2200736.652347958,
+      "resources_at_settlement": {
+        "generation_owner": 0,
+        "stream_owner": 0,
+        "file_owner": 0,
+        "active_tasks": 0,
+        "retained_io": 0,
+        "retained_cleanup": 0,
+        "admitted_operations": 0,
+        "responses": 0,
+        "leases": 0,
+        "backend_tasks": 0,
+        "native_calls": 0,
+        "player_processes": 0
+      },
+      "memory": {
+        "at": 2200736.65235025,
+        "threads": 3,
+        "rss_bytes": 1422360576,
+        "peak_rss_bytes": 1422573568,
+        "mps_allocated_bytes": 0,
+        "mps_driver_bytes": 458752
+      }
+    }
+  ],
+  "arguments": {
+    "engine": "onnx",
+    "device": "cpu",
+    "model": "/private/tmp/kokoro-playback-validation/models/kokoro-v1.0.onnx",
+    "voice": "af_heart",
+    "voice_dir": null,
+    "voices": "/private/tmp/kokoro-playback-validation/models/voices-v1.0.bin",
+    "language": "en-us",
+    "format": "mp3",
+    "speed": 1.0,
+    "text_file": null,
+    "cancel_text_file": null,
+    "scenarios": "playback,cancel",
+    "repeats": 1,
+    "phase_timeout": 300,
+    "cleanup_timeout": 60,
+    "run_timeout": 1800,
+    "expected_package_root": "/private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/tldw_chatbook",
+    "output": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-mp3-en-us",
+    "play_audio": true,
+    "worker": true
+  },
+  "python": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+  "executable": "/private/tmp/tts-macos-burndown/final-wheel-venv/bin/python",
+  "platform": "darwin",
+  "scope": "Mounted Speech pane and trusted Console handler, real models/codecs/device; no full-shell or acoustic loopback claim.",
+  "imported_package_root": "/private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/tldw_chatbook",
+  "runner_sha256": "323bc2542da37b00c509aee8ee3f973ea9bcdace9947dec08772e49ed3f18b26",
+  "assets": {
+    "/private/tmp/kokoro-playback-validation/models/kokoro-v1.0.onnx": "7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5",
+    "/private/tmp/kokoro-playback-validation/models/voices-v1.0.bin": "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d"
+  },
+  "source_revision_if_git": null,
+  "versions": {
+    "tldw_chatbook": "0.2.0",
+    "textual": "8.2.8",
+    "numpy": "2.5.3",
+    "sounddevice": "0.5.6",
+    "soundfile": "0.14.0",
+    "kokoro": "0.9.4",
+    "kokoro-onnx": "0.6.1",
+    "torch": "2.14.0",
+    "onnxruntime": "1.29.0",
+    "misaki": "0.9.4",
+    "spacy": "3.8.16",
+    "en-core-web-sm": "3.8.0"
+  },
+  "output_device": {
+    "name": "MacBook Pro Speakers",
+    "index": 1,
+    "hostapi": 0,
+    "max_input_channels": 0,
+    "max_output_channels": 2,
+    "default_low_input_latency": 0.01,
+    "default_low_output_latency": 0.017958333333333333,
+    "default_high_input_latency": 0.1,
+    "default_high_output_latency": 0.027291666666666665,
+    "default_samplerate": 48000.0
+  },
+  "memory_before_model": {
+    "at": 2200701.352645,
+    "threads": 2,
+    "rss_bytes": 224657408,
+    "peak_rss_bytes": 224657408
+  },
+  "runtime_files": {
+    "onnxruntime.capi.onnxruntime_pybind11_state": {
+      "path": "/private/tmp/tts-macos-burndown/final-wheel-venv/lib/python3.12/site-packages/onnxruntime/capi/onnxruntime_pybind11_state.so",
+      "sha256": "01adaf3590b50c5f10ce59b6844b6b33cb45142b6b3fc9a2fb2094d8645e873e"
+    }
+  },
+  "backend_assets": [
+    {
+      "model": "/private/tmp/kokoro-playback-validation/models/kokoro-v1.0.onnx",
+      "engine": "onnx"
+    }
+  ],
+  "cleanup_errors": [],
+  "final_resources": {
+    "generation_owner": 0,
+    "stream_owner": 0,
+    "file_owner": 0,
+    "active_tasks": 0,
+    "retained_io": 0,
+    "retained_cleanup": 0,
+    "admitted_operations": 0,
+    "responses": 0,
+    "leases": 0,
+    "backend_tasks": 0,
+    "native_calls": 0,
+    "player_processes": 0
+  },
+  "notices": [
+    {
+      "message": "TTS generation complete!",
+      "severity": "information"
+    },
+    {
+      "message": "Playback complete",
+      "severity": "information"
+    }
+  ],
+  "completions": [
+    {
+      "message_id": "a121e431-bd18-47b0-a1d7-cca70c7a4dd3",
+      "error": null
+    },
+    {
+      "message_id": "f0ddf7a6-2d5a-493e-a658-dd5165022dff",
+      "error": null
+    }
+  ],
+  "memory_after_cleanup": {
+    "at": 2200736.674972791,
+    "threads": 2,
+    "rss_bytes": 1422344192,
+    "peak_rss_bytes": 1422573568,
+    "mps_allocated_bytes": 0,
+    "mps_driver_bytes": 458752
+  },
+  "source_unchanged": true,
+  "cleanup_joined": true,
+  "ended_utc": "2026-09-09T14:37:12.571116+00:00",
+  "_packaging": {
+    "original_path": "/private/tmp/tts-macos-burndown/qodo-clean-installed-wheel/onnx-cpu-mp3-en-us/evidence.json",
+    "original_sha256": "6d6abbc544cf2276465a7525f21002a6fbb8412183521aa0dabeaf0422f8e77a",
+    "source_map": "../../application-source-hashes.json",
+    "source_map_sha256": "e9696f83ba91827281e56d4a2a3fd50ff6f242db166ab7cb1cf4bfd4fe4edfbb",
+    "source_map_keys": [
+      "source_hashes",
+      "source_hashes_after"
+    ]
+  }
+}

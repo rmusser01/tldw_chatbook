@@ -1,0 +1,14 @@
+{
+  "sounddevice_requested_name": "/private/tmp/tts-macos-burndown/portaudio/prefix/lib/libportaudio.dylib",
+  "actual_function_image": "/private/tmp/tts-macos-burndown/portaudio/prefix/lib/libportaudio.19.8.dylib",
+  "actual_sha256": "48d9fcaff582ff65c8a51d67570bf69ce900d51278841d563e19b7ef73746586",
+  "portaudio_version": [
+    1246976,
+    "PortAudio V19.7.0-devel, revision unknown"
+  ],
+  "expected_prefix": "/private/tmp/tts-macos-burndown/portaudio/prefix/lib",
+  "expected_sha256": "48d9fcaff582ff65c8a51d67570bf69ce900d51278841d563e19b7ef73746586",
+  "stream_opened": false,
+  "model_loaded": false,
+  "verified": true
+}

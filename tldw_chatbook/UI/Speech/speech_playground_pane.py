@@ -1321,6 +1321,12 @@ class SpeechPlaygroundPane(
     def _saved_studio_param_values(self, provider: str) -> dict[str, object]:
         """Return saved request-scoped values keyed by Playground control ID."""
 
+        if provider == "kokoro":
+            return {
+                "tts-kokoro-use-onnx": self._cli_setting(
+                    "app_tts", "KOKORO_USE_ONNX", True
+                )
+            }
         preferences = self.studio_preferences
         if type(preferences) is not StudioTTSPreferencesSnapshot:
             return {}

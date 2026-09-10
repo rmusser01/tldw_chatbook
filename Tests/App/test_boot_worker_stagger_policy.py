@@ -26,8 +26,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from Tests.Performance.test_boot_worker_census import ALLOWED_BOOT_WORKERS
+from Tests.Performance.test_boot_worker_census import (
+    ALLOWED_BOOT_WORKERS,
+    EXPECTED_BOOT_WORKERS,
+)
 from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.config import save_setting_to_cli_config
 from tldw_chatbook.Utils.boot_worker_policy import (
     BOOT_WORKER_KEY_BY_IDENTITY,
     BOOT_WORKER_POLICY,
@@ -58,6 +62,16 @@ def test_every_policy_row_is_on_the_boot_worker_census_allowlist():
         f"boot worker policy rows missing from the TASK-22222 census "
         f"allowlist: {sorted(unknown)}"
     )
+
+
+def test_census_does_not_require_staggered_workers_inside_its_settle_window():
+    """Prior workers may keep any staggered member queued past the census."""
+    staggered = {
+        (spec.name, spec.group)
+        for spec in BOOT_WORKER_POLICY
+        if spec.tier is BootWorkerTier.STAGGERED
+    }
+    assert EXPECTED_BOOT_WORKERS.isdisjoint(staggered)
 
 
 def test_staggered_order_runs_prefetches_before_the_resumable_backfills():
@@ -249,6 +263,8 @@ async def test_every_staggered_body_runs_after_the_ui_is_ready():
     ``on_mount``, so they observed ``_ui_ready`` False. Also the
     anti-starvation pin -- all four must actually run, not merely be queued.
     """
+    # Exercise post-ready workers without waiting through the splash animation.
+    save_setting_to_cli_config("splash_screen", "enabled", False)
     app = _build_test_app()
     observed: dict[str, bool] = {}
     done = threading.Event()

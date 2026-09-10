@@ -1,0 +1,96 @@
+{
+  "head_commit": "ff572a909b9f3f75937090299e79e603db910d95",
+  "production_base_commit": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+  "uncommitted_test_harness": true,
+  "production_unchanged_from_head": true,
+  "source_sha256": {
+    "tldw_chatbook/app.py": "d2da9f843d2beb6065acd61116e1cd7c8f4d3623126f8dfa60af9b07ea3b530a",
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": "53cc130734200289e3a90f973222f89344f0533ba10d5680e198ee091743f6ed",
+    "tldw_chatbook/DB/Workspace_DB.py": "648ee81aa621c2f89f1e2b4b42a0e805cffbdef4936b45f9f32fb31b1d147e11",
+    "tldw_chatbook/Persona_Buddy/library.py": "222374365ad4ef590b9ca51e4f77fbc146db304490805f32a08dd729bc865bcf",
+    "tldw_chatbook/Persona_Buddy/controller.py": "259f217cf3d90905d7a638eb2f5be2d568d49bf0ecc82f69bd5c3abc72dd1b3a",
+    "tldw_chatbook/UI/Navigation/buddy_management.py": "6b1fb072a8500179328cb727fef5679c38eef81b181f07375967930978aed0fb",
+    "tldw_chatbook/UI/Navigation/buddy_conversation.py": "95e06741d3e38e985815c8dd51261614dc8b4a0e45162847bc322394b3a65154",
+    "tldw_chatbook/UI/Navigation/buddy_workspace.py": "78a56f9b46598c5de86563ac64ed40983a5c0bda6e5de9370998c57e4cba18b2",
+    "tldw_chatbook/Widgets/Persona_Widgets/persona_buddy_widget.py": "04b9fa1797ca5577e92122aa31e7f2c7ed7d168482884927f2d4735ef05ab9d1",
+    "Tests/UI/test_buddy_v1_qualification_capture.py": "b2728a2a35f41f8cf2e2ef10b123411954525e07f3b3b1be0ac172373f7418b0",
+    "tldw_chatbook/Utils/path_validation.py": "d237eb566121912b2ea2bff3c9c368dcab05e48ea1a7a5e31201ca073a2c77c5",
+    "tldw_chatbook/Widgets/Persona_Widgets/buddy_management_modal.py": "39fbec4242af50db3de7a19de1b0b1c12a380293919541a1d34656b061bdfe88",
+    "tldw_chatbook/Workspaces/registry_service.py": "9e1dbd482a49fd0369fd3dfb56063e236d5adf1c147e0dae0cae8072652d8e94",
+    "tldw_chatbook/Character_Chat/local_character_persona_service.py": "cc211086f4ae3ea1f5cce26ce53a5be39c1a318f391a24e04fcc307b8d42214f"
+  },
+  "command": "PYTHONPATH=.:packages/tldw_profile_core/src PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring TLDW_BUDDY_QUALIFICATION_OUTPUT=pr2536-qodo-leaf-followup-20260909 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/pytest Tests/UI/test_buddy_v1_qualification_capture.py -q",
+  "result": "16 passed, 3 warnings in 37.13s",
+  "scope": "Two headless production-app journeys plus fourteen capture-directory/leaf-confinement, explicit capture hashing, exception-cleanup and frame-cycle guards. No native terminal, real provider, microphone, audible playback or full-suite coverage.",
+  "raw_capture_directory": "/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/chatbook-buddy-v1-qualification-32108/pr2536-qodo-leaf-followup-20260909",
+  "retained_svg_formatting": "Repository copies strip trailing whitespace; original exports and hashes remain unchanged in the raw capture directory.",
+  "retained_svg_hashes": {
+    "fresh-static-management.svg": {
+      "raw_export_sha256": "10be2ae82a56293ec5c754328d0fc887726453554468affd12fd58cbbc8dccba",
+      "repository_sha256": "dfe9aa2bfe4cba887a2a15d1e631c23e5c33d79147c2201fff1897c7b35aeee2"
+    },
+    "fresh-dynamic-home.svg": {
+      "raw_export_sha256": "f8a968738c75819dd1f6e67aa94bb6d589747a60d64a6ada51e756c2d5cc6c15",
+      "repository_sha256": "d7b6468193817c9c90054a76beca4c7d088682f1373bc153234aca0f53ee66ca"
+    },
+    "upgrade-conversation.svg": {
+      "raw_export_sha256": "963bc7342e7e34b09d6e070c877e19c0027326630229bf777db7bf143666393f",
+      "repository_sha256": "9428ed1ea2c12ee37b81da3fadde7b7dee978f5b1aa6a925d33f6c3424df0b47"
+    },
+    "upgrade-workspace-inbox.svg": {
+      "raw_export_sha256": "e0aaad9f460ccc8aa36c868effdf26fc37803bcc131d5afd06e4930767c65ba0",
+      "repository_sha256": "993b4b2cb5bf77e56a668f65a5e368089d469d79288f9abef25ee5baa872446f"
+    },
+    "fresh-workspace-management.svg": {
+      "raw_export_sha256": "b19d87d5d1e82308ae80be4eab91df01af3acb179d512ceb84d2b31a624b9cad",
+      "repository_sha256": "a7be5c7b2aef3932c608418810dfb5ab98a5aa28fb16128eb86cdc6ca67c084a"
+    },
+    "upgrade-workspace-management.svg": {
+      "raw_export_sha256": "b19d87d5d1e82308ae80be4eab91df01af3acb179d512ceb84d2b31a624b9cad",
+      "repository_sha256": "a7be5c7b2aef3932c608418810dfb5ab98a5aa28fb16128eb86cdc6ca67c084a"
+    }
+  },
+  "retained_metadata_sha256": {
+    "fresh-evidence.json": "29c5220371bf46dbdd5702a9cd81a32ed12e332ab393f35299c9734ec154fcc7",
+    "upgrade-evidence.json": "024952dcd8cbc1f70591e6dffaa61b49ea42ef728e782964de60740c34ddceb3",
+    "tests.txt": "4e8fe110a1240f271aa7b2f5db775f360b2bdfa7409e6bb16206b6ee7bf8fa2e"
+  },
+  "review_issue_comment": "https://github.com/rmusser01/tldw_chatbook/pull/2536#issuecomment-5596537996",
+  "review_inline_ids": [
+    3965095931,
+    3965095938,
+    3965095945,
+    3965095950,
+    3965095955,
+    3965095963
+  ],
+  "raw_review_files": {
+    "/private/tmp/chatbook-pr2536-issue-comments.json": "3e23764c9912814fea2ea490f50671f4d676a10250009709c9af45590f590a17",
+    "/private/tmp/chatbook-pr2536-inline-comments.json": "a3eb5f06ccbef553bad45f371c47a72f2b235dde8136387c2632e0af93d201e1"
+  },
+  "none_reproduction": {
+    "log": "/private/tmp/chatbook-pr2536-none-red.log",
+    "sha256": "88520fe917816e0c7c702d983f5ff513cdd3594aef586ce4b9003c1583bbe77b",
+    "result": "1 failed, 1 deselected, 2 warnings in 21.02s; expected '#none', observed '#unchanged'"
+  },
+  "historical_evidence": "Parent directory artifacts retain their original source attribution and hashes. They do not establish explicit clearing of a previously assigned workspace Persona.",
+  "static_checks": {
+    "ruff": "All checks passed!",
+    "ruff_format": "1 file already formatted",
+    "py_compile": "passed",
+    "raw_logs": [
+      "/private/tmp/chatbook-pr2536-ruff.log",
+      "/private/tmp/chatbook-pr2536-format.log"
+    ]
+  },
+  "leaf_negative_control": {
+    "scope": "Disposable pytest plugin restores direct write_text and profile glob operations; no production or harness file mutation.",
+    "result": "3 failed, 13 deselected, 1 warning in 1.89s; both outside write targets accepted and unexpected matching link read",
+    "command": "PYTHONPATH=.:packages/tldw_profile_core/src:/private/tmp PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/pytest -p chatbook_pr2536_leaf_mutation Tests/UI/test_buddy_v1_qualification_capture.py -k \"artifact_write or capture_hashes\" -q",
+    "files_sha256": {
+      "/private/tmp/chatbook_pr2536_leaf_mutation.py": "464c89d9c68236372bbe408244b54c59d119ae43bb9d690450eac335056321b8",
+      "/private/tmp/chatbook-pr2536-leaf-red.log": "f87e6d3749a449d1cd1440df7b3cd557867c0c262b9620077bc7e285d5398566",
+      "/private/tmp/chatbook-pr2536-leaf-guards.log": "ac9cde29194a593d925f9a9a3441adcada8468dd3502dc996463f0a5985d9897"
+    }
+  }
+}

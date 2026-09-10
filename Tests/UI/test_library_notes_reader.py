@@ -821,7 +821,7 @@ async def test_database_notes_work_session_activates_once_and_resets_exactly(
         screen.query_one("#library-row-browse-notes", Button).press()
         await _wait_for_selector(screen, pilot, "#library-notes-row-0")
         shell = screen.query_one(
-            "#library-notes-reader-shell", LibraryAdaptiveReaderShell
+            ".library-notes-route", LibraryAdaptiveReaderShell
         )
 
         assert (
@@ -934,7 +934,7 @@ async def test_notes_global_f6_cycles_only_visible_regions_when_library_collapse
         await _wait_for_selector(screen, pilot, "#library-notes-row-0")
         await _open_note_editor(screen, pilot)
         shell = screen.query_one(
-            "#library-notes-reader-shell", LibraryAdaptiveReaderShell
+            ".library-notes-route", LibraryAdaptiveReaderShell
         )
         assert shell.effective_layout.library_open is False
         screen.query_one("#library-note-title", Input).focus()
@@ -961,10 +961,10 @@ async def test_database_notes_mount_three_retained_roles_once() -> None:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-notes-reader-shell")
+        await _wait_for_selector(screen, pilot, ".library-notes-route")
 
         shell = screen.query_one(
-            "#library-notes-reader-shell", LibraryAdaptiveReaderShell
+            ".library-notes-route", LibraryAdaptiveReaderShell
         )
         rail = shell.query_one("#library-rail")
         items = shell.query_one("#library-notes-canvas", LibraryNotesCanvas)
@@ -1046,10 +1046,10 @@ async def test_reader_route_parks_dirty_note_selection_and_preview_without_savin
         await pilot.pause()
 
         screen.query_one("#library-row-browse-media", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-media-reader-shell")
+        await _wait_for_selector(screen, pilot, ".library-media-route")
 
         screen.query_one("#library-row-browse-media", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-media-reader-shell")
+        await _wait_for_selector(screen, pilot, ".library-media-route")
 
         snapshot = screen._library_note_session.snapshot
         assert snapshot is not None
@@ -1135,7 +1135,7 @@ async def test_reader_route_invalidates_autosave_queued_before_park(
         assert app.notes_scope_service.save_calls == []
 
         screen.query_one("#library-row-browse-media", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-media-reader-shell")
+        await _wait_for_selector(screen, pilot, ".library-media-route")
         await queued_autosaves[0]
 
         snapshot = screen._library_note_session.snapshot
@@ -1233,7 +1233,7 @@ async def test_editor_back_preserves_shell_list_and_work_owners() -> None:
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes", Button).press()
         await _wait_for_selector(screen, pilot, "#library-notes-row-0")
-        shell = screen.query_one("#library-notes-reader-shell")
+        shell = screen.query_one(".library-notes-route")
         notes_list = screen.query_one("#library-notes-canvas")
         work = screen.query_one("#library-note-work-pane")
         await _open_note_editor(screen, pilot)
@@ -1242,7 +1242,7 @@ async def test_editor_back_preserves_shell_list_and_work_owners() -> None:
         screen.query_one("#library-note-back", Button).press()
         await _wait_for_selector(screen, pilot, "#library-note-work-empty")
 
-        assert screen.query_one("#library-notes-reader-shell") is shell
+        assert screen.query_one(".library-notes-route") is shell
         assert screen.query_one("#library-notes-canvas") is notes_list
         assert screen.query_one("#library-note-work-pane") is work
 
@@ -1258,7 +1258,7 @@ async def test_create_back_preserves_shell_list_and_work_owners() -> None:
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes", Button).press()
         await _wait_for_selector(screen, pilot, "#library-notes-new")
-        shell = screen.query_one("#library-notes-reader-shell")
+        shell = screen.query_one(".library-notes-route")
         notes_list = screen.query_one("#library-notes-canvas")
         work = screen.query_one("#library-note-work-pane")
         screen.query_one("#library-notes-new", Button).press()
@@ -1267,7 +1267,7 @@ async def test_create_back_preserves_shell_list_and_work_owners() -> None:
         screen.query_one("#library-notes-create-back", Button).press()
         await _wait_for_selector(screen, pilot, "#library-note-work-empty")
 
-        assert screen.query_one("#library-notes-reader-shell") is shell
+        assert screen.query_one(".library-notes-route") is shell
         assert screen.query_one("#library-notes-canvas") is notes_list
         assert screen.query_one("#library-note-work-pane") is work
 
@@ -1283,7 +1283,7 @@ async def test_create_success_preserves_shell_list_and_work_owners() -> None:
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes", Button).press()
         await _wait_for_selector(screen, pilot, "#library-notes-new")
-        shell = screen.query_one("#library-notes-reader-shell")
+        shell = screen.query_one(".library-notes-route")
         notes_list = screen.query_one("#library-notes-canvas")
         work = screen.query_one("#library-note-work-pane")
 
@@ -1292,7 +1292,7 @@ async def test_create_success_preserves_shell_list_and_work_owners() -> None:
         screen.query_one("#library-notes-create-blank", Button).press()
         await _wait_for_selector(screen, pilot, "#library-note-title")
 
-        assert screen.query_one("#library-notes-reader-shell") is shell
+        assert screen.query_one(".library-notes-route") is shell
         assert screen.query_one("#library-notes-canvas") is notes_list
         assert screen.query_one("#library-note-work-pane") is work
 
@@ -1308,7 +1308,7 @@ async def test_delete_and_receipt_preserve_shell_list_and_work_owners() -> None:
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes", Button).press()
         await _wait_for_selector(screen, pilot, "#library-notes-row-0")
-        shell = screen.query_one("#library-notes-reader-shell")
+        shell = screen.query_one(".library-notes-route")
         notes_list = screen.query_one("#library-notes-canvas")
         work = screen.query_one("#library-note-work-pane")
         screen.query_one("#library-notes-row-0", Button).press()
@@ -1319,7 +1319,7 @@ async def test_delete_and_receipt_preserve_shell_list_and_work_owners() -> None:
         screen.query_one("#library-note-delete-confirm", Button).press()
         await _wait_for_selector(screen, pilot, "#library-notes-delete-receipt-copy")
 
-        assert screen.query_one("#library-notes-reader-shell") is shell
+        assert screen.query_one(".library-notes-route") is shell
         assert screen.query_one("#library-notes-canvas") is notes_list
         assert screen.query_one("#library-note-work-pane") is work
 
@@ -1334,10 +1334,10 @@ async def test_eighty_columns_protect_editor_and_keep_both_restore_grips() -> No
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-notes-reader-shell")
+        await _wait_for_selector(screen, pilot, ".library-notes-route")
         await _open_note_editor(screen, pilot)
         shell = screen.query_one(
-            "#library-notes-reader-shell", LibraryAdaptiveReaderShell
+            ".library-notes-route", LibraryAdaptiveReaderShell
         )
         await pilot.pause()
 
@@ -1378,7 +1378,7 @@ async def test_emergency_width_preserves_manual_collapse_and_notes_adaptive_owne
 
         await pilot.resize_terminal(63, 30)
         await screen._select_library_rail_row("browse-notes")
-        shell = await _wait_for_selector(screen, pilot, "#library-notes-reader-shell")
+        shell = await _wait_for_selector(screen, pilot, ".library-notes-route")
         await _wait_for_condition(
             pilot,
             lambda: screen._library_emergency_stage is None,

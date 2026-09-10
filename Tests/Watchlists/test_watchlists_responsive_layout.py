@@ -29,7 +29,7 @@ def test_declared_widths_orders_and_default_priorities():
     assert region_layout.PANE_GRIP_WIDTH == 5
     assert region_layout.PANE_MINIMUM_WIDTHS == {
         Region.LEFT_RAIL: 24,
-        Region.ITEMS: 32,
+        Region.ITEMS: 42,
         Region.RIGHT_RAIL: 30,
     }
     assert region_layout.CENTRE_COMFORT_WIDTH == 44
@@ -56,14 +56,14 @@ def test_declared_widths_orders_and_default_priorities():
 
 def test_read_all_open_boundary_collapses_inspector_first():
     preferred = RegionLayout()
-    assert resolve(preferred, 145).collapsed == frozenset()
-    assert resolve(preferred, 144).collapsed == frozenset({Region.RIGHT_RAIL})
+    assert resolve(preferred, 155).collapsed == frozenset()
+    assert resolve(preferred, 154).collapsed == frozenset({Region.RIGHT_RAIL})
 
 
 def test_read_navigation_and_feed_items_boundary_collapses_navigation_next():
     preferred = RegionLayout().toggle_preferred(Region.RIGHT_RAIL)
-    assert resolve(preferred, 115).collapsed == frozenset({Region.RIGHT_RAIL})
-    assert resolve(preferred, 114).collapsed == frozenset(
+    assert resolve(preferred, 125).collapsed == frozenset({Region.RIGHT_RAIL})
+    assert resolve(preferred, 124).collapsed == frozenset(
         {Region.LEFT_RAIL, Region.RIGHT_RAIL}
     )
 
@@ -74,10 +74,10 @@ def test_read_feed_items_only_boundary_collapses_every_side_pane():
         .toggle_preferred(Region.LEFT_RAIL)
         .toggle_preferred(Region.RIGHT_RAIL)
     )
-    assert resolve(preferred, 91).collapsed == frozenset(
+    assert resolve(preferred, 101).collapsed == frozenset(
         {Region.LEFT_RAIL, Region.RIGHT_RAIL}
     )
-    assert resolve(preferred, 90).collapsed == frozenset(
+    assert resolve(preferred, 100).collapsed == frozenset(
         region_layout.COLLAPSIBLE_REGIONS
     )
 
@@ -127,7 +127,7 @@ def test_priority_target_is_protected_until_every_other_eligible_pane_collapses(
     preferred = RegionLayout()
     protected = resolve(
         preferred,
-        114,
+        124,
         priority_target=Region.RIGHT_RAIL,
     )
     assert protected.collapsed == frozenset({Region.LEFT_RAIL, Region.ITEMS})
@@ -147,8 +147,8 @@ def test_preferred_closed_panes_stay_closed():
 
 def test_repeated_resolution_is_idempotent():
     preferred = RegionLayout()
-    effective = resolve(preferred, 114)
-    assert resolve(effective, 114) == effective
+    effective = resolve(preferred, 124)
+    assert resolve(effective, 124) == effective
 
 
 @pytest.mark.parametrize("width", [59, 30, 1, 0, -1])
@@ -172,7 +172,7 @@ def test_resolver_discards_a_retired_reader_collapse_value():
     preferred = RegionLayout(
         collapsed=frozenset({Region.LEFT_RAIL, Region.CONTENT})
     )
-    effective = resolve(preferred, 145)
+    effective = resolve(preferred, 155)
     assert effective.collapsed == frozenset({Region.LEFT_RAIL})
     assert not effective.is_collapsed(Region.CONTENT)
 
@@ -180,9 +180,9 @@ def test_resolver_discards_a_retired_reader_collapse_value():
 # --- Hysteresis at the collapse boundaries (TASK-22211) -------------------
 #
 # Boundary map (read mode, everything preferred open):
-#   145 = 44 (centre) + 3*5 (grips) + 24 + 32 + 30  -> RIGHT_RAIL collapses < 145
-#   115 = 145 - 30                                  -> LEFT_RAIL collapses < 115
-#    91 = 115 - 24                                  -> ITEMS collapses < 91
+#   155 = 44 (centre) + 3*5 (grips) + 24 + 42 + 30  -> RIGHT_RAIL collapses < 155
+#   125 = 155 - 30                                  -> LEFT_RAIL collapses < 125
+#   101 = 125 - 24                                  -> ITEMS collapses < 101
 # Management mode: 108 -> RIGHT_RAIL, 78 -> LEFT_RAIL.
 # A collapsed pane re-expands only once the width clears its boundary by
 # LAYOUT_HYSTERESIS_WIDTH (the Library reader precedent).
@@ -198,41 +198,41 @@ def test_hysteresis_constant_matches_the_library_reader_precedent():
 
 def test_one_cell_oscillation_at_the_read_inspector_boundary_is_stable():
     preferred = RegionLayout()
-    layout = resolve(preferred, 145)
+    layout = resolve(preferred, 155)
     assert layout.collapsed == frozenset()
     for _ in range(5):
-        layout = resolve(preferred, 144, previous=layout)
+        layout = resolve(preferred, 154, previous=layout)
         assert layout.collapsed == frozenset({Region.RIGHT_RAIL})
-        layout = resolve(preferred, 145, previous=layout)
+        layout = resolve(preferred, 155, previous=layout)
         assert layout.collapsed == frozenset({Region.RIGHT_RAIL})
 
 
 def test_expansion_requires_clearing_the_boundary_by_the_hysteresis_width():
     preferred = RegionLayout()
-    collapsed = resolve(preferred, 144, previous=resolve(preferred, 145))
+    collapsed = resolve(preferred, 154, previous=resolve(preferred, 155))
     assert collapsed.collapsed == frozenset({Region.RIGHT_RAIL})
 
-    still_held = resolve(preferred, 148, previous=collapsed)
+    still_held = resolve(preferred, 158, previous=collapsed)
     assert still_held.collapsed == frozenset({Region.RIGHT_RAIL})
 
-    reopened = resolve(preferred, 149, previous=collapsed)
+    reopened = resolve(preferred, 159, previous=collapsed)
     assert reopened.collapsed == frozenset()
 
     # The expand boundary is itself stable in both directions: once open,
     # dropping one cell below it does not re-collapse (the bare threshold,
-    # 145, governs collapse).
-    assert resolve(preferred, 148, previous=reopened).collapsed == frozenset()
+    # 155, governs collapse).
+    assert resolve(preferred, 158, previous=reopened).collapsed == frozenset()
 
 
 def test_crossing_by_at_least_the_hysteresis_width_still_flips_both_ways():
     preferred = RegionLayout()
-    open_layout = resolve(preferred, 149)
+    open_layout = resolve(preferred, 159)
     assert open_layout.collapsed == frozenset()
 
-    collapsed = resolve(preferred, 144, previous=open_layout)
+    collapsed = resolve(preferred, 154, previous=open_layout)
     assert collapsed.collapsed == frozenset({Region.RIGHT_RAIL})
 
-    reopened = resolve(preferred, 149, previous=collapsed)
+    reopened = resolve(preferred, 159, previous=collapsed)
     assert reopened.collapsed == frozenset()
 
 
@@ -256,19 +256,19 @@ def test_hysteresis_composes_per_region_when_two_boundaries_are_near():
         collapsed=frozenset({Region.RIGHT_RAIL, Region.LEFT_RAIL})
     )
 
-    # LEFT_RAIL's expand boundary (115 + 4) is evaluated with RIGHT_RAIL's
+    # LEFT_RAIL's expand boundary (125 + 4) is evaluated with RIGHT_RAIL's
     # suppressed width already deducted -- per-region state, not one flag.
-    held = resolve(preferred, 118, previous=prev)
+    held = resolve(preferred, 128, previous=prev)
     assert held.collapsed == frozenset({Region.RIGHT_RAIL, Region.LEFT_RAIL})
 
-    left_back = resolve(preferred, 119, previous=prev)
+    left_back = resolve(preferred, 129, previous=prev)
     assert left_back.collapsed == frozenset({Region.RIGHT_RAIL})
 
     # RIGHT_RAIL's own expand boundary is the all-open requirement + 4.
-    assert resolve(preferred, 148, previous=prev).collapsed == frozenset(
+    assert resolve(preferred, 158, previous=prev).collapsed == frozenset(
         {Region.RIGHT_RAIL}
     )
-    assert resolve(preferred, 149, previous=prev).collapsed == frozenset()
+    assert resolve(preferred, 159, previous=prev).collapsed == frozenset()
 
 
 def test_hysteresis_applies_to_the_priority_target_too():
@@ -297,10 +297,10 @@ def test_article_focus_still_collapses_everything_regardless_of_previous():
 
 def test_resolution_with_previous_reaches_a_fixed_point():
     preferred = RegionLayout()
-    layout = resolve(preferred, 144, previous=resolve(preferred, 145))
-    assert resolve(preferred, 144, previous=layout) == layout
-    layout = resolve(preferred, 118, previous=layout)
-    assert resolve(preferred, 118, previous=layout) == layout
+    layout = resolve(preferred, 154, previous=resolve(preferred, 155))
+    assert resolve(preferred, 154, previous=layout) == layout
+    layout = resolve(preferred, 128, previous=layout)
+    assert resolve(preferred, 128, previous=layout) == layout
 
 
 @pytest.mark.parametrize("read_mode", [True, False])
@@ -336,7 +336,7 @@ def test_hysteresis_never_holds_a_pane_open_the_bare_resolver_collapses(
 
 def test_no_previous_state_resolves_exactly_as_before():
     preferred = RegionLayout()
-    for width in (90, 91, 114, 115, 144, 145):
+    for width in (100, 101, 124, 125, 154, 155):
         assert resolve(preferred, width) == resolve(
             preferred, width, previous=None
         )
@@ -348,11 +348,11 @@ def test_no_previous_state_resolves_exactly_as_before():
 @pytest.mark.parametrize(
     ("read_mode", "threshold", "preferred_collapsed", "responsive_region"),
     [
-        (True, 145, frozenset(), Region.RIGHT_RAIL),
-        (True, 115, frozenset({Region.RIGHT_RAIL}), Region.LEFT_RAIL),
+        (True, 155, frozenset(), Region.RIGHT_RAIL),
+        (True, 125, frozenset({Region.RIGHT_RAIL}), Region.LEFT_RAIL),
         (
             True,
-            91,
+            101,
             frozenset({Region.LEFT_RAIL, Region.RIGHT_RAIL}),
             Region.ITEMS,
         ),
@@ -422,7 +422,7 @@ def test_each_boundary_has_bidirectional_four_column_hysteresis(
     [
         (
             True,
-            (95, 119, 149),
+            (105, 129, 159),
             (
                 frozenset({Region.ITEMS}),
                 frozenset({Region.LEFT_RAIL, Region.ITEMS}),
@@ -465,7 +465,7 @@ def test_multiple_panes_reopen_in_reverse_collapse_order(
 @pytest.mark.parametrize(
     ("read_mode", "width", "expected_collapsed"),
     [
-        (True, 149, frozenset()),
+        (True, 159, frozenset()),
         (False, 112, frozenset()),
     ],
 )
@@ -509,7 +509,7 @@ def test_priority_adjustment_is_reversed_for_reopening_candidates():
     )
     second_reopened = resolve(
         preferred,
-        125,
+        135,
         priority_target=Region.RIGHT_RAIL,
         previous=first_reopened,
     )
@@ -522,12 +522,12 @@ def test_priority_adjustment_is_reversed_for_reopening_candidates():
 @pytest.mark.parametrize(
     ("read_mode", "priority_target", "width", "expected_collapsed"),
     [
-        (True, None, 145, frozenset()),
-        (True, None, 144, frozenset({Region.RIGHT_RAIL})),
+        (True, None, 155, frozenset()),
+        (True, None, 154, frozenset({Region.RIGHT_RAIL})),
         (
             True,
             Region.RIGHT_RAIL,
-            114,
+            124,
             frozenset({Region.LEFT_RAIL, Region.ITEMS}),
         ),
         (False, None, 108, frozenset()),

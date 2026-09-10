@@ -112,6 +112,87 @@ def _launch_url(launch: CanvasGatewayLaunch, relative: str) -> str:
     return f"{launch.clean_url}{relative.lstrip('/')}"
 
 
+def test_gateway_cannot_replace_its_authority_snapshot(candidate_snapshot):
+    from dataclasses import replace
+
+    authority = _Authority([])
+    authority.profile_snapshot = candidate_snapshot
+    gateway = CanvasGateway(authority=authority)
+    assert gateway.profile_snapshot is candidate_snapshot
+    with pytest.raises(ValueError, match="canvas_profile_snapshot_mismatch"):
+        CanvasGateway(authority=authority, profile_snapshot=replace(candidate_snapshot))
+
+
+@pytest.mark.asyncio
+@pytest.mark.loopback_network
+async def test_candidate_delivery_uses_captured_bytes_and_private_data(
+    candidate_snapshot, monkeypatch
+):
+    source = '<pre data-canvas-diagram="mermaid">flowchart TD\nA[Tea]</pre>'
+
+    class CandidateAuthority(_Authority):
+        async def resolve_render_plan(self, scope):
+            return compile_canvas_document(
+                source,
+                runtime_profile="canvas-v2-mermaid-1",
+                snapshot=candidate_snapshot,
+            )
+
+        async def read_source(self, scope):
+            return CanvasSourceResponse(
+                source, sha256_utf8(source), "canvas-v2-mermaid-1"
+            )
+
+    gateway = CanvasGateway(
+        authority=CandidateAuthority([]), profile_snapshot=candidate_snapshot
+    )
+
+    # A package/file change after ownership cannot become route authority.
+    def changed_package(*args, **kwargs):
+        raise AssertionError("runtime files were reread")
+
+    monkeypatch.setattr("tldw_chatbook.Canvas.runtime_assets.files", changed_package)
+    monkeypatch.setattr("tldw_chatbook.Canvas.profiles.files", changed_package)
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Canvas.gateway._STATIC_ROOT",
+        SimpleNamespace(joinpath=changed_package),
+    )
+    try:
+        launch = await gateway.open_shell(_scope())
+        async with aiohttp.ClientSession(
+            cookie_jar=aiohttp.CookieJar(unsafe=True)
+        ) as client:
+            await _ready_bridge(client, gateway, launch, prepare=False)
+            response = await client.get(
+                _launch_url(launch, "api/plan"),
+                headers={"Sec-Fetch-Dest": "empty", "Sec-Fetch-Site": "same-origin"},
+            )
+            assert response.status == 200
+            payload = await response.json()
+            assert payload["runtime_data"]["source"] == source
+            assert set(payload["runtime_data"]) == {"manifest", "library", "source"}
+            assert len(set(payload) - {"runtime_data", "compatibility_issues"}) == 8
+            renderer = await client.get(
+                _launch_url(launch, "render"),
+                headers={"Sec-Fetch-Dest": "iframe", "Sec-Fetch-Site": "same-origin"},
+            )
+            assert renderer.status == 200
+            assert "canvas_renderer_v2.js" in await renderer.text()
+            assert "connect-src 'none'" in renderer.headers["Content-Security-Policy"]
+            asset = await client.get(
+                _launch_url(launch, "static/canvas_runtime_worker_v2.js")
+            )
+            assert asset.status == 200
+            assert b"validatePlan" in await asset.read()
+            shell = await client.get(_launch_url(launch, "static/canvas_shell.js"))
+            assert shell.status == 200
+            assert b"canvas:init" in await shell.read()
+    finally:
+        await gateway.aclose()
+
+
 def test_gateway_event_metadata_is_closed_and_source_free() -> None:
     with pytest.raises(ValueError, match="metadata field"):
         CanvasGatewayEvent(
@@ -1217,6 +1298,7 @@ async def test_boot_frame_plan_assets_events_source_and_bridge_are_exactly_scope
         assert (await session.get(_launch_url(launch, "api/events"))).status == 401
 
     assert authority.calls == [
+        ("source", _scope(selection_generation=selection_generation)),
         ("plan", _scope(selection_generation=selection_generation)),
         ("events", _scope(selection_generation=selection_generation)),
         ("source", _scope(selection_generation=selection_generation)),
@@ -1228,6 +1310,62 @@ async def test_boot_frame_plan_assets_events_source_and_bridge_are_exactly_scope
         for path in gateway.routes
     )
     await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transition", ["unchanged", "advanced", "unavailable"])
+@pytest.mark.parametrize("endpoint", ["state", "events"])
+async def test_failed_selected_read_only_recovers_proven_new_live_epoch(
+    transition, endpoint
+):
+    class FailingReadAuthority(_Authority):
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def describe_selection(self, scope):
+            self.entered.set()
+            await self.release.wait()
+            raise RuntimeError("PRIVATE_SELECTED_SOURCE")
+
+        async def read_events(self, scope, *, after_event_id):
+            return await self.describe_selection(scope)
+
+    authority = FailingReadAuthority([])
+    gateway = CanvasGateway(authority=authority)
+    try:
+        launch = await gateway.open_shell(_scope())
+        async with aiohttp.ClientSession(
+            cookie_jar=aiohttp.CookieJar(unsafe=True)
+        ) as session:
+            boot = await _post_json(
+                session,
+                _launch_url(launch, "api/boot"),
+                {"bootstrap": launch.browser_url.split("#boot=", 1)[1]},
+                origin=gateway.origin,
+            )
+            assert boot.status == 200
+            pending = asyncio.create_task(
+                session.get(_launch_url(launch, f"api/{endpoint}"))
+            )
+            await authority.entered.wait()
+            if transition == "advanced":
+                gateway.change_selection(
+                    browser_session_id="browser-a",
+                    scope=_scope(revision_id="revision-new"),
+                )
+            elif transition == "unavailable":
+                gateway.mark_browser_session_unavailable("browser-a")
+            authority.release.set()
+            response = await pending
+            assert response.status == (409 if transition == "advanced" else 503)
+            assert await response.json() == {
+                "error": "selection_changed"
+                if transition == "advanced"
+                else "gateway_unavailable"
+            }
+    finally:
+        await gateway.aclose()
 
 
 @pytest.mark.loopback_network
@@ -2709,6 +2847,21 @@ async def test_console_runtime_owns_one_lazy_gateway_and_disposes_it() -> None:
     await first.start()
     await runtime.dispose()
     assert first.started is False
+
+
+@pytest.mark.asyncio
+async def test_served_child_with_failed_control_never_opens_native_gateway():
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    runtime = ConsoleRuntime(
+        SimpleNamespace(_served_canvas_mode=True, served_canvas_control=None)
+    )
+    try:
+        assert runtime.ensure_canvas_gateway(authority=_Authority([])) is None
+    finally:
+        await runtime.dispose()
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,31 @@
+{
+  "source_changes": [
+    "tldw_chatbook/TTS/backends/higgs.py",
+    "tldw_chatbook/TTS/backends/alltalk.py",
+    "tldw_chatbook/TTS/legacy_catalogs.py (root-owned)",
+    "tldw_chatbook/UI/Speech/speech_settings_model.py",
+    "tldw_chatbook/UI/Speech/speech_settings_mixin.py",
+    "Tests/TTS/test_local_provider_contracts.py"
+  ],
+  "failure_first": "Pinned adapter contract baseline16 failed/1 passed; old Settings alias defaults2 failed.",
+  "verified_targeted_run": "76 passed: Tests/TTS/test_local_provider_contracts.py + Tests/UI/test_speech_settings_contracts.py",
+  "fix_scope": "Current Higgs torch_dtype plus older dtype signature; awaited AllTalk HTTP initialize; six OpenAI aliases/default and opaque custom voice IDs; active Settings selectors share catalog, historical Studio migration sentinel unchanged.",
+  "logs": [
+    {
+      "original_path": "/private/tmp/tts-macos-burndown/alltalk/logs/adapter-contracts-red.log",
+      "sha256": "a1cbee178427708160ca0c27a070fd1161456c42fc16bda2615299e7dfa7bc01"
+    },
+    {
+      "original_path": "/private/tmp/tts-macos-burndown/alltalk/logs/adapter-contracts-green.log",
+      "sha256": "dca1ec2927f6647b00f52278d2bf34da5c78b0669722587bf005bb8838e46244"
+    },
+    {
+      "original_path": "/private/tmp/tts-macos-burndown/alltalk/logs/settings-aliases-red.log",
+      "sha256": "a31381e60421b1f33d351748a1b29216f1a0a76b4c2974d0f3cf9470e97e07ed"
+    },
+    {
+      "original_path": "/private/tmp/tts-macos-burndown/alltalk/logs/settings-aliases-green.log",
+      "sha256": "6dc7b68c669f8ddf04358533cc3613ea5f096ccc4155ee97ac024ea15594ae03"
+    }
+  ]
+}

@@ -1,0 +1,101 @@
+[
+  {
+    "case": "active-handler",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/fixed/http_shutdown_test",
+      "active-handler",
+      "64807"
+    ],
+    "returncode": 0,
+    "stdout": "audiocpp_server listening on http://127.0.0.1:64807\naudiocpp_server stopped\nPASS active-handler\n",
+    "stderr": "audiocpp_server failed to send error response: socket send failed\n"
+  },
+  {
+    "case": "stream-callback",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/fixed/http_shutdown_test",
+      "stream-callback",
+      "64809"
+    ],
+    "returncode": 0,
+    "stdout": "audiocpp_server listening on http://127.0.0.1:64809\naudiocpp_server stopped\nPASS stream-callback\n",
+    "stderr": "audiocpp_server streaming response failed: socket send failed\naudiocpp_server failed to send error response: socket send failed\n"
+  },
+  {
+    "case": "accept-loop-exception",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/fixed/http_shutdown_test",
+      "accept-loop-exception",
+      "64811"
+    ],
+    "returncode": 0,
+    "stdout": "audiocpp_server listening on http://127.0.0.1:64811\nPASS accept-loop-exception\n",
+    "stderr": "audiocpp_server failed to send error response: socket send failed\n"
+  },
+  {
+    "case": "idle-client",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/fixed/http_shutdown_test",
+      "idle-client",
+      "64813"
+    ],
+    "returncode": 0,
+    "stdout": "audiocpp_server listening on http://127.0.0.1:64813\naudiocpp_server stopped\nPASS idle-client\n",
+    "stderr": "audiocpp_server failed to send error response: socket send failed\n"
+  },
+  {
+    "case": "partial-header",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/fixed/http_shutdown_test",
+      "partial-header",
+      "64815"
+    ],
+    "returncode": 0,
+    "stdout": "audiocpp_server listening on http://127.0.0.1:64815\naudiocpp_server stopped\nPASS partial-header\n",
+    "stderr": "audiocpp_server failed to send error response: socket send failed\n"
+  },
+  {
+    "case": "partial-body",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/fixed/http_shutdown_test",
+      "partial-body",
+      "64817"
+    ],
+    "returncode": 0,
+    "stdout": "audiocpp_server listening on http://127.0.0.1:64817\naudiocpp_server stopped\nPASS partial-body\n",
+    "stderr": "audiocpp_server failed to send error response: socket send failed\n"
+  },
+  {
+    "case": "idle",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/fixed/http_shutdown_test",
+      "idle",
+      "64821"
+    ],
+    "returncode": 0,
+    "stdout": "audiocpp_server listening on http://127.0.0.1:64821\naudiocpp_server stopped\nPASS idle\n",
+    "stderr": ""
+  },
+  {
+    "case": "completed-request",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/fixed/http_shutdown_test",
+      "completed-request",
+      "64823"
+    ],
+    "returncode": 0,
+    "stdout": "audiocpp_server listening on http://127.0.0.1:64823\naudiocpp_server stopped\nPASS completed-request\n",
+    "stderr": ""
+  },
+  {
+    "case": "handler-exception",
+    "command": [
+      "/private/tmp/tts-macos-burndown/native/transport-tests/fixed/http_shutdown_test",
+      "handler-exception",
+      "64827"
+    ],
+    "returncode": 0,
+    "stdout": "audiocpp_server listening on http://127.0.0.1:64827\naudiocpp_server stopped\nPASS handler-exception\n",
+    "stderr": ""
+  }
+]

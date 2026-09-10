@@ -1,0 +1,16 @@
+{
+  "site_packages": "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages",
+  "package_files_before": {
+    "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/unidic/download.py": "7a15072dce1fd9d269ba89eacb43e44ed7d5a56d690e274bfd0169d62281adbe",
+    "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/unidic/unidic.py": "7a696488884baa212a0494ba2adbec22da59eedb35be1ce74e48221338ab8c4d",
+    "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/unidic/__init__.py": "8a3e798489319de7f732b8f635fe980c2d0317739ed93828c90995d083da5e9e",
+    "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/unidic-1.1.0.dist-info/METADATA": "f23b888cf2a21757bdcbf4352e9839845678c5435e4903fcd7a1a2f71c92d6fa",
+    "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/misaki/ja.py": "5870e02433629475e95eaa0b023ac4948a9335e3dafbda0b6641156516c03c22",
+    "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/misaki/cutlet.py": "7695fc7d853ae4e99679dff4ca0c8404d4804a6fb1059a9d6ad02baeabc4d4de",
+    "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/fugashi/fugashi.cpython-312-darwin.so": "1df40b1149d09dcab9948b8561139d00e7f54679dddf100985eda4f45e381aba"
+  },
+  "unidic_dicdir_exists": false,
+  "unidic_dicdir_is_symlink": false,
+  "inspected_call_chain": "misaki 0.9.4 JAG2P default cutlet -> misaki.cutlet.Cutlet.__init__ -> fugashi.Tagger() -> installed unidic.DICDIR",
+  "download_metadata_declared_by_installed_package": "https://raw.githubusercontent.com/polm/unidic-py/master/dicts.json"
+}

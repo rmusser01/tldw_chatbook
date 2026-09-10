@@ -685,6 +685,16 @@ EXPECTED_CLOCK_ROOTS: frozenset[tuple[str, str, str | None, str]] = frozenset(
             "LibraryFileNotesWorkspace",
             "_start_poll",
         ),
+        # task-32121: the folder-change busy row repaints its running entry
+        # count on a patience tick; the interval only exists while a
+        # structural wait is outstanding and is stopped by
+        # _end_structural_wait, on_unmount and shutdown.
+        (
+            "set_interval",
+            "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",
+            "LibraryFileNotesWorkspace",
+            "_update_root_surface",
+        ),
         (
             "set_interval",
             "tldw_chatbook/Widgets/Persona_Widgets/persona_buddy_widget.py",

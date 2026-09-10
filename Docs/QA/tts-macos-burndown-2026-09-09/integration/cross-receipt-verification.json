@@ -1,0 +1,28 @@
+{
+  "packaged_artifact_hashes_verified": 40,
+  "serialized_reference_round_trips_equal": [
+    "wheel/final-wheel-verify.json",
+    "wheel/runs/pytorch-cpu-wav/evidence.json",
+    "wheel/runs/pytorch-mps-wav/evidence.json",
+    "wheel/runs/onnx-cpu-mp3/evidence.json"
+  ],
+  "live_runtime_source_map_matches_final_wheel": [
+    {
+      "run": "pytorch-cpu-wav",
+      "all_package_python_files_match_final_wheel": true,
+      "file_count": 2265
+    },
+    {
+      "run": "pytorch-mps-wav",
+      "all_package_python_files_match_final_wheel": true,
+      "file_count": 2265
+    },
+    {
+      "run": "onnx-cpu-mp3",
+      "all_package_python_files_match_final_wheel": true,
+      "file_count": 2265
+    }
+  ],
+  "forbidden_binary_audio_profile_files": [],
+  "total_package_bytes": 676550
+}
