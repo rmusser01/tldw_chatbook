@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 from textual.app import App, ComposeResult
 
+from Tests.UI.consolidated_css import APP_STYLESHEETS
+
 from tldw_chatbook.UI.Watchlists_Modules.pane_grip import (
     RegionToggled,
     WatchlistsPaneGrip,
@@ -17,12 +19,7 @@ from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
 class PaneGripApp(App[None]):
     """Minimal host which records pane-toggle messages."""
 
-    CSS_PATH = str(
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "tldw_cli_modular.tcss"
-    )
+    CSS_PATH = [str(sheet) for sheet in APP_STYLESHEETS]
 
     def __init__(self, region: Region, *, expanded: bool) -> None:
         super().__init__()

@@ -17,6 +17,8 @@ from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Button, Input, ListView, Select, Static
 
+from Tests.UI.consolidated_css import APP_STYLESHEETS
+
 from tldw_chatbook.UI.Watchlists_Modules.article_list import (
     ArticleListPane,
     NextItemsPageRequested,
@@ -100,12 +102,7 @@ class ArticleListHarness(App):
 
 
 class ProductionCssArticleListHarness(ArticleListHarness):
-    CSS_PATH = str(
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "tldw_cli_modular.tcss"
-    )
+    CSS_PATH = [str(sheet) for sheet in APP_STYLESHEETS]
 
     def compose(self) -> ComposeResult:
         pane = ArticleListPane(
