@@ -1,5 +1,12 @@
+import sqlite3
+from contextlib import closing
+
 import pytest
-from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.DB.Subscriptions_DB import (
+    SubscriptionError,
+    SubscriptionsDB,
+    _CURRENT_SCHEMA_VERSION,
+)
 
 
 @pytest.fixture
@@ -857,3 +864,128 @@ def test_get_url_snapshots_returns_empty_when_none_exist(db):
     rows = db.get_url_snapshots(source_id, "https://a.example/never-checked", limit=2)
 
     assert rows == []
+
+
+# --- task-32274: schema_version tolerates the current row beside stale ones ---
+#
+# Live evidence: a scratch profile's schema_version table ended up holding
+# rows [1, 2] after an abnormal app exit (the fresh-create path's
+# `INSERT OR IGNORE ... VALUES (2)` and the migration path's `DELETE` + insert
+# can disagree about what "the" version row is). The old check
+# (`versions != [_CURRENT_SCHEMA_VERSION] -> raise`) turned that into a raw
+# crash at boot with no recovery hint.
+
+
+def _seed_schema_version(path, versions) -> None:
+    """Write only a bare schema_version table with the given rows.
+
+    Every other table the constructor's `CREATE TABLE IF NOT EXISTS`` script
+    expects is created fresh by `_initialize_schema` itself once the version
+    check passes, so nothing else needs seeding.
+    """
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY NOT NULL)")
+        for version in versions:
+            conn.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
+        conn.commit()
+
+
+def test_schema_version_current_plus_stale_row_normalizes_to_current(tmp_path):
+    path = tmp_path / "current-plus-stale.db"
+    _seed_schema_version(path, [1, _CURRENT_SCHEMA_VERSION])
+
+    db = SubscriptionsDB(path)
+    try:
+        assert [row[0] for row in db.conn.execute("SELECT version FROM schema_version")] == [
+            _CURRENT_SCHEMA_VERSION
+        ]
+    finally:
+        db.close()
+
+    # Normalization is durable, not just an in-memory view.
+    with closing(sqlite3.connect(path)) as conn:
+        assert [row[0] for row in conn.execute("SELECT version FROM schema_version")] == [
+            _CURRENT_SCHEMA_VERSION
+        ]
+
+
+def test_schema_version_unknown_future_version_raises_actionable_error(tmp_path):
+    path = tmp_path / "future-version.db"
+    _seed_schema_version(path, [3])
+
+    with pytest.raises(SubscriptionError) as exc_info:
+        SubscriptionsDB(path)
+
+    message = str(exc_info.value)
+    assert str(path) in message
+    assert "[3]" in message
+    assert str(_CURRENT_SCHEMA_VERSION) in message
+
+
+def test_schema_version_unknown_version_beside_v1_still_raises(tmp_path):
+    """[1, 3] contains no current-version row and isn't a pure v1 table, so
+    it must not silently take the v1 migration path -- migrating a v1 table
+    that also carries a version this build has never heard of would run
+    untested code over unknown data.
+    """
+    path = tmp_path / "unknown-plus-v1.db"
+    _seed_schema_version(path, [1, 3])
+
+    with pytest.raises(SubscriptionError) as exc_info:
+        SubscriptionsDB(path)
+
+    assert "[1, 3]" in str(exc_info.value)
+
+
+def test_reopening_a_freshly_migrated_v1_db_does_not_produce_two_rows(tmp_path):
+    """Step 4 trigger attempt (a): a second constructor call immediately
+    after the first's v1->v2 migration committed. Documents that this
+    sequence does NOT reproduce [1, 2] on its own (the migration is one
+    atomic transaction) -- the normalization above is defense for however
+    the two-row state is actually reached (a cross-build INSERT OR IGNORE
+    beside an unmigrated row per the task's live evidence), not a fix for a
+    race in this constructor itself.
+    """
+    from Tests.DB.test_subscriptions_db_briefing_provenance_migration import _build_v1
+
+    path = tmp_path / "reopen-after-migration.db"
+    _build_v1(path)
+
+    first = SubscriptionsDB(path)
+    first.close()
+
+    second = SubscriptionsDB(path)
+    try:
+        assert [row[0] for row in second.conn.execute("SELECT version FROM schema_version")] == [
+            _CURRENT_SCHEMA_VERSION
+        ]
+    finally:
+        second.close()
+
+
+def test_interrupting_the_migration_version_swap_rolls_back_not_duplicates(tmp_path):
+    """Step 4 trigger attempt (b): call the migration's own DELETE+INSERT
+    statements directly and blow up between them without committing, the
+    way a process kill mid-migration would. Because the whole migration
+    (including this swap) runs inside one SQLite transaction, an
+    uncommitted interruption rolls back to the pre-migration state -- it
+    does not leave [1, 2] on disk either. Recorded per the brief: neither
+    trigger-reproduction attempt (a) or (b) produces the two-row state
+    through this constructor's own code paths; the normalization fix
+    still matters because the state is reachable from outside them (an
+    older build's unconditional insert, per the live evidence).
+    """
+    with closing(sqlite3.connect(tmp_path / "interrupted.db")) as conn:
+        conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY NOT NULL)")
+        conn.execute("INSERT INTO schema_version (version) VALUES (1)")
+        conn.commit()
+
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("DELETE FROM schema_version")
+        try:
+            raise RuntimeError("simulated crash before the version INSERT")
+        except RuntimeError:
+            pass
+        conn.rollback()
+
+        assert [row[0] for row in conn.execute("SELECT version FROM schema_version")] == [1]
