@@ -474,7 +474,6 @@ async def test_a_wide_row_does_not_repeat_its_destination() -> None:
         assert not app.query(".note-import-row-destination")
 
 
-
 # --- task-32174 (last-used picker start directory) -------------------------
 #
 # Import once and Keep a folder synced both open a vendored, plain
@@ -719,3 +718,51 @@ async def test_notes_sync_remembers_the_folder_it_selected(tmp_path, monkeypatch
         controller._library_notes_sync_controller.snapshot.setup.folder
         == str(picked_folder)
     )
+
+
+# --- task-32176 -----------------------------------------------------------
+
+
+async def test_group_actions_say_they_only_change_this_page() -> None:
+    """A bulk action settles the rendered page, so its label says so."""
+    app = _ImportHost(
+        _import_snapshot(
+            phase="review",
+            status_line="Review 2 items before import.",
+            preview_items=(
+                _item(1),
+                _item(
+                    2,
+                    classification="unsupported",
+                    action="skip",
+                    reason="This file type is not supported.",
+                ),
+            ),
+        )
+    )
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        labels = {
+            str(button.label)
+            for button in app.query(".note-import-group-action").results(Button)
+        }
+        assert labels == {"Skip all on this page", "Create all on this page"}
+
+
+def test_the_canvas_takes_its_non_importable_set_from_the_planner_enum() -> None:
+    """task-32176: one source of truth for what cannot be imported."""
+    from tldw_chatbook.Notes.note_import_plan_models import (
+        NON_IMPORTABLE_CLASSIFICATIONS,
+        ImportClassification,
+    )
+    from tldw_chatbook.Widgets.Library import library_note_import_canvas
+
+    assert library_note_import_canvas._NON_IMPORTABLE == {
+        classification.value for classification in NON_IMPORTABLE_CLASSIFICATIONS
+    }
+    # Every classification still needs a group label, which is the third place
+    # the set used to be spelled out by hand.
+    assert set(library_note_import_canvas._CLASSIFICATION_LABELS) == {
+        classification.value for classification in ImportClassification
+    }
