@@ -116,7 +116,11 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                 # the only globals left.
                 assert (
                     screen.query_one(AppFooterStatus).shortcut_text
-                    == "/ focus search | i import content | n new note | "
+                    # task-32138: ctrl+n now works on the landing too (not
+                    # just inside Notes), so the landing advertises the
+                    # same "ctrl+n new note" copy instead of a bare `n`
+                    # that worked nowhere else.
+                    == "/ focus search | i import content | ctrl+n new note | "
                     "F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit"
                 )
                 for _ in range(300):
@@ -222,7 +226,9 @@ def test_library_shortcuts_advertise_the_evidence_card_keys():
     assert LibraryScreen.LIBRARY_LANDING_SHORTCUTS == (
         ("/", "focus search"),
         ("i", "import content"),
-        ("n", "new note"),
+        # task-32138: ctrl+n now works on the landing too (not just inside
+        # Notes), so the landing advertises the same key both places do.
+        ("ctrl+n", "new note"),
         ("F6", "next pane"),
     )
 
