@@ -80,8 +80,10 @@ from tldw_chatbook.UI.Library_Modules.library_notes_state import (
 #: coordinator instances -- see below), 2 BLOCKED (shared shell focus state a
 #: SECOND subsystem writes -- see below), so 100 move. Pinned here so a field
 #: silently added to or dropped from the dataclass fails loudly instead of
-#: quietly resizing the shim surface this file checks.
-_EXPECTED_NOTES_STATE_FIELD_COUNT = 100
+#: quietly resizing the shim surface this file checks. +1 for
+#: ``navigation_focus_intent`` (task-32100), which records whether the
+#: locator behind ``navigation_status`` will take focus when it lands.
+_EXPECTED_NOTES_STATE_FIELD_COUNT = 101
 
 #: The 3 WIRING attributes the state PR deliberately left on ``LibraryScreen``
 #: (the ``_conversation_reader_controller``/``_library_media_browse_

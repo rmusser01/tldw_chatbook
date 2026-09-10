@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from textual.widgets import TextArea
+from textual.widgets import Input, TextArea
 
 from Tests.UI.test_library_shell import (
     LibraryHarness,
@@ -272,3 +272,169 @@ async def test_a_timed_out_load_leaves_the_destination_the_user_moved_to(monkeyp
         assert await load is LibraryEntryReconcileResult.SUPERSEDED
         assert screen._notes_state.load_state == settled_state
         assert screen._notes_state.load_message != LIBRARY_NOTE_LOAD_TIMEOUT_COPY
+
+
+# --- The tree locator the open starts must survive the click's own focus ----
+#
+# task-32100: opening a note calls ``_begin_library_note_load``, which starts
+# ``_locate_library_notes_tree_target(focus=False)`` to reveal and mark the
+# note's row in the folder tree. The row click's OWN ``DescendantFocus`` then
+# arrived while "Locating note…" was showing and was read as "the user took
+# control", superseding the locator every single time -- traced live on dev as
+# ``supersede -> 3 / locator start gen=3 / supersede -> 4 / locator end ->
+# False``. Only the real gesture reproduces it (a direct locator call posts no
+# focus event), so these drive real clicks over the real repository.
+
+
+def _folder_notes_app(tmp_path, titles: tuple[str, ...]):
+    """Build the harness app with ``titles`` filed in one collapsed folder."""
+    db = CharactersRAGDB(tmp_path / "crit8-locator.db", client_id="crit8")
+    repository = LocalNoteFolderRepository(db)
+    folder = repository.create_folder(name="Research", parent_id=None)
+    note_ids = []
+    for title in titles:
+        note_id = db.add_note(title, f"- body of {title}\n")
+        assert note_id is not None
+        repository.attach_manual(folder_id=folder.folder_id, note_id=note_id)
+        note_ids.append(note_id)
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.chachanotes_db = db
+    app.notes_service = NotesInteropService(tmp_path, "crit8", global_db_to_use=db)
+    app.notes_scope_service = NotesScopeService(
+        app.notes_service,
+        None,
+        folder_repository=repository,
+    )
+    return app, db, folder, note_ids
+
+
+async def _filter_notes(pilot, screen, query: str) -> None:
+    """Reach notes inside a collapsed folder the way a user does."""
+    for _ in range(200):
+        await pilot.pause(0.02)
+        if screen.query("#library-notes-filter"):
+            break
+    else:
+        pytest.fail("the Notes filter never mounted")
+    await pilot.press("/")
+    screen.query_one("#library-notes-filter", Input).value = query
+    await pilot.pause()
+    await pilot.press("enter")
+
+
+@pytest.mark.asyncio
+async def test_opening_a_filtered_note_reveals_its_folder_in_the_tree(tmp_path):
+    app, db, folder, (note_id,) = _folder_notes_app(tmp_path, (NOTE_TITLE,))
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(170, 48)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+            await _filter_notes(pilot, screen, "Reading")
+            for _ in range(200):
+                await pilot.pause(0.02)
+                if note_id in _note_rows(screen):
+                    break
+            else:
+                pytest.fail("the filter never surfaced the nested note")
+            assert folder.folder_id not in screen._notes_state.tree_expanded_ids
+
+            await _click_note_row(pilot, screen, note_id)
+            for _ in range(200):
+                await pilot.pause(0.02)
+                if (
+                    folder.folder_id in screen._notes_state.tree_expanded_ids
+                    and not screen._notes_state.navigation_status
+                ):
+                    break
+            else:
+                pytest.fail(
+                    "opening the note never revealed its folder; expanded is "
+                    f"{screen._notes_state.tree_expanded_ids!r}, status is "
+                    f"{screen._notes_state.navigation_status!r}"
+                )
+            assert note_id in screen._notes_state.tree_selected_placement_id
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_a_second_open_supersedes_the_older_locator_not_its_own_load(tmp_path):
+    """The second click cancels the first reveal and still opens its note.
+
+    Now that a locator survives the click that started it (above), a second
+    click lands while the first one is genuinely in flight -- so the fence it
+    raises has to reach the older locator only. The detail load is fenced by
+    its own identity, never by the navigation generation (task-32050).
+    """
+    app, db, folder, (first_id, second_id) = _folder_notes_app(
+        tmp_path, ("Reading list", "Reading queue")
+    )
+    service = app.notes_scope_service
+    original_locate = service.locate_note_tree_placement
+    held = asyncio.Event()
+    entered = asyncio.Event()
+
+    async def blocked_locate(**kwargs):
+        entered.set()
+        await held.wait()
+        return await original_locate(**kwargs)
+
+    service.locate_note_tree_placement = blocked_locate
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(170, 48)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+            await _filter_notes(pilot, screen, "Reading")
+            for _ in range(200):
+                await pilot.pause(0.02)
+                if {first_id, second_id} <= set(_note_rows(screen)):
+                    break
+            else:
+                pytest.fail("the filter never surfaced both nested notes")
+
+            await _click_note_row(pilot, screen, first_id)
+            for _ in range(200):
+                await pilot.pause(0.02)
+                if entered.is_set():
+                    break
+            else:
+                pytest.fail("the first open never started its locator")
+            older_generation = screen._notes_state.navigation_generation
+
+            await _click_note_row(pilot, screen, second_id)
+            assert screen._notes_state.navigation_generation > older_generation
+            held.set()
+
+            for _ in range(200):
+                await pilot.pause(0.02)
+                editors = screen.query("#library-note-body")
+                if editors and "Reading queue" in editors.first(TextArea).text:
+                    break
+            else:
+                pytest.fail(
+                    "the second note never opened; load state is "
+                    f"{screen._notes_state.load_state!r}"
+                )
+            assert screen._notes_state.selected_note_id == second_id
+            # The newer locator owns the mark; the superseded one wrote
+            # nothing on its way out.
+            for _ in range(200):
+                await pilot.pause(0.02)
+                if second_id in screen._notes_state.tree_selected_placement_id:
+                    break
+            else:
+                pytest.fail(
+                    "the second open never marked its row; placement is "
+                    f"{screen._notes_state.tree_selected_placement_id!r}"
+                )
+            assert first_id not in screen._notes_state.tree_selected_placement_id
+    finally:
+        db.close_connection()

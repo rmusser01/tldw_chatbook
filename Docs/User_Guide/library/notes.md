@@ -108,7 +108,10 @@ editor's own Back control returns to its list.
   dates, version details, copy/export actions, and Delete. Save status and
   frequent actions remain in the header. On wide terminals the
   top `‹ Library / Notes` cue returns to the exact prior list row, scope, and
-  scroll positions; on compact terminals use `‹ Back to list`.
+  scroll positions; on compact terminals use `‹ Back to list`. While you are
+  typing, the title, body and keyword fields are each their own authority: a
+  background refresh never rewrites the field under your hands, and it never
+  moves your place in the Items list beside it.
 - **New note view** — opens from the rail's "New note": a "Blank note"
   button plus a "From a template" list.
 - **Add from files…** — asks whether this is an **Import once** or a lasting
@@ -301,6 +304,10 @@ snapshot. Each level loads independently in fixed pages of 20:
   control while loading and moves it only after the requested rows arrive.
 - Collapsing a folder keeps its fresh branch pages for a quick re-expand.
   Mutations and stale results refresh only the affected folder branches.
+- Opening a note reveals where it lives: while the note loads, the status line
+  shows **Locating note…** and the tree expands the folders on the way to it
+  and marks its row. Open a second note before the first reveal lands and only
+  the older reveal is dropped — the note you just chose still opens.
 
 Filtering uses the same placement-aware hierarchy and bounded pages: matching
 notes retain the ancestors needed to understand their location, duplicate
@@ -924,3 +931,11 @@ the re-merged wave: an unterminated ``` or ~~~ fence now keeps the rest of a
 note as code, so a `[[link]]` after it is neither recorded nor rewritten;
 Obsidian vault detection is stated as POSIX-only, since the Windows
 discovery adapter never reports a vault (task-32178).)*
+
+*Verified against fix/library-crit8-riders-notes — 2026-09-10 (task-32100:
+opening a note now reveals and marks its row in the folder tree — the reveal
+used to be abandoned by the row click's own focus change, every time.)*
+
+*Verified against fix/library-crit8-riders-notes — 2026-09-10 (task-32106: a
+Notes refresh landing mid-edit repaints the Items list, keeps its scroll
+offset, and leaves the focused editor field alone.)*

@@ -470,6 +470,27 @@ def _library_canvas_kind_owns_route(screen: "LibraryScreen", kind: str) -> bool:
     return selected in owners
 
 
+def _library_notes_list_offset(screen: Any) -> tuple[int, int] | None:
+    """The Notes Items pane's own scroll position, or None when unmounted."""
+    listing = screen.query("#library-notes-list")
+    if not listing:
+        return None
+    offset = listing.first(Widget).scroll_offset
+    return (offset.x, offset.y)
+
+
+def _apply_library_notes_list_offset(
+    screen: Any, offset: tuple[int, int]
+) -> None:
+    """Put the Notes Items pane back where the reader left it."""
+    listing = screen.query("#library-notes-list")
+    if not listing:
+        return
+    listing.first(Widget).scroll_to(
+        x=offset[0], y=offset[1], animate=False, force=True, immediate=True
+    )
+
+
 def _sync_library_canvas(
     screen: "LibraryScreen",
     kind: str,
@@ -781,6 +802,32 @@ def _sync_library_canvas(
                     _explicit()
 
             follow_up = _restore_then_explicit
+        elif kind == "notes" and notes_editor_owned:
+            # task-32106: the editor-owned skip above protects the WORK pane,
+            # but the Items pane beside it is a separate canvas and still
+            # recomposes -- and its scroll offset went back to the top with
+            # it, mid-sentence (measured at 100x30: a 6-row offset read 0
+            # after one sync). Re-apply the offset only. Restoring FOCUS is
+            # exactly what the skip exists to prevent, so this path never
+            # touches it.
+            list_offset = _library_notes_list_offset(screen)
+
+            def _restore_list_offset(
+                _offset: tuple[int, int] | None = list_offset,
+                _explicit: Callable[[], bool | None] | None = then,
+            ) -> None:
+                if _explicit is not None:
+                    _explicit()
+                if _offset is not None:
+                    # Deferred for the same reason the identity restore
+                    # defers its own offset: the recomposed rows have no
+                    # layout yet, so the container clamps the offset to 0.
+                    screen.call_after_refresh(
+                        _apply_library_notes_list_offset, screen, _offset
+                    )
+
+            if list_offset is not None or then is not None:
+                follow_up = _restore_list_offset
         elif kind == "media":
             # task-31567: the Media equivalent of the Notes restore above,
             # and for the same reason -- a canvas-scoped sync recomposes the

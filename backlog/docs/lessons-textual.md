@@ -608,6 +608,18 @@ paths skip it. The pinned test is
 `test_click_outside_closes_the_menu_without_dispatching`, which asserts focus is NOT
 the opener after the click.
 
+**The `DescendantFocus` MESSAGE lands the other way round (task-32100, 2026-09-10).**
+`set_focus` runs before the press, but the event it posts is a queued message, so a
+`DescendantFocus` handler runs AFTER the `Button.Pressed` handler for the same click.
+A handler that reads a focus change as "the user took control" therefore revokes work
+the press handler started ~20 ms earlier. Library Notes: clicking a note row started a
+folder-tree locator, and the click's own focus event then superseded it — abandoned on
+every open, traced as `supersede -> 3 / locator start gen=3 / supersede -> 4 / locator
+end -> False`. Fence background work on the focus intent only when that work will
+actually take focus; work that just repaints has no stake in it. Only the real gesture
+reproduces this — calling the same coroutine directly from a test posts no focus event
+and passes.
+
 ## `run_worker(exclusive=True)` CANCELS the group — it never queues behind it
 
 **schedules-redesign PR-3 Qodo round, 2026-09-03.** The Automations pane's in-place

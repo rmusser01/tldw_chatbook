@@ -429,6 +429,11 @@ class LibraryNotesState:
     tree_filter_state: LibraryNotesFilterState | None = None
     filter_navigation_generation: int | None = None
     navigation_status: str = ""
+    # task-32100: whether the locator behind ``navigation_status`` intends to
+    # take focus when it lands. A ``focus=False`` locator (the one every note
+    # open starts) has no focus stake, so a foreign focus change must not
+    # revoke it -- the row click that STARTED it is itself such a change.
+    navigation_focus_intent: bool = False
     notice: str = ""
     tree_expanded_ids: set[str] = field(default_factory=set)
     tree_branches: dict[NotesBranchKey, NotesBranchSliceState] = field(

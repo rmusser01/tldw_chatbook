@@ -6,6 +6,8 @@ and 32072 -- the polish-shell group of the critique-8 fix wave.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from textual.widgets import Button, Input, Static, TextArea
 
@@ -15,6 +17,9 @@ from tldw_chatbook.Library.library_rail_state import LibraryLifecycle
 from tldw_chatbook.UI.Library_Modules.canvas_sync import _sync_library_canvas
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library import LibraryLandingCanvas
+from tldw_chatbook.Widgets.Library.library_notes_canvas import (
+    _NOTE_EDITOR_INPUT_IDS,
+)
 from tldw_chatbook.Widgets.Library.library_note_work_pane import LibraryNoteWorkPane
 from Tests.UI.test_destination_shells import (
     StaticLibraryConversationScopeService,
@@ -1044,3 +1049,149 @@ def test_use_it_in_console_unlocks_on_a_selection_not_on_bare_results() -> None:
 
     screen._rag_search_state.selected_result_id = "r1"
     assert screen._library_landing_canvas_state().search_result_selected is True
+
+
+# --- task-32106: the editor-owned skip protects the editor, not the list ---
+
+
+def _many_notes(count: int = 40) -> list[dict[str, str]]:
+    """Enough notes for the Items pane to actually scroll at 100 columns."""
+    return [
+        {
+            "id": f"n-{index}",
+            "title": f"Note {index:02d}",
+            "content": f"body {index}",
+            "last_modified": "2026-09-01T00:00:00Z",
+        }
+        for index in range(count)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_title_tab_body_burst_lands_the_body_in_the_body_field():
+    """task-32106 AC#1: the reported gesture, as one uninterrupted burst.
+
+    The title, the Tab and the body arrive as one batch of key events, with a
+    Notes refresh landing at the Tab boundary -- the moment the title stops
+    being its own authority and a snapshot could be written over it. Reported
+    live as the body being appended to the title; the guards from task-32062
+    (the recompose skip plus the per-field ``has_focus`` checks) are what keep
+    it apart. Textual 8's parser has no burst-to-Paste heuristic, so the keys
+    themselves stay ordered no matter how fast they arrive.
+    """
+    gates = _first_note_gates()
+    app = _new_fresh_profile_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(235, 52)) as pilot:
+            screen = _active_library_screen(host)
+            await _open_the_first_note_editor(screen, pilot, gates)
+            screen.query_one("#library-note-title", Input).focus()
+            await pilot.pause()
+
+            await _type(pilot, "My first note")
+            _sync_library_canvas(screen, "notes")
+            await pilot.press(
+                "tab", *("space" if c == " " else c for c in "hello from jordan")
+            )
+            await pilot.pause()
+
+            assert screen.query_one("#library-note-title", Input).value == (
+                "My first note"
+            )
+            assert screen.query_one("#library-note-body", TextArea).text == (
+                "hello from jordan"
+            )
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_the_keywords_field_is_its_own_authority_while_focused():
+    """task-32106 AC#2: the same rule as the title, one field over.
+
+    Shipped by commit 97626354ee (PR #2531 review) and unpinned until now:
+    ``apply_session_state`` used to write ``wide_keywords.value`` from a
+    snapshot that could be a keystroke behind, and assigning ``Input.value``
+    clamps the cursor to the shorter text -- so the rest of what was being
+    typed landed at a stale position.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=WIDE_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_tree_note(screen, pilot)
+        work = screen.query_one("#library-note-work-pane", LibraryNoteWorkPane)
+        keywords = screen.query_one("#library-note-keywords", Input)
+        keywords.focus()
+        await pilot.pause()
+        with keywords.prevent(Input.Changed):
+            keywords.value = "retro, half-typed"
+
+        state = work.presentation_state
+        assert state is not None
+        stale = replace(
+            state,
+            snapshot=replace(
+                state.snapshot,
+                draft=replace(state.snapshot.draft, keywords_text="stale"),
+            ),
+        )
+        work.apply_session_state(stale)
+        await pilot.pause()
+
+        assert screen.query_one("#library-note-keywords", Input).value == (
+            "retro, half-typed"
+        )
+        assert "library-note-keywords" in _NOTE_EDITOR_INPUT_IDS
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", (COMPACT_TEST_SIZE, WIDE_TEST_SIZE))
+async def test_a_sync_mid_edit_repaints_the_list_pane_and_keeps_its_scroll(size):
+    """task-32106 AC#3 + AC#4: the skip is scoped to the work pane instance.
+
+    ``editor_has_focus`` asks whether the focused field is inside THIS canvas,
+    so the Items pane beside the editor is not covered by it and still
+    repaints -- moving the guard up to the screen would freeze the list
+    silently (critique #9 D13 reads the other way round: a title the list
+    never shows is a list whose DATA has not changed, not a list that stopped
+    painting). What the repaint used to cost was the reader's place in the
+    list: the offset went back to the top mid-sentence, because the follow-up
+    that re-applies it is skipped while the editor owns focus (measured at
+    100x30: 6 -> 0). It is re-applied on its own now, without touching focus.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_many_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_tree_note(screen, pilot)
+        title = screen.query_one("#library-note-title", Input)
+        title.focus()
+        await pilot.pause()
+
+        listing = screen.query_one("#library-notes-list")
+        listing.scroll_to(y=6, animate=False, force=True, immediate=True)
+        await pilot.pause()
+        scrolled = screen.query_one("#library-notes-list").scroll_offset
+        assert scrolled.y > 0, "the Items pane never scrolled; widen the fixture"
+        rows_before = list(screen.query(".library-notes-row"))
+
+        _sync_library_canvas(screen, "notes")
+        await pilot.pause()
+        await pilot.pause()
+
+        rows_after = list(screen.query(".library-notes-row"))
+        assert rows_after and rows_after[0] is not rows_before[0], (
+            "the Items pane stopped repainting while the editor had focus"
+        )
+        assert screen.query_one("#library-note-title", Input) is title
+        assert title.has_focus, f"focus moved to {screen.focused!r}"
+        assert screen.query_one("#library-notes-list").scroll_offset == scrolled

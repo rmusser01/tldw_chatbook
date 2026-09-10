@@ -9639,7 +9639,14 @@ class LibraryScreen(BaseAppScreen):
                 # Veto every older deferred restore before its next turn can
                 # steal the control the user just chose.
                 self._notes_state.focus_intent_generation += 1
-                if self._notes_state.navigation_status:
+                # task-32100: a running locator that would take focus is the
+                # one this focus change overrules. A ``focus=False`` locator
+                # only reveals a row, and the row click that started it lands
+                # here ~20 ms later -- superseding it abandoned every open.
+                if (
+                    self._notes_state.navigation_status
+                    and self._notes_state.navigation_focus_intent
+                ):
                     LibraryScreen._supersede_library_notes_navigation(self)
             self.call_after_refresh(
                 self._record_library_notes_focus_interaction,
@@ -16017,10 +16024,17 @@ class LibraryScreen(BaseAppScreen):
             self._notes_state.navigation_generation = navigation_generation
         topology_epoch = self._notes_state.tree_topology_epoch
         lifecycle_generation = self._notes_state.tree_lifecycle_generation
-        focus_generation = getattr(self._notes_state, "focus_intent_generation", 0)
+        # task-32100: only a locator that will take focus has a stake in the
+        # focus intent. The one every note open starts (``focus=False``) just
+        # reveals and marks a row, and fencing it on focus meant the row
+        # click's own focus event abandoned it before it could land.
+        focus_generation = (
+            getattr(self._notes_state, "focus_intent_generation", 0) if focus else None
+        )
         self._notes_state.navigation_status = (
             "Locating note…" if note_id else "Locating folder…"
         )
+        self._notes_state.navigation_focus_intent = focus
         LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
 
         def current() -> bool:
@@ -16030,8 +16044,11 @@ class LibraryScreen(BaseAppScreen):
                 and topology_epoch == self._notes_state.tree_topology_epoch
                 and lifecycle_generation
                 == self._notes_state.tree_lifecycle_generation
-                and focus_generation
-                == getattr(self._notes_state, "focus_intent_generation", 0)
+                and (
+                    focus_generation is None
+                    or focus_generation
+                    == getattr(self._notes_state, "focus_intent_generation", 0)
+                )
                 and LibraryScreen._library_notes_restore_guard_is_current(
                     self, restore_guard
                 )
