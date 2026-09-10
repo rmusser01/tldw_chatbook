@@ -40,6 +40,20 @@ from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 LIBRARY_RAIL_ROW_PREFIX = "library-row-"
 
+#: task-32219 AC#2: the rail's own last line when its content runs past the
+#: fold. The scrollbar alone was not enough of a cue -- its thumb fills most
+#: of the track at 52 rows, so it reads as absent.
+#:
+#: MEASURED length, not chosen: the rail's Details column is 32 cells at 235
+#: columns, 22 at 100 and ~19 at the rail's own minimum width, so the cue has
+#: to say "there is more" AND "scroll" inside 19 cells or it wraps to two
+#: rows and costs another line of the space it is complaining about. The key
+#: hint that does not fit lives in the tooltip.
+LIBRARY_RAIL_FOLD_CUE = "▾ scroll for more"
+LIBRARY_RAIL_FOLD_CUE_TOOLTIP = (
+    "The rail has more below. Scroll it, or press F6 to move focus into it."
+)
+
 _MAX_LIBRARY_ROW_TITLE = 20
 
 
@@ -911,6 +925,56 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             )
         if self.workspaces_body_factory is not None:
             yield from self.workspaces_body_factory()
+        # task-32219 AC#2 (critique #9 row 16): at 52 rows the Details ▸
+        # Actions group sits below the rail's fold and the scrollbar reads
+        # as absent when its thumb fills most of the track -- the review
+        # took six wheel notches to find the group at all. This last line
+        # says there is more, and hides itself the moment the rail fits.
+        fold_cue = Static(
+            LIBRARY_RAIL_FOLD_CUE,
+            id="library-rail-fold-cue",
+            classes="library-details-row",
+        )
+        fold_cue.tooltip = LIBRARY_RAIL_FOLD_CUE_TOOLTIP
+        fold_cue.display = False
+        yield fold_cue
+
+    def on_mount(self) -> None:
+        """Settle the below-the-fold cue once the rail has a real height.
+
+        No ``super()`` call: Textual dispatches EVERY class's own handler
+        along the MRO, so chaining here would double-fire the mixins'.
+        """
+        self._sync_fold_cue()
+
+    def on_resize(self, event: Resize) -> None:
+        """Re-decide the below-the-fold cue whenever the rail changes size."""
+        self._sync_fold_cue()
+
+    def watch_virtual_size(self) -> None:
+        """Re-decide the cue whenever the rail's CONTENT height changes.
+
+        The rail's own size does not move when a section disclosure opens
+        (the screen just flips that body's ``display``), so ``on_resize``
+        alone never sees the case this cue exists for: Details opening and
+        pushing Actions past the fold.
+        """
+        self._sync_fold_cue()
+
+    def _sync_fold_cue(self) -> None:
+        """Show the fold cue only while the rail actually scrolls.
+
+        The cue occupies a row of the very content it measures, so the
+        overflow test discounts its own row when it is already showing --
+        otherwise a rail that overflows by exactly one line would toggle
+        the cue on and off forever.
+        """
+        try:
+            cue = self.query_one("#library-rail-fold-cue", Static)
+        except NoMatches:
+            return
+        cue.display = (self.max_scroll_y - (1 if cue.display else 0)) > 0
+
     def _row(self, row_id: str) -> LibraryRailRow:
         """Return one canonical row from the full shell state."""
         return next(

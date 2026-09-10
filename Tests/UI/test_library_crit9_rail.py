@@ -286,3 +286,30 @@ def test_the_handoff_row_generalises_across_a_mixed_blocked_set() -> None:
         "2 eligible · 2 blocked · in another workspace · "
         "Link them from the item's header"
     )
+
+
+# --- task-32219 AC#2: the rail says when Details runs past the fold --------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("size", "expected"), [((235, 52), True), ((235, 90), False)]
+)
+async def test_the_rail_says_when_details_runs_past_the_fold(size, expected) -> None:
+    """AC#2: at 52 rows the Details ▸ Actions group is below the fold with no
+    cue; the rail now says so on its own last line, and stops saying it as
+    soon as the whole rail fits."""
+    host = _library_host()
+    async with host.run_test(size=size) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen._set_library_rail_section("details", True)
+        await _wait_for_selector(screen, pilot, "#library-rail-fold-cue")
+        for _ in range(20):
+            await pilot.pause()
+        cue = screen.query_one("#library-rail-fold-cue", Static)
+        rail = screen.query_one("#library-rail")
+        assert cue.display is expected, (size, rail.max_scroll_y, cue.display)
+        if expected:
+            assert "scroll for more" in str(cue.renderable)
+            assert cue.region.height == 1, cue.region
