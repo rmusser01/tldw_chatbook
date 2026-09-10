@@ -143,3 +143,26 @@ and best-effort temporary-directory cleanup warnings; the graphics widget test
 also emitted its upstream Pillow deprecation warning. Root owns the final actual
 archive application/helper rerun, current-development integration, Qodo replies,
 push/merge, and TASK-32238 closeout. TASK-32238 remains **In Progress**.
+
+## Root qualification and adjudication
+
+Root reviewed the production diff and the publication, wrapper and rendering
+regressions. Finding 4 is contradicted by the actual generated-archive identity;
+the other eight findings are addressed. Root's additional dot-prefix finding is
+also corrected and covered by refusal tests.
+
+The grouped Console failure was a test synchronization defect: its manual elapsed
+time competed with the live 30 Hz timer. The assertion now pauses that timer and
+drains an in-flight paint before selecting an exact frame. Production timer and
+rendering behavior are unchanged. A focused five-test run covering transient
+decode retry, corrupt expressions, mounted Dynamic/Static playback, initial render
+cleanup and later-render fallback passed in **13.38 seconds**. The earlier failure
+is retained above as the evidence for this test-only correction.
+
+On production commit `84c567f4405dc9999082a5e242b41b9e219df585`, the actual
+downloaded-source headless application journey passed in **29.98 seconds**,
+including six Dynamic frames, fourteen independent character assets, original
+credits and offline restart. The installer helper/import checks passed all **12**
+cases in **1.097 seconds**. All seven required local preflight gates passed.
+Native terminal, actual Windows and physical voice limits remain as recorded in
+the [journey verification](2026-09-10-independent-buddy-journey-verification.md).

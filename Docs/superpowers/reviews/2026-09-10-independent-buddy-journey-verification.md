@@ -92,3 +92,15 @@ supplemental ADR-146; and close the remaining junction finding locally after the
 single scoped final re-review. These decisions retain the approved behavior and
 bounded review process; their costs are integration/review rework and an additional
 decision record. No finding is deferred by those rulings.
+
+## PR feedback qualification
+
+Qodo's eight confirmed findings are fixed; its retry-key concern is contradicted
+by a regression using real generated archives and publication. The complete
+[feedback evidence](2026-09-10-buddy-qodo-verification.md) records each verdict,
+the importer/playback test runs and a deterministic correction to a frame-assertion
+timer race. Root reran the downloaded-source application journey on production
+commit `84c567f4405dc9999082a5e242b41b9e219df585`: **1 passed in 29.98 seconds**.
+The installer checks passed all **12** cases and all seven required local preflight
+gates passed. The initial PR CI run additionally passed **784** fast-contract tests
+and its required derived-artifact gate; the updated PR must pass its own gates.

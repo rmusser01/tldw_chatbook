@@ -2632,6 +2632,15 @@ async def test_animated_character_uses_mounted_playback_and_same_asset_mode_chan
     )
     avatar = await mounted_avatar()
     assert len(avatar._prepared.frames) == 2
+    # This assertion controls elapsed time explicitly. Stop automatic ticks and
+    # drain any in-flight paint before asking for a particular frame.
+    assert avatar._timer is not None
+    avatar._timer.pause()
+    for _ in range(100):
+        await pilot.pause(0.01)
+        if not avatar._painting:
+            break
+    assert not avatar._painting
     # Optional product evidence uses the real mounted rail, with a disposable DB.
     import os
 
