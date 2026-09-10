@@ -521,6 +521,10 @@ async def test_undo_delete_returns_the_row_to_the_tree_projection(
     fake._restore_library_notes_focus_identity = lambda *_a, **_k: None
     fake._focus_library_note_control = lambda *_a, **_k: None
     fake._library_notes_restore_guard_is_current = lambda *_a, **_k: True
+    # task-32144: the restore seam now also reloads the Trash snapshot (the
+    # note has left the tombstones), so both entry points -- this Undo and the
+    # Trash view's own Restore -- keep that count truthful.
+    fake._refresh_library_notes_trash = lambda: None
     fake._source_record_id = LibraryScreen._source_record_id
     fake._append_library_note_source_record = MethodType(
         LibraryNotesController._append_library_note_source_record, fake
