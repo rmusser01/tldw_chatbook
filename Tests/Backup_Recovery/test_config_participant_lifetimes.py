@@ -323,6 +323,7 @@ def test_config_native_uncertainty_blocks_independent_maintenance(
     )
 
     authority = admission_authority(local_root)
+    log = (tmp_path / "native-child.log").open("w+")
     child = subprocess.Popen(
         [
             sys.executable,
@@ -335,21 +336,25 @@ def test_config_native_uncertainty_blocks_independent_maintenance(
         ],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=log,
         text=True,
     )
     try:
         try:
             assert line(child) == "held"
         except AssertionError:
+            if child.poll() is None:
+                child.kill()
             child.wait(timeout=5)
-            pytest.fail(child.stderr.read())
+            log.seek(0)
+            pytest.fail(log.read())
         observer = launch(authority.control_root, "maintenance", (UNBOUND_NAMESPACE,))
         assert not select.select([observer.stdout], [], [], 0.1)[0]
         child.stdin.write("exit\n")
         child.stdin.flush()
         child.wait(timeout=5)
-        assert child.returncode == 0, child.stderr.read()
+        log.seek(0)
+        assert child.returncode == 0, log.read()
         assert line(observer) == "entered"
         release(observer)
     finally:
@@ -358,7 +363,7 @@ def test_config_native_uncertainty_blocks_independent_maintenance(
         child.wait(timeout=5)
         child.stdin.close()
         child.stdout.close()
-        child.stderr.close()
+        log.close()
 
 
 def test_default_bootstrap_creates_private_parent_and_pause_preserves_it(
