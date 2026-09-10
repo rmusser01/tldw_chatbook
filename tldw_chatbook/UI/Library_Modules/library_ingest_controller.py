@@ -464,6 +464,7 @@ from ...Library.library_ingest_jobs import (
 )
 from ...Library.library_ingest_state import (
     INGEST_UNAVAILABLE_COPY,
+    IngestOutcomeGroup,
     LibraryIngestCanvasState,
     LibraryIngestFormState,
     active_ingest_start_confirm_line,
@@ -2634,11 +2635,20 @@ class LibraryIngestController:
             return
 
         def _focus_now() -> None:
-            try:
-                widget = self.query_one(f"#{control_id}")
-            except (NoMatches, QueryError):
+            # (review finding 2) The fallback is what makes the parking
+            # below safe for an action whose own control does NOT survive
+            # the repaint -- "Dismiss all" takes its group with it. Parked
+            # at None with nothing to restore, focus would be nowhere and
+            # the user's next Tab would restart from the top of the screen.
+            # The path field is this canvas's established landing spot (the
+            # Clear handler and ``_focus_library_ingest_path`` both use it).
+            for selector in (f"#{control_id}", "#library-ingest-path"):
+                try:
+                    widget = self.query_one(selector)
+                except (NoMatches, QueryError):
+                    continue
+                self.set_focus(widget, scroll_visible=False)
                 return
-            self.set_focus(widget, scroll_visible=False)
 
         _focus_now()
         try:
@@ -2646,6 +2656,10 @@ class LibraryIngestController:
         except (NoMatches, QueryError):
             panel = None
         if panel is not None:
+            # Chained, not replaced: ``preserve_same_id_focus_after_recompose``
+            # calls whatever was already queued after its own restore, so
+            # the fallback runs when the captured id is gone.
+            panel.queue_after_recompose(_focus_now)
             # Parks focus at None for the duration of the rebuild and
             # restores the same id afterwards, on the panel's OWN hook. The
             # parking is the half that matters live: without it the prune
@@ -2688,7 +2702,9 @@ class LibraryIngestController:
             event.button.id, self._update_library_ingest_dynamic_regions
         )
 
-    def _library_ingest_outcome_group(self, button_id: str | None, prefix: str):
+    def _library_ingest_outcome_group(
+        self, button_id: str | None, prefix: str
+    ) -> IngestOutcomeGroup | None:
         """Resolve the outcome group one group-action button addresses.
 
         (task-32231) Re-derived from the CURRENT queue rows rather than from
@@ -2761,7 +2777,12 @@ class LibraryIngestController:
         if callable(retry):
             for row in group.members:
                 retry(row.job_id)
-        self._update_library_ingest_dynamic_regions()
+        # (review finding 2) Same focus rule as every other queue toggle:
+        # on this button while it survives, on the import form once the
+        # group it belonged to has dissolved. Never nowhere.
+        self._refocus_library_ingest_control(
+            event.button.id, self._update_library_ingest_dynamic_regions
+        )
 
     @on(Button.Pressed, ".library-ingest-group-dismiss")
     def handle_library_ingest_group_dismiss(self, event: Button.Pressed) -> None:
@@ -2788,7 +2809,12 @@ class LibraryIngestController:
             panel.expanded_groups.discard(group.key)
         for row in group.members:
             self._dismiss_library_ingest_job(row.job_id)
-        self._update_library_ingest_dynamic_regions()
+        # (review finding 2) This button never survives -- it goes with the
+        # group it cleared -- so the wrapper's fallback is what decides the
+        # landing instead of leaving it to whatever the prune re-picks.
+        self._refocus_library_ingest_control(
+            event.button.id, self._update_library_ingest_dynamic_regions
+        )
 
     @on(Button.Pressed, "#library-ingest-clear-finished")
     def handle_library_ingest_clear_finished(self, event: Button.Pressed) -> None:

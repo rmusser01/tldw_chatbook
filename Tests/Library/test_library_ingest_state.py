@@ -4532,3 +4532,31 @@ def test_four_identical_failures_reach_the_canvas_state_as_one_group():
     assert len(groups) == 1, [row.line for row in state.queue_rows]
     assert groups[0].line.startswith("✗ failed · 4 files · ")
     assert "note0.md" not in groups[0].line
+
+
+def test_identical_successes_never_collapse():
+    """(review finding 6) The path this host could not live-exercise.
+
+    Two independent guards keep a successful import out of the grouping:
+    ``DONE`` is not a groupable state, AND the done builder never populates
+    ``reason``, so the key falls through to the per-``job_id`` one. Both are
+    load-bearing and neither is obvious from the call site.
+    """
+    jobs = tuple(
+        _job(
+            job_id=f"ingest-job-{n}",
+            source_path=f"/tmp/inbox/note{n}.md",
+            state=IngestJobState.DONE,
+            media_id=n + 1,
+            finished_at=120.0,
+        )
+        for n in range(4)
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+
+    assert all(row.reason == "" for row in state.queue_rows)
+    groups = group_ingest_queue_rows(state.queue_rows)
+    assert len(groups) == 4, [group.line for group in groups]
+    assert [group.line for group in groups] == [
+        row.line for row in state.queue_rows
+    ]
