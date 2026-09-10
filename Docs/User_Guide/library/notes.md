@@ -111,9 +111,9 @@ editor's own Back control returns to its list.
   scroll positions; on compact terminals use `‹ Back to list`. While you are
   typing, the title, body and keyword fields are each their own authority: a
   background refresh never rewrites the field under your hands, and it never
-  moves your place in the Items list beside it. Tab out of the title or a
-  keyword box takes effect before the next keystroke, so typing straight
-  through a Tab puts the rest where you meant it.
+  moves your place in the Items list beside it. Tab out of any of them —
+  title, body or keywords — takes effect before the next keystroke, so
+  typing straight through a Tab puts the rest where you meant it.
 - **New note view** — opens from the rail's "New note": a "Blank note"
   button plus a "From a template" list.
 - **Add from files…** — asks whether this is an **Import once** or a lasting
@@ -948,6 +948,7 @@ used to be abandoned by the row click's own focus change, every time.)*
 
 *Verified against fix/library-crit8-riders-notes — 2026-09-10 (task-32106: a
 Notes refresh landing mid-edit repaints the Items list, keeps its scroll
-offset, and leaves the focused editor field alone; and Tab out of the title
-or a keyword box now moves focus before the next keystroke is delivered, so
-typing title–Tab–body at speed no longer appends the body to the title.)*
+offset, and leaves the focused editor field alone; and Tab out of any editor
+field — title, body or keywords — now moves focus before the next keystroke
+is delivered, so typing straight through a Tab no longer appends what follows
+to the field you just left.)*

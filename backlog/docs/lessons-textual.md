@@ -640,7 +640,10 @@ burst  elapsed=   0.2ms  title='My first notehello' body=''
 **Two lessons, and the second is the expensive one.** (i) A field that must hand focus
 over mid-sentence needs its own `priority=True` Tab binding — namespaced (`screen.` /
 `app.`), because a bare action resolves against the `Input`, which has no
-`action_focus_next`, and the binding then silently never fires. (ii) `pilot.press` is
+`action_focus_next`, and the binding then silently never fires. It belongs on every
+field of the form, `TextArea` included (a peer hit the same symptom on the note body),
+and on a `TextArea` it is correct only while `tab_behavior == "focus"` — assert that
+rather than trusting the default. (ii) `pilot.press` is
 the OPPOSITE of a burst: `App._press_keys` awaits `wait_for_idle(0)` twice plus the
 animator between every key, so the loop fully drains between keystrokes (~200 ms each
 here). Any defect whose trigger is "faster than the event loop" is invisible to it, and
