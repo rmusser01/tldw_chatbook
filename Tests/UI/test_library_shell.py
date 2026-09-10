@@ -24555,7 +24555,14 @@ async def _enter_task8_editor_state(screen, pilot, state: str) -> None:
             "context",
             {
                 "#library-note-heading": 1,
-                "#library-note-context-status": 1,
+                # task-32177: #library-note-context-status was removed (dead
+                # duplicate of #library-note-status, task-32142 had already
+                # hidden it) -- its row-height entry is gone with it. This
+                # parametrization is pre-existing baseline-broken (stale
+                # #library-notes-row-0 selector, see task-6-report.md) and
+                # cannot currently run far enough to re-measure
+                # #library-note-context-region's own height, so that entry
+                # is left as-is rather than guessed.
                 "#library-note-context-region": 7,
                 "#library-note-primary-actions": 2,
                 "#library-note-mode-controls": 1,
@@ -32114,12 +32121,14 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
             "context",
             "#library-note-context-region",
             (
+                # task-32177: #library-note-context-status was removed (dead
+                # duplicate of #library-note-status) -- dropped from the
+                # fixed-row list along with its expected-height entry below.
                 "#library-note-heading",
                 "#library-note-status",
                 "#library-note-primary-actions",
-                "#library-note-context-status",
             ),
-            (1, 1, 2, 1),
+            (1, 1, 2),
             11,
             17,
         ),

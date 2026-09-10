@@ -1912,16 +1912,6 @@ class LibraryScreen(BaseAppScreen):
         overflow-x: hidden;
     }
 
-    #library-shell-grid.library-notes-compact #library-note-context-status {
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-        padding: 0 1;
-        text-wrap: nowrap;
-        text-overflow: ellipsis;
-    }
-
     #library-shell-grid.library-notes-compact #library-note-context-region {
         height: 1fr;
         min-height: 0;
@@ -9401,44 +9391,6 @@ class LibraryScreen(BaseAppScreen):
         # (see the method's own docstring).
         self._seed_local_source_snapshot_from_cache()
 
-    def _seed_local_source_snapshot_from_cache(self) -> None:
-        """Apply the app-scoped snapshot cache before this screen mounts.
-
-        Called from both ``__init__`` and ``restore_state`` (task-15459) --
-        the app calls both on a freshly constructed, not-yet-mounted
-        instance before ``switch_screen`` mounts it (see ``restore_state``'s
-        own docstring), so seeding here is what lets a warm revisit's FIRST
-        ``compose_content`` already render the previous visit's data instead
-        of the "Loading…" placeholder -- rather than composing once with
-        that placeholder and then being forced into an immediate second,
-        explicit ``refresh(recompose=True)`` from ``on_mount`` to correct it
-        (that fallback still exists there, for the cache-miss/expired case
-        this seed does not cover).
-
-        Mirrors ``on_mount``'s own freshness check
-        (``LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS``) so a stale cache is never
-        instant-applied here either.
-
-        Safe to call this early: ``_apply_local_source_snapshot`` only
-        touches the DOM (recompose / rail sync) when ``self.is_mounted`` is
-        True, which is never the case at either call site, so a hit is a
-        pure attribute assignment with no recompose or widget-query side
-        effects.
-        """
-        cached_snapshot = getattr(
-            self.app_instance, "_library_source_snapshot_cache", None
-        )
-        cached_stamp = getattr(
-            self.app_instance, "_library_source_snapshot_cache_stamp", None
-        )
-        if (
-            cached_snapshot is None
-            or cached_stamp is None
-            or time.monotonic() - cached_stamp >= LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS
-        ):
-            return
-        self._apply_local_source_snapshot(*cached_snapshot)
-
     def _file_notes_active(self) -> bool:
         """Return whether the retained File Notes workspace owns the canvas."""
         return (
@@ -11821,7 +11773,25 @@ class LibraryScreen(BaseAppScreen):
     def _seed_local_source_snapshot_from_cache(
         self, *, now: float | None = None
     ) -> bool:
-        """Apply a recent detached cache snapshot before first composition."""
+        """Apply a recent detached cache snapshot before first composition.
+
+        Called from both ``__init__`` and ``restore_state`` (task-15459) on a
+        freshly constructed, not-yet-mounted instance, so a warm revisit's
+        FIRST ``compose_content`` already renders the previous visit's data
+        instead of the "Loading…" placeholder. Safe to call this early, and
+        twice: ``_apply_local_source_snapshot`` only touches the DOM when
+        ``self.is_mounted``, which neither call site is, so a hit is a pure
+        attribute assignment and a miss is a no-op. ``on_mount`` still owns
+        the cache-miss/expired case and the mount-time reconciliation.
+
+        Args:
+            now: Monotonic reading to age the cache against, for tests;
+                defaults to ``time.monotonic()``.
+
+        Returns:
+            True when a fresh snapshot was applied, False on a miss or on a
+            cache older than ``LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS``.
+        """
         stamp = getattr(self.app_instance, "_library_source_snapshot_cache_stamp", None)
         if not isinstance(stamp, (int, float)) or not math.isfinite(float(stamp)):
             return False
