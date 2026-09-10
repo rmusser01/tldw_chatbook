@@ -39,11 +39,48 @@ After approving builtin:tldw_chatbook list_characters in Console, MCP Tools and 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-The bug as filed does not exist: the hub reads the same seam the Console provider does (local_service.get_inventory() -> builtin_tools_from_inventory() off the one UnifiedMCPControlPlaneService), verified by execution and live in the app -- Tools mode renders the tldw_chatbook group, Permissions has its own 'Server default - tldw_chatbook' group, and a Space-cycle writes builtin:tldw_chatbook/list_characters to the on-disk store, which effective_tool_states() then resolves to allow. The reported symptom is discoverability: the flat catalog sorts by (server_label, name), so ~40 'Local workspace...'/'Virtual CLI' rows precede 'tldw_chatbook' in a ~25-row viewport, and the rail's server selection scopes the Permissions footer but neither canvas -- left for a rider since it changes behaviour for every server. No production code changed; the one real gap (AC#4) is closed by two new tests in Tests/UI/test_mcp_workbench.py, with RED demonstrated by mutation.
+**Real cause: ordering, not inventory.** The hub always read the same seam the
+Console provider reads (`service.local_service.get_inventory()` ->
+`builtin_tools_from_inventory()`, one shared `UnifiedMCPControlPlaneService`),
+and the built-in server's 30 tools were always in the catalog with correct
+effective state. What hid them was the flat sort: `MCPToolsMode._apply_filter()`
+ordered by `(server_label, name)` and `MCPWorkbench._build_permission_rows()` by
+`(server_label, key)`, so "Local workspace, web, and Watchlists" and "Virtual CLI
+(read-only)" put ~40 rows ahead of "tldw_chatbook" in a ~25-row viewport. The
+rail's server selection scoped only the Permissions footer summary, so selecting
+the built-in server produced a footer reading "tldw_chatbook: 0 allow · 30 ask"
+above rows describing a different server -- which is what got this filed as a
+missing-inventory bug. "Open tool catalog" compounded it by switching modes
+without carrying the server across.
 
-Modified files: `Tests/UI/test_mcp_workbench.py` (two new tests plus an
-optional `inventory_names` parameter on the existing built-in-inventory
-fixture trio, so no third clone was needed). Full trace, live captures and
-mutation evidence:
+**Change.** Both sorts gain a leading `key != selected` term, so the
+rail-selected server's group comes first and everything else keeps its existing
+relative order; with no selection the term is constant and the order is
+byte-identical to before. `MCPToolsMode.update_tools()` takes the rail selection
+as `selected_server_key`, and a new `MCPToolsMode.focus_server()` (the filter
+Select's own mechanism, reused) lets the `OPEN_TOOL_CATALOG` hub action land in
+Tools mode already scoped to the server the inspector was showing. No new
+scoping concept and no other behaviour change: the filter Select, the footer,
+and the rail all keep their current meanings.
+
+**Tests.** Kept the two regression tests from the first round (built-in
+inventory -> `#mcp-tools-table` rows; Space-cycle round trip through the real
+store plus a real `effective_tool_states()` resolve, RED shown by mutation).
+Added three: canvas-level ordering in `Tests/UI/test_mcp_tools_mode.py`, matrix
+ordering and the "Open tool catalog" drill in `Tests/UI/test_mcp_workbench.py`
+(that is where `_selected_server_key` and the matrix row order actually live --
+`MCPPermissionsMode` only renders rows it is handed). All three were red first,
+each on its own missing behaviour.
+
+**Live.** Fresh scratch profile: clicking "Open tool catalog" on the built-in
+server's inspector lands in Tools mode with the Select reading `tldw_chatbook`
+and only that server's rows; Permissions now opens with `Server default —
+tldw_chatbook` directly under `Global default`; and with the filter back on "All
+servers" the built-in group still leads the table.
+
+Modified files: `tldw_chatbook/UI/MCP_Modules/mcp_tools_mode.py`,
+`tldw_chatbook/UI/MCP_Modules/mcp_workbench.py`,
+`Tests/UI/test_mcp_tools_mode.py`, `Tests/UI/test_mcp_workbench.py`.
+Full trace, live captures and red/green evidence:
 `.superpowers/sdd/2026-09-10-approval-card-fix-wave/task-13-report.md`.
 <!-- SECTION:NOTES:END -->
