@@ -122,6 +122,37 @@ def admission_authority(bootstrap_root: Path) -> Admission:
         raise RecoveryRequired("recovery_scope_uncertain") from None
 
 
+def _verify_pending_selector(selector: Path) -> None:
+    """Verify existing bytes or genuine absence for a local pre-publication fence."""
+    try:
+        selector.lstat()
+    except FileNotFoundError:
+        pass
+    else:
+        with pinned_directory(selector.parent):
+            _fingerprint(selector)  # Existing bytes stay strict; no TOML parsing.
+        return
+
+    ancestor = selector
+    missing = None
+    while True:
+        try:
+            ancestor.lstat()
+            break
+        except FileNotFoundError:
+            missing = ancestor.name
+            ancestor = ancestor.parent
+    # This also rejects links (including dangling links) and non-directories
+    # in the existing prefix. Never create destination directories to enroll it.
+    with pinned_directory(ancestor) as parent:
+        if missing is not None:
+            try:
+                os.stat(missing, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                return
+    raise ValueError("selector_absence_changed")
+
+
 def register_pending(
     bootstrap_root: Path,
     operation_id: str,
@@ -137,7 +168,7 @@ def register_pending(
     if len(set(selected)) != len(selected):
         raise ValueError("duplicate_selectors")
     for selector in selected:
-        _fingerprint(selector)  # local file, no TOML parsing; broken config is valid.
+        _verify_pending_selector(selector)
         if _overlap(selector, bootstrap_root) or _overlap(selector, control_root):
             raise ValueError("control_root_overlaps_target")
     registry = _registry(bootstrap_root)
