@@ -96,9 +96,10 @@ def describe_stream_failure(exc: BaseException) -> str:
         summary = "could not connect to the provider"
     elif isinstance(exc, ChatConfigurationError) and status_code is None:
         # task-32273: a status-less configuration error never reached the
-        # provider -- the request could not be built. Calling that a
-        # "provider error" blames the wrong party for a client-side bug.
-        summary = "the app could not build the request"
+        # provider -- either the request could not be built or its reply
+        # could not be read. Calling either a "provider error" blames the
+        # wrong party for a client-side bug.
+        summary = "the app could not build the request or read the reply"
     elif status_code is not None:
         summary = f"provider returned HTTP {status_code}"
         # TASK-335: the response BODY carries the provider's actionable
