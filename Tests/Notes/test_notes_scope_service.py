@@ -16,6 +16,7 @@ class FakeLocalNotes:
         self.unlink_calls = []
         self.add_keyword_calls = []
         self.count_calls = []
+        self.deleted_calls = []
         self.keyword_rows = {
             "existing": {"id": 1, "keyword": "existing"},
             "stale": {"id": 2, "keyword": "stale"},
@@ -114,6 +115,17 @@ class FakeLocalNotes:
     def count_notes(self, user_id):
         self.count_calls.append({"user_id": user_id})
         return 2
+
+    def list_deleted_notes(self, user_id, limit=20, offset=0):
+        self.deleted_calls.append(
+            {"user_id": user_id, "limit": limit, "offset": offset}
+        )
+        return {
+            "items": [
+                {"id": "local-9", "title": "Gone", "version": 2},
+            ],
+            "total": 1,
+        }
 
     def get_keywords_for_note(self, user_id, note_id):
         return list(self.note_keywords.get(note_id, []))
@@ -1248,3 +1260,34 @@ async def test_scope_service_list_notes_forwards_offset_to_local_service():
     )
 
     assert [note["id"] for note in page] == ["local-2"]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_lists_deleted_local_notes_for_the_trash_view():
+    """task-32144: the Trash view's read seam is local-only and bounded."""
+    local = FakeLocalNotes()
+    scope_service = NotesScopeService(
+        local_notes_service=local,
+        server_service=FakeServerNotes(),
+    )
+
+    page = await scope_service.list_deleted_notes(
+        scope=ScopeType.LOCAL_NOTE, user_id="user-1", limit=20
+    )
+
+    assert page["total"] == 1
+    assert [item["id"] for item in page["items"]] == ["local-9"]
+    assert local.deleted_calls == [{"user_id": "user-1", "limit": 20, "offset": 0}]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_deleted_notes_rejects_server_and_workspace_scopes():
+    scope_service = NotesScopeService(
+        local_notes_service=FakeLocalNotes(),
+        server_service=FakeServerNotes(),
+    )
+
+    with pytest.raises(ValueError):
+        await scope_service.list_deleted_notes(scope=ScopeType.SERVER_NOTE)
+    with pytest.raises(ValueError):
+        await scope_service.list_deleted_notes(scope=ScopeType.WORKSPACE)
