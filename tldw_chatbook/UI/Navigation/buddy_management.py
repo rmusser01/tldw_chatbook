@@ -222,7 +222,14 @@ class BuddyManagementCoordinator:
                 nonlocal revision
                 try:
                     await self.apply_choice(
-                        choice, expected_revision=revision, imports=imports
+                        choice,
+                        expected_revision=revision,
+                        imports=imports,
+                        staged_review=self._modal.staged_review,
+                        authority_guard=lambda: (
+                            authority()
+                            and controller.snapshot().preferences_generation == revision
+                        ),
                     )
                 except ValueError as exc:
                     if getattr(exc, "buddy_retry_revision", None) is not None:
@@ -246,11 +253,17 @@ class BuddyManagementCoordinator:
                 initial=initial,
                 preview=self._preview,
                 apply=commit,
+                import_petdex=self._review_petdex,
+                create_character=self._review_character
+                if getattr(self.app, "local_character_persona_service", None)
+                is not None
+                else None,
                 artwork_page=artwork_page,
                 selected_buddy=(selected_buddy.name, selected_buddy.id)
                 if selected_buddy
                 else None,
             )
+            authority = self._management_authority(self._modal)
             self.app.push_screen(self._modal, self._closed)
         except Exception:  # noqa: BLE001 - app boundary keeps storage faults out of the message pump
             self.app.notify(
@@ -259,6 +272,144 @@ class BuddyManagementCoordinator:
             )
         finally:
             self._opening = False
+
+    def _management_authority(self, modal: Any, *, selection: bool = False) -> Any:
+        """Retain exact local destination and optionally the staged source selection."""
+        from pathlib import Path
+
+        from textual.widgets import Input, Select
+
+        from tldw_chatbook.config import get_user_data_dir
+
+        db = getattr(self.app, "chachanotes_db", None)
+        service = getattr(self.app, "local_character_persona_service", None)
+        scope = getattr(self.app, "character_persona_scope_service", None)
+        scope_local = getattr(scope, "local_service", None)
+        root = Path(get_user_data_dir())
+        library = self.library
+        selected = (
+            (
+                modal.query_one("#buddy-artwork", Select).value,
+                modal.query_one("#buddy-import", Input).value,
+            )
+            if selection
+            else None
+        )
+
+        def current() -> bool:
+            return bool(
+                modal.is_mounted
+                and not modal._safe_dismiss_committed
+                and self._modal is modal
+                and db is not None
+                and library.db is db
+                and library.profile_root == root
+                and getattr(self.app, "chachanotes_db", None) is db
+                and getattr(self.app, "local_character_persona_service", None)
+                is service
+                and getattr(self.app, "character_persona_scope_service", None) is scope
+                and getattr(scope, "local_service", None) is scope_local
+                and Path(get_user_data_dir()) == root
+                and (
+                    not selection
+                    or selected
+                    == (
+                        modal.query_one("#buddy-artwork", Select).value,
+                        modal.query_one("#buddy-import", Input).value,
+                    )
+                )
+            )
+
+        return current
+
+    async def _review_petdex(self, modal: Any) -> Any:
+        """Validate prepared native bytes, then retain only immutable data and source guard."""
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from tldw_chatbook.Petdex.review import drain_thread
+        from tldw_chatbook.Widgets.Persona_Widgets.petdex_import_review import (
+            PetdexImportReviewDialog,
+        )
+
+        current = self._management_authority(modal, selection=True)
+        revision = self.controller.snapshot().preferences_generation
+
+        def review_current() -> bool:
+            return (
+                current()
+                and self.controller.snapshot().preferences_generation == revision
+            )
+
+        if not review_current():
+            raise ValueError("Profile changed.")
+        result = await self.app.push_screen_wait(
+            PetdexImportReviewDialog(
+                authority_guard=review_current,
+                config=self.app.app_config,
+                independent=True,
+            )
+        )
+        if result is None:
+            return None
+        if not review_current() or not await drain_thread(result.source.is_current):
+            raise ValueError("Source or profile changed.")
+        with TemporaryDirectory(prefix="buddy-petdex-review-") as folder:
+            archive = Path(folder) / "reviewed.tldw-persona-vpack"
+            await drain_thread(archive.write_bytes, result.archive)
+            review = await drain_thread(self.library.review_archive, archive)
+            if not review_current() or not await drain_thread(result.source.is_current):
+                raise ValueError("Source or profile changed.")
+            # The temporary archive has been validated completely. Its immutable
+            # bytes are now owned by this snapshot; original Petdex source remains
+            # the publication authority after temporary-file cleanup.
+            return replace(review, _guard=result.source.is_current)
+
+    async def _review_character(self, modal: Any, buddy_id: str) -> None:
+        """Explicitly publish from a saved independent owner without applying this form."""
+        from tldw_chatbook.Character_Chat.buddy_conversion import suggest_buddy_mappings
+        from tldw_chatbook.Persona_Visual.snapshot import read_saved_buddy
+        from tldw_chatbook.Petdex.review import drain_thread
+        from tldw_chatbook.Widgets.Persona_Widgets.buddy_character_review import (
+            BuddyCharacterReviewDialog,
+        )
+
+        current = self._management_authority(modal, selection=True)
+        revision = self.controller.snapshot().preferences_generation
+
+        def review_current() -> bool:
+            return (
+                current()
+                and self.controller.snapshot().preferences_generation == revision
+            )
+
+        if not review_current():
+            raise ValueError("Profile or selection changed.")
+        library = self.library
+        snapshot = await drain_thread(
+            read_saved_buddy,
+            library.repository,
+            None,
+            library.profile_root,
+            buddy_id=buddy_id,
+        )
+        rows = await drain_thread(suggest_buddy_mappings, snapshot)
+        if not review_current() or not await drain_thread(snapshot.is_current):
+            raise ValueError("Source or profile changed.")
+        if not review_current():
+            raise ValueError("Profile or selection changed.")
+        await self.app.push_screen_wait(
+            BuddyCharacterReviewDialog(
+                snapshot,
+                rows,
+                db=library.db,
+                local_service=self.app.local_character_persona_service,
+                profile_root=library.profile_root,
+                authority_guard=review_current,
+                config=self.app.app_config,
+                allow_open_console=False,
+            )
+        )
 
     def _persona_choices(self) -> tuple[tuple[str, str], ...]:
         service = getattr(self.app, "local_character_persona_service", None)
@@ -511,6 +662,8 @@ class BuddyManagementCoordinator:
         *,
         expected_revision: int | None = None,
         imports: dict[str, str] | None = None,
+        staged_review: Any = None,
+        authority_guard: Any = None,
     ) -> None:
         """Validate, publish requested artwork, then batch preference persistence.
 
@@ -526,6 +679,10 @@ class BuddyManagementCoordinator:
             imports: Optional dialog-scoped map of normalized lexical paths to
                 already installed Buddy IDs. Retain it across retries after a
                 settings-write failure to reuse the installed artwork copy.
+            staged_review: Optional immutable Petdex snapshot owned by this dialog.
+                A native import path takes precedence over this staged review.
+            authority_guard: UI-thread check for the original profile and dialog.
+                Revalidated by publication before committing private files and rows.
 
         Raises:
             ValueError: A selection or binding is invalid or stale; the import
@@ -542,6 +699,10 @@ class BuddyManagementCoordinator:
         async with self._apply_lock:
 
             def require_current() -> None:
+                if authority_guard is not None and not authority_guard():
+                    raise ValueError(
+                        "Profile or selection changed. Cancel and reopen Buddy management."
+                    )
                 if (
                     expected_revision is not None
                     and self.controller.snapshot().preferences_generation
@@ -565,7 +726,31 @@ class BuddyManagementCoordinator:
             else:
                 assignment = None
             selected_id = choice.buddy_id
-            if choice.import_path:
+            if staged_review is not None and not choice.import_path:
+                from tldw_chatbook.Petdex.review import drain_thread
+
+                key = "review:" + staged_review.source_sha256
+                selected_id = imports.get(key) if imports is not None else None
+                if selected_id is None:
+                    guarded = replace(
+                        staged_review,
+                        _guard=lambda: (
+                            staged_review.is_current()
+                            and (
+                                authority_guard is None
+                                or self.app.call_from_thread(authority_guard)
+                            )
+                        ),
+                    )
+                    record = await drain_thread(self.library.publish_review, guarded)
+                    selected_id = record.id
+                    if imports is not None:
+                        imports[key] = selected_id
+                elif await drain_thread(self.library.get_buddy, selected_id) is None:
+                    raise ValueError(
+                        "Imported Buddy was removed. Start a fresh review."
+                    )
+            elif choice.import_path:
                 from tldw_chatbook.Utils.input_validation import (
                     validate_buddy_import_path,
                 )
@@ -581,8 +766,20 @@ class BuddyManagementCoordinator:
                     )
                     require_current()
                     try:
-                        record = await asyncio.to_thread(
-                            self.library.publish_review, review
+                        from tldw_chatbook.Petdex.review import drain_thread
+
+                        guarded = replace(
+                            review,
+                            _guard=lambda: (
+                                review.is_current()
+                                and (
+                                    authority_guard is None
+                                    or self.app.call_from_thread(authority_guard)
+                                )
+                            ),
+                        )
+                        record = await drain_thread(
+                            self.library.publish_review, guarded
                         )
                     except Exception as exc:
                         if isinstance(exc, ValueError) and str(exc) in {

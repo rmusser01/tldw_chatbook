@@ -168,7 +168,14 @@ for the surrounding editor and import/export workflow.
 
 ## Import a Petdex companion
 
-In a saved active local Persona's **Persona Visual** editor, save or cancel any
+Open **Console → composer menu → Buddy & Persona Management → Import from Petdex**.
+No Persona is required. Review the URL or local package, source credits, terms and
+state mappings, then choose **Use draft**. Back in management, **Apply** installs
+one independent Buddy. Cancelling the review or management discards the staged
+import and preserves settings. Selecting another installed Buddy or entering a
+native pack path replaces the staged Petdex choice.
+
+Persona authoring also supports this review. In a saved active local Persona's **Persona Visual** editor, save or cancel any
 pending edits and choose **Petdex…**. Paste a public `petdex.dev/pets/...` URL or
 exact slug and choose **Fetch URL / slug**. For a downloaded ZIP or `pet.json`, use
 **Choose package…**; a folder path can be entered with **Read local path**.
@@ -191,8 +198,8 @@ Global motion preferences apply; if the animated preview encoder is unavailable,
 a static preview is shown with an explanation, while the imported native timeline
 retains its animation.
 
-After reviewing terms and mappings, choose **Use draft**, then **Save Pack** in the
-Persona editor to publish it. Cancelling or merely previewing leaves the saved
+After reviewing terms and mappings, choose **Use draft**, then **Apply** in management
+or **Save Pack** in the Persona editor to publish it. Cancelling or merely previewing leaves the saved
 Buddy unchanged. If the source files or selected Persona change during review,
 start a fresh review. A saved import uses local copies and works offline.
 
@@ -203,7 +210,13 @@ To chat with the imported companion, use **Create character…** after saving.
 
 ## Create a character from a Buddy
 
-In a saved local Persona's **Persona Visual** editor, choose **Create character…**.
+In **Buddy & Persona Management**, select an installed independent Buddy and choose
+**Create character**. Apply any staged import first. Character creation does not
+apply staged follow-target, Persona or motion settings. After explicit **Create
+character**, the new character remains saved even if you cancel management later;
+find it in **Characters** to edit or start chatting.
+
+The saved local Persona's **Persona Visual** editor also offers **Create character…**.
 Save or cancel pending pack edits first. You can also choose **From Buddy archive…**,
 or import a `.tldw-persona-vpack` from **Characters → Import** without creating a
 Persona first.
@@ -223,8 +236,8 @@ reduced-motion preferences still apply to previews and Console playback.
 
 Creation makes an independent editable local character. Updating or deleting the
 source Buddy does not change that copy. Creation leaves the active conversation
-and floating Buddy alone. Choose **Open in Console** when you want to start chatting
-with the new character, or **Done** to return to the workbench.
+and floating Buddy alone. The Personas workbench review also offers **Open in Console** to start chatting;
+**Done** returns to the invoking surface.
 
 Chatbook Actor Pack export preserves the carried artwork terms and conversion
 history. The inspected server importer does not support this metadata carrier;
@@ -269,7 +282,6 @@ its own configured voice test.
 
 ### Current import entry points
 
-Petdex review and saved Buddy-to-character conversion currently open through the
-Personas workbench. Independent Buddy management accepts native Buddy archives; it
-does not yet expose Petdex review or Create character. The ordinary Characters
-Import path also accepts a native Buddy archive for independent character creation.
+Independent Buddy management is the normal route for Petdex installation and
+selected-Buddy character creation. Persona authoring retains its own visual draft
+review and Save Pack workflow. Characters Import also accepts native Buddy archives.

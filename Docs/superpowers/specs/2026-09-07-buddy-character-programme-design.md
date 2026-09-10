@@ -116,4 +116,18 @@ for source-backed corrections and the encoder experiment.
 The original implementation is preserved in the integration branch. Its source-branch
 verification is historical; see the
 [integration verification](../reviews/2026-09-10-buddy-feature-integration-verification.md)
-for combined-code evidence and the remaining independent Buddy management entry points.
+for combined-code evidence.
+
+## Independent management integration (TASK-32238)
+
+Console Buddy management is the normal entry for Petdex review and selected-Buddy
+character creation, under amended ADR139. Petdex review prepares unpublished native
+bytes through the existing importer. Apply publishes an independent owner, while
+cancel discards staging without changing preferences. Original source checks and
+exact profile/destination authority remain active through publication.
+
+Character review pins the installed Buddy owner revision, immutable version and
+verified asset bytes through the shared saved snapshot API. Persona callers remain
+supported. Explicit Create commits an independent editable character and never
+applies pending management preferences. Later management cancellation does not undo
+that committed character. No new runtime, schema or ownership boundary is introduced.

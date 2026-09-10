@@ -63,6 +63,7 @@ class BuddyCharacterReviewDialog(
         profile_root: Any,
         authority_guard: Callable[[], bool],
         config: dict,
+        allow_open_console: bool = True,
     ) -> None:
         super().__init__()
         self.snapshot = snapshot
@@ -72,6 +73,7 @@ class BuddyCharacterReviewDialog(
         self._profile_root = profile_root
         self._authority_guard = authority_guard
         self._config = config
+        self._allow_open_console = allow_open_console
         self._conversion = None
         self._conversion_key = None
         self._result = None
@@ -227,7 +229,9 @@ class BuddyCharacterReviewDialog(
         )
         self.query_one("#buddy-prepare", Button).disabled = self._busy or created
         self.query_one("#buddy-open", Button).disabled = not created
-        self.query_one("#buddy-open", Button).display = created
+        self.query_one("#buddy-open", Button).display = (
+            created and self._allow_open_console
+        )
         self.query_one("#buddy-prepare", Button).display = not created
         self.query_one("#buddy-create", Button).display = not created
         self.query_one("#buddy-cancel", Button).disabled = self._publishing
@@ -415,6 +419,8 @@ class BuddyCharacterReviewDialog(
                     " Private-file cleanup is pending."
                     if result.cleanup_pending
                     else " Choose Open in Console when ready."
+                    if self._allow_open_console
+                    else " Find it in Characters."
                 )
             )
         except (ValueError, OSError, RuntimeError) as exc:

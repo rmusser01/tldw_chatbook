@@ -70,17 +70,60 @@ identity; no third-party artifact binaries committed.
 
 ## Task 2: Finish independent Buddy installation and conversion journeys
 
-After Task 1 review, amend the existing independent-ownership ADR/spec for the
-smallest management entry points that reuse restored review/publication services.
-Use the live prepared Homelander archive under `/private/tmp/petdex-live-install-20260910`
-to qualify guarded app save, offline reload, exact attribution, independent character
-creation and both motion modes in a disposable profile. Keep existing Persona
-authoring routes working. Record headless versus native evidence honestly.
+Tracked by TASK-32238. Read that task and amended ADR139 before implementation.
+ADR required: amend existing ADR139; retain ADR074 conversion, ADR144 playback
+and ADR145 Petdex trust contracts. No schema or runtime ownership change.
 
-The implementation brief will be completed from Task 1's verified seams before
-dispatch. Update corresponding tldw-stuff skill installation guidance after the
-actual supported journey works. Review the full branch, create PR against dev,
-address posted review and required checks, and merge under existing authorization.
+Work only in this worktree. Keep existing Persona authoring and archive character
+routes working. Root owns live downloaded-pet qualification and tldw-stuff changes.
+
+1. Add clear `Import from Petdex` and `Create character` entry points to the
+   existing Console Buddy & Persona Management modal. The first uses the restored
+   PetdexImportReviewDialog and native archive preparation without a saved Persona.
+   The second operates on the selected installed independent Buddy.
+2. Reuse BuddyLibrary.review_archive/publish_review for independent publication.
+   Petdex review stages content for management Apply; cancelling the review or
+   management form must not publish a Buddy or change preferences. Keep temporary
+   bytes/source guards owned and released on all exit paths. Preserve notices,
+   unspecified licenses and source mapping provenance. No executable source text.
+3. Extend the saved snapshot boundary to read a real independent Buddy owner with
+   its revision/version guard, preserving existing Persona snapshot callers. Reuse
+   BuddyCharacterReviewDialog and existing character publication. Explicit Create
+   commits one independent editable character; closing the management form later
+   does not undo that explicit action. Creating a character must not apply staged
+   Buddy follow-target or Persona preferences.
+4. Keep source, profile and destination guards across asynchronous preparation,
+   review and final publication. Reject stale source/selection/profile changes;
+   preserve previous content/settings on errors. Run file/network work off the UI
+   thread, drain owned work before cleaning staging. Show only actionable controls;
+   connect the existing explicit Open in Console handoff if that action is shown.
+5. Add discriminating unit and mounted workflow tests: Petdex review/cancel and
+   management cancel leave counts/settings unchanged; Apply installs exactly one
+   independent Buddy without creating a Persona; stale source/profile and failed
+   publication remain safe; selected-Buddy conversion retains credits/expression
+   bytes after source change and uses both motion modes. No fake publication or
+   direct DB mutation in the end-to-end journey. Targeted tests only.
+6. Update Buddy user guidance and current programme spec to name independent
+   management as the normal route. Regenerate CSS with the supported build if
+   defaults change. Run affected tests, formatting/lint and source-generation checks.
+   Commit owned files, update task plan/notes with CLI, but leave live qualification
+   AC and task completion to root until the real downloaded archive journey passes.
+
+Existing seams: UI/Navigation/buddy_management.py owns application integration;
+Widgets/Persona_Widgets/buddy_management_modal.py owns staged choices;
+Petdex/review.py and petdex_import_review.py supply reviewed native archive bytes;
+Persona_Visual/snapshot.py currently reads saved Persona owners only;
+UI/Persona_Modules/buddy_conversion.py shows existing character review/publication
+and explicit Console handoff. Avoid a second importer or conversion implementation.
+
+The real prepared Homelander archive lives under
+`/private/tmp/petdex-live-install-20260910`, with source/creator receipt at
+`/private/tmp/petdex-live-preparation.json`. Root will qualify actual app save,
+offline reload, attribution, independent character and rendering against your final
+code in a disposable profile, without committing the third-party asset.
+
+After Task2 review/qualification, root updates the collection installer guide,
+performs final review, publishes against dev, resolves review/checks and merges.
 
 ## Task 1 integration closeout
 

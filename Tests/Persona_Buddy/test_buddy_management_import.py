@@ -299,3 +299,44 @@ async def test_modal_can_recover_from_a_missing_file_and_import_the_pasted_path(
                 await pilot.pause()
         assert len(manager.library.list_buddies()) == 1
         assert manager.controller.current_preferences().selection != previous.selection
+
+
+def test_saved_independent_snapshot_tracks_owner_revision(imports):
+    from tldw_chatbook.Persona_Visual.snapshot import read_saved_buddy
+
+    manager, archive, _ = imports
+    buddy = manager.library.import_archive(archive)
+    snapshot = read_saved_buddy(
+        manager.library.repository,
+        None,
+        manager.library.profile_root,
+        buddy_id=buddy.id,
+    )
+    assert snapshot.is_current()
+    assert snapshot.assets
+    with manager.library.db.transaction() as cursor:
+        cursor.execute(
+            "UPDATE buddy_profiles SET version=version+1 WHERE id=?", (buddy.id,)
+        )
+    assert not snapshot.is_current()
+
+
+@pytest.mark.asyncio
+async def test_reviewed_petdex_apply_publishes_once_and_rejects_stale(imports):
+    from dataclasses import replace
+
+    manager, archive, previous = imports
+    review = manager.library.review_archive(archive)
+    stale = replace(review, _guard=lambda: False)
+    with pytest.raises(ValueError):
+        await manager.apply_choice(BuddyManagementChoice(), staged_review=stale)
+    assert manager.library.list_buddies() == ()
+    assert manager.controller.current_preferences() == previous
+    await manager.apply_choice(BuddyManagementChoice(), staged_review=review)
+    assert len(manager.library.list_buddies()) == 1
+    assert (
+        manager.library.get_graph(
+            manager.library.list_buddies()[0].id
+        ).identity.persona_id
+        is None
+    )

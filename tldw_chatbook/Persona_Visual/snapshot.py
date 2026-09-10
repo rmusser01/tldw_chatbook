@@ -192,8 +192,10 @@ def read_buddy_archive(path: os.PathLike[str] | str) -> BuddySnapshot:
 
 def read_saved_buddy(
     repository: PersonaVisualRepository,
-    persona_id: str,
+    persona_id: str | None,
     profile_root: os.PathLike[str] | str,
+    *,
+    buddy_id: str | None = None,
 ) -> BuddySnapshot:
     """Pin an active saved graph and verified bytes; retain no runtime binding.
 
@@ -201,7 +203,9 @@ def read_saved_buddy(
     metadata edits, file corruption and deletion before character publication.
     """
     try:
-        exported = repository.get_active_persona_pack_for_export(persona_id)
+        exported = repository.get_active_persona_pack_for_export(
+            persona_id, buddy_id=buddy_id
+        )
         if exported is None:
             raise ValueError
         assets = []
@@ -247,7 +251,12 @@ def read_saved_buddy(
         ).hexdigest()
 
         def current() -> bool:
-            if repository.get_active_persona_pack_for_export(persona_id) != exported:
+            if (
+                repository.get_active_persona_pack_for_export(
+                    persona_id, buddy_id=buddy_id
+                )
+                != exported
+            ):
                 return False
             for item, asset in zip(exported.assets, frozen_assets, strict=True):
                 loaded = load_persona_visual_asset(

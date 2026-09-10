@@ -49,10 +49,17 @@ class PetdexImportReviewDialog(
     }
     """
 
-    def __init__(self, *, authority_guard: Callable[[], bool], config: dict) -> None:
+    def __init__(
+        self,
+        *,
+        authority_guard: Callable[[], bool],
+        config: dict,
+        independent: bool = False,
+    ) -> None:
         super().__init__()
         self._authority_guard = authority_guard
         self._config = config
+        self._independent = independent
         self.source = None
         self.inspection = None
         self._prepared = None
@@ -66,7 +73,10 @@ class PetdexImportReviewDialog(
     def compose(self) -> ComposeResult:
         with Vertical(id="petdex-review"):
             yield Static(
-                "Import Petdex into this Persona’s visual draft", classes="petdex-copy"
+                "Import Petdex as an independent Buddy"
+                if self._independent
+                else "Import Petdex into this Persona’s visual draft",
+                classes="petdex-copy",
             )
             with VerticalScroll(id="petdex-scroll"):
                 yield Label(
@@ -117,7 +127,9 @@ class PetdexImportReviewDialog(
                     id="petdex-reviewed",
                 )
                 yield Static(
-                    "Active visuals stay unchanged until Save Pack.",
+                    "Apply in Buddy management installs this reviewed artwork."
+                    if self._independent
+                    else "Active visuals stay unchanged until Save Pack.",
                     classes="petdex-copy",
                 )
                 yield Static(
@@ -372,7 +384,8 @@ class PetdexImportReviewDialog(
                 for name, target in mappings.items()
             )
             warnings.append(
-                "Source states are retained as custom animations. Import remains unsaved until Save Pack."
+                "Source states are retained as custom animations. Import remains unsaved until "
+                + ("Apply." if self._independent else "Save Pack.")
             )
             self.query_one("#petdex-warnings", Static).update("\n".join(warnings))
             self.query_one("#petdex-reviewed", Checkbox).value = False
