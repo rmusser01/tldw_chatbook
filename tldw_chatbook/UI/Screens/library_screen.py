@@ -21726,6 +21726,30 @@ class LibraryScreen(BaseAppScreen):
         )
         self._set_library_rail_section(section_id, not currently_open)
 
+    @on(LibraryRail.DiagnosticsOpened)
+    def refresh_library_details_sizes_for_diagnostics(
+        self, event: LibraryRail.DiagnosticsOpened
+    ) -> None:
+        """Recompute the DB sizes the Diagnostics disclosure just revealed.
+
+        Qodo review #2: task-4023 AC#3 made opening a disclosure the
+        refresh trigger, and `_set_library_rail_section` only fires it for
+        the OUTER Details section. Nesting the size rows one disclosure
+        deeper (task-32357 AC#2) put them back behind a toggle that
+        refreshed nothing, so opening Diagnostics with Details already open
+        revealed whatever the cache last held. Same worker, same exclusive
+        group, so the two triggers cannot run twice over each other.
+
+        Args:
+            event: The rail's own open notice; it never fires on close.
+        """
+        event.stop()
+        self.run_worker(
+            self._refresh_library_details_db_sizes(),
+            exclusive=True,
+            group="library_details_db_sizes",
+        )
+
     @on(Button.Pressed, ".library-conversation-row")
     def handle_library_conversation_row(self, event: Button.Pressed) -> None:
         """Select mode: toggle the row's checkbox. Normal mode: select the row.

@@ -465,3 +465,65 @@ async def test_the_details_actions_carry_no_bare_acronym():
             if f"({match.group()})" not in tooltip
         ]
         assert not bare, (bare, tooltip)
+
+
+@pytest.mark.asyncio
+async def test_opening_diagnostics_refreshes_the_reading_it_reveals():
+    """Qodo #2: task-4023 AC#3 made opening a disclosure the refresh trigger
+    for the DB sizes, because a `display` toggle never recomposes and the
+    line otherwise keeps whatever the cache held (measured live: 180.0KB
+    against 4.8MB on disk). Nesting those rows one disclosure deeper put
+    them back behind a toggle that refreshed nothing: with Details already
+    open, opening Diagnostics revealed a cached reading.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.db_sizes_status = {
+        "prompts": "180.0KB",
+        "chachanotes": "1.1MB",
+        "media": "508.0KB",
+    }
+
+    class _StubManager:
+        """Writes whatever "disk" currently says, once per refresh."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+            self.on_disk = dict(app.db_sizes_status)
+
+        async def update_db_sizes(self) -> None:
+            self.calls += 1
+            app.db_sizes_status = dict(self.on_disk)
+
+    manager = _StubManager()
+    app.db_status_manager = manager
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen._set_library_rail_section("details", True)
+        sizes = await _wait_for_selector(screen, pilot, "#library-details-db-sizes")
+        for _ in range(60):
+            if "180.0KB" in str(sizes.render()):
+                break
+            await pilot.pause(0.02)
+        assert manager.calls >= 1
+
+        # The file grew while Details stayed open.
+        manager.on_disk["prompts"] = "9.9MB"
+        screen.query_one(
+            "#console-rail-section-toggle-library-details-diagnostics", Button
+        ).press()
+        for _ in range(120):
+            if "9.9MB" in str(
+                screen.query_one("#library-details-db-sizes", Static).render()
+            ):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                "Opening Diagnostics revealed a cached reading: "
+                f"{screen.query_one('#library-details-db-sizes', Static).render()!r} "
+                f"after {manager.calls} refresh(es)"
+            )

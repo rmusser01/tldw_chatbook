@@ -12,6 +12,7 @@ from textual.containers import Horizontal, Vertical
 from textual.css.scalar import Scalar
 from textual.css.query import NoMatches
 from textual.events import Focus, Key, MouseDown, Resize
+from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
@@ -727,6 +728,17 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
     #: task-32357 AC#2: the one toggle this rail answers itself.
     _DIAGNOSTICS_TOGGLE_ID = f"{RAIL_SECTION_TOGGLE_PREFIX}library-details-diagnostics"
 
+    class DiagnosticsOpened(Message):
+        """The Details ▸ Diagnostics disclosure was just opened.
+
+        Qodo review #2: the rail owns this disclosure's state, but the
+        reading inside it is the screen's to recompute -- and task-4023
+        AC#3 made "the disclosure opened" the trigger for that, because a
+        `display` toggle never recomposes and the rows would otherwise
+        show whatever the cache last held. Posted only on OPEN; closing
+        reveals nothing.
+        """
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Open or close Details ▸ Diagnostics without leaving the rail.
 
@@ -753,6 +765,8 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             return
         body.display = self.diagnostics_open
         header.sync_open(self.diagnostics_open)
+        if self.diagnostics_open:
+            self.post_message(self.DiagnosticsOpened())
         # Opening it changes the rail's content height, which is what the
         # fold cue measures.
         self._schedule_fold_cue_sync()

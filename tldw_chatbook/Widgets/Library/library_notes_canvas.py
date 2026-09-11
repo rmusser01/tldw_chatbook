@@ -162,6 +162,14 @@ def browse_row_width(labels: tuple[str, ...]) -> int:
     Measured from the labels ABOUT to be rendered rather than from a width
     constant, because a disabled action grows a "○ " marker (2 more cells)
     that a constant cannot see.
+
+    Args:
+        labels: The rendered action labels, disabled markers included, in
+            the order they are composed.
+
+    Returns:
+        Total terminal cells the row needs: every label plus the
+        per-Button chrome the compact sheet gives it.
     """
     return sum(len(label) + _TOOLBAR_ACTION_CHROME for label in labels)
 
