@@ -1083,3 +1083,48 @@ async def test_the_delete_prompt_renders_inside_info_beside_delete():
         assert prompt.region.y >= delete_button.region.y, (
             "The prompt must follow the control that raised it"
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reach", "expected_enter"),
+    [("tab", "back to list"), ("save", "save note")],
+)
+async def test_the_editor_exit_chip_survives_at_sixty_columns(reach, expected_enter):
+    """task-32246 fix round 1 (review F1): the `enter …` chip must not evict
+    the exit key at the narrow stage.
+
+    Round 0 PREPENDED the chip. The real ``AppFooterStatus`` keeps only the
+    leading chip at this width (``test_only_one_context_chip_paints_at_sixty_
+    columns`` pins that budget), so after the very Tab task-32246 fixes the
+    footer painted "enter back to list" ALONE -- no exit advertised at all,
+    and on Save neither an exit nor a way back. Measured on the registered
+    tier through the real footer widget, because the registered tuple is
+    blind to the elision that decides this.
+    """
+    from Tests.UI.test_library_crit10_layout import _painted_footer
+
+    host = _build_notes_host()
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_note(screen, pilot)
+
+        if reach == "tab":
+            screen.query_one("#library-note-body", TextArea).focus()
+            await pilot.pause()
+            await pilot.press("tab")
+            await pilot.pause()
+            assert getattr(screen.focused, "id", None) == "library-note-back"
+        else:
+            screen.query_one("#library-note-save", Button).focus()
+            await pilot.pause()
+
+        tier = screen._library_notes_footer_shortcuts()
+        assert dict(tier).get("enter") == expected_enter, tier
+
+        shown = await _painted_footer(tier, (60, 24))
+        assert "esc notes" in shown, (
+            f"the exit key was evicted from the narrow-stage footer by the "
+            f"enter chip: registered {tier!r} painted {shown!r}"
+        )

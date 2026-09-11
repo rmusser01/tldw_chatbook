@@ -8056,9 +8056,19 @@ class LibraryScreen(BaseAppScreen):
             # where typed characters go nowhere. Name it, so focus is never
             # unaccounted for -- the honest-footer rule, applied to the
             # editor the way the create canvas and delete prompt apply it.
+            #
+            # APPENDED, not prepended (fix round 1, review F1). The real
+            # footer keeps only the leading chips that fit, and the
+            # <=64-column narrow stage fits exactly one
+            # (``test_only_one_context_chip_paints_at_sixty_columns``), so a
+            # LEADING "enter …" evicted the exit outright: after the very Tab
+            # this task fixes the footer painted "enter back to list" alone,
+            # and with Save focused it advertised neither an exit nor a way
+            # back. Naming focus is the smaller promise of the two, so it
+            # yields wherever the two compete for the budget.
             enter_label = self._library_focus_enter_label()
             if enter_label:
-                return ((("enter", enter_label)),) + tier
+                return tier + (("enter", enter_label),)
             return tier
         if region == "create":
             if self._notes_state.create_running:
