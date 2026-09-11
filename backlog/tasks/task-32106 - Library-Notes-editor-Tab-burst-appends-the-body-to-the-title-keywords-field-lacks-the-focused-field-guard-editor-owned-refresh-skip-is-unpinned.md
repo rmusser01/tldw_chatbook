@@ -3,9 +3,11 @@ id: TASK-32106
 title: >-
   Library Notes editor: Tab burst appends the body to the title; keywords field
   lacks the focused-field guard; editor-owned refresh skip is unpinned
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-09-08 22:43'
+updated_date: '2026-09-10 16:56'
 labels:
   - library
   - notes
@@ -23,12 +25,44 @@ Found by the task-32062 fix rounds (PR #2531): with title + Tab + body typed in 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A title, Tab, body burst lands the body in the body field
-- [ ] #2 The keywords field is treated as its own authority while focused, like title and body
-- [ ] #3 A test pins that a sync while the editor has focus still repaints the list pane
-- [ ] #4 The list scroll offset survives a sync that lands mid-edit at compact widths
+- [x] #1 A title, Tab, body burst lands the body in the body field
+- [x] #2 The keywords field is treated as its own authority while focused, like title and body
+- [x] #3 A test pins that a sync while the editor has focus still repaints the list pane
+- [x] #4 The list scroll offset survives a sync that lands mid-edit at compact widths
 <!-- AC:END -->
 
 ## Critique #9 evidence (2026-09-10)
 
 Assessor B: the Notes list does not live-update a note's title while its editor is open (D13). Related to the editor-owned refresh skip this task tracks; include it in the pin.
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Re-verify each premise against current dev (peer Notes wave 1 landed).
+   - AC#2 ALREADY SHIPPED: commit 97626354ee ('the keyword boxes are editor fields', PR #2531 review) put both keyword ids in _NOTE_EDITOR_INPUT_IDS and gave each assignment the same 'not has_focus' guard the title has. No test pins it -- add one.
+   - AC#1 NOT REPRODUCIBLE in the harness on current dev: title + Tab + body in one uninterrupted pilot.press burst lands correctly, with or without a sync at the Tab boundary or a graduation mid-burst. Textual 8's parser has no burst-to-Paste heuristic, so keys stay ordered; the reported corruption is the task-32062 stale-snapshot clobber, now guarded. Pin the reported gesture as a regression test.
+   - AC#3 + AC#4 REPRODUCED at 100x30 and 170x48: a sync while the editor has focus DOES recompose the list pane (rows are new objects, the editor's Input is retained and still focused) -- but the list's scroll offset went to 0 (measured: 6 -> 0).
+2. Fix AC#4 only: when the editor-owned skip fires, queue a follow-up that re-applies the Items pane's own scroll offset -- and only that, never focus, which is what the skip exists to prevent.
+3. Tests in Tests/UI/test_library_crit8_polish_shell.py beside the task-32062 group: the burst pin, the keywords-authority pin, and one test covering both the list repaint and the surviving offset.
+4. Docs: Notes guide stamp.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Premise re-verified per AC against current dev (e6cb464239, after the peer's Notes wave 1). Two of the four had already shipped or did not reproduce; only AC#4 needed code.
+
+AC#1 (Tab burst) -- REAL, FIXED (corrected in review round 1; my first pass closed it on evidence that refuted a mechanism the rider never claimed). The mechanism is not the parser, it is Textual's asynchronous binding dispatch: `Screen.BINDINGS`' `Binding("tab", "app.focus_next")` is not `priority=True`, so `Key(tab)` is POSTED to the focused Input and bubbles one message-queue hop per ancestor while the App keeps dequeuing the following keys and forwarding each to `self.focused` -- still the title. Reproduced in stock Textual 8 with nothing from this repo in it: `burst elapsed=0.2ms title='My first notehello' body=''` against `pilot elapsed=1268.9ms title='My first note' body='hello'`. `pilot.press` is the OPPOSITE of a burst (`App._press_keys` awaits `wait_for_idle(0)` twice plus the animator between every key), which is why my first pass could not reproduce it -- and why the task itself records that '1 s gaps behave'. Fix: `NoteEditorInput`, an `Input` subclass carrying `Binding("tab"/"shift+tab", "screen.focus_next"/"screen.focus_previous", priority=True)`, used by the title and both keyword fields. The action is SCREEN-namespaced so it resolves to `LibraryScreen.action_focus_next` (task-32052 AC#3 keeps Tab inside `#screen-content`); a bare `focus_next` resolves against the Input, which has no such action, and the binding never fires -- verified both ways in the probe. The body `TextArea` carries the SAME binding (coordinator addendum: a peer session reproduced the sibling symptom there -- a burst of `hello` + Tab + `world` left `'helloworldalpha budget line'` in the body). It is safe because this editor's `tab_behavior` is `focus`, which the pin asserts rather than trusting. What the binding does NOT fix, and what the peer's body task keeps, is that Tab from the body lands on a Button that silently swallows the keys after it -- true at any typing speed, so a focus-ORDER defect, not this one.
+
+AC#2 (keywords authority) -- ALREADY SHIPPED in commit 97626354ee ('the keyword boxes are editor fields', PR #2531 review): both ids joined _NOTE_EDITOR_INPUT_IDS and each assignment took the 'not has_focus' guard. It had NO test; added one.
+
+AC#3 + AC#4 -- reproduced. A sync while the editor has focus does repaint the Items pane (editor_has_focus is instance-scoped: the work pane is a sibling canvas, not an ancestor of the list), and the editor's Input is retained and still focused -- but the list's scroll offset went to the top with the recompose (measured at 100x30: 6 -> 0), because the follow-up that re-applies it is skipped whenever the editor owns focus. Fix: when that skip fires, canvas_sync now queues a follow-up that re-applies the Items pane's own offset and nothing else -- never focus, which is what the skip exists to prevent. Deferred through call_after_refresh for the same reason the identity restore defers its own offset (unlaid-out rows clamp it to 0).
+
+On critique #9 D13 (the list not live-updating a title while the editor is open): the pin shows the list DOES repaint under an editor-owned sync. A title that never appears is a list whose DATA has not changed -- the tree projection reads loaded slices, not the unsaved editor buffer -- not a list frozen by this guard.
+
+Every new test was mutation-checked and each goes red under the guard it pins: removing the priority Tab binding reds the burst test, disabling the new scroll re-apply reds the mid-edit test (2 failed), dropping the wide_keywords has_focus guard reds the keywords pin, and making editor_has_focus screen-wide reds the repaint pin (2 failed). The AC#1 test drives the keys the way a terminal does -- `events.Key` posted with no awaits between them -- because `pilot.press` drains the loop and can never fail.
+
+Review round 1 also: restored the critique-9 evidence section this task file had lost; folded the field ratchet with dev's Trash + backlinks bumps (103 -> 104); TRIED hoisting the pending-focus-handoff clear out of `_supersede_library_notes_navigation` so it ran on every user focus change (the review's second option for its finding 4) and REVERTED it -- it reds the notes focus/footer pins in `test_library_canvas_sync_defects.py`, because `_rehydrate_library_notes_after_recompose` reads that same pending identity to decide it MAY restore focus at all, so the invariant is stated in the comment instead (the review's first option); replaced the two new canvas_sync helpers with the house `_library_notes_scroll_owner("navigator")` resolver; cleared `navigation_focus_intent` where `navigation_status` is cleared; and replaced two low-information assertions (an exact placement id, and the keyword cursor position -- the reported symptom was the cursor clamping to the shorter stale text).
+
+Files: tldw_chatbook/Widgets/Library/library_notes_canvas.py, tldw_chatbook/UI/Library_Modules/canvas_sync.py, Tests/UI/test_library_crit8_polish_shell.py, Docs/User_Guide/library/notes.md.
+<!-- SECTION:NOTES:END -->

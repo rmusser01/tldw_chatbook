@@ -6,7 +6,10 @@ and 32072 -- the polish-shell group of the critique-8 fix wave.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
+from textual import events
 from textual.widgets import Button, Input, Static, TextArea
 
 from tldw_chatbook import config as app_config
@@ -315,12 +318,15 @@ async def _open_the_first_note_editor(screen, pilot, gates) -> None:
 
 
 async def _type(pilot, text: str) -> None:
-    """Send ``text`` as one burst of keystrokes, the way fast typing arrives.
+    """Send ``text`` one key at a time through the pilot.
 
-    task-32062: one `pilot.press` per character pumps the whole message queue
-    between keystrokes, so every async follow-up settles before the next key
-    lands -- and the defect never appears. `press(*keys)` posts them all first
-    and pauses once, which is what a ~0.4 s sentence actually looks like.
+    This is NOT a burst, and the docstring that used to claim it was is the
+    folklore that cost PR #2571 a whole review round: ``App._press_keys``
+    awaits ``wait_for_idle(0)`` twice plus the animator between EVERY key,
+    so the event loop fully drains between keystrokes. That is enough for
+    task-32062's defect, which needs only a refresh to land between two
+    keystrokes -- but never for anything whose trigger is "faster than the
+    event loop". For that, see ``_burst`` below.
     """
     await pilot.press(*("space" if character == " " else character for character in text))
 
@@ -1044,3 +1050,289 @@ def test_use_it_in_console_unlocks_on_a_selection_not_on_bare_results() -> None:
 
     screen._rag_search_state.selected_result_id = "r1"
     assert screen._library_landing_canvas_state().search_result_selected is True
+
+
+# --- task-32106: the editor-owned skip protects the editor, not the list ---
+
+
+def _many_notes(count: int = 40) -> list[dict[str, str]]:
+    """Enough notes for the Items pane to actually scroll at 100 columns."""
+    return [
+        {
+            "id": f"n-{index}",
+            "title": f"Note {index:02d}",
+            "content": f"body {index}",
+            "last_modified": "2026-09-01T00:00:00Z",
+        }
+        for index in range(count)
+    ]
+
+
+def _burst(app, *keys: str) -> None:
+    """Post keys with NO awaits between them -- a real terminal burst.
+
+    ``pilot.press`` is the opposite of this: ``App._press_keys`` awaits
+    ``wait_for_idle(0)`` twice plus the animator between every key, so the
+    whole event loop drains between keystrokes (measured on this machine:
+    ~200 ms per key). The task itself records that "1 s gaps behave", so a
+    drained loop can never reproduce AC#1 -- PR #2571 review, finding 1.
+    """
+    for key in keys:
+        event = events.Key(key, key if len(key) == 1 else None)
+        event.set_sender(app)
+        app._driver.send_message(event)
+
+
+@pytest.mark.asyncio
+async def test_a_notes_refresh_at_the_tab_boundary_keeps_the_title():
+    """task-32062: a refresh landing as focus leaves the title clobbered it.
+
+    The title stops being its own authority the moment Tab moves focus off
+    it, so a snapshot one keystroke behind could be written over it -- and
+    assigning ``Input.value`` clamps the cursor to the shorter text. The
+    per-field ``has_focus`` guards and the recompose skip are what keep the
+    two fields apart here. (This is NOT the AC#1 burst: ``pilot.press``
+    drains the loop between keys. See the burst test below.)
+    """
+    gates = _first_note_gates()
+    app = _new_fresh_profile_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(235, 52)) as pilot:
+            screen = _active_library_screen(host)
+            await _open_the_first_note_editor(screen, pilot, gates)
+            screen.query_one("#library-note-title", Input).focus()
+            await pilot.pause()
+
+            await _type(pilot, "My first note")
+            _sync_library_canvas(screen, "notes")
+            await pilot.press("tab")
+            await _type(pilot, "hello from jordan")
+            await pilot.pause()
+
+            assert screen.query_one("#library-note-title", Input).value == (
+                "My first note"
+            )
+            assert screen.query_one("#library-note-body", TextArea).text == (
+                "hello from jordan"
+            )
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_a_title_tab_body_burst_lands_the_body_in_the_body_field():
+    """task-32106 AC#1: the reported gesture, driven as a REAL burst.
+
+    ``Screen.BINDINGS``' ``Binding("tab", "app.focus_next")`` is not
+    ``priority=True``, so ``Key(tab)`` is posted to the focused ``Input`` and
+    has to bubble a message-queue hop per ancestor up to the Screen -- while
+    the App keeps dequeuing the following keys and forwarding each to
+    ``self.focused``, still the title. Reproduced in stock Textual 8 with
+    nothing from this repo in it (PR #2571 review, finding 1):
+
+        pilot  elapsed=1268.9ms  title='My first note'      body='hello'
+        burst  elapsed=   0.2ms  title='My first notehello' body=''
+
+    The editor's own fields take a priority Tab binding so the App resolves
+    the focus move before it forwards the next key.
+    """
+    gates = _first_note_gates()
+    app = _new_fresh_profile_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(235, 52)) as pilot:
+            screen = _active_library_screen(host)
+            await _open_the_first_note_editor(screen, pilot, gates)
+            screen.query_one("#library-note-title", Input).focus()
+            await pilot.pause()
+
+            _burst(host, *"My first note".replace(" ", "_"), "tab", *"hello")
+            await pilot.pause()
+            await pilot.pause()
+
+            assert screen.query_one("#library-note-title", Input).value == (
+                "My_first_note"
+            )
+            assert screen.query_one("#library-note-body", TextArea).text == "hello"
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_a_body_tab_burst_leaves_the_trailing_word_out_of_the_body():
+    """The same defect one widget over -- the note BODY (coordinator addendum).
+
+    A peer session reported typing vanishing after Tab out of a note body.
+    Same root cause: bursting ``hello`` + Tab + ``world`` into the body left
+    BOTH words in it (measured before the fix:
+    ``'helloworldalpha budget line'``) because Tab's focus move landed after
+    the burst. The body carries the same priority Tab binding as the fields
+    around it.
+
+    What this does NOT fix, and is a separate defect the peer's task keeps:
+    Tab from the body lands on a Button, which silently swallows the keys
+    that follow -- true at any typing speed, so it is a focus-ORDER problem,
+    not this one.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=WIDE_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_tree_note(screen, pilot)
+        body = screen.query_one("#library-note-body", TextArea)
+        # The priority binding is only correct while Tab means "leave the
+        # field" here; under "indent" it would steal the key the TextArea
+        # needs.
+        assert body.tab_behavior == "focus"
+        body.focus()
+        await pilot.pause()
+        before = body.text
+
+        _burst(host, *"hello", "tab", *"world")
+        await pilot.pause()
+        await pilot.pause()
+
+        after = screen.query_one("#library-note-body", TextArea).text
+        assert after == f"hello{before}", after
+        assert "world" not in after
+
+
+@pytest.mark.asyncio
+async def test_the_keywords_field_is_its_own_authority_while_focused():
+    """task-32106 AC#2: the same rule as the title, one field over.
+
+    Shipped by commit 97626354ee (PR #2531 review) and unpinned until now:
+    ``apply_session_state`` used to write ``wide_keywords.value`` from a
+    snapshot that could be a keystroke behind, and assigning ``Input.value``
+    clamps the cursor to the shorter text -- so the rest of what was being
+    typed landed at a stale position.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=WIDE_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_tree_note(screen, pilot)
+        work = screen.query_one("#library-note-work-pane", LibraryNoteWorkPane)
+        keywords = screen.query_one("#library-note-keywords", Input)
+        keywords.focus()
+        await pilot.pause()
+        with keywords.prevent(Input.Changed):
+            keywords.value = "retro, half-typed"
+        keywords.cursor_position = len("retro, half")
+
+        state = work.presentation_state
+        assert state is not None
+        stale = replace(
+            state,
+            snapshot=replace(
+                state.snapshot,
+                draft=replace(state.snapshot.draft, keywords_text="stale"),
+            ),
+        )
+        work.apply_session_state(stale)
+        await pilot.pause()
+
+        applied = screen.query_one("#library-note-keywords", Input)
+        assert applied.value == "retro, half-typed"
+        # The reported symptom was the cursor clamping to the shorter stale
+        # text, so the cursor is the assertion that matters (PR #2571
+        # review, finding 7).
+        assert applied.cursor_position == len("retro, half")
+
+
+@pytest.mark.asyncio
+async def test_overlapping_syncs_mid_edit_keep_the_readers_place():
+    """Two editor-owned syncs in flight must not restore a zero snapshot.
+
+    PR #2571 Qodo finding 4 argued a second sync could capture the
+    recomposed list's temporary zero offset before the first deferred
+    restore ran, then apply that zero. It does not: the capture happens
+    synchronously in ``_sync_library_canvas``, strictly BEFORE
+    ``sync_state`` requests the recompose, and ``call_after_refresh``
+    applies the offset before the next turn can issue another sync. Probed
+    with 0, 1 and 2 pauses between the pair -- all three keep the offset.
+    Pinned here so a change to that ordering fails loudly instead.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_many_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=COMPACT_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_tree_note(screen, pilot)
+        screen.query_one("#library-note-title", Input).focus()
+        await pilot.pause()
+        screen.query_one("#library-notes-list").scroll_to(
+            y=6, animate=False, force=True, immediate=True
+        )
+        await pilot.pause()
+        scrolled = screen.query_one("#library-notes-list").scroll_offset
+        assert scrolled.y > 0
+
+        for pauses in (0, 1, 2):
+            _sync_library_canvas(screen, "notes")
+            for _ in range(pauses):
+                await pilot.pause()
+            _sync_library_canvas(screen, "notes")
+            for _ in range(3):
+                await pilot.pause()
+            assert screen.query_one("#library-notes-list").scroll_offset == scrolled, (
+                f"overlapping syncs with {pauses} pause(s) lost the offset"
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", (COMPACT_TEST_SIZE, WIDE_TEST_SIZE))
+async def test_a_sync_mid_edit_repaints_the_list_pane_and_keeps_its_scroll(size):
+    """task-32106 AC#3 + AC#4: the skip is scoped to the work pane instance.
+
+    ``editor_has_focus`` asks whether the focused field is inside THIS canvas,
+    so the Items pane beside the editor is not covered by it and still
+    repaints -- moving the guard up to the screen would freeze the list
+    silently (critique #9 D13 reads the other way round: a title the list
+    never shows is a list whose DATA has not changed, not a list that stopped
+    painting). What the repaint used to cost was the reader's place in the
+    list: the offset went back to the top mid-sentence, because the follow-up
+    that re-applies it is skipped while the editor owns focus (measured at
+    100x30: 6 -> 0). It is re-applied on its own now, without touching focus.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_many_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_tree_note(screen, pilot)
+        title = screen.query_one("#library-note-title", Input)
+        title.focus()
+        await pilot.pause()
+
+        listing = screen.query_one("#library-notes-list")
+        listing.scroll_to(y=6, animate=False, force=True, immediate=True)
+        await pilot.pause()
+        scrolled = screen.query_one("#library-notes-list").scroll_offset
+        assert scrolled.y > 0, "the Items pane never scrolled; widen the fixture"
+        rows_before = list(screen.query(".library-notes-row"))
+
+        _sync_library_canvas(screen, "notes")
+        await pilot.pause()
+        await pilot.pause()
+
+        rows_after = list(screen.query(".library-notes-row"))
+        assert rows_after and rows_after[0] is not rows_before[0], (
+            "the Items pane stopped repainting while the editor had focus"
+        )
+        assert screen.query_one("#library-note-title", Input) is title
+        assert title.has_focus, f"focus moved to {screen.focused!r}"
+        assert screen.query_one("#library-notes-list").scroll_offset == scrolled
