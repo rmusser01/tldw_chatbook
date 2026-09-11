@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import os
+import threading
+from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
+from functools import wraps
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
@@ -51,6 +57,102 @@ _SCRIPT_GRANTS_FILENAME = "skill_script_grants.json"
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# Context propagation alone is not authority: a child task/thread/process must
+# acquire its own admission rather than borrow another accepted call's leases.
+_active_execution = ContextVar("skill_execution", default=None)
+
+
+def _execution_identity():
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:
+        task = None
+    return os.getpid(), threading.get_ident(), task
+
+
+def _execution_sources(service):
+    paths = [service.skills_dir]
+    trust = getattr(service, "trust_service", service)
+    if trust is not None:
+        paths.append(getattr(trust, "skills_dir", service.skills_dir))
+        store = getattr(trust, "trust_store", None)
+        if store is not None:
+            paths.append(store.store_dir)
+            marker = getattr(store, "marker_store", None)
+            for field in ("marker_path", "store_dir"):
+                path = getattr(marker, field, None)
+                if path is not None:
+                    paths.append(path)
+    return paths
+
+
+@contextmanager
+def _execution_scope(service):
+    """Retain checked actual source leases through this accepted skill effect."""
+    from tldw_chatbook.Backup_Recovery.activation import execution_scope
+    from tldw_chatbook.Backup_Recovery.profile_paths import lexical_path
+    from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
+    identity = _execution_identity()
+    active = _active_execution.get()
+    if active is not None and active[0] != identity:
+        yield False
+        return
+    leases = dict(active[1]) if active is not None else {}
+    allowed = True
+    with ExitStack() as stack:
+        try:
+            for source in dict.fromkeys(map(lexical_path, _execution_sources(service))):
+                if source not in leases:
+                    leases[source] = acquire_storage(source)
+                    stack.callback(leases[source].close)
+                if not stack.enter_context(
+                    execution_scope(
+                        ("config", "skills"), source, retained=leases[source]
+                    )
+                ):
+                    allowed = False
+                    break
+        except (OSError, ValueError, TypeError, RuntimeError, AttributeError):
+            allowed = False
+        token = _active_execution.set((identity, leases))
+        try:
+            yield allowed
+        finally:
+            _active_execution.reset(token)
+
+
+def _activation_blocked(skill_name):
+    return SkillTrustBlockedError(
+        skill_name=skill_name,
+        reason_code="skills_activation_required",
+        trust_status=TRUST_STATUS_LOCKED,
+    )
+
+
+def _skill_use(function):
+    """Wrap use, preserving ordinary injected-service compatibility."""
+    if asyncio.iscoroutinefunction(function):
+
+        @wraps(function)
+        async def async_call(self, skill_name, *args, **kwargs):
+            with _execution_scope(self) as allowed:
+                if not allowed:
+                    raise _activation_blocked(skill_name)
+                return await function(self, skill_name, *args, **kwargs)
+
+        return async_call
+
+    @wraps(function)
+    def call(self, skill_name, *args, **kwargs):
+        with _execution_scope(self) as allowed:
+            if not allowed:
+                raise _activation_blocked(skill_name)
+            return function(self, skill_name, *args, **kwargs)
+
+    return call
 
 
 class SkillTrustService:
@@ -122,7 +224,9 @@ class SkillTrustService:
             # definitively hopeless case, and it costs nothing to re-check.
             return
         try:
-            self.unlock_from_keyring_convenience()
+            with _execution_scope(self) as allowed:
+                if allowed:
+                    self.unlock_from_keyring_convenience()
         except Exception:  # noqa: BLE001 — an unusable cache is just "locked"
             logger.opt(exception=True).debug(
                 "Cached skill-trust key unlock failed; staying locked"
@@ -145,7 +249,14 @@ class SkillTrustService:
         self.keyring_convenience_enabled = True
         return True
 
-    def overall_status(self) -> str:
+    def overall_status(self):
+        """Report inactive restored trust without automatic credential probes."""
+        with _execution_scope(self) as allowed:
+            if not allowed:
+                return TRUST_STATUS_LOCKED
+            return self._overall_status()
+
+    def _overall_status(self) -> str:
         """Return a global Settings-friendly trust posture from live files."""
 
         self._try_cached_unlock()
@@ -201,7 +312,14 @@ class SkillTrustService:
         except Exception:
             return None, False
 
-    def trust_posture(self) -> str:
+    def trust_posture(self):
+        """Report inactive restored trust without automatic credential probes."""
+        with _execution_scope(self) as allowed:
+            if not allowed:
+                return "locked"
+            return self._trust_posture()
+
+    def _trust_posture(self) -> str:
         """Structured global trust posture for the Skills list header.
 
         See the plan's Task 3 interface contract for the exact mapping.
@@ -287,7 +405,14 @@ class SkillTrustService:
         }
         self.trust_store.save_manifest(manifest, keys, salt=manifest_salt)
 
-    def status_for_skill(self, skill_name: str) -> SkillTrustStatus:
+    def status_for_skill(self, skill_name: str):
+        """Report inactive restored trust without automatic credential probes."""
+        with _execution_scope(self) as allowed:
+            if not allowed:
+                return self._locked_status(skill_name)
+            return self._status_for_skill(skill_name)
+
+    def _status_for_skill(self, skill_name: str) -> SkillTrustStatus:
         """Return visible trust status without raising for locked or bad manifests."""
 
         self._try_cached_unlock()
@@ -387,7 +512,14 @@ class SkillTrustService:
             last_verified_at=_now_iso(),
         )
 
-    def trusted_file_paths(self, skill_name: str) -> frozenset[str]:
+    def trusted_file_paths(self, skill_name: str):
+        """Report inactive restored trust without automatic credential probes."""
+        with _execution_scope(self) as allowed:
+            if not allowed:
+                return frozenset()
+            return self._trusted_file_paths(skill_name)
+
+    def _trusted_file_paths(self, skill_name: str) -> frozenset[str]:
         """Return the bundle-relative paths the trust manifest vouches for.
 
         The authoritative allow-list for "is this file trust material?".
@@ -454,6 +586,7 @@ class SkillTrustService:
         """
         return relative_path in self.trusted_file_paths(skill_name)
 
+    @_skill_use
     def ensure_skill_trusted(self, skill_name: str) -> None:
         """Raise only at use time when a local skill is trust-blocked."""
 
@@ -467,6 +600,7 @@ class SkillTrustService:
             changed_files=status.changed_files,
         )
 
+    @_skill_use
     def verify_skill_content(
         self,
         skill_name: str,
@@ -549,7 +683,9 @@ class SkillTrustService:
         """Capture a JSON-safe review snapshot for the current skill files."""
 
         normalized_name = self._normalize_skill_name(skill_name)
-        status = self.status_for_skill(normalized_name)
+        # Explicit local review may inspect locked recovery trust after unlock.
+        # It never grants execution activation for the restored generation.
+        status = self._status_for_skill(normalized_name)
         current = self._scan_skill(normalized_name)
         review_id = secrets.token_hex(16)
         review = {
@@ -779,7 +915,14 @@ class SkillTrustService:
         if grants.pop(normalized, None) is not None:
             self._save_script_grants(grants)
 
-    def script_execution_granted(self, skill_name: str) -> bool:
+    def script_execution_granted(self, skill_name: str):
+        """Report inactive restored trust without automatic credential probes."""
+        with _execution_scope(self) as allowed:
+            if not allowed:
+                return False
+            return self._script_execution_granted(skill_name)
+
+    def _script_execution_granted(self, skill_name: str) -> bool:
         """Return whether scripts may run for this skill without a prompt.
 
         The grant is honoured only while the skill's content still matches the

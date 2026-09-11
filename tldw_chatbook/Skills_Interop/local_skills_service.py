@@ -24,6 +24,7 @@ from ..Utils.input_validation import sanitize_string, validate_text_input
 from ..Utils.path_validation import get_safe_relative_path, validate_path_simple
 from .atomic_write import write_bytes_atomic, write_text_atomic
 from .skill_trust_models import SkillTrustBlockedError
+from .skill_trust_service import _activation_blocked, _execution_scope, _skill_use
 
 if TYPE_CHECKING:
     # Deferred at runtime (see run_skill_script) to avoid a module-scope
@@ -1696,6 +1697,7 @@ class LocalSkillsService:
             "content_type": "application/zip",
         }
 
+    @_skill_use
     async def execute_skill(
         self, skill_name: str, *, args: str | None = None
     ) -> dict[str, Any]:
@@ -1737,6 +1739,7 @@ class LocalSkillsService:
             payload.pop("reference_files", None)
         return payload
 
+    @_skill_use
     async def read_skill_file(
         self, skill_name: str, relative_path: str
     ) -> dict[str, Any]:
@@ -2410,7 +2413,16 @@ class LocalSkillsService:
         # method's own signature advertises `async def` -- calling it
         # directly would occupy whatever event loop this coroutine runs on
         # for the full duration.
-        return await asyncio.to_thread(_run_in_scratch_dir)
+        def _run_with_admission() -> ScriptRunResult:
+            # The worker owns admission, including after its waiter is cancelled.
+            with _execution_scope(self) as allowed:
+                if not allowed:
+                    raise _activation_blocked(skill_name)
+                self._require_trusted_skill(skill_name)
+                self._resolve_script(skill_name, script_path)
+                return _run_in_scratch_dir()
+
+        return await asyncio.to_thread(_run_with_admission)
 
     async def seed_builtin_skills(self, *, overwrite: bool = False) -> dict[str, Any]:
         self._enforce("skills.seed.launch.local")
