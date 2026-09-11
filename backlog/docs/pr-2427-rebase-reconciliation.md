@@ -4043,3 +4043,64 @@ The proposed pure Handoff-summary helper move remains separately design-gated
 and is not implemented. All local test processes are terminal. AC1/3/4 and
 normal protected merge remain open for resource repair, size paydown and
 final-head review/checks. The unrelated untracked September8 plan is untouched.
+
+### September10 formatter preimplementation review
+
+The user approved the written pure-Handoff-formatter spec, requested a further
+review, and then approved continuation. Independent review found no wrapper,
+free-global or architectural compatibility blocker. Verification is strengthened
+with actual helper residency and exact one-call forwarding assertions, rather
+than relying on the existing support guard's name-presence checks alone.
+The implementation plan is independently reviewed and approved:
+`Docs/superpowers/plans/2026-09-10-pr2427-handoff-formatter-extraction.md`.
+
+Review uncovered another existing gate failure before any runtime/test changes:
+screen preimport adds504 modules against500. The complete support/Library
+packaging/preload group returned9 passed/1 failed,2 warnings,8.53s
+(`/private/tmp/pr2427-formatter-review-tests.log`); the complete preload file
+reproduced alone in2.74s (`/private/tmp/pr2427-formatter-preload-repeat.log`).
+Six selected Handoff output cases passed,3 warnings,3.81s
+(`/private/tmp/pr2427-formatter-review-output.log`). Runtime and test bytes were
+verified unchanged from02597164ff. The safe isolated helper-import probe found
+eligibility already loaded and zero additional modules, but it does not replace
+the full preload-budget gate. Do not raise that budget or repair unrelated
+preload ownership inside the formatter move.
+
+### September10 formatter extraction qualified
+
+Step159 is implemented in eca8c083e7c4b27fadf6d8d8a7fe40515eca69ce. The helper
+body, including comments/docstring, is byte-identical after dedenting; executable
+AST is identical. The Screen keeps its original signature and four production
+callers, adding only the helper import/delegate, removing unused re and making
+the existing prefix-constant re-export explicit. All prior helper/test definitions
+are AST-identical. Independent parity checker:
+`/private/tmp/pr2427-formatter-parity.dGsOq0/check.py`.
+LibraryScreen32724 ->32664,60 lines removed;975 remain above its31689 ceiling.
+No size or preload limit changed. Mechanical-move blame provenance is recorded.
+
+The new positional/keyword delegation guard failed twice on the original missing
+helper before production edits (2 failures,8 deselections,0.97s; original output
+retained in the task's tool history, not a persisted log). It now proves actual
+helper module/globals, identical Screen re-export, exactly one identical-state
+call and unchanged sentinel return. Full support10 passed,2 warnings,4.05s:
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-handoff-support-final.KOltnx/pytest.log`.
+Six existing Handoff unit cases passed,3 warnings,2.13s:
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-handoff-unit-final.7qDCGN/pytest.log`.
+
+Complete frozen five-file UI native run:153 passed,3 warnings,171.39s
+(`/private/tmp/pr2427-formatter-native.log`). Final inventory has six standard
+descriptors (stdio plus previously attributed pytest selector/socketpair), zero
+SQLite and zero instance-lock handles. Report:
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-formatter-native.aOiGxD/fd_identity.jsonl`.
+This does not resolve the separate Console cohort's493 retained SQLite handles.
+
+Complete support/packaging/preload/size group:50 passed,14 failed,2 warnings,
+8.72s (`/private/tmp/pr2427-formatter-guards.log`). Failures are the same13 size
+ceilings plus the separately reproduced504/500 preload limit; no new failure.
+Both full private-owner files pass87 tests,2 warnings,3.10s
+(`/private/tmp/pr2427-formatter-private-guards.log`). All seven derived checks
+pass (`/private/tmp/pr2427-formatter-preflight.log`). Helper/test Ruff and
+whitespace pass; Screen Ruff remains exactly49 baseline findings, with identical
+code/message multiplicities and no additions. Sequential independent spec and
+code-quality reviews found no issues. All local test processes are terminal.
+TASK31932 remains In Progress; normal protected merge remains blocked.
