@@ -1,5 +1,5 @@
 ---
-id: TASK-32341
+id: TASK-32470
 title: >-
   Fix dev-tip test harness drift in console suites
 status: To Do
@@ -16,7 +16,8 @@ dependencies: []
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Verified during the TASK-32320..32340 arc (2026-09-10/11): a set of
+Verified during the TASK-32320..32340 arc (renumbered from a draft
+32341 after dev claimed that ID for an unrelated boot-crash task) (2026-09-10/11): a set of
 console test failures exist on origin/dev tip a0b8f96416 itself, before
 any of this arc's changes (confirmed repeatedly by stashing arc edits
 and re-running on the clean tree — identical failures). They are harness
