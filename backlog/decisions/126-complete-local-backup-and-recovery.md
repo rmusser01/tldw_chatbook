@@ -850,3 +850,21 @@ A reached output-parent replacement after original path validation redirected th
 ### Task10 phase14j ruling120 — ordinary platform compatibility
 
 Pinned export is selected upfront from original primitive identity, required flags and original dir_fd support. When those primitives are unavailable before allocation, retain the original ordinary pathname stream route and its complete operation/stream outcomes; Library maintenance remains explicitly unqualified. A failed or unknown pinned allocation never selects fallback. OS Independent ordinary use is preserved without a Windows/native-platform qualification claim, mutation of global capability metadata or use of fallback as a capture capability.
+
+
+### Task10: finite loose voice operations
+
+The unfinished recursive Python frame/code/closure/MRO authority machinery is
+replaced by finite scopes at installed voice constructors and file operations.
+Original revision4 section6 limits coordination to declared owners and
+protocol-aware entrypoints; arbitrary out-of-protocol same-user modification is
+outside the guarantee. Actual source binding, containment, native descriptor
+settlement and related audio/JSON operation consistency remain required.
+
+Existing service, registry, profile, repository and runtime ordering remains in
+place. Accepted nested operations may finish while fresh intake is paused; failed
+partial publication or uncertain native close keeps capture blocked. Whole live
+app/capture and standalone-root inventory coverage remain separate qualification
+requirements. The prior uncommitted proposal and tests were preserved before
+replacement; this decision adds no execution/restore feature or global attestation
+framework.

@@ -105,25 +105,161 @@ class _Voices(_RawDeclaration):
             ("app_tts", "CHATTERBOX_VOICE_DIR"),
             ("app_tts", "KOKORO_VOICE_BLENDS_DIR"),
             ("HiggsSettings", "voice_samples_dir"),
+            ("global_tts_settings", "CHATTERBOX_VOICE_DIR"),
+            ("global_tts_settings", "KOKORO_VOICE_BLENDS_DIR"),
+            ("local_chatterbox_default", "CHATTERBOX_VOICE_DIR"),
+            ("local_kokoro_default_onnx", "KOKORO_VOICE_BLENDS_DIR"),
+            ("local_kokoro_default_pytorch", "KOKORO_VOICE_BLENDS_DIR"),
+            ("local_higgs_default", "HIGGS_VOICE_SAMPLES_DIR"),
+            ("local_higgs_v2", "HIGGS_VOICE_SAMPLES_DIR"),
         ):
             value = setting(config, section, key)
-            if value is not None and type(value) is not str:
+            if value is not None and (type(value) is not str or not value):
                 raise ValueError("invalid_voice_path")
+        backend_higgs = config.get("HIGGS_VOICE_SAMPLES_DIR")
+        if backend_higgs is not None and (
+            type(backend_higgs) is not str or not backend_higgs
+        ):
+            raise ValueError("invalid_voice_path")
+        # Catalog readers use these fixed shared locations even when the
+        # configured manager/backend destinations differ. Location classification
+        # does not make saved voice content an optional model/external folder.
+        shared_chatterbox = lexical_path("~/.config/tldw_cli/chatterbox_voices")
+        shared_higgs = lexical_path("~/.config/tldw_cli/higgs_voices")
+        configured_kokoro = setting(config, "app_tts", "KOKORO_VOICE_BLENDS_DIR")
+        kokoro_root = (
+            lexical_path(configured_kokoro)
+            if configured_kokoro is not None
+            else context.config_path.parent / "kokoro_voice_blends"
+        )
         roots = (
-            lexical_path(
-                setting(config, "app_tts", "CHATTERBOX_VOICE_DIR")
-                or "~/.config/tldw_cli/chatterbox_voices"
-            ),
-            lexical_path(
-                setting(config, "HiggsSettings", "voice_samples_dir")
-                or "~/.config/tldw_cli/higgs_voices"
-            ),
-            lexical_path(setting(config, "app_tts", "KOKORO_VOICE_BLENDS_DIR"))
-            if setting(config, "app_tts", "KOKORO_VOICE_BLENDS_DIR") is not None
-            else context.config_path.parent / "kokoro_voice_blends",
+            lexical_path(setting(config, "app_tts", "CHATTERBOX_VOICE_DIR"))
+            if setting(config, "app_tts", "CHATTERBOX_VOICE_DIR") is not None
+            else shared_chatterbox,
+            lexical_path(setting(config, "HiggsSettings", "voice_samples_dir"))
+            if setting(config, "HiggsSettings", "voice_samples_dir") is not None
+            else shared_higgs,
+            lexical_path(backend_higgs) if backend_higgs is not None else shared_higgs,
+            shared_chatterbox,
+            shared_higgs,
+            kokoro_root,
             context.config_path.parent / "kokoro_voice_blends.json",
         )
-        entries = tuple(item for root in roots for item in self._tree(config, root))
+        # Mirror only the five installed legacy routes. The adapter receives
+        # validated raw TOML; normalized runtime wrappers are not another source.
+        chatterbox_base = setting(
+            config,
+            "app_tts",
+            "CHATTERBOX_VOICE_DIR",
+            setting(config, "global_tts_settings", "CHATTERBOX_VOICE_DIR"),
+        )
+        kokoro_base = setting(
+            config,
+            "app_tts",
+            "KOKORO_VOICE_BLENDS_DIR",
+            setting(config, "global_tts_settings", "KOKORO_VOICE_BLENDS_DIR"),
+        )
+        higgs_base = (
+            backend_higgs
+            if backend_higgs is not None
+            else setting(config, "HiggsSettings", "voice_samples_dir")
+        )
+        for route, key, base, fallback in (
+            (
+                "local_chatterbox_default",
+                "CHATTERBOX_VOICE_DIR",
+                chatterbox_base,
+                shared_chatterbox,
+            ),
+            (
+                "local_kokoro_default_onnx",
+                "KOKORO_VOICE_BLENDS_DIR",
+                kokoro_base,
+                kokoro_root,
+            ),
+            (
+                "local_kokoro_default_pytorch",
+                "KOKORO_VOICE_BLENDS_DIR",
+                kokoro_base,
+                kokoro_root,
+            ),
+            (
+                "local_higgs_default",
+                "HIGGS_VOICE_SAMPLES_DIR",
+                higgs_base,
+                shared_higgs,
+            ),
+            ("local_higgs_v2", "HIGGS_VOICE_SAMPLES_DIR", higgs_base, shared_higgs),
+        ):
+            value = setting(config, route, key, base)
+            roots += (lexical_path(value) if value is not None else fallback,)
+        # Dedup only identical lexical roots; resolving symlink/hardlink aliases
+        # here would hide the inventory's existing physical-alias diagnostics.
+        entries = tuple(
+            item for root in dict.fromkeys(roots) for item in self._tree(config, root)
+        )
+        # The same lexical member can be enumerated from overlapping actual
+        # roots. Canonicalize its identity and rewrite relationships together;
+        # distinct alias spellings and conflicting status remain observable.
+        members = {}
+        aliases = {}
+        observations = {}
+        discovery_changed = False
+        for item in entries:
+            observation = (
+                (
+                    item.metadata.version,
+                    item.metadata.kind,
+                    item.metadata.mode,
+                    item.metadata.mtime_ns,
+                    item.metadata.policy,
+                )
+                if item.metadata is not None
+                else None
+            )
+            key = (
+                item.path,
+                item.status,
+                item.shared_group,
+                item.deletion_validated,
+                observation,
+            )
+            if item.path is not None:
+                previous_observation = observations.setdefault(item.path, key[1:])
+                discovery_changed |= previous_observation != key[1:]
+            previous = members.get(key)
+            if previous is None:
+                members[key] = item
+            else:
+                aliases[item.logical_id] = previous.logical_id
+        entries = tuple(
+            replace(
+                item,
+                dependencies=tuple(
+                    dict.fromkeys(aliases.get(key, key) for key in item.dependencies)
+                ),
+                metadata=replace(
+                    item.metadata,
+                    root_id=aliases.get(item.metadata.root_id, item.metadata.root_id),
+                    parent_id=aliases.get(
+                        item.metadata.parent_id, item.metadata.parent_id
+                    ),
+                )
+                if item.metadata is not None
+                else None,
+            )
+            for item in members.values()
+        )
+        if discovery_changed:
+            entries += (
+                StorageItem(
+                    self.owner_id,
+                    storage_logical_id(context, self.owner_id, "discovery_changed"),
+                    None,
+                    "unsupported",
+                    (),
+                ),
+            )
         if any(item.status in {"included", "included_directory"} for item in entries):
             entries += (
                 StorageItem(

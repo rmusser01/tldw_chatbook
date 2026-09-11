@@ -532,6 +532,22 @@ APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
         "shared Kokoro default model artifact root",
     ),
     ExceptionRule(
+        "tldw_chatbook/TTS/recovery.py",
+        "function:discover",
+        "literal:~/.config/tldw_cli/chatterbox_voices",
+        1,
+        Disposition.SHARED_ARTIFACT,
+        "exact discovery of existing reusable Chatterbox voice source; baseline ownership is unchanged",
+    ),
+    ExceptionRule(
+        "tldw_chatbook/TTS/recovery.py",
+        "function:discover",
+        "literal:~/.config/tldw_cli/higgs_voices",
+        1,
+        Disposition.SHARED_ARTIFACT,
+        "exact discovery of existing reusable Higgs voice source; baseline ownership is unchanged",
+    ),
+    ExceptionRule(
         "tldw_chatbook/TTS/utils/download_models.py",
         "function:__init__",
         "join:.config/tldw_cli",

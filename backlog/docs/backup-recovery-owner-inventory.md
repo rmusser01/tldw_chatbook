@@ -692,53 +692,30 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/TTS/backends/chatterbox.py | ChatterboxTTSBackend._send_command | write | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox.py | ChatterboxTTSBackend._tensor_to_wav_bytes | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox.py | ChatterboxTTSBackend._transcribe_audio | write | 1 | unsupported | tts |
-| tldw_chatbook/TTS/backends/chatterbox.py | ChatterboxTTSBackend.list_voices_with_metadata | open | 1 | unsupported | tts |
-| tldw_chatbook/TTS/backends/chatterbox.py | ChatterboxTTSBackend.save_reference_voice | copy2 | 1 | unsupported | tts |
-| tldw_chatbook/TTS/backends/chatterbox.py | ChatterboxTTSBackend.save_reference_voice_with_metadata | copy2 | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox.py | ChatterboxTTSBackend.save_reference_voice_with_metadata | dump | 1 | unsupported | tts |
-| tldw_chatbook/TTS/backends/chatterbox.py | ChatterboxTTSBackend.save_reference_voice_with_metadata | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox.py | suppress_output | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox_isolated.py | ChatterboxIsolatedBackend._read_response | open | 2 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox_isolated.py | ChatterboxIsolatedBackend._send_command | write | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox_process.py | <module> | open | 2 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox_process.py | main | open | 5 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox_process.py | send_response | write | 1 | unsupported | tts |
-| tldw_chatbook/TTS/backends/chatterbox_voice_manager.py | ChatterboxVoiceManager.create_profile | copy2 | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox_voice_manager.py | ChatterboxVoiceManager.create_profile | mkdir | 1 | unsupported | tts |
-| tldw_chatbook/TTS/backends/chatterbox_voice_manager.py | ChatterboxVoiceManager.export_profile | copy2 | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox_voice_manager.py | ChatterboxVoiceManager.export_profile | dump | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox_voice_manager.py | ChatterboxVoiceManager.export_profile | mkdir | 2 | unsupported | tts |
-| tldw_chatbook/TTS/backends/chatterbox_voice_manager.py | ChatterboxVoiceManager.export_profile | open | 2 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox_voice_manager.py | ChatterboxVoiceManager.export_profile | write | 7 | unsupported | tts |
-| tldw_chatbook/TTS/backends/chatterbox_voice_manager.py | ChatterboxVoiceManager.import_profile | copy2 | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox_voice_manager.py | ChatterboxVoiceManager.import_profile | mkdir | 1 | unsupported | tts |
-| tldw_chatbook/TTS/backends/chatterbox_voice_manager.py | ChatterboxVoiceManager.import_profile | open | 1 | unsupported | tts |
-| tldw_chatbook/TTS/backends/chatterbox_voice_manager.py | ChatterboxVoiceManager.load_profiles | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox_voice_manager.py | ChatterboxVoiceManager.save_profiles | dump | 1 | unsupported | tts |
-| tldw_chatbook/TTS/backends/chatterbox_voice_manager.py | ChatterboxVoiceManager.save_profiles | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/higgs.py | HiggsAudioTTSBackend.__init__ | mkdir | 2 | unsupported | tts |
-| tldw_chatbook/TTS/backends/higgs.py | HiggsAudioTTSBackend._load_voice_profiles | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/higgs.py | HiggsAudioTTSBackend._prepare_messages | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/higgs.py | HiggsAudioTTSBackend._save_voice_profiles | dump | 1 | unsupported | tts |
-| tldw_chatbook/TTS/backends/higgs.py | HiggsAudioTTSBackend._save_voice_profiles | open | 1 | unsupported | tts |
-| tldw_chatbook/TTS/backends/higgs.py | HiggsAudioTTSBackend.create_voice_profile | copy2 | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/higgs.py | HiggsAudioTTSBackend.create_voice_profile | mkdir | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager.__init__ | mkdir | 2 | unsupported | tts |
-| tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager._create_backup | copy2 | 1 | unsupported | tts |
-| tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager.create_profile | copy2 | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager.create_profile | mkdir | 1 | unsupported | tts |
-| tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager.export_profile | copy2 | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager.export_profile | dump | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager.export_profile | mkdir | 2 | unsupported | tts |
-| tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager.export_profile | open | 2 | unsupported | tts |
 | tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager.export_profile | write | 6 | unsupported | tts |
-| tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager.import_profile | copy2 | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager.import_profile | mkdir | 1 | unsupported | tts |
-| tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager.import_profile | open | 1 | unsupported | tts |
-| tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager.load_profiles | open | 1 | unsupported | tts |
-| tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager.restore_from_backup | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager.save_profiles | dump | 1 | unsupported | tts |
-| tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager.save_profiles | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/kokoro.py | KokoroTTSBackend.__init__ | secure_private_directory | 2 | unsupported | tts |
 | tldw_chatbook/TTS/backends/kokoro.py | KokoroTTSBackend._download_model_if_needed | makedirs | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/kokoro.py | KokoroTTSBackend._download_model_if_needed | open | 1 | unsupported | tts |
@@ -750,9 +727,15 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/TTS/backends/kokoro.py | KokoroTTSBackend._generate_pytorch_with_timestamps | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/kokoro.py | KokoroTTSBackend._initialize_onnx | makedirs | 2 | unsupported | tts |
 | tldw_chatbook/TTS/backends/kokoro.py | KokoroTTSBackend._initialize_onnx | write | 2 | unsupported | tts |
-| tldw_chatbook/TTS/backends/kokoro.py | KokoroTTSBackend._load_saved_blends | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/kokoro.py | KokoroTTSBackend.initialize | mkdir | 2 | unsupported | tts |
 | tldw_chatbook/TTS/backends/voice_manager_base.py | VoiceManagerBase.__init__ | mkdir | 1 | unsupported | tts |
+| tldw_chatbook/TTS/loose_voice_lifetime.py | copy | atomic_private_write_bytes | 1 | unsupported | tts |
+| tldw_chatbook/TTS/loose_voice_lifetime.py | copy | open_private_binary | 1 | unsupported | tts |
+| tldw_chatbook/TTS/loose_voice_lifetime.py | directory | secure_private_directory | 2 | unsupported | tts |
+| tldw_chatbook/TTS/loose_voice_lifetime.py | mkdir | mkdir | 1 | unsupported | tts |
+| tldw_chatbook/TTS/loose_voice_lifetime.py | open_text | atomic_private_write_text | 1 | unsupported | tts |
+| tldw_chatbook/TTS/loose_voice_lifetime.py | open_text | open_private_binary | 1 | unsupported | tts |
+| tldw_chatbook/TTS/loose_voice_lifetime.py | unlink | os.unlink | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_migration_native.py | _native_open | open | 2 | unsupported | tts |
 | tldw_chatbook/TTS/profile_migration_publication.py | _append_journal | write | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_migration_publication.py | _immutable_validate | connect_private_sqlite_descriptor | 1 | unsupported | tts |
@@ -2918,3 +2901,14 @@ private staged copies. Model lease rows retain their existing cohort status.
 | tldw_chatbook/Backup_Recovery/storage_admission.py | _write_staged_credential_file | os.replace | 1 | disposable | private staged credential rewrite |
 | tldw_chatbook/Backup_Recovery/storage_admission.py | _write_staged_credential_file | os.unlink | 1 | disposable | private staged credential cleanup |
 | tldw_chatbook/Backup_Recovery/storage_admission.py | _write_staged_credential_file | write | 1 | disposable | private staged credential rewrite |
+
+### Finite loose TTS operation participation
+
+The installed Chatterbox, Higgs and Kokoro backends and both legacy voice managers
+use `TTS/loose_voice_lifetime.py` for finite operation admission, receiver/root
+binding, contained file access and related audio/JSON publication. Existing
+private-path helpers retain native descriptor uncertainty through the local drain.
+Cached Kokoro reads retain ordinary dictionary semantics. The seven helper census
+rows above replace moved producer edges; their presence does not qualify complete
+live capture. Actual runtime inventory of standalone selected roots, producer
+settlement and capture/resume composition still require their own evidence.

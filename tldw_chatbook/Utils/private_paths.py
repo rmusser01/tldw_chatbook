@@ -479,6 +479,11 @@ def _visual_native_scope():
     return (visual, state) if state is not None and state.helper is not None else (None, None)
 
 
+def _voice_operation(*, native=False):
+    module = sys.modules.get("tldw_chatbook.TTS.loose_voice_lifetime")
+    return (module.native() if native else module.active()) if module is not None else None
+
+
 def _native_mkdir(*args, **kwargs):
     visual, state = _visual_native_scope()
     if state is not None:
@@ -513,6 +518,9 @@ def _native_open(*args, _outcome: _NativeOpenOutcome | None = None, **kwargs):
         raise
     if _outcome is not None:
         _outcome.descriptor = fd
+    voice = _voice_operation(native=True)
+    if voice is not None:
+        voice.opened(fd)
     if operation is not None:
         raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
         raw._states[operation].descriptors.add(fd)
@@ -520,6 +528,9 @@ def _native_open(*args, _outcome: _NativeOpenOutcome | None = None, **kwargs):
 
 
 def _native_close(fd):
+    voice = _voice_operation(native=True)
+    if voice is not None:
+        return voice.close(fd)
     visual, state = _visual_native_scope()
     if state is not None:
         return visual.native_close(fd)
@@ -548,6 +559,11 @@ def _close_runtime_stream(operation, stream):
 def _admitted_file(function):
     @functools.wraps(function)
     def admitted(path, *args, **kwargs):
+        voice = _voice_operation()
+        if voice is not None:
+            voice.check(path, external=True)
+            with voice.native_scope():
+                return function(path, *args, **kwargs)
         from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
         visual, visual_state = _active_visual_source()
         if visual_state is not None:
@@ -705,6 +721,11 @@ def _admitted_stream(function):
 def _admitted_reader(function):
     @functools.wraps(function)
     def admitted(path, *args, **kwargs):
+        voice = _voice_operation()
+        if voice is not None:
+            with voice.native_scope():
+                yield from function(path, *args, **kwargs)
+            return
         from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
         operation = _runtime_operation(lexical_path(path))
         if operation is not None:
@@ -1007,9 +1028,14 @@ def atomic_private_write_bytes(
                 dst_dir_fd=parent_fd,
             )
         except BaseException:
+            voice = _voice_operation()
+            if voice is not None:
+                voice.uncertain = True
             if operation is not None:
                 raw._states[operation].uncertain = True
             raise
+        if _voice_operation() is not None:
+            _voice_operation().changed += 1
         temporary_exists = False
         published = True
         if operation is not None:
@@ -1038,6 +1064,8 @@ def atomic_private_write_bytes(
             status = PrivatePathStatus.ALREADY_PRIVATE
         return PrivatePathResult(selected, status)
     except BaseException as exc:
+        if published and _voice_operation() is not None:
+            _voice_operation().uncertain = True
         if operation is not None and published:
             raw._states[operation].uncertain = True
         if isinstance(exc, OSError) and not isinstance(exc, PrivatePathError):
@@ -1055,6 +1083,14 @@ def atomic_private_write_bytes(
                         os.unlink(temporary_leaf, dir_fd=parent_fd)
                 except FileNotFoundError:
                     pass
+                except BaseException:
+                    # The temporary was allocated by this voice publication.
+                    # Failed cleanup leaves its bytes/ownership unresolved even
+                    # when the write never reached rename and all fds close.
+                    voice = _voice_operation(native=True)
+                    if voice is not None:
+                        voice.uncertain = True
+                    raise
         finally:
             _native_close(parent_fd)
 
@@ -1309,7 +1345,7 @@ def open_private_binary(path: PathInput) -> Iterator[PrivateBinaryFile]:
                     )
                 )
             operation = _runtime_operation(selected)
-            stream = os.fdopen(file_fd, "rb", closefd=operation is None)
+            stream = os.fdopen(file_fd, "rb", closefd=operation is None and _voice_operation() is None)
             stream_fd = file_fd
             if operation is not None:
                 raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
@@ -1324,7 +1360,13 @@ def open_private_binary(path: PathInput) -> Iterator[PrivateBinaryFile]:
             _native_close(file_fd)
         _native_close(parent_fd)
 
-    if operation is None:
+    if _voice_operation() is not None:
+        try:
+            with stream:
+                yield PrivateBinaryFile(stream=stream, result=PrivatePathResult(selected, status))
+        finally:
+            _native_close(stream_fd)
+    elif operation is None:
         with stream:
             yield PrivateBinaryFile(
                 stream=stream,

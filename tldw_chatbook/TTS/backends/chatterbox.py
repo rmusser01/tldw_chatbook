@@ -1,3 +1,4 @@
+from tldw_chatbook.TTS import loose_voice_lifetime as voice_files
 # chatterbox.py
 # Description: Chatterbox TTS backend implementation with streaming support
 #
@@ -79,6 +80,7 @@ class ChatterboxTTSBackend(TTSBackendBase):
     - Fallback strategies for robust generation
     """
 
+    @voice_files.call
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
 
@@ -158,7 +160,7 @@ class ChatterboxTTSBackend(TTSBackendBase):
                 ),
             )
         ).expanduser()
-        self.voice_dir.mkdir(parents=True, exist_ok=True)
+        voice_files.mkdir(self, self.voice_dir, parents=True, exist_ok=True)
 
         # Streaming configuration
         self.streaming_enabled = self.config.get(
@@ -1434,6 +1436,7 @@ class ChatterboxTTSBackend(TTSBackendBase):
         buffer.seek(0)
         return buffer.read()
 
+    @voice_files.call
     async def list_voices(self) -> list[str]:
         """List available voices (predefined and custom)"""
         voices = ["default"]
@@ -1445,10 +1448,10 @@ class ChatterboxTTSBackend(TTSBackendBase):
 
         return voices
 
+    @voice_files.call
     async def save_reference_voice(self, name: str, audio_path: str) -> bool:
         """Save a reference audio file as a predefined voice"""
         try:
-            import shutil
 
             # Validate audio file
             if not os.path.exists(audio_path):
@@ -1457,7 +1460,7 @@ class ChatterboxTTSBackend(TTSBackendBase):
 
             # Copy to voice directory
             dest_path = self.voice_dir / f"{name}.wav"
-            shutil.copy2(audio_path, dest_path)
+            voice_files.copy(self, audio_path, dest_path)
 
             logger.info(f"Saved voice '{name}' to {dest_path}")
             return True
@@ -1466,6 +1469,7 @@ class ChatterboxTTSBackend(TTSBackendBase):
             logger.error(f"Failed to save reference voice: {e}")
             return False
 
+    @voice_files.call
     async def save_reference_voice_with_metadata(
         self, name: str, audio_path: str, metadata: Optional[Dict[str, Any]] = None
     ) -> bool:
@@ -1481,7 +1485,6 @@ class ChatterboxTTSBackend(TTSBackendBase):
             Success status
         """
         try:
-            import shutil
 
             # Validate audio file
             if not os.path.exists(audio_path):
@@ -1490,7 +1493,7 @@ class ChatterboxTTSBackend(TTSBackendBase):
 
             # Save audio file
             voice_path = self.voice_dir / f"{name}.wav"
-            shutil.copy2(audio_path, voice_path)
+            voice_files.copy(self, audio_path, voice_path)
 
             # Prepare metadata
             if metadata is None:
@@ -1517,7 +1520,7 @@ class ChatterboxTTSBackend(TTSBackendBase):
 
             # Save metadata
             metadata_path = self.voice_dir / f"{name}_metadata.json"
-            with open(metadata_path, "w") as f:
+            with voice_files.open_text(self, metadata_path, "w") as f:
                 json.dump(metadata, f, indent=2)
 
             logger.info(f"Saved voice '{name}' with metadata to {voice_path}")
@@ -1527,6 +1530,7 @@ class ChatterboxTTSBackend(TTSBackendBase):
             logger.error(f"Failed to save voice with metadata: {e}")
             return False
 
+    @voice_files.call
     async def list_voices_with_metadata(self) -> List[Dict[str, Any]]:
         """
         List available voices with their metadata.
@@ -1554,7 +1558,7 @@ class ChatterboxTTSBackend(TTSBackendBase):
                 metadata_path = self.voice_dir / f"{voice_name}_metadata.json"
                 if metadata_path.exists():
                     try:
-                        with open(metadata_path, "r") as f:
+                        with voice_files.open_text(self, metadata_path, "r") as f:
                             voice_info["metadata"] = json.load(f)
                             voice_info["has_metadata"] = True
                     except Exception as e:

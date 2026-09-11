@@ -3,12 +3,13 @@ from tldw_chatbook.Backup_Recovery.storage_admission import admit_startup
 
 admit_startup()
 
+from tldw_chatbook.TTS import loose_voice_lifetime as voice_files
+
 # higgs_voice_manager.py
 # Description: Voice profile management utilities for Higgs Audio TTS
 #
 # Imports
 import json
-import shutil
 import asyncio
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
@@ -58,6 +59,7 @@ class HiggsVoiceProfileManager:
     - Backup and restore profiles
     """
 
+    @voice_files.call
     def __init__(self, voice_samples_dir: Path):
         """
         Initialize the voice profile manager.
@@ -66,14 +68,15 @@ class HiggsVoiceProfileManager:
             voice_samples_dir: Directory for storing voice samples and profiles
         """
         self.voice_samples_dir = Path(voice_samples_dir)
-        self.voice_samples_dir.mkdir(parents=True, exist_ok=True)
+        voice_files.mkdir(self, self.voice_samples_dir, parents=True, exist_ok=True)
 
         self.profiles_file = self.voice_samples_dir / "voice_profiles.json"
         self.backup_dir = self.voice_samples_dir / "backups"
-        self.backup_dir.mkdir(exist_ok=True)
+        voice_files.mkdir(self, self.backup_dir, exist_ok=True)
 
         self._profiles_cache: Optional[Dict[str, Dict[str, Any]]] = None
 
+    @voice_files.call
     def load_profiles(self) -> Dict[str, Dict[str, Any]]:
         """Load voice profiles from disk"""
         if self._profiles_cache is not None:
@@ -81,7 +84,7 @@ class HiggsVoiceProfileManager:
 
         if self.profiles_file.exists():
             try:
-                with open(self.profiles_file, "r") as f:
+                with voice_files.open_text(self, self.profiles_file, "r") as f:
                     self._profiles_cache = json.load(f)
                     return self._profiles_cache
             except Exception as e:
@@ -92,6 +95,7 @@ class HiggsVoiceProfileManager:
 
         return self._profiles_cache
 
+    @voice_files.call
     def save_profiles(self, profiles: Dict[str, Dict[str, Any]]) -> bool:
         """Save voice profiles to disk"""
         try:
@@ -99,7 +103,7 @@ class HiggsVoiceProfileManager:
             if self.profiles_file.exists():
                 self._create_backup()
 
-            with open(self.profiles_file, "w") as f:
+            with voice_files.open_text(self, self.profiles_file, "w") as f:
                 json.dump(profiles, f, indent=2)
 
             self._profiles_cache = profiles
@@ -108,6 +112,7 @@ class HiggsVoiceProfileManager:
             logger.error(f"Failed to save voice profiles: {e}")
             return False
 
+    @voice_files.call
     def create_profile(
         self,
         profile_name: str,
@@ -154,11 +159,11 @@ class HiggsVoiceProfileManager:
 
             # Create profile directory
             profile_dir = self.voice_samples_dir / profile_name
-            profile_dir.mkdir(exist_ok=True)
+            voice_files.mkdir(self, profile_dir, exist_ok=True)
 
             # Copy reference audio
             dest_path = profile_dir / f"reference{ref_path.suffix}"
-            shutil.copy2(ref_path, dest_path)
+            voice_files.copy(self, ref_path, dest_path)
 
             # Create profile
             profile = {
@@ -190,6 +195,7 @@ class HiggsVoiceProfileManager:
             logger.error(f"Error creating profile: {e}")
             return False, f"Error: {str(e)}"
 
+    @voice_files.call
     def update_profile(
         self,
         profile_name: str,
@@ -231,6 +237,7 @@ class HiggsVoiceProfileManager:
             logger.error(f"Error updating profile: {e}")
             return False, f"Error: {str(e)}"
 
+    @voice_files.call
     def delete_profile(self, profile_name: str) -> Tuple[bool, str]:
         """Delete a voice profile"""
         try:
@@ -243,7 +250,7 @@ class HiggsVoiceProfileManager:
             # Remove profile directory
             profile_dir = self.voice_samples_dir / profile_name
             if profile_dir.exists():
-                shutil.rmtree(profile_dir)
+                voice_files.remove_tree(self, profile_dir)
 
             # Remove from profiles
             del profiles[profile_name]
@@ -259,6 +266,7 @@ class HiggsVoiceProfileManager:
             logger.error(f"Error deleting profile: {e}")
             return False, f"Error: {str(e)}"
 
+    @voice_files.call
     def list_profiles(self, tags: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """
         List all voice profiles.
@@ -295,11 +303,13 @@ class HiggsVoiceProfileManager:
         result.sort(key=lambda x: x["display_name"].lower())
         return result
 
+    @voice_files.call
     def get_profile(self, profile_name: str) -> Optional[Dict[str, Any]]:
         """Get a specific voice profile"""
         profiles = self.load_profiles()
         return profiles.get(profile_name)
 
+    @voice_files.call
     def export_profile(self, profile_name: str, export_path: str) -> Tuple[bool, str]:
         """
         Export a voice profile with its reference audio.
@@ -318,18 +328,18 @@ class HiggsVoiceProfileManager:
 
             profile = profiles[profile_name]
             export_dir = Path(export_path)
-            export_dir.mkdir(parents=True, exist_ok=True)
+            voice_files.mkdir(self, export_dir, parents=True, exist_ok=True)
 
             # Create export package directory
             package_dir = export_dir / f"higgs_voice_{profile_name}"
-            package_dir.mkdir(exist_ok=True)
+            voice_files.mkdir(self, package_dir, exist_ok=True)
 
             # Copy reference audio
             if "reference_audio" in profile:
                 ref_path = Path(profile["reference_audio"])
                 if ref_path.exists():
                     dest_audio = package_dir / ref_path.name
-                    shutil.copy2(ref_path, dest_audio)
+                    voice_files.copy(self, ref_path, dest_audio)
 
                     # Update path in exported profile
                     export_profile = profile.copy()
@@ -342,12 +352,12 @@ class HiggsVoiceProfileManager:
 
             # Save profile metadata
             profile_file = package_dir / "profile.json"
-            with open(profile_file, "w") as f:
+            with voice_files.open_text(self, profile_file, "w") as f:
                 json.dump(export_profile, f, indent=2)
 
             # Create README
             readme_path = package_dir / "README.txt"
-            with open(readme_path, "w") as f:
+            with voice_files.open_text(self, readme_path, "w") as f:
                 f.write(f"Higgs Audio Voice Profile: {profile_name}\n")
                 f.write(f"Display Name: {profile.get('display_name', profile_name)}\n")
                 f.write(f"Language: {profile.get('language', 'unknown')}\n")
@@ -364,6 +374,7 @@ class HiggsVoiceProfileManager:
             logger.error(f"Error exporting profile: {e}")
             return False, f"Error: {str(e)}"
 
+    @voice_files.call
     def import_profile(
         self,
         import_path: str,
@@ -401,7 +412,7 @@ class HiggsVoiceProfileManager:
                 return False, "profile.json not found in import package"
 
             # Load profile data
-            with open(profile_file, "r") as f:
+            with voice_files.open_text(self, profile_file, "r") as f:
                 import_profile = json.load(f)
 
             # Determine profile name
@@ -424,15 +435,15 @@ class HiggsVoiceProfileManager:
 
             # Create profile directory
             profile_dir = self.voice_samples_dir / profile_name
-            profile_dir.mkdir(exist_ok=True)
+            voice_files.mkdir(self, profile_dir, exist_ok=True)
 
             # Copy reference audio if exists
             if "reference_audio" in import_profile:
-                ref_filename = import_profile["reference_audio"]
+                ref_filename = voice_files.reference_filename(import_profile["reference_audio"])
                 source_audio = package_dir / ref_filename
                 if source_audio.exists():
                     dest_audio = profile_dir / ref_filename
-                    shutil.copy2(source_audio, dest_audio)
+                    voice_files.copy(self, source_audio, dest_audio)
                     import_profile["reference_audio"] = str(dest_audio)
                 else:
                     logger.warning(f"Reference audio not found: {ref_filename}")
@@ -546,6 +557,7 @@ class HiggsVoiceProfileManager:
 
         return characteristics
 
+    @voice_files.call
     def _create_backup(self):
         """Create backup of current profiles"""
         try:
@@ -554,17 +566,18 @@ class HiggsVoiceProfileManager:
                 backup_file = (
                     self.backup_dir / f"voice_profiles_backup_{timestamp}.json"
                 )
-                shutil.copy2(self.profiles_file, backup_file)
+                voice_files.copy(self, self.profiles_file, backup_file)
 
                 # Keep only last 10 backups
                 backups = sorted(self.backup_dir.glob("voice_profiles_backup_*.json"))
                 if len(backups) > 10:
                     for old_backup in backups[:-10]:
-                        old_backup.unlink()
+                        voice_files.unlink(self, old_backup)
 
         except Exception as e:
             logger.warning(f"Failed to create backup: {e}")
 
+    @voice_files.call
     def restore_from_backup(
         self, backup_file: Optional[str] = None
     ) -> Tuple[bool, str]:
@@ -583,7 +596,7 @@ class HiggsVoiceProfileManager:
                 return False, f"Backup file not found: {backup_path}"
 
             # Load backup
-            with open(backup_path, "r") as f:
+            with voice_files.open_text(self, backup_path, "r") as f:
                 backup_profiles = json.load(f)
 
             # Save as current profiles
