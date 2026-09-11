@@ -65,7 +65,7 @@ if state not in ('ordinary', 'unqualified'):
     (root / ('pending-' + bootstrap._key('restore') + '.json')).unlink()
     activation = ActivationStore(control/'activation')
     for owner in owners:
-        if state == 'approved' or (state == 'config_only' and owner == 'config'):
+        if state == 'owner_flag_only' or (state == 'config_only' and owner == 'config'):
             activation.approve('generation', owner)
     if state == 'missing':
         (activation._generation('generation')/'required.json').unlink()
@@ -78,7 +78,7 @@ if state in ('shared', 'trust_source', 'marker_source', 'trust_skills_source'):
     os.environ['TLDW_CONFIG_PATH'] = str(other)
 if state == 'unqualified':
     storage.qualified_for = lambda *args: (False, 'native_unqualified')
-denied = state not in ('ordinary', 'approved', 'unqualified')
+denied = state not in ('ordinary', 'unqualified')
 probes=[]
 old_load = marker.load_marker
 # Keep marker implementation real; a probe sentry records unexpected automatic IO.
@@ -111,7 +111,9 @@ elif route == 'review':
     assert trust.unlock_from_keyring_convenience()
     review = trust.capture_review('demo')
     assert 'SKILL.md' in review['current_files']
-    trust.trust_reviewed_snapshot(review['review_id'])
+    try: trust.trust_reviewed_snapshot(review['review_id'])
+    except ValueError as exc: assert str(exc)=='skills_recovery_root_review_required'
+    else: raise AssertionError('old root review changed imported trust')
     assert denied
     assert not activation.allowed('generation', 'skills')
     assert not trust.script_execution_granted('demo')
@@ -159,7 +161,7 @@ def test_restored_skill_use_and_cached_credentials_stay_inactive(tmp_path, route
     "state",
     [
         "ordinary",
-        "approved",
+        "owner_flag_only",
         "unqualified",
         "config_only",
         "missing",
@@ -281,4 +283,6 @@ print('retired and reopened')
 
 @pytest.mark.parametrize("route", ["nested", "copied", "pid", "cancel", "generation"])
 def test_skills_keep_exact_accepted_native_lifetime(tmp_path, route):
-    _run(tmp_path, route, "approved", script=_RETENTION)
+    from Tests.Backup_Recovery.test_skills_recovery_review import _retention_script
+
+    _run(tmp_path, route, "fresh", script=_retention_script())

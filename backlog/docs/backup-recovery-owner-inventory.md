@@ -630,6 +630,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/STT/parakeet_onnx.py | _wav_duration | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/STT/transcribe_cpp.py | _read_normalized_wav | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Scheduling/db/scheduled_tasks_db.py | ScheduledTasksDB | inherits:BaseDB | 1 | qualified | db.scheduled_tasks |
+| tldw_chatbook/Skills_Interop/recovery_activation.py | _snapshots | open | 1 | generic_boundary | exact admitted Skills bundle review; pinned bounded read only |
 | tldw_chatbook/Skills_Interop/atomic_write.py | write_bytes_atomic | write_bytes | 1 | unsupported | skills |
 | tldw_chatbook/Skills_Interop/atomic_write.py | write_text_atomic | write_text | 1 | unsupported | skills |
 | tldw_chatbook/Skills_Interop/local_skills_service.py | LocalSkillsService._load_index | open | 1 | unsupported | skills |

@@ -7237,23 +7237,40 @@ class TldwCli(
             )
         local_skills_store_dir = default_local_skills_store_dir(get_user_data_dir())
         trust_store_dir = default_trust_store_dir(local_skills_store_dir)
-        trust_account_scope = skill_trust_account_scope(trust_store_dir)
-        skill_trust_marker_store, reduced_rollback_protection = (
-            build_skill_trust_marker_store_with_fallback(
-                fallback_marker_path=trust_store_dir / _SKILL_TRUST_MARKER_FILENAME,
-                store_dir=trust_store_dir,
-                account_scope=trust_account_scope,
-            )
+        from .Skills_Interop.recovery_activation import is_recovered
+
+        recovered_skills = is_recovered(
+            local_skills_store_dir / "skills", trust_store_dir
         )
+        if recovered_skills:
+            from .Skills_Interop.skill_trust_store import (
+                FileSkillTrustGenerationMarkerStore,
+            )
+
+            skill_trust_marker_store = FileSkillTrustGenerationMarkerStore(
+                trust_store_dir / _SKILL_TRUST_MARKER_FILENAME, store_dir=trust_store_dir
+            )
+            reduced_rollback_protection = True
+            skill_key_cache = None
+        else:
+            trust_account_scope = skill_trust_account_scope(trust_store_dir)
+            skill_trust_marker_store, reduced_rollback_protection = (
+                build_skill_trust_marker_store_with_fallback(
+                    fallback_marker_path=trust_store_dir / _SKILL_TRUST_MARKER_FILENAME,
+                    store_dir=trust_store_dir,
+                    account_scope=trust_account_scope,
+                )
+            )
+            skill_key_cache = build_default_skill_trust_key_cache(
+                account_scope=trust_account_scope
+            )
         self.local_skill_trust_service = SkillTrustService(
             skills_dir=local_skills_store_dir / "skills",
             trust_store=SkillTrustStore(
                 store_dir=trust_store_dir,
                 marker_store=skill_trust_marker_store,
             ),
-            key_cache=build_default_skill_trust_key_cache(
-                account_scope=trust_account_scope
-            ),
+            key_cache=skill_key_cache,
             keyring_convenience_enabled=False,
             reduced_rollback_protection=reduced_rollback_protection,
         )

@@ -14,7 +14,7 @@ from functools import wraps
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -53,6 +53,10 @@ from .skill_trust_store import (
 )
 
 
+if TYPE_CHECKING:
+    from .recovery_activation import RecoveryReview
+
+
 _SKILL_FILENAME = "SKILL.md"
 _SCRIPT_GRANTS_FILENAME = "skill_script_grants.json"
 
@@ -87,6 +91,11 @@ def _execution_sources(service):
                 path = getattr(marker, field, None)
                 if path is not None:
                     paths.append(path)
+        original = getattr(trust, "_recovery_original_store", None)
+        if original is not None:
+            from .recovery_activation import _sources
+
+            paths.extend(_sources(trust))
     return paths
 
 
@@ -119,6 +128,13 @@ def _execution_scope(service):
                     break
         except (OSError, ValueError, TypeError, RuntimeError, AttributeError):
             allowed = False
+        if allowed:
+            from tldw_chatbook.Backup_Recovery.local_content_lifetime import operation
+
+            from .recovery_activation import allowed as root_allowed
+
+            stack.enter_context(operation(_execution_sources(service)))
+            allowed = root_allowed(service, retained=leases)
         token = _active_execution.set((identity, leases))
         try:
             yield allowed
@@ -189,6 +205,10 @@ class SkillTrustService:
         self._keys: SkillTrustKeys | None = None
         self._salt: bytes | None = None
         self._reviews: dict[str, dict[str, Any]] = {}
+        self._recovery_original_store = trust_store
+        from .recovery_activation import select
+
+        select(self)
 
     @content_call(_content_sources)
     def unlock_with_passphrase(
@@ -205,6 +225,9 @@ class SkillTrustService:
     def enable_keyring_convenience(self) -> None:
         """Persist derived trust keys in secure keyring storage, never a passphrase."""
 
+        from .recovery_activation import require_write
+
+        require_write(self)
         if self.key_cache is None:
             raise SkillTrustMarkerUnavailable(
                 "No secure OS-backed key cache is available."
@@ -307,6 +330,10 @@ class SkillTrustService:
         "needs review"). Skills themselves are untouched. Best-effort and
         non-raising so a partially-available keyring never blocks recovery.
         """
+        from .recovery_activation import require_write
+
+        require_write(self)
+
         try:
             self.trust_store.delete_manifest()
         except Exception:
@@ -388,6 +415,14 @@ class SkillTrustService:
     ) -> None:
         """Trust the current local skill directories as the initial baseline."""
 
+        from .recovery_activation import require_write
+
+        require_write(self)
+        self._bootstrap_trust(passphrase, salt=salt)
+
+    def _bootstrap_trust(
+        self, passphrase: str | None = None, *, salt: bytes | None = None
+    ) -> None:
         if passphrase is not None:
             self.unlock_with_passphrase(
                 passphrase, salt=salt or secrets.token_bytes(32)
@@ -705,6 +740,22 @@ class SkillTrustService:
         )
 
     @content_call(_content_sources)
+    def capture_recovery_review(self) -> RecoveryReview:
+        """Review complete current bundles and retained inactive permissions."""
+        from .recovery_activation import capture
+
+        return capture(self)
+
+    @content_call(_content_sources)
+    def trust_reviewed_recovery(
+        self, review: RecoveryReview, passphrase: str
+    ) -> None:
+        """Establish a fresh local trust root after exact current review."""
+        from .recovery_activation import approve
+
+        approve(self, review, passphrase)
+
+    @content_call(_content_sources)
     def capture_review(self, skill_name: str) -> dict[str, Any]:
         """Capture a JSON-safe review snapshot for the current skill files."""
 
@@ -781,6 +832,9 @@ class SkillTrustService:
         snapshot: SkillDirectorySnapshot | None = None,
     ) -> None:
         """Trust the live files for one skill after an explicit approval path."""
+        from .recovery_activation import require_write
+
+        require_write(self)
 
         normalized_name = self._normalize_skill_name(skill_name)
         keys = self._require_keys()
@@ -924,6 +978,10 @@ class SkillTrustService:
         Raises:
             ValueError: If `skill_name` cannot be normalized.
         """
+        from .recovery_activation import require_write
+
+        require_write(self)
+
         normalized = self._normalize_skill_name(skill_name)
         grants = self._load_script_grants()
         grants[normalized] = self.current_fingerprint_digest(normalized)
@@ -942,6 +1000,9 @@ class SkillTrustService:
         Raises:
             ValueError: If `skill_name` cannot be normalized.
         """
+        from .recovery_activation import require_write
+
+        require_write(self)
         normalized = self._normalize_skill_name(skill_name)
         grants = self._load_script_grants()
         if grants.pop(normalized, None) is not None:
