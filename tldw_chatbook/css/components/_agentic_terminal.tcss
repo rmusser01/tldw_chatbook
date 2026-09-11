@@ -2453,6 +2453,12 @@ with stray left-edge border fragments), and padding 0 1 so the full
     height: 3;
     min-height: 3;
     margin: 0 0 1 0;
+    /* task-32212 (critique #9 row 9): this 3 is only honoured because
+       `LibraryRail.compose` zeroes the button's `line_pad` inline --
+       Textual's `Button` defaults to `line-pad: 1`, whose two flanking
+       cells made a 3-cell box paint 5 and shoved the rail's frame two
+       columns right. `line-pad: 0` cannot be written here: Textual's
+       `_process_integer` rejects a literal 0. See library_rail.py. */
     border: tall $ds-grid-line;
     background: $ds-surface-raised;
     color: $ds-text-primary;
@@ -2467,6 +2473,32 @@ with stray left-edge border fragments), and padding 0 1 so the full
     border: tall $ds-grid-line;
     background: $ds-surface-raised;
     color: $ds-text-primary;
+}
+
+/* task-32220 (critique #9 row 17): at the 22-column compact rail the heading
+   was cut mid-word to "Navigati". AC#1 accepts an ellipsis; the label keeps
+   its full word wherever it fits. */
+#library-rail-heading-label {
+    text-overflow: ellipsis;
+}
+
+/* task-32219 (critique #9 row 16): the rail's "there is more below" line.
+   `dock: bottom` is load-bearing -- a cue that scrolls with the content is
+   only ever on screen once you have scrolled to the bottom, where there is
+   nothing left to announce (proven live at 235x52 with the first,
+   un-docked version). Docked means the row is RESERVED out of the
+   scrollable viewport (`textual/_arrange.py` shrinks the layout region by
+   the dock spacing and grows `scroll_spacing` by it) -- which is exactly
+   why `_sync_fold_cue` discounts its own row when deciding whether the
+   rail still overflows. Nothing becomes unreachable; it costs one notch
+   of scroll. The background keeps the row opaque against the panel. */
+#library-rail-fold-cue {
+    dock: bottom;
+    height: 1;
+    width: 100%;
+    background: $ds-surface-panel;
+    color: $ds-text-muted;
+    text-overflow: ellipsis;
 }
 
 #library-conversations-filter {
@@ -3805,6 +3837,67 @@ with stray left-edge border fragments), and padding 0 1 so the full
     margin: 0 0 1 0;
     border: solid $ds-grid-line;
     padding: 0 1;
+}
+
+#library-media-reader-mode-analysis {
+    /* task-32217 (critique #9 density rule) reverses task-31237's fill FOR
+       THIS TAB ONLY -- see the sibling rule below for why. This wrapper
+       takes the pane (explicit 1fr, not the unstyled default 31222 warned
+       about) and, crucially, scrolls: it is the ONE thing that changed
+       reachability, because the action row now lives in its scrolled flow
+       instead of being clipped at the pane edge.
+
+       There are TWO scrollers for a long analysis, not one. Measured on a
+       400-line analysis (235x52 / 100x30 / 60x24): this wrapper carries
+       only the last 4-5 rows (virt 45 vs h 41, 25 vs 20, 19 vs 14 --
+       max_scroll_y 4/5/5), which is exactly the overhang of the action row
+       and its reason line; the analysis TEXT is scrolled by the inner
+       virtualized view (#library-media-viewer-content-text, virt 400 vs
+       h 39/18/12 -- max_scroll_y 361/382/388), which paints its own
+       scrollbar. The wheel bubbles from the inner view to this wrapper
+       once the inner view bottoms out (Textual stops the event only when
+       an inner scroll actually moved), so reading to the end of the text
+       and then continuing brings the actions on screen; focusing the
+       button scrolls it into view the same way. Verified live at 235x52:
+       wheeling reached paragraph 119, the box's bottom border, then
+       "Edit analysis / ○ Regenerate". */
+    height: 1fr;
+    overflow-y: auto;
+}
+
+#library-media-reader-mode-analysis #library-media-viewer-content {
+    /* Analysis is the one tab with an action row BELOW the content box, so
+       31237's 1fr fill pinned "Edit analysis" / "Generate" to the pane
+       floor: measured at 235x52, a 2-line analysis got a 37-row box and
+       its actions at y=47 against a content top of y=9 -- 33 rows of empty
+       bordered box between the text and the controls that act on it. The
+       box now hugs its text and the actions follow it directly.
+
+       `max-height: 1fr` was tried first and does NOT work here: Textual
+       resolves fr in max-height against the whole container, not the
+       post-auto remainder, so the box took all 41 rows and pushed the
+       action row one line past the pane (measured: edit.bottom 51 vs
+       viewer.bottom 50). Hence the wrapper scroll above.
+
+       `auto` hugs only while the text FITS. Past that the box fills the
+       pane exactly as 1fr did (measured, 400-line analysis: h 41/20/14 at
+       235x52/100x30/60x24, i.e. the whole pane) because
+       VirtualizedRawContent._apply_height_cap caps its child at the
+       parent's content height. That is fine and intended: the short case is
+       the one 32217 is about, and in the long case the wrapper's scroll is
+       what carries the actions on screen.
+
+       Read keeps 1fr -- nothing sits under its box there, so hugging would
+       only re-open the stranded blank band 31237 closed (critique #3 P2). */
+    height: auto;
+    /* Belt-and-braces only: this declaration is INERT today. Analysis always
+       composes the body in raw mode, and LibraryMediaContentBody._apply_mode_
+       overflow sets overflow_y="hidden" INLINE for raw, which outranks the
+       stylesheet (measured: the box's _inline_styles already has the rule).
+       It is kept so the box still cannot become a third scroller if that
+       mode mapping ever changes -- but it is NOT what fixed reachability;
+       the wrapper's `height: 1fr` + `overflow-y: auto` above is. */
+    overflow-y: hidden;
 }
 
 /* task-31277 (critique #4 P2, AC#4): the reading measure. The bodies used
