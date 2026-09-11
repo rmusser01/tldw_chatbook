@@ -2485,3 +2485,13 @@ permissions or path containment under `$HOME`, outside the config directory the
 profile itself uses — and when a whole journey fails at step one for every
 assessor, check whether the harness is inside the feature's own exclusion rules
 before grading it.
+
+## Reasoning fields on the wire do not prove a template retained them
+
+**TASK-32273 / PR #2575, 2026-09-10.** Local replay payload assertions passed,
+but rendering the exact Gemma 4 template showed two limits: `preserve_thinking`
+retained older tool-call thinking while omitting older final-answer thinking,
+and legacy fenced tool results looked like new user turns and discarded active
+thinking. A live native calculator exchange on port 9099 retained its exact
+thinking in `/apply-template` and returned 221. Keep wire-field, rendered-prompt,
+and transcript-retention assertions separate; only claim the layer verified.

@@ -423,6 +423,9 @@ async def test_durable_owner_replay_is_counted_and_dispatched_exactly_once(
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/health":
             return httpx.Response(200, json={"status": "ok"})
+        if request.url.path == "/props":
+            # Optional template discovery can be unavailable on older servers.
+            return httpx.Response(404)
         assert request.url.path == "/v1/chat/completions"
         dispatched.append(json.loads(request.content))
         return httpx.Response(
@@ -711,7 +714,7 @@ async def test_persistence_preflight_controls_dispatch(
 
 
 @pytest.mark.asyncio
-async def test_plain_local_model_uses_real_resolver_and_dispatches_on_v0_backend(
+async def test_local_structured_capability_refuses_v0_backend_before_dispatch(
     tmp_path,
 ) -> None:
     endpoint = "http://127.0.0.1:9099"
@@ -721,6 +724,9 @@ async def test_plain_local_model_uses_real_resolver_and_dispatches_on_v0_backend
         nonlocal provider_contacts
         if request.url.path == "/health":
             return httpx.Response(200, json={"status": "ok"})
+        if request.url.path == "/props":
+            # Optional template discovery can be unavailable on older servers.
+            return httpx.Response(404)
         assert request.url.path == "/v1/chat/completions"
         provider_contacts += 1
         return httpx.Response(
@@ -751,17 +757,19 @@ async def test_plain_local_model_uses_real_resolver_and_dispatches_on_v0_backend
         streaming=False,
     )
 
+    store.set_session_draft(session.id, "Plain model question")
     try:
         result = await controller.submit_draft("Plain model question")
 
-        assert result.accepted is True
-        assert provider_contacts == 1
-        assert [
-            message.content for message in store.messages_for_session(session.id)
-        ] == [
-            "Plain model question",
-            "PLAIN-MODEL-ANSWER",
-        ]
+        # An alias cannot establish that a local server will never emit its
+        # declared structured reasoning fields. Refuse before accepting an
+        # owner whose backend cannot preserve those fields.
+        assert result.accepted is False
+        assert result.provider_started is False
+        assert result.should_clear_draft is False
+        assert provider_contacts == 0
+        assert not store.messages_for_session(session.id)
+        assert store.session_draft(session.id) == "Plain model question"
     finally:
         await gateway.aclose()
         db.close_connection()

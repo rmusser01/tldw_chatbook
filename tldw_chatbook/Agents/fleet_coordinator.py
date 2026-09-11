@@ -635,8 +635,20 @@ class FleetCoordinator:
             return False
         if self._retained_transcript_max_chars <= 0:
             return False
+
+        def retained_json_value(value):
+            from tldw_chatbook.Chat.thinking_blocks import (
+                ThinkingEnvelope,
+                dump_thinking_blocks_json,
+            )
+
+            if isinstance(value, ThinkingEnvelope):
+                # Measure the canonical body; its private repr omits all text.
+                return json.loads(dump_thinking_blocks_json(value))
+            return str(value)
+
         try:
-            size = len(json.dumps(messages, default=str))
+            size = len(json.dumps(messages, default=retained_json_value))
         except Exception:  # noqa: BLE001 — an unmeasurable transcript
             return False  # cannot be size-bounded, so it is not kept
         if size > self._retained_transcript_max_chars:

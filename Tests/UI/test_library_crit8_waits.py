@@ -93,6 +93,19 @@ def blocked_root_change(tmp_path, monkeypatch):
         blocked.release.set()
 
 
+async def _reveal_structural_cancel(pilot, workspace, wait):
+    """Age one folder-change wait past its patience window and repaint.
+
+    task-32102: Cancel is revealed with the line that first admits the wait
+    is slow, so a test that wants to press it has to reach that boundary.
+    Ages the wait's own start time and repaints -- deliberately not a second
+    clock (#2543's review found one of those defeating "Keep waiting").
+    """
+    wait.started_at -= 5.0
+    workspace._update_root_surface()
+    await pilot.pause()
+
+
 async def _start_blocked_root_change(pilot, workspace, blocked, new_root):
     """Choose the slow folder and wait for its wait to become visible."""
     workspace._root_selected(new_root)
@@ -206,8 +219,9 @@ async def test_cancelling_a_folder_change_keeps_the_previous_folder(
     workspace = LibraryFileNotesWorkspace(root=old_root, replica=replica)
     async with _production_workspace_context(workspace, size=(120, 40)) as pilot:
         screen = pilot.app.screen
-        await _start_blocked_root_change(pilot, workspace, blocked, new_root)
+        wait = await _start_blocked_root_change(pilot, workspace, blocked, new_root)
 
+        await _reveal_structural_cancel(pilot, workspace, wait)
         workspace.query_one(STRUCTURAL_WAIT_CANCEL, Button).press()
         await _wait_until(
             pilot,
@@ -469,9 +483,10 @@ async def test_a_folder_change_never_steals_another_surfaces_wait(
             cancel=lambda: cancelled.append("skill-import"),
         )
 
-        await _start_blocked_root_change(pilot, workspace, blocked, new_root)
+        wait = await _start_blocked_root_change(pilot, workspace, blocked, new_root)
         assert screen._library_structural_wait_for(WAIT_OWNER_SKILL_IMPORT) is skill_wait
 
+        await _reveal_structural_cancel(pilot, workspace, wait)
         workspace.query_one(STRUCTURAL_WAIT_CANCEL, Button).press()
         await _wait_until(
             pilot,

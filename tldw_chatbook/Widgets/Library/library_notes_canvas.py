@@ -36,6 +36,7 @@ from tldw_chatbook.Library.library_notes_tree_state import (
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
+    LIBRARY_NOTES_SORT_FILTERED_TOOLTIP,
     LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
     library_disabled_action_label,
 )
@@ -60,12 +61,41 @@ from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
 
+
+def notes_sort_is_blocked(*, tree_projection: object, filter_value: str) -> bool:
+    """Whether Sort cannot own the rows currently projected (task-32172).
+
+    A filter window's rows come back from the FTS search seam in its own
+    order (grouped by folder path), so Sort is offered disabled there
+    rather than silently reordering nothing. Shared with the screen's
+    canvas-kwargs pass, which closes an OPEN chooser under exactly this
+    condition -- a chooser whose mode outlived what paints it left the
+    footer offering "choose sort" and spent the next Escape on nothing
+    (task-32128 review round 2).
+
+    Args:
+        tree_projection: The projection about to be rendered, if any.
+        filter_value: The current Notes filter text.
+
+    Returns:
+        Whether the Sort control must render blocked.
+    """
+    return bool(tree_projection is not None and filter_value.strip())
+
 #: Columns the list pane needs before the browse and transfer toolbars share
-#: one row. Their widest composition -- New, Select, Add from files…, Export,
-#: Manage sync folders, Last import, plus both toolbars' own padding -- is 97
-#: cells, so under this width the merged row clips its last action off the
+#: one row. Under this width the merged row clips its last action off the
 #: pane, which is worse than the third row it saves (task-32127, review 1).
-_TOOLBAR_MERGE_MIN_WIDTH = 100
+#: Their widest composition is New (7), Sort (16), Select (10), Add from
+#: files… (19), Export (10), Manage sync folders (23), Last import (15),
+#: plus both toolbars' own padding -- 109 cells, measured button by button
+#: rather than estimated. task-32172 raised this from 100: Sort left the
+#: folder tree in task-32128 and this figure was re-derived without it (97),
+#: so putting Sort back pushed the widest frame 16 cells wider and "Last
+#: import" fell off the pane at every width from 100 to 108. Pinned at the
+#: threshold itself by test_notes_toolbar_fits_at_the_exact_width_it_starts_
+#: merging, since the widths pinned either side of it (137, 62, 38) all miss
+#: that band.
+_TOOLBAR_MERGE_MIN_WIDTH = 109
 
 #: Columns a single action group needs to stay on one row. The transfer group
 #: (Add from files…, Export, Last import) is 47 cells and the folder actions
@@ -1021,14 +1051,20 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             # the non-colour "○" marker plus an F-018 reason.
             running = list_state.operation_running
             running_tooltip = "Wait for the running notes operation to finish."
-            # task-32128: the folder tree's row order is a repository
-            # contract -- `page_note_placements` is ORDER BY title COLLATE
-            # NOCASE and every page offset (including the deep-link
-            # locator's) is computed against it -- so a Sort control there
-            # could only reorder the loaded window and lie about the rest.
-            # It stays on the flat list, which sorts its own records.
-            sort_available = self.tree_projection is None
-            sort_choices_visible = sort_available and list_state.sort_choices_visible
+            # task-32128 removed Sort from the folder tree because the
+            # tree's row order was a hard-coded repository contract.
+            # task-32172 made that order a parameter of BOTH the pager and
+            # the deep-link locator's rank, so the control is back and
+            # really re-pages. The one thing it still cannot own is the
+            # filter window: those rows come from the FTS search seam,
+            # ranked by folder path, so Sort is blocked there with a reason
+            # rather than silently reordering nothing.
+            sort_blocked = notes_sort_is_blocked(
+                tree_projection=self.tree_projection, filter_value=self.filter_value
+            )
+            sort_choices_visible = (
+                not sort_blocked and list_state.sort_choices_visible
+            )
             # task-32127: the browse and transfer actions share ONE row, so
             # the toolbar is two rows rather than three -- but only where the
             # pane can hold both groups. Below the threshold the merged row
@@ -1056,18 +1092,22 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         disabled=running,
                         tooltip=running_tooltip if running else None,
                     )
-                    if sort_available:
-                        sort_base = (
-                            f"Sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')}"
-                        )
-                        yield Button(
-                            library_disabled_action_label(sort_base, running),
-                            id="library-notes-sort",
-                            classes="library-canvas-action",
-                            compact=True,
-                            disabled=running,
-                            tooltip=running_tooltip if running else None,
-                        )
+                    sort_base = f"Sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')}"
+                    sort_disabled = running or sort_blocked
+                    yield Button(
+                        library_disabled_action_label(sort_base, sort_disabled),
+                        id="library-notes-sort",
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=sort_disabled,
+                        tooltip=(
+                            running_tooltip
+                            if running
+                            else LIBRARY_NOTES_SORT_FILTERED_TOOLTIP
+                            if sort_blocked
+                            else None
+                        ),
+                    )
                     select_disabled = rendered_count == 0 or running
                     yield Button(
                         library_disabled_action_label("Select", select_disabled),

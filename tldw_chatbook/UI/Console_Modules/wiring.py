@@ -1358,8 +1358,8 @@ def build_console_controllers(
             )
         ),
         refresh_effective_scope_and_sync=(
-            lambda session: screen._retrieval._refresh_console_effective_scope_and_sync(
-                session
+            lambda session, **kwargs: screen._retrieval._refresh_console_effective_scope_and_sync(
+                session, **kwargs
             )
         ),
         session_surface_accessor=lambda: screen.console_session_surface,

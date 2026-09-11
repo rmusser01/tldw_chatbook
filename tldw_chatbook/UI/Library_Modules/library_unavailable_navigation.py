@@ -13,6 +13,7 @@ from ...Constants import (
     LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION,
 )
 from ...Library.library_conversation_reader_state import LIBRARY_CONVERSATION_PAGE_SIZE
+from ...Utils.input_validation import validate_conversation_archive_scope
 
 if TYPE_CHECKING:
     from ...Character_Chat.character_conversation_navigation import (
@@ -66,6 +67,10 @@ def build_canvas_state(self):
         loading=self._library_conversation_loading,
         error_copy=self._library_conversation_error,
         selection_notice=self._library_conversation_selection_notice,
+        archive_scope=(
+            "" if self._library_conversation_projection == "unavailable_character"
+            else self._conversation_recovery().scope
+        ),
     )
     state = dataclasses.replace(
         state,
@@ -100,7 +105,9 @@ def build_canvas_state(self):
         self._library_conversations_row_selection.reconcile(
             r.conversation_id for r in state.rows
         )
-    return state
+    if self._library_conversation_projection == "unavailable_character":
+        return state
+    return self._conversation_recovery().project(state)
 
 
 def _library_character_navigation_admission(
@@ -678,6 +685,20 @@ def _apply_navigation_context_state(
     notes_create = bool(context.get(LIBRARY_NAV_CONTEXT_NOTES_CREATE))
     ingest_media = bool(context.get(LIBRARY_NAV_CONTEXT_INGEST))
     target_mode = requested_mode if requested_mode in LIBRARY_NAV_MODE_TO_ROW_ID else ""
+    try:
+        archive_scope = validate_conversation_archive_scope(
+            context.get("conversation_archive_scope")
+        )
+    except ValueError:
+        archive_scope = None
+    archive_navigation = archive_scope is not None
+    if archive_navigation:
+        self._conversation_recovery().scope = archive_scope
+        self._conversations_state.projection = ""
+        self._conversations_state.requested_query = self._safe_text(context.get("conversation_query"), "", max_length=200)
+        self._conversations_state.requested_page = 1
+        self._conversations_state.page_loaded = False
+        target_mode = LIBRARY_MODE_CONVERSATIONS
     if conversation_id and not target_mode:
         target_mode = LIBRARY_MODE_CONVERSATIONS
     if target_mode:
@@ -690,7 +711,7 @@ def _apply_navigation_context_state(
         self._set_library_destination_with_conversation_fence(
             LIBRARY_ROW_BROWSE_CONVERSATIONS
         )
-        if not should_open_pending_source:
+        if not should_open_pending_source and not archive_navigation:
             # Persona still emits the legacy conversation_id context.
             # A paged snapshot may not contain that id, so resolve it
             # through the same point-lookup opener used by Search/RAG.
@@ -807,6 +828,8 @@ def _apply_navigation_context_state(
     else:
         self._notes_state.explicit_stage_intent = False
     if self.is_mounted:
+        if archive_navigation:
+            self._start_library_conversation_page_request(1, self._conversations_state.requested_query, refocus_filter=True)
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
             self.run_worker(
                 self._load_library_collections_capture_entry(),
