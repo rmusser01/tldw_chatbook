@@ -26,12 +26,12 @@ transaction.
 <meta charset="utf-8">
 <title>Quantity and price</title>
 <style>
-body { margin: 0; padding: 16px; font-family: sans-serif; color: #182536; background: #ffffff; }
+body { margin: 0; padding: 16px; font-family: sans-serif; color: #182536; background-color: #ffffff; }
 main { max-width: 480px; margin: 0 auto; }
 h1 { font-size: 24px; }
 p { line-height: 1.5; }
 label { display: block; margin: 20px 0 8px; }
-input { box-sizing: border-box; width: 100%; padding: 10px; font-size: 18px; border: 1px solid #536579; border-radius: 4px; }
+input { box-sizing: border-box; width: 100%; padding: 10px; font-size: 18px; border-width: 1px; border-style: solid; border-color: #536579; border-radius: 4px; }
 input:focus { outline: 3px solid #245d91; outline-offset: 2px; }
 output { font-size: 22px; font-weight: bold; }
 </style>

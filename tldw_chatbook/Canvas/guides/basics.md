@@ -22,7 +22,7 @@ scales to the available width; the caption preserves exact values in plain text.
 <meta charset="utf-8">
 <title>Weekly time comparison</title>
 <style>
-body { margin: 0; padding: 16px; font-family: sans-serif; color: #182536; background: #ffffff; }
+body { margin: 0; padding: 16px; font-family: sans-serif; color: #182536; background-color: #ffffff; }
 main { max-width: 560px; margin: 0 auto; }
 h1 { font-size: 24px; line-height: 1.2; }
 p { line-height: 1.5; }
@@ -62,6 +62,11 @@ source does not prove a browser preview is ready.
 Guides do not admit profiles. Current tool/profile guidance and runtime checks
 win over these examples. Preserve a historical revision's exact profile. An
 unavailable profile stays source-only; adapting it requires an explicit new Canvas.
+
+Prefer `background-color` and explicit `border-width`, `border-style`, and
+`border-color` declarations. Browser CSS parsing expands `background` and `border`
+shorthands into properties outside the runtime allowlist, even when compilation
+accepts the source.
 
 Canvas is a constrained page runtime. Do not assume React, D3, Chart.js, CDNs,
 modules, native `window`, HTML canvas drawing APIs, CSS custom properties or
