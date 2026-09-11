@@ -72,7 +72,10 @@ async def test_select_folder_with_bad_typed_path_shows_error_and_stays_open(tmp_
         _field(dialog).value = str(tmp_path / "does-not-exist")
         dialog.query_one("#select-current-folder", Button).press()
         await pilot.pause()
-        assert "Path not found" in (dialog.query_one(Dialog).border_subtitle or "")
+        # task-32251 AC#2: the reason is an inline row, not the border.
+        assert "Path not found" in str(
+            dialog.query_one("#picker-error-line", Static).renderable
+        )
 
     assert not app.result_seen
 
@@ -89,8 +92,9 @@ async def test_select_folder_with_a_filename_reports_not_a_directory(tmp_path):
         _field(dialog).value = str(tmp_path / "notes.md")
         dialog.query_one("#select-current-folder", Button).press()
         await pilot.pause()
-        subtitle = dialog.query_one(Dialog).border_subtitle or ""
-        assert "Not a directory" in subtitle
+        assert "Not a directory" in str(
+            dialog.query_one("#picker-error-line", Static).renderable
+        )
 
     assert not app.result_seen
 

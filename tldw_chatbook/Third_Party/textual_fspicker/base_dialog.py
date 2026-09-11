@@ -159,6 +159,64 @@ class InputBar(Horizontal):
 
 
 ##############################################################################
+class PathInput(Input):
+    """A path/file-name field that behaves like a shell's path prompt.
+
+    Every path field in these dialogs arrives PRE-FILLED with the
+    directory being browsed, so the two things a user does to it -- click
+    into it, or select everything and retype -- have to replace that
+    pre-fill rather than append to it (task-32251).
+
+    Two behaviours, both absent from Textual's ``Input``:
+
+    * ``ctrl+a`` selects the field. Textual binds ``home,ctrl+a`` to "go
+      to start", and a focused widget's own bindings beat the screen's,
+      so the terminal-standard "select everything I typed" is only
+      reachable from a subclass (task-32229, which introduced this class
+      as ``FileNameInput`` for the one field ``BaseFileDialog`` owns).
+    * The click that FOCUSES the field selects all of it. ``Input``
+      already selects on focus (``select_on_focus``, default on), but
+      ``_on_mouse_down`` then collapses that selection to the click
+      point -- so click-then-type concatenated the typed path onto the
+      pre-filled one and produced `/Users/me/Users/me/notes`
+      (reproduced live; the resulting "Path not found" was painted into
+      the dialog's bottom border). A click on an ALREADY focused field
+      still positions the cursor, which is what a second click is for.
+    """
+
+    BINDINGS = [Binding("ctrl+a", "select_all", show=False)]
+
+    #: Armed by the ``Focus`` event, consumed by the ``MouseDown`` that
+    #: caused it, disarmed by any keystroke. ``Screen._forward_event``
+    #: focuses a widget BEFORE forwarding the mouse-down to it, and
+    #: ``set_focus`` only posts ``Focus`` when focus actually moves, so a
+    #: ``Focus`` immediately followed by a ``MouseDown`` is exactly the
+    #: click that focused this field -- and nothing else is. Without the
+    #: keystroke disarm, a Tab-focus followed much later by a deliberate
+    #: click-to-position would re-select instead of placing the cursor.
+    _select_on_focusing_click: bool = False
+
+    # NOTE for all three handlers: Textual dispatches `_on_*` to EVERY class
+    # in the MRO that defines it, most-derived first -- so `Input`'s own
+    # handler runs for the same event whether or not this one calls `super()`
+    # (calling it would simply run it twice), and it runs AFTER this one.
+    # That is why the select-all below is deferred rather than done inline:
+    # `Input._on_mouse_down` collapses the selection to the click point, and
+    # it has the last word inside the dispatch.
+
+    def _on_focus(self, event: Any) -> None:
+        self._select_on_focusing_click = True
+
+    async def _on_key(self, event: Any) -> None:
+        self._select_on_focusing_click = False
+
+    async def _on_mouse_down(self, event: Any) -> None:
+        if self._select_on_focusing_click and self.value:
+            self.call_next(self.action_select_all)
+        self._select_on_focusing_click = False
+
+
+##############################################################################
 ButtonLabel: TypeAlias = Union[str, Callable[[str], str]]
 """The type for a button label value."""
 
@@ -305,6 +363,15 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
             color: $text-muted;
             text-style: italic;
         }
+
+        /* task-32251 AC#2: the refusal reason, on its own row under the
+           input bar rather than inside the dialog's bottom border. */
+        #picker-error-line {
+            height: auto;
+            padding: 0 1;
+            color: $error;
+            text-style: bold;
+        }
     }
     """
 
@@ -414,7 +481,7 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
 
             # Path input field (hidden by default, shown with Ctrl+L)
             with Horizontal(id="path-input-container", classes="hidden"):
-                yield Input(placeholder="Enter path...", id="path-input")
+                yield PathInput(placeholder="Enter path...", id="path-input")
                 yield Button("Go", id="go-to-path", variant="primary")
                 yield Button("Cancel", id="cancel-path-input", variant="default")
 
@@ -450,6 +517,14 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
                         "Select folder", id="select-current-folder"
                     )
                 yield Button(self._label(self._cancel_button, "Cancel"), id="cancel")
+
+            # task-32251 AC#2: the refusal used to be the Dialog's
+            # border_subtitle -- painted INTO the bottom border rule, where
+            # nobody reads it. It belongs on its own row under the field it
+            # is about. Always mounted, display-toggled by `_set_error`.
+            error_line = Static("", id="picker-error-line", markup=False)
+            error_line.display = False
+            yield error_line
 
     def on_mount(self) -> None:
         """Focus the initial widget on mount and set the initial path."""
@@ -488,12 +563,22 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
         self.query_one(DirectoryNavigation).focus()
 
     def _set_error(self, message: str = "") -> None:
-        """Set or clear the error message.
+        """Set or clear the error message on the row under the input bar.
+
+        task-32251 AC#2: this used to write ``Dialog.border_subtitle``,
+        which renders the reason inside the dialog's bottom border rule
+        (reproduced live: ``+-- Path not found: ... -+``). The border is
+        left clean and the reason gets a row of its own.
 
         Args:
             message: Optional message to show as an error.
         """
-        self.query_one(Dialog).border_subtitle = message
+        # `EnhancedFileDialog` mirrors this layout with its own `#error-line`
+        # and overrides `_set_error`; it reaches this body only as a fallback,
+        # where there is nothing to write to.
+        for line in self.query("#picker-error-line"):
+            line.update(message)
+            line.display = bool(message)
 
     @on(DriveNavigation.DriveSelected)
     def _change_drive(self, event: DriveNavigation.DriveSelected) -> None:
