@@ -383,13 +383,13 @@ async def test_f3_cycles_active_history_character_and_back() -> None:
     async with app.run_test(size=(52, 20)) as pilot:
         modal = app.screen
         assert modal._mode is SwitcherMode.ACTIVE
-        await pilot.press("f3")
+        await pilot.press("shift+f3")
         await pilot.pause()
         assert modal._mode is SwitcherMode.HISTORY
-        await pilot.press("f3")
+        await pilot.press("shift+f3")
         await pilot.pause()
         assert modal._mode is SwitcherMode.CHARACTER_CHATS
-        await pilot.press("f3")
+        await pilot.press("shift+f3")
         await pilot.pause()
         assert modal._mode is SwitcherMode.ACTIVE
 
@@ -410,21 +410,21 @@ async def test_active_and_history_share_query_but_character_query_is_independent
     async with app.run_test(size=(52, 20)) as pilot:
         query = app.screen.query_one("#console-switcher-query", Input)
         query.value = "operations"
-        await pilot.press("f3")
+        await pilot.press("shift+f3")
         await pilot.pause()
         assert query.value == "operations"
 
-        await pilot.press("f3")
+        await pilot.press("shift+f3")
         await pilot.pause()
         assert query.value == ""
         query.value = "Ada"
 
-        await pilot.press("f3")
+        await pilot.press("shift+f3")
         await pilot.pause()
         assert query.value == "operations"
-        await pilot.press("f3")
+        await pilot.press("shift+f3")
         await pilot.pause()
-        await pilot.press("f3")
+        await pilot.press("shift+f3")
         await pilot.pause()
         assert query.value == "Ada"
 
@@ -1143,7 +1143,7 @@ async def test_f3_restores_history_page_two_and_stable_selection() -> None:
         selected = app.screen._candidate_key()
         assert app.screen._page_offset == 50
 
-        await pilot.press("f3", "f3", "f3")
+        await pilot.press("shift+f3", "shift+f3", "shift+f3")
         await pilot.pause()
 
         assert app.screen._mode is SwitcherMode.HISTORY
@@ -1182,7 +1182,7 @@ async def test_f3_restores_scrolled_character_selection() -> None:
         scroll_y = float(results.scroll_y)
         assert scroll_y > 0
 
-        await pilot.press("f3", "f3", "f3")
+        await pilot.press("shift+f3", "shift+f3", "shift+f3")
         await pilot.pause()
 
         assert app.screen._mode is SwitcherMode.CHARACTER_CHATS
@@ -1461,7 +1461,7 @@ async def test_failed_character_owner_is_released_when_selection_context_changes
         elif transition == "query":
             screen.query_one("#console-switcher-query", Input).value = "Second"
         else:
-            await pilot.press("f3")
+            await pilot.press("shift+f3")
         await pilot.pause(SEARCH_DEBOUNCE_SECONDS + 0.05)
         detail = str(
             screen.query_one("#console-switcher-selected-detail", Static).renderable
@@ -1475,3 +1475,68 @@ async def test_failed_character_owner_is_released_when_selection_context_changes
         rendered = app.screen.state.render_text()
         assert "First chat" not in rendered
         assert ("Active chat" if transition == "mode" else "Second chat") in rendered
+
+
+@pytest.mark.asyncio
+async def test_plain_f3_is_inert_under_open_switcher_and_logs_after_dismiss():
+    """task-32306 / review: the switcher no longer hijacks plain F3.
+
+    The switcher's mode toggle moved to shift+f3, so plain f3 with the modal
+    open neither cycles modes (the old conflict) nor mis-fires: like every
+    non-priority app binding under a modal screen -- ctrl+2 behaves the
+    same -- it stays inert while the modal owns the keyboard. Once the
+    modal is dismissed, f3 dispatches the app-level Logs route again.
+    """
+
+    class _LogsRouteCaptureApp(_CharacterSwitcherApp):
+        BINDINGS: ClassVar[list[Binding]] = [
+            Binding("f1", "show_workbench_help", "Help", priority=True),
+            Binding("f3", "shell_destination('logs')", "Logs"),
+        ]
+
+        def __init__(self, **kwargs) -> None:
+            super().__init__(**kwargs)
+            self.posted_routes: list[str] = []
+
+        def action_shell_destination(self, destination_id: str) -> None:
+            from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+            self.post_message(NavigateToScreen(destination_id))
+
+        def on_navigate_to_screen(self, message) -> None:
+            self.posted_routes.append(message.screen_name)
+
+    async def history_loader(**_kwargs):
+        return ConsoleSwitcherHistoryPage((), 0, 50, 0)
+
+    async def character_loader(**_kwargs):
+        return CharacterConversationPage((), 0, None, 3)
+
+    app = _LogsRouteCaptureApp(
+        history_loader=history_loader, character_loader=character_loader
+    )
+    async with app.run_test(size=(52, 20)) as pilot:
+        modal = app.screen
+        assert modal._mode is SwitcherMode.ACTIVE
+
+        # Under the open modal, plain f3 is inert -- it must NOT cycle the
+        # switcher mode (the pre-task-32306 conflict Qodo flagged).
+        await pilot.press("f3")
+        await pilot.pause()
+        assert modal._mode is SwitcherMode.ACTIVE
+        assert app.posted_routes == []
+
+        # The rebind keeps the mode toggle reachable on shift+f3.
+        await pilot.press("shift+f3")
+        await pilot.pause()
+        assert modal._mode is SwitcherMode.HISTORY
+
+        # Dismissed, the app-level Logs route dispatches on plain f3 again.
+        await pilot.press("escape")
+        for _ in range(40):
+            await pilot.pause()
+            if type(app.screen).__name__ != type(modal).__name__:
+                break
+        await pilot.press("f3")
+        await pilot.pause()
+        assert app.posted_routes == ["logs"]

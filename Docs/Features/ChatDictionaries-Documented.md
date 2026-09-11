@@ -460,7 +460,7 @@ Enable debug logging in `config.toml`:
 log_level = "DEBUG"
 ```
 
-Read the output in the **Logs** screen (`F8`). The rotating file under
+Read the output in the **Logs** screen (`F3`). The rotating file under
 `~/.share/tldw_cli/logs/` is metadata-only by design (ADR-029) and does not
 carry dictionary matches or replacement text.
 

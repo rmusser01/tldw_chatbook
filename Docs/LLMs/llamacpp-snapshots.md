@@ -67,11 +67,11 @@ starting again. Working files stay retained until server and local file work
 are settled. Catalog browsing and confirmed deletion remain available. Corrupt
 or missing saved files are rejected before a Restore request is sent.
 
-If persisted snapshot preferences are malformed, Models and F9 remain usable but
+If persisted snapshot preferences are malformed, Models and F4 remain usable but
 affected mutation/preference controls are disabled. Correct
 `[llamacpp_snapshots] enabled` (boolean) and `keep_count` (integer 1–1000) in
-Advanced Config, then Models Reload or F9 Revert. No silent default is accepted.
-F9 detects changes saved by another surface and asks you to reload rather than
+Advanced Config, then Models Reload or F4 Revert. No silent default is accepted.
+F4 detects changes saved by another surface and asks you to reload rather than
 overwriting a stale draft.
 
 ## Opt-in local verification

@@ -17607,9 +17607,9 @@ class SettingsScreen(BaseAppScreen):
             # so the toast stays plain language with a next step.
             error_count = len(errors)
             detail = (
-                f" {error_count} error(s) recorded — details are in Logs (F8)."
+                f" {error_count} error(s) recorded — details are in Logs (F3)."
                 if error_count
-                else " Details are in Logs (F8)."
+                else " Details are in Logs (F3)."
             )
             self.app.call_from_thread(
                 self.app.notify,

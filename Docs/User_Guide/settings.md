@@ -17,10 +17,11 @@ you touch them; some are read-only and point you elsewhere.
 ## Getting there
 
 - **Press F4 from anywhere** — it works even while a text field has focus.
-  Settings is the last of thirteen destinations: the first ten get
-  **Ctrl+1 … Ctrl+0**, and the remaining three get function keys — the nav
-  row from its left end — the nav bar labels say so ("F2 Lab", "F3 Logs",
-  "F4 Settings").
+  Settings is the thirteenth of fifteen destinations: the first ten get
+  **Ctrl+1 … Ctrl+0**, and the remaining five continue onto the function-key
+  row from its left end — **F2**, **F3**, **F4**, **F5**, then **F7** (F6 is
+  reserved for pane cycling) — the nav bar labels say so ("F2 Lab", "F3
+  Logs", "F4 Settings", "F5 Research", "F7 Meetings").
 - **Click "F4 Settings" in the nav bar.** On a narrow window a "More ▾"
   button appears at the right edge and opens a menu listing every
   destination — pick "F4 Settings" there; when everything fits, no button

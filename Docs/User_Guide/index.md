@@ -77,7 +77,10 @@ separate screens.
 **Note:** The "⌃\<digit\>" (or "F\<n\>") shown before each nav label is
 that screen's hotkey: press **Ctrl+digit** (Ctrl+1 … Ctrl+9, Ctrl+0) — or
 **F2**–**F5** / **F7** for the last five — to switch to it from anywhere;
-the keys work even while a text field has focus. Bare digit keys are not
+the keys work even while a text field has focus. While a modal dialog
+is open it owns the keyboard — destination keys stay inert until it closes
+(the Ctrl+K session switcher additionally uses **Shift+F3** for its mode
+toggle and **F2** for rename). Bare digit keys are not
 navigation shortcuts (typing `2` in the composer just types "2"). Clicking
 the nav label and **Ctrl+P** work everywhere too.
 
