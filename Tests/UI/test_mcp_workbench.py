@@ -384,11 +384,18 @@ async def test_workbench_at_100x30_keeps_server_master_switch_reachable(monkeypa
         workbench = app.query_one(MCPWorkbench)
         workbench.set_mode("tools")
         await pilot.pause()
-        title = app.query_one("#mcp-tools-local-config-title", Static)
-        title.scroll_visible(animate=False)
+        # task-32286: the Tools-mode master control is now one toggle
+        # Button (no separate title Static) -- reuses the SAME
+        # `[console] local_tools_enabled` gate the Servers-mode row above
+        # just flipped, so its label should already read the new state.
+        tools_toggle = app.query_one("#mcp-tools-local-enabled", Button)
+        tools_toggle.scroll_visible(animate=False)
         await pilot.pause()
-        assert title.is_on_screen
-        assert str(title.renderable) == "Local workspace, web, and Watchlists tools"
+        assert tools_toggle.is_on_screen
+        assert str(tools_toggle.label) == (
+            f"Local workspace, web, and Watchlists tools: "
+            f"{'off' if original else 'on'} ▸"
+        )
 
 
 class ProblemRecordsService(FakeHubService):
@@ -10835,7 +10842,9 @@ async def test_hub_local_group_stays_visible_but_disabled_when_master_flag_off(
             tool.server_key == "local:docs" for tool in workbench._last_hub_tools
         )
         assert app.query_one("#mcp-tools-local-config").display is True
-        assert app.query_one("#mcp-tools-local-enabled", Checkbox).value is False
+        assert str(app.query_one("#mcp-tools-local-enabled", Button).label) == (
+            "Local workspace, web, and Watchlists tools: off ▸"
+        )
 
 
 @pytest.mark.asyncio
@@ -10885,16 +10894,23 @@ async def test_tools_mode_local_controls_round_trip_master_and_workspace(
         workbench.set_mode("tools")
         await pilot.pause()
 
-        checkbox = app.query_one("#mcp-tools-local-enabled", Checkbox)
-        assert checkbox.value is True
-        checkbox.value = False
+        # task-32286: the master switch is a toggle Button whose label
+        # carries the state in text -- a press asks for the OPPOSITE of
+        # what it's currently showing (see `on_button_pressed()`).
+        toggle = app.query_one("#mcp-tools-local-enabled", Button)
+        assert str(toggle.label) == (
+            "Local workspace, web, and Watchlists tools: on ▸"
+        )
+        toggle.press()
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert ("console", "local_tools_enabled", False) in save_calls
-        assert app.query_one("#mcp-tools-local-enabled", Checkbox).value is False
+        assert str(app.query_one("#mcp-tools-local-enabled", Button).label) == (
+            "Local workspace, web, and Watchlists tools: off ▸"
+        )
 
-        checkbox.value = True
+        toggle.press()
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -10940,14 +10956,18 @@ async def test_tools_mode_failed_master_save_restores_persisted_truth(monkeypatc
         workbench = app.query_one(MCPWorkbench)
         await workbench._mount_deferred_canvases()
         await workbench._sync_children()
-        checkbox = app.query_one("#mcp-tools-local-enabled", Checkbox)
-        assert checkbox.value is True
-        checkbox.value = False
+        toggle = app.query_one("#mcp-tools-local-enabled", Button)
+        assert str(toggle.label) == (
+            "Local workspace, web, and Watchlists tools: on ▸"
+        )
+        toggle.press()
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-        assert app.query_one("#mcp-tools-local-enabled", Checkbox).value is True
+        assert str(app.query_one("#mcp-tools-local-enabled", Button).label) == (
+            "Local workspace, web, and Watchlists tools: on ▸"
+        )
         status = app.query_one("#mcp-tools-local-config-status", Static)
         assert "persisted setting is shown" in str(status.renderable)
         assert status.has_class("is-error")

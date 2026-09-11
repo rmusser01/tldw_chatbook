@@ -725,23 +725,9 @@
         padding: 0 1 1 1;
         background: $surface;
     }
-    MCPToolsMode #mcp-tools-local-config-title-row,
     MCPToolsMode #mcp-tools-workspace-row {
         height: auto;
         min-height: 0;
-    }
-    MCPToolsMode #mcp-tools-local-config-title {
-        width: 1fr;
-        text-style: bold;
-        content-align: left middle;
-    }
-    MCPToolsMode #mcp-tools-local-enabled {
-        width: 8;
-    }
-    MCPToolsMode #mcp-tools-local-enabled-state {
-        width: 10;
-        content-align: right middle;
-        text-style: bold;
     }
     MCPToolsMode #mcp-tools-local-config-help,
     MCPToolsMode #mcp-tools-local-config-status {

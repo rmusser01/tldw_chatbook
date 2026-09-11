@@ -18,7 +18,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
-from textual.widgets import Button, Checkbox, DataTable, Input, Select, Static
+from textual.widgets import Button, DataTable, Input, Select, Static
 from textual.widgets.data_table import RowDoesNotExist
 
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool, filter_tools
@@ -74,6 +74,29 @@ _EMPTY_ACTION_TOOLTIPS: dict[str, str] = {
 # echo.
 _ECHO_CONSUMED = object()
 
+# task-32286: the master control's title text, reused by the toggle Button's
+# label (see `_local_tools_toggle_label()`) so the two never drift apart.
+_LOCAL_TOOLS_TITLE = "Local workspace, web, and Watchlists tools"
+
+
+def _local_tools_toggle_label(enabled: bool) -> str:
+    """Render the local-tools master switch Button's label.
+
+    task-32286: a Checkbox + separate "Enabled"/"Disabled" Static used to
+    render this row -- the bundle's `MCPToolsMode #mcp-tools-local-enabled
+    { width: 8; }` escape hatch (needed back when an app-wide unscoped
+    `Checkbox { width: 100%; height: 2; }` rule, since retired in
+    TASK-18960, would have collapsed it otherwise) clamped the Checkbox to
+    a bordered 7-cell frame, truncating its own "On" label to a lone "…".
+    Reusing `mcp_servers_mode._gate_button()`'s toggle-Button idiom (same
+    `[console] local_tools_enabled` gate, surfaced a second time in the
+    Servers-mode Tool gates group as of task-32284) retires the escape
+    hatch entirely -- a Button sizes to its own label (`width: auto`) --
+    and spells the state out in text rather than a glyph that looks
+    identical in both states.
+    """
+    return f"{_LOCAL_TOOLS_TITLE}: {'on' if enabled else 'off'} ▸"
+
 
 class MCPToolsMode(DataTableClickSelectMixin, Vertical):
     """Canvas for the Tools mode: cross-server catalog, filters, empty state."""
@@ -94,23 +117,9 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         padding: 0 1 1 1;
         background: $surface;
     }
-    #mcp-tools-local-config-title-row,
     #mcp-tools-workspace-row {
         height: auto;
         min-height: 0;
-    }
-    #mcp-tools-local-config-title {
-        width: 1fr;
-        text-style: bold;
-        content-align: left middle;
-    }
-    #mcp-tools-local-enabled {
-        width: 8;
-    }
-    #mcp-tools-local-enabled-state {
-        width: 10;
-        content-align: right middle;
-        text-style: bold;
     }
     #mcp-tools-local-config-help,
     #mcp-tools-local-config-status {
@@ -210,20 +219,24 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         self._has_tags: bool = False
         # Mount-echo guard state for the filter Select -- see _ECHO_CONSUMED.
         self._displayed_server_value: Any = Select.NULL
+        # task-32286: the last `enabled` value `update_local_config()` was
+        # given -- the toggle Button posts the OPPOSITE of this on press
+        # (mirrors `mcp_servers_mode._tool_gates_by_id`'s same read-not-
+        # widget-state pattern; a Button carries no `.value` of its own).
+        self._local_tools_enabled: bool = False
 
     def compose(self) -> ComposeResult:
         with Vertical(id="mcp-tools-local-config"):
-            with Horizontal(id="mcp-tools-local-config-title-row"):
-                yield Static(
-                    "Local workspace, web, and Watchlists tools",
-                    id="mcp-tools-local-config-title",
-                )
-                yield Checkbox(
-                    "On",
-                    value=False,
-                    id="mcp-tools-local-enabled",
-                )
-                yield Static("Disabled", id="mcp-tools-local-enabled-state")
+            yield Button(
+                _local_tools_toggle_label(False),
+                id="mcp-tools-local-enabled",
+                classes="console-action-secondary",
+                compact=True,
+                tooltip=(
+                    "Toggle the workspace, web, and Watchlists tool master "
+                    "switch. Calls still follow Ask, Allow, or Off permissions."
+                ),
+            )
             yield Static(
                 "Available by default. Calls still follow Ask, Allow, or Off permissions.",
                 id="mcp-tools-local-config-help",
@@ -350,13 +363,13 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         """
         panel = self.query_one("#mcp-tools-local-config", Vertical)
         panel.display = visible
-        checkbox = self.query_one("#mcp-tools-local-enabled", Checkbox)
+        self._local_tools_enabled = bool(enabled)
+        self.query_one("#mcp-tools-local-enabled", Button).label = (
+            _local_tools_toggle_label(self._local_tools_enabled)
+        )
         root_input = self.query_one("#mcp-tools-workspace-root", Input)
-        with checkbox.prevent(Checkbox.Changed):
-            checkbox.value = bool(enabled)
         with root_input.prevent(Input.Changed):
             root_input.value = workspace_root
-        self._render_local_enabled_state(bool(enabled))
         self.set_local_config_status(
             "Changes apply to the next Console agent run.", error=False
         )
@@ -371,11 +384,6 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         status = self.query_one("#mcp-tools-local-config-status", Static)
         status.update(message)
         status.set_class(error, "is-error")
-
-    def _render_local_enabled_state(self, enabled: bool) -> None:
-        self.query_one("#mcp-tools-local-enabled-state", Static).update(
-            "Enabled" if enabled else "Disabled"
-        )
 
     def _request_workspace_root_save(self) -> None:
         value = self.query_one("#mcp-tools-workspace-root", Input).value
@@ -631,13 +639,6 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         )
         self._apply_filter()
 
-    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
-        if event.checkbox.id != "mcp-tools-local-enabled":
-            return
-        event.stop()
-        self._render_local_enabled_state(event.value)
-        self.post_message(self.LocalToolsEnabledChanged(event.value))
-
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "mcp-tools-workspace-root":
             return
@@ -650,6 +651,18 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
             self.post_message(self.ToolSelected(str(event.row_key.value)))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "mcp-tools-local-enabled":
+            # task-32286: the Button states its own current value in its
+            # label (see `_local_tools_toggle_label()`), so a press asks
+            # for the OPPOSITE of what it's currently showing -- read from
+            # `_local_tools_enabled` (the last `update_local_config()`
+            # value), never a fresh config read, which could race the
+            # workbench's own save/resync.
+            event.stop()
+            self.post_message(
+                self.LocalToolsEnabledChanged(not self._local_tools_enabled)
+            )
+            return
         if event.button.id == "mcp-tools-workspace-save":
             event.stop()
             self._request_workspace_root_save()

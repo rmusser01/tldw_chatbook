@@ -87,8 +87,11 @@ Registration is controlled by a `[tools]`/`[console]` config switch called a
 permission to in the first place.
 
 Under the local source, Tools mode now starts with an always-visible **Local
-workspace, web, and Watchlists tools** control. This provider is enabled by
-default and includes workspace file, read-only Git, web, and Watchlists tools
+workspace, web, and Watchlists tools** control — a single toggle button whose
+label states its own on/off state in text (`…: on ▸` / `…: off ▸`), the same
+styling as the Servers-mode Tool gates rows it mirrors. This provider is
+enabled by default and includes workspace file, read-only Git, web, and
+Watchlists tools
 (`web_search`, `web_fetch`, `web_crawl`, plus Watchlists metadata and receipt
 reads). The task tools `todo_create`, `todo_update`, `todo_get`,
 and `todo_list` require Console session state and are not Hub tools. Turning
@@ -574,4 +577,8 @@ publication the single next-client-launch exception. Fix round, same day:
 that exception now names its own precondition — the external-MCP half
 only applies when `[mcp] expose_local_tools` is on — and the master
 switch is corrected alongside `ask_user` as on by default (it was
-previously the only one credited).*
+previously the only one credited). Docs pass 2026-09-10 (task-32286,
+against code and tests, not a live screen): the Tools-mode master
+control is now a toggle button (it used to be a Checkbox plus a
+separate "Enabled"/"Disabled" label, which a bundle width escape hatch
+had clamped to a truncated seven-cell frame at wide terminal widths).*

@@ -9,7 +9,7 @@ from textual.app import ComposeResult
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Button, Checkbox, DataTable, Input, Select, Static
+from textual.widgets import Button, DataTable, Input, Select, Static
 
 import tldw_chatbook
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
@@ -90,18 +90,18 @@ async def test_local_tool_controls_are_visible_and_emit_configuration_requests()
         )
         await pilot.pause()
 
-        checkbox = app.query_one("#mcp-tools-local-enabled", Checkbox)
+        # task-32286: the Checkbox + "Enabled"/"Disabled" Static pair was
+        # replaced by one toggle Button whose label carries the state in
+        # text -- same idiom as `mcp_servers_mode._gate_button()`.
+        toggle = app.query_one("#mcp-tools-local-enabled", Button)
         root_input = app.query_one("#mcp-tools-workspace-root", Input)
-        assert checkbox.value is True
+        assert str(toggle.label) == "Local workspace, web, and Watchlists tools: on ▸"
         assert root_input.value == "C:/work/notes"
-        assert "Enabled" in str(
-            app.query_one("#mcp-tools-local-enabled-state", Static).renderable
-        )
         assert "Ask" in str(
             app.query_one("#mcp-tools-local-config-help", Static).renderable
         )
 
-        checkbox.value = False
+        toggle.press()
         root_input.value = "C:/other/notes"
         app.query_one("#mcp-tools-workspace-save", Button).press()
         await pilot.pause()
@@ -116,6 +116,9 @@ async def test_local_tool_controls_are_visible_and_emit_configuration_requests()
             for event in app.events
             if isinstance(event, MCPToolsMode.WorkspaceRootSaveRequested)
         ]
+        # The canvas posts the OPPOSITE of the last value `update_local_config()`
+        # gave it (True above) -- a press asks to flip the switch, exactly
+        # like the Checkbox's old `checkbox.value = False` intent.
         assert enabled_events[-1].enabled is False
         assert root_events[-1].workspace_root == "C:/other/notes"
 
@@ -151,6 +154,44 @@ async def test_local_tool_controls_render_with_bundled_css_at_100x30():
         assert "Save root" in rendered
         assert "C:/workspace/notes" in rendered
         assert app.query_one("#mcp-tools-filter-text", Input).region.height > 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("width", [80, 120, 250])
+async def test_local_tools_master_switch_renders_full_label_untruncated(width):
+    """task-32286: the master control used to be a Checkbox + separate
+    "Enabled"/"Disabled" Static, clamped by a bundle `width: 8` escape
+    hatch to a bordered 7-cell frame -- the Checkbox's own "On" label
+    truncated to a lone "…". It is now one toggle Button carrying the
+    full sentence in its label (mirrors `mcp_servers_mode._gate_button()`);
+    a Button sizes to its own content, so its region must be at least as
+    wide as the label and the rendered row must show it whole, at every
+    width from the narrowest supported terminal (80) up to the width the
+    live QA report that filed this task used (250).
+    """
+    app = ToolsModeBundledCSSApp()
+    async with app.run_test(size=(width, 40)) as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        canvas.update_local_config(enabled=True, workspace_root="", visible=True)
+        await pilot.pause()
+
+        toggle = app.query_one("#mcp-tools-local-enabled", Button)
+        label = str(toggle.label)
+        assert label == "Local workspace, web, and Watchlists tools: on ▸"
+        assert toggle.region.width >= len(label)
+
+        strips = app.screen._compositor.render_strips()
+        rendered = "\n".join(
+            "".join(segment.text for segment in strip) for strip in strips
+        )
+        assert label in rendered
+        # Scoped to the toggle's own row -- narrower widths legitimately
+        # ellipsize OTHER controls (e.g. a server label in the filter
+        # Select), so only the toggle's own row is asserted clean.
+        toggle_row = "".join(
+            segment.text for segment in strips[toggle.region.y]
+        )
+        assert "…" not in toggle_row
 
 
 @pytest.mark.asyncio
