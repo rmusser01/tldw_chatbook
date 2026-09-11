@@ -136,6 +136,12 @@ arguments. If a nondefault control root was used, supply its actual path with
 
 ## Setup after restore and compatibility
 
+Open **Restored profiles** to see the **Current profile** setup summary. It follows
+the current recovery generation, including replacement and later rollback, separately
+from the list of isolated profiles. Missing or damaged local evidence is reported as
+unavailable; it is not treated as completed setup. Historical recovery copies retain
+their own operation status.
+
 Restored data can be inspected locally while execution and reconnection remain
 inactive. Opening a profile or restarting does not approve provider connections,
 sync, schedules, MCP, skill scripts, model processes, downloads, or automatic
