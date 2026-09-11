@@ -8,7 +8,7 @@ opens from the keyboard and refuses the tabs it cannot search) and 32365
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 from Tests.UI.test_library_crit9_shell import (
     _library_host,
@@ -23,9 +23,16 @@ from Tests.UI.test_library_media_side_by_side import (
     _open_media_list,
     _two_media_items,
 )
+from tldw_chatbook.Widgets.Library.library_media_content import (
+    LibraryMediaContentBody,
+)
+from tldw_chatbook.Widgets.Library.library_media_viewer import (
+    ANALYSIS_RENDERED_BLOCKED_BY_SEARCH,
+)
 from Tests.UI.test_library_shell import (
     LibraryProductionCSSHarness,
     _active_library_screen,
+    _submit_content_search_query,
     _seed_conversations,
     _two_conversations,
     _wait_for_condition,
@@ -153,8 +160,15 @@ async def test_t_never_arms_the_trash_while_find_is_open():
 
 
 @pytest.mark.asyncio
-async def test_find_is_refused_on_the_info_tab_and_t_stays_a_plain_character():
-    """task-32348 AC#2, B D4/D4a: the Info tab has no bar to mount."""
+async def test_find_is_refused_on_the_info_tab():
+    """task-32348, B D4: the Info tab has no bar to mount, so Find refuses it.
+
+    Review finding 2: this deliberately says nothing about "t". With Find
+    CLOSED on Info, ``library_media_move_to_trash`` is still live (its gate
+    reads view/substate/pending, never the reader mode), so "t" does arm the
+    confirmation there -- the AC#2 guarantee is about a PENDING Find gesture
+    and is pinned by ``test_t_never_arms_the_trash_while_find_is_open``.
+    """
     host = _media_host()
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_first_media_reader(host, pilot)
@@ -169,6 +183,8 @@ async def test_find_is_refused_on_the_info_tab_and_t_stays_a_plain_character():
         await pilot.pause()
         assert screen._media_state.find_open is False
         assert not screen.query("#library-media-content-search-controls")
+
+
 # --------------------------------------------------------------------------
 # task-32365: a Markdown analysis renders
 # --------------------------------------------------------------------------
@@ -219,3 +235,49 @@ async def test_a_plain_text_analysis_is_offered_no_toggle():
         await _switch_to_analysis(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
         assert not screen.query("#library-media-analysis-content-mode-raw")
+
+
+@pytest.mark.asyncio
+async def test_an_active_find_query_drops_the_rendered_analysis_to_the_view_that_marks():
+    """Review finding 1: rendered mode mounts only the Markdown widget, whose
+    ``sync_search`` no-ops (there is no raw view to restyle) and whose
+    scroll-to-match is a source-line index applied to a rendered scroller. So
+    a Find over a rendered analysis counted matches and marked none. An active
+    query now shows the view that can mark, and the toggle says so."""
+    host = _analysis_host(_MARKDOWN_ANALYSIS)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_first_media_reader(host, pilot)
+        await _switch_to_analysis(screen, pilot)
+        body = await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
+        assert body.active_mode == "rendered", body.active_mode
+
+        await _submit_content_search_query(screen, pilot, "point")
+        body = await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one(
+                "#library-media-viewer-content", LibraryMediaContentBody
+            ).active_mode == "raw",
+            message="An active analysis query never dropped to the Raw view.",
+        )
+        raw_button = screen.query_one("#library-media-analysis-content-mode-raw", Button)
+        assert "Raw (selected)" in str(raw_button.label), raw_button.label
+        # ...and Rendered is refused with its reason, never a pressable
+        # control that repaints the same body.
+        rendered = screen.query_one(
+            "#library-media-analysis-content-mode-rendered", Button
+        )
+        assert rendered.disabled is True
+        assert rendered.tooltip == ANALYSIS_RENDERED_BLOCKED_BY_SEARCH
+        reason = screen.query_one("#library-media-analysis-content-mode-reason", Static)
+        assert str(reason.renderable) == ANALYSIS_RENDERED_BLOCKED_BY_SEARCH
+
+        # Clearing the query hands the rendered view back.
+        await _submit_content_search_query(screen, pilot, "")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one(
+                "#library-media-viewer-content", LibraryMediaContentBody
+            ).active_mode == "rendered",
+            message="Clearing the query never restored the Rendered view.",
+        )

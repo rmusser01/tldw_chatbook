@@ -268,8 +268,12 @@ readable measure rather than stretched across the whole canvas.
   "key action" pair — the Notes editor, for example, shows "ctrl+s save
   note | esc back to notes".
   While a text field has focus the footer leads with `typing in field`,
-  names `esc leave field`, and keeps the canvas verbs after `after esc:` —
-  they are not live until you leave the field.
+  names the Escape chip for that surface (`esc leave field` where nothing
+  else owns the key — a list canvas keeps its own `esc focus rail`), and
+  carries the canvas verbs after `after esc:` — they are not live until you
+  leave the field. On a terminal under 64 columns the return chip
+  (`esc back to Library`) comes first instead, because that is the one
+  action the narrow footer must never drop.
 
 One special case: selecting **Notes** adds a
 **Library notes | Folder files** strip above the workbench. **Folder files**

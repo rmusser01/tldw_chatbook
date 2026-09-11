@@ -4214,8 +4214,15 @@ class LibraryScreen(BaseAppScreen):
                 for key, gated_action, label in (
                     # task-32348: a multi-char key, so it survives the
                     # focused-Input transformation above and stays useful
-                    # while the Find field itself has focus.
-                    ("ctrl+f", "library_media_reader_find", "find"),
+                    # while the Find field itself has focus. The label
+                    # follows the toggle -- with the bar open the key
+                    # closes it, and "find" there would name the wrong half
+                    # of a two-way key.
+                    (
+                        "ctrl+f",
+                        "library_media_reader_find",
+                        "close find" if self._media_state.find_open else "find",
+                    ),
                     ("l", "library_media_read_later", "read later"),
                     ("c", "library_media_use_in_console", "use in Console"),
                     ("t", "library_media_move_to_trash", "trash"),
@@ -4463,8 +4470,26 @@ class LibraryScreen(BaseAppScreen):
             # task-31272 removed. What was missing is the way back: the field
             # state now names the gesture that re-arms the canvas, and the
             # verbs stay on screen behind it instead of vanishing.
+            #
+            # The verbs are baked into a TEXT chip whose key is "", so the two
+            # "/" suppressions further down this function can no longer reach
+            # them -- both are mirrored here or the chip would name a key the
+            # screen refuses (review finding 4). Dead-key predicate first, then
+            # the starter-lifecycle one, which drops only the search label.
             if self.is_mounted and not self._library_slash_would_land():
                 swallowed = tuple(pair for pair in swallowed if pair[0] != "/")
+            if self._library_lifecycle in (
+                LibraryLifecycle.UNKNOWN,
+                LibraryLifecycle.STARTER,
+            ):
+                swallowed = tuple(
+                    pair
+                    for pair in swallowed
+                    if not (
+                        pair[0] == "/"
+                        and pair[1].casefold() in {"focus search", "search"}
+                    )
+                )
             esc_pairs = tuple(pair for pair in kept if pair[0] == "esc")
             if not esc_pairs and self.check_action("library_blur_text_field", ()):
                 esc_pairs = (("esc", "leave field"),)
@@ -24286,8 +24311,13 @@ class LibraryScreen(BaseAppScreen):
             ):
                 return False
             if action == "library_media_reader_find":
-                # task-32348: live exactly where the button is enabled, so
-                # the footer chip below can never advertise a refusal.
+                # task-32348: live only where the button is enabled AND the
+                # Reader is settled -- the fences above (this row, the
+                # viewer view, no sub-state, no pending detail) make the key
+                # strictly narrower than the button, which consults only
+                # ``analysis_find_unavailable_reason``. The footer chip is
+                # gated on this same call, so it can never advertise a
+                # refusal either way.
                 return not self._library_media_find_unavailable_reason()
             if (
                 action == "library_media_move_to_trash"

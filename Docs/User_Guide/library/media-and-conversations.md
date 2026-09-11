@@ -502,7 +502,11 @@ still spans the pane.
   pane. A long analysis scrolls the tab, carrying its actions to the end of
   the text rather than clipping them.
   A Markdown analysis renders like the Read tab, with the same
-  Rendered/Raw toggle.
+  Rendered/Raw toggle. While a Find query is active the analysis shows its
+  stored text instead — only that view can mark the matches — and the strip
+  says so ("Showing the stored text so matches can be marked · clear the
+  search to read it rendered."); clearing the search hands the rendered view
+  straight back.
   Analysis is produced at import time (the "Analyze after import" option),
   written by hand here, or generated in place: **"Generate"** (**"Regenerate"**
   once one exists) calls the configured analysis provider without leaving
@@ -1186,3 +1190,9 @@ Analysis.", and "t" cannot arm the delete confirmation while Find is open;
 task-32365: a stored analysis beginning "## Key contributions" paints as a
 heading with a Rendered|Raw toggle above it, and a plain-prose analysis is
 offered no toggle).*
+
+*Verified against fix/library-crit10-viewer — 2026-09-11, fix round 1
+(task-32365 review finding 1: submitting a Find query over a rendered
+analysis now shows the stored text, where the matches are actually marked,
+with "○ Rendered" refused and its reason on the line beneath; clearing the
+query restores the rendered view).*
