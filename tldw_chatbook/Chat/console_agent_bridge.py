@@ -1449,8 +1449,9 @@ def _refusal_statuses() -> Mapping[str, ConsoleActivityStatus]:
     authority it does not have would be a lie.
 
     Built on first use so importing this module does not drag
-    `Agents.local_tool_provider` (task-24458). The values are module-level
-    string constants, so the table is computed once and never invalidated.
+    `Agents.local_tool_provider` (task-24458) -- or, since Qodo #3,
+    `Agents.raw_shell_tool_provider`. The values are module-level string
+    constants, so the table is computed once and never invalidated.
     """
     from tldw_chatbook.Agents.local_tool_provider import (
         LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
@@ -1460,6 +1461,7 @@ def _refusal_statuses() -> Mapping[str, ConsoleActivityStatus]:
         LOCAL_ROOT_CHANGED_REFUSAL,
         LOCAL_TIMEOUT_REFUSAL,
     )
+    from tldw_chatbook.Agents.raw_shell_tool_provider import RAW_SHELL_DENY_REFUSAL
 
     return MappingProxyType({
         MCP_USER_DENY_REFUSAL: "denied",
@@ -1476,6 +1478,10 @@ def _refusal_statuses() -> Mapping[str, ConsoleActivityStatus]:
         # into `denied` + `blocked_off` like the MCP one below.
         LOCAL_DENY_REFUSAL: "blocked",
         MCP_DENY_REFUSAL: "blocked_off",
+        # Qodo #3: the raw-shell provider's Off refusal names the same fact
+        # MCP's does ("set to Off"), so it renders the same way -- it used to
+        # fall through to the generic `blocked` and hide the cause.
+        RAW_SHELL_DENY_REFUSAL: "blocked_off",
         LOCAL_TIMEOUT_REFUSAL: "blocked",
         LOCAL_GATE_ERROR_REFUSAL: "blocked",
         LOCAL_ROOT_CHANGED_REFUSAL: "blocked",

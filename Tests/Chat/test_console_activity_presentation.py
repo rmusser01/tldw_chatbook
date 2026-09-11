@@ -31,6 +31,7 @@ from tldw_chatbook.Agents.mcp_tool_provider import (
     UNRESOLVED_REFUSAL as MCP_UNRESOLVED_REFUSAL,
     USER_DENY_REFUSAL as MCP_USER_DENY_REFUSAL,
 )
+from tldw_chatbook.Agents.raw_shell_tool_provider import RAW_SHELL_DENY_REFUSAL
 from tldw_chatbook.Chat.console_agent_bridge import (
     STEP_APPROVAL_TIMEOUT,
     build_intermediate_planning_marker,
@@ -272,6 +273,8 @@ def test_direct_controller_review_results_name_who_refused(
         (MCP_UNRESOLVED_REFUSAL, "blocked"),
         (MCP_TIMEOUT_REFUSAL, "blocked"),
         (MCP_KILL_SWITCH_REFUSAL, "blocked_kill_switch"),
+        # Qodo #3: raw shell's Off refusal names the same fact MCP's does.
+        (RAW_SHELL_DENY_REFUSAL, "blocked_off"),
     ],
 )
 def test_error_wrapped_provider_refusals_keep_their_refusing_authority(
@@ -289,6 +292,7 @@ def test_error_wrapped_provider_refusals_keep_their_refusing_authority(
         (MCP_DENY_REFUSAL, "blocked_off"),
         (MCP_KILL_SWITCH_REFUSAL, "blocked_kill_switch"),
         (MCP_UNRESOLVED_REFUSAL, "blocked"),
+        (RAW_SHELL_DENY_REFUSAL, "blocked_off"),
     ],
 )
 def test_structured_blocked_outcome_still_reads_the_refusal_text(
@@ -385,6 +389,28 @@ def test_local_deny_refusal_never_claims_an_authority_it_cannot_know() -> None:
         )
         == "blocked"
     )
+
+
+def test_raw_shell_off_renders_the_off_word_not_the_generic_one() -> None:
+    """Qodo #3: the whole point of the `blocked_off` status is the WORD.
+
+    Classification alone proves nothing the user sees, so pin the rendered
+    marker copy for both shapes a raw-shell Off arrives in.
+    """
+    structured = build_step_activity_presentation(
+        STEP_TOOL_RESULT,
+        tool_name="shell_exec",
+        result=RAW_SHELL_DENY_REFUSAL,
+        tool_outcome="blocked",
+    )
+    wrapped = build_step_activity_presentation(
+        STEP_TOOL_RESULT,
+        tool_name="shell_exec",
+        result=f"ERROR: {RAW_SHELL_DENY_REFUSAL}",
+    )
+
+    assert structured.status == wrapped.status == "blocked_off"
+    assert console_activity_status_word(structured.status) == "blocked (Off)"
 
 
 def test_error_wrapped_controller_kill_switch_is_named_as_one() -> None:
