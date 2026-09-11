@@ -68,8 +68,9 @@ def test_packaged_guide_example_executes(
         frame = page.frame(name="canvas-renderer")
         assert frame is not None
         root = frame.locator("#canvas-root")
+        label_container = root if topic == "controls" else frame.locator("svg")
         for label in labels:
-            expect(root).to_contain_text(label)
+            expect(label_container).to_contain_text(label)
         if topic == "controls":
             quantity = frame.get_by_label("Quantity (whole units)")
             price = frame.get_by_label("Unit price", exact=True)
