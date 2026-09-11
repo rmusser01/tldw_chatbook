@@ -480,7 +480,7 @@ def recovered_load(function):
                     for path, lease in leases.items():
                         if not holds.enter_context(
                             execution_scope(
-                                ("config", "models.artifacts"), path, retained=lease
+                                ("models.artifacts",), path, retained=lease
                             )
                         ):
                             raise RAGActivationRequired()
@@ -525,7 +525,7 @@ def recovered_encode(function):
                     for path, lease in leases.items():
                         if not stack.enter_context(
                             execution_scope(
-                                ("config", "models.artifacts"), path, retained=lease
+                                ("models.artifacts",), path, retained=lease
                             )
                         ):
                             raise RAGActivationRequired()

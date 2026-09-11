@@ -104,9 +104,7 @@ assert not activation.allowed('generation','models.artifacts')
 recovery.approve_local_embedding(config,review.fingerprint)
 assert activation.allowed('generation','models.artifacts')
 assert not activation.allowed('generation','config')
-denied(lambda:EmbeddingsServiceWrapper(str(model),device='cpu'))
-for owner in owners:
- if owner!='models.artifacts':activation.approve('generation',owner)
+assert all(not activation.allowed('generation',owner) for owner in owners if owner!='models.artifacts')
 require_local_model_construction(config)
 wrapper=EmbeddingsServiceWrapper(str(model),device='cpu')
 if sys.argv[1]!='cancel_load':assert wrapper.create_embedding('local model content').shape==(16,)
@@ -282,7 +280,7 @@ if sys.argv[1]=='generation':
   bind_activation(root,'again',selector,'generation2',owners,session=session)
  (root/('pending-'+bootstrap._key('again')+'.json')).unlink()
  second=ActivationStore(control2/'activation')
- for owner in owners:second.approve('generation2',owner)
+ second.approve('generation2','models.artifacts')
  denied(lambda:require_local_model_construction(config))
  fresh=recovery.preview_local_embedding(config)
  assert fresh.fingerprint!=review.fingerprint
@@ -305,6 +303,11 @@ _FACTORY = _REVIEW.replace(
     "wrapper=EmbeddingsServiceWrapper(str(model),device='cpu')",
     """
 from tldw_chatbook.RAG_Search.simplified.rag_factory import create_rag_service
+from tldw_chatbook.RAG_Search.activation import preview_recovery_review,approve_recovery_review
+denied(lambda:create_rag_service(config=config))
+approve_recovery_review(config,preview_recovery_review(config).fingerprint)
+assert not activation.allowed('generation','config')
+denied(lambda:EmbeddingsServiceWrapper('openai/text-embedding-3-small',device='cpu',api_key='owned-test-key'))
 service=create_rag_service(config=config)
 assert service.embeddings.get_embedding_dimension()==16
 assert service.embeddings.create_embedding('local model content').shape==(16,)
@@ -317,6 +320,44 @@ wrapper=EmbeddingsServiceWrapper(str(model),device='cpu')
 
 def test_actual_shared_rag_factory_uses_reviewed_local_hf_model(tmp_path):
     _run(tmp_path, "factory", "local", script=_FACTORY)
+
+
+_CROSS_ENCODER = _REVIEW.replace(
+    "wrapper=EmbeddingsServiceWrapper(str(model),device='cpu')",
+    r"""
+wrapper=EmbeddingsServiceWrapper(str(model),device='cpu')
+assert wrapper.create_embedding('local model content').shape==(16,)
+wrapper.close()
+from types import SimpleNamespace
+from tldw_chatbook.RAG_Search.activation import preview_recovery_review,approve_recovery_review
+from tldw_chatbook.RAG_Search import reranker as rerank_module
+approve_recovery_review(config,preview_recovery_review(config).fingerprint)
+assert not activation.allowed('generation','config')
+assert activation.allowed('generation','models.artifacts')
+assert all(activation.allowed('generation',owner) for owner in ('rag.definitions','rag.projections','db.rag_indexing'))
+unreviewed=data/'unreviewed-cross-encoder';unreviewed.mkdir(mode=0o700)
+entered=[]
+def forbidden_import():
+ entered.append('cross-encoder-native-import')
+ raise RuntimeError('unreviewed CrossEncoder native entry reached')
+rerank_module._import_cross_encoder_class=forbidden_import
+reranker=rerank_module.CrossEncoderReranker(rerank_module.RerankingConfig(strategy='cross_encoder',model_name=str(unreviewed)))
+try:
+ asyncio.run(reranker.rerank('query',[SimpleNamespace(id='row',document='content',score=.5)]))
+except RAGActivationRequired:
+ pass
+else:
+ raise AssertionError('separately unreviewed CrossEncoder was admitted: '+repr(entered))
+assert not entered
+assert not blocked_attempts()
+print('retired and reopened');raise SystemExit(0)
+""",
+    1,
+)
+
+
+def test_local_hf_and_rag_review_do_not_authorize_cross_encoder(tmp_path):
+    _run(tmp_path, "cross_encoder", "local", script=_CROSS_ENCODER)
 
 
 _ISOLATED_CHILD = r"""
@@ -337,17 +378,21 @@ from tldw_chatbook import config as installed_config
 assert installed_config.CLI_APP_CLIENT_ID==entry.installation_id
 model=Path(entry.data)/'local-bert'
 config=RAGConfig.from_dict({'embedding':{'model':str(model),'device':'cpu'}})
+_,profiles=bootstrap._records(bootstrap.default_bootstrap_root())
+witness=next(p['activation'] for p in profiles if p['selector']==entry.config)
+store=ActivationStore(Path(witness['store_root']))
+def unrelated_inactive():
+ for owner in ('config','rag.definitions','rag.projections','db.rag_indexing','skills','mcp.local'):
+  assert owner in witness['owners'],owner
+  assert not store.allowed(witness['generation'],owner),owner
+unrelated_inactive()
 if mode=='approve':
  review=recovery.preview_local_embedding(config)
  recovery.approve_local_embedding(config,review.fingerprint)
- _,profiles=bootstrap._records(bootstrap.default_bootstrap_root())
- witness=next(p['activation'] for p in profiles if p['selector']==entry.config)
- store=ActivationStore(Path(witness['store_root']))
- for owner in ('config','rag.definitions','rag.projections','db.rag_indexing'):
-  store.approve(witness['generation'],owner)
 wrapper=EmbeddingsServiceWrapper(str(model),device='cpu')
 assert wrapper.create_embedding('local model content').shape==(16,)
 wrapper.close()
+unrelated_inactive()
 assert not blocked_attempts()
 print('verified isolated local model')
 """

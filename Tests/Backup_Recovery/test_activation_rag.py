@@ -45,7 +45,14 @@ if state!='ordinary':
  (root/('pending-'+bootstrap._key('restore')+'.json')).unlink()
  activation=ActivationStore(control/'activation')
  if state=='approved':
-  for owner in owners: activation.approve('generation',owner)
+  from tldw_chatbook.RAG_Search.activation import preview_recovery_review,approve_recovery_review
+  approve_recovery_review(config,preview_recovery_review(config).fingerprint)
+  assert not activation.allowed('generation','config')
+  assert not activation.allowed('generation','models.artifacts')
+  if route=='reranker_timeout':
+   # Synthetic Event-based lifetime evidence only; not recovered model approval.
+   activation.approve('generation','config')
+   activation.approve('generation','models.artifacts')
  if state in ('config_only','shared'):
   activation.approve('generation','config')
  if state=='missing': (activation._generation('generation')/'required.json').unlink()
@@ -200,6 +207,7 @@ else:
   else: assert result is not None
 if denied: assert not effects,effects
 if route=='hf_constructor': assert not effects,effects
+if state=='approved':assert activation.allowed('generation','config')==(route=='reranker_timeout')
 assert media.execute_query('SELECT content FROM Media').fetchone()[0].startswith('Authoritative')
 assert not blocked_attempts()
 print('retired and reopened')
@@ -348,15 +356,12 @@ if state!='ordinary':
   review=preview_recovery_review(config)
   assert str(protected) in review.sources
   assert set(review.owners)=={'rag.definitions','rag.projections','db.rag_indexing'}
-  assert 'config_review_required' in review.prerequisites
+  assert 'config_review_required' not in review.prerequisites
   approve_recovery_review(config,review.fingerprint)
   assert activation.allowed('generation','db.rag_indexing')
   assert not activation.allowed('generation','config')
-  try: indexing._default_indexing_db()
-  except RAGActivationRequired: pass
-  else: raise AssertionError('RAG review implicitly approved independent config')
-  assert protected.read_bytes()==before
-  activation.approve('generation','config')
+  assert indexing._default_indexing_db() is not None
+  assert not activation.allowed('generation','config')
 assert get_rag_indexing_db_path()==protected
 denied=state=='denied'
 if route=='backfill':

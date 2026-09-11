@@ -53,7 +53,7 @@ def source_paths(service=None, *, config=None, sources=()):
     config = config or getattr(service, "_rag_activation_config", None)
     config = config or getattr(service, "config", None)
     config = getattr(config, "rag_config", config)
-    paths = [("config", selector)]
+    paths = [("rag.definitions", selector)]
     paths.extend(getattr(service, "_rag_activation_sources", ()))
     profiles = sys.modules.get("tldw_chatbook.RAG_Search.config_profiles")
     manager = getattr(service, "profile_manager", None)
@@ -66,6 +66,16 @@ def source_paths(service=None, *, config=None, sources=()):
     if hasattr(service, "model_name"):
         model_name = str(service.model_name)
         model = model_name.lower()
+        # Only the installed local HF wrapper has model receipt/closure checks.
+        paths[0] = ("config", selector)
+        wrapper = sys.modules.get(
+            "tldw_chatbook.RAG_Search.simplified.embeddings_wrapper"
+        )
+        if type(service) is getattr(wrapper, "EmbeddingsServiceWrapper", None):
+            if _mock_model(model):
+                paths[0] = ("rag.definitions", selector)
+            elif not model.startswith("openai/"):
+                paths[0] = ("models.artifacts", selector)
         if not _mock_model(model) and not model.startswith("openai/"):
             local = Path(model_name).expanduser()
             if (
@@ -172,7 +182,7 @@ def execution(service=None, *, config=None, sources=(), _transfer=None):
                 if path not in leases:
                     leases[path] = stack.enter_context(acquire_storage(path))
                 if not stack.enter_context(
-                    execution_scope(("config", owner), path, retained=leases[path])
+                    execution_scope((owner,), path, retained=leases[path])
                 ):
                     raise RAGActivationRequired()
         except (OSError, ValueError, TypeError, RuntimeError, AttributeError):
@@ -361,10 +371,6 @@ def _review_scope(config, sources):
             identities.append(
                 (owner, str(path), identity, _settings_identity(owner, path))
             )
-            if not stack.enter_context(
-                execution_scope(("config",), path, retained=lease)
-            ):
-                prerequisites.add("config_review_required")
         if not _mock_model(config.embedding.model) and witnesses:
             from .model_recovery import config_spec, require_local_embedding
 
