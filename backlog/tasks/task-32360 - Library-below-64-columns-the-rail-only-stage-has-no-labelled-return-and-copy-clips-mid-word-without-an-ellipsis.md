@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-09-11 06:18'
+updated_date: '2026-09-11 09:05'
 labels:
   - library
   - layout
@@ -27,9 +28,10 @@ At 60x24 on the rail-only stage Escape is the only return and the footer never s
 - [ ] #3 Grips never overpaint content
 <!-- AC:END -->
 
-## Implementation Notes (AC#2 only)
+## Implementation Notes
 
-Handed to the `notes-details` branch by the coordinator because the two
+<!-- SECTION:NOTES:BEGIN -->
+**AC#2 only.** Handed to the `notes-details` branch by the coordinator because the two
 measured losses are both composed in `library_notes_canvas.py`. AC#1 and AC#3
 belong to the layout branch and are untouched here.
 
@@ -76,3 +78,4 @@ Pinned by `Tests/UI/test_library_crit10_notes_details.py::
 test_notes_copy_is_not_clipped_mid_word_below_64_columns` (red first against
 the unpatched canvas), and verified live at 60x24 on a 7-note profile
 (`crit10/wave/notes-details/caps/cap-13-power-notes-60x24-no-midword-clip.txt`).
+<!-- SECTION:NOTES:END -->

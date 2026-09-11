@@ -353,6 +353,15 @@ other cue. While the library holds zero notes, that folder row itself also
 carries a one-line gloss: "Agent_Lessons — where Console agents file
 reusable lessons (empty)".
 
+On a terminal narrower than 64 columns the list pane is narrow enough that
+two things used to be cut off mid-word: the status line lost its last word
+("…or add from", without "files."), and the toolbar's third action painted
+as "Sel". At that width — and only there; at 64 columns and up the line
+keeps its full wording — the status line drops its "Library notes ·"
+prefix, since the source strip above it already says which notes these
+are, and the toolbar moves the action that does not fit onto a row of its
+own. Nothing is ever painted as half a word.
+
 ### Edit, Preview, and Info
 
 | Control | What it does |
@@ -1081,14 +1090,6 @@ retired as user-visible names. task-32215: the three placement verbs (**Add to
 folder**, **Move note**, **Remove placement**) are pinned to a selected row;
 **Sort** on a populated list arrived with task-32172. task-32217: the note
 editor's Body box takes the height its pane has spare.)*
-
-On a terminal narrower than 64 columns the list pane is narrow enough that
-two things used to be cut off mid-word: the status line lost its last word
-("…or add from", without "files."), and the toolbar's third action painted as
-"Sel". The status line drops its "Library notes ·" prefix there — the source
-strip above it already says which notes these are — and the toolbar moves the
-action that does not fit onto a row of its own, so nothing is ever painted as
-half a word.
 
 *Verified against fix/library-crit10-notes-details — 2026-09-11 (task-32356:
 **Ctrl+N** and **n** create the blank note and open it instead of posing a
