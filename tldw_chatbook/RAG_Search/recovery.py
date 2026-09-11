@@ -112,8 +112,15 @@ def _written_rows(batch, ids, documents, metadatas, embeddings, metric):
 
 def _configuration(service):
     from .simplified.collection_fingerprint import FINGERPRINT_VERSION, _index_fields
+    from .simplified.enhanced_rag_service_v2 import EnhancedRAGServiceV2
 
-    return _digest((FINGERPRINT_VERSION, _index_fields(service.config)))
+    fields = (FINGERPRINT_VERSION, _index_fields(service.config))
+    if type(service) is EnhancedRAGServiceV2:
+        # This named route delegates optimized Backfill to the recorded base
+        # storage pipeline. Do not reuse base-class proof for a different owner
+        # or claim the independent parent-document pipeline was observed.
+        return _digest(("enhanced-v2-base-optimized-v1", fields))
+    return _digest(fields)
 
 
 def _model(service):
@@ -192,6 +199,7 @@ def _failure(error):
         "projection_source_schema_unavailable",
         "projection_source_limit",
         "projection_backend_unavailable",
+        "projection_parent_pipeline_unavailable",
         "projection_tracking_unavailable",
         "projection_shared_source_scope_required",
         "projection_build_incomplete",
@@ -334,14 +342,24 @@ class ProjectionObservation:
 
 
 def _qualified_service(service):
+    """Qualify only installed service routes whose actual storage is recorded."""
+    from .simplified.enhanced_rag_service_v2 import EnhancedRAGServiceV2
     from .simplified.rag_service import RAGService
     from .simplified.vector_store import ChromaVectorStore
 
     if (
-        type(service) is not RAGService
+        type(service) not in (RAGService, EnhancedRAGServiceV2)
         or type(service.vector_store) is not ChromaVectorStore
     ):
         raise ValueError("projection_backend_unavailable")
+    if type(service) is EnhancedRAGServiceV2 and (
+        service.enable_parent_retrieval
+        or service.config.chunking.enable_parent_retrieval
+    ):
+        # V2.index_batch_optimized delegates to the base even with parent
+        # retrieval enabled. Certifying it as a parent build would be false;
+        # the separate *_with_parents APIs do not record owner provenance.
+        raise ValueError("projection_parent_pipeline_unavailable")
 
 
 @participant.async_operation
