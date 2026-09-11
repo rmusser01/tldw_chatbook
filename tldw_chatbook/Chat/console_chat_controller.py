@@ -762,7 +762,9 @@ ASK_USER_TIMEOUT_ENV_VAR = "TLDW_CONSOLE_ASK_USER_TIMEOUT_SECONDS"
 #: profile, short enough that a wedged one degrades instead of hanging.
 CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS = 10.0
 #: Set while a Personal Context bootstrap attempt is still running in a
-#: worker thread, and cleared by that thread whichever way it ends.
+#: worker thread, and cleared by that thread whichever way it ends -- or by
+#: the waiter, when the callable was cancelled before the executor ever
+#: started it and so will never run its own `finally`.
 #: Expiring the budget above abandons the worker but cannot kill it, and
 #: `TldwCli.get_personal_context_service` holds a module-level lock for the
 #: WHOLE bootstrap -- so a wedged credential store means every later send
@@ -18567,11 +18569,32 @@ class ConsoleChatController:
         if _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.is_set():
             return None
         _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.set()
+        # SUBMITTED is not STARTED: `to_thread` only queues the callable, and
+        # a Stop that cancels this await while it is still queued cancels the
+        # executor future outright -- the callable never runs, so its
+        # `finally` never clears the guard and every later resolution in the
+        # process returns None (Qodo #5). The worker owns the clear once it
+        # has started; before that, we do.
+        started = threading.Event()
 
         def _bootstrap():
+            started.set()
+            # We may have already given up and cleared the guard on the way
+            # to the executor; the worker is running now, so re-assert it.
+            _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.set()
             try:
                 return getter()
             finally:
+                _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.clear()
+
+        def _release_unless_worker_owns_it() -> None:
+            """Clear the guard only while nothing is holding the lock yet.
+
+            A budget expiry with the callable genuinely running keeps it set:
+            that worker is still parked on the app's bootstrap lock, which is
+            exactly what the guard exists to stop later sends from joining.
+            """
+            if not started.is_set():
                 _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.clear()
 
         try:
@@ -18580,13 +18603,18 @@ class ConsoleChatController:
                 CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS,
             )
         except (asyncio.TimeoutError, TimeoutError):
+            _release_unless_worker_owns_it()
             logger.warning(
                 "Console personal context bootstrap exceeded its "
                 "{budget_seconds}s budget; sending without profile tools",
                 budget_seconds=CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS,
             )
             return None
+        except asyncio.CancelledError:
+            _release_unless_worker_owns_it()
+            raise
         except Exception:  # noqa: BLE001 - personalization never blocks chat
+            _release_unless_worker_owns_it()
             return None
 
     @contextlib.asynccontextmanager
