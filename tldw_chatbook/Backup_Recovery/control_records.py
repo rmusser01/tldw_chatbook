@@ -570,8 +570,13 @@ def _operation_activation_generation(control, operation_id, witness, selector):
 
     phase = current_phase(rows) if rolling else rows
     return (
-        prepared.mode == "replace"
-        and bool(prepared.replacement_profiles)
+        (
+            prepared.mode == "replace" and bool(prepared.replacement_profiles)
+            or prepared.mode == "isolated"
+            and rolling is None
+            and any(row.config == str(selector) for row in prepared.isolated_profiles)
+            and witness["namespaces"] == prepared.publication.namespaces
+        )
         and any(row.event == validated for row in phase)
         and witness["generation"] == generation
         and witness["operation_id"] == operation_id

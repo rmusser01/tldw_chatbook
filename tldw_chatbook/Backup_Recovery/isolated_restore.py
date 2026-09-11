@@ -144,13 +144,20 @@ def _finish_isolated(
     """Finish/retry only this explicit journal under freshly held native authority."""
     from . import bootstrap
     from .archive_reader import _check
-    from .control_records import UNBOUND_NAMESPACE, admission_authority
-    from .publication import finalize_candidate, publish_candidate
+    from .control_records import (
+        UNBOUND_NAMESPACE,
+        _existing_admission_authority,
+        _recover_activation_pairs,
+    )
+    from .journal import _Prepared
+    from .publication import _plan_digest, finalize_candidate, publish_candidate
 
     root = bootstrap.default_bootstrap_root()
     _check(cancel)
-    authority = admission_authority(root)
-    with authority.maintenance(tuple(names) + (UNBOUND_NAMESPACE,), 30) as session:
+    authority = _existing_admission_authority(root)
+    with authority.maintenance(
+        tuple(names) + (UNBOUND_NAMESPACE,), 30, cancel=cancel
+    ) as session:
         with journal._locked(exclusive=False) as parent:
             records = journal._records(parent)
         if not any(row.event == "prepared" for row in records):
@@ -169,6 +176,24 @@ def _finish_isolated(
                 ),
                 generation=generation,
             )
+        with journal._locked(exclusive=False) as parent:
+            records = journal._records(parent)
+        prepared = _Prepared.model_validate(
+            next(row.evidence for row in records if row.event == "prepared")
+        )
+        if (
+            prepared.mode != "isolated"
+            or prepared.publication is None
+            or prepared.publication.bootstrap_root != str(root)
+            or prepared.generation != generation
+            or tuple(prepared.publication.namespaces) != tuple(names)
+            or prepared.publication.plan_digest != _plan_digest(plan)
+        ):
+            raise ValueError("isolated_recovery_context_invalid")
+        # Only this existing operation may complete a split native activation pair.
+        # Ordinary readers remain fenced until its exact before/after states match.
+        if records[-1].event != "committed":
+            _recover_activation_pairs(journal, prepared, session)
         _check(cancel)
         if records[-1].event != "committed":
             publish_candidate(candidate, plan, journal, None)
