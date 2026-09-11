@@ -16,12 +16,12 @@
 - **Reviewed diagnostics are metadata-only.** `REVIEWED_METADATA_ONLY_DIAGNOSTICS` inside `Tests/Architecture/test_persistent_diagnostic_inventory.py` forbids `logger.opt(exception=True)`, `exc_info=`, `stack_info=` on listed diagnostics because the log-file sink runs with `diagnose=True`. Add a reason as `error_type={}` metadata, never a traceback. Any new or reworded log/notify call requires `scripts/check_persistent_diagnostic_inventory.py --write` in the same PR, re-run AFTER every dev merge (the JSON auto-merges to impossible totals silently).
 - **Never search a path-bearing string for a word a path can contain** (the `"private"` canary incident): leak canaries are tokens like `zqleakcanary`.
 - **Harness vaults live under `$HOME` outside the profile directory.** A vault inside the profile config dir is rejected as `private_path_overlap`; anything under `/private/tmp` fails the `owner_group == os.getegid()` check. Use `$HOME/.cache/tldw-crit/<name>/vault`.
-- **Task ids:** sweep with `git rev-list --objects --all | grep -oE 'task-[0-9]+' | grep -oE '[0-9]+' | sort -rn | head -1` plus every worktree's `backlog/tasks` immediately before minting and again before pushing; older `created_date` keeps a colliding id. The peer session tldw-chatbook-da holds 32301–32310; mint from 32311 upward.
+- **Task ids:** sweep with `git rev-list --objects --all | grep -oE 'task-[0-9]+' | grep -oE '[0-9]+' | sort -rn | head -1` plus every worktree's `backlog/tasks` immediately before minting and again before pushing; older `created_date` keeps a colliding id. The peer session tldw-chatbook-da holds 32301–32310 and 32346–32393 (all on dev); mint from 32394 upward.
 - **Tests:** foreground, ≤40 node ids per chunk; `Tests/UI/test_library_shell.py` is 19k lines — never wholesale. Every fix ships a test proven RED without the change and GREEN with it, on the REAL route (no `SimpleNamespace` receivers for behaviour that lives in `LibraryScreen`). A repair that loosens an assertion is a defect.
 - **Live verification** of every user-visible change at 235x52 and one compact size (100x30 or 60x24) via tmux with `TLDW_CONFIG_PATH` pointing at a scratch profile — never the user's real database — with captures saved and cited.
 - **Guide:** `Docs/User_Guide/library/notes.md` and `file-notes.md` get body-text updates plus a "Verified against" stamp for every behaviour change; stale sentences are rewritten as "was … — superseded by task-N below", never deleted. Stamps keep a blank line before each.
 - **Never** `git stash`, `git clean -fdx`, force-push, broad `pkill`, or merge a PR; the controller merges. The `timeout` command does not exist.
-- **Peer session** tldw-chatbook-da has a Notes branch in flight (tasks 32233 Escape-in-filter, 32215 Sort/folder verbs, 32218 vocabulary, note-import glyphs, editor density) that lands before this wave; every group merges dev before its first push and again before landing.
+- **Peer session** tldw-chatbook-da's Notes work is ALREADY on dev: #2590 (32233 Escape-in-filter, 32215 Sort/folder verbs, 32218 vocabulary) and #2605 (ctrl+n creates directly, Details panel copy, the compact notes sheet at 60 cols, a `DiagnosticsOpened` rail message). Its Escape/footer pins live in `Tests/UI/test_library_crit10_notes_details.py` and layout pins in `test_library_crit10_layout.py` — respect them; every group merges dev before its first push and again before landing.
 
 ---
 
@@ -49,7 +49,7 @@
 
 ### Task 3: Preview and layout — 20-row cap, primary actions far below content, return cue, low-vision polish
 
-**Tasks:** 32249, 32259, 32270, 32261
+**Tasks:** 32249, 32259, 32270, 32261, plus peer riders 32389 (60-col notes reader keeps an empty work pane — `_sync_library_notes_reader_layout_from_shell` priority="items" at library_screen.py ~6248) and 32390 (dead `#library-notes-template-section` rule in _agentic_terminal.tcss)
 **Files:** `tldw_chatbook/css/components/_agentic_terminal.tcss` (~:2898 `max-height: 20`, the compact `1fr` rule next to it), the four surfaces named in 32259 (Session Git panel, Folder files empty state, import review, Info), `library_notes_canvas.py` (return cue display flag), `library_file_notes_workspace.py`, `Tests/UI/test_library_notes_wave_list.py`, `Tests/UI/test_library_crit8_waits.py`.
 **Facts:** the preview box closes at row 33 of 52 with 14 blank rows below and PageDown is inert until clicked, while the COMPACT layout gets `height: 1fr` — the inversion is a CSS bug. 32259: four surfaces put the primary action 20–38 rows below its content; 32270: the `‹ Library / Notes` cue's display flag is always false in wide Database Notes; 32261: compact select strip, stray `○`, unnamed `--->` grips.
 
