@@ -4520,8 +4520,27 @@ class LibraryScreen(BaseAppScreen):
             rest = tuple(
                 pair for pair in kept if pair[0] not in ("F6", "esc")
             )
+            # ...and on a surface the narrow-stage stand-down above does NOT
+            # cover -- ``_library_narrow_stage_return_active`` yields whenever
+            # an earlier Escape action owns the key, and its docstring names
+            # the 60x24 Media viewer as exactly that case -- the single
+            # painted chip must still be a KEY, not a status word. Leading
+            # with "typing in field" there paints that and nothing else
+            # (measured live at 60x24 with the Find bar open), which is less
+            # than the blurred footer said. Escape leads instead: it is the
+            # one key that works from inside the field, which is the same
+            # "recovery outranks navigation below 64 columns" order Task 6's
+            # block uses, so the two read as one grammar at that width.
+            narrow = (
+                self.is_mounted
+                and self.size.width > 0
+                and ordinary_emergency_required(self.size.width)
+            )
+            status = (("", "typing in field"),)
             shortcuts = (
-                (("", "typing in field"),) + esc_pairs + verbs + rest + f6_pairs
+                (esc_pairs + status + verbs + rest + f6_pairs)
+                if narrow
+                else (status + esc_pairs + verbs + rest + f6_pairs)
             )
         emergency = self._library_emergency_return_eligibility()
         if emergency.enabled:

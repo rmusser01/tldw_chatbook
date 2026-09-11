@@ -8,7 +8,7 @@ opens from the keyboard and refuses the tabs it cannot search) and 32365
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
 from Tests.UI.test_library_crit9_shell import (
     _library_host,
@@ -317,3 +317,34 @@ async def test_below_64_columns_a_focused_input_leaves_the_single_chip_alone():
             message="The media filter box never took focus.",
         )
         assert screen._library_footer_shortcuts_for_current_state() == blurred
+
+
+@pytest.mark.asyncio
+async def test_below_64_columns_the_viewer_names_escape_not_a_bare_status_word():
+    """Task 6's re-review, applied to the surface its own gate stands down on.
+
+    ``_library_narrow_stage_return_active`` yields whenever an earlier Escape
+    action owns the key, and its docstring names the 60x24 Media viewer as
+    exactly that case -- so the stand-down above does NOT cover the viewer,
+    and the wide form ran there. At 60 columns only the first chip is
+    painted, so it led with the bare status word "typing in field": true, and
+    useless, where the blurred footer had at least named a key.
+
+    The single slot now carries the Escape chip, which is the one thing that
+    works from inside the field -- the same "recovery outranks navigation
+    below 64 columns" order Task 6's block uses, so the two read as one
+    grammar at that width.
+    """
+    host = _media_host()
+    async with host.run_test(size=(60, 24)) as pilot:
+        screen = await _open_first_media_reader(host, pilot)
+        assert not screen._library_narrow_stage_return_active()
+        await pilot.press("ctrl+f")
+        await _wait_for_condition(
+            pilot,
+            lambda: isinstance(screen.focused, Input),
+            message="ctrl+f never focused the Find input.",
+        )
+        chips = screen._library_footer_shortcuts_for_current_state()
+        assert chips[0][0] == "esc", chips
+        assert chips[1] == ("", "typing in field"), chips
