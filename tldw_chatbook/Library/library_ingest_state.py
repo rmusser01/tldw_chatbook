@@ -12,6 +12,7 @@ from __future__ import annotations
 import errno
 import hashlib
 import math
+import os
 import re
 import time
 from dataclasses import dataclass, field, replace
@@ -2650,7 +2651,8 @@ def build_ingest_queue_groups(
     """Group jobs into contiguous per-submission runs (task-2221).
 
     Contiguous runs of a shared ``batch_id`` become one headed group
-    (source dirname, file count, relative age, outcome tallies); jobs
+    (the members' common root folder, file count, relative age, outcome
+    tallies); jobs
     without a batch id are singleton groups with no header, so a
     single-file submission reads exactly as before. Also returns the
     latest-batch tally line ("Latest batch: …"), ``""`` when no
@@ -2681,7 +2683,24 @@ def build_ingest_queue_groups(
                     )
                 )
             return
+        # task-32351 AC#1 (critique #10, B D1): the first member's parent is
+        # whichever subdirectory the recursive scan enumerated first, so a
+        # six-file import of `inbox/` was labelled "nested" after its one
+        # nested file. The folder the USER chose is the common root of every
+        # member, which the members already carry -- no new field, no schema
+        # change. ``commonpath`` raises on mixed absolute/relative or
+        # non-path sources (URL imports), which keeps the old behaviour.
+        # (review finding 2) Only a batch that is entirely real filesystem
+        # paths has a common root worth naming. A URL batch across two hosts
+        # would otherwise be headed "https:", and two unrelated roots "batch",
+        # where the first member's own parent still says something useful.
         source = PurePath(str(members[0].source_path)).parent.name or "batch"
+        if all(PurePath(str(job.source_path)).is_absolute() for job in members):
+            parents = [str(PurePath(str(job.source_path)).parent) for job in members]
+            try:
+                source = PurePath(os.path.commonpath(parents)).name or "batch"
+            except ValueError:  # Windows: members on different drives.
+                pass
         count = len(members)
         # (Qodo round) A batch is "running" until EVERY member is
         # terminal -- a finished member's age on an in-progress batch

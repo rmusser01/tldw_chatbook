@@ -120,9 +120,14 @@ In server mode the **Export** rail row is disabled, with the tooltip
   self-contradicted whenever every listed job was already done or
   failed), one line per job with action buttons underneath,
   "Clear finished", and a collapsed "Recent imports" fold listing the
-  last finished jobs. Batch headers use `active` plus exact state counts
+  last finished jobs. A batch's header names the folder you chose —
+  `inbox — 6 files` for an import of `inbox/`, whatever order the scan
+  walked its subfolders in — then `active` plus exact state counts
   (`1 queued · 1 done · 1 failed`) rather than adding a contradictory
   `running` synonym. Empty state: "No import jobs yet."
+  When jobs are left needing attention, the Library landing's card names
+  the counts rather than just flagging them: "Last import: 4 files
+  failed, 2 skipped." with a **Review** button back to the queue.
   Pressing "Start import" scrolls the Queue heading into view, so the
   freshly queued rows are the first thing you see after a submit.
 - **Fold indicator** — while the form is taller than the pane, a pinned
@@ -956,8 +961,8 @@ path, jumping the listing to it, with Ctrl+A selecting the field.)*
 *Verified against fix/library-crit10-export — 2026-09-11 (task-32353: the
 quality chooser opens on "original" instead of "thumbnail", so a bundle only
 loses content when asked, and a bundle line plus a contents list state what
-the export will write — count, fidelity, estimated size, and the item titles
-— before the button is pressed, the size qualified "before compression" so it
+the export will write — count, what the archive holds, estimated size, and
+the item titles — before the button is pressed, the size qualified "before compression" so it
 cannot be read as contradicting the receipt's smaller written-archive figure;
 task-32362: a blocked "Export bundle (.zip)"
 prints its reason on the line below it, not only in a tooltip.)*
@@ -969,3 +974,8 @@ value — the exporter writes the same stored text for all three options, so
 never produced; an empty scope shows no bundle line rather than "0 items …
 about 1 KB"; and the count is the items still exportable, not the raw size
 of a selection that may have gone stale.)*
+
+*Verified against fix/library-crit10-onboarding-import — 2026-09-11
+(task-32351: a folder batch is named after the folder you chose, not after
+whichever subfolder the recursive scan reached first; the landing's
+needs-attention card states the failed and skipped counts.)*
