@@ -260,8 +260,11 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
         """Refresh the mounted tray from a new staged-context snapshot.
 
         Equality-guarded like the other Console tray widgets; a real change
-        recomposes only this widget (row count, Attach button, and recovery
-        line presence all vary with the state), never the owning screen.
+        recomposes only this widget (source-row count, summary, empty
+        state, and recovery line presence all vary with the state), never
+        the owning screen. There is no in-tray Attach button (TASK-32337
+        docstring fix: the empty state directs to Library, whose search
+        controls sit directly beneath this tray in the Inspector).
 
         Args:
             state: Staged-context display-state snapshot to render.

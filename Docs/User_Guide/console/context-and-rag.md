@@ -659,10 +659,14 @@ see whether retrieved content will stay local or leave the device.
 ### Staged sources & Library search
 
 The Inspector's **Sources** tray lists context staged for the run, one
-row per source with a status word (ready / running / blocked / muted);
-empty state: "No sources attached. Stage sources from Library." The
-control-bar **Attach context** action opens the "Console context" rail;
-the staging itself is done from the Library screen.
+row per source with a status word (Ready / Blocked; the tray header shows
+the staged count, "none" when empty). Empty state: "No sources attached.
+Stage sources from Library." — and the tray's continuation is directly
+beneath it: the **Ask Library sources** search card mounted under the
+tray stages what it finds. To attach a file to the draft instead, use the
+composer menu's **Attach file**. The control-bar **Attach context**
+action opens the "Console context" rail; Library staging itself happens
+from the Library surfaces named above.
 
 Media, notes, and conversation handoffs now actually reach the model on
 send — they used to display as staged while delivering nothing. Notes

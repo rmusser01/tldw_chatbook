@@ -19716,15 +19716,12 @@ class ChatScreen(BaseAppScreen):
 
                 self.call_after_refresh(_restore_stop_button)
 
-    @on(Button.Pressed, "#console-attach-context")
-    async def handle_console_attach_context(self, event: Button.Pressed) -> None:
-        """Open the native Console file picker and stage the selected attachment."""
-        await self._handle_console_attach_context(event)
-
-    @on(Button.Pressed, "#console-staged-context-attach")
-    async def handle_console_staged_context_attach(self, event: Button.Pressed) -> None:
-        """Open the native Console file picker from the staged-context empty state."""
-        await self._handle_console_attach_context(event)
+    # TASK-32337: the two ``@on(Button.Pressed)`` handlers that used to
+    # live here ("#console-attach-context" and
+    # "#console-staged-context-attach") are removed -- no widget mounts
+    # either id anywhere (the tray's Attach button was removed by its
+    # redesign, and the file-picker flow is reached through the composer
+    # menu's "Attach file" entry, which routes via ComposerMenuAction).
 
     async def _handle_console_attach_context(
         self, event: Button.Pressed | None = None
