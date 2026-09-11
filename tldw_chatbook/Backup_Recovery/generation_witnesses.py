@@ -12,6 +12,11 @@ def _witnesses(path, lease):
     if path is not None and not _source_scope_admitted(root, names or (), path):
         raise ValueError("projection_source_scope_unavailable")
     selected = bootstrap.effective_config_path()
+    return _paired_witnesses(path, root, names, selected)
+
+
+def _paired_witnesses(path, root, names, selected):
+    """Read paired local control metadata; this grants no storage admission."""
     if not bootstrap.startup_permission(selected, root)[0]:
         raise ValueError("projection_generation_unavailable")
     _, profiles, associations = bootstrap._control_records(root)

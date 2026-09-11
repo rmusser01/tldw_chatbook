@@ -3,6 +3,7 @@
 import pytest
 
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
+from Tests.Backup_Recovery.test_mcp_recovery_review import _APPROVED_SETUP
 
 _SCRIPT = r"""
 import asyncio, os, sys, types
@@ -54,14 +55,14 @@ if state not in ('ordinary','unqualified'):
     (root/('pending-'+bootstrap._key('restore')+'.json')).unlink()
     activation=ActivationStore(control/'activation')
     for owner in owners:
-        if state=='approved' or state=='config_only' and owner=='config': activation.approve('generation',owner)
+        if state=='owner_flag' or state=='config_only' and owner=='config': activation.approve('generation',owner)
     if state=='missing': (activation._generation('generation')/'required.json').unlink()
     if state=='corrupt': (activation._generation('generation')/'required.json').write_bytes(b'{')
 if shared:
     other=base/'unrelated.toml'; other.write_text('[general]\n'); other.chmod(0o600)
     os.environ['TLDW_CONFIG_PATH']=str(other)
 if state=='unqualified': storage.qualified_for=lambda *args:(False,'native_unqualified')
-denied=state not in ('ordinary','approved','unqualified')
+denied=state not in ('ordinary','unqualified')
 events=[]
 async def effect(*args,**kwargs):
     events.append('effect')
@@ -163,7 +164,7 @@ def test_inactive_mcp_denies_before_effect(tmp_path, route):
     "state",
     [
         "ordinary",
-        "approved",
+        "owner_flag",
         "unqualified",
         "config_only",
         "missing",
@@ -179,7 +180,7 @@ def test_mcp_actual_independent_sources(tmp_path, state):
 
 
 _RETENTION = (
-    _SCRIPT.split("events=[]")[0]
+    _APPROVED_SETUP
     + r"""
 import threading
 from tldw_chatbook.Backup_Recovery.admission import AdmissionTimeout
@@ -187,7 +188,7 @@ from tldw_chatbook.MCP.activation import execution, MCPActivationRequired
 
 def assert_held():
     try:
-        with authority.maintenance(('profile',), .03):
+        with authority.maintenance(tuple(witness['namespaces']), .03):
             raise AssertionError('MCP effect lost native admission')
     except AdmissionTimeout: pass
 
@@ -262,7 +263,7 @@ elif route in ('worker_cancel','worker_timeout'):
     assert effects==['disposable-worker'],effects
 else:
     raise AssertionError(route)
-with authority.maintenance(('profile',),1): pass
+with authority.maintenance(tuple(witness['namespaces']),1): pass
 assert not blocked_attempts()
 print('retired and reopened')
 """
@@ -277,14 +278,14 @@ def test_mcp_native_accepted_lifetime(tmp_path, route):
 
 
 _TRANSPORT = (
-    _SCRIPT.split("events=[]")[0]
+    _APPROVED_SETUP
     + r'''
 from tldw_chatbook.Backup_Recovery.admission import AdmissionTimeout
 from tldw_chatbook.MCP import client as client_module
 
 def assert_held():
     try:
-        with authority.maintenance(('profile',), .03):
+        with authority.maintenance(tuple(witness['namespaces']), .03):
             raise AssertionError('transport lost native admission')
     except AdmissionTimeout: pass
 
@@ -341,7 +342,7 @@ async def run():
 asyncio.run(run())
 assert processes and all(p.returncode is not None for p in processes)
 assert not client.sessions and not client._pending_connections
-with authority.maintenance(('profile',),1): pass
+with authority.maintenance(tuple(witness['namespaces']),1): pass
 assert not blocked_attempts()
 print('retired and reopened')
 '''
@@ -382,7 +383,7 @@ async def run():
         # Removing a request future is not completion of the child operation.
         assert process.returncode is not None, 'accepted tool still runs after waiter release'
         assert not finished.exists()
-        with authority.maintenance(('profile',),.2):
+        with authority.maintenance(tuple(witness['namespaces']),.2):
             release.write_text('go')
             await asyncio.sleep(.05)
             assert not finished.exists()
@@ -453,7 +454,7 @@ async def run():
         release.write_text('go')
         await client.disconnect_all()
 asyncio.run(run())
-with authority.maintenance(('profile',),1): pass
+with authority.maintenance(tuple(witness['namespaces']),1): pass
 assert not blocked_attempts()
 print('retired and reopened')
 '''
@@ -493,7 +494,7 @@ async def run():
         release.write_text('go')
         await client.disconnect_all()
 asyncio.run(run())
-with authority.maintenance(('profile',),1): pass
+with authority.maintenance(tuple(witness['namespaces']),1): pass
 assert not blocked_attempts()
 print('retired and reopened')
 '''
@@ -529,7 +530,7 @@ async def run():
         await client.disconnect_all()
     assert process.returncode is not None
 asyncio.run(run())
-with authority.maintenance(('profile',),1): pass
+with authority.maintenance(tuple(witness['namespaces']),1): pass
 assert not blocked_attempts()
 print('retired and reopened')
 '''
@@ -551,7 +552,7 @@ def during_shutdown():
     # Let normal asyncio.run shutdown cancel all its outstanding tasks.
     time.sleep(.15)
     try:
-        with authority.maintenance(('profile',),.1):
+        with authority.maintenance(tuple(witness['namespaces']),.1):
             observed.append('maintenance entered with active child')
             (base/'release').write_text('go')
             for _ in range(200):
@@ -592,7 +593,7 @@ assert not observer.is_alive()
 assert observed==['admission retained'],observed
 assert process.returncode is not None
 assert (base/'finished').exists()
-with authority.maintenance(('profile',),1): pass
+with authority.maintenance(tuple(witness['namespaces']),1): pass
 assert not blocked_attempts()
 print('retired and reopened')
 '''

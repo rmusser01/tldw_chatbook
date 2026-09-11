@@ -278,6 +278,9 @@ class ConfiguredServerTargetStore:
 
     @mcp_sources.guarded
     def save_targets(self, targets: Sequence[ConfiguredServerTarget]) -> None:
+        from .recovery_activation import require_store_write
+
+        require_store_write(self, "mcp.targets")
         with self._mutation_lock:
             payload = {
                 "targets": [target.to_dict() for target in targets],
@@ -289,6 +292,10 @@ class ConfiguredServerTargetStore:
     def bootstrap_from_legacy_config(
         self, app_config: Mapping[str, Any] | None
     ) -> bool:
+        from .recovery_activation import readable
+
+        if not readable(self, "mcp.targets"):
+            return False
         with self._mutation_lock:
             if self.list_targets():
                 return False
@@ -307,6 +314,10 @@ class ConfiguredServerTargetStore:
         self,
         app_config: Mapping[str, Any] | None,
     ) -> ConfiguredServerTarget | None:
+        from .recovery_activation import readable
+
+        if not readable(self, "mcp.targets"):
+            return None
         legacy_target = ConfiguredServerTarget.from_legacy_tldw_api_config(
             app_config or {}
         )

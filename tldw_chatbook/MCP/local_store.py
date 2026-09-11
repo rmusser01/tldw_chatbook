@@ -719,9 +719,16 @@ class LocalMCPStore:
     @mcp_sources.guarded
     def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path) if path else _default_local_mcp_store_path()
+        from .recovery_activation import select
+
+        select(self)
 
     @mcp_sources.guarded
     def load(self) -> LocalMCPStoreState:
+        from .recovery_activation import readable
+
+        if not readable(self, "mcp.local"):
+            return LocalMCPStoreState()
         payload = self._read_payload()
         if not isinstance(payload, Mapping):
             return LocalMCPStoreState()
@@ -729,6 +736,9 @@ class LocalMCPStore:
 
     @mcp_sources.guarded
     def save(self, state: LocalMCPStoreState) -> None:
+        from .recovery_activation import require_store_write
+
+        require_store_write(self, "mcp.local")
         payload = state.to_dict()
         payload["updated_at"] = _datetime_to_iso(datetime.now(timezone.utc))
         mcp_sources.write_json(self, payload)

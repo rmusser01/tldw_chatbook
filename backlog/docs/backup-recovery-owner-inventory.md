@@ -2961,3 +2961,16 @@ hints without claiming durable dependency or recovery qualification.
 | tldw_chatbook/Backup_Recovery/inert_extraction.py | extract_inert | ZipFile | 1 | external_input | verified acquired archive read only |
 | tldw_chatbook/Backup_Recovery/inert_extraction.py | extract_inert | create_private_file | 1 | generic_boundary | private opaque manual extraction payload |
 | tldw_chatbook/Backup_Recovery/inert_extraction.py | extract_inert | write | 1 | generic_boundary | private opaque manual extraction payload |
+
+### Reviewed fresh MCP stores
+
+Explicit MCP recovery review creates only the three existing-format current-generation
+stores below. Imported files remain historical; the fresh stores begin with local
+context and no imported grants or governance. Their actual held capture and archive
+readback are covered by `test_mcp_recovery_review.py`. RootBinding records use the
+existing private activation publisher and are not restored execution authority.
+
+| Module | Symbol | Call | Count | Classification | Cohort |
+| --- | --- | --- | --- | --- | --- |
+| tldw_chatbook/MCP/recovery_activation.py | approve | create_private_file | 1 | qualified | mcp.local / mcp.permissions / mcp.context |
+| tldw_chatbook/MCP/recovery_activation.py | approve | write | 1 | qualified | mcp.local / mcp.permissions / mcp.context |

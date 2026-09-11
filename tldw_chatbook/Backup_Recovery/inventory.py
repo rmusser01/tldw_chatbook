@@ -594,6 +594,9 @@ def discover(
             declared.extend(_planned_output_exclusion(context, declared, root))
             items[profile_start:] = declared
             known = {entry.path for entry in declared if entry.path is not None}
+            from tldw_chatbook.MCP.recovery_activation import inventory_container
+
+            known.update(inventory_container(context, root))
             items.extend(_unknown_children(root, known, prefix))
         except (tomllib.TOMLDecodeError, UnicodeError):
             items.append(

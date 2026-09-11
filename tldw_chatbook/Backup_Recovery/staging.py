@@ -108,6 +108,15 @@ def _config_targets(data, profile, config_target, doc, plan, owners):
                 expected = user_data_dir(configured) / owner.leaf
         elif type(owner) is _Store:
             expected = user_data_dir(configured) / owner.leaf
+            key = f"profile:{profile}:{owner.owner_id}"
+            canonical_ids = {key}
+            if owner.owner_id == "mcp.permissions":
+                canonical_ids.add(key + ":bak")
+            if owner.owner_id in {"mcp.local", "mcp.permissions", "mcp.context"} and payload.logical_id not in canonical_ids:
+                owner.validate_retained_destination(
+                    profile, payload, doc, plan, expected, config_target
+                )
+                continue
             suffix = (
                 ".bak"
                 if owner.owner_id == "mcp.permissions"

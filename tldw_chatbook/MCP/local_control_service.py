@@ -1032,6 +1032,15 @@ class LocalMCPControlService:
         blocked: bool = False,
         error: str | None = None,
     ) -> None:
+        from .activation import _INSPECTION, MCPActivationRequired
+        from .recovery_activation import require_store_write
+
+        if action_name == "runtime.request" and target in _INSPECTION:
+            try:
+                require_store_write(self.store, "mcp.local")
+            except MCPActivationRequired:
+                # Descriptor inspection stays passive until fresh owner setup.
+                return
         entry = {
             "occurred_at": datetime.now(timezone.utc).isoformat(),
             "action_name": str(action_name or "").strip(),

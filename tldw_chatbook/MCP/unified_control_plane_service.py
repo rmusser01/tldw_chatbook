@@ -3025,6 +3025,18 @@ class UnifiedMCPControlPlaneService:
             )
 
     # ---- Typed permission methods (Phase 4) ----------------------------
+    def capture_recovery_review(self):
+        """Inspect the exact local roots without connecting or loading credentials."""
+        from .recovery_activation import capture
+
+        return capture(self)
+
+    def approve_recovery_review(self, review):
+        """Create fresh local policy only for the explicitly reviewed MCP roots."""
+        from .recovery_activation import approve
+
+        approve(self, review)
+
     # Backs the Hub's Permissions mode: effective-state resolution (with
     # the rug-pull downgrade audit), the state setters, and the Test Tool
     # gate. Keep this UI-free -- the Phase 5 chat bridge / agent-runtime
@@ -3037,7 +3049,9 @@ class UnifiedMCPControlPlaneService:
         store = getattr(self.local_service, "store", None)
         if store is None:
             return None
-        permissions_path = Path(store.path).with_name("mcp_permissions.json")
+        permissions_path = Path(
+            getattr(store, "_recovery_original_path", store.path)
+        ).with_name("mcp_permissions.json")
         self._permission_store = MCPPermissionStore(permissions_path)
         return self._permission_store
 

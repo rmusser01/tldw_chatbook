@@ -47,6 +47,16 @@ class _Binding:
     selected: Path
 
 
+def _selected(source, owner, canonical):
+    if owner in {"mcp.local", "mcp.permissions", "mcp.context"}:
+        from ..MCP.recovery_activation import selected_path
+
+        if getattr(source, "_recovery_original_path", None) != canonical:
+            return canonical
+        return selected_path(canonical)
+    return canonical
+
+
 def _kind(source):
     for module, name, owner, leaf in _SOURCES:
         cls = getattr(sys.modules.get("tldw_chatbook.MCP." + module), name, None)
@@ -84,7 +94,7 @@ def bind(source):
     if (
         config._CONFIG_CACHE_SOURCE == profile
         and selected
-        == profile_paths.lexical_path(profile_paths.user_data_dir(data) / leaf)
+        == _selected(source, owner, profile_paths.lexical_path(profile_paths.user_data_dir(data) / leaf))
     ):
         _BINDINGS[source] = _Binding(cls, config, profile, selected)
 
@@ -115,7 +125,7 @@ def binding(source):
             != bound.profile
             or config._CONFIG_CACHE_SOURCE != bound.profile
             or data is None
-            or profile_paths.lexical_path(profile_paths.user_data_dir(data) / leaf)
+            or _selected(source, owner, profile_paths.lexical_path(profile_paths.user_data_dir(data) / leaf))
             != selected
         ):
             raise bootstrap.RecoveryRequired("mcp_source_selection_changed")

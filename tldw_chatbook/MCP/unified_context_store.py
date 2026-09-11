@@ -35,9 +35,16 @@ class UnifiedMCPContextStore:
     @mcp_sources.guarded
     def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path) if path else _default_unified_mcp_context_path()
+        from .recovery_activation import select
+
+        select(self)
 
     @mcp_sources.guarded
     def load(self) -> UnifiedMCPContext:
+        from .recovery_activation import readable
+
+        if not readable(self, "mcp.context"):
+            return UnifiedMCPContext()
         payload = self._read_payload()
         if not isinstance(payload, dict):
             return UnifiedMCPContext()
@@ -45,6 +52,9 @@ class UnifiedMCPContextStore:
 
     @mcp_sources.guarded
     def save(self, context: UnifiedMCPContext) -> None:
+        from .recovery_activation import require_store_write
+
+        require_store_write(self, "mcp.context")
         try:
             payload = context.to_dict()
             payload["updated_at"] = _datetime_to_iso(datetime.now(timezone.utc))

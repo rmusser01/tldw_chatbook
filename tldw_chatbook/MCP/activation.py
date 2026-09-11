@@ -42,7 +42,7 @@ def _sources(service):
     store = getattr(local, "store", None)
     if store is None:
         store = getattr(service, "_definition_store", None)
-    local_path = getattr(store, "path", data / "local_mcp_store.json")
+    local_path = getattr(store, "_recovery_original_path", getattr(store, "path", data / "local_mcp_store.json"))
     permission = getattr(service, "_permission_store", None)
     paths = [
         ("config", selector),
@@ -50,7 +50,7 @@ def _sources(service):
         (
             "mcp.permissions",
             getattr(
-                permission, "path", Path(local_path).with_name("mcp_permissions.json")
+                permission, "_recovery_original_path", getattr(permission, "path", Path(local_path).with_name("mcp_permissions.json"))
             ),
         ),
     ]
@@ -58,7 +58,8 @@ def _sources(service):
         ("target_store", "mcp.targets"),
         ("context_store", "mcp.context"),
     ):
-        path = getattr(getattr(service, name, None), "path", None)
+        store = getattr(service, name, None)
+        path = getattr(store, "_recovery_original_path", getattr(store, "path", None))
         if path is not None:
             paths.append((owner, path))
     return tuple((owner, profile_paths.lexical_path(path)) for owner, path in paths)
@@ -94,6 +95,10 @@ def execution(service, *, sources=()):
                     execution_scope(("config", owner), path, retained=leases[path])
                 ):
                     raise MCPActivationRequired()
+            from .recovery_activation import allowed
+
+            if not allowed(observed, retained=leases):
+                raise MCPActivationRequired()
         except (OSError, ValueError, TypeError, RuntimeError, AttributeError):
             raise MCPActivationRequired() from None
         token = _active.set((identity, leases, observed))

@@ -176,6 +176,9 @@ class MCPPermissionStore:
     @mcp_sources.guarded
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
+        from .recovery_activation import select
+
+        select(self)
 
     # -- raw load/save -----------------------------------------------------
 
@@ -197,7 +200,9 @@ class MCPPermissionStore:
             its ``servers`` key are dicts. Admission and uncertain native
             persistence failures propagate without resetting policy.
         """
-        if not self.path.exists():
+        from .recovery_activation import readable
+
+        if not readable(self, "mcp.permissions") or not self.path.exists():
             return _fresh_payload()
 
         try:
@@ -233,6 +238,9 @@ class MCPPermissionStore:
             payload: Full store payload to persist. Mutated in place to
                 add/overwrite ``updated_at`` after successful publication and native close.
         """
+        from .recovery_activation import require_store_write
+
+        require_store_write(self, "mcp.permissions")
         stamp = _iso_utc_now()
         persisted = dict(payload, updated_at=stamp)
         mcp_sources.write_json(self, persisted)
@@ -240,6 +248,9 @@ class MCPPermissionStore:
 
     @mcp_sources.guarded
     def _backup_corrupt_file(self) -> None:
+        from .recovery_activation import require_store_write
+
+        require_store_write(self, "mcp.permissions")
         try:
             mcp_sources.backup_corrupt(self)
         except OSError as exc:
