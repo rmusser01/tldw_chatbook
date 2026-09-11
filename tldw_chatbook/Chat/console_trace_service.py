@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Generic, Literal, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Generic, Literal, TypeVar, cast, overload
 from weakref import ReferenceType, ref
 
 from tldw_chatbook.Chat.console_prepared_request import freeze_json
@@ -73,6 +73,10 @@ from tldw_chatbook.Chat.console_trace_repository import (
     TraceCallRecord,
     TraceEventType,
 )
+from tldw_chatbook.Chat.conversation_local_marks_service import (
+    ConversationLocalMarksService,
+)
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.provider_continuation import parse_provider_continuation_json
 from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.DB.transaction_observer import (
@@ -80,6 +84,16 @@ from tldw_chatbook.DB.transaction_observer import (
     register_transaction_completion,
 )
 
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_voice_trace_gateway import (
+        ProvisionalTraceEnvelope,
+        ProvisionalTraceManifest,
+        ProvisionalTraceRegistry,
+        VoiceTraceImportContext,
+    )
+    from tldw_chatbook.Chat.console_voice_trace_promotion import (
+        PostDispatchTraceImportResult,
+    )
 TRACE_VALUE_NORMALIZATION_VERSION = "canonical-json-v1"
 TRACE_VALUE_MEDIA_TYPE = "application/json"
 TRACE_CRITICAL_WRITE_WAL_AUTOCHECKPOINT_PAGES = 0
@@ -1474,6 +1488,27 @@ class _ChildSurfaceCapability:
     __slots__ = ()
 
 
+class ProvisionalTraceImportRetryableError(RuntimeError):
+    """The same bounded manifest remains available for an explicit retry."""
+
+    def __init__(self) -> None:
+        super().__init__("Promoted trace import may be retried.")
+
+
+class ProvisionalTraceImportExpiredError(RuntimeError):
+    """A confirmed rollback crossed the bounded manifest redemption window."""
+
+    def __init__(self) -> None:
+        super().__init__("Promoted trace import expired and cannot be retried.")
+
+
+class ProvisionalTraceImportUncertainError(RuntimeError):
+    """An uncertain import could not reconcile and was abandoned safely."""
+
+    def __init__(self) -> None:
+        super().__init__("Promoted trace import could not be reconciled.")
+
+
 class ConsoleTraceService:
     """Translate verified provider values into reference-backed trace records."""
 
@@ -1629,6 +1664,66 @@ class ConsoleTraceService:
             database,
             occurred_at=occurred_at,
         )
+
+    def import_provisional_voice_trace(
+        self,
+        database: object,
+        registry: ProvisionalTraceRegistry,
+        manifest: ProvisionalTraceManifest,
+        envelopes: tuple[ProvisionalTraceEnvelope, ...],
+        context: VoiceTraceImportContext,
+    ) -> PostDispatchTraceImportResult:
+        """Redeem one complete gateway manifest after its conversation pair commits.
+
+        A typed confirmed pre-commit failure releases the same manifest.  Every
+        other exception is uncertain, so the repository's deterministic importer
+        is invoked once more to reconcile before the capability is consumed or
+        abandoned.
+        """
+        from tldw_chatbook.Chat.console_voice_trace_gateway import (
+            _ClaimReleaseDisposition,
+            ProvisionalTraceRegistry,
+            ProvisionalTraceUnavailable,
+            VoiceTraceImportContext,
+        )
+        from tldw_chatbook.Chat.console_voice_trace_promotion import (
+            ConfirmedPreCommitTraceImportError,
+        )
+
+        if type(registry) is not ProvisionalTraceRegistry:
+            raise TypeError("registry")
+        if type(context) is not VoiceTraceImportContext:
+            raise TypeError("context")
+        claim = registry.claim(manifest, envelopes)
+
+        def import_once() -> PostDispatchTraceImportResult:
+            return registry._import_claim(
+                claim,
+                context,
+                lambda request: self.repository.import_post_dispatch_trace(
+                    database,
+                    request,
+                ),
+            )
+
+        try:
+            result = import_once()
+        except ConfirmedPreCommitTraceImportError as exc:
+            disposition = registry._release_claim(claim)
+            if disposition is _ClaimReleaseDisposition.RELEASED_RETRYABLE:
+                raise ProvisionalTraceImportRetryableError() from None
+            raise ProvisionalTraceImportExpiredError() from exc
+        except Exception:
+            try:
+                result = import_once()
+            except Exception:
+                try:
+                    registry._abandon_claim(claim)
+                except ProvisionalTraceUnavailable:
+                    pass
+                raise ProvisionalTraceImportUncertainError() from None
+        registry._consume_claim(claim)
+        return result
 
     def reserve_call(
         self,
@@ -2963,7 +3058,18 @@ class ConsoleTraceService:
             # This narrow recovery carries plain saved messages only. Canvas,
             # video and unknown metadata cannot silently become an empty owner.
             if metadata not in ({}, {"canvas_cards": []}):
-                return None
+                try:
+                    receipt_id = (
+                        ConversationLocalMarksService.validate_terminal_receipt_id(
+                            metadata.get("terminal_receipt_id")
+                        )
+                    )
+                    receipt_only = MessageMetadata(terminal_receipt_id=receipt_id)
+                    # Compare JSON types exactly: False and 0 are not aliases.
+                    if json.dumps(metadata, sort_keys=True) != receipt_only.to_json():
+                        return None
+                except (AttributeError, TypeError, ValueError, RecursionError):
+                    return None
         if complete_assistant_id is not None:
             return (
                 assistant_id

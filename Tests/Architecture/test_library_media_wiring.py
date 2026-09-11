@@ -575,6 +575,15 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "_library_pending_list_entry_focus_anchor",
     "_library_pending_list_entry_media_return",
     "_local_source_records",
+    # task-32350 (critique #10 review, finding 10): THREE more screen names
+    # are read by this controller and are deliberately NOT listed --
+    # `_library_loaded`, `_library_lookup_error` and `_local_source_counts`,
+    # reached through `self._screen` by `_library_media_unfiltered_total`.
+    # They are absent because this census asserts every listed name is a
+    # PROPERTY on the controller, and those three have no accessor: the
+    # injection site (`library_screen.py`'s `LibraryMediaController(...)`
+    # call) was outside the branch that needed them. Recorded here so the
+    # list still reads as a complete account of this controller's reach.
     # -- shared shell state this cluster also WRITES (getter + setter) (5)
     "_library_canvas_resync_pending",
     "_library_list_entry_focus_timer",

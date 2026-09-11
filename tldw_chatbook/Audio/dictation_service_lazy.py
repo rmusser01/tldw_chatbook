@@ -38,6 +38,7 @@ from ..Utils.local_stt_providers import (
     installed_local_providers,
     provider_is_local,
 )
+from .duplex_contracts import AudioFrame
 
 
 @dataclass
@@ -201,6 +202,9 @@ class LazyLiveDictationService:
     #: `_audio_callback`'s inline comment for the exact rule. Reset to
     #: `False` in `start_dictation()` for each new capture.
     _capture_saw_first_frame: bool = False
+    #: Optional speculative path. Raw legacy microphone callbacks never feed
+    #: this engine; only explicit post-AEC admitted frames do.
+    transcript_engine: Optional[Any] = None
 
     # Privacy settings keys
     PRIVACY_KEY_PREFIX = "dictation.privacy"
@@ -217,6 +221,7 @@ class LazyLiveDictationService:
         on_buffer_limit: Optional[Callable[[], None]] = None,
         transcription_service_factory: Optional[Callable[[], Any]] = None,
         recorder_factory: Optional[Callable[..., Any]] = None,
+        transcript_engine: Optional[Any] = None,
     ):
         """Initialize dictation service with lazy loading.
 
@@ -246,6 +251,9 @@ class LazyLiveDictationService:
                 Defaults to `AudioRecordingService`. Exists so a caller can
                 substitute its own capture (meetings hand in a mixed
                 mic+system stream) and so tests can inject a fake.
+            transcript_engine: Optional rolling revision engine fed explicitly
+                with post-AEC admitted frames. It does not alter legacy Mic
+                capture, streaming, or silence-finalization behavior.
         """
         self.transcription_provider = transcription_provider
         self.transcription_model = transcription_model
@@ -257,6 +265,7 @@ class LazyLiveDictationService:
         self.on_buffer_limit = on_buffer_limit
         self._transcription_service_factory = transcription_service_factory
         self._recorder_factory = recorder_factory
+        self.transcript_engine = transcript_engine
 
         # Lazy-loaded services
         self._audio_service = None
@@ -327,6 +336,17 @@ class LazyLiveDictationService:
             f"LazyLiveDictationService initialized (services will load on demand) "
             f"provider: {transcription_provider}, privacy: {self.privacy_settings}"
         )
+
+    def submit_admitted_frame(self, frame: AudioFrame) -> None:
+        """Submit one post-AEC admitted frame to the optional revision engine.
+
+        Ordinary Mic dictation continues to enter through `_audio_callback`;
+        keeping this seam explicit prevents raw/pre-AEC audio from entering
+        the speculative transcript path.
+        """
+
+        if self.transcript_engine is not None:
+            self.transcript_engine.append_admitted_frame(frame)
 
     @classmethod
     def _resolve_stop_join_timeout(cls) -> float:

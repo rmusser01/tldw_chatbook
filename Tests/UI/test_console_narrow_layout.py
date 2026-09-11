@@ -34,6 +34,10 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.UI.Navigation.main_navigation import (
+    CONSOLE_ATTENTION_GLYPH,
+    CONSOLE_ATTENTION_TOOLTIP,
+)
 
 
 class ConsoleLayoutHarness(ConsoleHarness):
@@ -61,6 +65,26 @@ def _compositor_text(svg: str) -> str:
     """Return only glyphs painted into an exported Textual frame."""
     joined = "".join(re.findall(r"<text[^>]*>([^<]*)</text>", svg))
     return unescape(joined).replace("\xa0", " ")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (100, 30), (160, 48)])
+async def test_console_attention_glyph_survives_production_shell_viewports(size):
+    app = _build_test_app()
+    host = ConsoleLayoutHarness(app)
+    host.console_needs_attention = True
+    host.console_runtime = None
+
+    async with host.run_test(size=size) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#nav-console")
+        await pilot.pause(0.2)
+        button = console.query_one("#nav-console", Button)
+
+        assert CONSOLE_ATTENTION_GLYPH in str(button.label)
+        assert button.tooltip == CONSOLE_ATTENTION_TOOLTIP
+        assert "⌃2 Console" in str(button.label)
+        assert button.region.width > 0
 
 
 @pytest.mark.asyncio
@@ -312,6 +336,7 @@ async def test_console_recovery_controls_resize_bar_one_two_one() -> None:
 @pytest.mark.asyncio
 async def test_console_retry_speech_button_routes_without_resuming() -> None:
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(90, 30)) as pilot:
@@ -322,14 +347,20 @@ async def test_console_retry_speech_button_routes_without_resuming() -> None:
         console._console_auto_speak.request_retry = retry
         console._console_auto_speak.request_resume = resume
         bar = console.query_one("#console-control-bar")
-        bar.sync_auto_speak(
-            enabled=True,
-            paused=True,
-            retry_available=True,
+        console._console_auto_speak.sync_controls = lambda: bar.sync_auto_speak(
+            enabled=True, paused=True, retry_available=True
         )
+        console._console_auto_speak.sync_controls()
         await pilot.pause()
 
-        await pilot.click("#console-auto-speak-retry")
+        assert console.query_one("#console-auto-speak-retry", Button).display
+        retry_button = console.query_one("#console-auto-speak-retry", Button)
+        assert await pilot.click("#console-auto-speak-retry"), (
+            retry_button.region,
+            retry_button.visible,
+            retry_button.disabled,
+            console.app.get_widget_at(*retry_button.region.offset),
+        )
         await pilot.pause()
 
         retry.assert_called_once_with()

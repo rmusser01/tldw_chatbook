@@ -19,16 +19,16 @@ under the rail's "Create" section.
 
 ## Layout tour
 
-Database Notes uses three side-by-side roles when there is room: Library
+Library notes uses three side-by-side roles when there is room: Library
 navigation, the Notes list, and the note you are working on. The Library
 navigation and Notes list each have their own slim collapse grip. Collapsing
 one does not collapse the other, and each grip remembers its own choice.
 
-Wide Database Notes keeps Library navigation beside the list while you scan:
+Wide Library notes keeps Library navigation beside the list while you scan:
 
 ```text
 +----------------------+-----------------------------------------------+
-| Library              | Database | Files                              |
+| Library              | Library notes | Files                         |
 | Browse               | Notes (N)                                     |
 |   Notes              | Filter...  New  Select  Add from files… Export |
 |   Media              | New folder   Move   Remove                    |
@@ -44,9 +44,9 @@ to reopen Library navigation; after you do, it stays open for the rest of that
 work session. Opening another note, switching between Edit, Preview, and Info,
 saving, resolving a conflict, or resizing the terminal does not close it
 again. The automatic close becomes available again only after you clear the
-selected Database note, switch between Database Notes and Folder Files,
-change the linked Folder Files root, leave Notes, or close the open Folder
-Files file. Folder Files' compact **Back to navigator** action is not a reset.
+selected Library note, switch between Library notes and Folder files,
+change the linked Folder files root, leave Notes, or close the open Folder
+files file. Folder files' compact **Back to navigator** action is not a reset.
 
 When Library navigation is closed, one stable cue names the return
 destination:
@@ -87,7 +87,7 @@ editor's own Back control returns to its list.
   open the list takes the width the empty work area would otherwise waste,
   so long titles are not truncated on a wide terminal; opening a note hands
   that width back. Its own grip collapses or restores the list without
-  changing the Folder Files tree choice. Renaming a note does not repaint its
+  changing the Folder files tree choice. Renaming a note does not repaint its
   list row live while the note stays open: a Notes refresh that lands while
   the title field holds focus is skipped rather than queued, so tabbing or
   clicking to another field does not by itself catch it up. The row shows the
@@ -122,7 +122,8 @@ editor's own Back control returns to its list.
   title, body or keywords — takes effect before the next keystroke, so
   typing straight through a Tab puts the rest where you meant it.
 - **New note view** — opens from the rail's "New note": a "Blank note"
-  button plus a "From a template" list.
+  button and a "From a template…" row that unfolds the eight templates.
+  (**Ctrl+N** / **n** skip this view: they make the blank note itself.)
 - **Add from files…** — asks whether this is an **Import once** or a lasting
   **Keep a folder synced** relationship before reading a source. Both buttons
   sit together, each directly under its own description; the bar below holds
@@ -134,7 +135,7 @@ editor's own Back control returns to its list.
 
 Three different notes worlds meet here, and each surface now says so in
 place: the strip above the canvas switches between two of them.
-**Library notes** (this page) keeps notes inside the Library database.
+**Library notes** (this page) keeps notes inside the Library's own database.
 **Folder files** is a mode of this same Notes screen: it swaps the work area
 for the File Notes workspace — which edits plain files under a folder you
 choose directly and has its own Session Git panel — while the Library rail
@@ -148,8 +149,8 @@ through the lasting-sync runtime.
 ### Portable organization with Sync v2
 
 For an eligible local-first server profile, Manual Sync can also carry the
-logical organization of Library notes: keywords, keyword collections, Database
-Notes folders, and their memberships. These six organization types enroll as
+logical organization of Library notes: keywords, keyword collections, Library
+notes folders, and their memberships. These six organization types enroll as
 one capability; Chatbook will not synchronize only part of the group.
 
 The first run may pause for an adoption review when a local and server object
@@ -160,14 +161,14 @@ and publication is blocked. Interrupted enrollment and sync can be retried from
 the same Manual Sync surface; committed checkpoints and pending changes are
 resumed rather than rebuilt.
 
-Deleting a Database Notes folder synchronizes only that explicit deletion. Its
+Deleting a Library notes folder synchronizes only that explicit deletion. Its
 descendants and memberships stay dormant and become effective again after the
 folder is restored. If a note belongs to a folder through both manual and
 source-managed placement, removing one placement does not remove the portable
 membership while the other remains effective.
 
 This does not synchronize filesystem paths or grant filesystem access. Folder
-Files and lasting folder sync remain device-private authorities. For the
+files and lasting folder sync remain device-private authorities. For the
 identity, dependency, suppression, conflict, and recovery contract, see the
 [Sync-v2 client runtime](../../Development/Sync-v2-client.md).
 
@@ -182,7 +183,7 @@ folder or whole-keyword filter. At least one of these is required:
   match `Agent-Lesson`;
 - `folder_id` uses the stable opaque folder identity returned by an earlier
   read; and
-- `folder` resolves an exact relative Database Notes path. It is not a local
+- `folder` resolves an exact relative Library notes path. It is not a local
   filesystem path. Ambiguous, deleted, or conflicting folder selections are
   refused instead of guessed.
 
@@ -219,7 +220,7 @@ Agent Lessons marker is the spelling-exact `agent-lesson` keyword; the
 
 Chatbook creates one conventional root folder named `Agent_Lessons` after the
 applicable Notes organization readiness boundary. It remains an ordinary,
-user-owned Database Notes folder: you may rename, move, or delete it, and
+user-owned Library notes folder: you may rename, move, or delete it, and
 Chatbook does not recreate a folder you deliberately changed. On synchronized
 profiles, only a provably untouched empty seed race converges automatically;
 edited, acknowledged, used, differently spelled, or colliding candidates wait
@@ -296,7 +297,7 @@ device.
 
 ### Notes list
 
-Database Notes are presented as a folder tree rather than one flattened
+Library notes are presented as a folder tree rather than one flattened
 snapshot. Each level loads independently in fixed pages of 20:
 
 - A folder-row **More folders** control loads the next 20 direct children of
@@ -332,7 +333,7 @@ both stay closed until you choose to reopen one.
 | Control | What it does |
 |---|---|
 | "Filter notes… (Enter)" | Type and press Enter to filter; the status line then reads "filter: \<text\> · N results". |
-| "New" | Creates a note directly from the list — the same destination as the rail's **New note** row, without the template picker. Disabled while another notes operation is running. |
+| "New" | Opens the **New note** view — the same destination as the rail's **New note** row: **Blank note**, or **From a template…**. (**Ctrl+N** skips the view and makes the blank note itself.) Disabled while another notes operation is running. |
 | "New folder" | Creates a folder in the tree beneath the toolbar. Disabled, with the reason in its tooltip, when the selected folder is sync-managed ("This folder is managed by sync; change its sync root instead.") or its branch is stale ("This branch may be out of date; retry it before changing it."). |
 | Folder selected: "Rename" / "Move" / "Remove" | Act on the selected folder. Same two disabled reasons as **New folder**. |
 | Note selected: "Add to folder" / "Move note" / "Remove placement" | File the selected note into a folder, move its placement, or take it out again. A sync-managed placement is refused with "This placement is managed by sync; change its sync root instead."; a note sitting in the automatic **Unfiled** group cannot have its placement removed ("Unfiled is shown automatically; move the note into a folder."). |
@@ -351,6 +352,15 @@ first-time user is never left staring at one unexplained folder with no
 other cue. While the library holds zero notes, that folder row itself also
 carries a one-line gloss: "Agent_Lessons — where Console agents file
 reusable lessons (empty)".
+
+On a terminal narrower than 64 columns the list pane is narrow enough that
+two things used to be cut off mid-word: the status line lost its last word
+("…or add from", without "files."), and the toolbar's third action painted
+as "Sel". At that width — and only there; at 64 columns and up the line
+keeps its full wording — the status line drops its "Library notes ·"
+prefix, since the source strip above it already says which notes these
+are, and the toolbar moves the action that does not fit onto a row of its
+own. Nothing is ever painted as half a word.
 
 ### Edit, Preview, and Info
 
@@ -390,8 +400,8 @@ jumps away as you type or after you move to another field. The next refresh
 that arrives once your hands are off the field paints normally.
 
 Notes does not use **Ctrl+S**, and there is no replacement Notes save
-shortcut. Use the visible **Save** button when you want an immediate Database
-save; normal Tab navigation and **F6** can reach it. Autosave continues to
+shortcut. Use the visible **Save** button when you want an immediate Library
+notes save; normal Tab navigation and **F6** can reach it. Autosave continues to
 handle ordinary typing.
 
 When the note body has keyboard focus, only its boundary becomes more
@@ -402,7 +412,7 @@ Title and Keywords still use their usual filled focus treatment.
 The wide `‹ Library / Notes` cue and Escape use the same guarded return as
 the compact Back control. A dirty save, sync, conflict, reload confirmation,
 or running mutation can therefore keep the focused task open until it is safe
-to leave. A successful return restores the Database/Files source, filter,
+to leave. A successful return restores the Library notes / Folder files source, filter,
 sort, selected note or placement, Notes-list scroll, Library-rail scroll, and
 semantic keyboard focus instead of starting over at the first row.
 
@@ -431,27 +441,34 @@ returns the row to the folder tree, not only the count).*
 
 ### New note view
 
+**Ctrl+N** (and the bare **n**) do not open this view at all: they create the
+blank note and drop you in its editor, because that is the answer nearly
+every time. The view below is the way to a template, and it opens from the
+rail's **Create ▸ New note** row or the Notes list's **New** button.
+
 "Blank note" drops you straight into the editor with an empty title (shown
-as an "Untitled" placeholder — just start typing) and an empty body. Its
-status reads "Draft — not saved yet" until you type the first character or
-press **Save**, rather than "Saved" before anything you have written is
-actually kept. If you leave again via "‹ Back to list" without typing
+as an "Untitled" placeholder — just start typing) and an empty body. The note
+itself already exists at that point — it is in the list and in the rail's
+count — so its status reads "Empty note — type to keep it" rather than
+"Saved": what is not yet safe is not the note, but the fact that you have
+written nothing in it. If you leave again via "‹ Back to list" without typing
 anything, the blank note is quietly discarded rather than left behind as a
 stray "Untitled" row.
 Pressing "Save" keeps it, and so does typing anything **that is not only
 whitespace** — a title of nothing but spaces, with an empty body and no
 keywords, still counts as blank and is discarded on the way out. That includes naming it "Untitled"
 yourself: once you have touched the title field the note is yours, and it
-is kept even with an empty body. The "From a template" list
-pre-fills title, body, and keywords instead; each row shows the template
-name with the title the note will get. Available templates: Brainstorming
-session, Bug report, Code review, Daily journal entry, Meeting notes,
-Project planning, Research notes, Todo list.
+is kept even with an empty body. **From a template…** unfolds eight template
+rows that pre-fill title, body, and keywords instead; each row shows the
+template name with the title the note will get. Available templates:
+Brainstorming session, Bug report, Code review, Daily journal entry, Meeting
+notes, Project planning, Research notes, Todo list. The rows stay folded
+until you ask for them, and fold again the next time you open the view.
 
 Opening this view parks keyboard focus on **Blank note**, so Enter creates
 a note straight away without tabbing to find it; ↑/↓ move between Blank
-note and the template rows, and the focused row carries the same left-edge
-bar the Notes list rows use. The footer's "enter create note" appears only
+note, **From a template…** and (once it is open) the template rows, and the
+focused row carries the same left-edge bar the Notes list rows use. The footer's "enter create note" appears only
 while one of those rows genuinely has focus — move to "‹ Notes" / "‹ Back to
 list" (the same compact-vs-wide wording as Edit/Preview/Info) and it drops,
 because Enter there goes back rather than creating anything.
@@ -462,7 +479,7 @@ because Enter there goes back rather than creating anything.
 the header names neither relationship — it reads "Add from files" and its next
 action is to pick one:
 
-- **Import once** copies supported files into Database Notes and ends after its
+- **Import once** copies supported files into Library notes and ends after its
   reviewed receipt. Later changes to the originals are not tracked.
 - **Keep a folder synced** creates a lasting local relationship. Choose the
   folder, direction, and local Library destination, then choose **Check
@@ -523,7 +540,7 @@ unavailable-in-this-release reason; no files or notes change.
 
 ### Import once
 
-**Import once** copies supported note files into local Database Notes. It is
+**Import once** copies supported note files into local Library notes. It is
 not the same as **Keep a folder synced**: the import ends after this reviewed
 batch, while lasting sync retains a root relationship.
 
@@ -643,7 +660,7 @@ outside the batch stayed as text and are not counted.
 
 1. In the notes list, click **Add from files…**, choose **Import once**, and
    pick the first file or one folder.
-2. For files, click **Add another file** as needed and enter the Database Notes
+2. For files, click **Add another file** as needed and enter the Library notes
    destination. A folder already supplies its proposed hierarchy. Picked the
    wrong source? Use **Change selection** or **Clear**.
 3. Click **Check selection** and review classifications, actions, matches, and
@@ -710,18 +727,18 @@ permanent delete.
 
 | Key | Action |
 |---|---|
-| **Ctrl+N** | New note. Works on the Library landing (no row selected yet) as well as inside the Notes workflow — the landing's bare **n** still works too, but the footer advertises Ctrl+N in both places now. |
+| **Ctrl+N** | Makes a new blank note and opens it — no chooser in between. Works on the Library landing (no row selected yet) as well as inside the Notes workflow — the landing's bare **n** does the same, but the footer advertises Ctrl+N in both places now. |
 | **/** | Focus the note filter ("find note"), without typing a literal "/" into it. Once the filter has focus, "/" is an ordinary typeable character rather than an accelerator — a second "/" adds a literal slash, since a filter can legitimately target a folder-style path such as "Work/Q3". |
 | **Escape** | Focus the rail (in **Recently deleted**, go back to the list) |
 | **r** (in **Recently deleted**) | Restore the focused row |
 | Enter (in "Filter notes… (Enter)") | Apply the filter |
-| ↑ / ↓ (New note view) | Move between **Blank note** and the template rows |
+| ↑ / ↓ (New note view) | Move between **Blank note**, **From a template…** and the template rows it opens |
 | Enter (New note view) | Create from the focused row |
 
 The footer advertises these as `ctrl+n new note | / find note | esc focus
 rail`. Notes does not register **Ctrl+S** and does not replace it with
 another save shortcut. Use the visible
-Database **Save** button for an immediate save; Folder Files saves
+Library notes **Save** button for an immediate save; Folder files saves
 automatically. Global navigation keys live in the [guide index](../index.md).
 
 ## Related settings & docs
@@ -746,7 +763,7 @@ automatically. Global navigation keys live in the [guide index](../index.md).
 ## Verification evidence
 
 TASK-19012 verifies this journey through the real `LibraryScreen` hierarchy
-and the shipped CSS bundle. The mounted matrix covers Database Notes and its
+and the shipped CSS bundle. The mounted matrix covers Library notes and its
 Add-from-files chooser at wide and 60×20 sizes, the visibly unavailable server
 destination, lasting-root attention/recovery after a fresh screen, and Folder
 files with Session Git at its supported 40×20 layout. It checks painted text,
@@ -774,7 +791,7 @@ evidence directory remains for inspection.
   lookup, and collision analysis are read-only. If checking fails, review the
   selected paths and destination and try again.
 - **Cancellation is partial, not undo** — work already completed remains in
-  Database Notes and is reported honestly in the receipt. Retry resumes only
+  Library notes and is reported honestly in the receipt. Retry resumes only
   unfinished or explicitly retryable work from that same app session.
 - **Another Chatbook process blocks activation** — close it and restart before
   activating folder sync. The cutover does not hot-swap or run two writers.
@@ -831,7 +848,7 @@ seam (Back, Escape, rail switch, screen leave), not just the two this
 paragraph's prose already covered).*
 
 *Verified on codex/notes-delete-undo-receipt — 2026-08-11 (TASK-15100:
-confirmed Database Note deletion now leaves a named inline Undo/Dismiss
+confirmed Library note deletion now leaves a named inline Undo/Dismiss
 receipt; Undo restores the exact soft-deleted row and Notes rail count through
 the version-checked service seam.)*
 
@@ -1062,3 +1079,31 @@ Folder files now keeps the Library rail before a folder is linked as well as
 after, so the empty state is a mode of Notes rather than a full-width
 onboarding step. Compact terminals — under about 120 columns — collapse the
 rail either way, as before. See [File notes](file-notes.md).)*
+
+*Verified against fix/library-crit9-notes — 2026-09-10 (task-32233: Escape on
+the Notes list now goes where the footer chip says — out of the Filter box to
+the rail's **Search Library…** box, and from there to the canvas, the same
+two-step ladder Media has. task-32218: one noun per source — this page and the
+canvas call the Library's own notes **Library notes** and the on-disk ones
+**Folder files**; "Library database", "Database Notes" and "Folder Files" are
+retired as user-visible names. task-32215: the three placement verbs (**Add to
+folder**, **Move note**, **Remove placement**) are pinned to a selected row;
+**Sort** on a populated list arrived with task-32172. task-32217: the note
+editor's Body box takes the height its pane has spare.)*
+
+*Verified against fix/library-crit10-notes-details — 2026-09-11 (task-32356:
+**Ctrl+N** and **n** create the blank note and open it instead of posing a
+nine-row chooser; the eight templates fold behind one **From a template…**
+row on the New note view, which is still where the rail's **New note** and
+the list's **New** go. task-32358: a fresh blank note's status reads "Empty
+note — type to keep it", which agrees with the list and the rail count it
+sits beside — it refines task-32133's wording, not its rule that an untouched
+blank note must never claim "Saved". task-32360 AC#2, handed over from the
+layout branch: below 64 columns the Notes status line and the browse toolbar
+no longer clip mid-word.)*
+
+*Verified against fix/library-crit10-docs — 2026-09-11 (task-32366: 14
+critique-10 claims reconciled; surface fixes in task-32346, 32348, 32349,
+32354, 32355). This page needed no correction — the note editor's autosave
+story and its guarded return were already stated here; the Library overview is
+what had drifted.*

@@ -69,9 +69,27 @@ async def test_first_trace_factory_failure_has_actionable_uncaptured_recovery(
 
             monkeypatch.setattr(gateway, "resolve_for_send", resolve)
             session = controller.store.ensure_session()
+            runtime = console._console_runtime()
+            turn_tasks = []
+            accept_turn = runtime.accept_turn
+
+            def capture_turn(request, **kwargs):
+                turn_id = accept_turn(request, **kwargs)
+                turn_tasks.append(runtime._turn_custody[turn_id].task)
+                return turn_id
+
+            monkeypatch.setattr(runtime, "accept_turn", capture_turn)
+            console._session._sync_console_session_draft()
+            console._console_composer_or_none().load_draft("Hello")
             await asyncio.wait_for(
-                console._submit_console_native_draft("Hello", session.id), 10
+                console._send_console_message_from_visible_action(
+                    session_id=session.id
+                ),
+                10,
             )
+            assert len(turn_tasks) == 1
+            await asyncio.wait_for(turn_tasks[0], 10)
+            await console._sync_native_console_chat_ui()
             await pilot.pause()
             card = console.query_one(TraceCallRecoveryCallout)
             assert card.display
@@ -90,7 +108,8 @@ async def test_first_trace_factory_failure_has_actionable_uncaptured_recovery(
             await pilot.pause()
             await pilot.press("enter", "enter")
             await asyncio.wait_for(host.workers.wait_for_complete(), 10)
-            await pilot.pause(0.3)
+            await console._sync_native_console_chat_ui()
+            await pilot.pause()
 
             if lose_proof:
                 assert adapter_calls == []

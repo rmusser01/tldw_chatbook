@@ -671,11 +671,12 @@ async def test_a_notes_refresh_never_overwrites_the_keywords_being_typed():
 
 @pytest.mark.asyncio
 async def test_notes_work_pane_does_not_repeat_the_list_pane_status_line():
-    """task-32063: both Notes panes painted `Library notes · Library database`.
+    """task-32063: both Notes panes painted the same authority sentence.
 
-    Live at 235x52 the list pane read "Library notes · Library database · Ready
-    · Next: Create a note or add from files." while the work pane restated the
-    same authority in its own header.
+    Live at 235x52 the list pane read "Library notes · Ready · Next: Create a
+    note or add from files." (then "Library notes · Library database · …",
+    before task-32218 dropped the second noun) while the work pane restated
+    the same authority in its own header.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
@@ -693,8 +694,10 @@ async def test_notes_work_pane_does_not_repeat_the_list_pane_status_line():
             screen.query_one("#library-note-work-authority", Static).renderable
         )
 
-        assert list_line.startswith("Library notes · Library database")
-        assert not work_line.startswith("Library notes · Library database"), (
+        # task-32218 renamed the authority to the one noun the source strip
+        # uses; the claim under test -- only ONE pane paints it -- is unchanged.
+        assert list_line.startswith("Library notes")
+        assert not work_line.startswith("Library notes"), (
             "the work pane must not restate the list pane's authority sentence"
         )
         assert work_line

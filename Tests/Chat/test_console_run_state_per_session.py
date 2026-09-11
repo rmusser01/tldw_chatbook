@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Chat.console_close_helpers import close_controller_session
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
@@ -573,10 +574,10 @@ async def test_submit_draft_targets_dispatched_session_not_active_session_at_exe
     the user switched TO, not the one showing when Send was pressed.
 
     This drives the exact shape the real dispatch path
-    (``ChatScreen._submit_console_native_draft``) now produces: session A
+    (runtime custody) now produces: session A
     dispatched, active session already moved to B by the time
     ``submit_draft`` actually runs -- passing A's id explicitly, exactly
-    as the fixed ``_submit_console_native_draft`` does. Session A must get
+    as the runtime handoff does. Session A must get
     the write; session B (the one merely being *viewed*) must stay
     untouched.
     """
@@ -646,7 +647,7 @@ async def test_submit_draft_closed_session_id_fails_closed_without_touching_acti
     session_a = store.ensure_session(title="A")
     closed_session_id = session_a.id
     session_b = controller.new_session(title="B")
-    controller.close_session(closed_session_id)
+    close_controller_session(controller, closed_session_id)
     assert store.active_session_id == session_b.id
 
     result = await controller.submit_draft("hello", session_id=closed_session_id)

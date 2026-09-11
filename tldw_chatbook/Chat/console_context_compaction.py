@@ -1577,6 +1577,7 @@ def plan_compaction(
             active_continuation_groups=without_old.active_continuation_groups,
             tools=without_old.tools,
             provenance=remaining_provenance,
+            capture_durability=without_old.capture_durability,
         )
         remaining = prepare_main(remaining_semantic)
         summary_provenance = (
@@ -1597,6 +1598,7 @@ def plan_compaction(
             active_request=remaining_semantic.active_request,
             active_continuation_groups=(remaining_semantic.active_continuation_groups),
             tools=remaining_semantic.tools,
+            capture_durability=remaining_semantic.capture_durability,
             provenance=(
                 replace(remaining_provenance, memory=(summary_provenance,))
                 if remaining_provenance is not None and summary_provenance is not None
@@ -1730,6 +1732,10 @@ def _plan_range_to_prefix_compaction(
             continue
         removed_count = len(early) + later_count
         without_old = semantic.without_oldest_units(removed_count)
+        remaining_provenance = (
+            replace(without_old.provenance, memory=())
+            if without_old.provenance is not None else None
+        )
         remaining_semantic = PreparedConsoleRequest(
             system=without_old.system,
             memory=(),
@@ -1741,12 +1747,26 @@ def _plan_range_to_prefix_compaction(
             thinking_policy=without_old.thinking_policy,
             effective_thinking_policy=without_old.effective_thinking_policy,
             tools=without_old.tools,
+            provenance=remaining_provenance,
+            capture_durability=without_old.capture_durability,
         )
         remaining = prepare_main(remaining_semantic)
+        summary_provenance = (
+            compaction_transform_provenance(
+                semantic.provenance, selected_units=removed_count,
+                transform=TraceTransformKind.TEXT_COMPACTION,
+                source=TraceProvenanceSource.CONTEXT_SUMMARY,
+            ) if semantic.provenance is not None else None
+        )
         empty_memory = prepare_main(
             replace(
                 remaining_semantic,
                 memory=(tagged_memory_message(""),),
+                provenance=(
+                    replace(remaining_provenance, memory=(summary_provenance,))
+                    if remaining_provenance is not None and summary_provenance is not None
+                    else None
+                ),
             )
         )
         wrapper_tokens = max(0, empty_memory.accounting.memory_tokens)

@@ -14,6 +14,8 @@ from textual.widgets import Button
 
 import tldw_chatbook
 from tldw_chatbook.UI.Navigation.main_navigation import (
+    CONSOLE_ATTENTION_GLYPH,
+    CONSOLE_ATTENTION_TOOLTIP,
     MainNavigationBar,
     _straddles_viewport,
 )
@@ -134,6 +136,78 @@ def test_nav_button_label_numbering_scheme():
     assert nav_button_label("logs", "Logs") == "F8 Logs"
     assert nav_button_label("settings", "Settings") == "F9 Settings"
     assert nav_button_label("research", "Research") == "F10 Research"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (100, 30), (160, 48)])
+async def test_console_attention_glyph_is_accessible_and_geometry_stable(size):
+    class TestApp(ConsolidatedCSSApp):
+        console_needs_attention = True
+        console_runtime = None
+
+        def compose(self):
+            yield MainNavigationBar(active="console")
+
+    app = TestApp()
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause(0.6)
+        nav = app.query_one(MainNavigationBar)
+        button = app.query_one("#nav-console", Button)
+        before = button.region
+
+        assert CONSOLE_ATTENTION_GLYPH in str(button.label)
+        assert button.tooltip == CONSOLE_ATTENTION_TOOLTIP
+        assert "⌃2 Console" in str(button.label)
+        assert button.region.width > 0
+
+        nav.sync_console_attention(False)
+        await pilot.pause()
+        after = button.region
+
+        assert CONSOLE_ATTENTION_GLYPH not in str(button.label)
+        assert after == before
+
+
+@pytest.mark.asyncio
+async def test_fresh_navigation_mount_recomputes_durable_console_attention():
+    calls: list[dict[str, bool]] = []
+
+    class TestApp(ConsolidatedCSSApp):
+        console_needs_attention = False
+
+        def compose(self):
+            yield MainNavigationBar(active="home")
+
+    app = TestApp()
+    app.console_runtime = SimpleNamespace(
+        recompute_console_attention=lambda **kwargs: calls.append(kwargs)
+    )
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+
+    assert calls == [{"force_projection": True}]
+
+
+@pytest.mark.asyncio
+async def test_overflow_menu_projects_the_same_console_attention_glyph():
+    from tldw_chatbook.UI.Navigation.nav_overflow_menu import NavOverflowMenu
+
+    class TestApp(ConsolidatedCSSApp):
+        console_needs_attention = True
+
+        def compose(self):
+            yield MainNavigationBar(active="settings")
+
+    app = TestApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0.6)
+        app.push_screen(NavOverflowMenu(active_destination_id="settings"))
+        await pilot.pause()
+
+        button = app.screen.query_one("#nav-overflow-console", Button)
+        assert CONSOLE_ATTENTION_GLYPH in str(button.label)
+        assert button.tooltip == CONSOLE_ATTENTION_TOOLTIP
+        assert "⌃2 Console" in str(button.label)
 
 
 @pytest.mark.asyncio

@@ -101,6 +101,46 @@ def library_pager_layout(
     )
 
 
+def simple_library_pager_display(
+    *,
+    range_copy: str,
+    page: int,
+    total_pages: int,
+    has_previous: bool,
+    has_next: bool,
+) -> LibraryPagerDisplay:
+    """Build a pager display for a source that pages itself (task-32354).
+
+    ``build_library_pager_display`` validates row counts against an exact
+    total and raises when they disagree -- correct for the sources that own
+    their paging end to end, fatal for one whose service may return a short
+    page. This carries the same copy and the same boundary reasons so those
+    sources can still go through ``library_pager_layout``.
+
+    Args:
+        range_copy: The already-formatted item range line.
+        page: The applied page number.
+        total_pages: Known page count, or 0 when it is unknown.
+        has_previous: Whether a previous page can be loaded.
+        has_next: Whether a next page can be loaded.
+
+    Returns:
+        A display whose ``single_page`` is True when neither direction can move.
+    """
+    return LibraryPagerDisplay(
+        title_count=None,
+        range_copy=range_copy,
+        page_copy=f"Page {page} of {total_pages}" if total_pages else "",
+        status_copy="",
+        previous_disabled=not has_previous,
+        next_disabled=not has_next,
+        previous_reason="" if has_previous else _FIRST_PAGE_REASON,
+        next_reason="" if has_next else _FINAL_PAGE_REASON,
+        retry_visible=False,
+        single_page=not has_previous and not has_next,
+    )
+
+
 def build_library_pager_display(
     *,
     applied_page: int | None,

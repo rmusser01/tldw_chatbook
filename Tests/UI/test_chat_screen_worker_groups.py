@@ -65,6 +65,17 @@ def _call_name(node: ast.Call) -> str:
     return func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
 
 
+def test_chat_screen_has_no_ordinary_console_submit_coroutine() -> None:
+    """Ordinary sends belong to the app runtime, never a screen worker."""
+    tree = ast.parse(CHAT_SCREEN_PATH.read_text(encoding="utf-8"))
+
+    assert not any(
+        isinstance(node, ast.AsyncFunctionDef)
+        and node.name == "_submit_console_native_draft"
+        for node in ast.walk(tree)
+    )
+
+
 def _exclusive_worker_sites(tree: ast.AST):
     """Yield (lineno, has_group) for every exclusive worker declaration.
 
@@ -150,7 +161,6 @@ def test_console_run_and_sync_workers_use_disjoint_groups():
     someone put a sync kick into group="console-run" — and the collision this
     branch fixed would silently return."""
     RUN_COROUTINES = {
-        "_submit_console_native_draft",
         "_retry_console_message",
         "_regenerate_console_message",
         "_continue_console_message",
@@ -205,8 +215,6 @@ class TestTextualExclusiveGroupSemantics:
 
     @staticmethod
     def _make_app(results: dict):
-        from textual.app import App
-
         class Probe(ConsolidatedCSSApp):
             async def long_run(self):
                 try:

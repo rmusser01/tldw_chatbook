@@ -101,6 +101,26 @@ gateway: launch mode had been inferred from whether authentication produced a
 client. Retaining the served marker independently and refusing native gateway
 creation made that regression pass. A bad protocol version must disable the
 affected transport, not select a different listener or authority boundary.
+---
+
+## Trace import evidence must cross the real producer and reconstruction boundaries
+
+**TASK-23175 current-dev voice integration, 2026-09-07.** Green row-shape
+and recording-only repository tests missed duplicated cross-turn surfaces,
+multi-message retry ordering and component-tag collisions. Real
+`ConsoleTraceService` reconstruction after consecutive imports exposed them.
+A separate real saved-controller → gateway seal → winning claim → SQLite
+check found that generated inline headers did not share the sanitized prompt's
+privacy projection, despite apparently correct captured body text.
+
+**What to do.** Assert exact reconstructed surfaces across consecutive turns,
+retries, inherited history and ordinary continuation, not just inserted rows.
+Carry actual transformed producer output through the production sealing and
+durable import boundary, and compare exact sanitized headers as well as bodies.
+Keep malformed bounded-span inputs fail-closed; a recording fake cannot prove
+production privacy or reconstruction behavior.
+
+---
 
 ## Index-plan guards must accept the names the DDL actually uses
 
@@ -13055,6 +13075,12 @@ The mounted policy check also needed splash disabled in its isolated on-disk
 config: its six-second wait expired during the seven-second splash, and the
 factory snapshot alone does not control the compose-time configuration read.
 
+PR #2504's subsequent rebase retained a fake-clock regression that still delayed
+FTS after dev removed it from the required set. Both timing assertions failed
+because the actual required sentinels were already present. Select the delayed
+fixture from the current required set so the test continues to exercise waiting
+and timeout without restoring a deliberately optional worker requirement.
+
 ## Faking a decorated method deletes the decorator, and the bug can live there
 
 **task-32121, Library ▸ Folder files, 2026-09-09.** Critique #8's task-32055 gave
@@ -13213,3 +13239,44 @@ assertion on the actual renamed conversation creation exposed the TypeError;
 correcting the mock contract then made that assertion pass. Batch tests must
 assert the specific item's persisted outcome or write payload, not only an
 aggregate count that unrelated items can satisfy.
+
+### Rebased cold-session fixtures must cross activation boundaries (2026-09-10)
+
+PR #2504's final integration initially failed 31 closed-history cases before the
+intended tamper hook. Its reload fixture restored rows but omitted real Library
+policy hydration, so the new send-time frozen configuration correctly retained
+unavailable authority. Hydrating through the real store method fixed that fixture
+gap; accepting the new third frozen-input dictionary callback argument fixed a
+second fixture mismatch. Neither justified weakening production policy checks.
+The still-failing exact closed-history proof then exposed a real composition gap:
+ordinary terminal receipt-only metadata was not one of its accepted empty forms.
+An exact canonical receipt/default shape, with four negative metadata regressions,
+resolved it; all 39 selected closed-history cases passed. Locate the actual failed
+boundary before treating every post-rebase failure as either fixture-only or a
+production regression.
+
+### A pipeline's exit code is the LAST command's — `pytest | tail` always looks green (2026-09-11)
+
+During the critique-10 fix wave a branch verified a change with
+`… -m pytest <file> -q | tail -40` and read the command as passing. It was not:
+the run was red, and `tail` had exited 0 over it. A shell pipeline reports the
+status of its **last** command, so every `pytest | tail`, `pytest | grep`,
+`pytest | head` reports the status of the filter, never the test run. The
+failure is silent in the worst way — the tool that lies is the one added for
+readability, and the failing names are usually scrolled off above the tail
+window, so the output *looks* consistent with the exit code.
+
+This is why the wave's brief mandated the redirect form, and it is the form to
+use:
+
+```bash
+… -m pytest <node id> -q -p no:cacheprovider > /tmp/<name>.txt 2>&1
+tail -40 /tmp/<name>.txt          # separate command; the status above is pytest's
+```
+
+Read the **summary line** out of the file (`N failed, M passed`), not the exit
+status of whatever printed it. `set -o pipefail` fixes the exit code but not the
+lost output, and it is not on by default in the shells these commands run in.
+The same trap sits behind `./scripts/preflight.sh | tail` — a known previous
+incident in this repo, and the reason preflight is always run bare.
+

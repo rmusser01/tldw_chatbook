@@ -25,7 +25,9 @@ from tldw_chatbook.Chat.console_prompt_queue import (
     PromptQueueSnapshot,
     QueueMutationStatus,
     QueueThreadViolation,
+    QueuedPrompt,
 )
+from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
@@ -57,7 +59,7 @@ class QueuedTurnSubmitter(Protocol):
 
     def __call__(
         self,
-        text: str,
+        prompt: QueuedPrompt,
         *,
         session_id: str,
         entry_id: str,
@@ -144,6 +146,11 @@ class ConsolePromptQueueCoordinator:
             and session_id in self._chains
             and not self._shutting_down
         )
+
+    def bind_runtime_submitter(self, submit_queued: QueuedTurnSubmitter) -> None:
+        """Route future claimed entries through the app-owned runtime."""
+
+        self._submit_queued = submit_queued
 
     def _terminal_status(
         self, session_id: str, result: "ConsoleSubmitResult"
@@ -353,6 +360,7 @@ class ConsolePromptQueueCoordinator:
         *,
         text: str,
         expected_revision: int,
+        custody_request: ConsoleTurnCustodyRequest | None = None,
     ) -> PromptQueueMutationResult:
         """Admit text only behind an accepted turn or an existing queue."""
 
@@ -367,6 +375,7 @@ class ConsolePromptQueueCoordinator:
             session_id,
             text=text,
             expected_revision=expected_revision,
+            custody_request=custody_request,
         )
         if result.applied:
             self._changed(session_id)
@@ -665,7 +674,7 @@ class ConsolePromptQueueCoordinator:
             )
             try:
                 queued_result = await self._submit_queued(
-                    claim.prompt.text,
+                    claim.prompt,
                     session_id=session_id,
                     entry_id=claim.prompt.entry_id,
                     authorization=authorization,

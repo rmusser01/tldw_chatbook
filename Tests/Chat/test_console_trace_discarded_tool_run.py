@@ -19,7 +19,7 @@ from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeRea
 from tldw_chatbook.Chat.console_trace_redaction import CredentialSanitizer
 
 
-def _reload_console(app):
+async def _reload_console(app):
     conversation = app.session.persisted_conversation_id
     nodes = [
         ConsoleChatMessage(
@@ -40,6 +40,7 @@ def _reload_console(app):
         active_leaf_persisted_id=app.db.get_conversation_active_leaf(conversation),
         settings=app.session.settings,
     )
+    await store.hydrate_session_library_policy(session.id)
     bridge = ConsoleAgentBridge(
         agent_runs_db=app.runs, store=store, provider_gateway=app.gateway
     )
@@ -82,8 +83,10 @@ async def test_following_captured_sends_after_discarded_tool_run(
         )
         if current_transform:
             assert app.store.persist_session_if_needed(app.session.id)
-            app.controller._chat_dictionary_applier = lambda _conversation, text: (
-                text.replace("calculator", "calculator tool")
+            app.controller._chat_dictionary_applier = (
+                lambda _conversation, text, _frozen_inputs: text.replace(
+                    "calculator", "calculator tool"
+                )
             )
         original = type(app.factory.service).prepare_current_surface_delta
 
@@ -175,11 +178,11 @@ async def test_following_captured_sends_after_discarded_tool_run(
                     strict=True,
                 )
             )
-        _reload_console(app)
+        await _reload_console(app)
         result = await app.controller.discard_dispatch_recovery(app.session.id)
         assert result.accepted
         if cold_after_discard:
-            _reload_console(app)
+            await _reload_console(app)
         for followup_index in range(failed_followups):
 
             def reject_successor(instance, *args, **kwargs):
@@ -197,7 +200,7 @@ async def test_following_captured_sends_after_discarded_tool_run(
                 )
             assert failed.accepted
             assert len(app.http_payloads) == 2
-            _reload_console(app)
+            await _reload_console(app)
             assert (
                 await app.controller.discard_dispatch_recovery(app.session.id)
             ).accepted

@@ -267,7 +267,7 @@ composer-level strip below shows once setup completes.
 | **Buddy** (composer **Menu**) | Manage independent Buddy artwork, follow a conversation/workspace, and change Persona settings — see [Buddies](buddies.md). |
 | **Help** | Opens the Console help panel (same as F1). |
 | **Speak replies** | Speaks new assistant replies in this conversation. |
-| **Hands-free** | Enters/exits the voice conversation loop (same as Ctrl+Shift+H) — the switch is the touch/soft-keyboard route into the mode. |
+| **Hands-free** | Enters/exits the voice conversation loop. Use this visible switch on macOS and with a touch or soft keyboard. |
 
 For local Kokoro, open **Settings > Speech & TTS** and use **Exact** voice policy
 with a Kokoro voice value. If an older configuration shows **Server default**,
@@ -501,6 +501,14 @@ close, and application quit retain their cancellation behavior. Details in
 [Agent runs & tools](console/agent-runs-and-tools.md) and the
 [guide index](index.md#console-runs-continue-during-navigation).
 
+Microphone, playback, and unaccepted speculative voice are view-owned: covering,
+suspending, or removing Console stops them, and returning does not restart
+Hands-free. A winning voice save already claimed by the runtime continues.
+Before archiving a chat or its workspace, stop Hands-free and let its retained
+work finish. An archived chat must be restored before it can accept a new reply.
+See [Hands-free voice conversation](console/attachments-images-voice.md#hands-free-voice-conversation)
+and [ADR-094](../../backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md).
+
 ## Common tasks
 
 1. **Set up a provider from the Get started card.** Click **Set up
@@ -539,7 +547,7 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 | Alt+V | Paste an image from the clipboard |
 | Ctrl+Shift+P | "Chat Context" viewer (what the model will see) |
 | Ctrl+Shift+F | Toggle focus mode — the chrome-free Console surface (see above) |
-| Ctrl+Shift+H | Enter/exit the hands-free voice loop (the control bar's **Hands-free** switch is the touch route) |
+| Ctrl+Shift+H | Optional Hands-free binding when delivered by the terminal; use the visible **Hands-free** switch on macOS. |
 | Esc | Return focus to the composer (expanding it first if collapsed) |
 
 While Console is the active screen, the command palette (**Ctrl+P**) also

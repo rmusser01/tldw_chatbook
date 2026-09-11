@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 import pytest
 
+from Tests.Chat.console_close_helpers import close_controller_session
 from Tests.Chat.test_console_automatic_library_preparation import (
     _PolicyCoordinator,
     _capture_staged_evidence,
@@ -97,7 +98,7 @@ async def test_close_session_release_fault_cannot_skip_owner_cleanup(
     )
     checkpoint_before = _checkpoint_rows(db)
 
-    activated = controller.close_session("session-1")
+    activated = close_controller_session(controller, "session-1")
 
     assert activated is None
     assert release_attempts == 1
@@ -130,7 +131,7 @@ async def test_close_session_releases_exact_evidence_once_and_preserves_replacem
     ) = await _accepted_evidence_recovery(tmp_path, monkeypatch)
     checkpoint_before = _checkpoint_rows(db)
 
-    activated = controller.close_session("session-1")
+    activated = close_controller_session(controller, "session-1")
 
     assert activated is None
     released = evidence_state["released"]

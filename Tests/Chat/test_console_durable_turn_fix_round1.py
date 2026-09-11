@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from Tests.Chat.console_close_helpers import close_controller_session
 from Tests.Chat.test_console_automatic_library_preparation import (
     _PolicyCoordinator,
     _StreamingFence,
@@ -487,7 +488,7 @@ async def test_session_close_drops_unresolved_live_postcommit_content(
     assert result.accepted is True
     assert result.preparation_id in controller._durable_postcommit_continuations
 
-    controller.close_session("session-1")
+    close_controller_session(controller, "session-1")
 
     assert controller._durable_postcommit_continuations == {}
     assert store.durable_content_retention_count() == 0
