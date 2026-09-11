@@ -22,6 +22,8 @@ from typing import Any, Callable, Literal, Protocol, cast
 
 from loguru import logger
 
+from .activation import AgentActivationRequired, guarded, worker_guard
+
 from tldw_chatbook.Chat.console_history_budget import (
     ProviderContinuationSidecar,
     provider_continuation_owner_groups,
@@ -865,6 +867,8 @@ def _call_with_timeout(
     tool_name: str,
     should_cancel: Callable[[], bool] = lambda: False,
     pauses_deadline: Callable[[], bool] = lambda: False,
+    *,
+    execution_owner: AgentService | None = None,
 ) -> ToolResult:
     """Run ``fn`` on a daemon thread, bounded by ``seconds`` of EXECUTION time.
 
@@ -911,9 +915,13 @@ def _call_with_timeout(
     """
     box: dict = {}
 
+    @worker_guard(execution_owner)
+    def _admitted_call() -> ToolResult:
+        return fn()
+
     def _runner() -> None:
         try:
-            box["result"] = fn()
+            box["result"] = _admitted_call()
         except BaseException as exc:  # noqa: BLE001 — surfaced as a failed ToolResult, never propagated to the worker's exit
             box["error"] = str(exc)
 
@@ -1794,6 +1802,7 @@ class AgentService:
                     # decision is pending for THIS run, so an approval/
                     # confirm wait inside the invoke outlives the ceiling.
                     pauses_deadline=lambda: human_input_wait_active(run_id),
+                    execution_owner=self,
                 )
             return _invoke()
 
@@ -2143,6 +2152,7 @@ class AgentService:
         self.db.append_steps(run_id, step_dicts)
         self.db.set_status(run_id, outcome.status, result=outcome.final_text or None)
 
+    @guarded
     def _run_one(
         self,
         *,
@@ -2737,8 +2747,22 @@ class AgentService:
                                 type(exc).__name__,
                             )
 
+            admitted_child = worker_guard(self)(run_child)
+
+            def run_child_worker() -> None:
+                try:
+                    admitted_child()
+                except AgentActivationRequired:
+                    # Admission failed before run creation; do not strand a
+                    # live fleet handle or replay a pending continuation.
+                    fleet.finish(
+                        handle.handle_id,
+                        RUN_ERROR,
+                        error="agent_activation_required",
+                    )
+
             thread = threading.Thread(
-                target=run_child,
+                target=run_child_worker,
                 name=f"fleet-{handle.handle_id[:8]}",
                 daemon=True,
             )
@@ -4394,6 +4418,7 @@ class AgentService:
 
     # -- public ----------------------------------------------------------
 
+    @guarded
     def run_turn(
         self,
         *,
