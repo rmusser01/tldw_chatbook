@@ -2508,7 +2508,26 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             return
         self.presentation_state = state
         self.compact = state.compact
-        authority = self.query_one(f"#{self.authority_id}", Static)
+        # Second half of the early-out above: a MOUNTED pane whose CHILDREN
+        # are between removal and remount has none of the surfaces below, and
+        # `query_one` raised `NoMatches` on the first of them. The backlinks
+        # loader reaches here from a WORKER, whose default
+        # `exit_on_error=True` turns that into a dead process rather than a
+        # skipped paint (task-32458, reproduced twice live on dev).
+        #
+        # Guarded HERE, not at a caller: several callers reach this method
+        # directly, and returning before it would also discard the
+        # `title_placeholder_only` and stage-visibility work the controller
+        # does around this call. `_apply_post_compose_state` guards the same
+        # shape for its own call and documents the sequence that produces it.
+        #
+        # Returning is complete, not lossy: the state is stored above and
+        # `_apply_post_compose_state` re-applies it the moment the recompose
+        # that removed these children mounts the new ones.
+        authority_matches = self.query(f"#{self.authority_id}")
+        if not authority_matches or not self.query("#library-note-title"):
+            return
+        authority = authority_matches.first(Static)
         authority_copy = self._authority_copy()
         if self._static_text(authority) != authority_copy:
             authority.update(authority_copy)

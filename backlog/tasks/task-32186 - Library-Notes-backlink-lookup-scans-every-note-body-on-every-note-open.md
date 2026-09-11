@@ -141,16 +141,11 @@ migrated v72 -> v73 on open and Info ▸ Linked from read "Linked from (40)"
 with the Slip rows listed, no re-import
 (`scratchpad/wave3-caps/backlinks-table/live-info-linked-from-40.txt`).
 
-**task-32458** (this worker's paint killing the app with `NoMatches` on
-`#library-note-work-authority`) is NOT fixed here. It was briefly assigned to
-this branch and implemented at the widget seam
-(`LibraryNoteWorkPane.apply_session_state`); the controller then reassigned it
-to the wave-3 test-health group, which had hit the same race and guarded the
-controller seam instead (`_apply_library_note_presentation_state`, their commit
-`dd1722ba01`). That implementation was reverted here (`581f418ce5`) so one race
-does not get two fixes. Nothing in this task's change alters that hand-off:
-the table-backed lookup returns the same rows to the same worker tail, which
-calls the same presentation sync.
+Also fixed here, as originally assigned: **task-32458**, the app-killing
+`NoMatches` from this worker's paint. It was briefly reassigned to the
+test-health group and reverted here, then handed back when their
+controller-seam guard was found to skip work the seam owns; see that task's
+notes for why the guard belongs in `apply_session_state`.
 
 Two regressions the full run caught, both fixed here and worth knowing:
 `sqlite3.Cursor.execute` returns the cursor itself, so the link writes added
@@ -164,6 +159,7 @@ Modified: `tldw_chatbook/DB/ChaChaNotes_DB.py`,
 `tldw_chatbook/DB/migrations/chachanotes_v72_to_v73_note_links.sql` (new),
 `tldw_chatbook/DB/sql_validation.py`,
 `tldw_chatbook/Notes/note_import_executor.py`,
+`tldw_chatbook/Widgets/Library/library_notes_canvas.py`,
 `Tests/ChaChaNotesDB/historical_bootstrap.py`,
 `Tests/ChaChaNotesDB/test_index_census.py`,
 `Tests/DB/test_chachanotes_v73_note_links_migration.py` (new),
@@ -171,5 +167,6 @@ Modified: `tldw_chatbook/DB/ChaChaNotes_DB.py`,
 `Tests/Notes/test_note_import_executor.py`,
 `Tests/DB/test_conversation_archive.py`,
 `Tests/DB/test_chachanotes_v72_voice_trace_provenance_migration.py`,
+`Tests/UI/test_library_notes_riders_backlinks.py`,
 `Docs/User_Guide/library/notes.md`.
 <!-- SECTION:NOTES:END -->
