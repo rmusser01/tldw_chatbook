@@ -414,7 +414,13 @@ assert replacement.recover_replacement(sys.argv[3],control_root=Path(sys.argv[2]
 
 @pytest.mark.parametrize(
     "boundary",
-    ["complete", "missing_dependency", "other_selector", "unrelated_registration"],
+    [
+        "complete",
+        "covered",
+        "missing_dependency",
+        "other_selector",
+        "unrelated_registration",
+    ],
 )
 def test_existing_config_container_requires_exact_selected_closure(
     tmp_path, monkeypatch, boundary
@@ -443,7 +449,14 @@ def test_existing_config_container_requires_exact_selected_closure(
         root = bootstrap.default_bootstrap_root()
         authority = admission_authority(root)
         authority.register("current-config", (selector,))
-        bind_profile(root, selector, ("current-config",), root / "admission")
+        names = ("current-config",)
+        if boundary == "covered":
+            research = folder / "research.db"
+            research.write_bytes(case[4].read_bytes())
+            research.chmod(0o600)
+            authority.register("current-research", (research,))
+            names += ("current-research",)
+        bind_profile(root, selector, names, root / "admission")
         if boundary in {"other_selector", "unrelated_registration"}:
             other = folder / "other.toml"
             other.write_text('[general]\nusers_name="other"\n')
@@ -473,7 +486,20 @@ def test_existing_config_container_requires_exact_selected_closure(
                     logical_id=item.logical_id.replace(
                         "profile:profile:", "profile:current:"
                     ),
-                    path=selector if item.owner == "config" else item.path,
+                    path=(
+                        selector
+                        if item.owner == "config"
+                        else folder / item.path.name
+                        if boundary == "covered"
+                        and item.path is not None
+                        and item.path
+                        in {
+                            case[4],
+                            case[4].with_name(case[4].name + "-wal"),
+                            case[4].with_name(case[4].name + "-shm"),
+                        }
+                        else item.path
+                    ),
                     dependencies=tuple(
                         key.replace("profile:profile:", "profile:current:")
                         for key in item.dependencies
@@ -498,7 +524,7 @@ def test_existing_config_container_requires_exact_selected_closure(
         )
         before = selector.read_bytes()
         selected_document = archive_reader.verify_sealed(archive)
-        if boundary == "complete":
+        if boundary in {"complete", "covered"}:
             replacement._register_publication_parents(
                 plan,
                 authority,
@@ -522,4 +548,4 @@ def test_existing_config_container_requires_exact_selected_closure(
                 for row in bootstrap._registry(root).values()
             )
         assert selector.read_bytes() == before
-        assert not (folder / "research.db").exists()
+        assert (folder / "research.db").exists() == (boundary == "covered")

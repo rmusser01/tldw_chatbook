@@ -98,6 +98,11 @@ covered by the credential-recovery guarantee.
 Target changes invalidate review. Re-inspect and review the actual current state
 instead of trying to reuse a stale confirmation.
 
+First-time replacement may refuse a configuration folder that contains recovery
+controls or unrelated files. The verified custom-folder layout keeps profile data
+under a private configuration folder, with recovery controls elsewhere. Its storage
+binding includes future lock and temporary files created inside that folder.
+
 ## Interrupted recovery and retained copies
 
 Use **Recovery copies** to inspect recorded operations and available recovery

@@ -674,7 +674,74 @@ def _first_binding_inventory(plan, selector):
     return current
 
 
-def _ensure_first_bindings(plan, selectors, root, cancel):
+def _first_config_container(
+    selector, inventory, names, registry, profiles, selectors, protected
+):
+    """Prove a private current container without adopting unknown sibling files."""
+    from .bootstrap import _overlap
+    from .file_inventory import inventory_tree
+
+    parent = selector.parent
+    configs = [item for item in inventory.items if item.owner == "config"]
+    actual = {
+        item.path
+        for item in inventory.items
+        if item.path is not None and item.status in {"included", "included_directory"}
+    }
+    if (
+        len(configs) != 1
+        or configs[0].path != selector
+        or any(_overlap(parent, path) for path in protected)
+        or any(
+            other != selector and _overlap(parent, other)
+            for other in (*selectors, *(Path(row["selector"]) for row in profiles))
+        )
+        or any(
+            name not in names
+            or Path(path) not in actual | {parent}
+            or any(name in row["namespaces"] for row in profiles)
+            for name, entry in registry.items()
+            for path in entry["roots"]
+            if _overlap(parent, Path(path))
+        )
+    ):
+        raise ValueError("replacement_config_container_unverified")
+    with pinned_directory(parent) as fd:
+        info = os.fstat(fd)
+        if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            raise ValueError("replacement_config_container_unverified")
+        identity = (info.st_dev, info.st_ino, info.st_mode)
+    declared = {
+        item.path
+        for item in inventory.items
+        if item.path is not None
+        and item.status in {"included", "included_directory", "intentionally_excluded"}
+    }
+    directories = {
+        item.path for item in inventory.items if item.status == "included_directory"
+    }
+    rows = inventory_tree(parent, owner="config", external=False)
+    state = []
+    for item in rows:
+        if item.status not in {"included", "included_directory"} or not (
+            item.path in declared
+            or any(root in item.path.parents for root in directories)
+            or item.status == "included_directory"
+            and any(item.path in path.parents for path in declared)
+        ):
+            raise ValueError("replacement_config_container_unverified")
+        info = item.path.lstat()
+        if not (
+            stat.S_ISDIR(info.st_mode)
+            if item.status == "included_directory"
+            else stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+        ):
+            raise ValueError("replacement_config_container_unverified")
+        state.append((item.path, item.metadata, info.st_dev, info.st_ino, info.st_mode))
+    return identity, tuple(state)
+
+
+def _ensure_first_bindings(plan, selectors, root, cancel, *, protected=()):
     """Compose first ordinary binding under actual unbound/source retirement."""
     from . import bootstrap
     from .capture_service import _capture_names
@@ -690,6 +757,7 @@ def _ensure_first_bindings(plan, selectors, root, cancel):
     authority = admission_authority(root)
     names_by_selector = {}
     inventories = {}
+    containers = {}
     for selector in missing:
         reader._check(cancel)
         inventory = _first_binding_inventory(plan, selector)
@@ -698,6 +766,35 @@ def _ensure_first_bindings(plan, selectors, root, cancel):
             name for name in _capture_names(authority, inventory)
             if name != UNBOUND_NAMESPACE
         )
+    registry = bootstrap._registry(root)
+    protected = (root, *protected)
+    for selector in missing:
+        names = names_by_selector[selector]
+        parent = selector.parent
+        covered = any(
+            Path(path) == parent or Path(path) in parent.parents
+            for name in names
+            for path in registry[name]["roots"]
+        )
+        if covered and any(
+            item.status == "included_directory"
+            and (item.path == parent or item.path in parent.parents)
+            for item in inventories[selector].items
+        ):
+            continue
+        containers[selector] = _first_config_container(
+            selector,
+            inventories[selector],
+            names,
+            registry,
+            profiles,
+            selectors,
+            protected,
+        )
+        name = "backup.source." + hashlib.sha256(str(parent).encode()).hexdigest()
+        authority.register(name, (parent,))
+        names_by_selector[selector] = tuple(sorted({*names, name}))
+        registry = bootstrap._registry(root)
     names = tuple(sorted({UNBOUND_NAMESPACE, *(name for group in names_by_selector.values() for name in group)}))
     registry = bootstrap._registry(root)
     if registry is None or any(name not in registry for name in names):
@@ -720,6 +817,20 @@ def _ensure_first_bindings(plan, selectors, root, cancel):
         from .storage_admission import _contains_owned_path
 
         for selector in missing:
+            if (
+                selector in containers
+                and _first_config_container(
+                    selector,
+                    inventories[selector],
+                    names_by_selector[selector],
+                    registry,
+                    current_profiles,
+                    selectors,
+                    protected,
+                )
+                != containers[selector]
+            ):
+                raise ValueError("replacement_config_container_changed")
             roots = tuple(
                 Path(path)
                 for name in names_by_selector[selector]
@@ -825,6 +936,10 @@ def _register_publication_parents(plan, authority, protected, *, document):
             for _, path in plan.restore
             if path == destination or destination in path.parents
         ]
+        if any(
+            row.root_id == key and row.owner_id == "config" for row in document.files
+        ):
+            paths.append(destination)
         if all(
             any(root == path or root in path.parents for root in roots)
             for path in paths
@@ -910,7 +1025,9 @@ def replace(
     )
     if not selectors:
         raise ValueError("replacement_local_binding_required")
-    _ensure_first_bindings(plan, selectors, root, cancel)
+    _ensure_first_bindings(
+        plan, selectors, root, cancel, protected=(control_root, candidate, archive.path)
+    )
     _, profiles = bootstrap._records(root)
     registry = bootstrap._registry(root)
     selected = [row for row in profiles if Path(row["selector"]) in selectors]
