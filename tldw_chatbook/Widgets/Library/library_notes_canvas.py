@@ -302,6 +302,14 @@ _NOTE_FIELD_TAB_BINDINGS = [
     Binding("shift+tab", "screen.focus_previous", show=False, priority=True),
 ]
 
+#: task-32247: the note body's own keys, on top of the shared Tab pair --
+#: see ``NoteEditorTextArea`` for why Textual supplies neither.
+_NOTE_BODY_BINDINGS = [
+    *_NOTE_FIELD_TAB_BINDINGS,
+    Binding("ctrl+end", "cursor_document_end", "End of note", show=False),
+    Binding("ctrl+home", "cursor_document_start", "Start of note", show=False),
+]
+
 
 class NoteEditorInput(Input):
     """A note field whose Tab moves focus BEFORE the next key is forwarded.
@@ -381,11 +389,7 @@ class NoteEditorTextArea(TextArea):
     trusting the default.
     """
 
-    BINDINGS = [
-        *_NOTE_FIELD_TAB_BINDINGS,
-        Binding("ctrl+end", "cursor_document_end", "End of note", show=False),
-        Binding("ctrl+home", "cursor_document_start", "Start of note", show=False),
-    ]
+    BINDINGS = _NOTE_BODY_BINDINGS
 
     def action_cursor_document_end(self) -> None:
         """Move the caret to the end of the note body."""
