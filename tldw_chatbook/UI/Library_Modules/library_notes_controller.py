@@ -5327,11 +5327,7 @@ class LibraryNotesController:
             return
 
     def _restore_library_note_context_scroll(self, offset: float | None) -> None:
-        """Put the Info pane back on a remembered scroll offset (task-32268).
-
-        Deferred, because the focus hop above resolves through
-        ``App.call_later`` and would otherwise land after this and win.
-        """
+        """Put the Info pane back on a remembered scroll offset (task-32268)."""
         if offset is None:
             return
         owner = self._library_notes_scroll_owner("context")
@@ -5342,6 +5338,7 @@ class LibraryNotesController:
         # defers this scroll past the next refresh, where that animation
         # wins. ``scroll_to`` force-stops the animation either way.
         owner.scroll_to(y=offset, animate=False, immediate=True)
+
     def _restore_library_note_delete_origin(self) -> None:
         """Leave confirmation and restore its stable source presentation."""
         origin_context = self._library_note_delete_origin_context
@@ -5368,6 +5365,7 @@ class LibraryNotesController:
         self._library_note_delete_origin_context = False
         self._library_note_delete_origin_preview = False
         self._library_note_delete_origin_scroll = None
+
     @on(Button.Pressed, "#library-note-delete-cancel")
     def handle_library_note_delete_cancel(self, event: Button.Pressed) -> None:
         """Discard the pending delete confirmation and restore the normal action row.
