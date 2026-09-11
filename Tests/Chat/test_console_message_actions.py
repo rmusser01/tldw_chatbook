@@ -199,7 +199,7 @@ def test_assistant_message_actions_include_required_order():
         "--->",
         "Feedback",
         "🗑",
-        "Save answer as note",
+        "Capture as note",
         "Summarize up to here as note",
         "Save transcript up to here as note",
     ]
@@ -364,7 +364,7 @@ def test_variant_action_labels_use_symbolic_navigation():
         "--->",
         "Feedback",
         "🗑",
-        "Save answer as note",
+        "Capture as note",
         "Summarize up to here as note",
         "Save transcript up to here as note",
     ]
@@ -568,7 +568,7 @@ def test_regression_no_generation_kwargs_matches_text_sibling_gating():
         "--->",
         "Feedback",
         "🗑",
-        "Save answer as note",
+        "Capture as note",
         "Summarize up to here as note",
         "Save transcript up to here as note",
     ]
@@ -1584,7 +1584,7 @@ def test_action_groups_separate_primary_overflow_and_media_actions() -> None:
         "Helpful",
         "Not helpful",
         "Delete",
-        "Save answer as note",
+        "Capture as note",
         "Summarize up to here as note",
         "Save transcript up to here as note",
     ]

@@ -695,6 +695,19 @@ automatic-sync setting.
    prompt "Use this note as context and help me work with it." ready to
    send or rewrite.
 
+### Capture a Console answer as a note
+The return leg of **Use in Console**. In the Console, select an assistant
+reply, click **More…**, then **Capture as note**. The reply is saved here
+immediately — titled with its first line, holding the answer verbatim — and
+a "Saved to Notes" receipt offers **Open note**, which lands you on that note
+in the editor.
+
+A captured note carries three keywords: `console`, `conversation:<id>` and
+`message:<id>`. They are ordinary keywords, so filtering the list on
+`conversation:` finds every answer kept from one chat. Capturing is blocked
+while the Console chat is temporary — a temporary chat promises nothing is
+written locally, and a note is a local write.
+
 ### Export a note as Markdown
 1. Open the note, choose **Info**, and click **Export Markdown**.
 2. Choose a destination in the "Export Note as Markdown" dialog — the
@@ -1107,3 +1120,9 @@ critique-10 claims reconciled; surface fixes in task-32346, 32348, 32349,
 32354, 32355). This page needed no correction — the note editor's autosave
 story and its guarded return were already stated here; the Library overview is
 what had drifted.*
+
+*Verified against fix/library-notes-w3-capture-console — 2026-09-11
+(task-32146: Console's **More… ▸ Capture as note** walked live at 235x52 and
+100x30 — the receipt's **Open note** landed on the new note in this screen's
+editor, and the note's `console` / `conversation:<id>` / `message:<id>`
+keywords were read back from the database.)*

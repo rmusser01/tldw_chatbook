@@ -389,9 +389,13 @@ tooltip "Wait for response to finish before using message actions."
 The stable direct row is **Copy**, **Speak/Stop** when available, **Edit**,
 text-response **< / >** controls when applicable, **Fork**,
 **Regenerate/Retry** when applicable, **Continue** when applicable, and
-**More…**. The menu contains **Save as…**, **Helpful**, **Not helpful**, and
-**Delete** when those actions are available; the diagnostic **View original**
-also appears there when an original attempt can be shown safely.
+**More…**. The menu contains **Save as…**, **Helpful**, **Not helpful**,
+**Delete**, and — on a finished assistant reply — the three note actions
+**Capture as note**, **Summarize up to** (here as note) and **Save
+transcript** (up to here as note), when those actions are available; the
+diagnostic **View original** also appears there when an original attempt can
+be shown safely. The menu is 24 cells wide and cuts a long label at about
+fifteen characters, which is why the last two read short.
 
 | Action | What it does | Where it appears |
 |---|---|---|
@@ -403,7 +407,8 @@ also appears there when an original attempt can be shown safely.
 | ♻ | Regenerate — fork another assistant variant for this turn; the old answer is kept, not overwritten — see [branching & rewind](branching-and-rewind.md). | Assistant replies |
 | ---> | Continue — extend the selected message with more generated text. | All messages |
 | Retry | Retry a failed reply. | Failed assistant replies |
-| More… | Opens the captured message's **Save as…**, **Helpful**, **Not helpful**, and **Delete** actions. Delete still requires confirmation and removes the message plus everything under it. | User and Assistant messages with an available overflow action |
+| More… | Opens the captured message's **Save as…**, **Helpful**, **Not helpful**, **Delete** and note actions. Delete still requires confirmation and removes the message plus everything under it. | User and Assistant messages with an available overflow action |
+| Capture as note | Saves this one reply into Library ▸ Notes: the note is titled with the reply's first line, holds the reply verbatim, and is tagged `console`, `conversation:<id>` and `message:<id>` so it records where it came from. Nothing is sent to a model. | Finished assistant replies (disabled in a temporary chat) |
 | View / Save Image | Cycle how an inline image renders / save the message's images to disk. These controls live on the image card — see [attachments, images & voice](attachments-images-voice.md). | Messages with images |
 | Play / Save copy | Play a generated video or save its ephemeral bytes. These controls live on the video card. | Generated videos while their bytes remain available |
 
@@ -435,10 +440,25 @@ also appears there when an original attempt can be shown safely.
 2. Open **More…** and choose **Delete** again. The message and everything
    beneath it are removed.
 
-### Save a reply as a Note
+### Capture a reply into a note
+1. Select the assistant reply, click **More…**, then choose
+   **Capture as note**.
+2. A "Saved to Notes" receipt appears. Click **Open note** to land in the
+   Library ▸ Notes editor on that note, or **Stay in Console** to keep
+   going — either way the note is already saved (toast: "Saved answer as
+   Note.").
+
+The note's title is the reply's first line, its body is the reply verbatim,
+and its keywords are `console`, `conversation:<id>` and `message:<id>` — so
+the note says which conversation and which message it came from. This is the
+return leg of Library ▸ Notes' **Use in Console**.
+
+### Save a reply as a Note (choosing the destination)
 1. Select the assistant reply, click **More…**, then choose **Save as…**.
 2. Choose **Note** — toast: "Saved message as Note." It appears in
-   Library ▸ Notes.
+   Library ▸ Notes. This route titles the note after the CONVERSATION
+   ("Console message — \<chat\> (date)") and tags it `console` only; for a
+   note that records the exact message, use **Capture as note** above.
 
 ### Fork a chat from a message
 1. Select a stable User or Assistant message and press **f**, or click
@@ -545,3 +565,12 @@ undocumented and was being re-derived on every keystroke; it is now derived on
 hover, and the tooltip content above was read off a live 400-message session).*
 *Fork, More…, and media-card action ownership were verified against
 TASK-23088's production-shaped provider-free journey on 2026-08-27.*
+
+*Verified against fix/library-notes-w3-capture-console — 2026-09-11
+(task-32146: **Capture as note** walked live at 235x52 and 100x30 on a seeded
+profile — More… ▸ Capture as note ▸ "Saved to Notes" ▸ **Open note** landing
+in the Library note editor; the saved note's keywords were read back from the
+database as `console`, `conversation:<id>`, `message:<id>`. The More… menu
+contents above were read off that same walk. Save as… ▸ Note was ALSO saving
+under an owner id nothing sets, so its notes never appeared in Library ▸
+Notes; both routes now write under the configured notes identity.)*

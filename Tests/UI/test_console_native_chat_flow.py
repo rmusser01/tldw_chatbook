@@ -8903,7 +8903,7 @@ async def test_console_selected_message_save_as_action_opens_modal():
 
 @pytest.mark.asyncio
 async def test_capture_note_action_saves_the_answer_and_its_receipt_opens_it():
-    """task-32146: More… ▸ Save answer as note writes the note with its
+    """task-32146: More… ▸ Capture as note writes the note with its
     provenance, and the receipt's Open note deep-links Library ▸ Notes at
     that exact note (the same nav-context contract Home's resume uses)."""
     from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_NOTE_ID, TAB_LIBRARY

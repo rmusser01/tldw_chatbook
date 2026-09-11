@@ -372,8 +372,11 @@ class ConsoleMessageActionService:
         ("delete", "🗑"),
         # task-32146: capture THIS answer (narrowest scope) ahead of the two
         # span actions below. Same overflow-only, routed-before-``dispatch()``
-        # shape as they have.
-        ("capture-note", "Save answer as note"),
+        # shape as they have. The label is 15 characters because the More
+        # menu is a fixed 24 cells wide and silently truncates past that --
+        # live check showed "Save answer as note" rendering as "Save answer
+        # as", the same cut the two labels below already take.
+        ("capture-note", "Capture as note"),
         # TASK-31759: More-menu note actions over the active-path span up
         # to and including the selected message. Overflow-only (never in
         # ``_PRIMARY_ACTION_IDS``) and dispatched by the UI router before
