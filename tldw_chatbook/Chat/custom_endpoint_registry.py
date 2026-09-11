@@ -161,10 +161,20 @@ def load_custom_endpoints(
         try:
             config = _EndpointEntryConfig.model_validate(dict(raw_entry))
         except ValueError as exc:
+            # Pydantic messages embed rejected INPUT VALUES, which for a
+            # malformed credential field would write the secret itself into
+            # the persistent log -- log only the field/type taxonomy.
+            details = "; ".join(
+                f"{'.'.join(str(part) for part in error.get('loc', ()))}:"
+                f"{error.get('type', 'invalid')}"
+                for error in (
+                    exc.errors() if hasattr(exc, "errors") else []
+                )
+            )
             logger.warning(
                 "custom endpoint '%s' ignored: malformed entry (%s)",
                 slug,
-                exc,
+                details or "invalid entry",
             )
             continue
         display_name = config.display_name

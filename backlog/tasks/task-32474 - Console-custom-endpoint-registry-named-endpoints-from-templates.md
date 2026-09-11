@@ -29,3 +29,19 @@ Implement the named custom-endpoint registry per Docs/superpowers/specs/2026-09-
 ## Implementation Plan
 
 ADR: backlog/decisions/146-console-custom-endpoint-registry.md
+
+
+## Implementation Notes
+
+**Persistent-diagnostic pin (CI, Derived Artifacts guard).** The registry's
+load boundary adds three WARNING diagnostics in
+`tldw_chatbook/Chat/custom_endpoint_registry.py` (malformed section / malformed
+entry / validation reasons, each naming only the slug). Reviewed per the
+guard's procedure: the malformed-entry line deliberately logs only the
+Pydantic field/type taxonomy -- never the exception object, whose messages
+embed rejected input values (a malformed credential field would otherwise
+write the secret into the persistent log). No user content, secrets, paths,
+or URLs reach a persistent sink. Inventory pin updated via
+`check_persistent_diagnostic_inventory.py --write` and committed with this
+note.
+
