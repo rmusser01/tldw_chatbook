@@ -10317,6 +10317,8 @@ class LibraryScreen(BaseAppScreen):
                     getattr(row, "media_id", "")
                 ):
                     self.set_focus(row)
+                    if self.focused is not row:
+                        self._retry_library_list_entry_focus_while_armed()
                     return
         target = rows[0]
         media_return = self._library_pending_list_entry_media_return
@@ -10336,6 +10338,22 @@ class LibraryScreen(BaseAppScreen):
             # ``on_descendant_focus`` and activate the Reader before Enter.
             self._library_notes_programmatic_focus_target = target
         self.set_focus(target, scroll_visible=False)
+        if self.focused is not target:
+            # task-32302: a MOUNTED row is not necessarily a FOCUSABLE one --
+            # ``Widget.focusable`` is also false while it is disabled, hidden or
+            # loading, and ``set_focus`` on such a widget is a silent no-op. The
+            # Conversations regression was exactly that: dev's archive-scope
+            # recovery hop fires a second page request during route entry, and
+            # ``LibraryConversationRecovery.project`` folds ``loading`` into
+            # ``actions_disabled``, which the canvas paints onto every row
+            # (``button.disabled = actions_disabled``). The first load's rows
+            # were up, the arm's one attempt spent itself on a disabled row, and
+            # returning here made that indistinguishable from success -- the
+            # same rule the empty-list fallback above already applies to its
+            # controls. Keep the arm owed a landing instead; the retry chain is
+            # bounded by the arm's own window either way (task-32301 owns that).
+            self._retry_library_list_entry_focus_while_armed()
+            return
         if row_class == "library-media-row" and media_return is not None:
             scroll_offset = media_return.scroll_offset
             if scroll_offset is not None:
