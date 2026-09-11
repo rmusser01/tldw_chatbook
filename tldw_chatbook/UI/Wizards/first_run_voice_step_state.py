@@ -227,6 +227,10 @@ def build_voice_setup_save_event(
         request_id=request_id,
         reply_to=reply_to,
         commit_defaults_after_handoff=draft.use_as_default,
+        # task-32266: the step awaits this save's result and renders every
+        # outcome itself, so the app-level toast adds nothing and lands over
+        # the docked actions of whichever step the wizard has advanced to.
+        notify_outcome=False,
     )
 
 

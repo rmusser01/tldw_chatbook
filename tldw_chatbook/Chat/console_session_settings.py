@@ -1391,6 +1391,7 @@ def build_console_settings_readiness(
 
     if not readiness.requires_api_key:
         credential: CredentialFacet = "not_required"
+        credential_source = "none"
     elif not readiness.ready:
         credential = "missing"
     elif (

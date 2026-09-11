@@ -494,6 +494,25 @@ The first use of either — or a remembered folder that has since been moved or
 deleted — opens at your home directory instead. **Folder files** keeps its own
 separate memory, see [File notes](file-notes.md).
 
+**What a folder has to be before it can be checked.** The folder itself must be
+a real folder (not a link to one) on a local disk, outside Chatbook's own data
+directory, not already connected as a sync folder, and not the Folder files
+root. Every `.md` file inside it must also pass, and one bad file stops the
+whole folder: each must be one you own or share a group with and can write,
+UTF-8 text, 10 MB or smaller, an ordinary file with a single name on disk, and
+consistent in its line endings — all Unix or all Windows, not a mix, and not
+the carriage-return-only style old Mac editors wrote.
+
+**Check changes** refuses anything else and names which rule it was, in the
+setup pane's status line, with the next action — for example "That folder is
+inside Chatbook's own data directory. Pick a folder outside it, then Check
+again", "Another Chatbook window is using that folder", "That folder is
+already connected", "Some files there use a mix of line endings. Save them
+with one style, then Check again", or "Some files there are larger than 10 MB".
+When several files fail for different reasons, the message names the most
+common one. A refusal changes nothing: pick a different folder, or fix the
+cause, and **Check changes** again in the same session.
+
 If files or notes change after checking, activation is refused as stale and the
 nearest valid action is **Check again**. Conflicts and deletion choices are not
 silently settled by a global winner policy. Server setup is visibly disabled
@@ -736,9 +755,12 @@ stayed as text and are not counted.
    away). Choose a direction and local destination. Server sync remains
    unavailable until its separate capability is installed.
 4. Choose **Check changes** and review the exact safe, attention, skipped, and
-   deletion-like effects.
+   deletion-like effects. If the folder cannot be used, the status line under
+   the pane's "Add files to Library notes" heading says which rule it broke
+   and what to do; choose **Choose folder…** again and check the new one.
 5. Choose **Activate reviewed root**. If the review is stale, choose **Check
-   again** instead.
+   again** instead. **Manage sync folders** appears in the notes toolbar once
+   a root is active.
 
 Existing legacy evidence appears as a paused candidate. Open **Manage sync
 folders**, choose **Review migration**, inspect the current dry-run, and
@@ -1163,6 +1185,35 @@ critique-10 claims reconciled; surface fixes in task-32346, 32348, 32349,
 32354, 32355). This page needed no correction — the note editor's autosave
 story and its guarded return were already stated here; the Library overview is
 what had drifted.*
+
+*Verified against fix/library-notes-w3-sync — 2026-09-11 (task-32269, and the
+task-32243 fix it waited on): the lasting-sync chapter was written from the
+design and had never been walked, because no folder could be admitted — a
+refused **Check changes** crashed over its own refusal and then poisoned the
+folder for the whole session. Every step in this chapter has now been walked
+on this branch at 235x52, in two sessions.
+
+Session one, a 179-file vault under `$HOME`: refusal copy on a folder inside
+the profile → **Choose folder…** → the `$HOME` vault → 60 safe · 0 attention →
+**Activate reviewed root** → "Sync root activated. 60 applied · durable
+receipt recorded" → the notes appear under a **⇄ Sync managed** folder →
+**Manage sync folders** (which only exists once a root is active) → **Check
+changes** → "Manual check finished."
+
+Session two made a real conflict — edit the note in Chatbook, edit the same
+file on disk — and walked the half no earlier run could reach: **Check
+changes** → "⚠ Needs attention · Next: Review changes" → **Review** →
+**View comparison** (a real `--- Note / +++ File` diff with both sides' line
+and character counts) → **Keep file** → **Apply reviewed** → an at-action
+receipt with **Undo** and **Dismiss** → **Undo** → **Resolution history**,
+where the entry is recorded "undone" → **Pause** (the action becomes Resume)
+→ **Resume**. **Retarget** and **Disconnect** stay visibly disabled
+throughout, as this chapter says.
+
+Added in this pass: what a folder and its files have to be before they can be
+checked, and the named refusals. Known gap, not fixed here: the root row in
+**Manage sync folders** reads "Sync folder (name unavailable before cutover)"
+rather than the display name you typed — task-32451.)*
 
 *Verified against fix/library-notes-w3-import-review — 2026-09-11 (fix round 1):
 `.git` is skipped at the walker for every source and both platform adapters;
