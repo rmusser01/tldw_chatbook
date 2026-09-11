@@ -1,7 +1,7 @@
 # PR2427 retained Handoff summary repair
 
-Status: user approved the in-place design on2026-09-10; independent spec review
-approved; user review of this written spec is pending.
+Status: user approved the in-place design and independently reviewed written
+spec on2026-09-10. Implementation plan independently approved; verification underway.
 Task: TASK-31932, latest-dev integration.
 
 ## Evidence and scope
@@ -78,5 +78,5 @@ owner refresh boundary; no new owner, lifetime, policy or service authority.
 - [x] Obtain user approval of the in-place design.
 - [x] Write this bounded spec.
 - [x] Independent spec review (approved, no planning blockers).
-- [ ] User review of written spec.
-- [ ] Write the implementation plan before code changes.
+- [x] User review of written spec.
+- [x] Write the implementation plan before code changes.
