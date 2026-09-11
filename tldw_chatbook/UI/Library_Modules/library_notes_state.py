@@ -38,7 +38,7 @@ Notes has no class-level-only attribute) rather than a ``startswith`` filter,
 per the conversations exemplar's own "startswith enumeration trap" lesson:
 
 - ``_library_notes_`` is the DEFAULT prefix -- 73 of the 100 moved fields.
-- ``_library_note_`` (SINGULAR) covers 21 fields, listed in
+- ``_library_note_`` (SINGULAR) covers 22 fields, listed in
   ``NOTE_SINGULAR_STATE_FIELDS`` below -- the same singular/plural split the
   prompts and skills series each carried, with the majority family reversed
   (Prompts' default was the singular one).
@@ -296,8 +296,9 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
         LibraryFileNotesWorkspace,
     )
 
-#: The 21 fields whose original attribute uses the SINGULAR
-#: ``_library_note_`` prefix rather than the plural default.
+#: The 22 fields whose original attribute uses the SINGULAR
+#: ``_library_note_`` prefix rather than the plural default. (21 from the
+#: original move census; ``delete_origin_scroll`` was added by task-32268.)
 NOTE_SINGULAR_STATE_FIELDS: frozenset[str] = frozenset(
     {
         "autosave_generation",
