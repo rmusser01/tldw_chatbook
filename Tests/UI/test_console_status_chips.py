@@ -2,7 +2,7 @@
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Tooltip
+from textual.widgets import Static, Tooltip
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_display_state import ConsoleControlState
@@ -418,6 +418,12 @@ async def test_run_chip_reads_waiting_for_approval_while_a_round_is_pending():
         await pilot.pause()
         assert chip.display is True
         assert str(chip.render()) == "Run: Waiting for your approval."
+        # task-32276 minor: the hidden compat mode-bar static must say the
+        # same thing as the visible chip -- two copies of one fact, never
+        # allowed to disagree.
+        assert "Waiting for your approval." in str(
+            console.query_one("#console-mode-bar", Static).renderable
+        )
 
         # Discarding the round returns the chip to the plain run copy --
         # the override is live, not sticky.
@@ -425,3 +431,6 @@ async def test_run_chip_reads_waiting_for_approval_while_a_round_is_pending():
         console._sync_console_mode_bar()
         await pilot.pause()
         assert str(chip.render()) == "Run: Agent running."
+        assert "Waiting for your approval." not in str(
+            console.query_one("#console-mode-bar", Static).renderable
+        )

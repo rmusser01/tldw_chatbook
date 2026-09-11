@@ -14555,12 +14555,47 @@ class ChatScreen(BaseAppScreen):
         distinction ``_console_setup_blocked_reason``/``_console_send_
         blocked_reason`` already carve out below. Left in, an otherwise
         fully-configured provider read "Setup: Provider configuration
-        required" (this copy feeds the Setup/Blocked-impact/Next-action
-        Inspector rows in ``_build_console_inspector_state``) for the
-        entire duration of EVERY active run, including one parked on a
-        healthy pending approval -- which then made the pinned authority
-        line's ``recovery_required`` check (any "Next action" row present)
-        read "Recovery required" over "Waiting for approval".
+        required" for the entire duration of EVERY active run, including
+        one parked on a healthy pending approval -- which then made the
+        pinned authority line's ``recovery_required`` check (any "Next
+        action" row present) read "Recovery required" over "Waiting for
+        approval". Four call sites read this method; each was re-verified
+        against this narrower meaning:
+
+        - ``_build_console_inspector_state`` (~L13873): the Setup/Blocked-
+          impact/Next-action Inspector rows -- the case above. Now absent
+          during a merely-active run, present only for a real gap.
+        - ``_build_console_workbench_state`` (~L14511): feeds
+          ``provider_status`` (the Provider/Model mode chips' "blocked"/
+          "ready") and, via ``can_send = ... and not blocker``,
+          ``send_available``. ``send_available`` is UNCHANGED by this
+          narrowing: ``can_send`` is independently gated by
+          ``run_allows_send`` (``run_state.is_send_allowed``), whose
+          False-set is the EXACT complement of ``CONSOLE_ACTIVE_RUN_
+          STATUSES`` (both derived from the same 9-member ``ConsoleRun
+          Status``), so ``can_send`` -- and therefore ``send_available`` --
+          was already ``False`` for every active run independent of this
+          copy; only ``provider_status`` changes, from an inaccurate
+          "blocked" to "ready" during a healthy active run (the header's
+          own ``status`` field already special-cased ``run_active`` over
+          ``blocker`` for the identical reason, TASK-347 -- the mode chips
+          had no such override and inherited the same bug this task fixes
+          elsewhere).
+        - ``_sync_console_transcript_guidance`` (~L14692): feeds the EMPTY-
+          transcript setup card/modal only. ``build_console_setup_card_
+          state`` returns ``quiet`` (ignoring this copy entirely) whenever
+          ``has_messages`` is true, and a run cannot become active before
+          the turn's own user message is persisted -- so this consumer
+          never observes a non-empty value from this method during an
+          active run either way; unaffected in practice.
+        - ``UI/Console_Modules/prompts.py`` (~L1208, Improve-prompt
+          ``unavailable_reason``): Improve calls the provider gateway on
+          its OWN, independent of the main turn's stream, so it must stay
+          unavailable while a run is active regardless of provider health.
+          That gate no longer reads this method at all -- it checks
+          ``_console_run_active()`` directly (``console_run_active``, a
+          dedicated constructor dependency on ``ConsolePromptsController``)
+          so its behavior does not depend on this copy's definition.
         """
         _settings, readiness = self._active_console_settings_readiness()
         if (
@@ -17651,6 +17686,13 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_transcript_guidance()
 
     def _native_run_status_copy(self) -> str:
+        """Return the viewed session's run-status copy for the hidden compat mode bar.
+
+        task-32276: kept in agreement with ``_console_active_run_copy``'s
+        (the VISIBLE run chip's) pending-approval override -- two copies of
+        the same fact must never disagree, even though only one of them is
+        ever seen.
+        """
         store = self._console_chat_store
         session_id = store.active_session_id if store is not None else None
         image_edit = (
@@ -17670,6 +17712,8 @@ class ChatScreen(BaseAppScreen):
         run_state = controller.run_state
         if run_state.status is ConsoleRunStatus.IDLE:
             return ""
+        if controller.has_pending_approval_round(session_id or ""):
+            return "Waiting for your approval."
         return run_state.visible_copy or run_state.status.value
 
     def _console_active_run_copy(self) -> str:
@@ -17705,6 +17749,12 @@ class ChatScreen(BaseAppScreen):
         run_state = controller.run_state if controller is not None else None
         if run_state is None or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES:
             return ""
+        # Invariant: this reads the round-KEYED registry (`has_pending_
+        # approval_round`), while `_console_pending_approval_count` /
+        # `ConsoleInspectorState.pending_approval_count` (console_display_
+        # state.py) read the viewed session's mounted-card count via a
+        # separate signal -- both describe "is a card waiting" for the SAME
+        # viewed session and must never disagree.
         if controller.has_pending_approval_round(session_id or ""):
             return "Waiting for your approval."
         return run_state.visible_copy or run_state.status.value
