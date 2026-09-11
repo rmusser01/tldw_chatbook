@@ -1,10 +1,10 @@
 ---
 id: TASK-32228
 title: Library Conversations footer offers neither 'esc focus rail' nor a '/' hint
-status: Done
+status: In Progress
 assignee: []
 created_date: '2026-09-10 14:56'
-updated_date: '2026-09-10 21:31'
+updated_date: '2026-09-11 00:41'
 labels:
   - library
   - conversations
@@ -36,6 +36,7 @@ The Conversations canvas footer is nearly empty while every sibling list adverti
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+--------------------------------------------------
 Fix round 1: AC#1 delivered per ruling R1.
 
 Two halves. The first was live at 100x30 before that round: the canvas showed
@@ -88,4 +89,17 @@ list-arrived seam instead of a fixed window.
 Files: UI/Library_Modules/screen_constants.py, UI/Screens/library_screen.py,
 Tests/UI/test_library_crit9_shell.py,
 Docs/User_Guide/library/media-and-conversations.md.
+
+--- fix round 3 (bot round, PR #2585) ---
+
+REOPENED on evidence. AC#1's delivered behaviour regressed when this branch
+merged dev adb7d5886f: Conversations entry focus was green 24/24 here before
+that merge and is red 4 runs in 5 after it, with no branch-side change. It is
+NOT task-32301's 2s ceiling -- the rows mount 0.44s after the press with 1.75s
+of window still open, the arm is still pending, and the arm generation reaches
+2, so a second arm during route entry invalidates the first scheduled attempt.
+dev's change in scope is the archive-scope recovery annotate hop added to the
+conversations page load. Filed as task-32302; the pin stays, asserting the
+delivered behaviour, marked xfail(strict=False) with that evidence rather than
+weakened or deleted.
 <!-- SECTION:NOTES:END -->

@@ -9709,6 +9709,16 @@ class LibraryScreen(BaseAppScreen):
         live.
         """
         self._media_state.successful_focus_ownership = None
+        # Same reason PR #1410's review stopped the settle timer below: a
+        # retry tick left over from the PREVIOUS arm carries that arm's
+        # generation, so it no-ops when it fires -- while its stored handle
+        # blocks this arm from starting a chain of its own. Live effect after
+        # dev's conversations change added a second arm to the route entry:
+        # the rows mounted 0.44s in, with 1.75s of window left, and nothing
+        # re-requested focus.
+        if self._library_list_entry_focus_retry_timer is not None:
+            self._library_list_entry_focus_retry_timer.stop()
+            self._library_list_entry_focus_retry_timer = None
         if self._library_list_entry_focus_timer is not None:
             self._library_list_entry_focus_timer.stop()
             self._library_list_entry_focus_timer = None
