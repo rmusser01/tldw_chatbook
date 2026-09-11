@@ -1402,3 +1402,107 @@ def test_a_child_profiles_own_rules_shadow_the_defaults(tmp_path) -> None:
     assert not arg_rule_allows(
         store.load(), tool, {"query": "inherited"}, profile_id="child"
     )
+
+
+def test_arg_rule_writes_route_through_the_guarded_mutation_path(tmp_path) -> None:
+    """Qodo #2600 #13: `remove_tool_arg_rule` (and `add_tool_arg_rule`) did
+    their own bare `load()` / mutate / `save()`, so a permission write
+    landing between the load and the save was silently overwritten. Both now
+    go through `_mutate_profile_locked` -- the SAME guarded path
+    `set_tool_state` uses, which holds the resolved-path fence across the
+    whole read-modify-write.
+    """
+    from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    rule_hash = definition_hash(tool.description, tool.input_schema)
+    guarded: list[str] = []
+    original = store._mutate_profile_locked
+
+    def _spy(profile_id, change, **kwargs):
+        guarded.append(profile_id)
+        return original(profile_id, change, **kwargs)
+
+    store._mutate_profile_locked = _spy
+
+    store.add_tool_arg_rule(
+        "srv", "search", args={"query": "x"}, definition_hash=rule_hash
+    )
+    rule_id = store.list_tool_arg_rules("srv", "search")[0]["rule_id"]
+    assert store.remove_tool_arg_rule("srv", "search", rule_id) is True
+
+    assert guarded == ["default", "default"]
+
+
+def test_concurrent_permission_writes_survive_arg_rule_churn(tmp_path) -> None:
+    """Qodo #2600 #13, behaviourally: a `set_tool_state` write must never be
+    lost to an arg-rule add/remove running beside it. Every state write below
+    is to its OWN tool name, so the only way one can go missing is a stale
+    payload being saved over it -- exactly the lost update the unfenced
+    read-modify-write allowed.
+    """
+    from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+    import threading
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    rule_hash = definition_hash(tool.description, tool.input_schema)
+    writes = 60
+    errors: list[BaseException] = []
+
+    def _set_states() -> None:
+        try:
+            for index in range(writes):
+                store.set_tool_state("srv", f"tool-{index}", "deny")
+        except BaseException as exc:  # noqa: BLE001 -- reported to the test
+            errors.append(exc)
+
+    def _churn_rules() -> None:
+        try:
+            for index in range(writes):
+                store.add_tool_arg_rule(
+                    "srv",
+                    "search",
+                    args={"query": f"q{index}"},
+                    definition_hash=rule_hash,
+                )
+                rules = store.list_tool_arg_rules("srv", "search")
+                store.remove_tool_arg_rule("srv", "search", rules[0]["rule_id"])
+        except BaseException as exc:  # noqa: BLE001 -- reported to the test
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=_set_states),
+        threading.Thread(target=_churn_rules),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+
+    assert not errors, errors
+    tools = store.load()["profiles"]["default"]["servers"]["srv"]["tools"]
+    missing = [f"tool-{i}" for i in range(writes) if f"tool-{i}" not in tools]
+    assert missing == [], f"permission writes lost to arg-rule churn: {missing}"
+
+
+def test_add_tool_arg_rule_still_seeds_a_missing_named_profile(tmp_path) -> None:
+    """Qodo #2600 #13 fix dropped `add_tool_arg_rule`'s separate
+    `ensure_profile()` round trip -- `_mutate_profile_locked` seeds the
+    profile inside the fence instead, which must keep working."""
+    from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+        profile_id="fresh",
+    )
+
+    rules = store.list_tool_arg_rules("srv", "search", profile_id="fresh")
+    assert [r["profile_id"] for r in rules] == ["fresh"]
+    assert "fresh" in store.load()["profiles"]
