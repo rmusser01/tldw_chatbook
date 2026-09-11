@@ -239,3 +239,25 @@ custom Tree or generalized private rendering layer remains rejected.
 - [ADR-043: Console rail compact collapse yields to explicit toggles](043-console-rail-compact-collapse-yields-to-explicit-toggle.md)
 - [ADR-077: Bound Console rail sections and expose hidden overflow](077-console-bounded-rail-section-scrolling.md)
 - [TASK-20937](../tasks/task-20937%20-%20Make-Console-rails-edge-native-and-organize-conversations-by-workspace.md)
+
+## Amendment (2026-09-10): Character portraits expand with the viewport
+
+TASK-32311 replaces the fixed 35-row Character maximum with a body ceiling
+of the measured Context viewport minus the Character header, with 35 rows
+retained as the compact/unmeasured fallback. This follows the user's request
+for portraits to grow with the terminal. The body still hugs its content;
+its ceiling is not a minimum height. Other sections remain reachable through
+the existing outer scroll owner.
+
+Both graphics and mosaic portraits use an aspect-preserving contain fit,
+allowing enlargement as well as reduction. The portrait receives only the
+rows left after measuring the Character controls. Geometry reconciliation
+uses the same current ceiling as the bounded section and the existing
+resize epoch/follow-up guards. A change in measured non-image control geometry
+starts a new epoch so async search-result expansion cannot strand a portrait
+at an oversized earlier fit. Image-only size changes do not reset that guard.
+Oversized controls retain local scrolling.
+
+Keeping a fixed maximum leaves unused space in tall terminals; stretching
+or cover-cropping would distort or hide artwork. Neither meets the requested
+whole-portrait fit. No new setting, renderer, or scroll owner is introduced.

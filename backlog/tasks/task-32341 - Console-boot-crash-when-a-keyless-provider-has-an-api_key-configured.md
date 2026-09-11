@@ -1,5 +1,5 @@
 ---
-id: TASK-32272
+id: TASK-32341
 title: Console boot crash when a keyless provider has an api_key configured
 status: Done
 assignee:
@@ -43,3 +43,26 @@ The Console readiness validator raises 'Console credential source conflicts with
 <!-- SECTION:NOTES:BEGIN -->
 build_console_settings_readiness() computed credential_source from readiness.api_key_source before checking readiness.requires_api_key, so a keyless provider (e.g. custom) with a stored api_key produced credential='not_required' alongside credential_source='stored', which the structural validator (ConsoleSettingsReadiness._validate_structured_state, L566-568) rejects. Fix: in the 'if not readiness.requires_api_key:' branch (console_session_settings.py, now L1392-1394) also force credential_source = 'none' -- the key is irrelevant to readiness for a keyless provider, matching the validator's existing rule. One-line fix. Added test_keyless_provider_with_stored_key_reports_not_required_without_source in Tests/Chat/test_console_session_settings.py (next to the existing keyless-provider readiness test), asserting credential == 'not_required', credential_source == 'none', operability == 'ready_to_send' for provider=custom with app_config[api_settings.custom].api_key='dummy'. TDD: test failed red with the exact reported ValueError before the fix, passed green after. Tests/Chat/test_console_session_settings.py + Tests/Chat/test_provider_test_evidence.py: 237 passed, 1 pre-existing unrelated failure (test_settings_active_compaction_close_anyway_keeps_provider_work_running_and_reopens_fresh, a SimpleNamespace mock missing capture_console_settings_origin, present before this change too). Live-checked: booted the app with HOME pointed at a scratch config ([chat_defaults] provider=custom/model=x, [api_settings.custom] api_key=dummy api_url=http://127.0.0.1:1) inside tmux; app reached the Console screen with its nav bar, no traceback, no first-run wizard. Commit e8bf765901.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+<!-- SECTION:PROVENANCE:BEGIN -->
+This task was filed as TASK-32272 on 2026-09-10 at 12:19 PT (19:19 UTC) in the
+approval-card / MCP-permissions UX review wave (PR #2574), which makes it the
+OLDER arrival against the TASK-32272 that `dev` minted later the same day
+("Library Notes select mode shows two selection counters that disagree").
+
+It renumbered to TASK-32341 anyway. The bare 2026-08-21 owner rule of TASK-19601
+quoted in `scripts/check_backlog_task_ids.py` (older arrival keeps the id) is
+superseded by the 2026-09-08 refinement recorded in
+`backlog/docs/lessons-backlog-hygiene.md`: **landed-keeps-id trumps
+older-keeps-id -- a task already on origin/dev never renumbers; the unmerged
+side moves regardless of timestamps, because renumbering landed ids breaks
+external references.** The dev-side TASK-32272 is merged; this task was cited
+only from its own unmerged plan. `dev` applied the same refinement earlier on
+2026-09-10 when it renumbered its archive-lifecycle task to TASK-32300.
+
+Renumbered 2026-09-10. Commit messages on the wave branches
+`approval-wave-a/b/c` written before this date that cite `task-32272` refer to
+THIS task; the dev-side TASK-32272 keeps the id.
+<!-- SECTION:PROVENANCE:END -->

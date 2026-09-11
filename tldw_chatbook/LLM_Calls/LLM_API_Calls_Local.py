@@ -137,6 +137,7 @@ def _chat_with_openai_compatible_local_server(
     timeout: int = 120,
     api_retries: int = 1,
     api_retry_delay: int = 1,
+    chat_template_kwargs: dict[str, Any] | None = None,
 ):
     start_time = time.time()
     logged_api_base = safe_llm_url_host(api_base_url)
@@ -238,12 +239,20 @@ def _chat_with_openai_compatible_local_server(
             )
         )
 
+    if chat_template_kwargs:
+        payload["chat_template_kwargs"] = {
+            **payload.get("chat_template_kwargs", {}),
+            **chat_template_kwargs,
+        }
+
     # Construct full API URL for chat completions
     base_url = api_base_url.rstrip("/")
     chat_completions_path = "v1/chat/completions"  # Standard OpenAI path
     # full_api_url = api_base_url.rstrip('/') + "/" + chat_completions_path.lstrip('/')
     if base_url.endswith(chat_completions_path):
         full_api_url = base_url
+    elif base_url.endswith("/v1"):
+        full_api_url = base_url + "/chat/completions"
     else:
         # If it doesn't end with the standard path, append it.
         # This handles cases where the config provides just the server root.
@@ -552,6 +561,7 @@ def chat_with_local_llm(
     api_base_url: Optional[str] = None,
     reasoning_effort: Optional[str] = None,
     thinking_budget_tokens: Optional[int] = None,
+    chat_template_kwargs: dict[str, Any] | None = None,
 ):
     """Chat with a local llamafile/Local-LLM OpenAI-compatible server.
 
@@ -577,6 +587,7 @@ def chat_with_local_llm(
             is the fallback.
         provider_name: Provider key for dynamic config lookup; also
             drives ADR-066 thinking wire composition.
+        chat_template_kwargs: Reviewed template options selected by the caller.
 
     Returns:
         The assistant reply text, or a streaming generator of chunks.
@@ -679,6 +690,7 @@ def chat_with_local_llm(
         reasoning_effort=reasoning_effort,
         thinking_budget_tokens=thinking_budget_tokens,
         thinking_wire_key="local-llm",
+        chat_template_kwargs=chat_template_kwargs,
         # Same pre-existing dict-.capitalize() crash as chat_with_custom_openai.
         provider_name="Local-LLM",
         timeout=timeout,
@@ -689,7 +701,7 @@ def chat_with_local_llm(
 
 def chat_with_llama(
     input_data: List[Dict[str, Any]],
-    api_key: Optional[str] = None,  # from map
+    api_key: str | None = None,
     custom_prompt: Optional[str] = None,  # from map, Mapped from 'prompt'
     temp: Optional[float] = None,  # from map, generic name is 'temperature'
     system_prompt: Optional[str] = None,  # from map, Mapped from 'system_message'
@@ -723,6 +735,10 @@ def chat_with_llama(
     api_base_url: Optional[str] = None,
     reasoning_effort: Optional[str] = None,
     thinking_budget_tokens: Optional[int] = None,
+    chat_template_kwargs: dict[str, Any] | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: str | dict[str, Any] | None = None,
+    api_key_resolved: bool | None = None,
 ):
     """Chat with a llama.cpp server (llama_cpp/local_llamacpp/local_llamafile).
 
@@ -748,6 +764,11 @@ def chat_with_llama(
             is the fallback.
         provider_name: Provider key for dynamic config lookup; also
             drives ADR-066 thinking wire composition.
+        chat_template_kwargs: Reviewed template options selected by the caller.
+        api_key_resolved: Whether the caller made the final credential decision,
+            including an explicitly keyless endpoint.
+        tools: OpenAI-format native tool definitions, when the target supports them.
+        tool_choice: Native tool selection policy for this request.
 
     Returns:
         The assistant reply text, or a streaming generator of chunks.
@@ -782,7 +803,9 @@ def chat_with_llama(
     from ..Chat.console_provider_gateway import normalize_llamacpp_base_url
 
     api_base_url = normalize_llamacpp_base_url(api_base_url)
-    current_api_key = api_key or llama_config.get("api_key")
+    current_api_key = (
+        api_key if api_key_resolved else api_key or llama_config.get("api_key")
+    )
     current_model = model or llama_config.get("model")
     if (
         not current_model
@@ -858,6 +881,9 @@ def chat_with_llama(
 
     # Assuming llama.cpp server uses an OpenAI-compatible endpoint
     return _chat_with_openai_compatible_local_server(
+        tools=tools,
+        tool_choice=tool_choice,
+        chat_template_kwargs=chat_template_kwargs,
         api_base_url=api_base_url,
         model_name=current_model,
         input_data=input_data,
@@ -1417,7 +1443,7 @@ def chat_with_tabbyapi(
 # vLLM (OpenAI compatible)
 def chat_with_vllm(
     input_data: List[Dict[str, Any]],
-    api_key: Optional[str] = None,  # from map
+    api_key: str | None = None,
     custom_prompt_input: Optional[str] = None,  # from map ('prompt')
     # vLLM's map has 'temp':'temperature', 'system_prompt':'system_message' etc.
     # These are the provider-specific names this function receives.
@@ -1451,6 +1477,10 @@ def chat_with_vllm(
     api_base_url: Optional[str] = None,
     reasoning_effort: Optional[str] = None,
     thinking_budget_tokens: Optional[int] = None,
+    chat_template_kwargs: dict[str, Any] | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: str | dict[str, Any] | None = None,
+    api_key_resolved: bool | None = None,
 ):
     """Chat with a vLLM OpenAI-compatible server (vllm/local_vllm).
 
@@ -1476,6 +1506,11 @@ def chat_with_vllm(
             is the fallback.
         provider_name: Provider key for dynamic config lookup; also
             drives ADR-066 thinking wire composition.
+        chat_template_kwargs: Reviewed template options selected by the caller.
+        api_key_resolved: Whether the caller made the final credential decision,
+            including an explicitly keyless endpoint.
+        tools: OpenAI-format native tool definitions, when the target supports them.
+        tool_choice: Native tool selection policy for this request.
 
     Returns:
         The assistant reply text, or a streaming generator of chunks.
@@ -1495,7 +1530,7 @@ def chat_with_vllm(
             provider=vllm_config_key,
             message="vLLM API URL (api_url) is required and could not be determined from arguments or configuration.",
         )
-    current_api_key = api_key or cfg.get("api_key")
+    current_api_key = api_key if api_key_resolved else api_key or cfg.get("api_key")
     current_model = model or cfg.get("model")
     if not current_model:
         raise ChatConfigurationError(
@@ -1556,6 +1591,9 @@ def chat_with_vllm(
         )
 
     return _chat_with_openai_compatible_local_server(
+        tools=tools,
+        tool_choice=tool_choice,
+        chat_template_kwargs=chat_template_kwargs,
         api_base_url=vllm_api_url,
         model_name=current_model,
         input_data=input_data,
@@ -1713,7 +1751,7 @@ def chat_with_aphrodite(
 # Ollama (with OpenAI compatible endpoint)
 def chat_with_ollama(
     input_data: List[Dict[str, Any]],
-    api_key: Optional[str] = None,  # from map, Ollama doesn't use key but map has it
+    api_key: str | None = None,
     custom_prompt: Optional[str] = None,  # from map ('prompt')
     # Ollama map: 'temp':'temperature', 'system_message':'system_message', 'topp':'top_p', etc.
     temperature: Optional[float] = None,  # from map (mapped from generic 'temp')
@@ -1740,6 +1778,10 @@ def chat_with_ollama(
         str
     ] = None,  # Added to support dynamic configuration loading
     api_base_url: Optional[str] = None,
+    chat_template_kwargs: dict[str, Any] | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: str | dict[str, Any] | None = None,
+    api_key_resolved: bool | None = None,
 ):
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
@@ -1763,7 +1805,7 @@ def chat_with_ollama(
 
     # API Key: function argument takes precedence, then config.
     # For Ollama, cfg.get('api_key') will likely be None as it's not standard.
-    current_api_key = api_key or cfg.get("api_key")
+    current_api_key = api_key if api_key_resolved else api_key or cfg.get("api_key")
 
     # Model: function argument takes precedence, then config.
     # config.py's CONFIG_TOML_CONTENT provides a default for [api_settings.ollama].model
@@ -1882,6 +1924,9 @@ def chat_with_ollama(
 
     # Ollama's /v1/chat/completions endpoint is OpenAI compatible
     return _chat_with_openai_compatible_local_server(
+        tools=tools,
+        tool_choice=tool_choice,
+        chat_template_kwargs=chat_template_kwargs,
         api_base_url=current_api_base_url,
         model_name=current_model,
         input_data=input_data,

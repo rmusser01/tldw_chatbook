@@ -38,8 +38,8 @@ Library rail                 Skills list / editor
 │ Browse             │       │ Skills (N)                               │
 │   Skills           │  ───▶ │ Filter skills…                           │
 │ Create             │       │ sort: Name        Import skill…          │
-│   New skill        │       │ ✓ code-review                            │
-└────────────────────┘       │ ⚠ summarize                              │
+│   New skill        │       │ ✓ code-review · trusted                  │
+└────────────────────┘       │ ⚠ summarize · needs review               │
                              └──────────────────────────────────────────┘
 ```
 
@@ -54,7 +54,11 @@ The list canvas, top to bottom:
   strip of Name / Status with ✓ on the active one and pick directly;
   Status puts needs-review skills first) and "Import skill…".
 - **Rows** — one per skill: **⚠ name** (blocked — needs review before use)
-  or **✓ name** (usable), with a dimmer description line underneath.
+  or **✓ name** (usable), each followed by its trust state in words —
+  `· trusted`, `· needs review`, or `· locked` — and a dimmer description
+  line underneath. A state the app does not recognise shows the glyph with
+  no word, rather than claiming a trust it cannot vouch for. The words are the row's real signal; the glyph repeats
+  them for scanning, and the canvas legend defines no trust glyph.
 - **Empty state** — "No skills yet — use Create ▸ New skill in the rail,
   or Import skill… above." (a filter with no matches shows "No skills match your
   filter." instead).
@@ -102,7 +106,8 @@ appears under it. Pressing it stops the wait and leaves
 "Import cancelled · check the skills list before retrying." — the import
 itself runs on a worker thread that cannot be interrupted, so it may still
 have landed, which is why the receipt says to check rather than promising
-nothing happened.
+nothing happened. The list behind that receipt is re-read when the cancel
+settles, so what it shows is the state after the run, not before it.
 
 Chatbook inspects a folder or archive before importing it:
 
@@ -440,3 +445,12 @@ claim on this page changed.)*
 *Verified against fix/library-crit8-waits — 2026-09-08 (task-32055: a skill
 import that outlives the patience window offers Cancel and never blocks
 leaving the screen).*
+
+*Verified against fix/library-crit8-riders-a — 2026-09-10 (task-32102: a
+cancelled import refreshes the skills list its own receipt tells you to
+check.)*
+
+*Verified against fix/library-crit9-shell — 2026-09-10 (task-32223: a list
+row carries its trust state as a word, so an approved and an unapproved skill
+no longer paint alike; task-32217: with no skill open the list takes the
+columns the "Select a skill to inspect it here." pane was holding).*

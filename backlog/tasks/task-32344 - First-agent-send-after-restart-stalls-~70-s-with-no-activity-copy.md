@@ -1,5 +1,5 @@
 ---
-id: TASK-32275
+id: TASK-32344
 title: First agent send after restart stalls ~70 s with no activity copy
 status: Done
 assignee: []
@@ -44,3 +44,29 @@ Traced, bounded and made visible. The suspected cause (built-in MCP server spawn
 
 Fix round (review Important): expiring the budget abandons the worker but cannot kill it, and TldwCli.get_personal_context_service holds a process-wide lock for the whole bootstrap -- so every later send would park ANOTHER shared default-executor worker on that lock permanently. That executor has ~22 slots and also carries run_reply plus ~1100 other to_thread calls, so ~22 sends against an unanswered keychain prompt would starve every offload in the app, and Python 3.12's Runner.close() then joins it for up to 300 s on quit. Added a module-level _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT threading.Event: while it is set the resolver returns None without submitting anything, and the original worker clears it whichever way it ends, so self-healing is preserved.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+<!-- SECTION:PROVENANCE:BEGIN -->
+This task was filed as TASK-32275 on 2026-09-10 at 12:19 PT (19:19 UTC) in the
+approval-card / MCP-permissions UX review wave (PR #2574), which makes it the
+OLDER arrival against the TASK-32275 that `dev` minted later the same day
+("Build searchable conversation archive review and bulk recovery").
+
+It renumbered to TASK-32344 anyway. The bare 2026-08-21 owner rule of TASK-19601
+quoted in `scripts/check_backlog_task_ids.py` (older arrival keeps the id) is
+superseded by the 2026-09-08 refinement recorded in
+`backlog/docs/lessons-backlog-hygiene.md`: **landed-keeps-id trumps
+older-keeps-id -- a task already on origin/dev never renumbers; the unmerged
+side moves regardless of timestamps, because renumbering landed ids breaks
+external references.** The dev-side TASK-32275 is merged and cited from
+`backlog/decisions/147-conversation-archive-and-exact-resume.md`,
+`backlog/docs/lessons-testing-evidence.md` and two plan/QA records; this task
+was cited only from its own unmerged plan. `dev` applied the same refinement
+earlier on 2026-09-10 when it renumbered its archive-lifecycle task to
+TASK-32300.
+
+Renumbered 2026-09-10. Commit messages on the wave branch `approval-wave-a`
+written before this date that cite `task-32275` refer to THIS task; the
+dev-side TASK-32275 keeps the id.
+<!-- SECTION:PROVENANCE:END -->

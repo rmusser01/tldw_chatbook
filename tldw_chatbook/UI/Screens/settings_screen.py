@@ -77,10 +77,17 @@ from ...Chat.console_roleplay_identity import (
     normalize_chat_display_name,
 )
 from ...Chat.console_rail_state import normalize_console_rail_layout_scope
+from ...Chat.local_reasoning import (
+    REASONING_HISTORY_OPTIONS,
+    reasoning_mode_setting,
+    reasoning_override_key,
+    supports_local_reasoning,
+)
 from ...Widgets.glyph_fallback import set_ascii_glyph_mode
 from ...Chat.console_provider_endpoints import (
     URL_BASED_PROVIDER_KEYS,
     generic_endpoint_differs,
+    safe_endpoint_display,
     unsaved_endpoint_copy,
 )
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
@@ -194,6 +201,7 @@ from ...Utils.input_validation import (
     sanitize_string,
     validate_bounded_integer,
     validate_number_range,
+    validate_reasoning_history_selector,
     validate_text_input,
     validate_url,
 )
@@ -1173,6 +1181,9 @@ CONSOLE_BEHAVIOR_CONSOLE_KEYS = frozenset(
         "collapse_large_pastes",
         "show_model_thinking",
         "thinking_history_policy_default",
+        "reasoning_history",
+        "reasoning_history_overrides",
+        "reasoning_native_tool_overrides",
         "rail_layout_scope",
         "stack_collapsed_rail_labels",
         "paste_collapse_threshold",
@@ -1248,6 +1259,9 @@ CONSOLE_BEHAVIOR_SAVE_ORDER = (
     "collapse_large_pastes",
     "show_model_thinking",
     "thinking_history_policy_default",
+    "reasoning_history",
+    "reasoning_history_overrides",
+    "reasoning_native_tool_overrides",
     "rail_layout_scope",
     "stack_collapsed_rail_labels",
     "paste_collapse_threshold",
@@ -5526,6 +5540,98 @@ class SettingsScreen(BaseAppScreen):
     def _loaded_thinking_history_policy_default(self) -> str:
         return load_thinking_history_policy_default(self._console_settings())
 
+    def _current_reasoning_target(self) -> tuple[str, str, str] | None:
+        """Snapshot the active local Console endpoint/model identity."""
+
+        runtime = getattr(self.app_instance, "console_runtime", None)
+        controller = getattr(runtime, "chat_controller", None)
+        store = getattr(runtime, "chat_store", None)
+        if controller is None or store is None or store.active_session_id is None:
+            return None
+        snapshot = controller.resolve_turn_configuration_snapshot(
+            store.active_session_id
+        )
+        selection = snapshot.provider_selection
+        model = normalize_console_model_value(
+            selection.explicit_model or selection.configured_model
+        )
+        if model is None or not supports_local_reasoning(selection.provider, model):
+            return None
+
+        from tldw_chatbook.Chat.console_provider_endpoints import (
+            effective_provider_endpoint,
+        )
+
+        provider_key = provider_config_key(selection.provider)
+        provider_settings = provider_settings_for_key(
+            self.app_instance.app_config.get("api_settings", {}),
+            provider_key,
+        )
+        endpoint = (
+            effective_provider_endpoint(
+                provider_key,
+                selection.base_url,
+                provider_settings,
+            )
+            or ""
+        )
+        if selection.provider in {"llama_cpp", "local_llamacpp"}:
+            from tldw_chatbook.Chat.console_session_settings import (
+                normalize_llamacpp_base_url,
+            )
+
+            endpoint = normalize_llamacpp_base_url(selection.base_url)
+        return selection.provider, endpoint, model
+
+    def _reasoning_override_value(self) -> str:
+        target = getattr(self, "_reasoning_override_target", None)
+        overrides = self._console_behavior_value("reasoning_history_overrides") or {}
+        value = (
+            overrides.get(reasoning_override_key(*target), "inherit")
+            if target and isinstance(overrides, Mapping)
+            else "inherit"
+        )
+        allowed = {"inherit", *(value for _, value in REASONING_HISTORY_OPTIONS)}
+        return value if isinstance(value, str) and value in allowed else "inherit"
+
+    def _reasoning_native_override_value(self) -> bool:
+        target = getattr(self, "_reasoning_override_target", None)
+        values = self._console_behavior_value("reasoning_native_tool_overrides") or {}
+        return bool(
+            target
+            and isinstance(values, Mapping)
+            and values.get(reasoning_override_key(*target)) is True
+        )
+
+    def _reasoning_policy_status(self) -> str:
+        target = getattr(self, "_reasoning_override_target", None)
+        mode = self._reasoning_override_value()
+        if mode == "inherit":
+            mode = str(self._console_behavior_value("reasoning_history"))
+        if mode != "auto":
+            label = {value: label for label, value in REASONING_HISTORY_OPTIONS}.get(
+                mode, "Automatic"
+            )
+            return f"Conversation Auto next send: {label}"
+        runtime = getattr(self.app_instance, "console_runtime", None)
+        gateway = getattr(runtime, "provider_gateway", None)
+        known = getattr(gateway, "reasoning_policies", {})
+        policy = (
+            known.get(reasoning_override_key(*target))
+            if target and isinstance(known, Mapping)
+            else None
+        )
+        if policy is not None and policy.source == "Auto":
+            status = f"{policy.label} — checked again on next send"
+            if policy.template_family == "Gemma 4" and not policy.native_tools:
+                status += (
+                    ". Native server tools are needed to retain Gemma thinking "
+                    "across tool rounds; legacy fenced tool results begin a new "
+                    "server-side user turn."
+                )
+            return status
+        return "Conversation Auto: template checked on next send"
+
     def _show_model_thinking_label(self) -> str:
         state = "On" if self._loaded_show_model_thinking() else "Off"
         return f"Show model thinking ({state})"
@@ -5914,6 +6020,22 @@ class SettingsScreen(BaseAppScreen):
             "thinking_history_policy_default": (
                 self._loaded_thinking_history_policy_default()
             ),
+            "reasoning_history": reasoning_mode_setting(self._console_settings()),
+            "reasoning_history_overrides": dict(
+                self._console_settings().get("reasoning_history_overrides")
+            )
+            if isinstance(
+                self._console_settings().get("reasoning_history_overrides"), Mapping
+            )
+            else {},
+            "reasoning_native_tool_overrides": dict(
+                self._console_settings().get("reasoning_native_tool_overrides")
+            )
+            if isinstance(
+                self._console_settings().get("reasoning_native_tool_overrides"),
+                Mapping,
+            )
+            else {},
             "rail_layout_scope": self._loaded_console_rail_layout_scope(),
             "stack_collapsed_rail_labels": self._loaded_stack_collapsed_rail_labels(),
             "paste_collapse_threshold": self._loaded_paste_collapse_threshold(),
@@ -16159,6 +16281,59 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-console-show-model-thinking-help",
                 classes="settings-detail-row",
             )
+            yield Static("Local reasoning history", classes="destination-section")
+            yield Select(
+                REASONING_HISTORY_OPTIONS,
+                value=self._console_behavior_value("reasoning_history"),
+                allow_blank=False,
+                id="settings-console-reasoning-history",
+            )
+            yield Static(
+                "These device-local controls refine Conversation Auto. Conversation "
+                "Include and Exclude override them, and Required continuation remains "
+                "intact. Automatic follows reviewed templates; unknown templates keep "
+                "the server default. All available sends every compatible field, but "
+                "the server template can still omit older reasoning.",
+                id="settings-console-reasoning-history-help",
+                classes="settings-detail-row",
+            )
+            self._reasoning_override_target = self._current_reasoning_target()
+            target = self._reasoning_override_target
+            with Collapsible(title="Override current Console model", collapsed=True):
+                yield Static(
+                    f"{target[0]} / {target[2]} — {safe_endpoint_display(target[1])}"
+                    if target
+                    else "Select a local model in Console to set a remembered override.",
+                    markup=False,
+                    classes="settings-detail-row",
+                )
+                yield Select(
+                    (("Use default", "inherit"), *REASONING_HISTORY_OPTIONS),
+                    value=self._reasoning_override_value(),
+                    allow_blank=False,
+                    disabled=target is None,
+                    id="settings-console-reasoning-override",
+                )
+                yield Checkbox(
+                    "This server is configured for native tool calls",
+                    value=self._reasoning_native_override_value(),
+                    disabled=target is None,
+                    id="settings-console-reasoning-native-tools",
+                    tooltip=(
+                        "Use when the server cannot report support. Configure the "
+                        "server's native tool parser before enabling this preference."
+                    ),
+                )
+                yield Static(
+                    "Remembered for this normalized endpoint and model. Native tool "
+                    "support is configured separately from reasoning replay.",
+                    classes="settings-detail-row",
+                )
+            yield Static(
+                self._reasoning_policy_status(),
+                id="settings-console-reasoning-status",
+                classes="settings-detail-row",
+            )
             yield Button(
                 "Conversation context and memory ↓",
                 id="settings-console-context-memory-jump",
@@ -18402,14 +18577,14 @@ class SettingsScreen(BaseAppScreen):
         with Vertical(id="settings-workspaces-list"):
             for record in registry.list_workspaces(include_archived=show_archived):
                 marker = " (active)" if record.workspace_id == active_id else ""
-                archived_suffix = " [archived]" if record.archived else ""
+                archived_prefix = "(archived) " if record.archived else ""
                 folders = (
                     len(registry.list_folder_bindings(record.workspace_id))
                     if record.workspace_id != DEFAULT_WORKSPACE_ID
                     else 0
                 )
                 yield Button(
-                    f"{record.name}{marker}{archived_suffix} - {folders} folders",
+                    Text(f"{archived_prefix}{record.name}{marker} - {folders} folders"),
                     id=f"settings-workspace-row-{record.workspace_id}",
                     classes="settings-workspace-row",
                     compact=True,
@@ -18419,6 +18594,14 @@ class SettingsScreen(BaseAppScreen):
             id="settings-workspaces-result",
             classes="settings-status-row",
         )
+        if getattr(self, "_settings_workspace_archive_receipt", None) is not None:
+            with Horizontal(classes="settings-input-row"):
+                yield Button(
+                    "Undo archive", id="settings-workspace-archive-undo", compact=True
+                )
+                yield Button(
+                    "View archived", id="settings-workspace-archive-view", compact=True
+                )
         yield from self._render_workspace_card(registry, active_id)
 
     def _render_workspace_card(
@@ -18470,15 +18653,20 @@ class SettingsScreen(BaseAppScreen):
                 # controls all require an ACTIVE workspace_id underneath --
                 # offering them here let a user hit a bare-id error acting
                 # on a workspace that is currently invisible everywhere
-                # else. Unarchive first restores it to normal editing.
+                # else. Restore first returns it to normal editing.
                 yield Static(
-                    "Archived workspace. Unarchive it to rename, activate, "
-                    "or edit folders.",
+                    "Archived workspace. Restore to list it again; your active workspace stays unchanged. Edit the name below if it is already in use.",
                     id="settings-workspace-archived-note",
                     classes="settings-status-row",
                 )
+                yield Static("Restore as", classes="settings-detail-row")
+                yield Input(
+                    value=record.name,
+                    id="settings-workspace-restore-name",
+                    classes="settings-compact-input",
+                )
                 yield Button(
-                    "Unarchive", id="settings-workspace-unarchive", compact=True
+                    "Restore workspace", id="settings-workspace-unarchive", compact=True
                 )
                 return
             with Horizontal(classes="settings-input-row"):
@@ -23084,69 +23272,330 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#settings-workspace-archive")
     def handle_workspace_archive(self, event: Button.Pressed) -> None:
-        """Confirm, then archive (task 9).
+        """Confirm workspace archive and retain recovery after storage completes.
 
-        Mirrors `ChatScreen._confirm_console_workspace_archive` (Console's
-        own archive flow): the SAME verbatim copy, and the SAME shape --
-        an async closure passed as `confirm_callback`, since
-        `ConfirmationDialog.on_button_pressed` `await`s that callback and a
-        plain sync function would raise there instead of archiving.
+        Args:
+            event: The workspace Archive button event.
         """
+        from tldw_chatbook.Chat.conversation_archive_actions import (
+            storage_call,
+            workspace_archive_refusal,
+        )
+
         event.stop()
         workspace_id = self._settings_selected_workspace_id
-        if not workspace_id:
-            return
         registry = getattr(self.app_instance, "workspace_registry_service", None)
-        if registry is None:
+        if not workspace_id or registry is None:
             return
-        record = registry.get_workspace(workspace_id)
-        if record is None:
-            return
+        request = object()
+        self._settings_workspace_archive_request = request
+        prior_receipt = getattr(self, "_settings_workspace_archive_receipt", None)
+        dialog = None
 
-        async def _archive() -> None:
-            try:
-                registry.archive_workspace(workspace_id)
-            except WorkspaceRegistryServiceError as exc:
-                self._set_settings_workspaces_result(str(exc))
+        def _current() -> bool:
+            return (
+                self._settings_workspace_archive_request is request
+                and self._settings_selected_workspace_id == workspace_id
+                and self.is_mounted
+                and self.app.screen in (self, dialog)
+            )
+
+        def _failed(message: str) -> None:
+            if _current():
+                self._set_settings_workspaces_result(message)
+
+        async def _prepare() -> None:
+            nonlocal dialog
+            refusal = workspace_archive_refusal(self.app_instance, workspace_id)
+            if refusal:
+                _failed(refusal)
                 return
-            # The row disappears from the default (not-showing-archived)
-            # list -- a selection surviving would point the card at a
-            # workspace no longer in view.
-            self._settings_selected_workspace_id = None
-            self._settings_workspaces_result = ""
-            self._refresh_settings_workspaces_pane()
+            try:
+                record = await storage_call(registry, "get_workspace", workspace_id)
+            except WorkspaceRegistryServiceError as exc:
+                _failed(str(exc))
+                return
+            except Exception:
+                logger.exception("Unable to read Settings workspace")
+                _failed("Workspace could not be read. Retry Archive.")
+                return
+            if record is None or not _current():
+                return
 
-        self.app.push_screen(
-            ConfirmationDialog(
+            async def _complete_archive() -> None:
+                try:
+                    archived = await storage_call(
+                        registry, "archive_workspace", workspace_id
+                    )
+                except WorkspaceRegistryServiceError as exc:
+                    _failed(str(exc))
+                    return
+                except Exception:
+                    logger.exception("Unable to archive Settings workspace")
+                    _failed("Workspace could not be archived. Retry Archive.")
+                    return
+                # Keep the receipt for a committed write even after navigation or
+                # cancellation, but never replace a newer operation's receipt.
+                if (
+                    self._settings_workspace_archive_request is not request
+                    or getattr(self, "_settings_workspace_archive_receipt", None)
+                    is not prior_receipt
+                ):
+                    return
+                self._settings_workspace_archive_receipt = archived
+                if not _current():
+                    return
+                self._settings_selected_workspace_id = None
+                self._settings_workspaces_result = (
+                    f"Archived {record.name}. Saved conversations stay in Library."
+                )
+                self._refresh_settings_workspaces_pane()
+
+            async def _archive() -> None:
+                if not _current():
+                    return
+                refusal = workspace_archive_refusal(self.app_instance, workspace_id)
+                if refusal:
+                    _failed(refusal)
+                    return
+                store = getattr(
+                    getattr(self.app_instance, "console_runtime", None),
+                    "chat_store",
+                    None,
+                )
+                reserved = (
+                    {
+                        session.persisted_conversation_id
+                        for session in store.sessions()
+                        if session.workspace_id == workspace_id
+                        and session.persisted_conversation_id
+                    }
+                    if store is not None
+                    else set()
+                )
+                inflight = getattr(
+                    self.app_instance, "_conversation_archive_inflight", None
+                )
+                if inflight is None:
+                    inflight = self.app_instance._conversation_archive_inflight = set()
+                if reserved & inflight:
+                    _failed("An archive change is already in progress.")
+                    return
+                inflight.update(reserved)
+
+                async def _complete_reserved_archive() -> None:
+                    try:
+                        await _complete_archive()
+                    finally:
+                        inflight.difference_update(reserved)
+
+                operation = asyncio.create_task(_complete_reserved_archive())
+                operations = getattr(
+                    self.app_instance, "_workspace_lifecycle_operations", None
+                )
+                if operations is None:
+                    operations = self.app_instance._workspace_lifecycle_operations = (
+                        set()
+                    )
+                operations.add(operation)
+                operation.add_done_callback(operations.discard)
+                operation.add_done_callback(
+                    lambda task: None if task.cancelled() else task.exception()
+                )
+                await asyncio.shield(operation)
+
+            dialog = ConfirmationDialog(
                 title="Archive workspace?",
                 message=(
                     f"Archive {record.name}? Its conversations stay saved and "
                     "remain visible in Library; the workspace disappears from "
-                    "the switcher and the Console browser."
+                    "the active switcher list and the Console browser. Recover it using Show archived."
                 ),
                 confirm_label="Archive",
                 confirm_callback=_archive,
             )
+            self.app.push_screen(dialog)
+
+        self.app.run_worker(
+            _prepare(), group="settings-workspace-archive", exclusive=True
         )
+
+    @on(Button.Pressed, "#settings-workspace-archive-view")
+    def handle_workspace_archive_view(self, event: Button.Pressed) -> None:
+        """Show archived workspaces and select the retained recovery receipt.
+
+        Args:
+            event: The View archived button event.
+        """
+        event.stop()
+        self._settings_show_archived_workspaces = True
+        receipt = getattr(self, "_settings_workspace_archive_receipt", None)
+        if receipt is not None:
+            self._settings_selected_workspace_id = receipt.workspace_id
+        self._refresh_settings_workspaces_pane()
+
+    @on(Button.Pressed, "#settings-workspace-archive-undo")
+    def handle_workspace_archive_undo(self, event: Button.Pressed) -> None:
+        """Restore a retained archive receipt without blocking the UI.
+
+        Args:
+            event: The Undo archive button event.
+        """
+        from tldw_chatbook.Chat.conversation_archive_actions import storage_call
+
+        event.stop()
+        receipt = getattr(self, "_settings_workspace_archive_receipt", None)
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if receipt is None or registry is None:
+            return
+        request = object()
+        self._settings_workspace_undo_request = request
+        selected_id = self._settings_selected_workspace_id
+
+        def _owns_receipt() -> bool:
+            return (
+                self._settings_workspace_undo_request is request
+                and self._settings_workspace_archive_receipt is receipt
+            )
+
+        def _visible() -> bool:
+            return self.is_mounted and self.app.screen is self
+
+        async def _undo() -> None:
+            try:
+                current = await storage_call(
+                    registry, "get_workspace", receipt.workspace_id
+                )
+                if not _owns_receipt() or not _visible():
+                    return
+                if current != receipt:
+                    self._set_settings_workspaces_result(
+                        "Workspace changed since archive. Use View archived to review before restoring."
+                    )
+                    return
+            except WorkspaceRegistryServiceError as exc:
+                if _owns_receipt() and _visible():
+                    self._set_settings_workspaces_result(
+                        f"Could not restore workspace: {exc}. Retry Undo; use View archived "
+                        "and Restore as if the name is in use."
+                    )
+                return
+            operation = asyncio.create_task(_complete_undo())
+            operations = getattr(
+                self.app_instance, "_workspace_lifecycle_operations", None
+            )
+            if operations is None:
+                operations = self.app_instance._workspace_lifecycle_operations = set()
+            operations.add(operation)
+            operation.add_done_callback(operations.discard)
+            operation.add_done_callback(
+                lambda task: None if task.cancelled() else task.exception()
+            )
+            await asyncio.shield(operation)
+
+        async def _complete_undo() -> None:
+            # Keep receipt completion coupled to a write even if a newer
+            # exclusive worker cancels its predecessor's await.
+            try:
+                restored = await storage_call(
+                    registry, "unarchive_workspace", receipt.workspace_id
+                )
+            except WorkspaceRegistryServiceError as exc:
+                if _owns_receipt() and _visible():
+                    self._set_settings_workspaces_result(
+                        f"Could not restore workspace: {exc}. Retry Undo; use View archived "
+                        "and Restore as if the name is in use."
+                    )
+                return
+            if self._settings_workspace_archive_receipt is not receipt:
+                return
+            self._settings_workspace_archive_receipt = None
+            self._settings_workspaces_result = (
+                f"Restored {restored.name}. Active workspace unchanged."
+            )
+            if _visible():
+                if self._settings_selected_workspace_id == selected_id:
+                    self._settings_selected_workspace_id = restored.workspace_id
+                self._refresh_settings_workspaces_pane()
+
+        self.app.run_worker(_undo(), group="settings-workspace-undo", exclusive=True)
 
     @on(Button.Pressed, "#settings-workspace-unarchive")
     def handle_workspace_unarchive(self, event: Button.Pressed) -> None:
-        """Restore a workspace to the default listing without activating it
-        (spec: never auto-activate on unarchive, task 9)."""
+        """Restore the selected workspace asynchronously without activating it.
+
+        Args:
+            event: The workspace Restore button event.
+        """
+        from tldw_chatbook.Chat.conversation_archive_actions import storage_call
+
         event.stop()
         workspace_id = self._settings_selected_workspace_id
-        if not workspace_id:
-            return
         registry = getattr(self.app_instance, "workspace_registry_service", None)
-        if registry is None:
+        if not workspace_id or registry is None:
             return
-        try:
-            registry.unarchive_workspace(workspace_id)
-        except WorkspaceRegistryServiceError as exc:
-            self._set_settings_workspaces_result(str(exc))
-            return
-        self._settings_workspaces_result = ""
-        self._refresh_settings_workspaces_pane()
+        name = self.query_one("#settings-workspace-restore-name", Input).value
+        receipt = getattr(self, "_settings_workspace_archive_receipt", None)
+        request = object()
+        self._settings_workspace_restore_request = request
+
+        def _current() -> bool:
+            return (
+                self._settings_workspace_restore_request is request
+                and self._settings_selected_workspace_id == workspace_id
+                and self.is_mounted
+                and self.app.screen is self
+            )
+
+        async def _complete_restore() -> None:
+            try:
+                restored = await storage_call(
+                    registry, "unarchive_workspace", workspace_id, name=name
+                )
+            except WorkspaceRegistryServiceError as exc:
+                if _current():
+                    self._set_settings_workspaces_result(str(exc))
+                return
+            except Exception:
+                logger.exception("Unable to restore Settings workspace")
+                if _current():
+                    self._set_settings_workspaces_result(
+                        "Workspace could not be restored. Retry Restore."
+                    )
+                return
+            if (
+                receipt is not None
+                and receipt.workspace_id == workspace_id
+                and self._settings_workspace_archive_receipt is receipt
+            ):
+                self._settings_workspace_archive_receipt = None
+            if not _current():
+                return
+            self._settings_workspaces_result = (
+                f"Restored {restored.name}. Active workspace unchanged; "
+                "choose Set active to switch."
+            )
+            self._refresh_settings_workspaces_pane()
+
+        async def _restore() -> None:
+            if not _current():
+                return
+            operation = asyncio.create_task(_complete_restore())
+            operations = getattr(
+                self.app_instance, "_workspace_lifecycle_operations", None
+            )
+            if operations is None:
+                operations = self.app_instance._workspace_lifecycle_operations = set()
+            operations.add(operation)
+            operation.add_done_callback(operations.discard)
+            operation.add_done_callback(
+                lambda task: None if task.cancelled() else task.exception()
+            )
+            await asyncio.shield(operation)
+
+        self.app.run_worker(
+            _restore(), group="settings-workspace-restore", exclusive=True
+        )
 
     @on(Button.Pressed, "#settings-workspace-change-review-toggle")
     def _settings_workspace_toggle_change_review(self, event: Button.Pressed) -> None:
@@ -23793,6 +24242,83 @@ class SettingsScreen(BaseAppScreen):
         self._thinking_visibility_write_revision += 1
         self._thinking_visibility_desired_value = next_value
         self._start_thinking_visibility_persist_if_idle()
+
+    @on(Checkbox.Changed, "#settings-console-reasoning-native-tools")
+    def handle_console_reasoning_native_tools_changed(
+        self, event: Checkbox.Changed
+    ) -> None:
+        """Stage explicit native-tool support for the active local target.
+
+        Args:
+            event: Checkbox event carrying the requested support state.
+        """
+
+        event.stop()
+        target = getattr(self, "_reasoning_override_target", None)
+        if target is None:
+            return
+        values = dict(
+            self._console_behavior_value("reasoning_native_tool_overrides") or {}
+        )
+        key = reasoning_override_key(*target)
+        if event.value:
+            values[key] = True
+        else:
+            values.pop(key, None)
+        self._stage_console_default_value("reasoning_native_tool_overrides", values)
+        self._mark_console_behavior_settings_staged()
+
+    @on(Select.Changed, "#settings-console-reasoning-history")
+    def handle_console_reasoning_history_changed(self, event: Select.Changed) -> None:
+        """Validate and stage the default local reasoning replay mode.
+
+        Args:
+            event: Selector event carrying the requested default mode.
+        """
+
+        event.stop()
+        try:
+            value = validate_reasoning_history_selector(event.value)
+        except ValueError:
+            return
+        self._stage_console_default_value("reasoning_history", value)
+        self._mark_console_behavior_settings_staged()
+        self._set_static_text(
+            "#settings-console-reasoning-status", self._reasoning_policy_status()
+        )
+
+    @on(Select.Changed, "#settings-console-reasoning-override")
+    def handle_console_reasoning_override_changed(self, event: Select.Changed) -> None:
+        """Validate and stage the active target's remembered replay override.
+
+        Args:
+            event: Selector event carrying a replay mode or ``inherit``.
+        """
+
+        event.stop()
+        target = getattr(self, "_reasoning_override_target", None)
+        if target is None:
+            return
+        try:
+            value = validate_reasoning_history_selector(
+                event.value,
+                allow_inherit=True,
+            )
+        except ValueError:
+            return
+        overrides = dict(
+            self._console_behavior_value("reasoning_history_overrides") or {}
+        )
+        key = reasoning_override_key(*target)
+        if value == "inherit":
+            overrides.pop(key, None)
+        else:
+            overrides[key] = value
+        self._stage_console_default_value("reasoning_history_overrides", overrides)
+        self._mark_console_behavior_settings_staged()
+        self._set_static_text(
+            "#settings-console-reasoning-status", self._reasoning_policy_status()
+        )
 
     @on(Checkbox.Changed, "#settings-console-stack-collapsed-rail-labels")
     def handle_console_rail_label_style_changed(self, event: Checkbox.Changed) -> None:
@@ -28611,6 +29137,30 @@ class SettingsScreen(BaseAppScreen):
         self._set_static_text(
             "#settings-console-exchange-capture-status",
             self._console_capture_status,
+        )
+        try:
+            native = self.query_one(
+                "#settings-console-reasoning-native-tools", Checkbox
+            )
+            with native.prevent(Checkbox.Changed):
+                native.value = self._reasoning_native_override_value()
+        except QueryError:
+            pass
+        for selector, value in (
+            (
+                "#settings-console-reasoning-history",
+                self._console_behavior_value("reasoning_history"),
+            ),
+            ("#settings-console-reasoning-override", self._reasoning_override_value()),
+        ):
+            try:
+                widget = self.query_one(selector, Select)
+                with widget.prevent(Select.Changed):
+                    widget.value = value
+            except QueryError:
+                pass
+        self._set_static_text(
+            "#settings-console-reasoning-status", self._reasoning_policy_status()
         )
         try:
             checkbox = self.query_one("#settings-console-show-model-thinking", Checkbox)

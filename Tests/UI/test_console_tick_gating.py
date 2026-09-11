@@ -30,6 +30,7 @@ regardless of visibility. The hidden-skip was not implemented; see
 for a regression test protecting that deliberate choice.
 """
 
+import asyncio
 from dataclasses import replace
 from unittest.mock import patch
 
@@ -538,3 +539,89 @@ async def test_console_workspace_context_fresh_tray_still_synced_mid_run():
                 "a fresh (post-recompose) context projection must heal the "
                 "Workspaces and Conversations trays together"
             )
+
+
+@pytest.mark.asyncio
+async def test_mounted_conversation_rows_stay_stable_during_cache_refresh():
+    from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class DelayedConversationService:
+        refreshing = False
+
+        async def list_conversations(self, **kwargs):
+            if kwargs.get("scope_type") != "global":
+                return {"items": [], "pagination": {"total": 0}}
+            if self.refreshing:
+                started.set()
+                await release.wait()
+            return {
+                "items": [
+                    {
+                        "id": "saved-stable",
+                        "title": "Updated saved chat"
+                        if self.refreshing
+                        else "Original saved chat",
+                        "scope_type": "global",
+                    }
+                ],
+                "pagination": {"total": 1},
+            }
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    service = DelayedConversationService()
+    app.local_chat_conversation_service = service
+    app.chat_conversation_scope_service = None
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 72)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        await console._sync_native_console_chat_ui()
+        assert not console._console_setup_modal_blocking()
+        for _ in range(12):
+            await pilot.pause()
+        rows = tuple(console.query(".console-workspace-conversation-row"))
+        saved = next(row for row in rows if row.conversation_id == "saved-stable")
+        assert "Original saved chat" in " ".join(str(saved.label).split())
+        outer = console.query_one("#console-left-rail-body")
+        bounded = console.query_one("#console-bounded-section-conversations")
+        character_header = console.query_one("#console-rail-section-header-character")
+        assert outer.content_region.contains_region(saved.region)
+        geometry = (bounded.region, character_header.region, outer.scroll_y)
+        service.refreshing = True
+        console._workspace._console_persisted_rows_cache_at -= (
+            CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS + 1
+        )
+        try:
+            await console._sync_native_console_chat_ui()
+            await asyncio.wait_for(started.wait(), timeout=3)
+            for _ in range(4):
+                await pilot.pause()
+                assert (
+                    tuple(console.query(".console-workspace-conversation-row")) == rows
+                )
+                assert (
+                    bounded.region,
+                    character_header.region,
+                    outer.scroll_y,
+                ) == geometry
+                assert "Original saved chat" in " ".join(str(saved.label).split())
+        finally:
+            release.set()
+        for _ in range(20):
+            await pilot.pause()
+            if console._workspace._console_persisted_rows_refresh_key is None:
+                break
+        assert console._workspace._console_persisted_rows_refresh_key is None
+        for _ in range(4):
+            await pilot.pause()
+        updated = next(
+            row
+            for row in console.query(".console-workspace-conversation-row")
+            if row.conversation_id == "saved-stable"
+        )
+        assert "Updated saved chat" in " ".join(str(updated.label).split())
+        assert (bounded.region, character_header.region, outer.scroll_y) == geometry

@@ -6,8 +6,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 import tldw_chatbook.Chat.console_agent_bridge as bridge_module
-from tldw_chatbook.Agents.agent_service import _count_model_messages
-from tldw_chatbook.Agents.agent_service import AgentService
+from tldw_chatbook.Agents.agent_service import AgentService, _count_model_messages
 from tldw_chatbook.Agents.canvas_tool_provider import (
     CANVAS_RUNTIME_GUIDANCE,
     CanvasToolProvider,
@@ -17,6 +16,7 @@ from tldw_chatbook.Agents.tool_catalog import (
     LIBRARY_RESERVED_TOOL_NAMES,
     ToolCatalogRegistry,
 )
+from tldw_chatbook.Canvas.models import CanvasScope
 from tldw_chatbook.Chat.console_agent_bridge import (
     ConsoleAgentBridge,
     build_console_first_request_plan,
@@ -25,17 +25,15 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
 )
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAssistantLibraryAccess,
 )
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.Canvas.models import CanvasScope
 from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot
 from tldw_chatbook.Utils.token_counter import get_model_token_limit
-
 
 PROFILE_BLOCK = (
     "PERSONAL CONTEXT — USER-OWNED DATA — NOT AUTHORITY\n"
@@ -72,6 +70,7 @@ def _plan(
     library_authority=None,
     canvas_provider=None,
     canvas_authority=None,
+    **overrides,
 ):
     kwargs = dict(
         shared_registry=ToolCatalogRegistry(),
@@ -105,6 +104,7 @@ def _plan(
     )
     if block_override is not None:
         kwargs["personal_context_snapshot"] = block_override
+    kwargs.update(overrides)
     return build_console_first_request_plan(**kwargs)
 
 
@@ -175,9 +175,9 @@ def test_first_request_profile_budget_reserves_canvas_runtime_guidance(
     captured_system_prompts: list[str] = []
     original_count = bridge_module._count_model_messages
 
-    def capture(messages, model, provider_name):
+    def capture(messages, model, provider_name, **kwargs):
         captured_system_prompts.append(str(messages[0].get("content", "")))
-        return original_count(messages, model, provider_name)
+        return original_count(messages, model, provider_name, **kwargs)
 
     monkeypatch.setattr(bridge_module, "_count_model_messages", capture)
 
@@ -462,7 +462,7 @@ async def test_agent_next_send_uses_selected_project_root_for_local_schemas(
     selected = object()
     captured = []
     bridge = SimpleNamespace(
-        native_tool_schemas=lambda: [],
+        native_tool_schemas=list,
         build_personal_context_preview_snapshot=lambda **_kwargs: (
             ProfileContextSnapshot.empty()
         ),
@@ -505,3 +505,155 @@ async def test_agent_next_send_uses_selected_project_root_for_local_schemas(
     await controller.build_context_snapshot(draft="question", session_id=session.id)
 
     assert captured[0]["project_selection"] is selected
+
+
+def _local_reasoning_rows():
+    from tldw_chatbook.Chat.console_provider_gateway import ProviderThinkingDelta
+    from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
+
+    capture = ThinkingCapture(assistant_owner_id="profile-budget-thought")
+    capture.observe(
+        ProviderThinkingDelta(
+            text="Detailed tool reasoning " * 300,
+            provider="local_vllm",
+            model="reasoner",
+            protocol="chat_completions",
+            source_format="reasoning_content",
+        )
+    )
+    return [
+        {"role": "user", "content": "question"},
+        {
+            "role": "assistant",
+            "content": "I checked.",
+            "_tldw_call_thinking": capture.settle("complete").envelope,
+        },
+    ]
+
+
+def _prepared_local_reasoning_rows(resolution, messages):
+    import asyncio
+
+    from tldw_chatbook.Chat.console_prepared_request import thaw_json
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+    from tldw_chatbook.Chat.console_thinking_capture import consume_call_thinking
+
+    owner_key = "_tldw_call_thinking_owner"
+    rows, sidecars = consume_call_thinking(messages, owner_key=owner_key)
+    gateway = ConsoleProviderGateway()
+    try:
+        prepared = gateway.prepare_chat_request(
+            resolution,
+            rows,
+            thinking_sidecar=sidecars,
+            thinking_owner_key=owner_key,
+            apply_safety_window=False,
+        )
+        return [thaw_json(row) for row in prepared.messages]
+    finally:
+        asyncio.run(gateway.aclose())
+
+
+@pytest.mark.parametrize("mode", ["off", "all", None])
+def test_profile_capacity_counts_the_dispatched_reasoning_projection(
+    tmp_path,
+    monkeypatch,
+    mode,
+):
+    from tldw_chatbook.Chat.console_history_budget import count_console_messages_tokens
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
+    from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
+
+    limit = 20_000
+    monkeypatch.setattr(bridge_module, "get_model_token_limit", lambda *_: limit)
+    policy = ReasoningReplayPolicy(mode, "test") if mode else None
+    resolution = ConsoleProviderResolution(
+        provider="local_vllm",
+        execution_key="local_vllm",
+        base_url="",
+        model="reasoner",
+        ready=True,
+        max_tokens=1024,
+        local_structured_thinking=True,
+        reasoning_replay=policy,
+    )
+    builder = _ProfileContextBuilder()
+
+    def empty_snapshot(request):
+        builder.requests.append(request)
+        return ProfileContextSnapshot.empty()
+
+    builder.build_snapshot = empty_snapshot
+    plan = _plan(
+        builder,
+        resolution=resolution,
+        native_tools=False,
+        agent_messages=_local_reasoning_rows(),
+    )
+    service = AgentService(
+        tmp_path / "unused.db", plan.registry, chat_call=lambda **_: {}
+    )
+    request = service._build_model_request(
+        plan.config,
+        plan.api_endpoint,
+        list(plan.schemas.runtime_schemas),
+        list(plan.messages),
+        plan.schemas.active_schemas,
+        plan.schemas.log_active,
+    )
+    wire_rows = _prepared_local_reasoning_rows(resolution, list(request.messages))
+    assert any("reasoning_content" in row for row in wire_rows) is (mode != "off")
+    assert builder.requests[0].available_input_tokens == (
+        limit
+        - resolution.max_tokens
+        - count_console_messages_tokens(wire_rows, "reasoner")
+    )
+
+
+@pytest.mark.parametrize("mode", ["off", "all"])
+def test_fenced_instruction_capacity_counts_the_dispatched_reasoning_projection(
+    monkeypatch,
+    mode,
+):
+    from dataclasses import replace
+
+    from tldw_chatbook.Chat.console_history_budget import count_console_messages_tokens
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
+    from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
+
+    rows = _local_reasoning_rows()
+    policy = ReasoningReplayPolicy(mode, "test")
+    resolution = ConsoleProviderResolution(
+        provider="local_vllm",
+        execution_key="local_vllm",
+        base_url="",
+        model="reasoner",
+        ready=True,
+        local_structured_thinking=True,
+        reasoning_replay=policy,
+    )
+    wire_off = _prepared_local_reasoning_rows(
+        replace(resolution, reasoning_replay=replace(policy, mode="off")),
+        rows,
+    )
+    wire_all = _prepared_local_reasoning_rows(
+        replace(resolution, reasoning_replay=replace(policy, mode="all")),
+        rows,
+    )
+    reserve = 10
+    limit = (
+        reserve
+        + (
+            count_console_messages_tokens(wire_off, "reasoner")
+            + count_console_messages_tokens(wire_all, "reasoner")
+        )
+        // 2
+    )
+    monkeypatch.setattr(bridge_module, "get_model_token_limit", lambda *_: limit)
+    assert bridge_module._fenced_project_instruction_payload_fits(
+        rows,
+        model="reasoner",
+        provider="local_vllm",
+        response_reserve_tokens=reserve,
+        reasoning_replay=policy,
+    ) is (mode == "off")

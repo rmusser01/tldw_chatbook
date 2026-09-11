@@ -1935,6 +1935,14 @@ def _load_settings_uncached(
         final_console_settings_cli.get("stack_collapsed_rail_labels", False),
         False,
     )
+    from tldw_chatbook.Utils.reasoning_config import resolve_console_reasoning_config
+
+    reasoning_resolution = resolve_console_reasoning_config(
+        final_console_settings_cli
+    )
+    for diagnostic in reasoning_resolution.diagnostics:
+        logger.warning("Invalid Console reasoning configuration: {}", diagnostic)
+    final_console_settings_cli.update(reasoning_resolution.settings.model_dump())
     _rail_layout_scope = final_console_settings_cli.get("rail_layout_scope")
     final_console_settings_cli["rail_layout_scope"] = (
         _rail_layout_scope.strip().lower()
@@ -3556,6 +3564,11 @@ shutdown_grace_seconds = 120.0
 collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
 show_model_thinking = true  # Presentation only; capture and replay are unchanged
 thinking_history_policy_default = "auto"  # auto, include, exclude for new conversations
+# Environment overrides: TLDW_CONSOLE_REASONING_HISTORY (mode), and JSON maps in
+# TLDW_CONSOLE_REASONING_HISTORY_OVERRIDES / TLDW_CONSOLE_REASONING_NATIVE_TOOL_OVERRIDES.
+reasoning_history = "auto"  # local replay when a conversation uses Auto: auto, current, all, off
+reasoning_history_overrides = {}  # normalized endpoint/model digest -> replay mode
+reasoning_native_tool_overrides = {}  # normalized endpoint/model digest -> true
 stack_collapsed_rail_labels = false  # Use compact stacked labels on collapsed Console rails
 rail_layout_scope = "global"  # Share Console rail disclosure across workspaces; use "workspace" for per-workspace layouts
 assistant_library_access_default = false  # New Console sessions block assistant Library access
@@ -5677,6 +5690,8 @@ _FREEFORM_CONFIG_PREFIXES: tuple[tuple[str, ...], ...] = (
                                 # Agents/agent_service.py (two-homes drift),
                                 # so documented overrides here would all flag
                                 # as unknown (Qodo #13, PR #2301)
+    ("console", "reasoning_history_overrides"),
+    ("console", "reasoning_native_tool_overrides"),
     ("api_settings",),          # provider configs incl. user-added custom providers
     ("providers",),             # provider display sections + model lists
     ("model_capabilities", "models"),    # arbitrary model names
@@ -6042,6 +6057,11 @@ def _load_cli_config_bootstrap_unlocked(
         user_config_from_file, _schema_changed, _schema_conflict = (
             migrate_config_forward(user_config_from_file)
         )
+        from tldw_chatbook.Utils.reasoning_config import (
+            migrate_legacy_reasoning_history,
+        )
+
+        migrate_legacy_reasoning_history(user_config_from_file)
         _CONFIG_SCHEMA_CONFLICT = _schema_conflict
         if _schema_conflict is not None:
             logger.warning(_schema_conflict)

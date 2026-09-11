@@ -11,6 +11,7 @@ from typing import Any, Callable, Literal
 from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Markdown, Static, TextArea
 
@@ -36,6 +37,7 @@ from tldw_chatbook.Library.library_notes_tree_state import (
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
+    LIBRARY_NOTES_SORT_FILTERED_TOOLTIP,
     LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
     library_disabled_action_label,
 )
@@ -60,12 +62,41 @@ from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
 
+
+def notes_sort_is_blocked(*, tree_projection: object, filter_value: str) -> bool:
+    """Whether Sort cannot own the rows currently projected (task-32172).
+
+    A filter window's rows come back from the FTS search seam in its own
+    order (grouped by folder path), so Sort is offered disabled there
+    rather than silently reordering nothing. Shared with the screen's
+    canvas-kwargs pass, which closes an OPEN chooser under exactly this
+    condition -- a chooser whose mode outlived what paints it left the
+    footer offering "choose sort" and spent the next Escape on nothing
+    (task-32128 review round 2).
+
+    Args:
+        tree_projection: The projection about to be rendered, if any.
+        filter_value: The current Notes filter text.
+
+    Returns:
+        Whether the Sort control must render blocked.
+    """
+    return bool(tree_projection is not None and filter_value.strip())
+
 #: Columns the list pane needs before the browse and transfer toolbars share
-#: one row. Their widest composition -- New, Select, Add from files…, Export,
-#: Manage sync folders, Last import, plus both toolbars' own padding -- is 97
-#: cells, so under this width the merged row clips its last action off the
+#: one row. Under this width the merged row clips its last action off the
 #: pane, which is worse than the third row it saves (task-32127, review 1).
-_TOOLBAR_MERGE_MIN_WIDTH = 100
+#: Their widest composition is New (7), Sort (16), Select (10), Add from
+#: files… (19), Export (10), Manage sync folders (23), Last import (15),
+#: plus both toolbars' own padding -- 109 cells, measured button by button
+#: rather than estimated. task-32172 raised this from 100: Sort left the
+#: folder tree in task-32128 and this figure was re-derived without it (97),
+#: so putting Sort back pushed the widest frame 16 cells wider and "Last
+#: import" fell off the pane at every width from 100 to 108. Pinned at the
+#: threshold itself by test_notes_toolbar_fits_at_the_exact_width_it_starts_
+#: merging, since the widths pinned either side of it (137, 62, 38) all miss
+#: that band.
+_TOOLBAR_MERGE_MIN_WIDTH = 109
 
 #: Columns a single action group needs to stay on one row. The transfer group
 #: (Add from files…, Export, Last import) is 47 cells and the folder actions
@@ -190,6 +221,59 @@ _NOTE_EDITOR_INPUT_IDS = frozenset(
         "library-note-context-keywords",
     }
 )
+
+
+#: task-32106 AC#1: shared by every field of the note editor -- see
+#: ``NoteEditorInput`` below for the mechanism and the measurement.
+_NOTE_FIELD_TAB_BINDINGS = [
+    Binding("tab", "screen.focus_next", show=False, priority=True),
+    Binding("shift+tab", "screen.focus_previous", show=False, priority=True),
+]
+
+
+class NoteEditorInput(Input):
+    """A note field whose Tab moves focus BEFORE the next key is forwarded.
+
+    task-32106 AC#1: ``Screen.BINDINGS``' ``Binding("tab", "app.focus_next")``
+    is not ``priority=True``, so ``Key(tab)`` is posted to the focused
+    ``Input`` and has to bubble one message-queue hop per ancestor up to the
+    Screen -- while the App keeps dequeuing the following keys and forwarding
+    each to ``self.focused``, which is still this field. Typed fast enough
+    (one terminal read, or a message queue backed up behind a busy Library
+    screen) the body lands in the title. Reproduced in stock Textual 8 with
+    nothing from this repo in it:
+
+        pilot  elapsed=1268.9ms  title='My first note'      body='hello'
+        burst  elapsed=   0.2ms  title='My first notehello' body=''
+
+    A priority binding makes the App resolve the focus move before it
+    forwards the next key. The action is namespaced to the SCREEN so it
+    resolves to ``LibraryScreen.action_focus_next``, which cycles inside
+    ``#screen-content`` (task-32052 AC#3) -- ``app.focus_next`` would walk
+    the nav bar instead, and a bare ``focus_next`` resolves against this
+    ``Input``, which has no such action, so the binding never fires.
+    """
+
+    BINDINGS = _NOTE_FIELD_TAB_BINDINGS
+
+
+class NoteEditorTextArea(TextArea):
+    """The note body, with the same synchronous Tab as the fields around it.
+
+    The body has the identical defect one widget over (coordinator addendum
+    from a peer session): bursting ``hello`` + Tab + ``world`` into it left
+    BOTH words in the body -- measured here as
+    ``'helloworldalpha budget line'`` -- because Tab's focus move landed
+    after the burst.
+
+    Safe only while ``tab_behavior`` is ``"focus"`` -- Textual's default,
+    and what this editor wants: the body is prose, not code, and Tab is how
+    a reader leaves it. Under ``"indent"`` this binding would steal the key
+    the ``TextArea`` needs, so the pin asserts that behaviour rather than
+    trusting the default.
+    """
+
+    BINDINGS = _NOTE_FIELD_TAB_BINDINGS
 
 
 @dataclass(frozen=True)
@@ -858,8 +942,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         """Render the existing note-loading/retry surface inside the canvas."""
         with Vertical(id="library-note-load-state"):
             with Horizontal(id="library-note-load-heading"):
+                # task-32177: this view's Back was left out of task-32139's
+                # unification and stayed hard-coded "‹ Notes" at every width.
                 yield Button(
-                    "‹ Notes",
+                    _library_note_back_label(self.compact),
                     id="library-note-back",
                     classes="library-canvas-action",
                     compact=True,
@@ -1019,14 +1105,20 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             # the non-colour "○" marker plus an F-018 reason.
             running = list_state.operation_running
             running_tooltip = "Wait for the running notes operation to finish."
-            # task-32128: the folder tree's row order is a repository
-            # contract -- `page_note_placements` is ORDER BY title COLLATE
-            # NOCASE and every page offset (including the deep-link
-            # locator's) is computed against it -- so a Sort control there
-            # could only reorder the loaded window and lie about the rest.
-            # It stays on the flat list, which sorts its own records.
-            sort_available = self.tree_projection is None
-            sort_choices_visible = sort_available and list_state.sort_choices_visible
+            # task-32128 removed Sort from the folder tree because the
+            # tree's row order was a hard-coded repository contract.
+            # task-32172 made that order a parameter of BOTH the pager and
+            # the deep-link locator's rank, so the control is back and
+            # really re-pages. The one thing it still cannot own is the
+            # filter window: those rows come from the FTS search seam,
+            # ranked by folder path, so Sort is blocked there with a reason
+            # rather than silently reordering nothing.
+            sort_blocked = notes_sort_is_blocked(
+                tree_projection=self.tree_projection, filter_value=self.filter_value
+            )
+            sort_choices_visible = (
+                not sort_blocked and list_state.sort_choices_visible
+            )
             # task-32127: the browse and transfer actions share ONE row, so
             # the toolbar is two rows rather than three -- but only where the
             # pane can hold both groups. Below the threshold the merged row
@@ -1054,18 +1146,22 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         disabled=running,
                         tooltip=running_tooltip if running else None,
                     )
-                    if sort_available:
-                        sort_base = (
-                            f"Sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')}"
-                        )
-                        yield Button(
-                            library_disabled_action_label(sort_base, running),
-                            id="library-notes-sort",
-                            classes="library-canvas-action",
-                            compact=True,
-                            disabled=running,
-                            tooltip=running_tooltip if running else None,
-                        )
+                    sort_base = f"Sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')}"
+                    sort_disabled = running or sort_blocked
+                    yield Button(
+                        library_disabled_action_label(sort_base, sort_disabled),
+                        id="library-notes-sort",
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=sort_disabled,
+                        tooltip=(
+                            running_tooltip
+                            if running
+                            else LIBRARY_NOTES_SORT_FILTERED_TOOLTIP
+                            if sort_blocked
+                            else None
+                        ),
+                    )
                     select_disabled = rendered_count == 0 or running
                     yield Button(
                         library_disabled_action_label("Select", select_disabled),
@@ -1782,13 +1878,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         with Vertical(id="library-note-editor-region"):
             with Horizontal(id="library-note-title-row"):
                 yield Static("Title", id="library-note-title-label", markup=False)
-                yield Input(
+                yield NoteEditorInput(
                     value="" if self.title_placeholder_only else title,
                     placeholder="Untitled" if self.title_placeholder_only else "",
                     id="library-note-title",
                 )
             yield Static("Body", id="library-note-body-label", markup=False)
-            yield TextArea(content, id="library-note-body")
+            yield NoteEditorTextArea(content, id="library-note-body")
 
         with VerticalScroll(id="library-note-preview-region", can_focus=True):
             # task-32142 AC#1: the shared heading row's title Static (above)
@@ -1808,18 +1904,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 id="library-note-preview-body",
                 parser_factory=front_matter_parser_factory(),
             )
-        yield Static(
-            status_line,
-            id="library-note-context-status",
-            markup=False,
-        )
         with VerticalScroll(id="library-note-context-region", can_focus=True):
             yield Static("Properties", classes="destination-section", markup=False)
             with Horizontal(id="library-note-context-keywords-row"):
                 yield Static(
                     "Keywords", id="library-note-context-keywords-label", markup=False
                 )
-                yield Input(
+                yield NoteEditorInput(
                     value=keywords_text,
                     placeholder="Comma-separated keywords",
                     id="library-note-context-keywords",
@@ -1896,7 +1987,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
         with Vertical(id="library-note-wide-utilities"):
             yield Static("Keywords", id="library-note-keywords-label", markup=False)
-            yield Input(
+            yield NoteEditorInput(
                 value=keywords_text,
                 placeholder="Comma-separated keywords",
                 id="library-note-keywords",
@@ -2099,6 +2190,21 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             discard_new.first(Button).label = (
                 "Discard" if compact else "Discard new note"
             )
+        # PR #2555 review (Qodo finding 2): the New-note and load-retry views
+        # pick their Back wording at compose time only, and crossing the
+        # compact breakpoint re-runs this method instead of recomposing them
+        # -- so without this they keep the previous width's wording. (The
+        # editor's own #library-note-back/#library-note-context-back are
+        # rewritten from the snapshot in ``apply_session_state``, which calls
+        # this method first, so a stale value there is corrected either way.)
+        back_label = _library_note_back_label(compact)
+        for selector in ("#library-note-back", "#library-notes-create-back"):
+            found = self.query(selector)
+            if not found:
+                continue
+            button = found.first(Button)
+            if str(button.label) != back_label:
+                button.label = back_label
 
     @staticmethod
     def _static_text(widget: Static) -> str:
@@ -2208,10 +2314,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         content_copy = channels.content_recovery
         if channels.safe_next_action:
             content_copy = f"{content_copy} Next: {channels.safe_next_action}."
-        for selector in ("#library-note-status", "#library-note-context-status"):
-            widget = self.query_one(selector, Static)
-            if self._static_text(widget) != content_copy:
-                widget.update(content_copy)
+        status_widget = self.query_one("#library-note-status", Static)
+        if self._static_text(status_widget) != content_copy:
+            status_widget.update(content_copy)
         authority_status = self.query_one("#library-note-authority-git-status", Static)
         if self._static_text(authority_status) != channels.authority_git:
             authority_status.update(channels.authority_git)
@@ -2285,11 +2390,6 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             bulk_status.update(bulk_copy)
         self.query_one("#library-note-editor-region").display = show_editor
         self.query_one("#library-note-preview-region").display = show_preview
-        # task-32142 AC#2: this Static repeats the identical text
-        # ``#library-note-status`` (the header-second-row status, visible
-        # in every mode) already shows -- Info printed "Saved" twice, once
-        # in the header and once again immediately above the panel.
-        self.query_one("#library-note-context-status").display = False
         self.query_one("#library-note-context-region").display = show_context
         self.query_one("#library-note-edit", Button).set_class(show_editor, "is-active")
         self.query_one("#library-note-preview", Button).set_class(
@@ -2306,6 +2406,17 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.query_one("#library-note-delete-confirmation").display = confirming_delete
 
         locked = confirming_delete or state.destructive_running or bulk_read_only
+        # task-32106 (PR #2571 re-review, NEW-2): DISABLED, not read-only,
+        # is load-bearing while ``confirming_delete``. These four fields
+        # carry a PRIORITY tab binding (``NoteEditorInput`` /
+        # ``NoteEditorTextArea``), which ``App._check_bindings`` resolves
+        # before ``LibraryScreen.on_key`` -- and ``on_key`` is where the
+        # delete prompt's Tab trap lives. Textual blurs a widget when it
+        # becomes disabled and drops it from ``focusable``, so no note field
+        # can be in the binding chain while the prompt is open and the trap
+        # holds. Keep one of these live behind the prompt and Tab would walk
+        # straight out of it; ``test_delete_confirmation_traps_tab_between_
+        # cancel_and_delete`` asserts the disabled state for that reason.
         title_input.disabled = not show_editor or locked
         body_input.disabled = not show_editor or locked
         wide_keywords.disabled = state.compact or show_context or locked
@@ -2394,8 +2505,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         needs the key and a human label, never the raw title/content.
         """
         with Horizontal(id="library-notes-create-heading"):
+            # task-32177: this view's Back was also left out of task-32139's
+            # unification and stayed hard-coded "‹ Notes" at every width.
             yield Button(
-                "‹ Notes",
+                _library_note_back_label(self.compact),
                 id="library-notes-create-back",
                 classes="library-canvas-action",
                 compact=True,

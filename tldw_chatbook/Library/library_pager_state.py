@@ -31,6 +31,76 @@ class LibraryPagerDisplay:
     single_page: bool = False
 
 
+@dataclass(frozen=True)
+class LibraryPagerLayout:
+    """What the one-page rule leaves on screen for one pager (task-32104).
+
+    Attributes:
+        status_parts: The status line's parts, already stripped of empties
+            and joined by the caller (" · ").
+        boundary_reasons: The de-duplicated boundary reasons to render, or
+            empty when there is nowhere to page to.
+        controls_hidden: Whether the Previous/Next row renders at all.
+    """
+
+    status_parts: tuple[str, ...]
+    boundary_reasons: tuple[str, ...]
+    controls_hidden: bool
+
+
+def library_pager_layout(
+    pager: LibraryPagerDisplay,
+    *,
+    retry_visible: bool | None = None,
+) -> LibraryPagerLayout:
+    """Apply the one-page pager rule once, for every Library pager.
+
+    task-28016 + task-31237: a list that fits one page has nowhere to page
+    to, so "Page 1 of 1", the boundary reasons ("Already on the first
+    page.", "No more results.") and the two dead "○ Previous ○ Next" forms
+    all say the same nothing. The item range stays, and every part of it
+    returns the moment a second page exists. A Retry still needs its row.
+
+    task-32104: this used to be spelled out separately in Media's,
+    Conversations' and Prompts' own ``_compose_pager``, over the one shared
+    ``single_page`` flag -- three readings that had already drifted, and a
+    fourth surface would have meant a fourth copy.
+
+    Args:
+        pager: The derived pager display.
+        retry_visible: Overrides ``pager.retry_visible`` for a surface that
+            renders its Retry somewhere else -- Media puts a FAILED fetch's
+            Retry in its load callout, beside the reason (task-31632), and
+            must not keep a control row here just to hold one.
+
+    Returns:
+        The three decisions the rule makes for this pager.
+    """
+    visible_retry = pager.retry_visible if retry_visible is None else retry_visible
+    if pager.single_page:
+        return LibraryPagerLayout(
+            status_parts=tuple(copy for copy in (pager.range_copy,) if copy),
+            boundary_reasons=(),
+            controls_hidden=not visible_retry,
+        )
+    return LibraryPagerLayout(
+        status_parts=tuple(
+            copy for copy in (pager.range_copy, pager.page_copy) if copy
+        ),
+        # A reason is non-empty only while its own control is disabled (see
+        # ``build_library_pager_display``), so this needs no second
+        # disabled check to say the same thing.
+        boundary_reasons=tuple(
+            dict.fromkeys(
+                reason
+                for reason in (pager.previous_reason, pager.next_reason)
+                if reason
+            )
+        ),
+        controls_hidden=False,
+    )
+
+
 def build_library_pager_display(
     *,
     applied_page: int | None,

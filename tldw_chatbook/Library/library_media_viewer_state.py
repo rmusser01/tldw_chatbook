@@ -16,19 +16,14 @@ from tldw_chatbook.Library.library_media_state import _trailing_regional_indicat
 
 _ID_KEYS = ("id", "media_id", "uuid")
 _TYPE_KEYS = ("type", "media_type")
-# local_file_ingestion.py maps BOTH .md/.markdown and .txt/.rst/.csv/.log to
-# the single "plaintext" media type, and Obsidian imports use
-# "obsidian_note" -- neither type alone proves the content is markdown, so
-# LIB-13's "Rendered by default" decision also requires a content sniff
-# (``looks_like_markdown_content``) before defaulting to the rendered view.
-# task-31277 (critique #4 P2, AC#5): video/audio transcripts join the list.
-# Ingestion writes sectioned transcripts with real `## ...` headings, and
-# gating the sniff on the type alone painted those hashes literally in the
-# Reader. The content sniff stays the second gate, so an ordinary transcript
-# still defaults to Raw.
-_MARKDOWN_MEDIA_TYPES = frozenset(
-    {"plaintext", "markdown", "obsidian_note", "video", "audio"}
-)
+# task-32234 (critique #9 row 3): there is no media-type allowlist any more.
+# It named plaintext/markdown/obsidian_note/video/audio and ran BEFORE the
+# content sniff, which is backwards -- local_file_ingestion.py maps .md,
+# .txt, .rst, .csv and .log all onto the single "plaintext" type, so the
+# type never proved anything about the content either way, and every type it
+# left out (document, article, pdf…) had its real Markdown painted
+# literally. ``looks_like_markdown_content`` is now the whole rule; see
+# ``_is_markdown_media``.
 _ATX_HEADING_RE = re.compile(r"^#{1,6}\s+\S")
 _TABLE_SEPARATOR_ROW_RE = re.compile(r"^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?$")
 
@@ -106,10 +101,9 @@ class LibraryMediaViewerState:
             detail), or "unknown" when absent -- the same value shown on
             the "Type: ..." metadata line.
         is_markdown: Whether the Content section should default to the
-            Rendered (Markdown) view rather than Raw -- true only when
-            ``media_type`` is one of the types local ingestion can
-            plausibly tag a markdown file with AND ``content`` actually
-            contains markdown syntax (see ``looks_like_markdown_content``).
+            Rendered (Markdown) view rather than Raw -- true when
+            ``content`` actually contains markdown syntax, whatever the
+            item's type (task-32234; see ``looks_like_markdown_content``).
         can_rename_speakers: TASK-31745 -- whether this item is a finished
             meeting recording whose speakers can still be renamed (its
             meeting folder survives; see ``can_rename_meeting_speakers``).
@@ -206,13 +200,14 @@ def _version(detail: Mapping[str, Any]) -> int | None:
 def looks_like_markdown_content(content: str) -> bool:
     """Return True when ``content`` contains at least one line of real markdown syntax.
 
-    Narrows the ambiguous ``"plaintext"``/``"obsidian_note"`` media types
-    (which cover genuinely-markdown files alongside plain .txt/.csv/.log)
-    down to the files LIB-13 is actually about: an ATX heading (``# ...``
-    through ``###### ...``), a fenced code block, or a GFM table separator
-    row (e.g. ``| --- | --- |``). A bare ``---`` thematic break does not
-    count on its own -- only a separator row that also has at least one
-    ``|`` reads as an actual table.
+    Since task-32234 this is the WHOLE "default to Rendered" rule, for
+    every media type -- the stored type never proved anything about the
+    content (ingestion maps .md, .txt, .csv and .log all onto
+    ``"plaintext"``), so only the text itself is evidence. Recognised: an
+    ATX heading (``# ...`` through ``###### ...``), a fenced code block, or
+    a GFM table separator row (e.g. ``| --- | --- |``). A bare ``---``
+    thematic break does not count on its own -- only a separator row that
+    also has at least one ``|`` reads as an actual table.
 
     The scan is bounded to the first ``MAX_MARKDOWN_SNIFF_CHARS`` characters
     and ``MAX_MARKDOWN_SNIFF_LINES`` lines of ``content`` (see that
@@ -245,12 +240,25 @@ def looks_like_markdown_content(content: str) -> bool:
 
 
 def _is_markdown_media(media_type: str, content: str) -> bool:
-    """Combine the media-type allowlist with the content sniff (see
-    ``looks_like_markdown_content``) into the single "default to Rendered"
-    decision.
+    """Whether the Reader defaults to the rendered view for this item.
+
+    task-32234 (critique #9 row 3): the media-type allowlist used to run
+    BEFORE the content sniff, so a `document` whose text starts `# Roadmap
+    sync` painted its hashes literally while Info said "No Markdown
+    formatting to render" -- a sentence the user could disprove by looking
+    at the screen. The content is the only honest evidence, and the sniff
+    is already bounded (MAX_MARKDOWN_SNIFF_CHARS/LINES), so it now decides
+    alone for every type. `media_type` is kept in the signature: the
+    "Type: markdown (stored as plaintext)" line in the caller still needs it.
+
+    Args:
+        media_type: The item's stored media type. Unused by the decision,
+            kept for the caller's own type-aware copy.
+        content: The item's stored content/transcript text.
+
+    Returns:
+        True when the Reader should open on the rendered view.
     """
-    if media_type.strip().lower() not in _MARKDOWN_MEDIA_TYPES:
-        return False
     return looks_like_markdown_content(content)
 
 

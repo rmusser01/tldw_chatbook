@@ -177,19 +177,33 @@ the saved preference.
 
 Below 64 columns an ordinary Library route shows one stage at a time: either
 the rail or the canvas. Activating a rail destination opens its canvas; use
-**‹ Library** (or **< Library** with ASCII glyphs) to return. Widening restores
+**‹ Library** (or **< Library** with ASCII glyphs) to return, or press
+**Escape** — the footer names it as `esc back to Library`. Widening restores
 the co-present layout and prior focus/scroll position when no newer action has
 replaced it.
 
-- **Chunking Lab strip** — directly under the header, on *every* Library
-  canvas: a **Chunking Lab** button and a **Try selected text** button.
-  This is a developer tool for comparing chunking strategies, not part of
-  the destination you are on; **Chunking Lab** opens it full-screen (see
-  [Search & RAG](library/search-and-rag.md) for what chunking affects).
-  It is deliberately undocumented per-canvas because it is identical
-  everywhere. Escape does not currently leave the Lab — use the nav bar or
-  the command palette. Demoting this strip out of every canvas header is
-  tracked as task-32064.
+The destinations with a three-pane reader (Media, Conversations, Notes,
+Prompts, Skills, Collections) close their Library pane at that width too, and
+Escape there does the same thing — **unless the canvas you are on already owns
+Escape**. A surface with its own exit keeps it: a reader with an item open goes
+back to its list, an editor back to its list, an armed delete confirmation
+cancels, and Notes keeps its own Escape throughout (Notes still returns to the
+rail — through its own key, not this one). The footer never names a return the
+key would not perform; at 60 columns it may not have room to name the surface's
+own exit either, so treat Escape as "back one step" and read the chip when
+there is one. Above 64 columns a closed Library pane is an ordinary collapsed
+pane one grip away, and Escape keeps its usual step-back through the visible
+panes.
+
+At this width the footer has room for one canvas key, and the way back wins it:
+`esc back to Library` replaces the `/` and `F6` hints rather than being dropped
+after them. Both keys still work; widen the terminal to see them named again.
+
+A pane with nothing open gives its columns to its sibling: on Prompts, Skills,
+Collections and Conversations the list widens to fill the canvas while the
+"Select something to open it here." pane holds only its own floor, and
+choosing an item restores the reading split. The landing hub is capped at a
+readable measure rather than stretched across the whole canvas.
 - **Header line** — reads **Library | Local**, or **Library | Server:
   \<label\>** when a server runtime is configured.
 - **Left rail**, top to bottom. A new empty profile first sees the compact
@@ -229,7 +243,12 @@ replaced it.
     selected row is marked **▸**, and the Flashcards row shows "due: N"
     instead of a plain count;
   - a **Details** section, collapsed by default (see below). Section
-    headers toggle open (**▾**) and closed (**▸**).
+    headers toggle open (**▾**) and closed (**▸**). **Chunking Lab** and
+    **Try selected text** live inside it — see the control table below.
+    When the rail is too short to show everything at once, its last line
+    reads "▾ scroll for more" (hover it for the keyboard route: **F6**
+    moves focus into the rail). The line disappears as soon as the whole
+    rail fits.
 - **Canvas** (the right pane) — there are no tabs here: the canvas swaps
   to match whichever rail row is selected. Before you pick one, a populated
   profile sees the returning landing described above. Import… and New note
@@ -258,6 +277,29 @@ visible stage so its controls remain on-screen. Escape (or the
 
 ## Features & controls
 
+### State glyphs
+
+Every Library canvas uses this one legend — each glyph means exactly one
+thing, so nothing on the screen relies on colour alone:
+
+| Glyph | Meaning | Where |
+|---|---|---|
+| `█` (leading) | the keyboard cursor | focused list rows, focused evidence cards, the chooser cursor |
+| `☐` / `☑` | selection you toggle | select-mode rows, the Search / RAG **Sources** panel, Import type toggles |
+| `✓` / `✗` / `–` | a settled outcome | Import queue rows, receipts (`–` is "never attempted") |
+| `≡` | already in your Library (a duplicate the import matched) | Import queue rows |
+| `⊘` | cancelled on purpose | Import queue rows |
+| `●` (leading a queue row) | still working | Import queue rows (queued, parsing, writing) |
+| `●` (inside a line) | not a state — it marks a count, or samples a colour | the blocked count on the Workspace ▸ Handoff row; a highlight's colour swatch in the Media reader |
+| `▸` / `▾` | disclosure | trailing on a section header, leading on a folder-tree node |
+| `○` | a blocked or disabled action | any greyed action, always beside its reason or tooltip |
+| `✓` (leading, in a chooser) | the active value of a chooser | choice strips, kept toggles ("mode: ✓ Search ⇄ RAG Answer") |
+| `▸ ` (leading, on a rail row) | the destination you are on | the left rail |
+| `⇄` | press to switch between the two options either side of it | mode toggles |
+
+A rail row never expands and a tree node is never a rail row, so the two
+leading `▸` uses cannot collide on one control.
+
 ### Left rail
 
 | Control | What it does |
@@ -268,9 +310,9 @@ visible stage so its controls remain on-screen. Escape (or the
 | **New note** | Opens the production note-creation canvas. It is shown directly in the Get started rail. |
 | **Explore all tools** | Reveals and remembers the complete Library without changing section disclosures. |
 | **Back to Get started** | Returns an explicitly expanded, still-empty Library to the Get started landing and compact rail, with focus on **Import…**. It is never offered after graduation. |
-| **Search Library…** | Type a query and press Enter: lands on the Search / RAG canvas and runs it (empty submit just opens the canvas) — see [Search & RAG](library/search-and-rag.md). **x** beside the box empties it. The box shows the live query only on the Search / RAG canvas; every other canvas gets an empty box, and returning to Search / RAG restores the query and its results. |
+| **Search Library…** | Type a query and press Enter: lands on the Search / RAG canvas and runs it (empty submit just opens the canvas) — see [Search & RAG](library/search-and-rag.md). **x** beside the box empties it. The box shows the live query only on the Search / RAG canvas; every other canvas gets an empty box, and returning to Search / RAG restores the query and its results. Text typed into the box on another canvas and never submitted is discarded when you leave — it never becomes the Search / RAG query. |
 | **Chunking Lab** / **Try selected text** | Under **Details ▸ Actions**, above the line "Chunking Lab — compare how text is split for search". Opens a full-screen A/B tool; **Escape** there returns to the Library canvas you came from, including from the sample editor. |
-| **▾** / **▸** (section headers) | Open or collapse that rail section. |
+| **▾** / **▸** (section headers) | Open or collapse that rail section — see [State glyphs](#state-glyphs). |
 
 ### Browse rows
 
@@ -371,8 +413,8 @@ current as of that open, not a reading cached at some earlier repaint.
 
 | Group | Contents |
 |---|---|
-| **Status** | A "Source · Local" (or "Source · Server: \<label\>") line, and a counts row: "Notes N · Media N · Conversations N". |
-| **Workspace** | "Active · \<workspace name\>" and "Handoff · \<summary\>" lines. |
+| **Status** | A "Source · Local" (or "Source · Server: \<label\>") line, a counts row ("Notes N · Media N · Conversations N"), and — once a reading exists — a "DB sizes" label with one line per database ("Prompts 180.0KB", "Chats/Notes 1.1MB", "Media 508.0KB"), a line each so no size is split across two rail lines. |
+| **Workspace** | "Active · \<workspace name\>" and a "Handoff" line. With nothing blocked it is a bare count ("0 eligible"). When something is blocked it names the reason and the next step: "2 eligible · 1 blocked · not in this workspace · Link it from the conversation's header". |
 | **Actions** | The buttons below, plus the note "Server sync WIP · local only". |
 
 | Action | What it does |
@@ -658,7 +700,9 @@ global cluster spells the pane key "F6 next pane" to match; value-cycle
 buttons ("type: All", "sort: Newest", "quality: thumbnail", "mode:
 Search") carry a trailing "⇄" with a tooltip listing the full cycle —
 a trailing "▸/▾" is now always a section-header disclosure and a leading
-"▸ " always the selected list row (Collections rows included); the Media
+"▸ " always the selected list row (Collections rows included; narrowed
+by task-32235 — a leading "▸" on a folder-tree node is disclosure, see
+[State glyphs](#state-glyphs)); the Media
 toolbar is a single horizontal row like its siblings; canvas list titles
 render in full instead of the rail's 17-character cut; the landing line
 reads "pick a section" (no "on the left" — at ≤100 columns the shell
@@ -809,3 +853,34 @@ paints on every Library canvas, was undocumented (task-32064).)*
 *Verified against fix/library-crit8-waits — 2026-09-08 (task-32055: Library's
 structural waits report "still working · Cancel" past three seconds and never
 gate Escape, the back cue, the palette or Quit).*
+
+*Verified against fix/library-crit9-grammar — 2026-09-10 (task-32235: one
+meaning per state glyph. "○" had carried three at once — a disabled action,
+an unchecked source toggle and a settled "skipped" outcome; it keeps the
+first (it is the only non-colour cue on tooltip-gated buttons) while
+selection moves to "☐/☑" and the never-attempted outcome to "–". The
+legend is now stated once, under **State glyphs**.
+Fix round 1 adds the Import queue's own `●`/`≡`/`⊘`, and round 2 splits `●`
+by context: leading a queue row it means "still working", inside a line it
+is a count marker or a colour swatch, neither of them a state.)*
+
+*Verified against fix/library-crit9-rail — 2026-09-10 (task-32219: the Layout
+tour no longer claims the Chunking Lab strip sits under every canvas header —
+the control table's "Details ▸ Actions" is now the page's only statement of
+its placement, and the rail says "▾ scroll for more" when its content runs
+past the fold. task-32212: the rail search row keeps the pane's frame at 235,
+100 and 60 columns. task-32220: the rail heading ellipsises instead of
+cutting to "Navigati". task-32226: rail text typed on another canvas and
+never submitted no longer seeds the Search / RAG query box. task-32230: the
+Details DB sizes take a line each, and the Handoff line names the blocked
+item's reason and its next step.)*
+
+*Verified against fix/library-crit9-shell — 2026-09-10 (task-32225: Escape
+returns to the rail below 64 columns on every adaptive-reader destination and
+the footer names it; task-32217: an empty work pane hands its columns to the
+list, and the landing hub is capped at 96 cells).*
+
+*Verified against fix/library-crit9-shell — 2026-09-10, fix round 1
+(task-32225: the return chip stands down wherever a canvas owns Escape itself,
+so the footer never names a return the key would not perform; task-32228:
+Conversations arrives with its first row focused like every other browse list).*
