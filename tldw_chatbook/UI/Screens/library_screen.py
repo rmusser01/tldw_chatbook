@@ -9761,17 +9761,14 @@ class LibraryScreen(BaseAppScreen):
                 self._focus_library_list_entry_if_current,
                 self._library_list_entry_focus_generation,
             )
-        elif media_return is None:
-            # Qodo #3 on PR #2585: guarded like the two branches around it.
-            # The plain call re-checks neither the pending flag nor the arm
-            # generation, so a user who took control between this schedule and
-            # the callback had focus pulled back into the list -- the exact
-            # yank task-2856's review round 2 added the immediate disarm for.
-            self.call_after_refresh(
-                self._focus_library_list_entry_if_current,
-                self._library_list_entry_focus_generation,
-            )
         else:
+            # One branch since Qodo #3 on PR #2585 guarded the ``media_return
+            # is None`` case: the plain call re-checked neither the pending
+            # flag nor the arm generation, so a user who took control between
+            # this schedule and the callback had focus pulled back into the
+            # list -- the yank task-2856's review round 2 added the immediate
+            # disarm for. Both remaining cases now want the identical guarded
+            # continuation, so they say so once.
             self.call_after_refresh(
                 self._focus_library_list_entry_if_current,
                 self._library_list_entry_focus_generation,
@@ -13874,15 +13871,12 @@ class LibraryScreen(BaseAppScreen):
                     # replacement-owner geometry can settle exact scroll.
                     self.set_focus(None)
                 self._media_state.return_settlement = None
-            elif pending_media_return is None:
+            else:
                 # Qodo #3 on PR #2585: the recompose re-request carries the arm
                 # generation too, so a disarm between this compose and the
                 # callback stands it down instead of re-focusing the list.
-                self.call_after_refresh(
-                    self._focus_library_list_entry_if_current,
-                    self._library_list_entry_focus_generation,
-                )
-            else:
+                # Same continuation with or without a pending media return,
+                # so it is written once.
                 self.call_after_refresh(
                     self._focus_library_list_entry_if_current,
                     self._library_list_entry_focus_generation,
