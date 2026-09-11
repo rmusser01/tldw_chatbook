@@ -116,6 +116,19 @@ def _ancestor(path):
     return parent
 
 
+def _empty_private_container(path: Path) -> bool:
+    """Recognize an existing placement parent without adopting directory data."""
+    try:
+        with pinned_directory(path) as fd:
+            info = os.fstat(fd)
+            if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+                return False
+            with os.scandir(fd) as entries:
+                return next(entries, None) is None
+    except OSError:
+        return False
+
+
 def _observed(path):
     ancestor = _ancestor(path)
     ancestors = []
@@ -339,9 +352,13 @@ def plan_restore(
         _ancestor(path)
         if mode == "isolated" and path.exists():
             raise ValueError("destination_exists")
-    for path in destinations.values():
+    for key, path in destinations.items():
         _ancestor(path)
-        if mode == "isolated" and (path.exists() or path.is_symlink()):
+        if (
+            mode == "isolated"
+            and (path.exists() or path.is_symlink())
+            and (not roots[key].synthetic or not _empty_private_container(path))
+        ):
             raise ValueError("destination_exists")
         if (
             path == archive.path
