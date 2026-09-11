@@ -6561,26 +6561,26 @@ class ToolsStep(SetupStep):
     _TOOL_COPY = {
         "read_file": (
             "Read file",
-            "Read a file you point the assistant at. Asks you each time before running.",
+            "Read a file you point the assistant at. Asks before running unless you approve a longer scope.",
         ),
         "list_directory": (
             "List directory",
-            "Browse the contents of a folder. Asks you each time before running.",
+            "Browse the contents of a folder. Asks before running unless you approve a longer scope.",
         ),
         "write_file": ("Write file", "⚠ Creates or overwrites files on disk."),
         "create_note": ("Create note", "⚠ Adds new notes to your notebook."),
         "update_note": ("Update note", "⚠ Edits your existing notes."),
         "glob_files": (
             "Find files",
-            "Match file names by pattern (like *.md). Asks you each time before running.",
+            "Match file names by pattern (like *.md). Asks before running unless you approve a longer scope.",
         ),
         "grep_files": (
             "Search in files",
-            "Search inside files for text. Asks you each time before running.",
+            "Search inside files for text. Asks before running unless you approve a longer scope.",
         ),
         "expand_document": (
             "Expand document",
-            "Read the whole document behind a search result. Asks you each time before running.",
+            "Read the whole document behind a search result. Asks before running unless you approve a longer scope.",
         ),
     }
 
