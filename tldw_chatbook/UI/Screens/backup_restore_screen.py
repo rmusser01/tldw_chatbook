@@ -59,6 +59,7 @@ class BackupRestoreScreen(Screen):
         self._extraction_plan = None
         self._delete_copy_id = None
         self._last_terminal = None
+        self._list_delivery = 0
         self._review_codes_seen = ()
         self._requested_backup_operation = None
         self._requested_restore_operation = None
@@ -578,6 +579,18 @@ class BackupRestoreScreen(Screen):
     async def _list_ready(self, revision, mode, entries, pending, issue, current=None):
         if not self.is_mounted or mode != self._mode or revision != self._revision:
             return
+        self._list_delivery += 1
+        delivery = self._list_delivery
+        listing = self.query_one("#backup-list", Vertical)
+        await listing.remove_children()
+        if (
+            not self.is_mounted
+            or mode != self._mode
+            or revision != self._revision
+            or delivery != self._list_delivery
+        ):
+            return
+        widgets = []
         self.query_one("#backup-list-title", Static).update(
             ("Recovery copies" if mode == "copies" else "Restored profiles")
             + (": " + issue if issue else "")
@@ -591,78 +604,97 @@ class BackupRestoreScreen(Screen):
         self._delete_copy_id = None
         self.query_one("#backup-delete-copy", Button).disabled = True
         self.query_one("#backup-delete-preview", Static).update("")
-        listing = self.query_one("#backup-list", Vertical)
-        await listing.remove_children()
         if current is not None:
             if current["status"] == "no_verified_generation":
                 setup = "No verified recovery generation for this current profile. Optional features may still require setup."
             elif not current["requirements_checked"]:
                 setup = "Setup requirements unavailable. Local recovery evidence needs attention."
             elif current["needs_setup"]:
-                setup = "Needs setup\nReview these features in their settings before enabling them:\n" + "\n".join(
-                    "• " + owner.replace(".", " / ").replace("_", " ")
-                    for owner in current["pending_owners"]
+                setup = (
+                    "Needs setup\nReview these features in their settings before enabling them:\n"
+                    + "\n".join(
+                        "• " + owner.replace(".", " / ").replace("_", " ")
+                        for owner in current["pending_owners"]
+                    )
                 )
             else:
-                setup = "Owner reviews complete. Optional features may still require setup."
-            generation = "\nGeneration: " + current["generation"] if current["generation"] else ""
-            await listing.mount(Static(
-                f"Current profile\n{current['config']}{generation}\n{setup}",
-                id="backup-current-requirements", markup=False,
-            ))
-            await listing.mount(Button("Recovered media details", id="backup-open-media"))
+                setup = (
+                    "Owner reviews complete. Optional features may still require setup."
+                )
+            generation = (
+                "\nGeneration: " + current["generation"]
+                if current["generation"]
+                else ""
+            )
+            widgets.append(
+                Static(
+                    f"Current profile\n{current['config']}{generation}\n{setup}",
+                    id="backup-current-requirements",
+                    markup=False,
+                )
+            )
+            widgets.append(Button("Recovered media details", id="backup-open-media"))
         if not entries and not pending and current is None:
-            await listing.mount(Static("No local entries.", markup=False))
+            widgets.append(Static("No local entries.", markup=False))
         for entry in entries:
             if mode == "copies":
-                await listing.mount(
-                    Static(
-                        f"{entry.operation_id}\n{entry.status} · {entry.size} bytes\n{entry.path or 'No retained payload'}\nCoverage: {entry.coverage}",
-                        markup=False,
-                    ),
-                    Button(
-                        "Inspect recovery copy",
-                        name=entry.operation_id,
-                        classes="backup-inspect-copy",
-                        disabled=entry.status != "verified",
-                    ),
-                    Button(
-                        "Review deletion",
-                        name=entry.operation_id,
-                        classes="backup-review-delete",
-                        disabled=entry.pending_operation or entry.status != "verified",
-                    ),
-                    Button(
-                        "Review later rollback",
-                        name=entry.operation_id,
-                        classes="backup-review-rollback",
-                        disabled=entry.pending_operation or entry.status != "verified",
-                    ),
+                widgets.extend(
+                    [
+                        Static(
+                            f"{entry.operation_id}\n{entry.status} · {entry.size} bytes\n{entry.path or 'No retained payload'}\nCoverage: {entry.coverage}",
+                            markup=False,
+                        ),
+                        Button(
+                            "Inspect recovery copy",
+                            name=entry.operation_id,
+                            classes="backup-inspect-copy",
+                            disabled=entry.status != "verified",
+                        ),
+                        Button(
+                            "Review deletion",
+                            name=entry.operation_id,
+                            classes="backup-review-delete",
+                            disabled=entry.pending_operation
+                            or entry.status != "verified",
+                        ),
+                        Button(
+                            "Review later rollback",
+                            name=entry.operation_id,
+                            classes="backup-review-rollback",
+                            disabled=entry.pending_operation
+                            or entry.status != "verified",
+                        ),
+                    ]
                 )
             else:
                 if not entry.get("requirements_checked"):
                     setup = "Setup requirements unavailable. Recover this profile before opening it."
                 elif entry["needs_setup"]:
-                    setup = "Needs setup\nReview these features in their settings before enabling them:\n" + "\n".join(
-                        "• " + owner.replace(".", " / ").replace("_", " ")
-                        for owner in entry["pending_owners"]
+                    setup = (
+                        "Needs setup\nReview these features in their settings before enabling them:\n"
+                        + "\n".join(
+                            "• " + owner.replace(".", " / ").replace("_", " ")
+                            for owner in entry["pending_owners"]
+                        )
                     )
                 else:
                     setup = "Owner reviews complete. Optional features may still require setup."
-                await listing.mount(
-                    Static(
-                        f"{entry['profile_id']}\n{entry['config']}\n{entry['data']}\n{entry['status']}\n{setup}",
-                        markup=False,
-                    ),
-                    Button(
-                        "Open in new process",
-                        name=entry["profile_id"],
-                        classes="backup-open-profile",
-                        disabled=not entry.get("requirements_checked"),
-                    ),
+                widgets.extend(
+                    [
+                        Static(
+                            f"{entry['profile_id']}\n{entry['config']}\n{entry['data']}\n{entry['status']}\n{setup}",
+                            markup=False,
+                        ),
+                        Button(
+                            "Open in new process",
+                            name=entry["profile_id"],
+                            classes="backup-open-profile",
+                            disabled=not entry.get("requirements_checked"),
+                        ),
+                    ]
                 )
         for row, state in pending:
-            await listing.mount(
+            widgets.append(
                 Static(
                     f"Pending recovery: {row['operation_id']}\n{state['phase']}\nSelected configurations: {row['config_paths']}\nFinish completes this reviewed recovery. Roll back restores its verified prior data. Abort releases an untouched replacement without restoring a safety copy.",
                     markup=False,
@@ -676,13 +708,14 @@ class BackupRestoreScreen(Screen):
                 }.get(action)
                 if label is None:
                     continue
-                await listing.mount(
+                widgets.append(
                     Button(
                         label,
                         name=row["operation_id"],
                         classes="backup-recover-" + action,
                     )
                 )
+        await listing.mount(*widgets)
 
     @on(Button.Pressed, ".backup-review-delete")
     def _review_delete(self, event):
