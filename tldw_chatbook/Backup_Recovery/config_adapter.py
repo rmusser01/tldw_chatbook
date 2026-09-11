@@ -227,6 +227,47 @@ class _ChatbookRegistry(_Definition):
     _reference_key = "__chatbook_archive_reference"
 
     @staticmethod
+    def shared_dependencies(items):
+        """Reconcile only ZIP dependencies of selected native registry aliases."""
+        by_id = {item.logical_id: item for item in items}
+        groups = {}
+        for item in items:
+            if (
+                item.owner == "chatbooks.registry"
+                and item.status == "included"
+                and item.path is not None
+                and item.shared_group
+            ):
+                groups.setdefault(item.shared_group, []).append(item)
+        dependencies = {}
+        for peers in groups.values():
+            if len(peers) < 2 or len({peer.path for peer in peers}) != 1:
+                continue
+            archives = set()
+            for peer in peers:
+                prefix = peer.logical_id.removesuffix("chatbooks.registry")
+                for key in peer.dependencies:
+                    source = by_id.get(key)
+                    if (
+                        source is not None
+                        and source.owner == "chatbooks.archives"
+                        and source.status == "included"
+                        and source.path is not None
+                        and key.startswith(prefix + "chatbooks.archives:")
+                    ):
+                        archives.add(key)
+            for peer in peers:
+                dependencies[peer.logical_id] = tuple(
+                    sorted(set(peer.dependencies) | archives)
+                )
+        return tuple(
+            replace(item, dependencies=dependencies[item.logical_id])
+            if item.logical_id in dependencies
+            else item
+            for item in items
+        )
+
+    @staticmethod
     def _reference_path(value, *, live=False):
         if (
             not isinstance(value, str)
@@ -278,7 +319,7 @@ class _ChatbookRegistry(_Definition):
         return document
 
     @classmethod
-    def _archive_reference(cls, item, record):
+    def _archive_reference(cls, item, record, sources=None):
         marker = record.get(cls._reference_key)
         if marker is None or marker == {"status": "unresolved"}:
             return None
@@ -289,9 +330,37 @@ class _ChatbookRegistry(_Definition):
             len(profile) != 3
             or profile[0] != "profile"
             or profile[2] != "chatbooks.registry"
-            or not key.startswith(prefix)
-            or not key[len(prefix) :]
             or key not in item.dependencies
+        ):
+            raise ValueError("invalid_chatbook_archive_dependency")
+        if key.startswith(prefix) and key[len(prefix) :]:
+            return key
+        # Cross-profile references require this exact selected registry peer,
+        # not merely a profile-shaped string or an imported shared-group label.
+        referenced = key.split(":")
+        sources = sources or {}
+        peer = sources.get(":".join(referenced[:2]) + ":chatbooks.registry")
+        archive = sources.get(key)
+        if (
+            len(referenced) != 4
+            or referenced[0] != "profile"
+            or referenced[2] != "chatbooks.archives"
+            or not referenced[3]
+            or sources.get(item.logical_id) != item
+            or item.owner != "chatbooks.registry"
+            or item.status != "included"
+            or not item.shared_group
+            or item.path is None
+            or peer is None
+            or peer.owner != "chatbooks.registry"
+            or peer.status != "included"
+            or peer.shared_group != item.shared_group
+            or peer.path != item.path
+            or key not in peer.dependencies
+            or archive is None
+            or archive.owner != "chatbooks.archives"
+            or archive.status != "included"
+            or archive.path is None
         ):
             raise ValueError("invalid_chatbook_archive_dependency")
         return key
@@ -303,14 +372,17 @@ class _ChatbookRegistry(_Definition):
         from .credentials import _read, _write
 
         document = self._document(_read(candidate), live=True)
-        sources = {
-            source.path: source.logical_id
-            for source in source_items
-            if source.owner == "chatbooks.archives"
-            and source.status == "included"
-            and source.path is not None
-            and source.logical_id in item.dependencies
-        }
+        source_items = tuple(source_items)
+        by_id = {source.logical_id: source for source in source_items}
+        sources = {}
+        for source in sorted(source_items, key=lambda row: row.logical_id):
+            if (
+                source.owner == "chatbooks.archives"
+                and source.status == "included"
+                and source.path is not None
+                and source.logical_id in item.dependencies
+            ):
+                sources.setdefault(source.path, source.logical_id)
         for record in document["records"]:
             if self._reference_key in record:
                 if record[self._reference_key] != {"status": "unresolved"}:
@@ -324,29 +396,37 @@ class _ChatbookRegistry(_Definition):
             record[self._reference_key] = (
                 {"logical_id": key} if key is not None else {"status": "unresolved"}
             )
-            self._archive_reference(item, record)
+            self._archive_reference(item, record, by_id)
         _write(candidate, json.dumps(document, ensure_ascii=False, indent=2))
 
-    def validate_restore_reference_owners(self, item, candidate, payload_owners):
+    def validate_restore_reference_owners(
+        self, item, candidate, payload_owners, source_items=()
+    ):
         """Check authenticated payload ownership before any path relocation."""
         from .credentials import _read
 
+        sources = {source.logical_id: source for source in source_items}
         for record in self._document(_read(candidate))["records"]:
-            key = self._archive_reference(item, record)
+            key = self._archive_reference(item, record, sources)
             if key is not None and payload_owners.get(key) != "chatbooks.archives":
                 raise ValueError("invalid_chatbook_archive_owner")
 
-    def relocate_restore(self, item, candidate, mapping):
+    def relocate_restore(self, item, candidate, mapping, source_items=()):
         import json
 
         from .credentials import _read, _write
 
         document = self._document(_read(candidate))
+        sources = {source.logical_id: source for source in source_items}
         for record in document["records"]:
-            key = self._archive_reference(item, record)
+            key = self._archive_reference(item, record, sources)
             if key is not None:
                 if key not in mapping:
                     raise ValueError("chatbook_archive_mapping_required")
+                if sources:
+                    selected = sources.get(key)
+                    if selected is None or selected.path != mapping[key]:
+                        raise ValueError("chatbook_archive_mapping_required")
                 record["file_path"] = str(self._reference_path(str(mapping[key])))
                 del record[self._reference_key]
             elif record.get("file_path") not in (None, ""):

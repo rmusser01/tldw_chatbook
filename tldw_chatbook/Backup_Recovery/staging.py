@@ -544,6 +544,7 @@ def stage_restore(
                         item,
                         candidate,
                         {row.logical_id: row.owner_id for row in doc.files},
+                        tuple(items.values()),
                     )
                 snapshot_digest = (
                     reader._hash(candidate, cancel) if plan.local_snapshot else None
@@ -553,6 +554,10 @@ def stage_restore(
                     # Historical config is an authenticated byte snapshot; its
                     # ordinary relocate hook parses TOML and cannot admit it.
                     validate_snapshot_config(payload, candidate)
+                elif type(owner) is _ChatbookRegistry:
+                    owner.relocate_restore(
+                        item, candidate, selected, tuple(items.values())
+                    )
                 elif callable(relocate):
                     relocate(item, candidate, selected)
                 else:

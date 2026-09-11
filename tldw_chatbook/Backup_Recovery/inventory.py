@@ -664,7 +664,10 @@ def discover(
             )
             for index in indexes:
                 items[index] = replace(items[index], shared_group=group)
-    items, cohort_issues = _merge_chachanotes_cohort(tuple(items))
+    from .config_adapter import _ChatbookRegistry
+
+    items = _ChatbookRegistry.shared_dependencies(tuple(items))
+    items, cohort_issues = _merge_chachanotes_cohort(items)
     items, tts_issues = _merge_chachanotes_cohort(items, cohort="tts")
     cohort_issues = (*cohort_issues, *tts_issues)
     result = classify_entries(tuple(items))

@@ -3,15 +3,15 @@ id: TASK-31992
 title: Add recovery inventory for configuration durable files and optional content
 status: Done
 assignee:
-  - codex
-created_date: '2026-09-07 23:52'
-updated_date: '2026-09-08 10:41'
+- codex
+created_date: 2026-09-07 23:52
+updated_date: 2026-09-11 19:19
 labels:
-  - backup-recovery
+- backup-recovery
 dependencies:
-  - task-31978
-  - task-31986
-  - task-31987
+- task-31978
+- task-31986
+- task-31987
 ---
 
 ## Description
@@ -45,7 +45,7 @@ Reason: direct implementation of the approved recovery inventory and metadata co
 
 ## Implementation Notes
 
-<!-- SECTION:NOTES:BEGIN -->
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Implemented versioned directory/file metadata and pure selection-aware recovery
 inventory; config/history/definition owners, TTS schema4/BLOB capture, persona
 manual/builtin references, Skills and installed model closure adapters. Config
@@ -96,8 +96,10 @@ Independent spec/quality review and scoped re-review approved I1/I2 at
 84dfad68b5a053fd96cf3b9620dfc140e7918f81 with no open Critical/Important findings.
 All three criteria are complete. Maintenance enrollment remains assigned to
 TASK-31993; complete-backup exposure still depends on later qualification tasks.
-<!-- SECTION:NOTES:END -->
-
+2026-09-11: Read-only preflight /private/tmp/two-profile-skills-chatbook-cohort-preflight.md identifies potential existing shared registry/cross-profile owned ZIP reference loss. Scope remains original multi-profile/shared durable stores. Authorize separate focused test module using actual app/service selected registry path derived from shared Prompts DB and native note-containing Chatbook export/create, both profile-owned ZIP roots, actual Complete capture and explicit isolated relocation. Establish behavioral result before any product edits; do not split shared registry, override roots, manufacture typed references, drop records or change A-owned combined fixture. Agent P owns focused test and diagnostic; root reviews minimal correction if observed.
+2026-09-11 actual shared Chatbook regression failed1/21.14s at held capture shared_payload_mismatch after successful native two-profile note ZIP export/shared registry/Complete preview. Report /private/tmp/shared-chatbook-registry-red-and-proposal.md. Release bounded correction in config_adapter._ChatbookRegistry, concrete inventory closure call after existing physical aliases, staging passes existing authenticated selected StorageItems to Chatbook checks, plus new focused test. Union only archive dependencies already declared by actual same-path/shared-group registry peers; deterministic reference IDs; cross-profile refs require selected exact peer+archive owner/dependency and explicit destination. Preserve reader shared_payload_mismatch, ordinary no-context/same-profile policy, other owners/external refs. Agent P implements actual capture→isolated→fresh shared ZIP readers + finite negatives; no new framework/authority/owner or blanket profile relaxation. Root handles review, relevant census and scoped commit.
+Shared Chatbook registry correction independently reviewed and approved: exact same actual shared registry derives deterministic union only of included peer archive dependencies. Selected typed owner/context/mapping checks retained. Native original red at shared_payload_mismatch; corrected full capture/public ZIP/isolated/twofreshappreaders1/42.51s,16 policy tests and30 existing relocation/census tests green. Two fixture-only failures preserved accurately. Production Bandit0/Ruff4→4. Frozen4 source/patch/30 evidence hashes verified. Report /private/tmp/chatbook-shared-registry-correction-report.md; review /private/tmp/shared-chatbook-independent-review.md. Root committing exact3product+newtest.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Design references
 
 - [Approved specification](../../Docs/superpowers/specs/2026-09-07-complete-local-backup-restore-design.md)
