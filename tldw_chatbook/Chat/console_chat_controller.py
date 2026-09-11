@@ -735,7 +735,7 @@ _DEFAULT_WORKTREE_MERGE_CONFIRM_TIMEOUT_SECONDS = 0.0
 _DEFAULT_ASK_USER_TIMEOUT_SECONDS = 0.0
 #: Env override for `[console] ask_user_timeout_seconds` (env -> config -> default).
 ASK_USER_TIMEOUT_ENV_VAR = "TLDW_CONSOLE_ASK_USER_TIMEOUT_SECONDS"
-#: task-32275: ceiling on the pre-provider setup a send will wait through
+#: task-32344: ceiling on the pre-provider setup a send will wait through
 #: before giving up on the optional part of it and calling the provider
 #: anyway. The one seam that needed a bound is the app-owned Personal
 #: Context service, which is bootstrapped lazily on the FIRST agent send of
@@ -16816,7 +16816,7 @@ class ConsoleChatController:
     ) -> AsyncIterator[None]:
         """Name the pre-provider setup window on the assistant row.
 
-        task-32275: between "send accepted" and "provider called" the run
+        task-32344: between "send accepted" and "provider called" the run
         does not exist yet, so nothing publishes a step and the row renders
         blank -- for however long the setup takes. The mark is cleared on
         every exit, including a raise: a stale mark would keep the row
@@ -22868,7 +22868,7 @@ class ConsoleChatController:
                 assistant_message_id,
                 generation_token=generation_token,
             )
-        # task-32275: from here to the provider dispatch is the window
+        # task-32344: from here to the provider dispatch is the window
         # the first send of a process pays in full (the lazy Personal
         # Context bootstrap above all); the row says so while it runs.
         async with self._pre_provider_setup_phase(conversation_id):

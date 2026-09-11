@@ -1933,7 +1933,7 @@ class AgentLiveSnapshot:
 
     Attributes:
         status: Run status -- ``"idle"``, ``"running"``, ``"setup"``
-            (task-32275: the send is composing this turn's tool surface and
+            (task-32344: the send is composing this turn's tool surface and
             no run exists yet), or a terminal ``RunOutcome.status`` value
             (``"done"``/``"error"``/``"cancelled"``/``"stuck"``).
         step: Total number of steps observed so far for this run.
@@ -4459,7 +4459,7 @@ class ConsoleAgentBridge:
         #: Which `_live[conversation_id]` key holds the rail's summary --
         #: the newest turn's primary run. Only `run_reply` writes it.
         self._live_primary_keys: dict[str, str] = {}
-        #: task-32275: conversations currently in pre-provider setup, each
+        #: task-32344: conversations currently in pre-provider setup, each
         #: mapped to the `time.monotonic()` the phase began, so the rail
         #: can name and time a window that publishes no step of its own.
         self._setup_started_at: dict[str, float] = {}
@@ -7366,7 +7366,7 @@ class ConsoleAgentBridge:
         conversation has no coordinator -- the inline/kill-switch path,
         where there is no live status to read and never was.
 
-        task-32275: a conversation marked in pre-provider setup short-
+        task-32344: a conversation marked in pre-provider setup short-
         circuits everything below it. No run exists yet, so there is
         nothing published to merge with and no fleet to re-derive -- and
         the PREVIOUS turn's terminal snapshot (still in ``_live``) must
@@ -7395,7 +7395,7 @@ class ConsoleAgentBridge:
     def begin_setup_phase(
         self, conversation_id: str, *, now: float | None = None
     ) -> None:
-        """Mark this conversation as in pre-provider setup (task-32275).
+        """Mark this conversation as in pre-provider setup (task-32344).
 
         The window between "send accepted" and "provider called" publishes
         no step -- the run does not exist yet -- so the rail's snapshot was

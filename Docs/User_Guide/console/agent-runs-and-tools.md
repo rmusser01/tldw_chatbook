@@ -1982,7 +1982,7 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
 
 —
 *Verified against dev @ ff435772c — 2026-07-31; activity-line states
-re-verified live 2026-09-10 (task-32275, `Connecting tools…`). Named agents section added
+re-verified live 2026-09-10 (task-32344, `Connecting tools…`). Named agents section added
 against dev @ 3dd3e7431 — 2026-08-09 (fleet PR-1: driven live — Console
 delegated to a real named definition, the transcript showed the
 `[researcher]` sub-agent marker, and the reply visibly honored the

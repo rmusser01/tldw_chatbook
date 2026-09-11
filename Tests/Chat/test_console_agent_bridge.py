@@ -2365,7 +2365,7 @@ def test_capture_on_agent_run_reserves_each_real_gateway_call_in_stable_order(
             trace_db.get_connection().cursor(), owner.owner_id
         )
         assert calls[-1].state is TraceCallState.DISPATCH_STARTED
-        # task-32273: the trace surface issues recursively frozen rows so the
+        # task-32342: the trace surface issues recursively frozen rows so the
         # verifier can prove identity; the adapter must still be handed plain
         # JSON containers, or `requests` dies preparing the body.
         assert all(type(row) is dict for row in kwargs["messages_payload"])
@@ -9916,7 +9916,7 @@ def test_content_stall_surfaces_through_chat_call(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# task-32275: the pre-provider setup phase the rail reads off the bridge.
+# task-32344: the pre-provider setup phase the rail reads off the bridge.
 # --------------------------------------------------------------------------
 
 

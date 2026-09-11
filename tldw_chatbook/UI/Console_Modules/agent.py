@@ -250,7 +250,7 @@ CONSOLE_TURN_ACTIVITY_TOOL_GLYPH = "⚙"
 #: emitted AFTER the round returns, carrying its text), so this is derived
 #: from "the last primary step is not a tool call", not from an event.
 CONSOLE_TURN_ACTIVITY_THINKING = "Thinking…"
-#: task-32275: the turn-activity line's PRE-PROVIDER state. The send has
+#: task-32344: the turn-activity line's PRE-PROVIDER state. The send has
 #: been accepted but the first provider call has not happened yet, because
 #: the run is still composing this turn's tool surface (MCP catalog, local
 #: tools, and the lazily-bootstrapped Personal Context profile tools).
@@ -407,7 +407,7 @@ def console_turn_activity_text(
     turn ended (any non-running) ``""`` -- the caller renders nothing
     ===========================  ==========================================
 
-    task-32275: the ``setup`` state is the window between "send accepted"
+    task-32344: the ``setup`` state is the window between "send accepted"
     and "provider called", which the first send of a process pays in full
     (tool catalogs plus the lazy Personal Context bootstrap) and which
     used to render as a blank assistant row for its whole duration.

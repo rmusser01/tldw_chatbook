@@ -11145,7 +11145,7 @@ async def test_leading_reference_draft_still_gets_audit_row(monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# task-32275: pre-provider setup is bounded and visible.
+# task-32344: pre-provider setup is bounded and visible.
 # --------------------------------------------------------------------------
 
 
