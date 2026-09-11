@@ -423,14 +423,22 @@ from pathlib import Path
 from threading import Event
 from Tests.network_guard import install, blocked_attempts
 install()
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
 from tldw_chatbook.Backup_Recovery.archive_reader import acquire, verify_sealed
 from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
 from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
 from tldw_chatbook.Backup_Recovery.isolated_restore import restore_isolated
 home = Path.home()
 source = Path(sys.argv[1])
-sealed = acquire(source / 'retained-temporary.tldw-backup.zip', home / 'acquired', ArchiveLimits(), None, Event())
+second_cycle = sys.argv[2] == 'second-archive'
+archive_name = 'second.tldw-backup.zip' if second_cycle else 'retained-temporary.tldw-backup.zip'
+sealed = acquire(source / archive_name, home / 'acquired', ArchiveLimits(), None, Event())
 doc = verify_sealed(sealed)
+if second_cycle:
+    assert doc.consistency == 'coherent'
+    (home/'second-media-facts.json').write_bytes((source/'second-media-facts.json').read_bytes())
 profile = doc.profile_ids[0]
 destination = home / 'destination'
 destination.mkdir(mode=0o700)
@@ -438,6 +446,7 @@ data = destination / 'data' / 'restored'
 producer = {row.logical_id: row for row in doc.producer_inventory}
 leaves = {'agents.history':'tool_sandbox', 'chat.dictionaries':'chat_dicts', 'chatbooks.archives':'chatbooks', 'runtime.chatbook_scratch':'temp', 'skills':'skills', 'persona.visual_identity_builtin':'persona-assets', 'generation.assets':'generated_images', 'recovered.media':'recovered_media'}
 mapping = {}
+eval_roots = []
 for row in doc.directories:
     if row.parent_id is not None:
         continue
@@ -445,11 +454,20 @@ for row in doc.directories:
         owners = {f.owner_id for f in doc.files if f.root_id == row.logical_id}
         assert len(owners) == 1, owners
         owner = next(iter(owners))
-        mapping[row.logical_id] = destination / 'config' if owner in {'config','runtime.source_state'} else data
+        if second_cycle and owner == 'eval.definitions':
+            # Both captured package/default and retained definitions are explicit
+            # inactive selections, with separate absent destinations.
+            eval_roots.append(row.logical_id)
+            mapping[row.logical_id] = destination / ('inactive-eval-' + str(len(eval_roots)))
+        else:
+            mapping[row.logical_id] = destination / 'config' if owner in {'config','runtime.source_state'} else data
     else:
         owner = producer[row.logical_id].owner_id
         mapping[row.logical_id] = destination / 'persona-assets' if owner == 'persona.visual_identity_builtin' else data / leaves[owner]
 mapping[f'profile:{profile}:paths.data_dir'] = destination / 'data'
+if second_cycle:
+    assert len(eval_roots) == 2
+    assert len({mapping[key] for key in eval_roots}) == 2
 plan = plan_restore(sealed, mode='isolated', destinations=mapping, target=None, profile_names={profile:'restored'})
 restored = restore_isolated(sealed, plan, home / 'control', Event())
 source.rename(source.with_name('source-home-removed'))
@@ -469,6 +487,8 @@ import keyring
 from keyring.backends.null import Keyring
 keyring.set_keyring(Keyring())
 home = Path.home()
+delete_one = sys.argv[1:] == ['--delete-one-before-rebackup']
+assert not sys.argv[1:] or delete_one
 receipt = json.loads((home / 'restored.json').read_text())
 from tldw_chatbook.Backup_Recovery.isolated_restore import select_profile
 select_profile(receipt['profile'], home / 'control')
@@ -496,6 +516,23 @@ async def main():
         unreferenced = connection.execute('SELECT asset_id FROM assets WHERE asset_id NOT IN (SELECT asset_id FROM refs)').fetchall()
     assert {recovered.resolve(asset)[1].read_bytes() for (asset,) in unreferenced} == {b'available temporary gallery',b'orphan video bytes'}
     assert not list(videos.root.glob('*/*.mp4'))
+    if delete_one:
+        with sqlite3.connect(recovered.db_path) as connection:
+            (deleted_asset,) = connection.execute('SELECT asset_id FROM refs WHERE profile=? AND message=? AND slug=? AND media_type=?',(current_profile_id(),'message-mp4','clip','video/mp4')).fetchone()
+        status, deleted_path = recovered.resolve(deleted_asset)
+        assert status == 'ready'
+        recovered.delete(deleted_asset)
+        assert not deleted_path.exists()
+        for selected_profile in profiles:
+            assert recovered.resolve_reference(profile=selected_profile,message='message-mp4',slug='clip',media_type='video/mp4') == ('deleted',None)
+        assert videos.resolve_state('message-mp4','clip',extension='mp4') == ('recovered_deleted',None)
+        with sqlite3.connect(recovered.db_path) as connection:
+            facts = {'assets':connection.execute('SELECT asset_id,digest,size,media_type,state FROM assets ORDER BY asset_id').fetchall(),
+                     'refs':connection.execute('SELECT profile,message,slug,media_type,asset_id FROM refs ORDER BY profile,message,slug,media_type').fetchall(),
+                     'tombstone':connection.execute('SELECT asset_id,version,references_json FROM tombstones WHERE asset_id=?',(deleted_asset,)).fetchone(),
+                     'deleted_asset':deleted_asset,'source_profile':receipt['source_profile'],'first_profile':current_profile_id()}
+        assert facts['tombstone'] is not None
+        (home/'second-media-facts.json').write_text(json.dumps(facts,sort_keys=True))
     selector = Path(os.environ['TLDW_CONFIG_PATH'])
     options = {'staging_parent':home, 'temporary_media':False}
     preview = preview_capture((selector,), options=options)
@@ -517,10 +554,15 @@ async def main():
         captured = await asyncio.to_thread(capture,(selector,),preview.scope_digest,home/'second.tldw-backup.zip',options=options,cancel=cancel)
         manifest = json.loads(captured.manifest_bytes)
         members = [f for f in manifest['files'] if f['owner_id']=='recovered.media']
-        assert len(members)==5
+        assert len(members)==(4 if delete_one else 5)
         catalog = next(f for f in members if f['relative_path']=='catalog.sqlite3')
         with sqlite3.connect(captured.root/catalog['payload']) as connection:
             assert connection.execute('SELECT asset_id FROM assets ORDER BY asset_id').fetchall()==assets
+            if delete_one:
+                assert connection.execute('SELECT asset_id,digest,size,media_type,state FROM assets ORDER BY asset_id').fetchall()==facts['assets']
+                assert connection.execute('SELECT profile,message,slug,media_type,asset_id FROM refs ORDER BY profile,message,slug,media_type').fetchall()==facts['refs']
+                assert connection.execute('SELECT asset_id,version,references_json FROM tombstones WHERE asset_id=?',(deleted_asset,)).fetchone()==facts['tombstone']
+                assert deleted_asset+'.payload' not in {f['relative_path'] for f in members}
         assert captured.inventory.complete and manifest['consistency']=='coherent'
         retained = [f for f in manifest['files'] if f['owner_id']=='eval.definitions']
         assert len(retained) == 2
@@ -556,7 +598,7 @@ print('retired and reopened')
 """
 
 
-def test_temporary_capture_isolated_restore_reopens_without_ttl_sources(tmp_path):
+def _first_temporary_roundtrip(tmp_path, *, delete_one=False):
     import os
     import subprocess
     import sys
@@ -579,8 +621,9 @@ def test_temporary_capture_isolated_restore_reopens_without_ttl_sources(tmp_path
         TLDW_TEST_MODE="1",
         TLDW_DISABLE_CONFIG_WATCH="1",
     )
+    flags = ["--delete-one-before-rebackup"] if delete_one else []
     result = subprocess.run(
-        [sys.executable, "-c", _REOPEN],
+        [sys.executable, "-c", _REOPEN, *flags],
         cwd=Path(__file__).resolve().parents[2],
         env=environment,
         capture_output=True,
@@ -588,6 +631,116 @@ def test_temporary_capture_isolated_restore_reopens_without_ttl_sources(tmp_path
         check=False,
         timeout=45,
     )
+    assert result.returncode == 0, result.stderr[-6000:] + result.stdout[-1000:]
+    assert "retired and reopened" in result.stdout
+    return restored
+
+
+def test_temporary_capture_isolated_restore_reopens_without_ttl_sources(tmp_path):
+    _first_temporary_roundtrip(tmp_path)
+
+
+_SECOND_REOPEN = r"""
+import asyncio,hashlib,json,os,sqlite3,sys
+from pathlib import Path
+from Tests.network_guard import install,blocked_attempts
+install()
+for name in ('sounddevice','pyaudio'):sys.modules[name]=None
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+home=Path.home()
+receipt=json.loads((home/'restored.json').read_text())
+facts=json.loads((home/'second-media-facts.json').read_text())
+from tldw_chatbook.Backup_Recovery.isolated_restore import select_profile
+select_profile(receipt['profile'],home/'control')
+from tldw_chatbook.app import TldwCli
+from tldw_chatbook.Backup_Recovery.recovered_media import RecoveredMedia,current_profile_id
+async def main():
+    app=TldwCli()
+    try:
+        recovered=RecoveredMedia(Path(receipt['data'])/'recovered_media')
+        selected=current_profile_id()
+        assert selected not in {facts['source_profile'],facts['first_profile']}
+        assert receipt['source_profile']==facts['first_profile']
+        with sqlite3.connect(recovered.db_path) as connection:
+            assets=connection.execute('SELECT asset_id,digest,size,media_type,state FROM assets ORDER BY asset_id').fetchall()
+            refs=connection.execute('SELECT profile,message,slug,media_type,asset_id FROM refs ORDER BY profile,message,slug,media_type').fetchall()
+            tombstone=connection.execute('SELECT asset_id,version,references_json FROM tombstones WHERE asset_id=?',(facts['deleted_asset'],)).fetchone()
+        assert [list(row) for row in assets]==facts['assets']
+        originals={tuple(row) for row in facts['refs']}
+        aliases={(selected,*row[1:]) for row in facts['refs'] if row[0]==facts['first_profile']}
+        assert set(refs)==originals|aliases
+        assert tombstone[:2]==tuple(facts['tombstone'][:2])
+        deleted_refs={row[:4] for row in refs if row[-1]==facts['deleted_asset']}
+        assert {tuple(row) for row in json.loads(tombstone[2])}==deleted_refs
+        assert {tuple(row) for row in json.loads(facts['tombstone'][2])}<=deleted_refs
+        assert len(assets)==4 and sum(row[-1]=='deleted' for row in assets)==1
+        for asset,digest,size,kind,state in assets:
+            status,path=recovered.resolve(asset)
+            assert status==state
+            if state=='deleted':
+                assert path is None and not (recovered.root/(asset+'.payload')).exists()
+            else:
+                payload=path.read_bytes()
+                assert len(payload)==size and hashlib.sha256(payload).hexdigest()==digest
+        for profile,message,slug,kind,asset in refs:
+            expected='deleted' if asset==facts['deleted_asset'] else 'ready'
+            assert recovered.resolve_reference(profile=profile,message=message,slug=slug,media_type=kind)[0]==expected
+        videos=app.generated_video_store
+        assert videos.resolve_state('message-webm','clip',extension='webm')[1].read_bytes()==b'available webm'
+        assert videos.resolve_state('message-mp4','clip',extension='mp4')==('recovered_deleted',None)
+        fallback=videos.save('message-mp4','clip',b'unrelated temporary fallback',extension='mp4')
+        assert fallback.read_bytes()==b'unrelated temporary fallback'
+        assert videos.resolve_state('message-mp4','clip',extension='mp4')==('recovered_deleted',None)
+        assert videos.resolve_state('expired-message','expired',extension='mp4')[0]=='expired'
+        from tldw_chatbook.Backup_Recovery.isolated_restore import profile_requirements
+        assert profile_requirements(receipt['profile'],home/'control')['needs_setup']
+        assert not blocked_attempts(),blocked_attempts()
+    finally:
+        await app._shutdown_app_owned_lifecycles()
+        await app.tts_service.close()
+        await app.tts_service.wait_closed()
+asyncio.run(main())
+print('retired and reopened')
+"""
+
+
+def test_second_temporary_archive_restores_ready_assets_and_deleted_references(
+    tmp_path,
+):
+    """A real deletion survives a Complete temp-off backup and second restore."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    first = _first_temporary_roundtrip(tmp_path, delete_one=True)
+    second = tmp_path / "second-restored"
+    second.mkdir()
+    _run(second, str(first / "home"), "second-archive", script=_RESTORE)
+    assert not (first / "home").exists()
+    environment = os.environ.copy()
+    environment.update(
+        HOME=str(second / "home"),
+        XDG_CONFIG_HOME=str(second / "config"),
+        XDG_DATA_HOME=str(second / "data"),
+        TLDW_CONFIG_PATH=str(second / "config" / "config.toml"),
+        TLDW_TEST_MODE="1",
+        TLDW_DISABLE_CONFIG_WATCH="1",
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", _SECOND_REOPEN],
+        cwd=Path(__file__).resolve().parents[2],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=45,
+    )
+    (second / "reopen-output.log").write_text(result.stdout + result.stderr)
     assert result.returncode == 0, result.stderr[-6000:] + result.stdout[-1000:]
     assert "retired and reopened" in result.stdout
 
