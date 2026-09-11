@@ -30,6 +30,7 @@ from Tests.Notes.test_notes_sync_runtime import (
 )
 from Tests.UI.test_library_file_notes_workspace import (
     _assert_legible_painted_text,
+    _painted_text_in_region,
     _production_workspace_context,
     _wait_until,
 )

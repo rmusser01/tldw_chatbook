@@ -164,7 +164,6 @@ def _sync_tree_projection(
     canvas: LibraryNotesCanvas, projection: LibraryNotesTreeProjection
 ) -> None:
     canvas.sync_state(
-        pane_width=canvas.pane_width,
         list_state=_list_state(),
         sort_mode="newest",
         filter_value="",
@@ -264,7 +263,7 @@ async def test_compact_work_authority_survives_responsive_round_trip(
             await pilot.pause()
             assert canvas.query_one("#library-note-work-authority") is authority
             text = str(authority.renderable)
-            assert text.startswith("Library notes · Library database") is compact
+            assert text.startswith("Library notes") is compact
             assert text
             if mode == "loading":
                 assert "Loading note…" in text
@@ -344,7 +343,6 @@ async def test_lasting_setup_retained_wrapper_preserves_input_and_pins_action_at
         folder = app.query_one("#notes-sync-folder-choose", Button)
         folder.focus()
         canvas.sync_state(
-            pane_width=canvas.pane_width,
             list_state=None,
             sort_mode="newest",
             filter_value="",

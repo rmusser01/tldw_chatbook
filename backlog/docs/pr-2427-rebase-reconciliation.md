@@ -4142,3 +4142,86 @@ but dev advanced again to423ae37c1b5394cb596d0d975c1579c9e6f790d3. Inspect that
 delta before any further integration; this evidence qualifiesd80, not the new
 unread tip. Fresh paginated review still has only the existing size thread open.
 TASK31932 AC1/3/4 and normal protected merge remain open.
+
+### Notes critique rebase and fixture qualification (2026-09-10)
+
+Rebased the published f87779b02abdf48b83e17938fd835fb057970bd3 checkpoint
+onto dev423ae37c1b5394cb596d0d975c1579c9e6f790d3, yielding local
+5fb70876dff1215e30274bb7e81e4f95fe6d40ca before follow-up repairs. The sole
+shell-test conflict retains the new Library notes noun and the existing
+loading-aware Next assertions. Independent whole-delta review found the same
+955 normalized change lines across the25 incoming files, with no lost PR or
+upstream behavior. The Handoff formatter ignore entry now names its exact
+rebased commit1d8af2c9dfa231cc6c5cc44e8fbf9d2335d0023b.
+
+Initial native cohortA could not collect because two duplicate pane_width
+keywords already existed before this rebase. Removing only each redundant
+copy, updating one retired compact-heading prefix, and dropping its unused
+stylesheet import leaves all37 Notes widget tests passing. Independent review
+approved the exact patch; production styling and assertions are retained.
+
+The eight-file native rerun completed214 passed/1 failed in269.16s:
+`/private/tmp/pr2427-notes-dev-native-a-final.log`. Terminal native inventory
+retained146 SQLite handles and zero instance-lock handles. Historical owner
+attribution places62 in the three Obsidian import tests and84 in the journey
+import/conflict tests; these are final live identities, not cumulative opens.
+
+The Obsidian helper's current-thread-only close was independently reproduced
+by actual-helper setup/body/cancellation controls: owned registrations remained
+2/1/1. The helper now protects setup from database allocation onward, disposes
+the service cache, and uses existing bounded same-file quiescence after the
+enclosing host exits. All17 complete import-flow tests pass in32.24s, with
+zero terminal SQLite or instance-lock handles. The controls preserve the exact
+raised exception and prove a foreign-path connection remains usable. Evidence:
+`/private/tmp/pr2427-import-fixture-red.log` and
+`/private/tmp/pr2427-import-fixture-green.log`. Independent review is clear.
+
+The lone behavior failure was a painted-text oracle: the complete server
+warning was visible, but capability and not installed wrapped onto adjacent
+rows. Reuse the existing compositor-region helper and require the complete
+phrase after whitespace normalization; retain disabled state, Back visibility,
+navigation and both viewports. All30 complete journey tests pass in50.41s;
+independent review is clear. The separate journey resource problem remains:
+this standalone run retained76 SQLite handles (34 import and42 conflict),
+zero instance locks. Counts vary with worker connections, not ownership.
+Evidence: `/private/tmp/pr2427-notes-server-painted-screen.log` and
+`/private/tmp/pr2427-journey-paint-green.log`.
+
+Read-only in-memory diagnosis of four early cohortB failures verifies that
+three still select the retired Files task-return control. TASK32136 retains
+the source strip and its guarded Library notes button instead. The fourth
+also scrolls before the list has scrollable geometry: before_list_scroll is0,
+before the return action. Waiting for max_scroll_y>=5 before capturing the row,
+then using the accepted source button, passes every original exact receipt,
+focus and scroll assertion. These B-source repairs are not implemented while
+its full1018-case run remains frozen. Evidence:
+`/private/tmp/pr2427-notes-source-switch-probe.log`,
+`/private/tmp/pr2427-notes-source-switch-exact.log`, and
+`/private/tmp/pr2427-notes-return-ready.log`.
+
+Complete guards remain176 passed/15 failed:13 unchanged size ceilings,
+preload504/500, and seven unconsolidated widget CSS declarations. CSS bytes
+pass757059/768000. The seven declarations are WorkspaceArchiveReceiptModal,
+BuddyConversationModal, BuddyManagementModal, BuddySpeechControls,
+BuddyWorkspaceModal, WorkspacePersonaDefaultModal and WorkspacePersonaPicker.
+All seven derived preflight checks pass; no artifacts or caps were changed.
+Evidence: `/private/tmp/pr2427-notes-dev-guards.log` and
+`/private/tmp/pr2427-notes-dev-preflight.log`. Fatal scoped Ruff checks and
+whitespace pass; full lint/format still have inherited findings, with no new
+diagnostics after the test-context formatting correction.
+
+An observation-only import trace confirms two eager entry routes: Library media
+imports meeting_session, while Meetings imports meeting_owner, system_audio_tap
+and wav_writer. No preload repair is implemented; changing only the Meetings
+route would not remove all four Audio modules. The separately recorded
+Console493 SQLite finding is also still open. Latest remote read confirms
+dev423ae37 and published PRf87779b unchanged, with only Qodo size thread
+PRRT_kwDOOcyyl86hU_qn unresolved. Final eight-file rerun completes218 passed,
+3 warnings in274.60s (`/private/tmp/pr2427-notes-dev-native-a-verified.log`).
+Terminal observation retains86 SQLite handles, all attributed to the still-open
+journey owners (44 import and42 conflict), zero from the repaired Obsidian
+fixture and zero instance locks. The1018-case B run remains in progress;
+no complete-PR or merge-readiness claim.
+
+All seven derived checks pass again on this repair checkpoint:
+`/private/tmp/pr2427-notes-fixture-preflight.log`. No generated output changed.
