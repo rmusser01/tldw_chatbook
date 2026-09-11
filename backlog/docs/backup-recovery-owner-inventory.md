@@ -2839,10 +2839,8 @@ Catalog v1, exact source profile/message/slug/type references, operation journal
 | tldw_chatbook/Backup_Recovery/recovered_media.py | RecoveredMedia.retain | atomic_private_write_bytes | 1 | qualified | recovered.media |
 | tldw_chatbook/Backup_Recovery/recovered_media.py | _RecoveredAdapter.capture | copy_private_sqlite | 1 | qualified | recovered.media |
 | tldw_chatbook/Backup_Recovery/recovered_media.py | _RecoveredAdapter.discover | connect_private_sqlite | 1 | qualified | recovered.media |
-| tldw_chatbook/Backup_Recovery/recovered_media.py | _RecoveredAdapter.relocate_restore | connect_private_sqlite | 1 | qualified | recovered.media |
 | tldw_chatbook/Backup_Recovery/recovered_media.py | _RecoveredAdapter.validate | connect_private_sqlite | 1 | qualified | recovered.media |
 | tldw_chatbook/Backup_Recovery/recovered_media.py | _RecoveredAdapter.validate_dependencies | connect_private_sqlite | 1 | qualified | recovered.media |
-| tldw_chatbook/Backup_Recovery/recovered_media.py | _RecoveredAdapter.validate_restore_dependencies | connect_private_sqlite | 1 | qualified | recovered.media |
 | tldw_chatbook/Backup_Recovery/recovered_media.py | _read | open_private_binary | 1 | qualified | recovered.media |
 
 ## Original Task19 bounded RAG discovery and indexing SQLite
@@ -2948,3 +2946,10 @@ hints without claiming durable dependency or recovery qualification.
 | tldw_chatbook/Backup_Recovery/replacement.py | _rollback_replacement | os.unlink | 1 | generic_boundary | backup_control |
 | tldw_chatbook/LLM_Calls/recovery_review.py | _config | open | 1 | generic_boundary | bounded selected configuration read |
 | tldw_chatbook/Backup_Recovery/recovery_copies.py | delete_recovery_copy | os.unlink | 1 | generic_boundary | explicit completed encrypted recovery-copy deletion |
+| tldw_chatbook/Backup_Recovery/recovered_media.py | materialize_temporary_media | connect_private_sqlite | 1 | qualified | recovered.media |
+| tldw_chatbook/Backup_Recovery/recovered_media.py | materialize_temporary_media | create_private_file | 1 | qualified | recovered.media |
+| tldw_chatbook/Backup_Recovery/recovered_media.py | materialize_temporary_media | write | 1 | qualified | recovered.media |
+| tldw_chatbook/Backup_Recovery/recovered_media.py | prepare_temporary_capture | create_private_file | 1 | qualified | recovered.media |
+| tldw_chatbook/Backup_Recovery/recovered_media.py | prepare_temporary_capture | write | 1 | qualified | recovered.media |
+| tldw_chatbook/Backup_Recovery/recovered_media.py | prepare_temporary_capture | connect_private_sqlite | 1 | qualified | recovered.media |
+| tldw_chatbook/DB/recovery_core.py | _CoreAdapter.temporary_video_references | connect_private_sqlite | 1 | qualified | recovered.media |

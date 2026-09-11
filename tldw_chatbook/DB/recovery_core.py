@@ -122,6 +122,74 @@ class _CoreAdapter:
             ".primary"
         )
 
+    def temporary_video_references(
+        self,
+        candidate: Path,
+        *,
+        cancel: Event,
+        max_records: int = 100_000,
+        max_metadata_bytes: int = 16 * 1024**2,
+    ) -> tuple[tuple[str, str, str], ...]:
+        """Read actual native transcript identities without opening a video store."""
+        import json
+
+        from tldw_chatbook.Video_Generation.video_metadata import (
+            VIDEO_METADATA_TOP_KEY,
+            VideoGenerationMetadata,
+            video_relative_path,
+        )
+
+        from .private_sqlite import connect_private_sqlite
+
+        if self.owner_id != "db.chachanotes.primary":
+            raise ValueError("temporary_reference_owner_invalid")
+        if (
+            type(max_records) is not int
+            or not 0 < max_records <= 100_000
+            or type(max_metadata_bytes) is not int
+            or not 0 < max_metadata_bytes <= 16 * 1024**2
+        ):
+            raise ValueError("temporary_reference_limit_invalid")
+        if cancel.is_set():
+            raise InterruptedError("cancelled")
+        issues = self.validate(candidate)
+        if issues:
+            raise ValueError(issues[0])
+        references, total = [], 0
+        with closing(
+            connect_private_sqlite(self.backup_owner_id, candidate, read_only=True)
+        ) as connection:
+            for index, (message, encoded) in enumerate(
+                connection.execute(
+                    "SELECT id,metadata_json FROM messages WHERE metadata_json IS NOT NULL ORDER BY id LIMIT ?",
+                    (max_records + 1,),
+                )
+            ):
+                if cancel.is_set():
+                    raise InterruptedError("cancelled")
+                if index >= max_records or type(encoded) is not str:
+                    raise ValueError("temporary_reference_limit")
+                total += len(encoded.encode("utf-8"))
+                if total > max_metadata_bytes:
+                    raise ValueError("temporary_reference_limit")
+                if not encoded:
+                    continue
+                try:
+                    document = json.loads(encoded)
+                except (ValueError, RecursionError):
+                    raise ValueError("temporary_reference_invalid") from None
+                if type(document) is not dict or VIDEO_METADATA_TOP_KEY not in document:
+                    continue
+                payload = document[VIDEO_METADATA_TOP_KEY]
+                if type(payload) is not dict or type(payload.get("name")) is not str:
+                    raise ValueError("temporary_reference_invalid")
+                metadata = VideoGenerationMetadata.from_json(encoded)
+                if metadata is None:
+                    raise ValueError("temporary_reference_invalid")
+                relative = video_relative_path(message, metadata.name, metadata.container)
+                references.append((message, metadata.name, "video/" + relative.suffix[1:]))
+        return tuple(references)
+
     def capture(self, item: StorageItem, destination: Path, cancel: Event) -> None:
         from tldw_chatbook.Backup_Recovery.admission import _local
 

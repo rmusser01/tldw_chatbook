@@ -13,7 +13,7 @@ dependencies:
 - task-31995
 - task-31996
 - task-31997
-updated_date: 2026-09-11 05:27
+updated_date: 2026-09-11 06:09
 ---
 
 ## Description
@@ -83,4 +83,5 @@ Root saved-image bounded twofile qualification frozen. /private/tmp/chatbook-gen
 Saved-generated-image root unit independently APPROVED P /private/tmp/chatbook-generated-saved-capture-independent-review.md; both frozen hashes+patch verified, bounded saved-image claim only. Exact-index census11passed /private/tmp/generated-saved-index-census.log, no censusdelta. Commit only config_adapter marker removal/newpublictest/task31998, then release config_adapter to C for its already-approved Chatbooks scope.
 Root independent review of frozen six-file populated Skills/Chatbooks capture package (patch SHA256 8aaa2ddaad9dacf7467b40ce04d9bf0bf34e686bd9c92849d03be42e65627bb2): approved after canonical selector correction. Verified narrow inert dependency handling, exact agents.history sandbox topology, no execution/trust adoption, existing content admission before helper mutation, and actual public capture/resume test. Report /private/tmp/chatbook-skills-chatbooks-capture-report.md records focused greens and existing clean-feature-HEAD PromptHistory fixture failure. Exact-index census and scoped commit next; no full restore completion claim.
 Final frozen-package exact-index census: 11 passed, 3 warnings in 7.08s; /private/tmp/content-capture-index-census.log. No census edits required. All six frozen hashes matched; scoped commit includes this task, no other concurrent production changes.
+Released originalTasks11/15 temporary-media integration under existing31994: private capture-stage transform only, exact included originals and finalrediscovery unchanged, strict ordinary manifest/groups/budgets. Missing expired optional references counted honestly without phantomdigest/tombstone and do not alone defeatComplete. Existing required recovered missing asset remainsfailure. Shared config_adapter/capture work waits root coordination after Chatbook typedreference author freezes.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

@@ -542,7 +542,13 @@ class _Generated(_RawDeclaration):
                     item = replace(item, status="unsupported")
                 elif item.status in {"included", "included_directory"}:
                     item = replace(item, status="intentionally_excluded")
-            elif relative.parts and relative.parts[0] not in {"temp", "saved"}:
+            elif relative.parts and (
+                relative.parts[0] not in {"temp", "saved"}
+                or context.selections.temporary_media
+                and relative.parts[0] == "temp"
+                and item.status == "included"
+                and item.path.suffix.lower() != ".png"
+            ):
                 item = replace(item, status="unsupported")
             result.append(item)
         video_root = user_data_dir(config) / "generated_videos"
@@ -576,20 +582,22 @@ class _Generated(_RawDeclaration):
             lock = replace(lock, status="intentionally_excluded")
         result.append(lock)
         if context.selections.temporary_media:
-            result.extend(self._tree(config, video_root))
-            # No claim that available pathname bytes establish transcript/media
-            # reference completeness; task11 owns the retained asset catalogue.
-            result.append(
-                StorageItem(
-                    self.owner_id,
-                    storage_logical_id(
-                        context, self.owner_id, "temporary_reference_pending"
-                    ),
-                    None,
-                    "unsupported",
-                    (),
-                )
+            from tldw_chatbook.Video_Generation.video_metadata import (
+                video_relative_path,
             )
+
+            for item in self._tree(config, video_root):
+                if item.status == "included":
+                    relative = item.path.relative_to(video_root)
+                    try:
+                        valid = len(relative.parts) == 2 and video_relative_path(
+                            relative.parts[0], item.path.stem, item.path.suffix[1:]
+                        ) == relative
+                    except ValueError:
+                        valid = False
+                    if not valid:
+                        item = replace(item, status="unsupported")
+                result.append(item)
         else:
             result.append(
                 _excluded_root(

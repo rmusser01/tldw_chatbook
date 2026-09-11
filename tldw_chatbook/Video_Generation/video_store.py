@@ -44,7 +44,6 @@ from tldw_chatbook.Video_Generation.config import (
 )
 from tldw_chatbook.Video_Generation.video_formats import (
     SUPPORTED_VIDEO_FORMATS,
-    canonical_video_extension,
 )
 
 VIDEO_MARKER_PREFIX = "[video] "
@@ -250,12 +249,9 @@ class VideoStore:
         return self._root / message_id
 
     def _video_path(self, message_id: str, slug: str, extension: str) -> Path:
-        if not slug or not _SAFE_COMPONENT.fullmatch(slug):
-            raise ValueError(f"unsafe slug component: {slug!r}")
-        if slug.startswith(_STAGE_PREFIX):
-            raise ValueError("slug uses reserved internal stage namespace")
-        safe_ext = canonical_video_extension(extension)
-        candidate = (self._message_dir(message_id) / f"{slug}.{safe_ext}")
+        from .video_metadata import video_relative_path
+
+        candidate = self._root / video_relative_path(message_id, slug, extension)
         try:
             resolved_root = self._root.resolve()
             resolved = candidate.resolve()

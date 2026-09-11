@@ -163,6 +163,7 @@ def _manifest_for(inventory, staged, aliases, options, issues):
         "Captured files: " + str(len(files)),
         "Captured bytes: " + str(sum(item["size"] for item in files)),
     ]
+    lines.extend(options.get("report_lines", ()))
     if external:
         lines.append(
             "External files have per-file stability checks, not folder-wide consistency."
@@ -455,6 +456,15 @@ def _capture_under_maintenance(
                     )
                     if dependency_issues:
                         raise CaptureReviewRequired(dependency_issues)
+            representation = final_inventory
+            representation_report = ()
+            if selections.temporary_media:
+                from .recovered_media import prepare_temporary_capture
+
+                representation, staged, representation_report = prepare_temporary_capture(
+                    session, final_inventory, staged, stage=stage, cancel=cancel,
+                    limits=limits, byte_budget=budget,
+                )
             rebound = replace(
                 current, items=tuple(replace(item, path=path) for item, path in staged)
             )
@@ -498,11 +508,14 @@ def _capture_under_maintenance(
                     complete=False,
                     issues=tuple(sorted(set(final_inventory.issues) | set(issues))),
                 )
+                representation = replace(
+                    representation, complete=False, issues=final_inventory.issues
+                )
             total = sum(path.stat().st_size for _, path in staged)
             if total > budget:
                 raise CaptureReviewRequired(("capture_budget_changed",))
             manifest = _manifest_for(
-                final_inventory,
+                representation,
                 staged,
                 aliases,
                 {
@@ -512,6 +525,7 @@ def _capture_under_maintenance(
                     "encrypted": encrypted,
                     "versions": versions,
                     "limits": limits,
+                    "report_lines": representation_report,
                 },
                 tuple(sorted(set(issues) | set(current.issues))),
             )

@@ -26,13 +26,30 @@ that invariant.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from tldw_chatbook.Video_Generation.video_formats import canonical_video_extension
 
 #: Top-level key namespacing this payload inside ``metadata_json``.
 VIDEO_METADATA_TOP_KEY = "video_generation"
+
+
+def video_relative_path(message_id: str, slug: str, container: str) -> Path:
+    """Select the installed VideoStore member without opening or creating storage."""
+    if (
+        not isinstance(message_id, str)
+        or not re.fullmatch(r"[A-Za-z0-9._-]+", message_id)
+        or message_id == ".."
+        or not isinstance(slug, str)
+        or not re.fullmatch(r"[A-Za-z0-9._-]+", slug)
+    ):
+        raise ValueError("unsafe video reference component")
+    if slug.startswith(".video-stage-"):
+        raise ValueError("slug uses reserved internal stage namespace")
+    return Path(message_id) / (slug + "." + canonical_video_extension(container))
 
 
 @dataclass(frozen=True, slots=True)
