@@ -282,6 +282,7 @@ class NotesScopeService:
         limit: int,
         offset: int,
         user_id: str | None = None,
+        order: str = "title",
     ) -> NotePlacementPage:
         """Page note placements through the local repository boundary.
 
@@ -291,6 +292,7 @@ class NotesScopeService:
             limit: Maximum placements to return.
             offset: Zero-based placement offset.
             user_id: Local database user identifier.
+            order: Placement order the caller is browsing in (task-32172).
 
         Returns:
             The repository's exact placement page.
@@ -308,6 +310,7 @@ class NotesScopeService:
             parent_id=parent_id,
             limit=limit,
             offset=offset,
+            order=order,
         )
 
     async def locate_note_tree_folder(
@@ -352,6 +355,7 @@ class NotesScopeService:
         preferred_folder_id: str | None = None,
         preferred_membership_id: str | None = None,
         user_id: str | None = None,
+        order: str = "title",
     ) -> NoteTreeLocation | None:
         """Locate one preferred note placement in the exact paged tree.
 
@@ -362,6 +366,8 @@ class NotesScopeService:
             preferred_folder_id: Folder to prefer after exact membership lookup.
             preferred_membership_id: Exact surviving membership to prefer.
             user_id: Local database user identifier.
+            order: Placement order the tree is paging in; the returned
+                offset is ranked in it (task-32172).
 
         Returns:
             The repository's exact tree location, or ``None`` when absent.
@@ -380,6 +386,7 @@ class NotesScopeService:
             page_size=page_size,
             preferred_folder_id=preferred_folder_id,
             preferred_membership_id=preferred_membership_id,
+            order=order,
         )
 
     async def load_note_tree_mutation_context(

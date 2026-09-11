@@ -17,9 +17,74 @@ from typing import Iterable, Sequence
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal
-from textual.widgets import Button
+from textual.widgets import Button, OptionList
 
 from tldw_chatbook.Library.library_shell_state import LIBRARY_CHOICE_ACTIVE_MARKER
+
+#: task-32210 (critique #9 row 6): the vertical choosers marked their cursor
+#: with an OptionList background swap measured at 1.09:1 -- colour-only, and
+#: invisible in a plain-text capture. This is the same ``█`` left-edge cue the
+#: list rows carry (task-31983), rendered into the prompt because CSS cannot
+#: target one option (``option-list--option-highlighted`` styles it, but a
+#: component style is a Rich style -- it cannot add a glyph).
+LIBRARY_CHOICE_CURSOR = "█ "
+
+
+class LibraryChoiceOptionList(OptionList):
+    """An OptionList whose highlighted option carries the house ``█ `` cursor.
+
+    The prefix rides in FRONT of the ``✓`` active marker, so the highlighted
+    active option reads ``█ ✓ All types``. ``Option._set_prompt`` mutates in
+    place, so the ``choice_value`` attribute the pick handlers read survives.
+    """
+
+    def on_mount(self) -> None:
+        # No ``super().on_mount()`` -- Textual dispatches every ``on_mount``
+        # in the MRO, subclass first, so ``OptionList.on_mount``'s
+        # ``_update_lines()`` still runs, and it runs AFTER this paint.
+        # Calling it here would run it twice (see
+        # ``backlog/docs/lessons-textual.md`` and
+        # ``Tests/UI/test_on_mount_mro_convention.py``).
+        self._paint_choice_cursor()
+
+    def watch_highlighted(self, highlighted: int | None) -> None:
+        """Move the cursor with the highlight.
+
+        Args:
+            highlighted: Index of the newly highlighted option, or ``None``
+                when nothing is highlighted. Delegated to the base watcher
+                first (it scrolls and posts ``OptionHighlighted``), then the
+                cursor prefix is repainted onto that option's prompt and
+                stripped from every other.
+        """
+        super().watch_highlighted(highlighted)
+        self._paint_choice_cursor()
+
+    def _paint_choice_cursor(self) -> None:
+        """Keep the cursor on exactly the highlighted option's prompt.
+
+        Each option's ORIGINAL prompt is stashed the first time it is seen
+        and every rewrite is rebuilt from that. Recovering it by stripping
+        the prefix back off instead (the first cut of this) cannot tell the
+        cursor from the same two characters in the data: media types are
+        free text -- a type literally named "All" is already a pinned case
+        -- so a type named ``█ redacted`` lost its first two cells the
+        moment the chooser painted, and the visible option stopped agreeing
+        with the ``choice_value`` behind it.
+        """
+        for index in range(self.option_count):
+            option = self.get_option_at_index(index)
+            base = getattr(option, "_library_choice_base", None)
+            if base is None:
+                base = str(option.prompt)
+                option._library_choice_base = base
+            wanted = (
+                f"{LIBRARY_CHOICE_CURSOR}{base}"
+                if index == self.highlighted
+                else base
+            )
+            if str(option.prompt) != wanted:
+                self.replace_option_prompt_at_index(index, wanted)
 
 
 def compose_library_choice_strip(

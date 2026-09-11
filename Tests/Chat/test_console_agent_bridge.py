@@ -880,7 +880,7 @@ def test_fenced_nested_delivery_counts_exact_transformed_payload_before_mark(
     )
     events = []
     monkeypatch.setattr(agent_service_module, "get_model_token_limit", lambda *_: 100)
-    monkeypatch.setattr(agent_service_module, "_count_model_messages", lambda *_: 10)
+    monkeypatch.setattr(agent_service_module, "_count_model_messages", lambda *_, **_kwargs: 10)
     monkeypatch.setattr(
         bridge_module, "get_model_token_limit", lambda *_: 100, raising=False
     )

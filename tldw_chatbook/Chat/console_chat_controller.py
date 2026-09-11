@@ -461,6 +461,7 @@ from tldw_chatbook.Chat.console_thinking_history import (
     resolve_thinking_history,
 )
 from tldw_chatbook.Chat.thinking_blocks import (
+    THINKING_ENVELOPE_VERSION,
     ThinkingEnvelope,
     ThinkingHistoryPolicy,
     normalize_thinking_history_policy,
@@ -8869,12 +8870,17 @@ class ConsoleChatController:
                     or getattr(resolution, "api_mode", None)
                     or "chat_completions"
                 ),
-                disposition=getattr(
-                    resolution, "thinking_stream_disposition", "ignored"
+                disposition=(
+                    "displayable"
+                    if getattr(resolution, "local_structured_thinking", False)
+                    else getattr(resolution, "thinking_stream_disposition", "ignored")
                 ),
-                round_trip_version=getattr(
-                    resolution, "thinking_round_trip_version", None
+                round_trip_version=(
+                    THINKING_ENVELOPE_VERSION
+                    if getattr(resolution, "local_structured_thinking", False)
+                    else getattr(resolution, "thinking_round_trip_version", None)
                 ),
+                reasoning_replay=getattr(resolution, "reasoning_replay", None),
             ),
             policy=self.store.session_thinking_history_policy(preparation.session_id),
             sidecars=thinking_sidecars,

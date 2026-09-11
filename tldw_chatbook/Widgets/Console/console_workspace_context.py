@@ -1692,6 +1692,16 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 )
                 title.styles.width = "1fr"
                 yield title
+        for label, button_id in (
+            ("Archive this chat", "console-archive-chat"),
+            ("Archived chats", "console-open-archive"),
+            ("Search all chats…", "console-search-all"),
+        ):
+            action = Button(
+                label, id=button_id, compact=True, classes="console-workspace-action"
+            )
+            action.styles.width = "100%"
+            yield action
         if show_selected_summary:
             yield self._static(
                 browser.selected_summary or "No active conversation.",
@@ -1705,7 +1715,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         ):
             search_input = ConsoleBrowserSearchInput(
                 initial_value=browser.query,
-                placeholder="Search conversations",
+                placeholder="Filter visible titles",
                 id="console-workspace-conversation-search",
                 classes="console-workspace-conversation-search",
             )

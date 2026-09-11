@@ -58,10 +58,10 @@ from tldw_chatbook.Workspaces.workspace_tree_state import (
 SECTION_IDS = (
     "workspace",
     "conversations",
+    "character",
     "model",
     "agent",
     "details",
-    "character",
 )
 LOCAL_HINT = "▼ more — scroll"
 #: TASK-23195 made the outer hint name the sections below the fold instead
@@ -455,14 +455,27 @@ async def test_all_open_context_sections_keep_their_own_complete_ceiling_and_out
         initial_state = rail._rail_state
         # The two peer list sections' ceilings grow to fill the rail (half
         # the measured viewport each, floored at the historical 20-line
-        # ceiling); every other section keeps its fixed ceiling.
+        # ceiling); Character gets the viewport minus its header.
         adaptive_budget = console_rail_section_height_budget(
             rail._snapshot_outer_viewport_height()
         )
         ceilings = dict(
             zip(
                 SECTION_IDS,
-                (adaptive_budget, adaptive_budget, 15, 15, 15, 35),
+                (
+                    adaptive_budget,
+                    adaptive_budget,
+                    max(
+                        35,
+                        rail._snapshot_outer_viewport_height()
+                        - rail.query_one(
+                            "#console-rail-section-header-character"
+                        ).outer_size.height,
+                    ),
+                    15,
+                    15,
+                    15,
+                ),
                 strict=True,
             )
         )
@@ -1901,7 +1914,7 @@ async def test_focus_and_pointer_activation_are_transient_and_open_close_falls_b
         await pilot.pause()
         assert await pilot.click(conversations_toggle)
         await _settle(pilot)
-        assert rail._active_section_id == "model"
+        assert rail._active_section_id == "character"
 
 
 @pytest.mark.parametrize("owner_name", ("sources", "settings", "run"))
@@ -2232,7 +2245,7 @@ async def test_canceled_header_press_releases_pointer_activation_latch(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("removed_section", "expected_fallback"),
-    (("character", "details"), ("agent", "model")),
+    (("character", "conversations"), ("agent", "model")),
 )
 async def test_absent_active_section_falls_back_in_stable_descriptor_order(
     monkeypatch: pytest.MonkeyPatch,
@@ -3138,3 +3151,31 @@ async def test_scroll_cost_probe_still_detects_pre_split_routing(
         assert burst > 0, (
             "the probe no longer observes the pre-split coalesced layout cost"
         )
+
+
+@pytest.mark.asyncio
+async def test_character_header_missing_during_prepare_does_not_latch_reconciliation():
+    host = ConsoleHarness(_build_test_app())
+    async with host.run_test(size=(180, 72)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-left-rail")
+        rail = console.query_one(ConsoleLeftRail)
+        await pilot.pause()
+        header = rail.query_one("#console-rail-section-header-character")
+        parent = header.parent
+        bounded = rail.query_one("#console-bounded-section-character")
+        await header.remove()
+        # The body remains while its header is temporarily absent.
+        rail._allocation_reconcile_scheduled = True
+        rail._prepare_allocation_reconcile()
+        for _ in range(3):
+            await pilot.pause()
+        assert not rail._allocation_reconcile_scheduled
+        await parent.mount(header, before=bounded)
+        await pilot.resize_terminal(180, 100)
+        for _ in range(4):
+            await pilot.pause()
+        assert bounded.max_content_lines == max(
+            35, rail._snapshot_outer_viewport_height() - header.outer_size.height
+        )
+        assert not rail._allocation_reconcile_scheduled

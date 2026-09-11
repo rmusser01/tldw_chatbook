@@ -93,6 +93,7 @@ class TraceTransformKind(str, Enum):
     SYSTEM_FRAMING = "system_framing"
     PROVIDER_OVERLAY = "provider_overlay"
     MESSAGE_REWRITE = "message_rewrite"
+    RUNTIME_GUIDANCE = "runtime_guidance"
     CURRENT_TURN_TEXT = "current_turn_text"
     WINDOWING = "windowing"
 
@@ -598,6 +599,33 @@ def _validate_derived_shape(descriptor: DerivedTraceProvenance) -> None:
 
     transform = descriptor.transform
     artifact = descriptor.artifact
+    if transform is TraceTransformKind.RUNTIME_GUIDANCE:
+        # This encoding preserves a tool-result role while attaching runtime
+        # guidance, or wraps one guidance/result row for a reviewed template.
+        controls = frozenset(
+            {
+                TraceProvenanceSource.ACTIVE_REQUEST,
+                TraceProvenanceSource.PROJECT_INSTRUCTION,
+            }
+        )
+        first_sources = controls | {TraceProvenanceSource.TOOL_RESULT}
+        if (
+            artifact is not None
+            or not descriptor.inputs
+            or not _descriptor_matches_category(
+                descriptor.inputs[0], allow_saved=True, artifact_sources=first_sources
+            )
+            or any(
+                not _descriptor_matches_category(
+                    item, allow_saved=True, artifact_sources=controls
+                )
+                for item in descriptor.inputs[1:]
+            )
+        ):
+            raise TraceProvenanceAlignmentError(
+                "runtime guidance requires its result/control source and exact guidance inputs"
+            )
+        return
     if transform is TraceTransformKind.CURRENT_TURN_TEXT:
         if (
             len(descriptor.inputs) != 1
@@ -747,6 +775,17 @@ def _descriptor_matches_category(
     allow_saved: bool,
     artifact_sources: frozenset[TraceProvenanceSource],
 ) -> bool:
+    if (
+        type(descriptor) is DerivedTraceProvenance
+        and descriptor.transform is TraceTransformKind.RUNTIME_GUIDANCE
+    ):
+        # The wire role is that of the first source; every causal input remains
+        # traversed and admitted by the normal provenance admission walker.
+        return _descriptor_matches_category(
+            descriptor.inputs[0],
+            allow_saved=allow_saved,
+            artifact_sources=artifact_sources,
+        )
     if (
         type(descriptor) is DerivedTraceProvenance
         and descriptor.transform is TraceTransformKind.MESSAGE_REWRITE

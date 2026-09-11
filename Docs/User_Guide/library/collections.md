@@ -35,8 +35,12 @@ open it, N is **every** capture in the active authority — that first read is
 unfiltered, so it answers "how much is in Collections". Once the list has
 loaded a page, N follows that page's scope instead (Favorites shows the
 Favorites total), and is withheld entirely while a page is loading or stale
-rather than falling back to the whole-library number. At narrow rail widths
-the row abbreviates to **Captures (N)**.
+rather than falling back to the whole-library number — including when you
+leave a scoped list and come back to it, and after the capture authority
+itself goes away. If the count cannot be read at all (it failed, or the
+read ran out of its deadline) the row reads **Collections (—)** and the
+rail's **Details** disclosure says so; opening the row loads the real
+number. At narrow rail widths the row abbreviates to **Captures (N)**.
 
 Selecting the row mounts six scope sub-rows underneath it — **All
 Captures**, **Saved**, **Reading**, **Read**, **Archived**,
@@ -222,6 +226,16 @@ is a product decision and is deliberately left open.)*
 the rail's Collections count is now withheld, not replaced by the unfiltered
 whole-library total, while a scoped page is loading or stale -- so the
 "Showing the last good page … the exact total is withheld" behaviour above
-holds for the rail row too, and a narrower scope's count no longer flashes the
-whole-library number mid-load. The obsolete screenshot of the superseded
-Collections manager was deleted rather than left orphaned.)*
+holds for the rail row too. NOTE: this stamp's "a narrower scope's count no
+longer flashes the whole-library number mid-load" overstated the fix -- one
+path was left, and task-32101's sibling task-32103 closed it; see the stamp
+below. The obsolete screenshot of the superseded Collections manager was
+deleted rather than left orphaned.)*
+
+*Verified against fix/library-crit8-riders-a — 2026-09-10 (task-32103: the
+flash the stamp above claimed was gone survived on one path -- leaving a
+scoped list and returning reset the canvas page while the scope persisted,
+so the rail borrowed the unfiltered total for one load window. The
+unfiltered prefetch now answers only for the unfiltered scope, a page whose
+authority has gone is never painted, and a count read that fails or runs out
+of deadline shows "(—)" with a Details sentence instead of vanishing.)*

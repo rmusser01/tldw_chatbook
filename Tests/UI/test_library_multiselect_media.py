@@ -422,19 +422,38 @@ async def test_media_fresh_zero_distills_to_one_recovery_action(
         assert action.disabled is False
         assert action in pilot.app.screen.focus_chain
         assert not pilot.app.query("#library-media-pager")
-        assert not pilot.app.query("#library-media-select-toggle")
-        assert not pilot.app.query("#library-media-export")
         assert not pilot.app.query("#library-media-detail-empty")
+        # task-32213 (critique #9 row 10): the toolbar SURVIVES a 0-result
+        # page. It used to be taken away with the early return, so the facet
+        # that produced the empty page could neither be read nor reset from
+        # the canvas. Select is composed but disabled by the pre-existing
+        # zero-row gate.
+        assert (
+            pilot.app.query_one("#library-media-select-toggle", Button).disabled
+            is True
+        )
         # task-31635 (critique #5 item 7): the title row's Sets opener rides
         # this page too -- it is navigation, not a result, and it is the only
         # route back to a saved review set from an empty list. The RECOVERY
-        # budget is still exactly one: everything in the page's own body.
-        body_actions = [
-            action
+        # budget is still exactly one; the rest of the body is the browse
+        # toolbar, pinned here as an exact inventory so a stray action still
+        # fails this test.
+        body_action_ids = sorted(
+            action.id
             for action in pilot.app.query(".library-canvas-action")
             if action.id != "library-media-review-sets"
-        ]
-        assert len(body_actions) == 1, body_actions
+        )
+        assert body_action_ids == sorted(
+            (
+                action_id,
+                "library-media-type-filter",
+                "library-media-sort",
+                "library-media-export",
+                "library-media-trash-open",
+                "library-media-select-toggle",
+                "library-media-review",
+            )
+        ), body_action_ids
         sets = pilot.app.query_one("#library-media-review-sets", Button)
         assert sets.display is True and not sets.disabled
 

@@ -1286,8 +1286,15 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                     # task-31945: the fifth list canvas gets the shared
                     # row press behaviour too -- the flash swallows a fast
                     # second click here exactly as it did on the other four.
+                    # task-32223: the trust state in words, on the row's own
+                    # label. The glyph alone painted an approved and an
+                    # unapproved skill alike for anyone not decoding "✓"/"⚠",
+                    # and the canvas legend carries no trust glyph to decode
+                    # it against. Wording comes from the list-state builder
+                    # (``SkillListRow.trust_label``), never restated here.
+                    trust = f" · {row.trust_label}" if row.trust_label else ""
                     button = library_row_button(
-                        f"{'› ' if row.selected else ''}{row.trust_glyph} {name}",
+                        f"{'› ' if row.selected else ''}{row.trust_glyph} {name}{trust}",
                         id=f"library-skill-row-{row.name}",
                         classes=classes,
                         compact=True,

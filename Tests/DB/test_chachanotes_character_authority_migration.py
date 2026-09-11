@@ -284,18 +284,12 @@ def test_v27_migration_adds_only_nullable_authority_and_backfills_proven_local_r
     path = tmp_path / "v27-to-v28.sqlite"
     before_columns, expected_authority = _seed_v27_database(path, monkeypatch)
 
-    db = open_current_chachanotes_from_legacy(
-        path, client_id="migration-test"
-    )
+    # Isolate this migration from later additive conversation columns.
+    with monkeypatch.context() as target_version:
+        target_version.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 28)
+        db = open_current_chachanotes_from_legacy(path, client_id="migration-test")
     connection = db.get_connection()
-
-    # task-1780 bumped the schema past v28, and cost ticker PR1 (v29->v30)
-    # bumped it again; a real CharactersRAGDB always migrates fully to
-    # whatever is current, so assert dynamically. Neither the v28->v29
-    # (kept_briefings/kept_scripts) nor the v29->v30 (messages.usage_json)
-    # migration touches `conversations`, so the column-delta assertion below
-    # is unaffected.
-    assert _version(connection) == db._CURRENT_SCHEMA_VERSION
+    assert _version(connection) == 28
     after_columns = _conversation_columns(connection)
     assert after_columns - before_columns == {"assistant_authority_id"}
     authority_column = next(

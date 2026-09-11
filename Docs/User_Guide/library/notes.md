@@ -96,9 +96,16 @@ editor's own Back control returns to its list.
   area's own **‹ Notes** / **‹ Back to list** control, below), which always
   repaints immediately; no filter re-query is needed once you are back.
 
-  The folder tree is ordered by title, which is the order the database pages
-  notes in, so it carries no sort control; the sort control belongs to the
-  flat list shown before any folder tree has loaded.
+  The folder tree lists notes **newest first by default** — every folder's
+  notes, and the automatic **Unfiled** group, in the order they were last
+  changed. **Sort** switches that to **Oldest** or to **Title** (by name),
+  and your choice is remembered. The order you pick is the order the
+  database pages notes in, so choosing one reloads the tree — including
+  the folders you have open — and a note really does move between pages
+  rather than only shuffling within the page you can see; jumping straight
+  to a note lands on the page that order puts it on. While a filter is
+  active, results come back in the search's own order (grouped by folder),
+  so **Sort** is disabled there and says so.
 
   In a narrow list pane the toolbar's action groups stack one action per
   line rather than running off the pane edge, so every action stays
@@ -108,7 +115,12 @@ editor's own Back control returns to its list.
   dates, version details, copy/export actions, and Delete. Save status and
   frequent actions remain in the header. On wide terminals the
   top `‹ Library / Notes` cue returns to the exact prior list row, scope, and
-  scroll positions; on compact terminals use `‹ Back to list`.
+  scroll positions; on compact terminals use `‹ Back to list`. While you are
+  typing, the title, body and keyword fields are each their own authority: a
+  background refresh never rewrites the field under your hands, and it never
+  moves your place in the Items list beside it. Tab out of any of them —
+  title, body or keywords — takes effect before the next keystroke, so
+  typing straight through a Tab puts the rest where you meant it.
 - **New note view** — opens from the rail's "New note": a "Blank note"
   button plus a "From a template" list.
 - **Add from files…** — asks whether this is an **Import once** or a lasting
@@ -301,6 +313,10 @@ snapshot. Each level loads independently in fixed pages of 20:
   control while loading and moves it only after the requested rows arrive.
 - Collapsing a folder keeps its fresh branch pages for a quick re-expand.
   Mutations and stale results refresh only the affected folder branches.
+- Opening a note reveals where it lives: while the note loads, the status line
+  shows **Locating note…** and the tree expands the folders on the way to it
+  and marks its row. Open a second note before the first reveal lands and only
+  the older reveal is dropped — the note you just chose still opens.
 
 Filtering uses the same placement-aware hierarchy and bounded pages: matching
 notes retain the ancestors needed to understand their location, duplicate
@@ -321,7 +337,7 @@ both stay closed until you choose to reopen one.
 | Folder selected: "Rename" / "Move" / "Remove" | Act on the selected folder. Same two disabled reasons as **New folder**. |
 | Note selected: "Add to folder" / "Move note" / "Remove placement" | File the selected note into a folder, move its placement, or take it out again. A sync-managed placement is refused with "This placement is managed by sync; change its sync root instead."; a note sitting in the automatic **Unfiled** group cannot have its placement removed ("Unfiled is shown automatically; move the note into a folder."). |
 | "Restore folder" | Appears after a folder removal, to put it back. |
-| "Sort: Newest" | Opens a one-row strip of Newest / Oldest / Title (✓ on the active one) in place of the action row; pick one directly, or press Escape to cancel. Only offered for the flat list shown before a folder tree has loaded — the folder tree itself (the default view once any folder exists) carries no Sort control, per "The folder tree is ordered by title" above, so this control is not part of ordinary browsing. |
+| "Sort: Newest" | Opens a one-row strip of Newest / Oldest / Title (✓ on the active one) in place of the action row; pick one directly, or press Escape to cancel. **Newest is the default.** The value is the order the folder tree is paged in, so choosing a new one reloads the tree (open folders included). Disabled while a filter is showing, with "Filter results keep their own order. Clear the filter to sort." |
 | "Add from files…" | Choose **Import once** or **Keep a folder synced** before selecting a source. |
 | "Manage sync folders" | Appears only when roots or paused migration candidates exist; opens root status and contextual controls. |
 | "Last import" | Reopens the latest import receipt from this app session after you return to the Notes list. |
@@ -355,7 +371,8 @@ reusable lessons (empty)".
 Opening a note shows "Loading note…" only while the note is being read. If a
 read takes longer than about three seconds the editor stops waiting and shows
 "Unable to load note — timed out after 3 s. Press Retry." with a **Retry**
-button; **‹ Notes** takes you back to the list, and opening another note still
+button; "‹ Notes" / "‹ Back to list" (the same compact-vs-wide wording as
+Edit/Preview/Info) takes you back to the list, and opening another note still
 works.
 
 **Autosave** runs about two seconds after you stop typing; the meta line
@@ -435,8 +452,9 @@ Opening this view parks keyboard focus on **Blank note**, so Enter creates
 a note straight away without tabbing to find it; ↑/↓ move between Blank
 note and the template rows, and the focused row carries the same left-edge
 bar the Notes list rows use. The footer's "enter create note" appears only
-while one of those rows genuinely has focus — move to "‹ Notes" and it
-drops, because Enter there goes back rather than creating anything.
+while one of those rows genuinely has focus — move to "‹ Notes" / "‹ Back to
+list" (the same compact-vs-wide wording as Edit/Preview/Info) and it drops,
+because Enter there goes back rather than creating anything.
 
 ### Add from files and lasting sync
 
@@ -451,6 +469,13 @@ action is to pick one:
   changes**. Checking is mutation-free. Review safe actions, attention items,
   skips, filesystem effects, and deletion-like effects before **Activate
   reviewed root** is enabled.
+
+Both folder pickers remember where you were. Each reopens at the directory it
+last picked in *that* flow, so Import once and Keep a folder synced never move
+each other's starting point, and neither borrows the Library ingest browser's.
+The first use of either — or a remembered folder that has since been moved or
+deleted — opens at your home directory instead. **Folder files** keeps its own
+separate memory, see [File notes](file-notes.md).
 
 If files or notes change after checking, activation is refused as stale and the
 nearest valid action is **Check again**. Conflicts and deletion choices are not
@@ -511,21 +536,25 @@ existing-or-new destination path such as `Research / Interviews`. The
 destination is only a proposal during checking; no folder or note is created
 yet.
 
-The folder picker's **Folder path** field can be typed into directly: press
-**Enter** to browse into the typed path, or click **Select folder** to use it
-immediately without pressing Enter first — either way, whatever the field
-currently holds is what gets picked, not merely the directory being browsed.
-An invalid path shows an inline reason and leaves the dialog open. Once a
-folder is picked, the confirmation line shows its full path (elided in the
-middle for long paths, keeping the folder name itself visible), not just its
-name.
+The picker — from **Add another file**, from a folder choice, and from
+**Change selection** — reopens at the directory Import once last picked, or at
+your home directory the first time. Its **Folder path** field can be typed into
+directly: press **Enter** to browse into the typed path, or click **Select
+folder** to use it immediately without pressing Enter first — either way,
+whatever the field currently holds is what gets picked, not merely the
+directory being browsed. An invalid path shows an inline reason and leaves the
+dialog open. Once a folder is picked, the confirmation line shows its full path
+(elided in the middle for long paths, keeping the folder name itself visible),
+not just its name.
 
 Choose **Check selection** to build a read-only review. Each source is one
 line — path · what will happen · where it lands — with its **Skip** and
 **Create new** controls beside the path. Rows are grouped by outcome (**New**,
 **Unchanged repeat**, **Changed repeat**, **Uncertain match**, **Unsupported**,
-**Skipped**, **Empty**, **Failed**) and each group header carries **Skip all**
-and, where the group can create notes, **Create all** for the rows it counts.
+**Skipped**, **Empty**, **Failed**) and each group header carries **Skip all
+on this page** and, where the group can create notes, **Create all on this
+page** — both act on exactly the rows that page's heading counts, so a later
+page keeps its own choices.
 An empty or whitespace-only file is reported as "Empty file — nothing to
 import." and an application configuration file (a JSON or YAML document with no
 note body) as "Not a note file (app configuration)." A well-formed document
@@ -533,12 +562,18 @@ that simply holds no note — an empty JSON array, a CSV with only headers —
 reads "This source does not contain any notes." None of these is a failure. A
 document that mixes note records with other records is still a failure ("This
 source could not be parsed as notes."), so a damaged export is never presented
-as harmless configuration. A structured source states how many notes it will
+as harmless configuration — and the reason names the record that failed
+("Record 2 of 3 has no note content.", or "Row 3 could not be read as a note."
+for a CSV), so a 200-note export does not have to be bisected by hand. The
+whole file is refused, not partly imported: fix the named record and import
+again. A structured source states how many notes it will
 create, so a two-row CSV reads "create 2 new notes". You can still skip an
 item, create a new note, or, when an existing match is authorized, update its
 content and/or add its folder placement; **Confirm this match**, **Replace note
 content** and **Add folder placement** sit on their own line under the row, so
-they stay reachable in a narrow pane. Uncertain matches must be confirmed. If
+they stay reachable in a narrow pane. **Update existing** works on an unchanged
+repeat too — it replaces the note's content and leaves its folder placement
+alone. Uncertain matches must be confirmed. If
 the imported top-level folder already exists, choose whether to use it, create
 a unique sibling, or enter another name.
 
@@ -560,10 +595,8 @@ it settles. **Last import** reopens the same-session receipt afterward.
 If the folder you chose holds an `.obsidian/` directory, the review shows an
 **Obsidian vault** toggle, on by default, and one line saying what it does.
 
-**Not on Windows.** Vault detection runs in the POSIX discovery pass only, so
-on Windows a vault imports as an ordinary folder: no toggle appears, the vault's
-own folders are walked, frontmatter stays in the body and wikilinks stay as
-text. Tracked as task-32178.
+Windows works the same way: the Windows discovery adapter detects the vault and
+skips its own folders exactly as the POSIX one does.
 
 With it on:
 
@@ -572,9 +605,12 @@ With it on:
   rather than one row per file inside them.
 - YAML frontmatter is read: `title` becomes the note title, and `tags` and
   `aliases` become keywords (there is no separate alias field, and keeping them
-  as keywords is what makes the note findable by its alternate names). The
-  frontmatter block is removed from the note body — unless it is the whole file,
-  in which case the note keeps it and still takes its title and keywords from it.
+  as keywords is what makes the note findable by its alternate names). An alias
+  is an alternate *name*, not a tag, so it is stored as `alias: <name>` — in
+  Info you can tell the two apart, and searching for the name still finds the
+  note. The frontmatter block is removed from the note body — unless it is the
+  whole file, in which case the note keeps it and still takes its title and
+  keywords from it.
 - `[[wikilinks]]` and `[[link|alias]]` whose target is imported in the same
   batch become note links; a link to anything else stays as plain text, and a
   `[[link]]` written inside a code block or backticks is left alone.
@@ -590,7 +626,10 @@ and Import once never modifies the vault on disk; it does rebuild the review,
 so any per-item Skip/Create choices you had already made are reset.
 
 Review rows for new notes state what will be created — the resulting title, its
-keywords, and how many links it carries — before you approve anything.
+keywords, and how many links it carries — before you approve anything. When the
+import finishes, the receipt adds how many of those links actually resolved
+("Import finished · 59 notes created · 12 links resolved"); links to notes
+outside the batch stayed as text and are not counted.
 
 ## Common tasks
 
@@ -688,7 +727,16 @@ automatically. Global navigation keys live in the [guide index](../index.md).
 ## Related settings & docs
 
 - Lasting root paths, bindings, operations, and recovery state live in the
-  private device sync store, not ordinary `config.toml` settings.
+  private device sync store, not ordinary `config.toml` settings. The one
+  exception is where each folder picker reopens, immediately below — that is
+  an ordinary `config.toml` setting.
+- **config.toml `[library.notes_import] last_directory`** and
+  **`[library.notes_sync] last_directory`** — the directory the **Import
+  once** and **Keep a folder synced** pickers respectively reopen at; each is
+  written whenever a selection is made in that flow. Separate keys, so neither
+  flow moves the other's starting point; **Folder files** has its own
+  `[file_notes] browse`. A key naming a folder that no longer exists is
+  ignored and the picker opens at your home directory.
 - [Lasting Notes folder sync](../../Features/notes_bidirectional_sync.md) —
   runtime, cutover, ownership, and recovery details.
 - [File notes](file-notes.md) — the **Folder files** side of the source strip.
@@ -856,8 +904,8 @@ stuck load now reaches a failed state with Retry).*
 Folder files is a mode of Notes — once a folder is linked, the Library rail
 and the "Library notes | Folder files" strip stay visible inside it at wide
 sizes, and the strip, not the back cue, is the way back. The empty state
-shown before any folder is linked is full-width without the rail; see
-[File notes](file-notes.md).)*
+shown before any folder is linked was full-width without the rail —
+superseded by task-32173 below; see [File notes](file-notes.md).)*
 
 *Verified against fix/library-notes-pickers — 2026-09-09 (task-32122: the
 Import once and Keep-synced folder pickers used to commit the directory
@@ -894,9 +942,9 @@ no longer sits at 38 columns beside an empty work area, and its action
 groups stack rather than clip in a narrow pane; task-32137: rows
 carry an age, and same-folder duplicate titles name their folder;
 task-32128: the tree's title order is the database's, so Sort is not
-offered there; task-32123: the delete receipt's Undo/Dismiss actions are no
-longer composed off the pane; task-32124: Undo returns the row to the
-folder tree, not only the count.)*
+offered there — superseded by task-32172 below; task-32123: the delete
+receipt's Undo/Dismiss actions are no longer composed off the pane;
+task-32124: Undo returns the row to the folder tree, not only the count.)*
 
 *Verified against fix/library-notes-editor-keys — 2026-09-09 (task-32131: `/`
 no longer types itself into the filter it focuses; a same-round controller
@@ -943,8 +991,9 @@ the main keywords field.)*
 *Verified against fix/library-notes-docs — 2026-09-09 (PR #2549 review, at
 the re-merged wave: an unterminated ``` or ~~~ fence now keeps the rest of a
 note as code, so a `[[link]]` after it is neither recorded nor rewritten;
-Obsidian vault detection is stated as POSIX-only, since the Windows
-discovery adapter never reports a vault (task-32178).)*
+Obsidian vault detection was stated as POSIX-only, since the Windows
+discovery adapter never reported a vault — superseded by task-32178 below,
+which taught that adapter to detect one.)*
 
 *Verified against fix/library-notes-i-trash — 2026-09-09 (task-32144: a
 "Recently deleted (N)" row under the folder tree opens a Trash view of the
@@ -959,3 +1008,57 @@ this note's `note://` link — and each entry opens that note. Checked live on a
 fresh profile after importing the review vault: "Zettelkasten — overview" read
 "Linked from (2)" and listed both linking notes, activating one opened it, and
 an unlinked note read "Linked from (0) — no notes link here yet".)*
+
+*Verified against fix/library-notes-r-pickers — 2026-09-09 (task-32174:
+**Import once**'s and **Keep a folder synced**'s folder pickers each now
+reopen at the directory they were last successfully browsed in, falling
+back to home when nothing is recorded yet, or when the recorded value no
+longer names a real folder — independently of each other and of the Library
+ingest browser's own last-used directory. Stored in
+`config.toml` as `[library.notes_import] last_directory` and
+`[library.notes_sync] last_directory`; Folder files' own picker does the
+same for its `[file_notes] browse` setting, see
+[File notes](file-notes.md).)*
+
+*Verified against fix/library-notes-r-editor — 2026-09-09 (task-32177: the
+New-note view's and the note-loading/retry view's own Back buttons had been
+left out of task-32139's back-cue unification and stayed hard-coded
+"‹ Notes" at every width; both now follow the same "‹ Notes" (wide) /
+"‹ Back to list" (compact) rule as Edit, Preview, and Info.)*
+
+*Verified against fix/library-notes-r-import — 2026-09-09 (task-32176: the
+group bulk actions say **Skip all on this page** / **Create all on this page**;
+a structured source that fails names the record or row that failed; and
+**Update existing** on an unchanged repeat now updates the note instead of
+aborting the run with no receipt.)*
+
+*Verified against fix/library-notes-r-import — 2026-09-09 (task-32178: the
+receipt counts the Obsidian links it resolved; the Windows discovery adapter
+now detects a vault and skips `.obsidian/`, `.trash/` and `Templates/` like the
+POSIX one, so the "Not on Windows" caveat is gone; and an `aliases:` entry is
+stored as `alias: <name>` so it is distinguishable from a tag.)*
+
+*Verified against fix/library-notes-r-list — 2026-09-09 (task-32172: the
+placement order is a repository parameter now — folder paging AND the
+deep-link locator's page arithmetic both take it — so Sort is offered on the
+folder tree again and Newest/Oldest really re-page it; it stays disabled,
+with its reason, while a filter window is showing. The folder tree's default
+order changes from title to newest-first with this, which is what the Sort
+control has always claimed.)*
+
+*Verified against fix/library-crit8-riders-notes — 2026-09-10 (task-32100:
+opening a note now reveals and marks its row in the folder tree — the reveal
+used to be abandoned by the row click's own focus change, every time.)*
+
+*Verified against fix/library-crit8-riders-notes — 2026-09-10 (task-32106: a
+Notes refresh landing mid-edit repaints the Items list, keeps its scroll
+offset, and leaves the focused editor field alone; and Tab out of any editor
+field — title, body or keywords — now moves focus before the next keystroke
+is delivered, so typing straight through a Tab no longer appends what follows
+to the field you just left.)*
+
+*Verified against fix/library-notes-r-file-notes — 2026-09-09 (task-32173:
+Folder files now keeps the Library rail before a folder is linked as well as
+after, so the empty state is a mode of Notes rather than a full-width
+onboarding step. Compact terminals — under about 120 columns — collapse the
+rail either way, as before. See [File notes](file-notes.md).)*
