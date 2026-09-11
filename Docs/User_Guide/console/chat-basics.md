@@ -484,7 +484,7 @@ Transcript:
 ### Exchange capture privacy
 
 Provider exchanges use **Safe** capture by default. The Conversation
-Inspector and live Trace use `c` for scoped future controls; F9 **Console
+Inspector and live Trace use `c` for scoped future controls; F4 **Console
 Behavior** controls the global On/Off and Safe/Full default. Next-send Full is
 one-shot and expires when consumed. Capture Off preserves dormant Full choices
 and warns before they resume. Imported Trace stays read-only.

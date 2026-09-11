@@ -27,7 +27,7 @@ choice.
 
 ## Getting there
 
-Open **Settings** — press **F9**, click "F9 Settings" in the nav bar, or
+Open **Settings** — press **F4**, click "F4 Settings" in the nav bar, or
 press **Ctrl+P** and pick "Tab Navigation: Switch to Settings". Then pick
 **RAG** in the
 category rail: click **Domain Defaults ▸ (10)** to expand the group (it is
@@ -108,8 +108,8 @@ profile's index, in the background — you can keep using the app. It starts wit
 again meanwhile gives "Backfill is already running.") and ends as one of:
 "Backfill complete: `N` indexed, `M` already up-to-date." · "Backfill finished
 with problems: `N` indexed, `M` failed. `K` error(s) recorded — details are in
-Logs (F8)." · "Backfill failed before finishing (`ErrorType`). Run Backfill
-again — completed items are kept. Details are in Logs (F8)." · "Semantic
+Logs (F3)." · "Backfill failed before finishing (`ErrorType`). Run Backfill
+again — completed items are kept. Details are in Logs (F3)." · "Semantic
 indexing is unavailable (missing embeddings extras, or disabled in config)." ·
 "No local databases are available to backfill." Failure toasts stay plain
 language; per-item error detail lands in the log, never in the toast.
@@ -480,7 +480,7 @@ controls changed.*
 *Verified against feat/settings-ux-critique-burndown — 2026-08-28
 (TASK-23108 review round: the Backfill failure toasts documented above changed
 shape — the crash toast is plain language with the exception type name and a
-next step, and the partial-failure toast reports counts and points at Logs (F8)
+next step, and the partial-failure toast reports counts and points at Logs (F3)
 instead of embedding the last raw error string. Pinned by
 `Tests/UI/test_settings_rag_profile_region.py`'s backfill toast tests; no other
 behavior of this pane changed.)*

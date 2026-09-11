@@ -795,7 +795,7 @@ CONSOLE_SETTINGS_MODEL_SCOPE_COPY = (
     "Use: this conversation only. Defaults: future provider conversations."
 )
 CONSOLE_SETTINGS_CONTEXT_SCOPE_COPY = (
-    "Use: this conversation only. Defaults: F9 Settings > Console behavior."
+    "Use: this conversation only. Defaults: F4 Settings > Console behavior."
 )
 CONSOLE_SETTINGS_SCOPE_COPY = CONSOLE_SETTINGS_MODEL_SCOPE_COPY
 #: Debounce for the custom-model-id `Input` -- mirrors the picker/filter
@@ -1663,7 +1663,7 @@ class ConsoleSettingsModal(
                             "Configure credential…",
                             id="console-settings-configure-credential",
                             tooltip=(
-                                "Open F9 Settings > Providers & Models to configure "
+                                "Open F4 Settings > Providers & Models to configure "
                                 "this API key"
                             ),
                         )
@@ -6939,11 +6939,11 @@ class ConsoleSettingsModal(
         if self._context_state.model_window_tokens is not None:
             return (
                 "Estimated fallback only; model capacity is unverified. "
-                "Set the actual context window in F9 Settings > Providers & Models."
+                "Set the actual context window in F4 Settings > Providers & Models."
             )
         return (
             "Model limit unknown; automatic safety cannot be verified. "
-            "Set the context window in F9 Settings > Providers & Models."
+            "Set the context window in F4 Settings > Providers & Models."
         )
 
     def _model_window_label(self) -> str:

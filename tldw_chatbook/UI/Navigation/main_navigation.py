@@ -3,6 +3,7 @@
 from typing import TYPE_CHECKING, Any, Callable
 from loguru import logger
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.events import DescendantFocus
@@ -68,6 +69,29 @@ def nav_button_label(destination_id: str, label: str) -> str:
     return f"{shortcut.upper()} {label}"
 
 
+def nav_button_label_text(destination_id: str, label: str) -> Text:
+    """Renderable form of :func:`nav_button_label` with the key prefix dimmed.
+
+    task-32458: the dimmed prefix parses as a key hint rather than an
+    ordinal number. The plain-string contract stays with
+    ``nav_button_label``:
+    ``str(nav_button_label_text(d, l)) == nav_button_label(d, l)``, so
+    width math, ghost clipping, and label assertions are styling-neutral.
+
+    Args:
+        destination_id: Stable shell destination ID.
+        label: Compact destination label from the shell destination model.
+
+    Returns:
+        The shortcut-prefixed label as ``Text`` with the prefix in ``dim``.
+    """
+    text = Text(nav_button_label(destination_id, label))
+    prefix_end = text.plain.find(" ")
+    if prefix_end > 0:
+        text.stylize("dim", 0, prefix_end)
+    return text
+
+
 #: task-31385: where the app remembers how many Console interrupt rounds
 #: are pending, so a navigation bar composed AFTER a round armed (every
 #: screen composes its own bar) still shows the badge on mount.
@@ -106,6 +130,25 @@ def navigation_destination_label(
     # The trailing cell is always present so toggling attention never moves a
     # later destination or changes the clip/ghost decision at a viewport edge.
     return f"{rendered} {CONSOLE_ATTENTION_GLYPH if console_needs_attention else ' '}"
+
+
+def navigation_destination_label_text(
+    destination_id: str, label: str, *, console_needs_attention: bool
+) -> Text:
+    """task-32458: :func:`navigation_destination_label` as dim-prefixed ``Text``.
+
+    Same geometry-stable contract -- Console's reserved trailing glyph cell
+    is preserved and ``str()`` equals ``navigation_destination_label(...)`` --
+    but the key prefix carries the ``dim`` style so it parses as a key hint
+    rather than an ordinal. Width math, ghost clipping, and label assertions
+    are styling-neutral.
+    """
+    rendered = nav_button_label_text(destination_id, label)
+    if destination_id != "console":
+        return rendered
+    return rendered.append(
+        f" {CONSOLE_ATTENTION_GLYPH if console_needs_attention else ' '}"
+    )
 
 
 class NavigateToScreen(Message):
@@ -427,7 +470,7 @@ class MainNavigationBar(Container):
         with Horizontal(id="nav-destination-strip", classes="main-nav"):
             for destination in SHELL_DESTINATION_ORDER:
                 button = NavigationButton(
-                    navigation_destination_label(
+                    navigation_destination_label_text(
                         destination.destination_id,
                         destination.label,
                         console_needs_attention=console_needs_attention,
@@ -514,7 +557,7 @@ class MainNavigationBar(Container):
         except Exception:
             return
         destination = get_shell_destination("console")
-        button.label = navigation_destination_label(
+        button.label = navigation_destination_label_text(
             "console",
             destination.label,
             console_needs_attention=bool(needs_attention),
@@ -1070,7 +1113,7 @@ class MainNavigationBar(Container):
     def handle_overflow_hint(self, event: Button.Pressed) -> None:
         """Open the overflow menu listing every destination (NV-01)."""
         event.stop()
-        # Local import: nav_overflow_menu imports NavigateToScreen/nav_button_label
+        # Local import: nav_overflow_menu imports NavigateToScreen/nav_button_label_text
         # from this module, so a top-level import here would be circular.
         from .nav_overflow_menu import NavOverflowMenu
 

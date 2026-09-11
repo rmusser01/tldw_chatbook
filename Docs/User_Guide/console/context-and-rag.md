@@ -841,7 +841,7 @@ does not rewrite history.
 
 Press **c** in the Conversation Inspector or a live Trace to set Capture and
 optional PII masking for **Next send**, **This conversation**, or the **Global
-default**. F9 **Settings > Console Behavior** owns the same global controls.
+default**. F4 **Settings > Console Behavior** owns the same global controls.
 The viewer is read-only: edits, regeneration, retries, and compaction append
 new call or replacement records, while forks share their immutable inherited
 prefix. Imported/shared and historical traces cannot be edited.
