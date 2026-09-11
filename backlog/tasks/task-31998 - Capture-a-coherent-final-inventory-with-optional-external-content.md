@@ -13,7 +13,7 @@ dependencies:
 - task-31995
 - task-31996
 - task-31997
-updated_date: 2026-09-11 04:59
+updated_date: 2026-09-11 05:27
 ---
 
 ## Description
@@ -81,4 +81,6 @@ Next bounded original Task15 Skills/Chatbooks populated capture unit released af
 Root begins separate bounded originalTask15 saved generated-image populated Complete capture qualification after aa5e0a603 lifetime commit. Own new test_generated_media_capture.py and only config_adapter._Generated participant_pending removal if actual public capture proves saved bytes, temporary option off exclusions, native settlement/resume before packaging. C asked to hold config_adapter while continuing independent Skills/Agents/helper/test work. No temporary-reference marker removal/conversion claim; no new image/provider behavior.
 Root saved-image bounded twofile qualification frozen. /private/tmp/chatbook-generated-saved-capture-report.md, patch SHAa4d21d9b445fb663cfbbf04acce9e4e31bc338f2be9b910202ac7e72ae87dd5a. Real Complete preview/capture with initialized saved image + ordinary temp exclusion + sameowner resumed save before packaging1pass11.64s; existing exactpolicy/unsafechildren5pass0.50s. Ruff3→3/Bandit0→0 noadded, no existing assertions changed. Only obsolete generated participant marker removed; temporary-reference marker remains. P independent review pending; exact-index census next. C config_adapter held until this commit then released.
 Saved-generated-image root unit independently APPROVED P /private/tmp/chatbook-generated-saved-capture-independent-review.md; both frozen hashes+patch verified, bounded saved-image claim only. Exact-index census11passed /private/tmp/generated-saved-index-census.log, no censusdelta. Commit only config_adapter marker removal/newpublictest/task31998, then release config_adapter to C for its already-approved Chatbooks scope.
+Root independent review of frozen six-file populated Skills/Chatbooks capture package (patch SHA256 8aaa2ddaad9dacf7467b40ce04d9bf0bf34e686bd9c92849d03be42e65627bb2): approved after canonical selector correction. Verified narrow inert dependency handling, exact agents.history sandbox topology, no execution/trust adoption, existing content admission before helper mutation, and actual public capture/resume test. Report /private/tmp/chatbook-skills-chatbooks-capture-report.md records focused greens and existing clean-feature-HEAD PromptHistory fixture failure. Exact-index census and scoped commit next; no full restore completion claim.
+Final frozen-package exact-index census: 11 passed, 3 warnings in 7.08s; /private/tmp/content-capture-index-census.log. No census edits required. All six frozen hashes matched; scoped commit includes this task, no other concurrent production changes.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

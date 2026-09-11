@@ -24,14 +24,17 @@ class _RunLogs(_RawDeclaration):
     def discover(self, config):
         from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
         from tldw_chatbook.DB.recovery_operations import recovery_adapters
+        from tldw_chatbook.Skills_Interop.recovery import default_script_output_root
 
         context = discovery_context(config)
+        script_output = default_script_output_root(config)
         configured = setting(config, "tools", "file_sandbox_root")
         default_root = user_data_dir(config) / "tool_sandbox"
-        roots = {lexical_path(configured) if configured else default_root}
+        selected_root = lexical_path(configured) if configured else default_root
+        roots = {selected_root}
         issues = []
         unused_runs = None
-        bound_root = bool(configured)
+        bound_root = selected_root != default_root
         # Current bindings and retained change history are exact owning references,
         # not authority to execute tools or enumerate arbitrary external contents.
         for owner, query in (
@@ -108,14 +111,18 @@ class _RunLogs(_RawDeclaration):
             name = "agent-runs"  # Exact RunLogWriter's safe component fallback.
         names = {name if name.startswith(".") else "." + name, name}
         result = list(issues)
+        retained_logs = False
         for root in sorted(roots):
             from tldw_chatbook.Backup_Recovery.file_inventory import _inventory_root
             from tldw_chatbook.Backup_Recovery.recovery_files import _tree_member_id
 
             container = None
+            leaves = set(names)
+            if root == default_root and script_output is not None:
+                leaves.add(script_output.name)
             default_item = (
                 _inventory_root(root, owner=self.owner_id, external=False)
-                if not configured and root == default_root
+                if root == default_root
                 else None
             )
             absent_default = (
@@ -133,8 +140,9 @@ class _RunLogs(_RawDeclaration):
                 )
                 if container.status == "included":
                     container = replace(container, status="unsupported")
-                # Own only the installed log container, never arbitrary sandbox
-                # content. Each permitted child is inspected by its log owner.
+                # Own the exact installed sandbox children, never arbitrary
+                # content. Skills produces retained script output under this
+                # same physical topology; bytes never grant script execution.
                 if container.status == "included_directory":
                     try:
                         from tldw_chatbook.Backup_Recovery.native_files import (
@@ -142,14 +150,14 @@ class _RunLogs(_RawDeclaration):
                         )
 
                         with pinned_directory(root) as parent:
-                            if set(os.listdir(parent)) - names:
+                            if set(os.listdir(parent)) - leaves:
                                 container = replace(container, status="unsupported")
                     except (OSError, ValueError, RuntimeError):
                         container = replace(container, status="unavailable")
                 result.append(container)
                 if container.status != "included_directory":
                     continue
-            for leaf in sorted(names):
+            for leaf in sorted(leaves):
                 path = root / leaf
                 if absent_default:
                     result.append(
@@ -163,6 +171,11 @@ class _RunLogs(_RawDeclaration):
                     )
                 else:
                     group = self._tree(config, path)
+                    if leaf in names and any(
+                        item.status in {"included", "included_directory"}
+                        for item in group
+                    ):
+                        retained_logs = True
                     if container is not None:
                         group = tuple(
                             replace(
@@ -184,10 +197,7 @@ class _RunLogs(_RawDeclaration):
                             for item in group
                         )
                     result.extend(group)
-        if unused_runs is not None and (
-            bound_root
-            or any(item.status in {"included", "included_directory"} for item in result)
-        ):
+        if unused_runs is not None and (bound_root or retained_logs):
             # Retained installed run logs are observable evidence of prior use.
             result.append(
                 StorageItem(

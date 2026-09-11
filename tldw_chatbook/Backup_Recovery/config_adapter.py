@@ -234,13 +234,102 @@ class _ChatbookRegistry(_Definition):
         )
 
     def discover(self, config):
+        import json
+
+        from .file_inventory import _inventory_root
+        from .profile_paths import lexical_path
+        from .recovery_files import _tree_member_id
+        from .storage_admission import _read_recovery_file
+
         context = discovery_context(config)
-        return tuple(
+        entries = tuple(
             replace(
                 item,
                 dependencies=item.dependencies
                 + (storage_logical_id(context, "db.prompts.primary"),),
             )
+            for item in super().discover(config)
+        )
+        catalog = entries[0]
+        if catalog.status != "included":
+            return entries
+        issues = []
+        dependencies = set(catalog.dependencies)
+        archive_root = user_data_dir(config) / "chatbooks"
+        try:
+            document = json.loads(
+                _read_recovery_file(self.owner_id, catalog.path, max_bytes=16 * 1024**2)
+            )
+            records = document["records"]
+            if not isinstance(records, list):
+                raise TypeError("invalid_chatbook_records")
+            references = set()
+            for record in records:
+                if not isinstance(record, dict):
+                    raise TypeError("invalid_chatbook_record")
+                value = record.get("file_path")
+                if value is None or value == "":
+                    continue  # A metadata-only registry entry has no archive.
+                if not isinstance(value, str):
+                    raise TypeError("invalid_chatbook_reference")
+                path = lexical_path(value)
+                # User-selected external destinations remain inert historical
+                # locators. A registry string never adopts an external tree.
+                if path != archive_root and archive_root not in path.parents:
+                    continue
+                if ".." in Path(value).parts:
+                    raise ValueError("invalid_chatbook_reference")
+                references.add(path)
+            for path in sorted(references):
+                item = _inventory_root(path, owner="chatbooks.archives", external=False)
+                if item.status == "included":
+                    dependencies.add(
+                        _tree_member_id(
+                            context, "chatbooks.archives", archive_root, path
+                        )
+                    )
+                else:
+                    key = (
+                        "archive_reference_"
+                        + hashlib.sha256(str(path).encode()).hexdigest()
+                    )
+                    issues.append(
+                        StorageItem(
+                            self.owner_id,
+                            storage_logical_id(context, self.owner_id, key),
+                            None,
+                            "missing_required"
+                            if item.status == "unused"
+                            else "unsupported",
+                            (catalog.logical_id,),
+                        )
+                    )
+        except (OSError, ValueError, RuntimeError, KeyError, TypeError, RecursionError):
+            issues.append(
+                StorageItem(
+                    self.owner_id,
+                    storage_logical_id(
+                        context, self.owner_id, "reference_catalog_unavailable"
+                    ),
+                    None,
+                    "unavailable",
+                    (catalog.logical_id,),
+                )
+            )
+        return (
+            replace(catalog, dependencies=tuple(sorted(dependencies))),
+            *entries[1:],
+            *issues,
+        )
+
+
+class _ChatbookArchives(_Definition):
+    def discover(self, config):
+        root = self._definition_path(config)
+        return tuple(
+            replace(item, status="unsupported")
+            if item.path == root and item.status == "included"
+            else item
             for item in super().discover(config)
         )
 
@@ -547,10 +636,8 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             location="config",
             tree=True,
         ),
-        _ChatbookRegistry("chatbooks.registry", participant_pending=True),
-        _Definition(
-            "chatbooks.archives", leaf="chatbooks", tree=True, participant_pending=True
-        ),
+        _ChatbookRegistry("chatbooks.registry"),
+        _ChatbookArchives("chatbooks.archives", leaf="chatbooks", tree=True),
         _Definition(
             "tokenizers.custom",
             leaf="tokenizers",

@@ -1315,7 +1315,7 @@ async def test_remaining_installed_preferences_history_and_chatbooks_are_baselin
         pending = any(
             item.logical_id.endswith(":participant_pending") for item in entries
         )
-        assert pending == owner.startswith("chatbooks.")
+        assert not pending
     # The default archive directory owns every retained ordinary export, even
     # a backup-looking extension; registry external destinations remain inert.
     backup_named = archives / "ordinary-content.tldw-backup.zip"
@@ -1349,10 +1349,14 @@ async def test_remaining_installed_preferences_history_and_chatbooks_are_baselin
     registry_item = next(
         i for i in adapters["chatbooks.registry"].discover(config) if i.path == registry
     )
-    assert registry_item.dependencies == (
+    archive_item = next(
+        i for i in adapters["chatbooks.archives"].discover(config) if i.path == archive
+    )
+    assert set(registry_item.dependencies) == {
         "profile:p:config",
         "profile:p:db.prompts.primary",
-    )
+        archive_item.logical_id,
+    }
 
 
 def test_chatbook_scratch_has_exact_producers_cleanup_and_unknown_sibling_refusal(
