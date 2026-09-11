@@ -398,6 +398,7 @@ async def test_recovery_dialog_has_exact_labels_initial_focus_and_credential_ree
             "resume": "Resume",
             "start_over": "Start over",
             "later": "Later",
+            "setup-backup-restore": "Restore a backup",
         }
         assert app.focused is buttons["resume"]
         assert "credentials" in dialog.message.lower()

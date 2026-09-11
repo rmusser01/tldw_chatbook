@@ -14,7 +14,7 @@ dependencies:
 - task-32005
 - task-32006
 - task-32007
-updated_date: 2026-09-11 08:30
+updated_date: 2026-09-11 08:55
 ---
 
 ## Description
@@ -55,4 +55,5 @@ Original extraction view composition planned within existing single-worker servi
 A independently approved exact inert extraction frozen two-file patch plus precisely five census rows: /private/tmp/chatbook-inert-extraction-independent-review.md; no findings/source edits. Root clean census11passed7.91s after root21newbehavioral cases pass10.73s. Production Ruff/Bandit0. Ready for bounded standalone engine commit, service/UI exposure remains original pending work.
 2026-09-11: Root verified CLI recover parser likewise lacks new native pre-safety --abort choice. Released exact launcher.py mutually-exclusive parser choice + test_launcher.py real pre-safety abort dispatch proof with A's corresponding F9 correction. Existing dispatcher uses actual service action validation; no new engine. This updates exactly two firstslice hashes for focused C re-review after prior eightfile approval. Extraction service followup frozen separately with4actual+census11pass15.34s; A independent review queued.
 A independently approved frozen extraction service followup: /private/tmp/chatbook-inert-extraction-service-independent-review.md, exact3file hashes/patch verified;4native composition+census11 passed15.34s in committed production snapshot, Ruff0/Bandit0. Standalone extraction engine already committeda19114179; facade ready for scoped commit. One embedded test trailing whitespace exposed by prior commit check is removed here; source behavior unchanged, subsequent mutation shell scripts fail fast.
+Ready to commit corrected original first8file startup-independent/first-run slice. Root exact committed-dependency snapshot new launcher+wizard34cases22.15s /private/tmp/task25-correction1-root-new.log; A affected7cases12.25s, correction1affected15cases20.17s. C initial/correction1 independent approvals /private/tmp/chatbook-task25-first-slice-independent-review.md and /private/tmp/chatbook-task24-task25-correction1-independent-review.md. Bounded malformed/encrypted-config prebootstrap, actual isolated restore and stopped native replacement recovery, secret getpass and --abort preserved. Task25Ruff174→174/Bandit17→17 no additions; correction4filesRuff0/Bandit0. Actual initial Complete CLI replacement gap separately under32006; child-open receipt/owner state/inert workflow remain pending.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

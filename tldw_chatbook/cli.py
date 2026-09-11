@@ -14,6 +14,11 @@ def main_cli_runner() -> Any:
     import sys
     from pathlib import Path
 
+    if sys.argv[1:2] == ["recovery"]:
+        from tldw_chatbook.Backup_Recovery.launcher import recovery_main
+
+        return recovery_main(sys.argv[2:])
+
     parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     parser.add_argument("--recovery-profile")
     parser.add_argument("--recovery-control-root", type=Path)
@@ -28,9 +33,22 @@ def main_cli_runner() -> Any:
 
         select_profile(selected.recovery_profile, selected.recovery_control_root)
     sys.argv[1:] = remaining
+    from tldw_chatbook.Backup_Recovery.launcher import (
+        minimal_recovery,
+        startup_preflight,
+    )
+
+    reason, password = startup_preflight()
+    if reason is not None:
+        return minimal_recovery(reason)
     from tldw_chatbook.Backup_Recovery.storage_admission import admit_startup
 
     admit_startup()
+    if password is not None:
+        from tldw_chatbook.config import set_encryption_password
+
+        set_encryption_password(password)
+        password = None
 
     from tldw_chatbook.app import main_cli_runner as app_main_cli_runner
 
