@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tldw_chatbook.Backup_Recovery.local_content_lifetime import call as content_call
+
 import asyncio
 import json
 import os
@@ -155,6 +157,18 @@ def _skill_use(function):
     return call
 
 
+def _content_sources(values):
+    owner = values["self"]
+    store = owner.trust_store
+    marker = store.marker_store
+    return (
+        owner.skills_dir,
+        store.store_dir,
+        getattr(marker, "marker_path", None),
+        getattr(marker, "store_dir", None),
+    )
+
+
 class SkillTrustService:
     """Coordinate trust bootstrap, classification, review, and approval."""
 
@@ -176,6 +190,7 @@ class SkillTrustService:
         self._salt: bytes | None = None
         self._reviews: dict[str, dict[str, Any]] = {}
 
+    @content_call(_content_sources)
     def unlock_with_passphrase(
         self, passphrase: str, *, salt: bytes | None = None
     ) -> None:
@@ -186,6 +201,7 @@ class SkillTrustService:
         self._keys = derive_skill_trust_keys(passphrase, salt=salt)
         self._salt = salt
 
+    @content_call(_content_sources)
     def enable_keyring_convenience(self) -> None:
         """Persist derived trust keys in secure keyring storage, never a passphrase."""
 
@@ -232,6 +248,7 @@ class SkillTrustService:
                 "Cached skill-trust key unlock failed; staying locked"
             )
 
+    @content_call(_content_sources)
     def unlock_from_keyring_convenience(self) -> bool:
         """Load derived trust keys from a salt-bound secure keyring cache."""
 
@@ -249,6 +266,7 @@ class SkillTrustService:
         self.keyring_convenience_enabled = True
         return True
 
+    @content_call(_content_sources)
     def overall_status(self):
         """Report inactive restored trust without automatic credential probes."""
         with _execution_scope(self) as allowed:
@@ -281,6 +299,7 @@ class SkillTrustService:
                 return status.trust_status
         return TRUST_STATUS_TRUSTED
 
+    @content_call(_content_sources)
     def reset_trust(self) -> None:
         """Clear all local trust state, returning the profile to first-run.
 
@@ -312,6 +331,7 @@ class SkillTrustService:
         except Exception:
             return None, False
 
+    @content_call(_content_sources)
     def trust_posture(self):
         """Report inactive restored trust without automatic credential probes."""
         with _execution_scope(self) as allowed:
@@ -362,6 +382,7 @@ class SkillTrustService:
             return "error"
         return "ready"
 
+    @content_call(_content_sources)
     def bootstrap_trust(
         self, passphrase: str | None = None, *, salt: bytes | None = None
     ) -> None:
@@ -405,6 +426,7 @@ class SkillTrustService:
         }
         self.trust_store.save_manifest(manifest, keys, salt=manifest_salt)
 
+    @content_call(_content_sources)
     def status_for_skill(self, skill_name: str):
         """Report inactive restored trust without automatic credential probes."""
         with _execution_scope(self) as allowed:
@@ -512,6 +534,7 @@ class SkillTrustService:
             last_verified_at=_now_iso(),
         )
 
+    @content_call(_content_sources)
     def trusted_file_paths(self, skill_name: str):
         """Report inactive restored trust without automatic credential probes."""
         with _execution_scope(self) as allowed:
@@ -587,6 +610,7 @@ class SkillTrustService:
         return relative_path in self.trusted_file_paths(skill_name)
 
     @_skill_use
+    @content_call(_content_sources)
     def ensure_skill_trusted(self, skill_name: str) -> None:
         """Raise only at use time when a local skill is trust-blocked."""
 
@@ -601,6 +625,7 @@ class SkillTrustService:
         )
 
     @_skill_use
+    @content_call(_content_sources)
     def verify_skill_content(
         self,
         skill_name: str,
@@ -679,6 +704,7 @@ class SkillTrustService:
             changed_files=changed,
         )
 
+    @content_call(_content_sources)
     def capture_review(self, skill_name: str) -> dict[str, Any]:
         """Capture a JSON-safe review snapshot for the current skill files."""
 
@@ -714,6 +740,7 @@ class SkillTrustService:
 
         self._reviews.pop(review_id, None)
 
+    @content_call(_content_sources)
     def trust_reviewed_snapshot(self, review_id: str) -> None:
         """Approve a captured review if live files still match that review."""
 
@@ -745,6 +772,7 @@ class SkillTrustService:
             skill_name, audit_event="trust_approved", snapshot=current
         )
 
+    @content_call(_content_sources)
     def trust_current_skill(
         self,
         skill_name: str,
@@ -836,6 +864,7 @@ class SkillTrustService:
             base_dir=self.trust_store.store_dir,
         )
 
+    @content_call(_content_sources)
     def current_fingerprint_digest(self, skill_name: str) -> str:
         """Return the digest of a skill's live on-disk fingerprints.
 
@@ -860,6 +889,7 @@ class SkillTrustService:
         normalized = self._normalize_skill_name(skill_name)
         return self._fingerprints_digest(self._scan_skill(normalized))
 
+    @content_call(_content_sources)
     def script_grant_digest(self, skill_name: str) -> str | None:
         """Return the fingerprint digest a script grant was pinned to.
 
@@ -881,6 +911,7 @@ class SkillTrustService:
             return None
         return self._load_script_grants().get(normalized)
 
+    @content_call(_content_sources)
     def grant_script_execution(self, skill_name: str) -> None:
         """Record an 'always allow scripts' grant pinned to current content.
 
@@ -898,6 +929,7 @@ class SkillTrustService:
         grants[normalized] = self.current_fingerprint_digest(normalized)
         self._save_script_grants(grants)
 
+    @content_call(_content_sources)
     def revoke_script_execution(self, skill_name: str) -> None:
         """Drop any standing script grant for a skill.
 
@@ -915,6 +947,7 @@ class SkillTrustService:
         if grants.pop(normalized, None) is not None:
             self._save_script_grants(grants)
 
+    @content_call(_content_sources)
     def script_execution_granted(self, skill_name: str):
         """Report inactive restored trust without automatic credential probes."""
         with _execution_scope(self) as allowed:

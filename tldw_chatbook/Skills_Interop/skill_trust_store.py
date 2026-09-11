@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tldw_chatbook.Backup_Recovery.local_content_lifetime import call as content_call
+
 import base64
 import hashlib
 import json
@@ -90,6 +92,17 @@ def default_trust_store_dir(local_skills_store_dir: str | Path) -> Path:
     return Path(local_skills_store_dir) / _TRUST_DIRNAME
 
 
+def _content_sources(values):
+    owner = values["self"]
+    marker = getattr(owner, "marker_store", None)
+    return (
+        owner.store_dir,
+        getattr(owner, "marker_path", None),
+        getattr(marker, "marker_path", None),
+        getattr(marker, "store_dir", None),
+    )
+
+
 class SkillTrustMarkerUnavailable(RuntimeError):
     """Raised when rollback marker storage cannot provide full protection."""
 
@@ -133,6 +146,7 @@ class FileSkillTrustGenerationMarkerStore:
     marker_path: Path
     store_dir: Path
 
+    @content_call(_content_sources)
     def load_marker(self) -> dict[str, Any] | None:
         """Load the file-backed generation marker if it exists."""
 
@@ -147,6 +161,7 @@ class FileSkillTrustGenerationMarkerStore:
             return None
         return payload
 
+    @content_call(_content_sources)
     def save_marker(self, *, generation: int, manifest_digest: str) -> None:
         """Atomically save the file-backed generation marker."""
 
@@ -156,6 +171,7 @@ class FileSkillTrustGenerationMarkerStore:
         }
         _atomic_write_json(self.marker_path, payload, base_dir=self.store_dir)
 
+    @content_call(_content_sources)
     def clear(self) -> None:
         """Remove the on-disk marker file (missing-ok, no raise).
 
@@ -400,6 +416,7 @@ class SkillTrustStore:
 
         return self.store_dir / _SNAPSHOTS_DIRNAME
 
+    @content_call(_content_sources)
     def has_manifest(self) -> bool:
         """Return whether a trust manifest payload exists on disk."""
 
@@ -410,6 +427,7 @@ class SkillTrustStore:
 
         return sha256_hex(canonical_json(manifest))
 
+    @content_call(_content_sources)
     def load_salt(self) -> bytes:
         """Load and validate the 32-byte KDF salt stored with the manifest."""
 
@@ -427,6 +445,7 @@ class SkillTrustStore:
             raise ValueError("skill trust salt invalid")
         return salt
 
+    @content_call(_content_sources)
     def save_manifest(
         self,
         manifest: dict[str, Any],
@@ -476,6 +495,7 @@ class SkillTrustStore:
             _restore_previous_marker(self.marker_store, previous_marker)
             raise
 
+    @content_call(_content_sources)
     def load_manifest(self, keys: SkillTrustKeys) -> dict[str, Any]:
         """Load a manifest after verifying its HMAC and generation marker."""
 
@@ -501,6 +521,7 @@ class SkillTrustStore:
             raise ValueError("manifest generation marker mismatch")
         return manifest
 
+    @content_call(_content_sources)
     def save_snapshot(
         self,
         snapshot_id: str,
@@ -527,6 +548,7 @@ class SkillTrustStore:
             base_dir=snapshots_dir,
         )
 
+    @content_call(_content_sources)
     def load_snapshot(
         self,
         snapshot_id: str,
@@ -549,6 +571,7 @@ class SkillTrustStore:
             associated_data=_snapshot_associated_data(snapshot_id, generation),
         )
 
+    @content_call(_content_sources)
     def delete_manifest(self) -> None:
         """Remove the manifest payload and all snapshots (missing-ok)."""
         import shutil

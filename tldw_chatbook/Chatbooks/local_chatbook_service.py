@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tldw_chatbook.Backup_Recovery.local_content_lifetime import call as content_call
+
 from contextlib import AbstractContextManager
 import json
 import re
@@ -45,6 +47,10 @@ def _registry_lock(path: Path) -> threading.RLock:
         return _REGISTRY_LOCKS.setdefault(resolved, threading.RLock())
 
 
+def _content_sources(values):
+    return (values["self"].registry_path,)
+
+
 class LocalChatbookService:
     """Expose local chatbook import/export operations through a service contract."""
 
@@ -84,7 +90,15 @@ class LocalChatbookService:
     def provenance_collection_guard(self) -> AbstractContextManager[Any]:
         """Hold registry mutation stable through one trace collection."""
 
-        return self._registry_lock
+        from contextlib import contextmanager
+
+        from tldw_chatbook.Backup_Recovery.local_content_lifetime import operation
+
+        @contextmanager
+        def guarded():
+            with operation((self.registry_path,)), self._registry_lock:
+                yield
+        return guarded()
 
     @property
     def artifact_collection_identity(self) -> tuple[str, Path]:
@@ -262,6 +276,7 @@ class LocalChatbookService:
             normalized[key] = [str(item_id) for item_id in ids]
         return normalized
 
+    @content_call(_content_sources)
     async def preview_chatbook(self, chatbook_file_path: str | Path) -> dict[str, Any]:
         manifest, error = ChatbookImporter(self.db_paths).preview_chatbook(
             Path(chatbook_file_path)
@@ -272,6 +287,7 @@ class LocalChatbookService:
             "manifest": manifest.to_dict() if manifest is not None else None,
         }
 
+    @content_call(_content_sources)
     async def list_chatbooks(
         self,
         *,
@@ -329,6 +345,7 @@ class LocalChatbookService:
             chatbook_id = 0
         return timestamp_value, chatbook_id
 
+    @content_call(_content_sources)
     def list_home_artifact_snapshot(self, *, limit: int = 20) -> list[dict[str, Any]]:
         """Return latest Console-saved Chatbook artifacts for synchronous Home rendering."""
         registry = self._load_registry()
@@ -340,10 +357,12 @@ class LocalChatbookService:
         records.sort(key=self._home_artifact_sort_key, reverse=True)
         return records[: int(limit)]
 
+    @content_call(_content_sources)
     async def get_chatbook(self, chatbook_id: int | str) -> dict[str, Any]:
         registry = self._load_registry()
         return self._record_copy(self._find_record(registry, chatbook_id))
 
+    @content_call(_content_sources)
     async def create_chatbook(
         self,
         *,
@@ -400,6 +419,7 @@ class LocalChatbookService:
             self._save_registry(registry)
         return self._record_copy(record)
 
+    @content_call(_content_sources)
     async def update_chatbook(
         self,
         chatbook_id: int | str,
@@ -461,6 +481,7 @@ class LocalChatbookService:
             self._save_registry(registry)
         return self._record_copy(record)
 
+    @content_call(_content_sources)
     async def delete_chatbook(self, chatbook_id: int | str) -> bool:
         with self._registry_lock:
             registry = self._load_registry()
@@ -593,6 +614,7 @@ class LocalChatbookService:
             raise ValueError("local chatbook provenance_outbox is full")
         outbox.append(tombstone.model_dump(mode="json"))
 
+    @content_call(_content_sources)
     def list_provenance_outbox(
         self,
         *,
@@ -655,6 +677,7 @@ class LocalChatbookService:
                 operations.append(operation)
             return operations
 
+    @content_call(_content_sources)
     def materialize_deferred_provenance_unlinks(
         self,
         coordinator: CitationArtifactOwnershipCoordinator,
@@ -725,6 +748,7 @@ class LocalChatbookService:
                 registry["provenance_outbox"] = outbox
                 self._save_registry(registry)
 
+    @content_call(_content_sources)
     def list_provenance_barrier_trace_ids(self, *, limit: int) -> tuple[str, ...]:
         """Return bounded barriers from normal and deferred outbox entries."""
 
@@ -751,6 +775,7 @@ class LocalChatbookService:
                 trace_ids.append(entry.binding.trace_id)
             return tuple(trace_ids)
 
+    @content_call(_content_sources)
     def validate_provenance_operation(
         self,
         operation: ArtifactOwnerOperation,
@@ -800,6 +825,7 @@ class LocalChatbookService:
             if not has_signed_unlink:
                 raise CitationPersistenceUnavailable("artifact_body_integrity_invalid")
 
+    @content_call(_content_sources)
     def mark_provenance_operation_acknowledged(self, operation_id: str) -> None:
         """Durably record trace-side application before release."""
 
@@ -827,6 +853,7 @@ class LocalChatbookService:
                 return
             raise KeyError(f"Unknown provenance operation: {operation_id}")
 
+    @content_call(_content_sources)
     def prune_provenance_operation(self, operation_id: str) -> None:
         """Remove only an artifact-acknowledged, trace-finalized entry."""
 
@@ -853,6 +880,7 @@ class LocalChatbookService:
             registry["provenance_outbox"] = kept
             self._save_registry(registry)
 
+    @content_call(_content_sources)
     def record_provenance_operation_failure(
         self,
         operation_id: str,
@@ -880,6 +908,7 @@ class LocalChatbookService:
                 self._save_registry(registry)
                 return
 
+    @content_call(_content_sources)
     async def export_chatbook(
         self,
         request_data: Any,
@@ -923,6 +952,7 @@ class LocalChatbookService:
             "cancelled": cancelled,
         }
 
+    @content_call(_content_sources)
     async def import_chatbook(
         self, chatbook_file_path: str | Path, request_data: Any
     ) -> dict[str, Any]:

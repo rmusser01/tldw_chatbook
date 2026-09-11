@@ -13185,61 +13185,68 @@ class LibraryScreen(BaseAppScreen):
         Returns a plain dict: ``success``, ``message``, ``path``,
         ``dependency_info``, ``registry_recorded``.
         """
-        try:
-            export_result = asyncio.run(  # policy-exception: worker-thread loop
-                service.export_chatbook(
-                    payload,
-                    progress_callback=progress_callback,
-                    cancel_check=cancel_check,
+        from tldw_chatbook.Backup_Recovery.local_content_lifetime import (
+            operation,
+            run_async,
+        )
+
+        paths = (getattr(service, "registry_path", None), payload.get("output_path"))
+        with operation(paths):
+            try:
+                export_result = run_async(
+                    service.export_chatbook(
+                        payload,
+                        progress_callback=progress_callback,
+                        cancel_check=cancel_check,
+                    )
                 )
-            )
-        except Exception as exc:
-            logger.opt(exception=True).warning("Library export service call failed.")
+            except Exception as exc:
+                logger.opt(exception=True).warning("Library export service call failed.")
+                return {
+                    "success": False,
+                    "message": f"Export failed: {exc}",
+                    "path": "",
+                    "dependency_info": {},
+                    "registry_recorded": False,
+                    "cancelled": False,
+                }
+
+            if not export_result.get("success"):
+                return {
+                    "success": False,
+                    "message": str(export_result.get("message") or "Export failed."),
+                    "path": export_result.get("path") or payload.get("output_path", ""),
+                    "dependency_info": export_result.get("dependency_info") or {},
+                    "registry_recorded": False,
+                    "cancelled": bool(export_result.get("cancelled", False)),
+                }
+
+            output_path = export_result.get("path") or payload.get("output_path", "")
+            dependency_info = export_result.get("dependency_info") or {}
+            registry_recorded = False
+            try:
+                run_async(
+                    service.create_chatbook(
+                        name=name,
+                        description=description,
+                        file_path=output_path,
+                        tags=["library-export"],
+                    )
+                )
+                registry_recorded = True
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"Library export succeeded but registry recording failed for {output_path!r}."
+                )
+
             return {
-                "success": False,
-                "message": f"Export failed: {exc}",
-                "path": "",
-                "dependency_info": {},
-                "registry_recorded": False,
+                "success": True,
+                "message": export_result.get("message") or "",
+                "path": output_path,
+                "dependency_info": dependency_info,
+                "registry_recorded": registry_recorded,
                 "cancelled": False,
             }
-
-        if not export_result.get("success"):
-            return {
-                "success": False,
-                "message": str(export_result.get("message") or "Export failed."),
-                "path": export_result.get("path") or payload.get("output_path", ""),
-                "dependency_info": export_result.get("dependency_info") or {},
-                "registry_recorded": False,
-                "cancelled": bool(export_result.get("cancelled", False)),
-            }
-
-        output_path = export_result.get("path") or payload.get("output_path", "")
-        dependency_info = export_result.get("dependency_info") or {}
-        registry_recorded = False
-        try:
-            asyncio.run(  # policy-exception: worker-thread loop
-                service.create_chatbook(
-                    name=name,
-                    description=description,
-                    file_path=output_path,
-                    tags=["library-export"],
-                )
-            )
-            registry_recorded = True
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"Library export succeeded but registry recording failed for {output_path!r}."
-            )
-
-        return {
-            "success": True,
-            "message": export_result.get("message") or "",
-            "path": output_path,
-            "dependency_info": dependency_info,
-            "registry_recorded": registry_recorded,
-            "cancelled": False,
-        }
 
     @work(thread=True, exclusive=True, group="library_export")
     def _run_library_export_worker(
@@ -13257,78 +13264,90 @@ class LibraryScreen(BaseAppScreen):
         preresolved_selections: dict[ContentType, list[str]] | None,
         cancel_event: threading.Event | None,
     ) -> None:
-        if preresolved_selections is not None:
-            selections = preresolved_selections
-        else:
-            try:
-                selections = resolve_export_selections(
-                    scope, media_db, chachanotes_db, prompts_db
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Library export selection resolution failed "
-                    "scope_kind={} category={}",
-                    scope.kind,
-                    type(exc).__name__,
-                )
+        from tldw_chatbook.Backup_Recovery.local_content_lifetime import (
+            operation,
+            worker_databases,
+        )
+
+        databases = (
+            media_db if scope.kind in ('everything', 'media') else None,
+            chachanotes_db if scope.kind in ('everything', 'conversations', 'notes') else None,
+            prompts_db if scope.kind in ('everything', 'prompts') else None,
+        )
+        paths = tuple(getattr(db, "db_path", None) for db in databases) + (destination,)
+        with operation(paths), worker_databases(databases):
+            if preresolved_selections is not None:
+                selections = preresolved_selections
+            else:
+                try:
+                    selections = resolve_export_selections(
+                        scope, media_db, chachanotes_db, prompts_db
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Library export selection resolution failed "
+                        "scope_kind={} category={}",
+                        scope.kind,
+                        type(exc).__name__,
+                    )
+                    self._marshal_library_export_failure(
+                        run_id, "Unable to resolve export selections."
+                    )
+                    return
+
+            service = getattr(self.app_instance, "local_chatbook_service", None)
+            if service is None:
                 self._marshal_library_export_failure(
-                    run_id, "Unable to resolve export selections."
+                    run_id, "Bundle export service unavailable."
                 )
                 return
 
-        service = getattr(self.app_instance, "local_chatbook_service", None)
-        if service is None:
-            self._marshal_library_export_failure(
-                run_id, "Bundle export service unavailable."
+            payload = self._build_library_export_payload(
+                name=name,
+                description=description,
+                selections=selections,
+                destination=destination,
+                media_quality=media_quality,
             )
-            return
+            throttle = ExportProgressThrottle()
 
-        payload = self._build_library_export_payload(
-            name=name,
-            description=description,
-            selections=selections,
-            destination=destination,
-            media_quality=media_quality,
-        )
-        throttle = ExportProgressThrottle()
+            def _progress_cb(evt) -> None:
+                try:
+                    if not throttle.should_emit(
+                        evt.phase, evt.current, evt.total, time.monotonic()
+                    ):
+                        return
+                    self.app.call_from_thread(
+                        self._apply_library_export_progress,
+                        run_id,
+                        evt.phase,
+                        evt.current,
+                        evt.total,
+                    )
+                except Exception:
+                    # NoApp/shutdown mid-marshal must not crash the worker.
+                    pass
 
-        def _progress_cb(evt) -> None:
-            try:
-                if not throttle.should_emit(
-                    evt.phase, evt.current, evt.total, time.monotonic()
-                ):
-                    return
-                self.app.call_from_thread(
-                    self._apply_library_export_progress,
+            outcome = self._run_library_export_via_service(
+                service,
+                payload,
+                name=name,
+                description=description,
+                progress_callback=_progress_cb,
+                cancel_check=(cancel_event.is_set if cancel_event is not None else None),
+            )
+            if outcome.get("cancelled"):
+                self._marshal_library_export_cancelled(run_id)
+            elif outcome["success"]:
+                self._marshal_library_export_success(
                     run_id,
-                    evt.phase,
-                    evt.current,
-                    evt.total,
+                    outcome["path"],
+                    outcome["dependency_info"],
+                    bool(outcome["registry_recorded"]),
+                    outcome["message"],
                 )
-            except Exception:
-                # NoApp/shutdown mid-marshal must not crash the worker.
-                pass
-
-        outcome = self._run_library_export_via_service(
-            service,
-            payload,
-            name=name,
-            description=description,
-            progress_callback=_progress_cb,
-            cancel_check=(cancel_event.is_set if cancel_event is not None else None),
-        )
-        if outcome.get("cancelled"):
-            self._marshal_library_export_cancelled(run_id)
-        elif outcome["success"]:
-            self._marshal_library_export_success(
-                run_id,
-                outcome["path"],
-                outcome["dependency_info"],
-                bool(outcome["registry_recorded"]),
-                outcome["message"],
-            )
-        else:
-            self._marshal_library_export_failure(run_id, outcome["message"])
+            else:
+                self._marshal_library_export_failure(run_id, outcome["message"])
 
     def _marshal_library_export_success(
         self,

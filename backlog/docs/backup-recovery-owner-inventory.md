@@ -636,8 +636,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Skills_Interop/local_skills_service.py | LocalSkillsService._plan_for_script | open | 1 | unsupported | skills |
 | tldw_chatbook/Skills_Interop/local_skills_service.py | LocalSkillsService._read_zip_member_bounded | open | 1 | unsupported | skills |
 | tldw_chatbook/Skills_Interop/local_skills_service.py | LocalSkillsService._save_index | mkdir | 1 | unsupported | skills |
-| tldw_chatbook/Skills_Interop/local_skills_service.py | LocalSkillsService._script_output_root | mkdir | 1 | unsupported | skills |
-| tldw_chatbook/Skills_Interop/local_skills_service.py | LocalSkillsService._script_scratch_root | mkdir | 1 | unsupported | skills |
+| tldw_chatbook/Skills_Interop/local_skills_service.py | LocalSkillsService._script_output_root | mkdir | 2 | unsupported | skills |
 | tldw_chatbook/Skills_Interop/local_skills_service.py | LocalSkillsService._write_bytes_atomic | mkdir | 1 | unsupported | skills |
 | tldw_chatbook/Skills_Interop/local_skills_service.py | LocalSkillsService._write_text_atomic | mkdir | 1 | unsupported | skills |
 | tldw_chatbook/Skills_Interop/local_skills_service.py | LocalSkillsService.create_skill | mkdir | 1 | unsupported | skills |

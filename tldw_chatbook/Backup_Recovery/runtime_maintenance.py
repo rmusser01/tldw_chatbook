@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass
 
 from .bootstrap import RecoveryRequired
+from .local_content_lifetime import participant as content_lifetime
 from .rag_definition_participant import participant as definition_participant
 from .rag_definition_participant import retained_issues
 from .rag_projection_lifetime import participant as projection_lifetime
@@ -321,6 +322,11 @@ class RuntimeMaintenance:
         if not await delivery.drain(delivery.owner, deadline):
             raise RecoveryRequired("runtime_work_not_settled")
         await _settle_stage(views, self.closed, deadline)
+        await _settle_stage(
+            [_bind(content_lifetime, "Backup_Recovery.local_content_lifetime", "LocalContentLifetime")],
+            self.closed,
+            deadline,
+        )
         # Accepted sync calls may still publish cursors/error state. Drain the
         # actual caller layers while SyncStateRepository admission remains open.
         for declarations in (
