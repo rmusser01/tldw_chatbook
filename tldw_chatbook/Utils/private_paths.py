@@ -468,7 +468,9 @@ def _runtime_operation(path=None):
 def _active_visual_source():
     for name in ("persona_visual_participants", "visual_identity_participants"):
         visual = sys.modules.get("tldw_chatbook.Backup_Recovery." + name)
-        state = getattr(visual._local, "state", None) if visual is not None else None
+        # A concurrent cold import publishes the module before its thread-local
+        # state exists. No visual operation can be active at that point.
+        state = getattr(getattr(visual, "_local", None), "state", None)
         if state is not None:
             return visual, state
     return None, None
