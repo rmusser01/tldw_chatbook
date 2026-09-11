@@ -1,11 +1,11 @@
 ---
 id: TASK-32186
-title: >-
-  Library Notes: backlink lookup scans every note body on every note open
-status: To Do
-assignee: []
+title: 'Library Notes: backlink lookup scans every note body on every note open'
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-09 12:30'
-updated_date: '2026-09-09 12:30'
+updated_date: '2026-09-11 16:47'
 labels:
   - library
   - notes
@@ -40,7 +40,6 @@ which is why it is not part of the feature PR.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
 - [ ] #1 Opening a note in a vault of several thousand notes fills "Linked
   from" without reading every note body, measured against the current
@@ -55,3 +54,14 @@ which is why it is not part of the feature PR.
 - [ ] #4 An existing database picks up its backlinks without the user
   re-importing anything.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Baseline: time get_notes_linking_to over 1k/3k/10k-note corpora (the LIKE scan is linear in corpus size).
+2. Schema v72 -> v73: note_links(source_note_id, target_note_id) with an index on (target_note_id, source_note_id); migration backfills from existing note bodies.
+3. One extractor (the (note://<id>) tail, which survives the [[t|title]](note://id) syntax change) + one maintenance helper, called from every note-content writer: _add_note_with_cursor / _update_note_with_cursor in ChaChaNotes_DB and _insert_note / _update_note in note_import_executor.
+4. get_notes_linking_to joins note_links to notes (deleted = 0, id != target, ORDER BY title) so soft-deleted linkers drop out and restore brings them back.
+5. RED->GREEN tests: migration + backfill on a v72 DB, edit/import/delete/restore round trips, and a query-plan budget proving the corpus is not scanned.
+6. Re-measure, update VALID_TABLES + index census, guide note, derived-artifact checks.
+<!-- SECTION:PLAN:END -->

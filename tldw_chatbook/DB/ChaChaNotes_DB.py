@@ -171,6 +171,41 @@ _NOTES_ORGANIZATION_SYNC_ID_TABLES = (
 # Conversations snapshot so Console workspace chats are listed and counted.
 CONVERSATION_SCOPE_ALL = "all"
 
+# The canonical note-to-note link: the `(note://<id>)` tail of the markdown
+# link the Obsidian importer writes for a resolvable `[[wikilink]]`
+# (`note_import_plan_models.rewrite_wikilinks`), and the form a hand-typed link
+# uses too. Only the tail is matched: task-32129 changed the visible half of an
+# imported link to `[[target|title]]`, and the tail is what survived that and
+# what any further link-text change must keep.
+#
+# Ceiling: a note id containing `)` is not representable here (the match stops
+# at the first one). Ids are UUIDs from `_generate_uuid()` or validated opaque
+# import ids, so this is unreachable in practice; the old containment query
+# could match such an id and this cannot.
+_NOTE_LINK_TARGET_RE = re.compile(r"\(note://([^)]+)\)")
+
+
+def extract_note_link_targets(content: str, *, source_note_id: str) -> list[str]:
+    """Return the note ids ``content`` links to, each once, in first-seen order.
+
+    Args:
+        content: One note body.
+        source_note_id: The note the body belongs to. A note that links to
+            itself is not its own backlink, so it is dropped here rather than
+            in every reader.
+
+    Returns:
+        The distinct link targets, excluding ``source_note_id``.
+    """
+    if not content:
+        return []
+    seen: dict[str, None] = {}
+    for target in _NOTE_LINK_TARGET_RE.findall(content):
+        if target != source_note_id:
+            seen.setdefault(target, None)
+    return list(seen)
+
+
 _CHAT_SYNC_INTENT_PAYLOAD_KEYS = frozenset(
     {
         "id",
@@ -715,7 +750,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 72  # Voice provenance follows local conversation archive.
+    _CURRENT_SCHEMA_VERSION = 73  # Note links are persisted, not scanned for.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -8194,6 +8229,71 @@ UPDATE db_schema_version
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v72_to_v73(self, conn: sqlite3.Connection) -> None:
+        """Persist the note-link relation and backfill it from existing bodies."""
+
+        self._require_migration_entry_version(conn, 72, "V72→V73")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v72_to_v73_note_links.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V72→V73",
+                )
+                # The backfill is what lets an existing vault answer "Linked
+                # from" without re-importing anything. It must run in Python:
+                # extracting `(note://<id>)` needs a regex, which SQLite has
+                # no built-in for. Streamed on a second cursor and written in
+                # batches so a large vault is never held in memory at once.
+                read_cursor = conn.cursor()
+                read_cursor.execute("SELECT id, content FROM notes")
+                while True:
+                    batch = read_cursor.fetchmany(500)
+                    if not batch:
+                        break
+                    edges = [
+                        (str(row["id"]), target)
+                        for row in batch
+                        for target in extract_note_link_targets(
+                            row["content"] or "", source_note_id=str(row["id"])
+                        )
+                    ]
+                    if edges:
+                        cursor.executemany(
+                            "INSERT OR IGNORE INTO"
+                            " note_links(source_note_id, target_note_id)"
+                            " VALUES (?, ?)",
+                            edges,
+                        )
+                read_cursor.close()
+                version_cursor = cursor.execute(
+                    """
+                    UPDATE db_schema_version
+                       SET version = 73
+                     WHERE schema_name = ?
+                       AND version = 72
+                    """,
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V72→V73] Migration version update was not applied"
+                    )
+            if self._get_db_version(conn) != 73:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V72→V73] Migration version check failed"
+                )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V72 to V73 failed for '{self._SCHEMA_NAME}': "
+                f"{type(exc).__name__}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -8438,6 +8538,7 @@ UPDATE db_schema_version
                     69: self._migrate_from_v69_to_v70,
                     70: self._migrate_from_v70_to_v71,
                     71: self._migrate_from_v71_to_v72,
+                    72: self._migrate_from_v72_to_v73,
                 }
 
                 if current_db_version == 0:
@@ -17354,6 +17455,7 @@ UPDATE db_schema_version
         )  # created_at is also now
 
         cursor.execute(query, params)
+        self.replace_note_links(cursor, final_note_id, content)
         logger.info(f"Added note ID: {final_note_id}.")
         return final_note_id
 
@@ -17600,50 +17702,77 @@ UPDATE db_schema_version
             ).fetchall()
         return {"items": [dict(row) for row in rows], "total": total}
 
+    #: The backlink lookup (task-32186). Named so the query-plan budget in
+    #: ``Tests/Notes/test_note_backlink_query.py`` runs EXPLAIN QUERY PLAN over
+    #: the statement production actually uses. Table names, not aliases: the
+    #: plan the test reads names them.
+    _BACKLINK_SOURCES_SQL = """
+            SELECT notes.id, notes.title
+            FROM note_links
+            JOIN notes ON notes.id = note_links.source_note_id
+            WHERE note_links.target_note_id = ?
+              AND notes.deleted = 0
+            ORDER BY notes.title COLLATE NOCASE, notes.id
+            LIMIT ?
+        """
+
+    @staticmethod
+    def replace_note_links(
+        cursor: sqlite3.Cursor, note_id: str, content: str
+    ) -> None:
+        """Rewrite one note's outgoing links to match its body.
+
+        Call this from every writer of ``notes.content``, inside that writer's
+        own transaction and after the row exists (the source is a foreign key).
+        Both ChaChaNotes note writers do; so do the import target's two, which
+        write their own SQL for version and client-id reasons.
+
+        Args:
+            cursor: The caller's open transaction cursor.
+            note_id: The note whose body was written.
+            content: The body as written.
+        """
+        cursor.execute(
+            "DELETE FROM note_links WHERE source_note_id = ?", (note_id,)
+        )
+        targets = extract_note_link_targets(content, source_note_id=note_id)
+        if targets:
+            cursor.executemany(
+                "INSERT INTO note_links(source_note_id, target_note_id)"
+                " VALUES (?, ?)",
+                [(note_id, target) for target in targets],
+            )
+
     def get_notes_linking_to(
         self, note_id: str, limit: int = 50
     ) -> List[Dict[str, Any]]:
         """List notes whose body carries the note link for ``note_id``.
 
-        The note-link form is the one the Obsidian importer writes when a
-        ``[[wikilink]]`` resolves inside the batch:
-        ``[label](note://<note_id>)`` (``note_import_plan_models.
-        rewrite_wikilinks``). Matching the closing parenthesis too is what
-        keeps ``note://abc`` from also matching a link to ``note://abcdef``.
+        Answered from the ``note_links`` relation every note writer maintains
+        (task-32186), so the cost is the number of notes that link HERE, not
+        the size of the vault. It used to be a leading-wildcard ``LIKE`` over
+        the unindexed ``notes.content``: no index can serve ``%(note://<id>)%``
+        and the ``ORDER BY title`` meant the row limit did not bound the work,
+        so every active body was read and sorted on every note open.
 
-        FTS5 is the wrong index here: its tokenizer splits ``note://<uuid>``
-        into ``note`` plus the id's hex runs, so a MATCH would answer a
-        looser question than "carries this exact link".
+        FTS5 was never the alternative: its tokenizer splits ``note://<uuid>``
+        into ``note`` plus the id's hex runs, so a MATCH would answer a looser
+        question than "carries this exact link".
 
         Args:
-            note_id: The linked-to note. Bound as a parameter, with LIKE's
-                own wildcards escaped so an id containing ``%`` or ``_``
-                cannot widen the search.
+            note_id: The linked-to note.
             limit: Maximum rows to return.
 
         Returns:
             ``{"id", "title"}`` rows for the linking notes, soft-deleted
-            notes and the target itself excluded, ordered by title.
+            notes and the target itself excluded, ordered by title. A
+            soft-deleted linker drops out through the join and comes back when
+            Trash restores it -- its edges are never removed.
         """
         if not note_id:
             return []
-        escaped = (
-            str(note_id)
-            .replace("\\", "\\\\")
-            .replace("%", "\\%")
-            .replace("_", "\\_")
-        )
-        query = """
-            SELECT id, title
-            FROM notes
-            WHERE deleted = 0
-              AND id != ?
-              AND content LIKE ? ESCAPE '\\'
-            ORDER BY title COLLATE NOCASE, id
-            LIMIT ?
-        """
         cursor = self.execute_query(
-            query, (note_id, f"%(note://{escaped})%", max(0, int(limit)))
+            self._BACKLINK_SOURCES_SQL, (str(note_id), max(0, int(limit)))
         )
         return [dict(row) for row in cursor.fetchall()]
 
@@ -18863,6 +18992,9 @@ UPDATE db_schema_version
             else:
                 msg = f"Update for note ID {note_id} (expected v{expected_version}) affected 0 rows."
             raise ConflictError(msg, entity="notes", entity_id=note_id)
+
+        if "content" in update_data:
+            self.replace_note_links(cursor, note_id, update_data["content"])
 
         logger.info(
             f"Updated note ID {note_id} from version {expected_version} to version {next_version_val}."
