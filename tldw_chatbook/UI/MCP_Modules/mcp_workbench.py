@@ -976,7 +976,15 @@ class MCPWorkbench(Container):
             # to toggle yet; the post-mount call_after_refresh covers it.
             return
         width = self.size.width
-        grid.set_class(0 < width < _COMPACT_WIDTH, "mcp-compact")
+        compact = 0 < width < _COMPACT_WIDTH
+        grid.set_class(compact, "mcp-compact")
+        # ADR-148 Wave E: collapsing an open Advanced section is a band-
+        # friendliness nicety, never worth failing a resize over -- the
+        # inspector guards its own pre-compose window.
+        try:
+            self.query_one(MCPInspector).apply_compact_layout(compact)
+        except Exception:
+            pass
 
     def _start_initial_load(self) -> None:
         """Kick off the mount-time reload once the subtree is mounted."""
