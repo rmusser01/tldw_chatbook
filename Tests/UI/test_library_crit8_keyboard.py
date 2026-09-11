@@ -733,6 +733,7 @@ async def test_escape_from_the_rail_box_on_the_notes_list_still_blurs_to_the_can
             "`n` was typed into the rail search box after Escape."
         )
 
+
 @pytest.mark.asyncio
 async def test_emergency_tab_from_a_note_field_still_reaches_on_key():
     """task-32106 (PR #2571 re-review, NEW-1): the priority Tab must yield here.

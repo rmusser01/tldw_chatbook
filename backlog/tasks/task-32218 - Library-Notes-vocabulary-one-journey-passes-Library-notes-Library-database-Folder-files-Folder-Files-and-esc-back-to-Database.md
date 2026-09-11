@@ -50,7 +50,26 @@ Docs: both guide pages rewritten to the same two nouns (Database Notes/Database 
 
 Five existing pins asserted the retired copy and were updated in place (test_library_crit8_polish_shell, test_library_notes_files_sync_journey, test_library_shell, test_library_file_notes_workspace, test_library_notes_canvas x4); none of them asserted a design decision, only the old string. New walk: Tests/UI/test_library_crit9_notes.py asserts the painted frame in both modes carries the mode's noun and none of "Library database", "Database Notes", "Folder Files", "back to Database" or a bare word "Database", and that the Folder files footer chip reads `esc back to Library notes`.
 
-KNOWN GAP: Settings still labels the pane "Folder Files tree" (settings_appearance_defaults.py, settings_search_index.py, settings_screen.py). Those files are outside this branch's ownership, so they are left for a follow-up rather than edited here.
+AC#1 names five surfaces; the rail row is the one that did NOT change, and
+that is deliberate (controller ruling R1). It reads `Notes (N)`, which is the
+SECTION name in the same grammar as `Media (N)` / `Conversations (N)` /
+`Prompts (N)` -- not a name for either source. The two source nouns live on
+the strip inside that section (`Library notes | Folder files`,
+`library_browse_route_swap.py:141,156`), which is where the reader actually
+chooses between them and where the one-noun rule has to hold. Renaming the
+rail row to "Library notes (N)" would break the rail's own grammar, leave
+Folder files with no rail row at all, and collide with the rail work on a
+sibling branch. The controller confirmed AC#1 is satisfied without changing
+it.
+
+KNOWN GAP: Settings still labels the pane "Folder Files tree" (settings_appearance_defaults.py, settings_search_index.py, settings_screen.py). Those files are outside this branch's ownership, so they are left for a
+follow-up rather than edited here. Two smaller items belong in the same
+rider: `test_settings_configuration_hub.py:2224/2225/2239` pins those labels,
+and `library_notes_controller.py:4534/4541/4543` still raise fail-closed
+`RuntimeError("Local Database Notes …")` guards. The latter are type-guard
+failures on the app's own DB handle -- no caller catches them (there is no
+`except` in `library_note_import_controller.py`), they are outside AC#1's five
+surfaces, and a user should never see one; left deliberately.
 
 Files: tldw_chatbook/Widgets/Library/library_notes_canvas.py, library_file_notes_workspace.py, tldw_chatbook/UI/Screens/library_screen.py (two one-line labels), Docs/User_Guide/library/notes.md, file-notes.md, Tests/UI/test_library_crit9_notes.py + 5 pin files.
 <!-- SECTION:NOTES:END -->

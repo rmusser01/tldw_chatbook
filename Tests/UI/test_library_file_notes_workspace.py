@@ -2879,7 +2879,7 @@ async def test_folder_files_authority_row_tracks_root_save_and_session_git(
         assert workspace.children[0] is authority
         assert authority._render_markup is False
         assert _static_text(workspace, "#file-notes-authority") == (
-            "Folder Files · No folder selected"
+            "Folder files · No folder selected"
         )
         assert "Choose folder" in _static_text(workspace, "#file-notes-save-status")
 
@@ -3078,7 +3078,7 @@ def test_configured_root_authority_state_table_is_two_line_and_bounded(
 
         assert "\n" not in authority and "\n" not in content, context
         assert cell_len(authority) <= 60, (context, authority)
-        assert "Folder Files" in authority and "Folder:" in authority, context
+        assert "Folder files" in authority and "Folder:" in authority, context
         if offline is True:
             assert "Folder unavailable" in authority
         elif warning:
@@ -3828,7 +3828,7 @@ async def test_saved_authority_with_session_git_paints_at_60x20(
             cell_len(row) <= authority.region.width
             for row in authority_copy.splitlines()
         )
-        assert "Folder Files" in painted
+        assert "Folder files" in painted
         assert "Folder:" in painted
         assert "Saved" in _static_text(workspace, "#file-notes-save-status")
         if push_copy:
@@ -6806,7 +6806,7 @@ async def test_file_notes_authority_is_painted_and_contained_at_60x20_shell(
         assert workspace.content_region.contains_region(content.region)
         assert shell_grid.content_region.contains_region(workspace.region)
         assert 0 < authority.region.height <= 2
-        assert _painted_style_of_text(pilot.app, authority.region, "Folder Files")
+        assert _painted_style_of_text(pilot.app, authority.region, "Folder files")
         assert _painted_style_of_text(pilot.app, content.region, "Saved")
 
     await workspace.shutdown()
@@ -6878,7 +6878,7 @@ async def test_file_notes_merged_recovery_authority_paints_at_60x20_shell(
         assert workspace.content_region.contains_region(content.region)
         assert shell_grid.content_region.contains_region(workspace.region)
         assert 0 < authority.region.height <= 2
-        assert "Folder Files" in painted
+        assert "Folder files" in painted
         assert "Folder: Resear" in painted
         assert "name" in painted
         assert state_copy in content_words
@@ -6971,7 +6971,7 @@ async def test_file_notes_combined_non_ready_authority_matrix_paints_at_60x20(
                 cell_len(row) <= authority.region.width
                 for row in authority_copy.splitlines()
             )
-            assert "Folder Files" in painted
+            assert "Folder files" in painted
             assert "Folder:" in painted
             assert (
                 "Folder unavailable" if root_state == "offline" else "Folder warning"

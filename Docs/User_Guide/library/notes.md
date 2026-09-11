@@ -46,7 +46,7 @@ saving, resolving a conflict, or resizing the terminal does not close it
 again. The automatic close becomes available again only after you clear the
 selected Library note, switch between Library notes and Folder files,
 change the linked Folder files root, leave Notes, or close the open Folder
-Files file. Folder files' compact **Back to navigator** action is not a reset.
+files file. Folder files' compact **Back to navigator** action is not a reset.
 
 When Library navigation is closed, one stable cue names the return
 destination:
@@ -167,7 +167,7 @@ source-managed placement, removing one placement does not remove the portable
 membership while the other remains effective.
 
 This does not synchronize filesystem paths or grant filesystem access. Folder
-Files and lasting folder sync remain device-private authorities. For the
+files and lasting folder sync remain device-private authorities. For the
 identity, dependency, suppression, conflict, and recovery contract, see the
 [Sync-v2 client runtime](../../Development/Sync-v2-client.md).
 
