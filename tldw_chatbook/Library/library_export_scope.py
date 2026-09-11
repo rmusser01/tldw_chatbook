@@ -19,7 +19,7 @@ handles are passed in by the caller and never constructed here.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping, Protocol
+from typing import Any, Mapping, NamedTuple, Protocol
 
 from tldw_chatbook.Chatbooks.chatbook_models import ContentType
 from tldw_chatbook.Library.library_media_state import library_media_int_backing_id
@@ -161,6 +161,87 @@ def count_export_scope(
     if prompts_db is not None and scope.kind in ("everything", "prompts"):
         counts["prompts"] = len(prompts_db.get_all_active_prompt_ids())
     return counts
+
+
+class MediaContentSource(Protocol):
+    """The read seam ``preview_export_scope`` needs off ``MediaDatabase``."""
+
+    def execute_query(self, query: str, params: tuple = ...) -> Any: ...
+
+
+class ExportPreview(NamedTuple):
+    """What the bundle will hold, as far as one pre-write query can say.
+
+    task-32353 AC#2: the export canvas asked for a destination and a name
+    and then wrote a bundle nobody had seen the contents of. This is the
+    "before you press it" half -- read on the counts worker, beside the
+    counts, never on the UI thread.
+
+    Attributes:
+        titles: The in-scope media items' titles, in export (id) order.
+        approx_bytes: Those items' stored content in bytes, or ``None``
+            when the scope's media set is not enumerable up front (an
+            ``everything`` export spans four sources, only one of which
+            this query can size) or the query failed. ``None`` is what
+            drives the canvas's honest "size known once it runs" copy --
+            never a zero standing in for "unknown".
+    """
+
+    titles: tuple[str, ...] = ()
+    approx_bytes: int | None = None
+
+
+def preview_export_scope(
+    scope: ExportScope, media_db: MediaContentSource | None
+) -> ExportPreview:
+    """Read the in-scope media items' titles and total stored size.
+
+    Only a ``kind="media"`` scope has an enumerable, sizeable item set --
+    every other kind returns the empty preview so the canvas says "size
+    known once it runs" rather than guessing. ``ChatbookCreator.
+    _collect_media`` writes each item's ``content`` column into the zip
+    (plus a small metadata JSON), so that column's byte length is the
+    honest estimate for what lands on disk.
+
+    Never raises: a missing seam, a missing table, or a selection too
+    large for SQLite's bound-parameter limit all degrade to the empty
+    preview, exactly like ``_compute_library_export_counts``'s
+    quiet-degrade contract for the sibling counts query.
+
+    Args:
+        scope: What this export will include.
+        media_db: The media database read seam, or ``None``.
+
+    Returns:
+        The titles + byte total, or ``ExportPreview()`` when unavailable.
+    """
+    if scope.kind != "media" or media_db is None:
+        return ExportPreview()
+    where = ["deleted = 0", "is_trash = 0"]
+    params: list[Any] = []
+    if scope.ids:
+        selected = [_media_selection_id(value) for value in scope.ids]
+        where.append(f"id IN ({','.join('?' * len(selected))})")
+        params.extend(selected)
+    else:
+        media_type = _effective_media_type(scope)
+        if media_type is not None:
+            where.append("type = ?")
+            params.append(media_type)
+    # LENGTH(CAST(... AS BLOB)) is the UTF-8 BYTE count; a bare LENGTH()
+    # on TEXT counts characters and under-reports any non-ASCII library.
+    query = (
+        "SELECT title, LENGTH(CAST(content AS BLOB)) AS size FROM Media "
+        f"WHERE {' AND '.join(where)} ORDER BY id ASC"
+    )
+    try:
+        rows = media_db.execute_query(query, tuple(params)).fetchall()
+    except Exception:
+        return ExportPreview()
+    return ExportPreview(
+        tuple(str(row["title"] or "Untitled") for row in rows),
+        sum(int(row["size"] or 0) for row in rows),
+    )
 
 
 def resolve_export_selections(

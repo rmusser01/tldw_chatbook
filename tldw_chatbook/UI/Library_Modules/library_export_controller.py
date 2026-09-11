@@ -233,7 +233,11 @@ from textual.css.query import NoMatches, QueryError
 from textual.widgets import Button, Input, Static
 
 from ...Chatbooks.chatbook_models import ContentType
-from ...Library.library_export_scope import ExportScope, count_export_scope
+from ...Library.library_export_scope import (
+    ExportPreview,
+    ExportScope,
+    count_export_scope,
+)
 from ...Library.library_export_state import (
     DEFAULT_MEDIA_QUALITY,
     MEDIA_QUALITY_OPTIONS,
@@ -714,6 +718,9 @@ class LibraryExportController:
         """
         self._library_export_scope = scope or ExportScope(kind="everything")
         self._library_export_counts = None
+        # task-32353 AC#2: the preview lands and clears with the counts --
+        # a fresh visit must never show the previous scope's contents list.
+        self._library_export_preview = ExportPreview()
         self._library_export_form = self._default_library_export_form()
         # task-14902: a fresh visit never inherits a half-open quality strip.
         self._library_export_quality_choices_visible = False

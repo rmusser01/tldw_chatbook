@@ -26,6 +26,7 @@ from tldw_chatbook.Library.library_export_scope import (
     ExportScope,
     count_export_scope,
     export_scope_label,
+    preview_export_scope,
     resolve_export_selections,
 )
 
@@ -408,3 +409,95 @@ def test_export_scope_label_media_type_filter_pluralises_too():
 def test_export_scope_label_explicit_selection_pluralises():
     scope = ExportScope(kind="notes", ids=("note-1",))
     assert export_scope_label(scope, {"notes": 1}) == "Selected notes · 1 item"
+
+
+# --- preview_export_scope (task-32353 AC#2) ---------------------------------
+# The canvas asked for a destination and a name and then wrote a bundle
+# nobody had seen the contents of. This is the pre-write read that lets it
+# say what it is about to write -- run on the counts worker, never the UI
+# thread, and never raising out of it.
+
+
+def test_preview_reports_the_selected_items_titles_and_their_stored_bytes(media_db):
+    first, _, _ = media_db.add_media_with_keywords(
+        title="Attention Is All You Need", content="a" * 2048, media_type="article"
+    )
+    second, _, _ = media_db.add_media_with_keywords(
+        title="Deep Residual Learning", content="b" * 2048, media_type="article"
+    )
+    scope = ExportScope(
+        kind="media", ids=(f"local:media:{first}", f"local:media:{second}")
+    )
+
+    preview = preview_export_scope(scope, media_db)
+
+    assert preview.titles == (
+        "Attention Is All You Need",
+        "Deep Residual Learning",
+    )
+    assert preview.approx_bytes == 4096
+
+
+def test_preview_counts_utf8_bytes_not_characters(media_db):
+    # A bare LENGTH() on TEXT counts characters and would under-report any
+    # non-ASCII library by up to 4x.
+    media_id, _, _ = media_db.add_media_with_keywords(
+        title="Ω", content="Ω" * 100, media_type="article"
+    )
+
+    preview = preview_export_scope(
+        ExportScope(kind="media", ids=(str(media_id),)), media_db
+    )
+
+    assert preview.approx_bytes == 200
+
+
+def test_preview_honours_the_media_type_filter_for_a_whole_source_scope(media_db):
+    media_db.add_media_with_keywords(title="V1", content="x" * 1024, media_type="video")
+    media_db.add_media_with_keywords(title="A1", content="y" * 1024, media_type="article")
+
+    preview = preview_export_scope(
+        ExportScope(kind="media", media_type="video"), media_db
+    )
+
+    assert preview.titles == ("V1",)
+    assert preview.approx_bytes == 1024
+
+
+def test_preview_skips_deleted_and_trashed_items(media_db):
+    kept, _, _ = media_db.add_media_with_keywords(
+        title="Kept", content="k" * 1024, media_type="article"
+    )
+    trashed, _, _ = media_db.add_media_with_keywords(
+        title="Trashed", content="t" * 1024, media_type="article"
+    )
+    media_db.mark_as_trash(trashed)
+
+    preview = preview_export_scope(ExportScope(kind="media"), media_db)
+
+    assert preview.titles == ("Kept",)
+    assert preview.approx_bytes == 1024
+    assert kept
+
+
+def test_preview_is_empty_for_a_scope_whose_items_it_cannot_size(media_db):
+    """An "everything" export spans four sources; only one is sizeable here,
+    so the canvas says "size known once it runs" rather than guessing."""
+    media_db.add_media_with_keywords(title="M", content="m" * 1024, media_type="article")
+
+    preview = preview_export_scope(ExportScope(kind="everything"), media_db)
+
+    assert preview.titles == ()
+    assert preview.approx_bytes is None
+
+
+def test_preview_degrades_quietly_instead_of_raising_out_of_the_worker():
+    class _Broken:
+        def execute_query(self, query, params=()):
+            raise RuntimeError("no such table: Media")
+
+    preview = preview_export_scope(ExportScope(kind="media"), _Broken())
+
+    assert preview.titles == ()
+    assert preview.approx_bytes is None
+    assert preview_export_scope(ExportScope(kind="media"), None).approx_bytes is None

@@ -24,7 +24,7 @@ from loguru import logger
 
 
 from tldw_chatbook.Chatbooks.chatbook_models import ContentType
-from tldw_chatbook.Library.library_export_scope import ExportScope
+from tldw_chatbook.Library.library_export_scope import ExportPreview, ExportScope
 from tldw_chatbook.UI.Screens.library_screen import (
     LibraryEntryReconcileResult,
     LibraryScreen,
@@ -194,7 +194,15 @@ def test_prompt_memory_database_forces_inline_count_resolution():
         (
             scope,
             {"media": 0, "conversations": 0, "notes": 0, "prompts": 2},
-            {"generation": 7, "route_key": route_key, "request_id": 1},
+            {
+                "generation": 7,
+                "route_key": route_key,
+                "request_id": 1,
+                # task-32353: a Prompts scope has no media to size, so the
+                # sibling preview read lands empty -- and never touches the
+                # poison media source to find that out.
+                "preview": ExportPreview(),
+            },
         )
     ]
 

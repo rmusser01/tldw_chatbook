@@ -23,7 +23,11 @@ from datetime import date
 from pathlib import Path
 from typing import Mapping
 
-from tldw_chatbook.Library.library_export_scope import ExportScope, export_scope_label
+from tldw_chatbook.Library.library_export_scope import (
+    ExportScope,
+    _count_phrase,
+    export_scope_label,
+)
 
 # Exact copy values. The F4 plan's Global Constraints originally pinned
 # EXPORT_HEADER_COPY/EXPORT_BUTTON_COPY to "Export chatbook" -- task-2857
@@ -55,10 +59,12 @@ EXPORT_BUTTON_RUNNING_TOOLTIP = "An export is already running."
 EXPORT_BUTTON_COUNTING_TOOLTIP = "Waiting for item counts before exporting."
 EXPORT_BUTTON_NO_DESTINATION_TOOLTIP = "Choose a destination before exporting."
 
-# The creator's own quality options (thumbnail/compressed/original); default
-# is the cheapest one, matching the design spec.
 MEDIA_QUALITY_OPTIONS = ("thumbnail", "compressed", "original")
-DEFAULT_MEDIA_QUALITY = "thumbnail"
+# task-32353 AC#1 (critique #10): the default used to be "thumbnail", which
+# "keeps a small preview image instead of the full file" -- a silent data
+# reduction chosen for someone whose reason for exporting is usually to keep
+# the files. A lossy bundle is now something you ask for.
+DEFAULT_MEDIA_QUALITY = "original"
 
 # task-2859 item 3: the helper line used to be one FIXED sentence describing
 # "original" quality ("original copies full media files into the zip"),
@@ -70,6 +76,39 @@ _MEDIA_QUALITY_HELPER_COPY: dict[str, str] = {
     "compressed": "shrinks media files before adding them to the zip",
     "original": "copies full media files into the zip",
 }
+
+
+# task-32353 AC#2: the consequence line's fidelity phrase -- the same three
+# options ``_MEDIA_QUALITY_HELPER_COPY`` captions, said in the two words the
+# bundle summary has room for. Unknown values degrade to "full files" for the
+# same reason the helper copy degrades to "original": it is the conservative
+# (most-content) description.
+_MEDIA_QUALITY_BUNDLE_COPY: dict[str, str] = {
+    "thumbnail": "previews only",
+    "compressed": "compressed files",
+    "original": "full files",
+}
+
+# How many titles the contents disclosure lists before it summarises the rest.
+_CONTENTS_PREVIEW_LIMIT = 20
+
+
+def format_export_bytes(size_bytes: int) -> str:
+    """Return a byte count in the Export canvas's own "N KB" spelling.
+
+    One formatter for both halves of the same promise: the pre-write
+    estimate on ``consequence_line`` and the post-write receipt in
+    ``format_last_export_line``. They round identically so "about 4 KB"
+    is never followed by a receipt saying "4.1 KB" for the same bundle.
+
+    Args:
+        size_bytes: A non-negative byte count.
+
+    Returns:
+        e.g. ``"4 KB"`` -- never "0 KB" for a non-empty bundle (anything
+        under 1 KB rounds up to 1).
+    """
+    return f"{max(1, round(size_bytes / 1024))} KB"
 
 
 def media_quality_helper_copy(media_quality: str) -> str:
@@ -167,6 +206,13 @@ class LibraryExportFormState:
             ``_reset_library_export_transient_state`` -- unlike every
             other field above, this is NOT derived from the current
             scope/form.
+        consequence_line: task-32353 AC#2: what pressing Export will
+            actually write -- item count, fidelity and estimated size in
+            one line above the button; ``""`` while counts are loading.
+        contents_lines: task-32353 AC#2: the in-scope items' titles (at
+            most ``_CONTENTS_PREVIEW_LIMIT``, then a ``"+ N more"``
+            summary), or ``()`` when the scope's items are not
+            enumerable up front.
     """
 
     scope: ExportScope
@@ -187,6 +233,20 @@ class LibraryExportFormState:
     # task-14902: True while the quality chooser's direct-pick strip
     # renders below its (still-visible) opener button.
     quality_choices_visible: bool = False
+    consequence_line: str = ""
+    contents_lines: tuple[str, ...] = ()
+
+    @property
+    def submit_blocked_reason(self) -> str:
+        """Why the Export button is off right now, or ``""`` when it is on.
+
+        task-32362: the blocked button's reason had to reach a mouse
+        tooltip to be read at all -- ``"No destination chosen"`` sat
+        three rows up. The inline reason under the button and the
+        tooltip are THE SAME STRING because both come from
+        ``export_button_tooltip``; there is no second sentence to drift.
+        """
+        return "" if self.export_enabled else export_button_tooltip(self)
 
 
 def build_library_export_form_state(
@@ -203,6 +263,8 @@ def build_library_export_form_state(
     error_line: str = "",
     last_export_line: str = "",
     quality_choices_visible: bool = False,
+    titles: tuple[str, ...] = (),
+    approx_bytes: int | None = None,
 ) -> LibraryExportFormState:
     """Build the export canvas's full display state.
 
@@ -226,6 +288,12 @@ def build_library_export_form_state(
         last_export_line: The durable receipt line (task-2858 AC#3,
             LIB-12), already formatted by ``format_last_export_line`` --
             this function only passes it through.
+        titles: The in-scope items' titles (``ExportPreview.titles``),
+            already observed by the counts worker; ``()`` when the
+            scope's items are not enumerable up front.
+        approx_bytes: Their total stored size in bytes
+            (``ExportPreview.approx_bytes``), or ``None`` when unknown --
+            ``None`` is rendered as honest copy, never as a zero.
 
     Returns:
         The canvas's full display state.
@@ -247,6 +315,35 @@ def build_library_export_form_state(
     export_enabled = (
         not running and not counts_loading and total > 0 and bool(destination_clean)
     )
+    # task-32353 AC#2 (critique #10): the canvas asked for a destination and
+    # a name and then wrote a bundle nobody had seen the contents of, at a
+    # fidelity chosen by a control rendered at the same weight as "sort".
+    # This states the consequence in one line, above the button.
+    fidelity = (
+        f" · {_MEDIA_QUALITY_BUNDLE_COPY.get(media_quality, 'full files')}"
+        if show_media_fields
+        else ""
+    )
+    size = (
+        f" · about {format_export_bytes(approx_bytes)}"
+        if approx_bytes is not None
+        else " · size known once it runs"
+    )
+    # A media-only scope counts media items; a mixed scope counts items.
+    noun = "media item" if scope.kind == "media" else "item"
+    consequence_line = (
+        ""
+        if counts_loading
+        else f"Bundle: {_count_phrase(total, noun)}{fidelity}{size}"
+    )
+    # The preview lands with the counts, so neither line renders before them.
+    extra = len(titles) - _CONTENTS_PREVIEW_LIMIT
+    contents_lines = (
+        ()
+        if counts_loading
+        else tuple(titles[:_CONTENTS_PREVIEW_LIMIT])
+        + ((f"+ {extra} more",) if extra > 0 else ())
+    )
     return LibraryExportFormState(
         scope=scope,
         scope_line=scope_line,
@@ -264,6 +361,8 @@ def build_library_export_form_state(
         overwrite_line=overwrite_line,
         last_export_line=last_export_line,
         quality_choices_visible=quality_choices_visible,
+        consequence_line=consequence_line,
+        contents_lines=contents_lines,
     )
 
 
@@ -368,9 +467,9 @@ def format_last_export_line(
         return ""
     if item_count is not None and size_bytes is not None:
         item_word = "item" if item_count == 1 else "items"
-        kilobytes = max(1, round(size_bytes / 1024))
         return (
-            f"✓ exported · {item_count} {item_word} · {kilobytes} KB · {clean_path}"
+            f"✓ exported · {item_count} {item_word} · "
+            f"{format_export_bytes(size_bytes)} · {clean_path}"
         )
     current = time.time() if now is None else now
     elapsed = max(0.0, current - exported_at)
