@@ -7,7 +7,7 @@ and this project adheres to Some kind of Versioning
     
 ## [0.2.1] - 2026-09-10
 
-Includes the committed development changes through `a0b8f96416` and supersedes
+Includes the newer committed development changes from `dev` and supersedes
 the unpublished PyPI 0.2.0 release candidate.
 
 ### Added

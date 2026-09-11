@@ -578,6 +578,10 @@ class SkillListRow:
             omitted, along with its separator, when absent).
         trust_glyph: ``"✓"`` when trusted, ``"⚠"`` when the skill needs
             trust review.
+        trust_label: The trust state in words ("trusted", "needs review",
+            "locked") -- task-32223: the glyph alone left an approved and an
+            unapproved row indistinguishable to anyone who reads the row
+            rather than decodes it, and the legend carries no trust glyph.
         blocked: Whether the skill is currently trust-blocked
             (``trust_blocked``) -- unusable until reviewed/re-trusted.
         selected: Whether this row owns the retained Work pane.
@@ -588,6 +592,7 @@ class SkillListRow:
     trust_glyph: str
     blocked: bool
     selected: bool = False
+    trust_label: str = ""
 
 
 @dataclass(frozen=True)
@@ -835,6 +840,38 @@ def _matches_query(record: Mapping[str, Any], query_lower: str) -> bool:
     return query_lower in _text(record.get("description")).lower()
 
 
+def _trust_row_label(trust_status: str, *, blocked: bool) -> str:
+    """Name the row's trust state in words (task-32223).
+
+    Three states, not eight: the row needs "can I use this" at a glance, and
+    the editor's trust panel already carries the per-status detail. An
+    unrecognised or absent status falls back to the blocked flag -- the only
+    trust field every skills service is guaranteed to send -- and in the
+    not-blocked direction that fallback says NOTHING rather than "trusted".
+
+    Args:
+        trust_status: The record's ``trust_status``, if it carries one.
+        blocked: The record's ``trust_blocked`` flag, already resolved.
+
+    Returns:
+        "trusted", "needs review" or "locked" -- or "" when the status is
+        unrecognised and the record is not blocked, so the row falls back to
+        its glyph rather than asserting a trust it cannot vouch for.
+    """
+    status = trust_status.strip().lower()
+    if status == "trusted":
+        return "trusted"
+    if status == "trust_locked":
+        return "locked"
+    if status.startswith("quarantined_") or status == "trust_uninitialized":
+        return "needs review"
+    # Review finding 10: never claim "trusted" for a status we do not
+    # recognise. A blocked row still says so; anything else keeps the glyph
+    # and says nothing, because the word is a claim and the glyph is only
+    # decoration. Over-claiming trust is the wrong direction to fail in.
+    return "needs review" if blocked else ""
+
+
 def _row(
     record: Mapping[str, Any], *, default_blocked: bool, selected_name: str
 ) -> SkillListRow | None:
@@ -845,6 +882,7 @@ def _row(
         return None
     blocked = bool(record.get("trust_blocked", default_blocked))
     trust_glyph = "⚠" if blocked else "✓"
+    trust_label = _trust_row_label(_text(record.get("trust_status")), blocked=blocked)
     flags = skill_flags_line(
         bool(record.get("user_invocable", True)),
         bool(record.get("disable_model_invocation", False)),
@@ -855,6 +893,7 @@ def _row(
         name=name,
         secondary=secondary,
         trust_glyph=trust_glyph,
+        trust_label=trust_label,
         blocked=blocked,
         selected=name == selected_name,
     )

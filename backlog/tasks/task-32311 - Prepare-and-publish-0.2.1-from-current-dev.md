@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-11 02:12'
-updated_date: '2026-09-11 02:38'
+updated_date: '2026-09-11 02:43'
 labels:
   - release
   - packaging
@@ -53,4 +53,6 @@ Expanded Library verification: 197 passed and five stale assertions failed; all 
 Publication and the source tag remain pending. Full test suite was not requested or run locally.
 
 Final repair verification after focused formatting: 9 passed in 30.26s. Ruff E9/F821 checks pass for the touched Python modules; Ruff range-format checks pass for all changed functions and the version declarations. Existing unrelated whole-file formatting drift was not reformatted. Added the baseline-backed geometry/helper lesson. The width failure was a canvas-versus-pane mismatch (32 versus 36), not ignored custom widths.
+
+Synced dev again to a5486ad4d4 (PR2585 Library shell fixes) to satisfy its strict up-to-date rule. Targeted shell and repaired-assertion verification: 28 passed, 1 existing xfailed (TASK-32302 conversation entry focus), no unexpected failures. Fresh synchronized build, twine/manifest gates, and 24 metadata tests pass. This expected failure is retained rather than changing product behavior in the release task.
 <!-- SECTION:NOTES:END -->
