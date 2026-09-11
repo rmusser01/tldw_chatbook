@@ -558,7 +558,7 @@ async def test_close_tab_button_confirms_for_unsaved_message_on_hidden_branch():
         console.query_one(f"#console-close-session-tab-{saved.id}", Button).press()
         dialog = await _wait_for_confirmation(host)
 
-        assert "Transcript messages: 1" in dialog.message
+        assert "Temporary or unsaved messages: 1" in dialog.message
         assert saved.id in {session.id for session in store.sessions()}
 
 
@@ -583,8 +583,8 @@ async def test_close_tab_button_confirms_before_dropping_a_session_with_messages
         close.press()
         dialog = await _wait_for_confirmation(host)
 
-        assert dialog.message.startswith("Closing this session will discard or cancel:")
-        assert "Transcript messages: 1" in dialog.message
+        assert "Saved history stays in Library" in dialog.message
+        assert "Temporary or unsaved messages: 1" in dialog.message
         assert "Live agent turns: 0" in dialog.message
         assert "Unsent queued prompts: 0" in dialog.message
         # Still open: the confirmation is a gate, not a notification.
@@ -638,7 +638,7 @@ async def test_close_empty_session_with_queue_warns_without_exposing_prompt_text
         console.query_one(f"#console-close-session-tab-{doomed.id}", Button).press()
         dialog = await _wait_for_confirmation(host)
 
-        assert "Transcript messages: 0" in dialog.message
+        assert "Temporary or unsaved messages: 0" in dialog.message
         assert "Live agent turns: 0" in dialog.message
         assert "Unsent queued prompts: 1" in dialog.message
         assert "secret queued close text" not in dialog.message
@@ -666,13 +666,13 @@ async def test_close_revalidates_changed_impact_and_presents_updated_dialog():
 
         console.query_one(f"#console-close-session-tab-{doomed.id}", Button).press()
         first = await _wait_for_confirmation(host)
-        assert "Transcript messages: 1" in first.message
+        assert "Temporary or unsaved messages: 1" in first.message
 
         store.append_message(doomed.id, role=ConsoleMessageRole.USER, content="two")
         first.query_one("#confirm-button", Button).press()
         second = await _wait_for_confirmation(host, previous=first)
 
-        assert "Transcript messages: 2" in second.message
+        assert "Temporary or unsaved messages: 2" in second.message
         assert doomed.id in {session.id for session in store.sessions()}
         second.query_one("#cancel-button", Button).press()
         await pilot.pause()
@@ -819,3 +819,87 @@ async def test_mic_button_routes_a_live_capture_to_cancel_or_stop(
         await pilot.pause()
 
         assert calls == [expected]
+
+
+@pytest.mark.asyncio
+async def test_close_saved_session_warns_only_for_unsaved_draft_and_retains_saved_history(tmp_path):
+    from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+    from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    app = _build_test_app()
+    db = CharactersRAGDB(tmp_path / "saved-close.db", client_id="close-review")
+    app.chachanotes_db = db
+    app.local_chat_conversation_service = ChatConversationService(db)
+    cid = db.add_conversation({"title": "Saved"})
+    mid = db.add_message(
+        {"conversation_id": cid, "sender": "user", "content": "saved text"}
+    )
+    saved_row = db.get_conversation_by_id(cid)
+    saved_message = db.get_message_by_id(mid)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        keeper = store.active_session_id
+        saved = store.restore_persisted_session(
+            title="Saved",
+            workspace_id=None,
+            persisted_conversation_id=cid,
+            all_nodes=[
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.USER,
+                    content="saved text",
+                    persisted_message_id=mid,
+                )
+            ],
+        )
+        store.set_session_draft(saved.id, "private draft")
+        store.switch_session(keeper)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+        console.query_one(f"#console-close-session-tab-{saved.id}", Button).press()
+        dialog = await _wait_for_confirmation(host)
+        assert "Saved history stays in Library" in dialog.message
+        assert "Temporary or unsaved messages: 0" in dialog.message
+        assert "Unsent draft: yes" in dialog.message
+        assert "private draft" not in dialog.message
+        dialog.query_one("#cancel-button", Button).press()
+        await pilot.pause()
+        assert store.session_draft(saved.id) == "private draft"
+        console.query_one(f"#console-close-session-tab-{saved.id}", Button).press()
+        dialog = await _wait_for_confirmation(host)
+        dialog.query_one("#confirm-button", Button).press()
+        for _ in range(200):
+            if saved.id not in {session.id for session in store.sessions()}:
+                break
+            await pilot.pause(0.01)
+        assert saved.id not in {session.id for session in store.sessions()}
+        retained = db.get_conversation_by_id(cid)
+        assert retained is not None
+        assert {key: retained[key] for key in ("id", "title", "deleted")} == {
+            key: saved_row[key] for key in ("id", "title", "deleted")
+        }
+        assert db.get_message_by_id(mid) == saved_message
+    db.close_connection()
+
+
+
+@pytest.mark.asyncio
+async def test_close_draft_only_session_requires_confirmation():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        keeper = store.active_session_id
+        draft = store.create_session()
+        store.set_session_draft(draft.id, "private draft")
+        store.switch_session(keeper)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+        console.query_one(f"#console-close-session-tab-{draft.id}", Button).press()
+        dialog = await _wait_for_confirmation(host)
+        assert "Unsent draft: yes" in dialog.message
+        assert draft.id in {s.id for s in store.sessions()}
+        dialog.query_one("#cancel-button", Button).press()

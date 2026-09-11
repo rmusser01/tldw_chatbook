@@ -69,7 +69,10 @@ def test_v68_upgrade_preserves_old_boundaries_and_checks_exact_call_source(
 
     db = CharactersRAGDB(path, "source-pin-new")
     try:
-        assert db._get_db_version(db.get_connection()) == 69
+        assert (
+            db._get_db_version(db.get_connection())
+            == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        )
         with db.transaction() as cursor:
             assert (
                 repository.get_latest_call_boundary(cursor, segment.segment_id)
@@ -179,9 +182,6 @@ def test_source_pin_migration_requires_v68_and_fresh_schema_matches_upgrade(tmp_
             db._migrate_from_v68_to_v69(connection)
         assert _schema(connection) == upgraded_schema
 
-    fresh = CharactersRAGDB(tmp_path / "fresh.sqlite", "source-pin-fresh")
-    try:
+    with chachanotes_db_at_version(tmp_path / "fresh.sqlite", 69) as fresh:
         assert fresh._get_db_version(fresh.get_connection()) == 69
         assert _schema(fresh.get_connection()) == upgraded_schema
-    finally:
-        fresh.close()
