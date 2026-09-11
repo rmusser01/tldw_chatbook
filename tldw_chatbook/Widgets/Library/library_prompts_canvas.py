@@ -1006,9 +1006,21 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 # description) and must be escaped too, not just the name.
                 name = escape_markup(row.name)
                 secondary = escape_markup(row.secondary) if row.secondary else ""
-                artifact_summary = escape_markup(
-                    f"{row.type_label} · {row.source_label} · {row.lane_summary}"
-                )
+                # task-32364: the canvas is already titled Prompts, so a
+                # leading "Prompt · " on every row spent cells telling the
+                # reader where they already are. The other artifact types
+                # (Recipe, Template) still name themselves -- they are the
+                # ones the canvas title does NOT cover.
+                summary_parts = [
+                    part
+                    for part in (
+                        "" if row.artifact_type == "prompt" else row.type_label,
+                        row.source_label,
+                        row.lane_summary,
+                    )
+                    if part
+                ]
+                artifact_summary = escape_markup(" · ".join(summary_parts))
                 selection_prefix = ""
                 if state.select_mode:
                     selection_prefix = "☑ " if row.checked else "☐ "

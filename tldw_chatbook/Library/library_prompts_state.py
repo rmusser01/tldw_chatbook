@@ -2144,7 +2144,10 @@ def _row(
     if not isinstance(has_user, bool):
         has_user = bool(_raw_text(record.get("user_prompt")).strip())
     if has_system and has_user:
-        lane_summary = "System + User"
+        # task-32364: "System + User" is schema-speak -- the row says what
+        # the prompt HAS, in words. (The three other lane values keep their
+        # older phrasing; this task named only this one.)
+        lane_summary = "has system and user text"
     elif has_system:
         lane_summary = "System only"
     elif has_user:
