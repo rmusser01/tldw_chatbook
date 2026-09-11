@@ -78,6 +78,7 @@ from tldw_chatbook.MCP.tool_naming import dedupe_names, llm_tool_name
 from .agent_models import ToolCatalogEntry, ToolResult, ToolSchema
 from .run_context import current_run_id
 from .tool_catalog import ToolExecutionPolicy
+from .tool_refusals import TOOL_KILL_SWITCH_REFUSAL
 
 SOURCE = "mcp"
 
@@ -100,9 +101,10 @@ USER_DENY_REFUSAL = f"tool call denied by the user. {DENIAL_POLICY}"
 #: decided, and the permissions were not Off.
 UNRESOLVED_REFUSAL = "tool call not approved (no decision recorded)"
 TIMEOUT_REFUSAL = "user did not approve within the time limit; do not retry"
-#: task-32285: wording unified with `console_chat_controller.
-#: KILL_SWITCH_REFUSAL` -- see that constant's docstring.
-KILL_SWITCH_REFUSAL = "tool call blocked: the chat tool kill switch is on"
+#: task-32285: ONE definition of the sentence, in `Agents.tool_refusals`
+#: -- see `TOOL_KILL_SWITCH_REFUSAL`. The NAME stays (importers depend on
+#: it); only the value's source moved.
+KILL_SWITCH_REFUSAL = TOOL_KILL_SWITCH_REFUSAL
 NON_TEXT_PLACEHOLDER = "[image result — not yet supported]"
 
 # `.result(timeout=...)` slack added on top of the configured per-call tool

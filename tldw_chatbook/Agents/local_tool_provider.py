@@ -83,6 +83,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Tools.watchlists_command_service import WatchlistsCommandService
     from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
 from .tool_catalog import ToolExecutionPolicy, ToolPathTarget, redact_root_locator
+from .tool_refusals import TOOL_KILL_SWITCH_REFUSAL
 
 # Module-level (not the function-local imports the other `_default_specs`
 # tool modules use) SPECIFICALLY so tests can patch this one name via
@@ -122,9 +123,10 @@ AskUserCallback = Callable[[list[dict[str, Any]]], dict[str, Any]]
 # Pinned refusal strings (spec §3.3) — tests assert on these verbatim.
 LOCAL_DENY_REFUSAL = "blocked by local tool permissions (set to Off)"
 LOCAL_TIMEOUT_REFUSAL = "user did not approve within the time limit; do not retry"
-#: task-32285: wording unified with `console_chat_controller.
-#: KILL_SWITCH_REFUSAL` -- see that constant's docstring.
-LOCAL_KILL_SWITCH_REFUSAL = "tool call blocked: the chat tool kill switch is on"
+#: task-32285: ONE definition of the sentence, in `Agents.tool_refusals`
+#: -- see `TOOL_KILL_SWITCH_REFUSAL`. The NAME stays (importers depend on
+#: it); only the value's source moved.
+LOCAL_KILL_SWITCH_REFUSAL = TOOL_KILL_SWITCH_REFUSAL
 # Fix Round H (PR-T3 review), Item 1. `_verdict_for()`'s permission-resolver
 # `except` used to collapse a RAISE into the SAME "deny" verdict as a
 # genuine configured Off -- which then rendered `LOCAL_DENY_REFUSAL`, a

@@ -412,6 +412,7 @@ from tldw_chatbook.Agents.session_todo_store import (
     TodoChangeCallback,
 )
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolExecutionPolicy
+from tldw_chatbook.Agents.tool_refusals import TOOL_KILL_SWITCH_REFUSAL
 
 # task-24458: these two providers pull the whole workspace tool-execution
 # cluster (`Tools.workspace_tool_executor` -> `Tools.{git,local,patch,
@@ -1611,7 +1612,9 @@ AGENT_LESSON_DENIED = "foreground approval denied for Agent Lesson save"
 #: strings used to exist for the same event, and a downstream classifier
 #: (lane B's transcript status table, `console_agent_bridge.py`'s own
 #: `_refusal_statuses()`-style tables) keys on these by identity/prefix.
-KILL_SWITCH_REFUSAL = "tool call blocked: the chat tool kill switch is on"
+#: Qodo #2597 #2: the sentence now has exactly ONE definition, the
+#: import-free leaf `Agents.tool_refusals`; every NAME below stays put.
+KILL_SWITCH_REFUSAL = TOOL_KILL_SWITCH_REFUSAL
 
 #: TASK-1861: how broad each approval scope is. A session/always grant is
 #: recorded against a tool NAME, so when per-call rows of one tool are

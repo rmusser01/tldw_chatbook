@@ -10465,12 +10465,19 @@ def test_kill_switch_refusal_wording_is_unified_everywhere():
     what the brief asked for over reaching across the lazy-import
     boundary.
     """
-    shared = "tool call blocked: the chat tool kill switch is on"
+    from tldw_chatbook.Agents.tool_refusals import TOOL_KILL_SWITCH_REFUSAL
 
-    assert bridge_module.CONTROLLER_KILL_SWITCH_REFUSAL == shared
-    assert bridge_module.MCP_KILL_SWITCH_REFUSAL == shared
-    assert LOCAL_KILL_SWITCH_REFUSAL == shared
-    assert bridge_module._BUILTIN_KILL_SWITCH_REFUSAL == shared
+    shared = "tool call blocked: the chat tool kill switch is on"
+    assert TOOL_KILL_SWITCH_REFUSAL == shared
+
+    # Qodo #2597 #2 fix round: the five sites no longer each hold their own
+    # copy of the sentence -- they all ALIAS the one definition in the
+    # import-free leaf `Agents.tool_refusals`, so identity (`is`) holds and
+    # a future edit physically cannot change only one of them.
+    assert bridge_module.CONTROLLER_KILL_SWITCH_REFUSAL is TOOL_KILL_SWITCH_REFUSAL
+    assert bridge_module.MCP_KILL_SWITCH_REFUSAL is TOOL_KILL_SWITCH_REFUSAL
+    assert LOCAL_KILL_SWITCH_REFUSAL is TOOL_KILL_SWITCH_REFUSAL
+    assert bridge_module._BUILTIN_KILL_SWITCH_REFUSAL is TOOL_KILL_SWITCH_REFUSAL
 
     from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
     from tldw_chatbook.Tools.tool_executor import CalculatorTool
@@ -10481,7 +10488,7 @@ def test_kill_switch_refusal_wording_is_unified_everywhere():
 
     gate = BuiltinToolGate(_KillSwitchOnService())
     reason = gate.check(CalculatorTool(), "run-1")
-    assert reason == bridge_module._BUILTIN_KILL_SWITCH_REFUSAL
+    assert reason is TOOL_KILL_SWITCH_REFUSAL
 
 
 # --------------------------------------------------------------------------

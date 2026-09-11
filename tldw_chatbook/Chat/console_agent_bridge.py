@@ -136,6 +136,7 @@ from tldw_chatbook.Agents.tool_catalog import (
     ToolCatalogRegistry,
     intersect_skill_tools,
 )
+from tldw_chatbook.Agents.tool_refusals import TOOL_KILL_SWITCH_REFUSAL
 from tldw_chatbook.Tools.raw_cli_executor import (
     MAX_RAW_PREVIEW_BYTES,
     RawCliResult,
@@ -1442,7 +1443,10 @@ def _thinking_round_ordinals(
 #: three kill-switch refusal constants -- see
 #: `console_chat_controller.KILL_SWITCH_REFUSAL`'s docstring for why they
 #: are all the same sentence now.
-_BUILTIN_KILL_SWITCH_REFUSAL = "tool call blocked: the chat tool kill switch is on"
+#: Qodo #2597 #2: no longer a hand copy -- `Agents.tool_refusals` is an
+#: import-free leaf module, so taking it here costs no dependency edge
+#: (the reason the string was duplicated in the first place).
+_BUILTIN_KILL_SWITCH_REFUSAL = TOOL_KILL_SWITCH_REFUSAL
 _BUILTIN_DENY_REFUSAL_PREFIX = "tool is set to Off: "
 _BUILTIN_UNRESOLVED_REFUSAL_PREFIX = "tool requires approval and none was granted: "
 _CONTROLLER_USER_DENIED_PREFIX = CONTROLLER_USER_DENIED_REFUSAL.partition("{name}")[0]
