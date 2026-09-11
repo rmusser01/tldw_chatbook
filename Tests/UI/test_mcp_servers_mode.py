@@ -730,16 +730,11 @@ async def test_builtin_toggles_container_does_not_expand_past_content():
         # nowhere near the height of an expanding 1fr container consuming
         # whatever vertical space the scroll pane has left.
         assert toggles.size.height < 12
-        # Nine gate checkboxes + a title + two subheadings + a note -- still
-        # a content-sized handful of rows, not an expanding 1fr container.
-        assert tool_gates.size.height < 20
-
-        # The tool-gates container sits directly under the [mcp] toggles.
-        gap_between = tool_gates.region.y - (toggles.region.y + toggles.region.height)
-        assert 0 <= gap_between <= 2
-        # The copy button sits directly under the tool-gates container, not
-        # dozens of rows further down the scroll pane.
-        gap = copy_button.region.y - (tool_gates.region.y + tool_gates.region.height)
+        # ADR-148 Wave D: the gate group no longer renders in the built-in
+        # detail at all (it moved to the Agent tools detail), so the copy
+        # button must sit directly under the [mcp] toggles themselves.
+        assert not tool_gates.display
+        gap = copy_button.region.y - (toggles.region.y + toggles.region.height)
         assert 0 <= gap <= 2
 
 
@@ -782,7 +777,7 @@ async def test_showing_builtin_detail_does_not_post_builtin_flag_changed():
 
 
 @pytest.mark.asyncio
-async def test_tool_gate_checkboxes_render_under_builtin_detail_with_subheadings_and_note(
+async def test_tool_gate_checkboxes_render_under_agent_detail_with_subheadings_and_note(
     monkeypatch,
 ):
     """The builtin detail pane also renders a "Tool gates" group -- one
@@ -794,6 +789,7 @@ async def test_tool_gate_checkboxes_render_under_builtin_detail_with_subheadings
     import tldw_chatbook.config as config_module
     from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
     from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
+    from tldw_chatbook.MCP.readiness import agent_tools_readiness
 
     first_builtin_key = _GATEABLE_BUILTINS[0].gate_key
 
@@ -809,7 +805,8 @@ async def test_tool_gate_checkboxes_render_under_builtin_detail_with_subheadings
     app = CanvasApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
-        await canvas.show_detail(builtin_readiness(enabled=True))
+        # ADR-148 Wave D: the gates live in the AGENT detail now
+        await canvas.show_detail(agent_tools_readiness(enabled=True))
         await pilot.pause()
 
         heading_builtin = app.query_one("#mcp-gate-heading-builtin", Static)
@@ -863,10 +860,13 @@ async def test_local_group_dependents_are_disabled_while_master_is_off(monkeypat
 
     monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
 
+    from tldw_chatbook.MCP.readiness import agent_tools_readiness
+
     app = CanvasApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
-        await canvas.show_detail(builtin_readiness(enabled=True))
+        # ADR-148 Wave D: gates render from the AGENT detail now
+        await canvas.show_detail(agent_tools_readiness(enabled=True))
         await pilot.pause()
 
         note = app.query_one("#mcp-gate-local-master-off-note", Static)
@@ -910,10 +910,13 @@ async def test_local_group_dependents_are_enabled_while_master_is_on(monkeypatch
 
     monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
 
+    from tldw_chatbook.MCP.readiness import agent_tools_readiness
+
     app = CanvasApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
-        await canvas.show_detail(builtin_readiness(enabled=True))
+        # ADR-148 Wave D: gates render from the AGENT detail now
+        await canvas.show_detail(agent_tools_readiness(enabled=True))
         await pilot.pause()
 
         assert not list(app.query("#mcp-gate-local-master-off-note"))
@@ -926,7 +929,9 @@ async def test_local_group_dependents_are_enabled_while_master_is_on(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_tool_gate_checkboxes_do_not_appear_for_non_builtin_detail():
+async def test_tool_gate_checkboxes_do_not_appear_outside_agent_detail():
+    from tldw_chatbook.MCP.readiness import agent_tools_readiness
+
     app = CanvasApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
@@ -935,6 +940,17 @@ async def test_tool_gate_checkboxes_do_not_appear_for_non_builtin_detail():
         assert not list(app.query("#mcp-gate-toggles-note"))
         assert not list(app.query("#mcp-gate-heading-builtin"))
         assert not list(app.query("#mcp-gate-heading-local"))
+        # ADR-148 Wave D: the BUILT-IN server detail no longer hosts the
+        # gates either -- they moved to the Agent tools row.
+        await canvas.show_detail(builtin_readiness(enabled=True))
+        await pilot.pause()
+        assert not list(app.query("#mcp-gate-toggles-note"))
+        assert not list(app.query("#mcp-gate-heading-builtin"))
+
+        # ...and showing agent detail (like any detail) posts no echo.
+        await canvas.show_detail(agent_tools_readiness(enabled=True))
+        await pilot.pause()
+        assert not app.events
 
 
 @pytest.mark.asyncio
@@ -978,6 +994,7 @@ async def test_toggling_tool_gate_checkbox_posts_tool_gate_changed_with_section_
     import tldw_chatbook.config as config_module
     from tldw_chatbook.Agents.builtin_tool_gate import LOCAL_TOOLS_MASTER_KEY
     from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
+    from tldw_chatbook.MCP.readiness import agent_tools_readiness
 
     def fake_get_cli_setting(section, key=None, default=None):
         if key == LOCAL_TOOLS_MASTER_KEY:
@@ -989,7 +1006,8 @@ async def test_toggling_tool_gate_checkbox_posts_tool_gate_changed_with_section_
     app = CanvasApp()
     async with app.run_test(size=(100, 30)) as pilot:
         canvas = app.query_one(MCPServersMode)
-        await canvas.show_detail(builtin_readiness(enabled=True))
+        # ADR-148 Wave D: gates toggle from the AGENT detail now
+        await canvas.show_detail(agent_tools_readiness(enabled=True))
         await pilot.pause()
 
         checkbox = app.query_one(f"#mcp-gate-{WEB_DEEP_SEARCH_GATE_KEY}", Checkbox)
@@ -1796,10 +1814,13 @@ async def test_restart_class_gates_carry_a_restart_marker(monkeypatch):
 
     monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
 
+    from tldw_chatbook.MCP.readiness import agent_tools_readiness
+
     app = CanvasApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
-        await canvas.show_detail(builtin_readiness(enabled=True))
+        # ADR-148 Wave D: gates render from the AGENT detail now
+        await canvas.show_detail(agent_tools_readiness(enabled=True))
         await pilot.pause()
 
         deep = app.query_one(f"#mcp-gate-{WEB_DEEP_SEARCH_GATE_KEY}", Checkbox)
@@ -1890,3 +1911,36 @@ def test_agent_tools_readiness_builder_shapes_the_rail_row():
     off = agent_tools_readiness(enabled=False)
     assert off.state is ReadinessState.OFF_OPT_IN
     assert "Turned off" in off.message
+
+
+@pytest.mark.asyncio
+async def test_builtin_detail_points_at_the_agent_tools_row():
+    """ADR-148 Wave D: the built-in server's detail keeps only the [mcp]
+    controls and points at the new home for agent tool gates."""
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.show_detail(builtin_readiness(enabled=True))
+        await pilot.pause()
+        body = str(app.query_one("#mcp-detail-body", Static).renderable)
+        assert "Agent tool gates live under Agent tools in the rail." in body
+
+
+@pytest.mark.asyncio
+async def test_agent_detail_body_explains_console_scope():
+    """ADR-148 Wave D: the Agent tools detail explains registration vs
+    permission, carries no [mcp] server toggles, and no Edit/Delete
+    toolbar (it is not a server)."""
+    from tldw_chatbook.MCP.readiness import agent_tools_readiness
+
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.show_detail(agent_tools_readiness(enabled=True))
+        await pilot.pause()
+        title = str(app.query_one("#mcp-detail-title", Static).renderable)
+        assert "Agent tools" in title
+        body = str(app.query_one("#mcp-detail-body", Static).renderable)
+        assert "Console" in body
+        assert not list(app.query("#mcp-detail-builtin-toggles Checkbox"))
+        assert not list(app.query("#mcp-detail-toolbar Button"))

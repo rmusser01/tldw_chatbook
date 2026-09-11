@@ -1264,12 +1264,13 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         )
 
     def _tool_gate_widgets(self) -> list[Widget]:
-        """Build the `[tools]`/`[console]` gate Checkbox rows (task-3240).
+        """Build the `[tools]`/`[console]` gate Checkbox rows (task-3240;
+        moved to the AGENT detail by ADR-148 Wave D).
 
-        Builtin-source snapshots only, same gate as `_builtin_toggle_
-        widgets()` -- spec review finding 5 (branch (b)): `_collect_
-        snapshots()` never produces a `local:__local__` row, so this is the
-        only reachable place for ALL of them. Rendered under two
+        Agent-source snapshots only -- the in-process agent tool catalog
+        this pane fronts is what these gates register. The built-in
+        SERVER's detail keeps only the `[mcp]` controls (its `_detail_text`
+        points here). Rendered under two
         subheadings ("Agent built-ins" / "Local workspace, web, and Watchlists tools") so the
         accepted UX trade-off stays visible rather than papered over: this
         pane is badged as the built-in MCP SERVER, but these checkboxes
@@ -1281,7 +1282,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         stale mapping.
         """
         snapshot = self._detail_snapshot
-        if snapshot is None or snapshot.source != "builtin":
+        if snapshot is None or snapshot.source != "agent":
             self._tool_gate_ids = {}
             return []
         gates = all_tool_gates()
@@ -1459,6 +1460,12 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             lines.append(f"Resources · {_count_display(snapshot.resource_count)}")
             lines.append(f"Prompts · {_count_display(snapshot.prompt_count)}")
             lines.append("External server records: see Advanced ▸ External Servers.")
+        elif snapshot.source == "agent":
+            lines.append(
+                "Registers the in-process tools Console agents can see — it "
+                "does not grant permission; the Permissions matrix still "
+                "gates every call."
+            )
         else:  # builtin
             lines.append("Runs over stdio when an MCP client launches it:")
             lines.append("  python3 -m tldw_chatbook.MCP")
@@ -1466,6 +1473,9 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             # (a human-readable summary of the expose_* flags) is now the
             # four Checkbox rows built by `_builtin_toggle_widgets()` --
             # this body text no longer dumps flags at all, raw or humanized.
+            # ADR-148 Wave D: the agent tool gates moved to their own rail
+            # row's detail -- leave a pointer so nobody hunts for them here.
+            lines.append("Agent tool gates live under Agent tools in the rail.")
         return "\n".join(lines)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
