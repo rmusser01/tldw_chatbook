@@ -689,6 +689,7 @@ async def test_legend_line_renders_fixed_marker_key():
         assert legend == (
             "• override · ⚠ definition changed · ⚑ high-risk floor · "
             "≡ exact-input allows · "
+            "(session) approved until Chatbook exits · "
             "Space cycles Inherit → Allow → Ask → Off"
         )
 
@@ -737,6 +738,7 @@ async def test_update_matrix_with_no_gate_breadcrumb_shows_bare_legend():
         assert legend == (
             "• override · ⚠ definition changed · ⚑ high-risk floor · "
             "≡ exact-input allows · "
+            "(session) approved until Chatbook exits · "
             "Space cycles Inherit → Allow → Ask → Off"
         )
 

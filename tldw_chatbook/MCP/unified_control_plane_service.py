@@ -4931,6 +4931,62 @@ class UnifiedMCPControlPlaneService:
         """
         return (profile_id, server_key, tool_name) in self._session_approvals
 
+    def list_session_approvals(
+        self, *, profile_id: str = "default"
+    ) -> list[tuple[str, str]]:
+        """Every live session approval held for one profile (task-32291).
+
+        The review surface's read: until now a session grant was invisible
+        (and, with no caller of :meth:`clear_session_approvals`, revocable
+        only by restarting the app). Sorted so the UI's row order -- and
+        its Revoke buttons' index alignment -- is stable across renders.
+
+        The built-in tool gate writes into this SAME set under
+        ``BUILTIN_TOOL_SERVER_KEY`` (see ``BuiltinToolGate.stamp()``), so
+        one listing already covers both MCP and built-in grants.
+
+        Args:
+            profile_id: Exact permission profile whose approvals to list.
+
+        Returns:
+            Sorted ``(server_key, tool_name)`` pairs approved under
+            ``profile_id``. Empty on a fresh instance -- grants are never
+            persisted.
+        """
+        return sorted(
+            (server_key, tool_name)
+            for approved_profile, server_key, tool_name in self._session_approvals
+            if approved_profile == profile_id
+        )
+
+    def revoke_session_approval(
+        self, server_key: str, tool_name: str, *, profile_id: str = "default"
+    ) -> bool:
+        """Drop one session approval (task-32291).
+
+        The per-entry counterpart to :meth:`clear_session_approvals`:
+        afterwards :meth:`is_session_approved` is ``False`` for this exact
+        triple, so the next call falls back through to the approval card.
+        No permission-store fence here -- unlike
+        :meth:`approve_for_session`, revoking only ever *removes* a
+        permission, so a stale profile digest cannot make it unsafe.
+
+        Args:
+            server_key: Prefixed server key the tool belongs to.
+            tool_name: Name of the tool whose approval to drop.
+            profile_id: Exact permission profile holding the approval.
+
+        Returns:
+            ``True`` if an approval was held and is now gone, ``False`` if
+            there was nothing to revoke (never granted, already revoked,
+            or granted under a different profile).
+        """
+        key = (profile_id, server_key, tool_name)
+        if key not in self._session_approvals:
+            return False
+        self._session_approvals.discard(key)
+        return True
+
     def clear_session_approvals(self, *, profile_id: str | None = None) -> None:
         """Discard approvals for one profile, or all approvals when omitted."""
         if profile_id is None:

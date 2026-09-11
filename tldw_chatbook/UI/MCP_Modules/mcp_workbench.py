@@ -2406,6 +2406,9 @@ class MCPWorkbench(Container):
                 cycle_current=server_cycle_current,
             )
         ]
+        session_approved = set(
+            self._session_approvals_for_row(self._tool_policy_profile_id)
+        )
         for row in rows_in:
             builtin_state_label = format_tool_state_label(row.effective)
             # task-32281 AC#2: same ≡ marker as the MCP matrix rows above.
@@ -2413,6 +2416,9 @@ class MCPWorkbench(Container):
                 servers_payload, BUILTIN_TOOL_SERVER_KEY, row.name
             ):
                 builtin_state_label = f"{builtin_state_label} ≡"
+            # task-32291 AC#1: same ` (session)` suffix as the MCP rows.
+            if (BUILTIN_TOOL_SERVER_KEY, row.name) in session_approved:
+                builtin_state_label = f"{builtin_state_label} (session)"
             matrix_rows.append(
                 PermRow(
                     kind="tool",
@@ -2835,6 +2841,9 @@ class MCPWorkbench(Container):
             )
         ]
         cascade_map: dict[tuple[str, str], tuple[str | None, str | None, str]] = {}
+        session_approved = set(
+            self._session_approvals_for_row(self._tool_policy_profile_id)
+        )
 
         tools_by_server: dict[str, list[HubTool]] = {}
         labels_by_key: dict[str, str] = {}
@@ -2892,6 +2901,13 @@ class MCPWorkbench(Container):
                     servers_payload, tool.server_key, tool.name
                 ):
                     tool_state_label = f"{tool_state_label} ≡"
+                # task-32291 AC#1: a live session grant is a WORD, not a
+                # glyph -- it names a thing that expires, which no marker
+                # key entry could convey on its own. Appended last so the
+                # leading state word (`_perm_row_kind()`'s read) and the
+                # rule markers are both untouched.
+                if (tool.server_key, tool.name) in session_approved:
+                    tool_state_label = f"{tool_state_label} (session)"
                 rows.append(
                     PermRow(
                         kind="tool",
@@ -3185,6 +3201,9 @@ class MCPWorkbench(Container):
                     profile_context=successor,
                     arg_rules=self._arg_rules_for_row(
                         cycled_tool, successor.profile_id
+                    ),
+                    session_approvals=self._session_approvals_for_row(
+                        successor.profile_id
                     ),
                 )
 
@@ -3916,6 +3935,7 @@ class MCPWorkbench(Container):
             effective=effective,
             profile_context=context,
             arg_rules=arg_rules,
+            session_approvals=self._session_approvals_for_row(context.profile_id),
         )
 
     def _effective_for_display(self, tool: HubTool) -> EffectiveToolState:
@@ -3994,6 +4014,42 @@ class MCPWorkbench(Container):
             )
             return ()
 
+    def _session_approvals_for_row(
+        self, profile_id: str
+    ) -> tuple[tuple[str, str], ...]:
+        """Every live "Approve for session" grant in one profile
+        (task-32291) -- the matrix's ` (session)` suffix and the inspector's
+        revocable listing both read this.
+
+        One listing covers MCP tools AND the app's built-ins: the built-in
+        gate writes its grants into this same service under
+        `BUILTIN_TOOL_SERVER_KEY` (`BuiltinToolGate.stamp()`), so there is
+        no second store to merge in -- `BuiltinToolGate.list_session_
+        approvals()` is a scoped VIEW of these same entries, not a separate
+        set.
+
+        Defensive (never raises), same fail-safe precedent as
+        `_arg_rules_for_row()` above: a broken read omits the listing
+        rather than blanking the permission explanation around it.
+        """
+        service = self._service()
+        lister = getattr(service, "list_session_approvals", None)
+        if not callable(lister):
+            return ()
+        try:
+            return tuple(
+                (str(server_key), str(tool_name))
+                for server_key, tool_name in lister(profile_id=profile_id)
+            )
+        except Exception as exc:
+            logger.warning(
+                "{}",
+                _safe_diagnostic_message(
+                    "MCP session-approval list failed", exc
+                ),
+            )
+            return ()
+
     async def on_mcp_permissions_mode_row_selected(
         self, event: MCPPermissionsMode.RowSelected
     ) -> None:
@@ -4062,6 +4118,9 @@ class MCPWorkbench(Container):
                 cascade=None,
                 profile_context=context,
                 arg_rules=self._arg_rules_for_row(builtin_tool, context.profile_id),
+                session_approvals=self._session_approvals_for_row(
+                    context.profile_id
+                ),
             )
             return
         tool = (
@@ -4078,6 +4137,7 @@ class MCPWorkbench(Container):
             cascade=self._cascade_for_tool(tool),
             profile_context=context,
             arg_rules=self._arg_rules_for_row(tool, context.profile_id),
+            session_approvals=self._session_approvals_for_row(context.profile_id),
         )
 
     # -- T7 (MCP Hub Phase 5): Audit mode ------------------------------------
@@ -4254,6 +4314,7 @@ class MCPWorkbench(Container):
             effective=self._effective_for_display(tool),
             profile_context=context,
             arg_rules=self._arg_rules_for_row(tool, context.profile_id),
+            session_approvals=self._session_approvals_for_row(context.profile_id),
         )
 
     async def on_mcp_inspector_audit_adjust_permission_requested(
@@ -4367,6 +4428,7 @@ class MCPWorkbench(Container):
             cascade=self._cascade_for_tool(tool),
             profile_context=context,
             arg_rules=self._arg_rules_for_row(tool, context.profile_id),
+            session_approvals=self._session_approvals_for_row(context.profile_id),
         )
 
     async def on_mcp_inspector_reallow_requested(
@@ -4440,6 +4502,7 @@ class MCPWorkbench(Container):
             cascade=self._cascade_for_tool(tool),
             profile_context=successor,
             arg_rules=self._arg_rules_for_row(tool, successor.profile_id),
+            session_approvals=self._session_approvals_for_row(successor.profile_id),
         )
 
     async def on_mcp_inspector_remove_arg_rule_requested(
@@ -4501,6 +4564,59 @@ class MCPWorkbench(Container):
             cascade=self._cascade_for_tool(tool),
             profile_context=successor,
             arg_rules=self._arg_rules_for_row(tool, successor.profile_id),
+            session_approvals=self._session_approvals_for_row(successor.profile_id),
+        )
+
+    async def on_mcp_inspector_revoke_session_approval_requested(
+        self, event: MCPInspector.RevokeSessionApprovalRequested
+    ) -> None:
+        """task-32291: drop one live session approval, then resync the
+        matrix (that tool's ` (session)` suffix clears) and re-render the
+        inspector's own (already-open) permission block with the fresh,
+        now-shorter listing -- the same no-stale-panel flow
+        `on_mcp_inspector_remove_arg_rule_requested()` above uses.
+
+        The revoked entry is usually NOT the tool this block explains (the
+        group lists every grant in the profile), so the block is re-rendered
+        in place from its own cached inputs
+        (`MCPInspector.refresh_permission_session_approvals()`) rather than
+        re-resolved against the revoked tool.
+
+        Like the arg-rule removal, this skips `_call_profile_scoped()`'s
+        CAS-guarded call shape: session approvals live in memory, never in
+        the profile payload a digest fences, and revoking only ever REMOVES
+        a permission -- a stale digest cannot make that unsafe.
+        """
+        event.stop()
+        context = self._validate_profile_context(event.profile_context)
+        if context is None:
+            return
+        service = self._service()
+        revoke = getattr(service, "revoke_session_approval", None)
+        if not callable(revoke):
+            return
+        try:
+            revoke(
+                event.server_key,
+                event.tool_name,
+                profile_id=context.profile_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "{}",
+                _safe_diagnostic_message(
+                    f"MCP session-approval revoke failed for {event.server_key}::{event.tool_name}",
+                    exc,
+                ),
+            )
+            self.app.notify(
+                _toast("Revoking the session approval failed."), severity="error"
+            )
+            return
+        async with self._sync_children_lock:
+            await self._sync_permissions_mode()
+        await self.query_one(MCPInspector).refresh_permission_session_approvals(
+            self._session_approvals_for_row(context.profile_id)
         )
 
     async def open_test_for_selected_tool(self) -> None:

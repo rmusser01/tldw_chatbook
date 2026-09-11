@@ -138,6 +138,48 @@ class FakeHubService:
             selected_source="local", selected_section="overview"
         )
         self.disconnect_calls: list[str] = []
+        # In-memory session approvals, keyed exactly as the real service
+        # keys them: (profile_id, server_key, tool_name).
+        self.session_approvals: set[tuple[str, str, str]] = set()
+
+    def approve_for_session(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        profile_id: str = "default",
+        expected_profile_digest: str | None = None,
+        expected_revision: int | None = None,
+    ) -> None:
+        self.session_approvals.add((profile_id, server_key, tool_name))
+
+    def is_session_approved(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        profile_id: str = "default",
+    ) -> bool:
+        return (profile_id, server_key, tool_name) in self.session_approvals
+
+    def list_session_approvals(
+        self, *, profile_id: str = "default"
+    ) -> list[tuple[str, str]]:
+        # task-32291: same shape as the real service -- sorted, profile-scoped.
+        return sorted(
+            (server_key, tool_name)
+            for approved_profile, server_key, tool_name in self.session_approvals
+            if approved_profile == profile_id
+        )
+
+    def revoke_session_approval(
+        self, server_key: str, tool_name: str, *, profile_id: str = "default"
+    ) -> bool:
+        key = (profile_id, server_key, tool_name)
+        if key not in self.session_approvals:
+            return False
+        self.session_approvals.discard(key)
+        return True
 
     async def disconnect_local_profile(self, profile_id):
         self.disconnect_calls.append(profile_id)
@@ -3541,28 +3583,6 @@ class ToolTestHubService(FakeHubService):
         self.preview_profile_calls: list[tuple[str, str | None, int | None]] = []
         self.lease_observer = None
         self.lease_observations: list[int] = []
-        self.session_approvals: set[tuple[str, str, str]] = set()
-
-    def approve_for_session(
-        self,
-        server_key: str,
-        tool_name: str,
-        *,
-        profile_id: str = "default",
-        expected_profile_digest: str | None = None,
-        expected_revision: int | None = None,
-    ) -> None:
-        self.session_approvals.add((profile_id, server_key, tool_name))
-
-    def is_session_approved(
-        self,
-        server_key: str,
-        tool_name: str,
-        *,
-        profile_id: str = "default",
-    ) -> bool:
-        return (profile_id, server_key, tool_name) in self.session_approvals
-
     def gate_tool_test(
         self, tool: Any, *, profile_id: str = "default"
     ) -> EffectiveToolState:
@@ -6300,6 +6320,10 @@ class PermissionsHubService(FakeHubService):
         self.session_approval_calls.append(
             (profile_id, server_key, tool_name, expected_revision)
         )
+        # task-32291: the grant this override records is also a LIVE grant --
+        # `list_session_approvals()`/`revoke_session_approval()` (inherited
+        # from FakeHubService) read the same set the real service does.
+        self.session_approvals.add((profile_id, server_key, tool_name))
 
     def get_kill_switch(self):
         return self._store.get_kill_switch()
@@ -11173,3 +11197,73 @@ async def test_virtual_cli_permission_cycle_remains_independent_of_raw_shell(
         )
         assert entry is not None and entry["state"] == "allow"
         assert _tools_table_state(app, "ls").startswith("Allow")
+
+
+# -- task-32291: session approvals, reviewed and revoked ---------------------
+
+
+@pytest.mark.asyncio
+async def test_matrix_marks_and_inspector_revokes_session_approvals(tmp_path):
+    """AC#1/#2 end to end: a live "Approve for session" grant marks its
+    tool's State cell ` (session)`; selecting any tool row lists every
+    grant in the inspector with a Revoke button; pressing Revoke drops that
+    grant (so `is_session_approved()` -- the read every provider's
+    short-circuit uses -- goes False and the next call asks again) AND
+    clears both the inspector row and the matrix suffix, with the
+    permission block still open on the same tool."""
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    # Granted before the app builds its first matrix -- a session approval
+    # is in-memory service state, the same way the arg-rule test seeds the
+    # store before `run_test()`.
+    service = app.unified_mcp_service
+    service.session_approvals.add(("default", "local:docs", "search"))
+    service.session_approvals.add(("default", "agent:builtin", "calculator"))
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        tool_cells = {row[0].strip(): row[1] for row in _perm_all_rows(app)}
+        assert "(session)" in tool_cells["search"]
+        assert "(session)" in tool_cells["calculator"]
+        assert "(session)" not in tool_cells["fetch"]
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)  # local:docs::search
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert (
+            str(app.query_one("#mcp-inspector-session-approvals", Static).renderable)
+            == "Session approvals"
+        )
+        rows = [
+            str(s.renderable)
+            for s in app.query(Static)
+            if (s.id or "").startswith("mcp-inspector-session-approval-")
+        ]
+        assert rows == ["agent:builtin · calculator", "local:docs · search"]
+
+        await pilot.click("#mcp-inspector-session-approval-revoke-1")
+        await pilot.pause()
+
+        assert service.is_session_approved("local:docs", "search") is False
+        assert service.is_session_approved("agent:builtin", "calculator") is True
+        rows_after = [
+            str(s.renderable)
+            for s in app.query(Static)
+            if (s.id or "").startswith("mcp-inspector-session-approval-")
+        ]
+        assert rows_after == ["agent:builtin · calculator"]
+        tool_cells_after = {row[0].strip(): row[1] for row in _perm_all_rows(app)}
+        assert "(session)" not in tool_cells_after["search"]
+        assert "(session)" in tool_cells_after["calculator"]
+        # The block must stay open on the SAME tool (mirrors the arg-rule
+        # Remove flow's own no-stale-panel regression).
+        assert app.query_one("#mcp-inspector-permission").display is True
+        assert (
+            str(app.query_one("#mcp-inspector-permission-tool", Static).renderable)
+            == "search — docs"
+        )

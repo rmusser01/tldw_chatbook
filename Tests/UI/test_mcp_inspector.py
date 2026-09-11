@@ -196,6 +196,9 @@ class InspectorApp(ConsolidatedCSSApp):
     def on_mcp_inspector_remove_arg_rule_requested(self, event) -> None:
         self.events.append(event)
 
+    def on_mcp_inspector_revoke_session_approval_requested(self, event) -> None:
+        self.events.append(event)
+
     def on_mcp_inspector_change_in_permissions_requested(self, event) -> None:
         self.events.append(event)
 
@@ -6336,3 +6339,83 @@ async def test_editing_the_payload_preserves_real_run_output_when_not_armed():
         assert _adv_result(app) == result_before, (
             "editing the payload while UNARMED must not blank real run output"
         )
+
+
+# -- task-32291: session approvals, listed and revocable --------------------
+
+
+@pytest.mark.asyncio
+async def test_show_permission_lists_every_live_session_approval():
+    """AC#1: the permission block names each tool holding a live "Approve
+    for session" grant -- the whole profile's set, not just this row's
+    tool, since until now nothing listed them anywhere."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(server_key="local:docs", name="search"),
+            EffectiveToolState(state="ask", origin="server_default"),
+            session_approvals=[
+                ("agent:builtin", "calculator"),
+                ("local:docs", "search"),
+            ],
+        )
+        await pilot.pause()
+
+        header = app.query_one("#mcp-inspector-session-approvals", Static)
+        assert str(header.renderable) == "Session approvals"
+        rows = [
+            str(s.renderable)
+            for s in app.query(Static)
+            if (s.id or "").startswith("mcp-inspector-session-approval-")
+        ]
+        assert rows == [
+            "agent:builtin · calculator",
+            "local:docs · search",
+        ]
+        assert app.query_one("#mcp-inspector-session-approval-revoke-0", Button)
+        assert app.query_one("#mcp-inspector-session-approval-revoke-1", Button)
+
+
+@pytest.mark.asyncio
+async def test_show_permission_with_no_session_approvals_renders_no_group():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(), EffectiveToolState(state="ask", origin="server_default")
+        )
+        await pilot.pause()
+
+        assert not list(app.query("#mcp-inspector-session-approvals"))
+        assert not list(app.query("#mcp-inspector-session-approval-revoke-0"))
+
+
+@pytest.mark.asyncio
+async def test_revoke_button_press_posts_that_rows_own_entry():
+    """AC#1: Revoke targets the pressed row's (server_key, tool_name) --
+    which need NOT be the tool the block is explaining -- verified with two
+    entries present."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(server_key="local:docs", name="search"),
+            EffectiveToolState(state="ask", origin="server_default"),
+            session_approvals=[
+                ("agent:builtin", "calculator"),
+                ("local:docs", "search"),
+            ],
+        )
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-session-approval-revoke-0")
+        await pilot.pause()
+
+        events = [
+            e
+            for e in app.events
+            if isinstance(e, MCPInspector.RevokeSessionApprovalRequested)
+        ]
+        assert len(events) == 1
+        assert events[0].server_key == "agent:builtin"
+        assert events[0].tool_name == "calculator"

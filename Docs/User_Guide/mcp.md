@@ -447,6 +447,16 @@ its filter can answer "what did I refuse?":
 A Deny you press in Console lands here as its own row, exactly as each
 approval does.
 
+### Session approvals
+
+**Approve for session** lasts until Chatbook exits or you revoke it — it is
+never written to disk, and it is not a permission change (the tool's
+Allow/Ask/Off setting is untouched). A tool holding one gets a `(session)`
+suffix on its State cell in the Permissions matrix, and selecting any tool
+row lists every live grant in the inspector with a **Revoke** button next to
+each. Revoking takes effect immediately: the next call to that tool asks
+again.
+
 ### Exact-input allow rules
 
 Alongside **Approve once** / **Approve for session** / **Always allow** /

@@ -681,3 +681,75 @@ def test_tool_gate_breadcrumb_reads_each_config_gate_once(monkeypatch):
 
     assert breadcrumb is not None
     assert reads == builtin_tool_gate._gate_key_pairs()
+
+
+# -- task-32291: session approvals are reviewable and revocable --------------
+
+
+def _real_service():
+    """A REAL `UnifiedMCPControlPlaneService` -- the gate's list/revoke pair
+    delegates to it, so a fake would only pin the delegation shape, not the
+    round trip. No local store is wired: an approval captured without a
+    policy digest never touches the permission store (see
+    `approve_for_session()`'s compatibility branch), which is exactly the
+    shape `BuiltinToolGate.stamp()` uses.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
+
+    return UnifiedMCPControlPlaneService(
+        local_service=SimpleNamespace(),
+        server_service=None,
+        target_store=None,
+        context_store=None,
+    )
+
+
+def test_gate_lists_and_revokes_its_own_session_approval():
+    """AC#1/#2 for the built-in side: a session grant is enumerable through
+    the gate, and revoking it makes the next run's `check()` refuse again
+    (the gate's own "asks again" -- `BuiltinToolProvider.invoke` turns that
+    string into a failed result and the review hook re-prompts)."""
+    service = _real_service()
+    gate = BuiltinToolGate(service)
+    gate.stamp(RUN, "write_thing", "approve_session")
+
+    assert gate.list_session_approvals() == [("agent:builtin", "write_thing")]
+    # A DIFFERENT run has no stamp of its own -- only the session grant can
+    # permit it.
+    assert gate.check(_Mutating(), "run-2") is None
+
+    assert gate.revoke_session_approval("agent:builtin", "write_thing") is True
+
+    assert gate.list_session_approvals() == []
+    assert gate.is_session_approved("write_thing") is False
+    assert gate.check(_Mutating(), "run-2") is not None
+
+
+def test_gate_lists_only_builtin_approvals_from_its_own_profile():
+    """The gate is the BUILT-IN facade over a store shared with MCP tools:
+    an MCP server's grant, and a grant under another profile, are not the
+    gate's to list or revoke."""
+    service = _real_service()
+    service.approve_for_session("local:docs", "search", profile_id="research")
+    service.approve_for_session("agent:builtin", "calculator", profile_id="other")
+    gate = BuiltinToolGate(service, profile_id="research")
+    gate.stamp(RUN, "write_thing", "approve_session")
+
+    assert gate.list_session_approvals() == [("agent:builtin", "write_thing")]
+    assert gate.revoke_session_approval("local:docs", "search") is False
+    assert service.is_session_approved(
+        "local:docs", "search", profile_id="research"
+    )
+
+
+def test_service_less_gate_has_nothing_to_list_or_revoke():
+    """Constraint 7's fail-soft shape: no service means no grants, never a
+    crash -- same contract as `is_session_approved()` above."""
+    gate = BuiltinToolGate(None)
+
+    assert gate.list_session_approvals() == []
+    assert gate.revoke_session_approval("agent:builtin", "write_thing") is False

@@ -54,6 +54,7 @@ _TOOL_ROW_INDENT = "  "
 _LEGEND_TEXT = (
     "• override · ⚠ definition changed · ⚑ high-risk floor · "
     "≡ exact-input allows · "
+    "(session) approved until Chatbook exits · "
     "Space cycles Inherit → Allow → Ask → Off"
 )
 

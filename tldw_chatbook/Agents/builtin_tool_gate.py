@@ -339,6 +339,64 @@ class BuiltinToolGate:
         """
         return self._session_approved(tool_name)
 
+    def list_session_approvals(self) -> list[tuple[str, str]]:
+        """Live session approvals for THIS gate's built-ins (task-32291).
+
+        The built-in half of the review surface. Session grants all live in
+        the control-plane service's one set (``stamp()`` above writes there
+        under ``BUILTIN_TOOL_SERVER_KEY``), so this is a scoped read of
+        that: only this gate's captured profile, only built-in tools -- an
+        MCP server's grant is not the built-in gate's to report.
+
+        Returns:
+            Sorted ``(server_key, tool_name)`` pairs, always with
+            ``server_key == BUILTIN_TOOL_SERVER_KEY``. Empty for a
+            service-less gate or a failed read -- same fail-soft contract
+            as ``_session_approved`` above.
+        """
+        if self._service is None:
+            return []
+        lister = getattr(self._service, "list_session_approvals", None)
+        if lister is None:
+            return []
+        try:
+            approvals = lister(profile_id=self._profile_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"session approval list failed: {exc}")
+            return []
+        return [
+            (server_key, tool_name)
+            for server_key, tool_name in approvals
+            if server_key == BUILTIN_TOOL_SERVER_KEY
+        ]
+
+    def revoke_session_approval(self, server_key: str, tool_name: str) -> bool:
+        """Drop one built-in session approval (task-32291).
+
+        Scoped the same way ``list_session_approvals`` is: a non-built-in
+        ``server_key`` is refused here rather than forwarded, so the
+        built-in facade can never revoke an MCP server's grant.
+
+        Args:
+            server_key: Must be ``BUILTIN_TOOL_SERVER_KEY``.
+            tool_name: The built-in tool's LLM-facing name.
+
+        Returns:
+            ``True`` if a grant was held and is now gone; ``False``
+            otherwise (no service, wrong server key, nothing granted, or a
+            failed call).
+        """
+        if self._service is None or server_key != BUILTIN_TOOL_SERVER_KEY:
+            return False
+        revoke = getattr(self._service, "revoke_session_approval", None)
+        if revoke is None:
+            return False
+        try:
+            return bool(revoke(server_key, tool_name, profile_id=self._profile_id))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"session approval revoke failed: {exc}")
+            return False
+
     def check(self, tool: Tool, run_id: str) -> str | None:
         """Execution-time verdict for ``run_id``'s call to ``tool``.
 
