@@ -797,6 +797,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 next_action = ""
             elif "failed" in f"{status} {state.transfer_status}".lower():
                 next_action = "Review the error, then keep editing."
+            elif state.presentation == "preview":
+                # task-32249: Preview is read-only, so "changes save
+                # automatically" named a behaviour this surface does not
+                # have. Name the control that gets the reader back to the
+                # one that does.
+                next_action = "Press Edit to change this note."
             elif not state.snapshot.body:
                 # Review F4: "Keep editing" presumes editing has started.
                 # The brief's "Start typing" belongs here -- this is the
@@ -1221,12 +1227,26 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # ``library-toolbar-count`` class (css/components/
                 # _agentic_terminal.tcss's ``width: auto``) rather than a
                 # per-canvas one-off.
-                yield Static(
+                in_row_count = Static(
                     f"{list_state.selected_count} selected",
                     id="library-notes-selected-count",
                     classes="library-toolbar-count",
                     markup=False,
                 )
+                # task-32261 AC#1: this counter costs 11 of the 42 columns a
+                # 100x30 terminal gives the list pane, which is what pushed
+                # "Export selected" off the right edge -- the strip painted
+                # "0 selected  Done  All 10  Clear" and the guide's fifth
+                # action was unreachable. The same count is printed on its
+                # own line directly below (``#library-notes-selection-
+                # status``), so compact loses nothing by hiding it. It stays
+                # MOUNTED, not dropped: ``_apply_library_row_toggle``
+                # queries it by id to patch the count in place, and a
+                # missing widget there falls back to a full recompose.
+                # Whether the two counters should be one widget at every
+                # width is peer task-32272's call, not this one's.
+                in_row_count.display = not self.compact
+                yield in_row_count
                 yield Button(
                     "Done",
                     id="library-notes-select-toggle",
@@ -1987,7 +2007,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
         # File-synced notes may carry YAML front matter; consume it instead
         # of rendering the delimiter block as note content.
-        from tldw_chatbook.Utils.markdown_parsing import front_matter_parser_factory
+        from tldw_chatbook.Utils.markdown_parsing import (
+            front_matter_parser_factory,
+            render_obsidian_callouts,
+        )
 
         # task-32139: Edit/Preview said "‹ Notes", Info said "‹ Note" (two
         # wordings for the identical Back action, live-caught at 235x52),
@@ -2113,7 +2136,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 markup=False,
             )
             yield Markdown(
-                content,
+                render_obsidian_callouts(content),
                 id="library-note-preview-body",
                 parser_factory=front_matter_parser_factory(),
             )
@@ -2331,6 +2354,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             if database_purpose:
                 database_purpose.first(Static).display = not compact
             rendered_count = len(self.list_state.rows)
+            # task-32261 AC#1: the in-strip counter's compact hide flips on a
+            # breakpoint crossing, like the two labels below -- this method
+            # is the canvas's whole in-place responsive path.
+            in_row_count = self.query("#library-notes-selected-count")
+            if in_row_count:
+                in_row_count.first(Static).display = not compact
             select_all = self.query("#library-notes-select-all")
             if select_all:
                 select_all.first(Button).label = (
@@ -2431,6 +2460,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         idempotent. The screen owns the presentation-sync guard around calls
         that may assign ``Input`` or ``TextArea`` values.
         """
+        from tldw_chatbook.Utils.markdown_parsing import render_obsidian_callouts
+
         if self.mode != "editor" or not self.is_mounted:
             self.presentation_state = state
             self.compact = state.compact
@@ -2518,8 +2549,14 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # hidden Preview stale while typing, then perform one canonical update
         # when Preview becomes the active surface so edits cannot queue an
         # unbounded hidden-render backlog.
-        if show_preview and preview_body.source != snapshot.body:
-            preview_body.update(snapshot.body)
+        #
+        # task-32249: the rendered source is the callout-rewritten one, so
+        # the staleness comparison has to be against THAT -- comparing the
+        # raw body would re-render every sync on any note carrying a
+        # callout.
+        preview_source = render_obsidian_callouts(snapshot.body)
+        if show_preview and preview_body.source != preview_source:
+            preview_body.update(preview_source)
         channels = state.status_channels or NotesStatusChannels(
             state.status_line or "Saved",
             NOTES_AUTHORITY_PREFIX,

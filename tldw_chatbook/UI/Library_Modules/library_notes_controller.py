@@ -603,6 +603,7 @@ from .library_notes_work_session import (
 from .screen_constants import (
     LIBRARY_FILE_NOTES_READER_PROFILE,
     LIBRARY_NOTES_COMPACT_BREAKPOINT,
+    LIBRARY_NOTES_FULL_CANVAS_VIEWS,
     LIBRARY_NOTES_SOURCE_DATABASE,
     LIBRARY_NOTES_SOURCE_FILES,
     LIBRARY_NOTE_BLANK_SEED_TITLE,
@@ -2387,6 +2388,15 @@ class LibraryNotesController:
         preferences: AdaptiveReaderLayoutPreferences,
     ) -> AdaptiveReaderLayoutPreferences:
         """Derive the Library-only work-first override."""
+        if self._library_notes_view in LIBRARY_NOTES_FULL_CANVAS_VIEWS:
+            # task-32259 AC#2: Import once / Add from files are whole tasks,
+            # not a second reading pane. Live at 235x52 the review pane was
+            # elided to ". ke..." while the Notes list it is not about kept
+            # its share of the width. The list closes to its grip while the
+            # task is in hand and comes straight back with it; the persisted
+            # preference is untouched, exactly like the work-session
+            # override below.
+            return dataclasses.replace(preferences, items_open=False)
         if self._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE:
             return dataclasses.replace(preferences, library_open=False)
         return preferences
@@ -3942,6 +3952,16 @@ class LibraryNotesController:
         self._library_note_context = False
         self._library_note_preview = True
         self._apply_library_note_presentation_state()
+        # task-32249: the footer promises "pgup/pgdn scroll" the moment
+        # Preview lands, but the region is the scroll owner and focus was
+        # still on the Preview button -- the keys did nothing until the
+        # reader clicked inside the box. Info already focuses its region on
+        # arrival; Preview now does the same.
+        try:
+            preview = self.query_one("#library-note-preview-region")
+        except (NoMatches, QueryError):
+            return
+        preview.focus()
     @on(Button.Pressed, "#library-note-context")
     def handle_library_note_context_open(self, event: Button.Pressed) -> None:
         """Show the stable Context region without replacing editor widgets.
