@@ -288,7 +288,9 @@ it was deleted, newest first. Press a row to select it (the **▸** marker
 moves), then **"Restore"** to put it back: the row leaves the Trash, the
 rail's "Media N" count goes up in place, a "Restored 'Title'." line
 confirms it, and the item is back in the media list (and in search
-results) exactly as it was — restore never rewrites the item. "‹ Media" or
+results) with its title, content and analysis untouched. Restore brings the
+item back and marks it changed now, so it returns at the top of a Newest
+sort — the same is true of "Undo" on a delete receipt. "‹ Media" or
 Escape returns to the list.
 
 Notes on the edges: with nothing deleted the view says "Trash is empty.
@@ -459,9 +461,10 @@ open mode; no section header repeats it. Body text wraps at a reading measure
 of about 90 columns however wide the terminal is, while the box around it
 still spans the pane.
 
-- **Read** — the complete stored text ("No stored content." when empty). For
-  markdown-flavored media (a `.md`/Obsidian-style item, or a video/audio
-  transcript, whose content has a real heading, table, or fenced code block), a "Rendered (selected) |
+- **Read** — the complete stored text ("No stored content." when empty).
+  Whenever the stored text itself has a real heading, table, or fenced code
+  block — whatever the item's media type, because the stored type does not
+  tell you what the text contains — a "Rendered (selected) |
   Raw" toggle appears above the box and defaults to **Rendered** — headings,
   tables, and code render properly instead of showing literal `#`/`##`/`|`
   characters, using the same renderer as Notes' own "Preview". Press
@@ -494,6 +497,10 @@ still spans the pane.
   and server-item previews are not fetched or rendered here.
 - **Analysis** — stored analysis text you can view and edit ("Edit
   analysis", or "Add analysis" when empty; "No analysis yet." otherwise).
+  The actions sit directly beneath the analysis text, however short it is —
+  a two-line analysis puts them on the next line, not at the bottom of the
+  pane. A long analysis scrolls the tab, carrying its actions to the end of
+  the text rather than clipping them.
   Analysis is produced at import time (the "Analyze after import" option),
   written by hand here, or generated in place: **"Generate"** (**"Regenerate"**
   once one exists) calls the configured analysis provider without leaving
@@ -588,9 +595,9 @@ them one by one, with your place and progress saved between visits.
   Reader's own border.
 - **Resume on entry** — opening the media area with a set active loads its
   current item into the Reader automatically, on every entry, so the banner
-  and the open document always agree (in narrower layouts Escape shows the
-  list again until the next entry; the three-pane layout keeps showing it in
-  the Items pane throughout).
+  and the open document always agree. Escape behaves here exactly as it does
+  everywhere else in the Reader — see [Keyboard & commands](#keyboard--commands)
+  for the one rule and the chip that states it.
 - **Walk** — while a set is active the Reader carries a banner naming the
   set, your place, and the open item's own state ("Reviewing: All media — 2
   of 14 · 1 reviewed · ✓ reviewed"), and the footer shows the same place —
@@ -761,15 +768,20 @@ The Media grips accept **Enter**; in Select mode **Space** is reserved for
 toggling the focused row, so the grips take Enter only there. Arrow-key
 traversal moves the Items selection with a short settle delay; **Enter**
 loads immediately.
-**Escape** closes transient Reader state first — the Find bar, the More
-menu, an open type/sort strip, or an armed delete or edit — and then steps
-outward: from the Reader to the loaded **Items row**, from Items to the
-**Media row in the rail**. Neither of those steps lands in a text box.
-In the three-pane layout (verified at 235x52) Escape never leaves the
-Reader at all: the Items pane is already showing the list, so the document
-stays open and `]`/`[` keep working from the row. The rail row is the last
-stop, and the footer drops its `esc` chip there rather than advertise a key
-that does nothing.
+**Escape** closes transient Reader state first — the Find bar, then the More
+strip — and then steps out of the Reader to the Items list; the footer chip
+always names the next step it will take. The chip is the authority, and it
+has four readings: **`esc close`** over anything transient (the Find bar, the
+More strip, an open type/sort strip, an armed delete or edit),
+**`esc focus Items`** from the open document, **`esc focus Library`** from the
+Items row, and **`esc back`** wherever the next pane out is collapsed rather
+than on screen — the Items row at 100x30 and narrower, and the rail row in any
+layout the Reader still has a real exit from. In the three-pane layout the rail
+row is the last stop, and the footer drops the `esc` chip there rather than
+advertise a key that does nothing. No step lands in a text box.
+Stepping out of the Reader moves focus, not the document: in the three-pane
+layout (verified at 235x52) the Items pane is already showing the list, so
+the item keeps painting beside it and `]`/`[` keep working from the row.
 Where the Library pane is collapsed but the Items pane still shows the list
 (verified at 100x30) the "‹ Back" control returns you to the list, and so
 does Escape from the Items row. Between 64 and 88 columns both panes are
@@ -1090,6 +1102,42 @@ with nothing on screen to link into.)*
 line beneath it, so it no longer truncates in a narrow reader pane; `c` now
 consults the workspace gate the button consults; a block linking cannot
 resolve says so and withholds the link.)*
+
+*Verified against fix/library-crit9-media-reader — 2026-09-10 (task-32237:
+the Reader's More strip paints "Move to trash" in full at 235x52, 100x30 and
+60x24. The grid column now holds the longest label, the button's own
+auto-width, and the danger action's 2-cell separation together — at 16 cells
+that separation came out of the button's box and Textual wrapped the label to
+"Move to".)*
+
+*Verified against fix/library-crit9-media-reader — 2026-09-10 (task-32234:
+the Rendered|Raw decision is the content sniff alone now. The media-type
+allowlist that ran in front of it (plaintext/markdown/obsidian_note/video/
+audio) meant a `document` or `article` whose text started with a heading
+painted its literal `#` under a note saying there was no Markdown to render.)*
+
+*Verified against fix/library-crit9-media-reader — 2026-09-10 (task-32222:
+one Escape rule, quoted from the footer chip itself. The page previously
+claimed two different targets in two places while the chip named a third;
+the chip is pinned by test and the guide was not, so the guide now quotes
+`esc focus Items` / `esc focus Library` / `esc close` and a test asserts the
+quotes are the strings the code produces.)*
+
+*Verified against fix/library-crit9-media-reader — 2026-09-10 (task-32224:
+the page no longer claims a restore leaves the item's modified time alone.
+Measured against a real MediaDatabase: `mark_as_trash` ALREADY stamps `last_modified`
+with the current time, so the re-dating starts at the delete and dropping
+the stamp from `restore_from_trash` alone would change nothing the user
+sees. The behaviour is documented and pinned instead.)*
+
+*Verified against fix/library-crit9-media-reader — 2026-09-10 (task-32217
+AC#2, media clause: the Analysis tab's actions now sit under the analysis
+text instead of at the pane floor. task-31237's `height: 1fr` fill is
+reversed for this tab only — Read keeps it, because nothing sits under its
+box there. Live at 235x52, 100x30 and 60x24 a 5-line analysis puts "Edit
+analysis" / "○ Regenerate" on the next line. A longer analysis keeps its own
+text scroll and the tab scrolls the last few rows on top of it, so reading to
+the end of the text and carrying on brings the actions on screen.)*
 
 *Verified against fix/library-crit9-media-list — 2026-09-10 (task-32210: the
 type and sort choosers now mark the row your arrow keys are on with the house
