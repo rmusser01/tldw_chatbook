@@ -375,6 +375,10 @@ async def test_collision_controls_post_choice_and_proposed_name() -> None:
             phase="review",
             collision_kind="root",
             collision_name="Work",
+            # task-32262: the field renders the rename input alone, so an
+            # untouched panel shows its placeholder rather than a name with
+            # an error already painted under it.
+            collision_rename_input="Work",
             collision_reason="Choose how to handle the existing Work folder.",
         )
     )

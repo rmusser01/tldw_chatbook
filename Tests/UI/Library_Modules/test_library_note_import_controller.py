@@ -328,6 +328,10 @@ async def test_large_review_diff_bounds_inputs_and_marks_truncated_preview(
                     ImportAction.CREATE_NEW,
                     ImportAction.UPDATE_EXISTING,
                 ),
+                # task-32262: the diff is shown on the row it describes --
+                # the one replacing an existing note's content.
+                selected_action=ImportAction.UPDATE_EXISTING,
+                replace_content=True,
             ),
         ),
     )
@@ -908,3 +912,67 @@ def test_change_selection_keeps_the_old_source_until_a_path_returns(
 
     assert controller.snapshot.selected_paths == (second,)
     assert controller.snapshot.selection_is_folder is True
+
+
+# --- task-32262 (collision panel default) ---------------------------------
+
+
+def _directory_plan(root: str = "Inbox") -> NoteImportPlan:
+    item = ImportPreviewItem(
+        item_id="item-000001",
+        source=ImportSource(
+            kind=ImportSourceKind.DIRECTORY_MEMBER,
+            display_path=f"{root}/one.md",
+            source_path=Path("/private/import") / root / "one.md",
+        ),
+        payloads=(ParsedNotePayload(title="One", content="Body"),),
+        memberships=(
+            ProposedFolderMembership(payload_index=0, folder_segments=(root,)),
+        ),
+        classification=ImportClassification.NEW,
+        reason="New source",
+        default_action=ImportAction.CREATE_NEW,
+        selected_action=ImportAction.CREATE_NEW,
+        allowed_actions=(ImportAction.SKIP, ImportAction.CREATE_NEW),
+        match=None,
+        replace_content=False,
+        add_membership=True,
+    )
+    return NoteImportPlan(
+        bounds=BOUNDS,
+        items=(item,),
+        proposed_folder_paths=((root,),),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_detected_collision_opens_with_the_safe_default_selected(
+    tmp_path: Path,
+) -> None:
+    """task-32262 AC#3: no error against an untouched field, a default chosen.
+
+    The real planner analyses and resolves here -- a stub would not prove the
+    default the review actually opens with.
+    """
+    from tldw_chatbook.Notes.note_import_planner import (
+        analyze_root_collision,
+        resolve_root_collision,
+    )
+
+    controller = _controller(
+        plan=_directory_plan(), calls=[], repository=_FolderRepository()
+    )
+    controller._analyze_collision = analyze_root_collision
+    controller._resolve_collision = resolve_root_collision
+    controller.begin_selection()
+    controller.accept_selected_path(tmp_path, is_folder=True)
+
+    await controller.check()
+
+    projected = controller.presentation_snapshot
+    assert projected.collision_kind == "root"
+    assert projected.collision_choice == "unique_sibling"
+    assert projected.collision_rename_input == ""
+    assert projected.collision_rename_error == ""
+    assert "Inbox (2)" in projected.collision_reason
+    assert projected.can_import is True

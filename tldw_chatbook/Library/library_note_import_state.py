@@ -507,18 +507,14 @@ def show_review(
         approved_plan=None,
         cancel_requested=False,
         decision_item_ids=frozenset(),
-        collision_rename_input=(
-            collision.resolved_label
-            if renamed_root
-            else collision.proposed_label
-            if unresolved_collision
-            else ""
-        ),
-        collision_rename_error=(
-            "That folder name already exists. Enter a different name."
-            if unresolved_collision
-            else ""
-        ),
+        # An unresolved collision leaves this empty on purpose (task-32262):
+        # pre-filling the name that already collides arms "Use another name"
+        # against a value that cannot resolve anything.
+        collision_rename_input=collision.resolved_label if renamed_root else "",
+        # task-32262: the rename field opened already painted red against a
+        # name the user had not touched. A validation error belongs to typed
+        # input; `set_collision_rename` raises it the moment there is any.
+        collision_rename_error="",
         revision=state.revision + 1,
     )
 
@@ -791,9 +787,7 @@ def project_library_note_import_snapshot(
             target_label=_target_label(effects.get(item.item_id)),
             effect_summary=_effect_summary(item),
             membership_summary=_membership_summary(item),
-            content_diff=(
-                effects[item.item_id].content_diff if item.item_id in effects else ""
-            ),
+            content_diff=_review_diff(item, effects.get(item.item_id)),
         )
         for item in state.page.items
     )
@@ -858,11 +852,7 @@ def project_library_note_import_snapshot(
         collision_choice=collision.choice.value
         if collision and collision.choice
         else "",
-        collision_reason=(
-            "Choose how to handle the existing folder."
-            if collision and collision.collides and collision.choice is None
-            else ""
-        ),
+        collision_reason=_collision_reason(collision),
         collision_rename_input=state.collision_rename_input,
         collision_rename_error=state.collision_rename_error,
         collision_rename_available=bool(
@@ -902,6 +892,21 @@ def project_library_note_import_snapshot(
     )
 
 
+def _collision_reason(collision: RootCollisionState | None) -> str:
+    """Say what the chosen (or unchosen) collision resolution will do."""
+    if collision is None or not collision.collides:
+        return ""
+    if collision.choice is None:
+        return "Choose how to handle the existing folder."
+    if collision.choice is RootCollisionChoice.USE_EXISTING:
+        return "These notes will go into the folder that already exists."
+    label = collision.resolved_label or collision.proposed_label
+    return (
+        f"A folder with this name already exists. These notes will go into "
+        f"{label} instead — choose another option to change that."
+    )
+
+
 def _target_label(effect: NoteImportReviewEffect | None) -> str:
     if effect is None or not effect.target_title:
         return ""
@@ -916,6 +921,27 @@ def _target_label(effect: NoteImportReviewEffect | None) -> str:
         else ""
     )
     return f"Existing note: {title}{version}."
+
+
+def _review_diff(
+    item: ImportPreviewItem,
+    effect: NoteImportReviewEffect | None,
+) -> str:
+    """Return the existing-note diff only where it governs this row's outcome.
+
+    task-32262: the diff compares the stored note to the raw source, while the
+    classification compares this source to the last import of it. On an
+    "Unchanged repeat" row those are different questions, and the answers
+    disagreed on screen -- "Content: no change." printed directly above a diff
+    showing a changed line, because the stored note carries rewritten links the
+    source file does not. The diff is shown on the one row it describes: the
+    one about to replace an existing note's content.
+    """
+    if effect is None or not effect.content_diff:
+        return ""
+    if item.selected_action is not ImportAction.UPDATE_EXISTING:
+        return ""
+    return effect.content_diff if item.replace_content else ""
 
 
 def _membership_summary(item: ImportPreviewItem) -> str:
@@ -960,6 +986,20 @@ def _effect_summary(item: ImportPreviewItem) -> str:
             parts.append(f"keywords {shown}")
         if links:
             parts.append(f"{links} link{'' if links == 1 else 's'}")
+        # task-32262: `mood: ok` used to vanish with no row and no receipt
+        # line. Name the properties that do not survive the import.
+        dropped = tuple(
+            dict.fromkeys(
+                key
+                for payload in item.payloads
+                for key in payload.unimported_frontmatter_keys
+            )
+        )
+        if dropped:
+            shown = ", ".join(dropped[:4])
+            if len(dropped) > 4:
+                shown = f"{shown}, and {len(dropped) - 4} more"
+            parts.append(f"not imported: {shown}")
         return f"{' · '.join(parts)}."
     return (
         "Content: replace existing content."

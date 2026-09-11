@@ -381,9 +381,8 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                 snapshot.collision_reason
             )
             rename_input = self.query_one("#note-import-collision-name", Input)
-            visible_name = snapshot.collision_rename_input or snapshot.collision_name
-            if rename_input.value != visible_name:
-                rename_input.value = visible_name
+            if rename_input.value != snapshot.collision_rename_input:
+                rename_input.value = snapshot.collision_rename_input
             self.query_one("#note-import-collision-rename-error", Static).update(
                 snapshot.collision_rename_error
             )
@@ -614,7 +613,9 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                     ),
                 )
             yield Input(
-                value=state.collision_rename_input or state.collision_name,
+                # task-32262: an untouched field carries its placeholder, not
+                # the colliding name with an error already painted under it.
+                value=state.collision_rename_input,
                 placeholder="New top-level folder name",
                 id="note-import-collision-name",
             )

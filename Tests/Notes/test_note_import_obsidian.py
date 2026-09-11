@@ -15,6 +15,7 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     ImportBounds,
     ImportClassification,
     ParsedNotePayload,
+    render_note_links,
     rewrite_wikilinks,
 )
 from tldw_chatbook.Notes.note_import_planner import classify_import_batch
@@ -366,7 +367,7 @@ def test_a_link_label_cannot_widen_a_neighbouring_link() -> None:
     rewritten = rewrite_wikilinks(payload, {"readme": "note-id-1"})
 
     assert rewritten.content == (
-        "[see\\\\](note://note-id-1) then [docs](http://example.com)."
+        "[[README|see\\\\]](note://note-id-1) then [docs](http://example.com)."
     )
 
 
@@ -385,7 +386,7 @@ def test_links_inside_code_spans_are_never_rewritten(vault: Path) -> None:
 
     assert "`[[README]]`" in rewritten.content
     assert 'x = "[[README]]"' in rewritten.content
-    assert "A real link: [README](note://note-id-1)." in rewritten.content
+    assert "A real link: [[README]](note://note-id-1)." in rewritten.content
 
 
 def test_an_unclosed_fence_keeps_the_rest_of_the_note_as_code() -> None:
@@ -416,7 +417,7 @@ def test_a_closed_fence_still_ends_at_its_closer() -> None:
     rewritten = rewrite_wikilinks(payload, {"readme": "note-id-1"})
 
     assert "```\n[[README]]\n```" in rewritten.content
-    assert "A real link: [README](note://note-id-1)." in rewritten.content
+    assert "A real link: [[README]](note://note-id-1)." in rewritten.content
 
 
 def test_a_template_placeholder_is_rejected_with_the_toggle_off(
@@ -426,3 +427,146 @@ def test_a_template_placeholder_is_rejected_with_the_toggle_off(
     payload = _payloads(vault, obsidian_mode=False)["vault/Journal/Templated.md"]
 
     assert payload.title == "Templated"
+
+
+# --- task-32263 (display-text links) --------------------------------------
+
+
+def test_a_resolved_link_keeps_the_wikilink_and_shows_the_target_title() -> None:
+    """The stored link is readable prose plus a machine target behind it."""
+    payload = ParsedNotePayload(
+        title="Index",
+        content="Start at [[Reading/Zettelkasten]].",
+        wikilinks=("Reading/Zettelkasten",),
+    )
+
+    rewritten = rewrite_wikilinks(
+        payload,
+        {"reading/zettelkasten": "note-id-1"},
+        titles={"reading/zettelkasten": "Zettelkasten — overview"},
+    )
+
+    assert rewritten.content == (
+        "Start at [[Reading/Zettelkasten|Zettelkasten — overview]]"
+        "(note://note-id-1)."
+    )
+
+
+def test_the_authors_own_alias_survives_the_rewrite() -> None:
+    """A label the author chose is never replaced by the note's title."""
+    payload = ParsedNotePayload(
+        title="Index",
+        content="See [[Daily/2026-09-07|yesterday's meeting]].",
+        wikilinks=("Daily/2026-09-07",),
+    )
+
+    rewritten = rewrite_wikilinks(
+        payload,
+        {"daily/2026-09-07": "note-id-2"},
+        titles={"daily/2026-09-07": "2026-09-07"},
+    )
+
+    assert "[[Daily/2026-09-07|yesterday's meeting]](note://note-id-2)" in (
+        rewritten.content
+    )
+
+
+def test_a_rewritten_body_round_trips_through_the_importers_own_parser() -> None:
+    """Exporting and re-importing recovers the same link target."""
+    payload = ParsedNotePayload(
+        title="Index",
+        content="Start at [[README]].",
+        wikilinks=("README",),
+    )
+
+    rewritten = rewrite_wikilinks(
+        payload, {"readme": "note-id-1"}, titles={"readme": "My vault"}
+    )
+
+    assert _wikilinks(rewritten.content) == ("README",)
+
+
+def test_re_importing_a_linked_body_does_not_stack_note_link_targets() -> None:
+    """The scan swallows the tail it wrote, so a second pass replaces it."""
+    once = rewrite_wikilinks(
+        ParsedNotePayload(
+            title="Index", content="Start at [[README]].", wikilinks=("README",)
+        ),
+        {"readme": "note-id-1"},
+        titles={"readme": "My vault"},
+    )
+    twice = rewrite_wikilinks(
+        ParsedNotePayload(
+            title="Index", content=once.content, wikilinks=("README",)
+        ),
+        {"readme": "note-id-2"},
+        titles={"readme": "My vault"},
+    )
+
+    assert twice.content.count("note://") == 1
+    assert twice.content == "Start at [[README|My vault]](note://note-id-2)."
+
+
+def test_preview_renders_a_stored_note_link_as_its_display_text() -> None:
+    """Markdown cannot read the stored spelling, so Preview reduces it."""
+    body = "Start at [[README|My vault]](note://note-id-1) and `[[README]]`."
+
+    assert render_note_links(body) == (
+        "Start at [My vault](note://note-id-1) and `[[README]]`."
+    )
+
+
+def test_a_body_without_note_links_is_returned_unchanged() -> None:
+    """The render pass is a no-op for every note this importer never touched."""
+    body = "Plain [[wikilink]] and [markdown](http://example.com)."
+
+    assert render_note_links(body) is body
+
+
+# --- task-32262 (review fidelity) -----------------------------------------
+
+
+def test_frontmatter_properties_the_import_drops_are_recorded(vault: Path) -> None:
+    """`status: in-progress` used to vanish with no row and no receipt line."""
+    bounds = _bounds()
+    discovery = discover_import_sources([vault], bounds, obsidian_mode=True)
+    plan = classify_import_batch(
+        parse_import_sources(discovery, bounds, obsidian_mode=True), bounds
+    )
+    item = next(
+        entry
+        for entry in plan.items
+        if entry.source.display_path == "vault/Projects/Library review.md"
+    )
+
+    assert item.payloads[0].unimported_frontmatter_keys == ("status",)
+    assert "not imported: status" in _effect_summary(item)
+
+
+def test_a_frontmatter_only_note_reports_no_dropped_properties(vault: Path) -> None:
+    """Nothing is dropped when the whole block stays in the stored body."""
+    payload = _payloads(vault)["vault/Journal/Properties only.md"]
+
+    assert payload.unimported_frontmatter_keys == ()
+
+
+def test_an_obsidian_canvas_is_named_rather_than_called_unsupported(
+    tmp_path: Path,
+) -> None:
+    """`.canvas`, `.png` and `.pdf` shared one generic sentence (task-32262)."""
+    root = _build_vault(tmp_path / "vault")
+    _write(root, "Canvas/Overview.canvas", json.dumps({"nodes": [], "edges": []}))
+    _write(root, "attachments/diagram.png", "not really a png")
+    _write(root, "attachments/paper.pdf", "%PDF-1.4")
+    bounds = _bounds()
+    discovery = discover_import_sources([root], bounds, obsidian_mode=True)
+    batch = parse_import_sources(discovery, bounds, obsidian_mode=True)
+    messages = {
+        issue.display_path: issue.user_message
+        for issue in batch.issues
+        if issue.classification is ImportClassification.UNSUPPORTED
+    }
+
+    assert messages["vault/Canvas/Overview.canvas"] == "Obsidian canvas — not a note."
+    assert messages["vault/attachments/diagram.png"].startswith("Image — not a note.")
+    assert messages["vault/attachments/paper.pdf"].startswith("Document — not a note.")

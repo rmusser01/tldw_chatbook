@@ -341,8 +341,12 @@ def test_unresolved_collision_blocks_approval_until_an_explicit_resolution() -> 
     assert state.can_approve is False
     assert state.approval_blocker == "Choose how to handle the folder name collision."
     projected = project_library_note_import_snapshot(state)
-    assert projected.collision_rename_input == "Imported"
-    assert "already exists" in projected.collision_rename_error
+    # task-32262: an untouched rename field carries no value and no error --
+    # the panel used to open with "That folder name already exists" painted
+    # against a name nobody had typed.
+    assert projected.collision_rename_input == ""
+    assert projected.collision_rename_error == ""
+    assert projected.collision_reason == "Choose how to handle the existing folder."
 
     resolved = set_root_collision_resolution(
         state,
@@ -975,3 +979,96 @@ def test_an_import_that_resolves_no_links_says_nothing_about_them() -> None:
 
     assert projection.resolved_links == 0
     assert "link" not in projection.receipt_detail
+
+
+# --- task-32262 (review fidelity) -----------------------------------------
+
+
+def _diff_effect(item_id: str = "item-1") -> NoteImportReviewEffect:
+    return NoteImportReviewEffect(
+        item_id=item_id,
+        target_title="Private 1",
+        target_version=7,
+        content_diff="--- Existing note\n+++ Imported source\n-old line\n+new line",
+    )
+
+
+def test_a_no_change_row_never_carries_a_changed_diff() -> None:
+    """"Content: no change." printed directly above a changed diff (32262).
+
+    The classification compares this source to the last import of it; the diff
+    compares the stored note to the raw source. Both were rendered on the same
+    row, answering different questions.
+    """
+    state = _file_review(
+        _plan(_item(classification=ImportClassification.UNCHANGED_REPEAT)),
+    )
+    state = replace(state, review_effects=(_diff_effect(),))
+
+    projected = project_library_note_import_snapshot(state)
+
+    assert projected.preview_items[0].effect_summary == "Content: no change."
+    assert projected.preview_items[0].content_diff == ""
+    # The matched note is still named, so the row is not silent about it.
+    assert projected.preview_items[0].target_label.startswith("Existing note:")
+
+
+def test_the_row_that_replaces_content_still_shows_what_it_replaces() -> None:
+    """The diff belongs on the one row it actually describes."""
+    state = _file_review(
+        _plan(
+            _item(
+                classification=ImportClassification.CHANGED_REPEAT,
+                selected_action=ImportAction.UPDATE_EXISTING,
+                replace_content=True,
+            )
+        ),
+    )
+    state = replace(state, review_effects=(_diff_effect(),))
+
+    projected = project_library_note_import_snapshot(state)
+
+    assert projected.preview_items[0].effect_summary == (
+        "Content: replace existing content."
+    )
+    assert "+new line" in projected.preview_items[0].content_diff
+
+
+def test_keeping_existing_content_shows_no_replacement_diff() -> None:
+    """"keep existing content" and a replacement diff cannot both be true."""
+    state = _file_review(
+        _plan(
+            _item(
+                classification=ImportClassification.CHANGED_REPEAT,
+                selected_action=ImportAction.UPDATE_EXISTING,
+                replace_content=False,
+                add_membership=True,
+            )
+        ),
+    )
+    state = replace(state, review_effects=(_diff_effect(),))
+
+    projected = project_library_note_import_snapshot(state)
+
+    assert projected.preview_items[0].content_diff == ""
+
+
+def test_a_resolved_collision_states_where_the_notes_will_go() -> None:
+    """A pre-selected default has to say what it does, not go quiet."""
+    state = _file_review(
+        _plan(
+            collision=RootCollisionState(
+                proposed_label="Imported",
+                collides=True,
+                choice=RootCollisionChoice.UNIQUE_SIBLING,
+                resolved_label="Imported 2",
+            )
+        )
+    )
+
+    projected = project_library_note_import_snapshot(state)
+
+    assert projected.collision_choice == "unique_sibling"
+    assert "Imported 2" in projected.collision_reason
+    assert projected.collision_rename_error == ""
+    assert state.can_approve is True

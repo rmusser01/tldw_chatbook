@@ -301,7 +301,30 @@ class LibraryNoteImportController:
         )
         names = self._top_level_folder_names()
         plan = self._analyze_collision(plan, names)
+        plan = self._default_collision_resolution(plan, names)
         return plan, names, self._build_review_effects(plan), discovery.vault_detected
+
+    def _default_collision_resolution(self, plan: Any, names: tuple[str, ...]) -> Any:
+        """Pre-select the non-destructive collision default (task-32262).
+
+        The review used to open with no radio chosen and the rename field
+        already painted red against a name the user had not touched. A unique
+        sibling touches nothing that exists, so it is the honest default; the
+        other two choices stay one press away.
+        """
+        collision = plan.root_collision
+        if collision is None or not collision.collides or collision.choice is not None:
+            return plan
+        try:
+            return self._resolve_collision(
+                plan,
+                RootCollisionChoice.UNIQUE_SIBLING,
+                existing_top_level_names=names,
+            )
+        except (TypeError, ValueError):
+            # No default is better than a wrong one: the review still opens
+            # with the choice unresolved and approval still blocked on it.
+            return plan
 
     def _build_review_effects(self, plan: Any) -> tuple[NoteImportReviewEffect, ...]:
         matched = tuple(item for item in plan.items if item.match is not None)

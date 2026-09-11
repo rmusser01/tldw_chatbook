@@ -105,10 +105,17 @@ MAX_IMPORT_ITEM_ID_LENGTH = 256
 #: still needs its closer (PR #2549 review, finding 8).
 _CODE_SPAN = r"```[\s\S]*?(?:```|\Z)|~~~[\s\S]*?(?:~~~|\Z)|``[\s\S]*?``|`[^`\n]*`"
 
+_NOTE_LINK_TAIL = r"(?P<link>\(note://[^()\s]*\))?"
+"""The stored note-link target that follows a rewritten wikilink.
+
+Matching it as part of the link is what keeps a re-import from stacking a
+second `(note://…)` onto a body this importer already wrote (task-32263).
+"""
+
 WIKILINK_SCAN = re.compile(
     rf"(?P<code>{_CODE_SPAN})"
     r"|(?<!!)\[\[(?P<target>[^\[\]|#^]+)(?:[#^][^\[\]|]*)?"
-    r"(?:\|(?P<alias>[^\[\]]*))?\]\]"
+    rf"(?:\|(?P<alias>[^\[\]]*))?\]\]{_NOTE_LINK_TAIL}"
 )
 """One code span, or one non-embedded `[[target]]`/`[[target|alias]]`.
 
@@ -117,6 +124,13 @@ with it and the executor rewrites the same spans with it. Code spans are matched
 FIRST and on purpose -- a `[[Target]]` inside a fenced block or backticks is
 sample text, and rewriting it would corrupt the note.
 """
+
+NOTE_LINK_SCAN = re.compile(
+    rf"(?P<code>{_CODE_SPAN})"
+    r"|\[\[(?P<target>[^\[\]|#^]+)(?:[#^][^\[\]|]*)?"
+    r"(?:\|(?P<alias>[^\[\]]*))?\]\]\((?P<uri>note://[^()\s]*)\)"
+)
+"""One stored note link, as :func:`rewrite_wikilinks` writes it."""
 
 
 def wikilink_target(match: re.Match[str]) -> str | None:
@@ -152,6 +166,8 @@ def wikilink_key(target: str) -> str:
 def rewrite_wikilinks(
     payload: ParsedNotePayload,
     note_ids: Mapping[str, str],
+    *,
+    titles: Mapping[str, str] | None = None,
 ) -> ParsedNotePayload:
     """Return `payload` with resolvable `[[links]]` rewritten as note links.
 
@@ -159,9 +175,21 @@ def rewrite_wikilinks(
     attachment, a heading-only link — is left exactly as the author wrote it, and
     so is anything inside a code span.
 
+    task-32263 (display-text links, decided by the user): the link stays a
+    `[[wikilink]]` and carries its `(note://<id>)` target behind it. That one
+    form does four jobs at once — the reader sees the linked note's TITLE, the
+    stored body round-trips through this module's own parser, an exported file
+    is still a working Obsidian link, and ``get_notes_linking_to``'s
+    ``%(note://<id>)%`` probe still finds it. The `[[target|title]]` alias
+    spelling is used rather than replacing the target, because the target is
+    what resolves the link in Obsidian and two notes can share a title.
+
     Args:
         payload: One parsed note, whose `wikilinks` licence the rewrite.
         note_ids: Comparable link keys mapped to the note id each will get.
+        titles: Optional link keys mapped to the title the created note will
+            carry. A title that differs from the text the author wrote becomes
+            the link's display alias; the author's own alias always wins.
 
     Returns:
         The same payload when nothing resolves, else a copy with linked content.
@@ -169,23 +197,54 @@ def rewrite_wikilinks(
     if not payload.wikilinks or not note_ids:
         return payload
 
+    # The grammar already excludes `[` and `]` from a target and an alias, so
+    # neither can close the link early -- except through a trailing backslash,
+    # which would escape the `]` and let the link swallow the text after it.
+    # An escaped backslash renders the same.
+    def _safe(value: str) -> str:
+        return value.replace("\\", "\\\\")
+
     def _link(match: re.Match[str]) -> str:
         target = wikilink_target(match)
         if target is None:
             return match.group(0)
-        note_id = note_ids.get(wikilink_key(target))
+        key = wikilink_key(target)
+        note_id = note_ids.get(key)
         if note_id is None:
             return match.group(0)
-        label = (match.group("alias") or "").strip() or target
-        # The grammar already excludes `[` and `]` from a target and an alias,
-        # so a label cannot close the link text early -- except through a
-        # trailing backslash, which would escape the `]` and let the link
-        # swallow the text after it. An escaped backslash renders the same.
-        label = label.replace("\\", "\\\\")
-        return f"[{label}](note://{note_id})"
+        alias = (match.group("alias") or "").strip()
+        title = ((titles or {}).get(key) or "").strip()
+        label = alias or (title if title and title != target else "")
+        inner = f"{_safe(target)}|{_safe(label)}" if label else _safe(target)
+        return f"[[{inner}]](note://{note_id})"
 
     content = WIKILINK_SCAN.sub(_link, payload.content)
     return payload if content == payload.content else replace(payload, content=content)
+
+
+def render_note_links(text: str) -> str:
+    """Return `text` with stored note links shown as their display text.
+
+    Preview renders Markdown, and the stored `[[Title]](note://<id>)` form is
+    not Markdown link syntax -- without this it would print verbatim, machine
+    identifier and all. Code spans keep whatever they contain (task-32263).
+
+    Args:
+        text: One note body as it is stored.
+
+    Returns:
+        The body with each note link reduced to `[display text](note://<id>)`.
+    """
+    if "note://" not in text:
+        return text
+
+    def _render(match: re.Match[str]) -> str:
+        if match.group("code") is not None:
+            return match.group(0)
+        label = (match.group("alias") or "").strip() or match.group("target").strip()
+        return f"[{label}]({match.group('uri')})"
+
+    return NOTE_LINK_SCAN.sub(_render, text)
 
 
 _EnumT = TypeVar("_EnumT", bound=Enum)
@@ -255,6 +314,14 @@ class ParsedNotePayload:
     rewrite links, so an ordinary import that happens to contain ``[[…]]`` text
     keeps it literal.
     """
+    unimported_frontmatter_keys: tuple[str, ...] = field(default=(), repr=False)
+    """Frontmatter property names this import reads but does not keep.
+
+    Obsidian-mode strips the leading YAML block and takes ``title``, ``tags``
+    and ``aliases`` from it; every other property is dropped. task-32262: the
+    review has to say so, because the note's own file no longer carries them
+    once it lives in the Library database.
+    """
 
     def __post_init__(self) -> None:
         if not isinstance(self.title, str) or not isinstance(self.content, str):
@@ -281,8 +348,20 @@ class ParsedNotePayload:
             for link in wikilinks
         ):
             raise ValueError("wikilinks must contain bounded non-blank text values.")
+        dropped = _as_tuple(
+            self.unimported_frontmatter_keys,
+            field_name="unimported_frontmatter_keys",
+        )
+        if not all(
+            isinstance(key, str) and key.strip() and len(key) <= MAX_IMPORT_KEYWORD_LENGTH
+            for key in dropped
+        ):
+            raise ValueError(
+                "unimported_frontmatter_keys must contain bounded non-blank text."
+            )
         object.__setattr__(self, "keywords", keywords)
         object.__setattr__(self, "wikilinks", wikilinks)
+        object.__setattr__(self, "unimported_frontmatter_keys", dropped)
 
 
 @dataclass(frozen=True, slots=True)

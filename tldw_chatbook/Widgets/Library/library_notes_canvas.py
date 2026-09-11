@@ -31,6 +31,7 @@ from tldw_chatbook.Notes.agent_lessons import (
     AGENT_LESSONS_FOLDER,
     AGENT_LESSONS_FOLDER_GLOSS,
 )
+from tldw_chatbook.Notes.note_import_plan_models import render_note_links
 from tldw_chatbook.Library.library_notes_tree_state import (
     LibraryNotesTreeProjection,
     LibraryNotesTreeRow,
@@ -2518,8 +2519,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # hidden Preview stale while typing, then perform one canonical update
         # when Preview becomes the active surface so edits cannot queue an
         # unbounded hidden-render backlog.
-        if show_preview and preview_body.source != snapshot.body:
-            preview_body.update(snapshot.body)
+        # task-32263: an imported body stores its links as
+        # `[[Title]](note://<id>)` -- a working Obsidian link this module's own
+        # parser reads back. Markdown does not know that spelling, so Preview
+        # renders the display text and leaves the identifier behind the link.
+        preview_source = render_note_links(snapshot.body)
+        if show_preview and preview_body.source != preview_source:
+            preview_body.update(preview_source)
         channels = state.status_channels or NotesStatusChannels(
             state.status_line or "Saved",
             NOTES_AUTHORITY_PREFIX,
