@@ -11837,3 +11837,67 @@ async def test_every_mode_renders_usably_at_100x30():
             assert canvas.display
             assert canvas.region.height > 3
         assert app.query_one("#mcp-hub-inspector").region.height <= 12
+
+
+# -- Wave F (2026-09-11 MCP Hub UX program, ADR-149): bulk actions --------
+
+
+@pytest.mark.asyncio
+async def test_shift_space_bulk_sets_visible_tools_of_one_server(tmp_path):
+    """ADR-149: shift+space applies the cursor row's next state to the
+    server's VISIBLE tool rows only (Wave B order: first press from
+    Inherit = Ask), with one echo and the store holding ordinary
+    per-tool entries -- exactly what N single presses would write."""
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)  # local:docs::search
+        await pilot.press("shift+space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        store = app.unified_mcp_service.permission_store.load()
+        docs_tools = store["profiles"]["default"]["servers"]["local:docs"]["tools"]
+        assert docs_tools["search"]["state"] == "ask"
+        assert docs_tools["fetch"]["state"] == "ask"
+        preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
+        assert preview.startswith("docs: 2 tools → Ask · ")
+
+
+@pytest.mark.asyncio
+async def test_bulk_clear_reverts_only_overridden_rows(tmp_path):
+    """ADR-149: C writes None only for rows that HELD an override; a
+    never-overridden sibling gains no entry at all."""
+    store_path = tmp_path / "mcp_permissions.json"
+    MCPPermissionStore(store_path).set_tool_state("local:docs", "search", "ask")
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)  # local:docs::search (the overridden row)
+        await pilot.press("C")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        store = app.unified_mcp_service.permission_store.load()
+        docs_servers = store["profiles"]["default"]["servers"]
+        # A None write removes the entry; an emptied server section may be
+        # pruned entirely -- either way the override is GONE and fetch (never
+        # overridden) gained nothing.
+        if "local:docs" in docs_servers:
+            docs_tools = docs_servers["local:docs"].get("tools") or {}
+            assert "search" not in docs_tools
+            assert "fetch" not in docs_tools
+        preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
+        assert preview.startswith("docs: 1 visible overrides cleared · ")
