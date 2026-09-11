@@ -742,3 +742,82 @@ async def test_the_receipt_never_stands_beside_the_refusal_it_resolved() -> None
         assert screen.query_one(
             "#library-conversation-link-undo", Button
         ).display is False
+
+
+# --------------------------------------------------------------------------
+# Qodo bot round: link-on-use edge cases
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_undo_is_withheld_when_the_membership_already_existed() -> None:
+    """Qodo #2 (High): Undo must never delete a link this press did not make.
+
+    ``link_membership`` is ``INSERT OR IGNORE`` and returns the EXISTING row
+    when the membership is already there, so a press reaching it through
+    stale cached eligibility recorded a receipt for a membership it did not
+    create -- and Undo would then remove someone else's link. The hand-off
+    still proceeds (the conversation is eligible either way); only the
+    receipt and its Undo are withheld.
+    """
+    host = _conversations_host(linked=False)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_first_conversation(host, pilot)
+        # Link it behind the screen's back, leaving the cached eligibility
+        # (and so the reader's block) stale -- the press still runs.
+        host.registry.link_membership(
+            "workspace-a",
+            item_type="conversation",
+            item_id=CONVERSATION_ID,
+            title=CONVERSATION_TITLE,
+        )
+        staged: list = []
+        host.tldw_app.open_chat_with_handoff = (
+            lambda payload, **kwargs: staged.append(payload)
+        )
+
+        screen.query_one("#library-conversation-use-source", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert staged, "the hand-off still runs for an already-linked conversation"
+        assert not screen.query_one(
+            "#library-conversation-link-receipt", Static
+        ).display
+        assert not screen.query_one(
+            "#library-conversation-link-undo", Button
+        ).display
+        assert _memberships(host), "the pre-existing membership is untouched"
+
+
+@pytest.mark.asyncio
+async def test_a_stale_page_refuses_instead_of_promising_a_link() -> None:
+    """Qodo #3 (Medium): no pressable promise that silently does nothing.
+
+    The hand-off returns without staging while the Conversations page is not
+    fresh, so offering "Use as source" (and a sentence promising it will link
+    and continue) presented an actionable control that did nothing. Staleness
+    is now a workspace block a link cannot resolve: the action disables with
+    the "○" marker, states the reason, and no link is offered.
+    """
+    host = _conversations_host(linked=False)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_first_conversation(host, pilot)
+        screen._conversations_state.freshness = "stale"
+        screen._invalidate_library_workspace_depth_state()
+        screen._sync_library_conversation_reader()
+        await pilot.pause()
+
+        source = screen.query_one("#library-conversation-use-source", Button)
+        blocked = screen.query_one(
+            "#library-conversation-open-console-blocked", Static
+        )
+        assert source.disabled is True
+        assert str(source.label).startswith("○ ")
+        assert blocked.display is True
+        assert "out of date" in str(blocked.renderable), str(blocked.renderable)
+        assert not screen.query_one(
+            "#library-conversation-link-workspace", Button
+        ).display
+        # ...and the press is inert either way.
+        assert screen._library_conversation_link_would_unblock() is False

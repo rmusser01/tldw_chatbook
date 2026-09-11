@@ -12915,6 +12915,25 @@ class LibraryScreen(BaseAppScreen):
         ).strip()
         if not conversation_id:
             return "", False, ""
+        if self._conversations_state.freshness != "fresh":
+            # (Qodo bot round #3) The hand-off returns without staging while
+            # the page is not fresh, so a pressable "Use as source" -- and
+            # the sentence promising it will link and continue -- was an
+            # actionable control that did nothing. Reported here as the block
+            # it is: NOT link-resolvable, so the action disables with its "○"
+            # marker and no link is offered. Reported through this one seam
+            # rather than a second metadata key so the reader, the tooltip
+            # and the `c` accelerator cannot disagree about it. Resume is
+            # unaffected -- reopening the original never needed a fresh list.
+            return (
+                # Inline, like the canvas's own "List may be out of date"
+                # (library_conversations_state.py): one writer, one reader
+                # echoing it, so a constant would be ceremony.
+                "from a list that may be out of date",
+                False,
+                "This list may be out of date. Refresh Conversations before "
+                "using this one in Console.",
+            )
         state = self._library_workspace_depth_state()
         eligible, reason_copy = library_item_context_handoff(
             state, item_type="conversation", item_id=conversation_id
@@ -13067,6 +13086,22 @@ class LibraryScreen(BaseAppScreen):
             active = registry.get_active_workspace()
             if active is None:
                 raise ValueError("no active workspace")
+            # (Qodo bot round #2) ``link_membership`` is INSERT OR IGNORE and
+            # returns the EXISTING row when the membership is already there.
+            # A press that reaches it through stale cached eligibility would
+            # otherwise get a receipt for a link it did not make, and Undo
+            # would delete someone else's membership. Read first, receipt
+            # only what this press inserted.
+            # ponytail: read-then-write, not an atomic "did it insert?" from
+            # the registry -- one UI thread makes the window unreachable
+            # here; push the answer into `link_membership` if a second writer
+            # ever shares it.
+            already_linked = any(
+                membership.workspace_id == active.workspace_id
+                for membership in registry.get_item_memberships(
+                    item_type="conversation", item_id=conversation_id
+                )
+            )
             registry.link_membership(
                 active.workspace_id,
                 item_type="conversation",
@@ -13088,9 +13123,14 @@ class LibraryScreen(BaseAppScreen):
                 )
             return ""
         workspace_name = str(getattr(active, "name", "") or active.workspace_id)
-        self._set_library_conversation_link_receipt(
-            workspace_name, active.workspace_id
-        )
+        if not already_linked:
+            # Nothing was added when it was already linked, so there is
+            # nothing to undo -- but the refresh below still has to run, or
+            # the cached eligibility that sent us here stays stale and the
+            # hand-off refuses the conversation it just accepted.
+            self._set_library_conversation_link_receipt(
+                workspace_name, active.workspace_id
+            )
         self._invalidate_library_workspace_depth_state()
         self._sync_library_conversation_reader()
         return workspace_name
@@ -34015,14 +34055,11 @@ class LibraryScreen(BaseAppScreen):
             # task-32107: one gesture, not two. A failed link leaves the
             # refusal exactly as it was and does not stage anything.
             #
-            # (review fix round 1) Gated on the SAME freshness answer the
-            # hand-off itself checks first (`_open_selected_conversation_handoff`
-            # returns silently unless it is "fresh"). Without this the press
-            # would widen the workspace and then stage nothing, which is a
-            # data effect with no visible result but the receipt.
-            if self._conversations_state.freshness != "fresh":
-                event.stop()
-                return
+            # (Qodo bot round #1) The freshness check that stood here is
+            # gone, not moved: a page that is not fresh is now reported as a
+            # non-linkable workspace block, so this predicate is already
+            # False for it and the literal had nowhere left to disagree with
+            # `_open_selected_conversation_handoff`'s own.
             if not self._link_selected_conversation_to_workspace():
                 event.stop()
                 return

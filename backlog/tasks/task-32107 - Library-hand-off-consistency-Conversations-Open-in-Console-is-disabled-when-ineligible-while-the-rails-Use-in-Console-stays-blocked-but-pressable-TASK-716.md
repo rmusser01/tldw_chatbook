@@ -100,6 +100,39 @@ question the existing block already answers. Residual, deliberately not
 covered: switching to a DIFFERENT workspace that also holds this membership
 leaves a receipt naming the first one while its claim is still true; Undo
 still removes the membership that receipt names, so the two stay consistent.
+
+### Bot round (Qodo, PR #2603)
+
+Three findings, all real, all fixed red-first.
+
+- **High — Undo could delete an existing link.** `link_membership` is
+  `INSERT OR IGNORE` and returns the EXISTING row when the membership is
+  already there, so a press arriving through stale cached eligibility got a
+  receipt for a link it never made and Undo would have removed someone
+  else's membership. The link path now reads `get_item_memberships` first and
+  records the receipt only for a membership it actually inserted; the
+  hand-off still proceeds either way, and the depth-state refresh still runs
+  (skipping it left the cached eligibility stale and made the hand-off refuse
+  the conversation it had just accepted -- caught by the pin).
+- **Medium — a stale page offered a dead action.** `Use as source` was
+  pressable for a link-resolvable block even while the Conversations page was
+  not fresh, where the hand-off returns without staging. Staleness is now
+  reported through the ONE workspace-block seam as a block a link cannot
+  resolve, so the action disables with its "○" marker and its reason, no link
+  is offered, and the reader, the tooltip and the `c` accelerator cannot
+  disagree about it. Resume is unaffected -- reopening the original never
+  needed a fresh list.
+- **Medium — repeated protocol strings.** Fixed by DELETION: the handler's
+  own `freshness != "fresh"` check (added in review fix round 1) is gone,
+  because a non-fresh page is now a block and the predicate is already False
+  for it. The remaining `_workspace_link_receipt` metadata key is declined as
+  a constant: it is the fifth key on an established controller-to-reader
+  seam whose four siblings (`_workspace_block`, `_workspace_block_detail`,
+  `_workspace_block_linkable`, `_list_status`) are all plain literals, and
+  hoisting one of five would make the seam less consistent, not more.
+
+Pins: `test_undo_is_withheld_when_the_membership_already_existed`,
+`test_a_stale_page_refuses_instead_of_promising_a_link`.
 <!-- SECTION:NOTES:END -->
 
 ## Decision
