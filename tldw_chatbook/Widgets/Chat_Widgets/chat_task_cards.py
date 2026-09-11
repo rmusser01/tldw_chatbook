@@ -90,7 +90,7 @@ class ChatTaskCards(Container):
         task_state,
         *,
         operation_rows: Mapping[str, Mapping[str, Any]] | None = None,
-    ) -> None:
+    ) -> bool:
         """Sync the approval, skill-install/script, and resume cards from task state.
 
         Args:
@@ -125,6 +125,7 @@ class ChatTaskCards(Container):
             or bool(task_state.followed_watchlists_operations)
             or task_state.has_resume_content()
         )
+        return True
 
     def _routes(self, task_state):
         """The kind -> card routing table for one sync (task-31384).

@@ -204,6 +204,27 @@ class ConsoleImageController:
     def _ensure_console_chat_store(self) -> Any:
         return self._ensure_console_chat_store_fn()
 
+    def _append_durable_generation_message(
+        self,
+        store: Any,
+        session_id: str,
+        **kwargs: Any,
+    ) -> Any:
+        """Persist one terminal image and then refresh app-owned attention."""
+        message = store.append_generation_message(session_id, persist=True, **kwargs)
+        app_instance = getattr(self, "app_instance", None)
+        runtime = getattr(app_instance, "console_runtime", None)
+        recompute = getattr(runtime, "recompute_console_attention", None)
+        if callable(recompute):
+            try:
+                recompute()
+            except Exception as exc:  # noqa: BLE001 -- durable media already committed
+                logger.debug(
+                    "Console image attention refresh failed (exception_type={})",
+                    type(exc).__name__,
+                )
+        return message
+
     @property
     def _console_chat_store(self) -> ConsoleChatStore | None:
         return self._current_console_chat_store_fn()
@@ -1008,11 +1029,12 @@ class ConsoleImageController:
                 message.id for message in store.messages_for_session(session.id)
             }
             try:
-                message = store.append_generation_message(
+                message = ConsoleImageController._append_durable_generation_message(
+                    self,
+                    store,
                     session.id,
                     content=generation_content_marker(instruction),
                     variants=batch.successes,
-                    persist=True,
                 )
                 persisted_message_id = message.persisted_message_id
                 if not persisted_message_id:
@@ -1221,11 +1243,12 @@ class ConsoleImageController:
                     f"Image generation failed: {detail}", session_id=session.id
                 )
                 return
-            store.append_generation_message(
+            ConsoleImageController._append_durable_generation_message(
+                self,
+                store,
                 session.id,
                 content=generation_content_marker(prepared.prompt),
                 variants=batch.successes,
-                persist=True,
             )
             if len(batch.successes) < count:
                 store.append_message(

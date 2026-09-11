@@ -1757,26 +1757,28 @@ with stray left-edge border fragments), and padding 0 1 so the full
     text-style: bold;
 }
 
-/* Bounded editor: a bare TextArea in this scrolling canvas defaults to
-   height:1fr, which would balloon to fill available space and crowd out
-   the keywords/meta/action row beneath it. height:auto with a floor and a
-   generous ceiling keeps short notes compact while long notes scroll
-   inside the field itself instead of pushing the rest of the editor off
-   screen. */
+/* task-32217 (critique #9 density rule): the Body is the primary content
+   box of this pane and takes the pane. The old ceiling (`height: auto`,
+   `max-height: 20`) was written when the keywords, meta line and action
+   row still sat BELOW the TextArea and it had to leave them room; they
+   moved into the Info region, so `#library-note-editor-region` ends at
+   this field and the ceiling only bought blank pane. Measured live at
+   235x52 on the seeded profile: a 3-line note got a 12-row box with 18
+   empty rows under it, and the compact stage had already been given
+   `1fr` for the same reason (see the `.library-notes-compact` rules). */
 #library-note-body {
-    height: auto;
-    min-height: 12;
-    max-height: 20;
+    height: 1fr;
+    min-height: 6;
     margin: 0 0 1 0;
 }
 
-/* The read-only Markdown preview takes the TextArea's place one-for-one.
-   The focusable wrapper is its sole scroll owner; Markdown grows naturally
-   inside it so keyboard paging can reach the complete document. */
+/* The read-only Markdown preview takes the TextArea's place one-for-one,
+   so it takes the same height. The focusable wrapper is its sole scroll
+   owner; Markdown grows naturally inside it so keyboard paging can reach
+   the complete document. */
 #library-note-preview-region {
-    height: auto;
-    min-height: 12;
-    max-height: 20;
+    height: 1fr;
+    min-height: 6;
     margin: 0 0 1 0;
     border: solid $ds-grid-line;
     overflow-y: auto;

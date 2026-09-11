@@ -26,7 +26,11 @@ import math
 import re
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, replace
-from typing import Any
+from typing import Any, Protocol
+
+from tldw_chatbook.Chat.conversation_local_marks_service import (
+    ConversationLocalMarksService,
+)
 
 #: Closed vocabulary for ``MessageMetadata.transcript_status``.
 #:
@@ -304,6 +308,7 @@ class MessageMetadata:
     origin: str = ""
     character_emote: CharacterEmoteMetadata | None = None
     canvas_cards: tuple[CanvasCardMetadata, ...] = ()
+    terminal_receipt_id: str = ""
 
     def __post_init__(self) -> None:
         if self.transcript_status not in TRANSCRIPT_STATUSES:
@@ -337,6 +342,13 @@ class MessageMetadata:
                 )
         elif self.template_source:
             raise ValueError("template_source requires a recognized template_kind")
+        if self.terminal_receipt_id:
+            try:
+                ConversationLocalMarksService.validate_terminal_receipt_id(
+                    self.terminal_receipt_id
+                )
+            except ValueError as exc:
+                raise ValueError("terminal receipt id must be a canonical UUID") from exc
 
     @property
     def is_empty(self) -> bool:
@@ -421,6 +433,9 @@ class MessageMetadata:
                 origin=_as_origin(data.get("origin")),
                 character_emote=_as_character_emote(data.get("character_emote")),
                 canvas_cards=_as_canvas_cards(data.get("canvas_cards")),
+                terminal_receipt_id=_as_terminal_receipt_id(
+                    data.get("terminal_receipt_id")
+                ),
             )
         except ValueError:
             # Direct construction remains strict. Stored data is an untrusted
@@ -521,6 +536,15 @@ def _as_origin(value: Any) -> str:
     return origin if origin in MESSAGE_ORIGINS else ""
 
 
+def _as_terminal_receipt_id(value: Any) -> str:
+    if type(value) is not str or not value:
+        return ""
+    try:
+        return ConversationLocalMarksService.validate_terminal_receipt_id(value)
+    except ValueError:
+        return ""
+
+
 def _as_template_kind(value: Any) -> str:
     return "character_greeting" if value == "character_greeting" else ""
 
@@ -586,3 +610,33 @@ def _as_character_emote(value: Any) -> CharacterEmoteMetadata | None:
         )
     except (TypeError, ValueError):
         return None
+
+
+class TerminalReceiptMetadata(Protocol):
+    """The sole receipt field shared by ordinary and video metadata."""
+
+    terminal_receipt_id: str
+
+
+class ConsoleMessageWithTerminalMetadata(Protocol):
+    """The receipt-bearing subset of a ``ConsoleChatMessage`` value."""
+
+    metadata: MessageMetadata | None
+    video_metadata: TerminalReceiptMetadata | None
+
+
+def terminal_receipt_id_for_message(
+    message: ConsoleMessageWithTerminalMetadata,
+) -> str:
+    """Read one receipt from ordinary or video local-only metadata.
+
+    The structural protocol avoids importing ``ConsoleChatMessage`` here and
+    therefore keeps the model/metadata dependency one-way.
+    """
+    video_metadata = getattr(message, "video_metadata", None)
+    video_receipt = getattr(video_metadata, "terminal_receipt_id", "")
+    if type(video_receipt) is str and video_receipt:
+        return video_receipt
+    metadata = getattr(message, "metadata", None)
+    receipt_id = getattr(metadata, "terminal_receipt_id", "")
+    return receipt_id if type(receipt_id) is str else ""

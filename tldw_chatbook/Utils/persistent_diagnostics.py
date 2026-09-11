@@ -63,6 +63,7 @@ _INTEGER_FIELDS = frozenset(
         "status_code",
         "payload_length",
         "duration_ms",
+        "latency_ms",
         "retry_count",
         "unknown_argument_count",
         "result_size",
@@ -77,6 +78,13 @@ _INTEGER_FIELDS = frozenset(
         "mounts",
         "removes",
         "sqlite_code",
+        "native_callback_count",
+        "native_fatal_status_bits",
+        "native_capture_overflows",
+        "native_invalid_frames",
+        "native_invalid_timing",
+        "native_capture_occupancy",
+        "native_render_occupancy",
     }
 )
 _BOOLEAN_FIELDS = frozenset({"cache_hit", "streaming", "cancelled", "capture_enabled"})

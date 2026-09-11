@@ -46,8 +46,13 @@ from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsoleExactNativeIdTransactionContribution,
     _scoped_console_transaction_writer,
 )
+from tldw_chatbook.Chat.conversation_local_marks_service import (
+    ConversationLocalMarksService,
+)
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
+from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 
 
 _OWNER_SELECT = """
@@ -114,6 +119,7 @@ class ConsoleDispatchRepository:
 
     def __init__(self, db: CharactersRAGDB) -> None:
         self.db = db
+        self.local_marks = ConversationLocalMarksService(db)
 
     def insert_with_messages(
         self,
@@ -887,6 +893,38 @@ class ConsoleDispatchRepository:
                 raise ConsoleDispatchCheckpointValidationError(
                     "Invalid assistant metadata."
                 )
+        terminal_mark_type = None
+        ordinary = MessageMetadata.from_json(settlement.metadata_json)
+        video = VideoGenerationMetadata.from_json(settlement.metadata_json)
+        metadata_receipt = (
+            video.terminal_receipt_id
+            if video is not None
+            else ordinary.terminal_receipt_id
+            if ordinary is not None
+            else ""
+        )
+        attention_terminal = settlement.terminal_state in {"complete", "failed"}
+        if (
+            attention_terminal != (settlement.terminal_receipt_id is not None)
+            or bool(metadata_receipt)
+            != (settlement.terminal_receipt_id is not None)
+            or (
+                settlement.terminal_receipt_id is not None
+                and metadata_receipt != settlement.terminal_receipt_id
+            )
+        ):
+            raise ConsoleDispatchCheckpointValidationError(
+                "Invalid terminal receipt settlement."
+            )
+        if settlement.terminal_receipt_id is not None:
+            try:
+                terminal_mark_type = self.local_marks.console_unseen_mark_type(
+                    settlement.terminal_receipt_id
+                )
+            except ValueError as exc:
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Invalid terminal receipt settlement."
+                ) from exc
         if settlement.usage_json is not None:
             try:
                 usage = json.loads(settlement.usage_json)
@@ -996,6 +1034,15 @@ class ConsoleDispatchRepository:
                             conversation_id=str(row["conversation_id"]),
                             message_ids=message_ids,
                         )
+            if terminal_mark_type is not None:
+                self.local_marks.set_console_terminal_with_cursor(
+                    cursor,
+                    str(row["conversation_id"]),
+                    settlement.terminal_receipt_id,
+                    settlement.terminal_state,
+                    created_at=now,
+                    updated_at=now,
+                )
             deleted = cursor.execute(
                 """
                 DELETE FROM console_dispatch_checkpoints

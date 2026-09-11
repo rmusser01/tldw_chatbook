@@ -3009,6 +3009,42 @@ class LibraryNotesController:
             self._sync_library_notes_reader_layout_from_shell(priority="library")
         self._apply_library_notes_stage_visibility()
         self._apply_library_notes_footer_context()
+        # task-32233: from the plain Notes list, converge on the ONE focus-rail
+        # hop `/`, F6 and every sibling list canvas's Escape already use
+        # (`_library_list_focus_rail_target`), because that is what the
+        # footer's "esc focus rail" chip promises.
+        #
+        # This binding is declared FIRST among the screen's many Escape entries
+        # and its gate is True across the whole Notes workflow, so on the list
+        # it is the only path the key ever takes -- `library_list_focus_rail`,
+        # declared last, was never reached. Restoring the rail ROW instead left
+        # the caret where it was (the filter box, once this restore resolved
+        # the navigator region) and the next printable key was typed into it:
+        # live at dev 1077ac2dad, `/ read esc n` put "n" back in the filter.
+        if self._screen._library_list_canvas_showing_list():
+            rail_target = self._screen._library_list_focus_rail_target().lstrip("#")
+            if rail_target and (getattr(self.focused, "id", "") or "") == rail_target:
+                # ...except when the caret is ALREADY standing on the hop's
+                # destination: the hop would be inert and the next printable
+                # key typed into the rail box -- task-32051's exact finding,
+                # which `library_blur_text_field` exists to close on every
+                # other canvas and which never fires here for the reason
+                # above. Reach that same shared action directly. This is the
+                # one rule the screen's own gate states; it is not restated
+                # anywhere else.
+                self._screen.action_library_blur_text_field()
+                return
+            # Delivered as the canvas sync's explicit `then` (the shape the
+            # branches above use), NOT `call_after_refresh`: a canvas recompose
+            # already in flight restores the identity it captured before the
+            # key -- the list row -- and a bare deferred hop lands BEFORE that
+            # restore and is silently undone. `_restore_then_explicit` runs the
+            # notes restore first and the explicit follow-up last, so the hop
+            # is what the user is left with.
+            _sync_library_canvas(
+                self, "notes", then=self._screen.action_library_list_focus_rail
+            )
+            return
         identity = LibraryNotesFocusIdentity(
             stage="rail",
             region="navigator",

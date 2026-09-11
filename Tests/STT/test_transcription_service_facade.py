@@ -26,13 +26,41 @@ def _signature_shape(callable_object: object) -> tuple[tuple[str, object, object
     )
 
 
-def test_public_constructor_adds_only_a_keyword_dispatcher() -> None:
+def test_public_constructor_keeps_explicit_keyword_only_owners() -> None:
     keyword_only = inspect.Parameter.KEYWORD_ONLY
 
     assert _signature_shape(TranscriptionService) == (
         ("local_stt_dispatcher", keyword_only, None),
         ("parakeet_source_service", keyword_only, None),
+        ("local_buffer_owner", keyword_only, None),
     )
+
+
+def test_facade_refuses_dual_executor_and_buffer_owner_before_construction(monkeypatch):
+    from tldw_chatbook.STT.executor_worker import ResidentBufferRuntime
+
+    monkeypatch.setattr(
+        service_module,
+        "LegacyTranscriptionBridge",
+        lambda _: pytest.fail("dual ownership must fail before service construction"),
+    )
+    with pytest.raises(ValueError):
+        TranscriptionService(
+            local_stt_dispatcher=_Dispatcher(),
+            local_buffer_owner=ResidentBufferRuntime(),
+        )
+
+
+def test_facade_does_not_create_a_buffer_owner_by_default(monkeypatch):
+    from tldw_chatbook.STT import executor_worker
+
+    monkeypatch.setattr(
+        executor_worker.ResidentBufferRuntime,
+        "__init__",
+        lambda _: pytest.fail("default facade must not acquire a model owner"),
+    )
+    service = TranscriptionService()
+    service.cleanup()
 
 
 def test_public_method_signatures_match_the_legacy_contract() -> None:

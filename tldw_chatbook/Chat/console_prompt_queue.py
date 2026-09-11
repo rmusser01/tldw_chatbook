@@ -14,13 +14,14 @@ import unicodedata
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 
 from rich.cells import cell_len, split_graphemes
 from rich.markup import escape as escape_markup
 
 from tldw_chatbook.Utils.input_validation import validate_text_input
+from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 
 
 MAX_CONSOLE_QUEUE_ENTRIES = 10
@@ -179,6 +180,9 @@ class QueuedPrompt:
     preview: str = field(repr=False)
     insertion_order: int
     admitted_at: float
+    custody_request: ConsoleTurnCustodyRequest | None = field(
+        default=None, repr=False
+    )
 
     def __repr__(self) -> str:
         return (
@@ -386,6 +390,21 @@ class ConsolePromptQueueRegistry:
                 max_length=MAX_CONSOLE_QUEUED_PROMPT_LENGTH,
                 allow_html=False,
             )
+        )
+
+    @staticmethod
+    def _valid_custody_request(
+        session_id: str,
+        text: str,
+        request: ConsoleTurnCustodyRequest | None,
+    ) -> bool:
+        return request is None or (
+            isinstance(request, ConsoleTurnCustodyRequest)
+            and request.session_id == session_id
+            and request.draft == text
+            and getattr(request.configuration, "session_id", None) == session_id
+            and not request.attachment_ids
+            and request.staged_evidence_launch is None
         )
 
     def _empty_snapshot(self, session_id: str) -> PromptQueueSnapshot:
@@ -622,7 +641,11 @@ class ConsolePromptQueueRegistry:
         # ``reserve`` and ``resume`` calls.  No await or widget mutation can occur
         # between those event-loop-thread-confined transitions.
 
-    def _new_prompt(self, text: str) -> QueuedPrompt | None:
+    def _new_prompt(
+        self,
+        text: str,
+        custody_request: ConsoleTurnCustodyRequest | None = None,
+    ) -> QueuedPrompt | None:
         entry_id = self._id_factory()
         if (
             not isinstance(entry_id, str)
@@ -640,6 +663,7 @@ class ConsolePromptQueueRegistry:
             preview=make_prompt_preview(text),
             insertion_order=self._next_insertion_order,
             admitted_at=float(admitted_at),
+            custody_request=custody_request,
         )
         self._active_entry_ids.add(entry_id)
         return prompt
@@ -718,6 +742,7 @@ class ConsolePromptQueueRegistry:
         *,
         text: str,
         expected_revision: int,
+        custody_request: ConsoleTurnCustodyRequest | None = None,
     ) -> PromptQueueMutationResult:
         self._assert_owner_thread()
         session_id = self._session_id(session_id)
@@ -758,9 +783,11 @@ class ConsolePromptQueueRegistry:
             return self._result(QueueMutationStatus.CLOSING, session_id, state=state)
         if not self._valid_text(text):
             return self._result(QueueMutationStatus.INVALID, session_id, state=state)
+        if not self._valid_custody_request(session_id, text, custody_request):
+            return self._result(QueueMutationStatus.INVALID, session_id, state=state)
         if state.total_count >= MAX_CONSOLE_QUEUE_ENTRIES:
             return self._result(QueueMutationStatus.FULL, session_id, state=state)
-        prompt = self._new_prompt(text)
+        prompt = self._new_prompt(text, custody_request)
         if prompt is None:
             return self._result(QueueMutationStatus.INVALID, session_id, state=state)
         state.waiting.append(prompt)
@@ -779,6 +806,7 @@ class ConsolePromptQueueRegistry:
         entry_id: str,
         text: str,
         expected_revision: int,
+        custody_request: ConsoleTurnCustodyRequest | None = None,
     ) -> PromptQueueMutationResult:
         session_id, state, refusal = self._check(session_id, expected_revision)
         if refusal is not None:
@@ -791,6 +819,8 @@ class ConsolePromptQueueRegistry:
             return self._result(QueueMutationStatus.NOT_FOUND, session_id, state=state)
         if not self._valid_text(text):
             return self._result(QueueMutationStatus.INVALID, session_id, state=state)
+        if not self._valid_custody_request(session_id, text, custody_request):
+            return self._result(QueueMutationStatus.INVALID, session_id, state=state)
         existing = state.waiting[index]
         if text == existing.text:
             return self._result(
@@ -799,12 +829,16 @@ class ConsolePromptQueueRegistry:
                 state=state,
                 entry_id=entry_id,
             )
+        next_request = custody_request
+        if next_request is None and existing.custody_request is not None:
+            next_request = replace(existing.custody_request, draft=text)
         state.waiting[index] = QueuedPrompt(
             entry_id=existing.entry_id,
             text=text,
             preview=make_prompt_preview(text),
             insertion_order=existing.insertion_order,
             admitted_at=existing.admitted_at,
+            custody_request=next_request,
         )
         self._bump(state)
         return self._result(

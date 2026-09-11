@@ -24100,7 +24100,7 @@ def _assert_task8_compact_chrome(screen: LibraryScreen) -> None:
     assert authority.region.height == 2
     assert notes.content_region.contains_region(authority.region)
     authority_text = getattr(authority.renderable, "plain", str(authority.renderable))
-    assert "Library notes · Library database" in authority_text
+    assert "Library notes" in authority_text
     assert "Next:" in authority_text
     assert footer.region.height == 1
     assert (

@@ -976,7 +976,7 @@ class LibraryScreen(BaseAppScreen):
         # mode owning the Notes canvas (``_file_notes_active()``), the same
         # gate the sibling skill-editor binding uses, so it never fires on
         # any other Library surface.
-        ("escape", "library_notes_files_back", "Back to Database notes"),
+        ("escape", "library_notes_files_back", "Back to Library notes"),
         # task-2856: four more "escape" bindings, tried in order after the
         # two above and gated the same way -- each ``check_action`` returns
         # False everywhere outside its own state, so Textual falls through
@@ -1193,7 +1193,7 @@ class LibraryScreen(BaseAppScreen):
     LIBRARY_NOTES_FILES_SHORTCUTS = (
         ("/", "focus search"),
         ("F6", "next pane"),
-        ("esc", "back to Database"),
+        ("esc", "back to Library notes"),
     )
 
     LIBRARY_NOTES_FILES_RELOAD_CONFIRM_SHORTCUTS = (
@@ -1654,10 +1654,18 @@ class LibraryScreen(BaseAppScreen):
         overflow-x: hidden;
     }
 
+    /* task-32217 (Qodo #2590 comment 3): NO sizing here. The build scopes this
+       block to `LibraryScreen #library-note-preview-region`, one type selector
+       more specific than the app sheet's bare id, so the old
+       `height: auto / min-height: 12 / max-height: 20` silently outranked the
+       density rule and Preview stayed capped at 20 rows in a 40-row pane while
+       Edit expanded. `#library-note-body` never had a copy here, which is why
+       only Preview was affected. Deleting the three sizing declarations rather
+       than restating them keeps ONE home for the rule: with the app sheet the
+       bare id applies, and without it (harness tests) `VerticalScroll`'s own
+       `height: 1fr` gives the same shape. Chrome stays -- it is the fallback
+       this block exists for. */
     #library-note-preview-region {
-        height: auto;
-        min-height: 12;
-        max-height: 20;
         margin: 0 0 1 0;
         border: solid $surface-lighten-1;
         overflow-y: auto;

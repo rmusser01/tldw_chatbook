@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from multiprocessing.connection import Connection
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
+from uuid import uuid4
 
 from .contracts import (
     BufferAudioSource,
@@ -30,6 +31,7 @@ from .executor import (
     validate_local_source_snapshot,
 )
 from .executor_process_tree import enter_worker_containment
+from .parakeet_dispatch import ParakeetDispatch
 
 TranscriptionRunner = Callable[..., dict[str, Any]]
 ProviderBuilder = Callable[
@@ -69,6 +71,95 @@ class _ResidentRuntime:
             if self.lease is not None:
                 self.lease.close()
                 self.lease = None
+
+
+class ResidentBufferRuntime:
+    """One serialized ONNX buffer owner in an already isolated model process.
+
+    Reuses the executor's source validation, protecting leases and provider. It
+    neither spawns a worker nor admits Library/dictation work. The caller owns
+    process containment and must retire that process after uncertain cleanup.
+    """
+
+    def __init__(self) -> None:
+        self._resident: _ResidentRuntime | None = None
+        self._closing = False
+
+    def transcribe_buffer(
+        self,
+        *,
+        source: BufferAudioSource,
+        dispatch: ParakeetDispatch,
+        language: str,
+    ) -> dict[str, Any]:
+        """Recognize one buffer with the current validated source and provenance.
+
+        Args:
+            source: PCM already bounded by the owning voice process.
+            dispatch: Exact local/managed identity resolved by the source service.
+            language: Requested language for this particular buffer.
+
+        Returns:
+            The existing provider's complete transcription payload.
+
+        Raises:
+            ValueError: The request is not an ONNX PCM buffer.
+            RuntimeError: Cleanup began or resident identity/source validation fails.
+        """
+        if self._closing:
+            raise RuntimeError("resident_buffer_closed")
+        if (
+            type(source) is not BufferAudioSource
+            or type(dispatch) is not ParakeetDispatch
+            or dispatch.identity.provider_id != "parakeet-onnx"
+        ):
+            raise ValueError("resident_buffer_request_invalid")
+        options = dict(dispatch.option_updates)
+        options["language"] = language
+        request = ExecutorRequest(
+            generation=1,
+            attempt_id=uuid4().hex,
+            job_id=None,
+            source=source,
+            identity=dispatch.identity,
+            options=options,
+            segment_end_frames=(
+                len(source.audio) // (source.channels * source.sample_width),
+            ),
+            local_source=dispatch.local_source,
+            managed_store_root=dispatch.managed_store_root,
+            managed_artifact_ref=dispatch.managed_artifact_ref,
+            managed_dependency_refs=dispatch.managed_dependency_refs,
+        )
+        if self._resident is None:
+            self._resident = _load_resident(
+                request, _default_provider_builder, lambda: False
+            )
+        else:
+            _validate_reuse(request, self._resident)
+        runner = self._resident.provider.buffer_runner
+        if runner is None:
+            raise _ProviderLoadFailure(TranscriptionFailureCode.UNSUPPORTED_CAPABILITY)
+        return runner(source, **_buffer_runner_kwargs(runner, request))
+
+    def close(self) -> None:
+        """Release native state once, then leases; retain both after failed close."""
+        if self._closing:
+            if self._resident is not None:
+                raise RuntimeError("resident_buffer_cleanup_unconfirmed")
+            return
+        self._closing = True
+        resident = self._resident
+        if resident is None:
+            return
+        # The shared executor's close releases its lease during process retirement.
+        # This owner cannot establish process exit, so failed native close retains
+        # the actual provider and its leases for the model process's remaining life.
+        resident.provider.close()
+        if resident.lease is not None:
+            resident.lease.close()
+            resident.lease = None
+        self._resident = None
 
 
 class _ProviderLoadFailure(RuntimeError):
