@@ -4663,10 +4663,23 @@ def test_a_recursive_folder_import_is_named_after_the_folder_the_user_chose():
     assert groups[0].header_line.startswith("inbox — 6 files"), groups[0].header_line
 
 
-def test_a_batch_whose_paths_share_no_root_falls_back_to_the_first_parent():
+def test_a_url_batch_is_named_after_its_host():
+    """(review nit 5) URLs are not filesystem paths, so they never take the
+    common-root branch -- the first member's own parent names them, as before."""
     jobs = (
         _queued_job("a", source_path="https://example.com/one", batch_id="b1"),
         _queued_job("b", source_path="https://example.com/two", batch_id="b1"),
+    )
+    groups, _latest = build_ingest_queue_groups(jobs, now=NOW)
+    assert groups[0].header_line.startswith("example.com — 2 files")
+
+
+def test_a_url_batch_across_two_hosts_is_not_named_after_the_scheme():
+    """(review finding 2) commonpath over these yields "https:", which names
+    nothing; the first member's host still does."""
+    jobs = (
+        _queued_job("a", source_path="https://example.com/one", batch_id="b1"),
+        _queued_job("b", source_path="https://other.example/two", batch_id="b1"),
     )
     groups, _latest = build_ingest_queue_groups(jobs, now=NOW)
     assert groups[0].header_line.startswith("example.com — 2 files")

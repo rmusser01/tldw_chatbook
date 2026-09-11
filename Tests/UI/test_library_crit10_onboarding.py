@@ -96,8 +96,10 @@ async def test_a_returning_user_with_content_never_sees_the_starter_rail() -> No
     try:
         async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
             await _wait_for_evidence_round(pilot, gates)
-            # The full rail is already on screen while the read is in flight.
+            # The full rail is already on screen while the read is in flight:
+            # no compact-rail flash, which is what the default is for.
             assert screen._library_lifecycle is LibraryLifecycle.EXPANDED
+            assert not screen.query("#library-rail-explore-all")
             gates.release_round(0)
             await _wait_for_condition(
                 pilot,
@@ -184,6 +186,33 @@ async def test_explore_survives_the_next_evidence_read_in_the_same_session() -> 
 
 
 @pytest.mark.asyncio
+async def test_a_corrupt_stored_lifecycle_is_not_a_decision_either() -> None:
+    """(review finding 3) Garbage coerces to EXPANDED too, and nobody pressed
+    Explore to produce it, so an empty Library still lands on Get started."""
+    gates = _LibraryEvidenceGates()
+    app = _pre_written_config_app(gates, lifecycle="not-a-lifecycle")
+    screen = LibraryScreen(app)
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            await _wait_for_evidence_round(pilot, gates)
+            assert screen._library_lifecycle is LibraryLifecycle.EXPANDED
+            gates.release_round(0)
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_onboarding_status is LibraryEvidenceStatus.SETTLED
+                ),
+                message="empty evidence did not settle",
+            )
+            assert screen._library_lifecycle is LibraryLifecycle.STARTER
+            assert not screen.query("#library-rail-back-to-starter")
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
 async def test_the_landing_card_counts_the_failures_it_is_asking_about() -> None:
     """task-32351 AC#2: the queue was exact, the landing card was not."""
     app = _build_test_app()
@@ -230,6 +259,40 @@ async def test_a_single_failure_is_named_in_the_singular() -> None:
             job.job_id,
             error="private failure",
             permanent=False,
+        )
+
+        action = screen._library_landing_attention_action()
+
+        assert action is not None
+        assert action.message == "Last import: 1 file failed."
+
+
+@pytest.mark.asyncio
+async def test_the_card_counts_the_last_import_not_every_unreviewed_one() -> None:
+    """(review finding 1) Two unreviewed imports summed into one sentence that
+    says "Last import" would be a wrong count -- worse than the vague copy this
+    replaced. The card still appears for the older failure; it just does not
+    add it in."""
+    app = _build_test_app()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        for index in range(3):
+            job = app.library_ingest_jobs.submit(
+                source_path=f"/tmp/older/fail-{index}.pdf",
+                batch_id="local-older",
+            )
+            app.library_ingest_jobs.mark_failed(
+                job.job_id, error="private failure", permanent=False
+            )
+        newer = app.library_ingest_jobs.submit(
+            source_path="/tmp/newer/only.pdf",
+            batch_id="local-newer",
+        )
+        app.library_ingest_jobs.mark_failed(
+            newer.job_id, error="private failure", permanent=False
         )
 
         action = screen._library_landing_attention_action()

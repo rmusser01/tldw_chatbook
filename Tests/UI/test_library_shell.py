@@ -2023,12 +2023,13 @@ async def test_library_onboarding_new_generation_cancels_previous_worker() -> No
 @pytest.mark.parametrize(
     "stored,settled",
     [
-        # task-32349: both OPEN Expanded (the no-flash default), but an
-        # ABSENT value was nobody's decision, so an all-empty settle takes it
-        # back to Get started. A corrupt value is still a stored one -- the
-        # profile has been here before -- and keeps the full rail.
+        # task-32349: both OPEN Expanded (the no-flash default), and neither
+        # value is a decision anybody made -- an absent one is the default,
+        # a corrupt one coerces to it -- so an all-empty settle takes both
+        # back to Get started. Only a stored "expanded" is a real Explore
+        # press (review finding 3).
         (None, LibraryLifecycle.STARTER),
-        ("not-a-lifecycle", LibraryLifecycle.EXPANDED),
+        ("not-a-lifecycle", LibraryLifecycle.STARTER),
     ],
 )
 async def test_library_onboarding_legacy_and_corrupt_preferences_open_expanded(

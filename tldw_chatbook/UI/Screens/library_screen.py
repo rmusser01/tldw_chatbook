@@ -13141,13 +13141,33 @@ class LibraryScreen(BaseAppScreen):
                 for job in jobs_fn()
                 if not job.permanent and not job.dismissed and not job.superseded
             )
-            failed = sum(1 for job in live if job.state is IngestJobState.FAILED)
-            skipped = sum(1 for job in live if job.state is IngestJobState.SKIPPED)
-            if failed:
+            failures = [job for job in live if job.state is IngestJobState.FAILED]
+            if failures:
                 # task-32351 AC#2 (critique #10, B D2): after 4 of 6 files
                 # failed the landing said only "An import needs review." --
                 # neutral where the queue itself was exact. The counts are
                 # already in the registry snapshot this walks.
+                #
+                # (review finding 1) The sentence says "Last import", so it
+                # counts ONE import: the most recent submission that has a
+                # failure, not every unreviewed job in the queue -- two
+                # unreviewed imports summed into one sentence would be a
+                # wrong count, which is worse than the vague one this
+                # replaced. The card still appears for ANY live failure (the
+                # trigger above is unchanged); only what it counts is scoped.
+                # A job submitted on its own carries no batch id, so it is
+                # its own import.
+                newest = max(failures, key=lambda job: job.submitted_at)
+                last_import = newest.batch_id or newest.job_id
+                members = [
+                    job for job in live if (job.batch_id or job.job_id) == last_import
+                ]
+                failed = sum(
+                    1 for job in members if job.state is IngestJobState.FAILED
+                )
+                skipped = sum(
+                    1 for job in members if job.state is IngestJobState.SKIPPED
+                )
                 noun = "file" if failed == 1 else "files"
                 parts = [f"{failed} {noun} failed"]
                 if skipped:
@@ -20193,9 +20213,14 @@ class LibraryScreen(BaseAppScreen):
             # ``_library_lifecycle_was_stored``: that snapshot never updates,
             # so an Explore press followed by any later evidence round (a
             # screen resume) would have been demoted back to Get started.
+            # (review finding 3) It is the stored VALUE that has to say
+            # "expanded", not merely the key being present: a corrupt
+            # ``lifecycle = "not-a-lifecycle"`` also coerces to EXPANDED, and
+            # nobody pressed Explore to produce it.
             if (
                 lifecycle is LibraryLifecycle.EXPANDED
-                and not self._load_library_lifecycle_value()[1]
+                and self._load_library_lifecycle_value()[0]
+                != LibraryLifecycle.EXPANDED.value
             ):
                 lifecycle = LibraryLifecycle.UNKNOWN
             self._set_library_lifecycle(
