@@ -88,7 +88,12 @@ editor's own Back control returns to its list.
   the folder tree, and one row per note showing its title and how long ago
   it changed
   ("3m", "1d"). When two notes in the same folder share a title, each row
-  also names its folder — "Reading list · Unfiled · 2h". While no note is
+  also names its folder — "Reading list · Unfiled · 2h". When they share
+  the age as well, the row adds a third part that is not shared: the time
+  of day it was last changed ("Reading list · Unfiled · 2m · 09:14"), or,
+  for two notes written inside the same minute, a short id
+  ("Reading list · Unfiled · 2m · #0f3a"). Only the rows that would
+  otherwise be identical carry it. While no note is
   open the list takes the width the empty work area would otherwise waste,
   so long titles are not truncated on a wide terminal; opening a note hands
   that width back. The same rule holds below 64 columns, where there is no
@@ -351,7 +356,7 @@ both stay closed until you choose to reopen one.
 | "Manage sync folders" | Appears only when roots or paused migration candidates exist; opens root status and contextual controls. |
 | "Last import" | Reopens the latest import receipt from this app session after you return to the Notes list. |
 | "Export…" | Opens the "Export bundle (.zip)" canvas scoped to notes — bundle notes into a .zip. |
-| "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". "Export…" hides while selecting. On a compact terminal the row shortens to "Done", "All N", "Clear" and "Export", and the count is printed on its own line under the row rather than inside it — all five stay on the pane. |
+| "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". The count is also repeated on its own line below the row, and the two always read the same number. "Export…" hides while selecting. On a compact terminal the row shortens to "Done", "All N", "Clear" and "Export" and drops its own copy of the count, keeping the line below it — all four actions stay on the pane. |
 
 With no notes at all, the list reads "No notes yet. Create your first note."
 above the tree — even when the seeded **Agent_Lessons** folder (see "Reuse
@@ -437,7 +442,10 @@ dismisses a still-open receipt, since it is scoped to this list session. Its
 them, so **Undo** and **Dismiss** stay reachable however narrow the list is.
 **Undo** restores that exact database note and immediately returns its row —
 in its folder, or under Unfiled — along with the Notes rail count, and moves
-the selection to the restored row. **Dismiss** removes only the receipt; the
+the selection to the restored row. If that folder is collapsed, Undo opens
+it, so the row you were promised back is one you can see; a folder whose
+contents fail to reload still opens, with its own retry row inside, rather
+than staying shut over a note that is already restored. **Dismiss** removes only the receipt; the
 note remains deleted. *(This page previously said Notes expose no separate
 Trash browser, so the receipt was the only in-Library recovery action —
 superseded by task-32144: see "Recently deleted" below, which recovers a note
@@ -446,6 +454,11 @@ whose receipt was dismissed.)*
 *Verified against fix/library-notes-list — 2026-09-09 (task-32123: the
 receipt's actions are no longer composed off the pane; task-32124: Undo
 returns the row to the folder tree, not only the count).*
+
+*Verified against fix/library-notes-w3-list-tree — 2026-09-11 (task-32255:
+Undo opens the restored note's folder, including when a branch reload
+fails; task-32254: a third part tells apart two rows that share title,
+folder and age; task-32272: one selection count, not two that disagree).*
 
 ### New note view
 
@@ -501,6 +514,25 @@ each other's starting point, and neither borrows the Library ingest browser's.
 The first use of either — or a remembered folder that has since been moved or
 deleted — opens at your home directory instead. **Folder files** keeps its own
 separate memory, see [File notes](file-notes.md).
+
+**What a folder has to be before it can be checked.** The folder itself must be
+a real folder (not a link to one) on a local disk, outside Chatbook's own data
+directory, not already connected as a sync folder, and not the Folder files
+root. Every `.md` file inside it must also pass, and one bad file stops the
+whole folder: each must be one you own or share a group with and can write,
+UTF-8 text, 10 MB or smaller, an ordinary file with a single name on disk, and
+consistent in its line endings — all Unix or all Windows, not a mix, and not
+the carriage-return-only style old Mac editors wrote.
+
+**Check changes** refuses anything else and names which rule it was, in the
+setup pane's status line, with the next action — for example "That folder is
+inside Chatbook's own data directory. Pick a folder outside it, then Check
+again", "Another Chatbook window is using that folder", "That folder is
+already connected", "Some files there use a mix of line endings. Save them
+with one style, then Check again", or "Some files there are larger than 10 MB".
+When several files fail for different reasons, the message names the most
+common one. A refusal changes nothing: pick a different folder, or fix the
+cause, and **Check changes** again in the same session.
 
 If files or notes change after checking, activation is refused as stale and the
 nearest valid action is **Check again**. Conflicts and deletion choices are not
@@ -695,9 +727,12 @@ outside the batch stayed as text and are not counted.
    away). Choose a direction and local destination. Server sync remains
    unavailable until its separate capability is installed.
 4. Choose **Check changes** and review the exact safe, attention, skipped, and
-   deletion-like effects.
+   deletion-like effects. If the folder cannot be used, the status line under
+   the pane's "Add files to Library notes" heading says which rule it broke
+   and what to do; choose **Choose folder…** again and check the new one.
 5. Choose **Activate reviewed root**. If the review is stale, choose **Check
-   again** instead.
+   again** instead. **Manage sync folders** appears in the notes toolbar once
+   a root is active.
 
 Existing legacy evidence appears as a paused candidate. Open **Manage sync
 folders**, choose **Review migration**, inspect the current dry-run, and
@@ -1123,6 +1158,35 @@ critique-10 claims reconciled; surface fixes in task-32346, 32348, 32349,
 story and its guarded return were already stated here; the Library overview is
 what had drifted.*
 
+*Verified against fix/library-notes-w3-sync — 2026-09-11 (task-32269, and the
+task-32243 fix it waited on): the lasting-sync chapter was written from the
+design and had never been walked, because no folder could be admitted — a
+refused **Check changes** crashed over its own refusal and then poisoned the
+folder for the whole session. Every step in this chapter has now been walked
+on this branch at 235x52, in two sessions.
+
+Session one, a 179-file vault under `$HOME`: refusal copy on a folder inside
+the profile → **Choose folder…** → the `$HOME` vault → 60 safe · 0 attention →
+**Activate reviewed root** → "Sync root activated. 60 applied · durable
+receipt recorded" → the notes appear under a **⇄ Sync managed** folder →
+**Manage sync folders** (which only exists once a root is active) → **Check
+changes** → "Manual check finished."
+
+Session two made a real conflict — edit the note in Chatbook, edit the same
+file on disk — and walked the half no earlier run could reach: **Check
+changes** → "⚠ Needs attention · Next: Review changes" → **Review** →
+**View comparison** (a real `--- Note / +++ File` diff with both sides' line
+and character counts) → **Keep file** → **Apply reviewed** → an at-action
+receipt with **Undo** and **Dismiss** → **Undo** → **Resolution history**,
+where the entry is recorded "undone" → **Pause** (the action becomes Resume)
+→ **Resume**. **Retarget** and **Disconnect** stay visibly disabled
+throughout, as this chapter says.
+
+Added in this pass: what a folder and its files have to be before they can be
+checked, and the named refusals. Known gap, not fixed here: the root row in
+**Manage sync folders** reads "Sync folder (name unavailable before cutover)"
+rather than the display name you typed — task-32451.)*
+
 *Verified against fix/library-notes-w3-layout — 2026-09-11 (wave-3 group
 `layout`, live at 235x52 / 100x30 / 60x24 on a seeded scratch profile with a
 Markdown-showcase note). task-32249: Preview fills the work pane, takes focus
@@ -1131,8 +1195,9 @@ instead of printing its `[!note]` marker, and its status line names **Edit**
 rather than offering to keep editing. task-32259: **Check selection** stands
 with the selection summary, and Import once / Add from files close the Notes
 list beside them while they are the task in hand. task-32261: the compact
-select strip prints its count once, on its own line, so all five actions stay
-on a 42-column pane. task-32270: the `‹ Library / Notes` cue is a compact
+select strip drops its own copy of the count and keeps the line below it, so
+Done, All N, Clear and Export all stay on a 42-column pane; both counts track
+the selection (task-32272, landed first). task-32270: the `‹ Library / Notes` cue is a compact
 control — the wide sentences that promised it are corrected above.
 task-32389: below 64 columns an empty work pane hands the whole stage to the
 list.*

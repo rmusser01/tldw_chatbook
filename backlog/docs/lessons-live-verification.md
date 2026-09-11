@@ -2453,6 +2453,31 @@ mounted overlay test proves hidden time is excluded.
 **What to do.** Pair mounted-state assertions with actual screen pixels. Check
 same-screen overlays as well as screen-stack visibility when gating animation.
 
+## A scratch `HOME` turns the OS keychain from slow into an infinite block
+
+**TASK-32344 (filed as TASK-32275), 2026-09-10.** The critique reported "first
+agent send after a restart stalls ~70 s" and named the built-in MCP server spawn
+as the suspect.
+Timing marks between "console agent reply start" and "Routing to endpoint"
+cleared MCP outright — catalog composition was 15 ms — and pointed at the lazy
+Personal Context bootstrap. Under the scratch `HOME` recipe the same send was
+still waiting after **six minutes**, and `sample <pid> 2` (no root needed,
+unlike `py-spy dump`) put 1686 of 1686 samples in `SecItemAdd` →
+`makeLoginAuthUI` → `AuthorizationCopyRights`: the macOS Keychain
+authorization UI, waiting for a dialog nobody would ever answer, because the
+redirected `HOME` has no login keychain. On a real profile the same call is
+merely slow (3.7 s measured cold, 70 s–3.5 min reported).
+
+**What to do.** Two things. First, when the log narrows a stall to a range but
+not to a call, take a native stack sample before adding more log lines —
+`sample <pid> 2 -f out.txt` works on your own processes without root and named
+the frame in one shot. Second, treat an unbounded wait under a scratch `HOME`
+as the *worst case* of a real defect, not as an artifact to dismiss: it
+reproduced on demand what two observers had only seen intermittently, and it
+is the case a timeout has to survive. (Companion to the TASK-31450 entry
+above: a scratch profile does not merely de-authenticate keychain-backed
+tooling, it can make it hang.)
+
 ## A fixture vault in the scratchpad or the profile dir cannot be lasting-synced
 
 **Library ▸ Notes critiques, 2026-09-09 and 2026-09-10.** Two consecutive live
@@ -2527,3 +2552,54 @@ believing either result: a zero count in the tree you thought you were
 testing means you are testing the wrong tree, not that the code is missing.
 After any suspicious run, `pwd` plus `git -C <tree> status` is one second
 of insurance against a split-brain patch.
+
+## A performance claim gets re-measured at the commit it was made on, before you go hunting (TASK-32260, 2026-09-11)
+
+**What happened.** The critique reported Library opening in 12.6 s on a
+27-item profile against 2.7 s on an empty one — a 12x gap, cause untraced.
+Rebuilding the profile with the same seed script and driving the same open
+at 235x52 gave 0.68 s to the painted shell and 1.01 s fully settled. Rather
+than argue about the machine, I added a detached worktree at the critique's
+OWN base commit (`git worktree add --detach ... e6cb464239`), re-seeded a
+profile with THAT tree's code, and measured the same open: 1.24 s. Two
+numbers, one branch apart, and the reported gap in neither — which
+distinguishes "already fixed by something in the 509 intervening commits"
+from "never reproducible", and those call for completely different work.
+The likeliest real cause was the measuring session: the same crit-base tree
+booted in 9.1 s cold against 4.1 s warm, and that review ran several app
+instances at once.
+
+**What to do.** Before optimising anything from a reported number, measure
+it (a) on your branch and (b) at the commit the report names, with the same
+fixture. A detached worktree plus a re-seed is ten minutes. Then ship the
+pin the report should have had: a budget test on a fixture that HAS content,
+with an assertion that the content really reached the screen — an
+open-latency test on an empty profile is how a 12x claim stands for a week.
+
+## A peer's ad-hoc script in the shared scratch dir shadowed a real package (wave-3, 2026-09-11)
+
+**What happened.** Several wave agents shared one scratch directory. A peer
+had written `click.py` and `find.py` there as tmux helpers. Running my own
+probe from that cwd made `import click` load the peer's script, which read
+`sys.argv[1]` and exited — so the app probe died with a bare `NOT FOUND` on
+stderr and exit 1, no traceback, and it only misbehaved when PYTHONPATH
+pointed at my worktree, which sent me looking for a sitecustomize that did
+not exist.
+
+**The same hazard bit the test baseline, harder.** The wave also shared a
+detached `devbase` worktree at the merge-base, and a peer had left it DIRTY
+(a modified `test_library_notes_wave_list.py` plus an untracked new test
+file). My branch-vs-base FAILED-set diff for that one file was therefore
+comparing against a peer's edits, and it read as "base has a failure my
+branch does not" — i.e. as though my change had fixed something. It had
+not; the failing test only existed in the peer's copy. `git status` in the
+"base" worktree took two seconds and dissolved it.
+
+**What to do.** Run scratch scripts from a directory only you write to
+(`<scratch>/<group>-scripts/`), never from the shared wave root. Create
+your OWN detached base worktree for test comparisons and remove it when
+done — never reuse a shared one, and `git status` it before trusting a
+single number out of it. When a Python process dies with output that
+belongs to no code you can find, list `*.py` in the cwd before anything
+else: `sys.path[0]` is the cwd, and a one-word filename there outranks
+site-packages.

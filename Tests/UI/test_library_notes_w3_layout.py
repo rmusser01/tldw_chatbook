@@ -428,6 +428,48 @@ async def test_the_compact_select_strip_paints_every_action_inside_the_pane():
 
 
 @pytest.mark.asyncio
+async def test_the_compact_select_strip_counts_the_row_the_reader_just_checked():
+    """task-32261 AC#2, review finding F1: the SURVIVING counter must move.
+
+    Hiding the in-strip counter in compact hid the only widget
+    `_apply_library_row_toggle` patched, so compact select mode painted a
+    permanently stale "0 selected" over a checked row with Export enabled --
+    worse than the crowding it fixed. Live at 100x30 on dev the strip read
+    "1 selected" after one toggle; on the first version of this branch it
+    read "0 selected".
+
+    task-32272 (wave-3 Task 6, landed first) is what makes the hide safe:
+    its patcher writes one label to every `.library-<kind>-selection-count`,
+    a class query that finds `display=False` widgets, so both counters track
+    the selection and the hidden one is merely invisible rather than
+    authoritative. This asserts the painted result, not the mechanism.
+    """
+    host = _notes_host()
+    async with host.run_test(size=COMPACT) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-select-toggle")
+        screen.query_one("#library-notes-select-toggle", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-selection-actions")
+        row = await _wait_for_selector(screen, pilot, ".library-notes-tree-note-row")
+        row.press()
+        await pilot.pause()
+        await pilot.pause()
+
+        painted = "\n".join(
+            "".join(segment.text for segment in strip)
+            for strip in screen._compositor.render_strips()
+        )
+        assert "1 selected" in painted, (
+            "the compact select strip still paints "
+            f"{'0 selected' if '0 selected' in painted else 'no count'} "
+            "after one row was checked"
+        )
+        assert "0 selected" not in painted, painted
+
+
+@pytest.mark.asyncio
 async def test_the_notes_select_strip_uses_the_library_glyph_legend():
     """task-32261 AC#3 (revised): one meaning per glyph on this strip.
 

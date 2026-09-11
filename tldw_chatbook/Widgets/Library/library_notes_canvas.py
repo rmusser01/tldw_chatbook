@@ -3,7 +3,8 @@ create mode (Blank note + template rows)."""
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
+from collections.abc import Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any, Callable, Literal
@@ -201,14 +202,26 @@ def browse_row_overflows(pane_width: int, needed: int, *, already_split: bool) -
 
 
 def compose_note_row_label(
-    title: str, *, folder_label: str = "", age_label: str = ""
+    title: str,
+    *,
+    folder_label: str = "",
+    age_label: str = "",
+    tiebreak_label: str = "",
 ) -> str:
-    """Render one Notes list row label: title, folder, then age.
+    """Render one Notes list row label: title, folder, age, tie-break.
 
-    The single renderer for BOTH list paths (task-32137). The flat list used
+    The one renderer both list paths call (task-32137). The flat list used
     to put the age on a second line of its own -- a branch nothing reached
     once a folder tree existed -- while the tree rows carried no age at all,
     so two notes titled "Reading list" rendered as identical rows.
+
+    Calling it is not the same as feeding it: only the TREE path passes
+    ``folder_label`` and ``tiebreak_label``, so only the tree path tells
+    duplicates apart. The flat fallback runs solely when there is no tree
+    projection at all, and its row records carry neither a folder nor a
+    clock to disambiguate WITH -- widening it would mean widening
+    ``LibraryNotesListRow`` for a path no live visit reaches, so the flat
+    path deliberately keeps title-and-age (task-32254).
 
     Args:
         title: The note title, already markup-escaped.
@@ -216,11 +229,58 @@ def compose_note_row_label(
             included only when the row needs telling apart from a sibling
             with the same title, or when a filter has scattered the rows.
         age_label: Relative age of the note ("3m", "1d"), if known.
+        tiebreak_label: The third key (task-32254) -- a modified time of
+            day ("14:05") or a short id ("#0f3a") -- present ONLY for rows
+            that would otherwise be byte-identical to another row.
 
     Returns:
         The row label, its present parts joined with " · ".
     """
-    return " · ".join(part for part in (title, folder_label, age_label) if part)
+    return " · ".join(
+        part for part in (title, folder_label, age_label, tiebreak_label) if part
+    )
+
+
+def note_row_tiebreak_labels(
+    rows: Sequence[LibraryNotesTreeRow],
+) -> dict[str, str]:
+    """Return a third key per placement, for rows that still collide.
+
+    task-32254: task-32137's folder-then-age discriminator is a no-op in
+    the case it is most needed -- two notes titled "Reading list", both
+    unfiled, both minutes old, render as the same string, and
+    unfiled-and-recent is exactly the state of two notes a user has just
+    made twice. The remedy is a THIRD key, and only for the rows that
+    actually tie: everything else keeps the label 32137 shipped.
+
+    The preferred key is the modified time of day, which answers "which
+    one did I just touch?". Notes written in the same minute (a duplicate
+    made by a script or a double press) share that too, so such a group
+    falls back to a short, stable id -- ugly, but it is an identity, and
+    two rows that cannot be told apart at all are worse.
+
+    Args:
+        rows: The projection's rows, note and non-note alike.
+
+    Returns:
+        ``placement_id -> label``, holding only the colliding rows.
+    """
+    groups: dict[tuple[str, str, str], list[LibraryNotesTreeRow]] = defaultdict(list)
+    for row in rows:
+        if row.kind == "note":
+            groups[(row.folder_id or "", row.label, row.age_label)].append(row)
+    tiebreakers: dict[str, str] = {}
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        clocks = [row.clock_label for row in group]
+        if all(clocks) and len(set(clocks)) == len(group):
+            for row, clock in zip(group, clocks, strict=True):
+                tiebreakers[row.placement_id] = clock
+            continue
+        for row in group:
+            tiebreakers[row.placement_id] = f"#{str(row.note_id or '')[:4]}"
+    return tiebreakers
 
 
 #: Backlink rows Info renders at most (task-32145). The loader asks for one
@@ -1230,21 +1290,25 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 in_row_count = Static(
                     f"{list_state.selected_count} selected",
                     id="library-notes-selected-count",
-                    classes="library-toolbar-count",
+                    classes="library-toolbar-count library-notes-selection-count",
                     markup=False,
                 )
                 # task-32261 AC#1: this counter costs 11 of the 42 columns a
                 # 100x30 terminal gives the list pane, which is what pushed
                 # "Export selected" off the right edge -- the strip painted
                 # "0 selected  Done  All 10  Clear" and the guide's fifth
-                # action was unreachable. The same count is printed on its
-                # own line directly below (``#library-notes-selection-
-                # status``), so compact loses nothing by hiding it. It stays
-                # MOUNTED, not dropped: ``_apply_library_row_toggle``
-                # queries it by id to patch the count in place, and a
-                # missing widget there falls back to a full recompose.
-                # Whether the two counters should be one widget at every
-                # width is peer task-32272's call, not this one's.
+                # action was unreachable.
+                #
+                # Hiding it is only safe because task-32272 made the count a
+                # CLASS the patcher writes to (``library-notes-selection-
+                # count``, above): ``_apply_library_row_toggle`` now updates
+                # every renderer wearing it, hidden ones included, so the
+                # line below this strip tracks the selection instead of
+                # keeping the compose-time number. The first round of this
+                # branch hid the only patched widget and shipped a stale
+                # "0 selected" over a checked row -- pinned now by
+                # ``test_the_compact_select_strip_counts_the_row_the_reader_
+                # just_checked``.
                 in_row_count.display = not self.compact
                 yield in_row_count
                 yield Button(
@@ -1299,6 +1363,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             yield Static(
                 f"{list_state.selected_count} selected",
                 id="library-notes-selection-status",
+                # task-32272: the class, not the id, is what the in-place
+                # toggle patcher looks for -- a new count renderer opts in
+                # by wearing it rather than by someone remembering that
+                # `_apply_library_row_toggle` exists.
+                classes="library-notes-selection-count",
                 markup=False,
             )
         else:
@@ -1716,6 +1785,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         duplicate_siblings = {
             sibling for sibling, count in sibling_counts.items() if count > 1
         }
+        # task-32254: folder+age still ties for two unfiled notes of the
+        # same age -- the case it was needed for most -- so those rows earn
+        # a third key.
+        tiebreak_labels = note_row_tiebreak_labels(projection.rows)
         with Vertical(id="library-notes-list", classes="library-notes-tree"):
             for index, row in enumerate(projection.rows):
                 indent = "  " * row.depth
@@ -1792,6 +1865,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     escape_markup(row.label),
                     folder_label=escape_markup(folder_label),
                     age_label=row.age_label,
+                    tiebreak_label=tiebreak_labels.get(row.placement_id, ""),
                 )
                 if row.status_text:
                     title = f"{title}  {row.status_text}"

@@ -3479,7 +3479,7 @@ or Textual will reject the duplicate even when the route signature matches.
 
 ## Adding a resource of a GUARDED KIND obliges you to run that kind's inventory suite, not just your feature's tests
 
-**Follow-up incident (TASK-31758 / PR #2437, 2026-09-05).** Forty-five
+**Follow-up incident (TASK-31978 / PR #2437, 2026-09-05).** Forty-five
 pixel-migu seed, resource, and installed-distribution checks passed after a
 rebase, but the required generated-artifact job still failed: two new startup
 diagnostics in `app.py` and `config.py` were absent from the production
@@ -13279,6 +13279,68 @@ status of whatever printed it. `set -o pipefail` fixes the exit code but not the
 lost output, and it is not on by default in the shells these commands run in.
 The same trap sits behind `./scripts/preflight.sh | tail` — a known previous
 incident in this repo, and the reason preflight is always run bare.
+
+## Plan-embedded code rots against the installed library; only implementer-run RED catches it (TASK-31758, 2026-09-05)
+## Plan-embedded code rots against the installed library; only implementer-run RED catches it (TASK-31978, 2026-09-05)
+
+The artifact-share SDD plan embedded near-verbatim implementation and test
+code authored against pinned-at-plan-time versions, and both sides rotted
+before implementation. Task 3: the plan's aiohttp middleware block appended
+bare `(request, handler)` methods to `app.middlewares`; under the installed
+aiohttp 3.14.3 every route 500'd because 3.14 discriminates middleware by
+the `__middleware_version__ == 1` marker the plan omitted — caught only when
+the implementer's RED run failed with 500s across the suite. Task 5: the
+plan's test snippet called `SelectionList.select(0)` as if it took an index;
+Textual 8.2.8's `select()` takes a *value* and does not validate existence,
+so with string option values the selection stayed empty and two tests could
+never pass — again caught only at implementer-run RED, and the failure first
+looked like a dialog bug rather than a wrong test call.
+
+**What to do.** Treat code embedded in plan docs as a sketch, never as
+verified: pin the library-version assumptions at the top of the plan, and
+never skip the implementer-run RED step — it is the only checkpoint that
+reveals whether the plan's code or its tests encode the wrong API. When a
+RED failure contradicts the plan, check the *test-side* API usage for
+version rot before hunting a bug in code that follows the plan.
+
+## A refusal path needs its own test, or it will lose both its name and its cleanup (task-32243, 2026-09-11)
+
+Library ▸ Notes lasting sync shipped on 2026-08-21 with a working happy path and
+a refusal path no test ever entered. `grep root_lease_unavailable Tests/` and
+`grep root_discovery_incomplete Tests/` both returned zero hits for three weeks.
+Two independent defects lived there the whole time, and both are the same shape:
+
+- `_ensure_lease` published a status to the store *before* returning the falsy
+  value its caller turned into `RuntimeError("root_lease_unavailable")`. For a
+  setup review the root is not in the store yet, so the publish raised
+  `NotesDeviceStateError: The requested sync root does not exist` and the honest,
+  named refusal was destroyed by a secondary crash on its way out.
+- `review_setup` popped its `_root_paths` entry only on the branch where
+  `_ensure_lease` *returned* falsy. A raise skipped the pop, so the leaked entry
+  made the coordinator refuse the same folder as `lasting_root_overlap` on every
+  later attempt — for the rest of the session, invisibly, even after the user
+  fixed the real cause. Only a restart cleared it.
+
+Both are invisible to a happy-path suite, and both are the kind of thing a
+reviewer reads straight past: the publish looks like ordinary status reporting,
+and the pop looks like it is on the failure path. The generalisation:
+
+**On any path that refuses, write the test that refuses.** Not a test that the
+error type is raised — a test that (a) the error carries the reason the code
+went to the trouble of computing, and (b) the second attempt reaches the same
+decision a fresh process would. (b) is the one that catches leaked state, and
+nothing else does: one call in isolation passes either way.
+
+Two corollaries worth keeping:
+
+- **Anything you write before you raise can raise first.** A guard that reports,
+  persists, or publishes before it fails has two exits, and the one you did not
+  write the test for is the one users will hit.
+- **Cleanup belongs on one path, not on each failure branch.** The fix here was
+  not a second pop next to the raise — it was moving the lease check inside the
+  `except` block that already released the setup authority for the *other*
+  failure. Two half-cleanups is the bug; one release for every failure is the
+  fix, and it is the smaller diff.
 
 
 ### A Library canvas swallows a harness press while it is hidden — it looks like "the feature never ran" (2026-09-11)
