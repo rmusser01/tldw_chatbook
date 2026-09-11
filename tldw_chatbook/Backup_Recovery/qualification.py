@@ -10,6 +10,30 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
+def release_capability(
+    *,
+    helper: bool,
+    owner_coverage: bool,
+    admission: bool,
+    archive: bool,
+    native_publish: bool,
+    restore: bool,
+    product_flow: bool,
+) -> bool:
+    """Combine demonstrated release gates; this supplies no native evidence."""
+    return all(
+        (
+            helper,
+            owner_coverage,
+            admission,
+            archive,
+            native_publish,
+            restore,
+            product_flow,
+        )
+    )
+
+
 # Darwin's statfs64 ABI from the installed sys/mount.h; no pathname shell probe.
 class _StatFS(ctypes.Structure):
     _fields_ = [
