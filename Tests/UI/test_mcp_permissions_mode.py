@@ -162,6 +162,12 @@ class PermissionsModeApp(ConsolidatedCSSApp):
     def on_mcp_permissions_mode_state_cycle_requested(self, event) -> None:
         self.events.append(event)
 
+    def on_mcp_permissions_mode_bulk_state_requested(self, event) -> None:
+        self.events.append(event)
+
+    def on_mcp_permissions_mode_bulk_clear_requested(self, event) -> None:
+        self.events.append(event)
+
     def on_mcp_permissions_mode_kill_switch_toggled(self, event) -> None:
         self.events.append(event)
 
@@ -689,7 +695,8 @@ async def test_legend_line_renders_fixed_marker_key():
         legend = str(app.query_one("#mcp-perm-legend", Static).renderable)
         assert legend == (
             "• override · ⚠ definition changed · ⚑ high-risk floor · "
-            "Space cycles Inherit → Ask → Allow → Off"
+            "Space cycles Inherit → Ask → Allow → Off · shift+space bulk "
+            "set · C clears overrides (visible rows only)"
         )
 
 
@@ -736,7 +743,8 @@ async def test_update_matrix_with_no_gate_breadcrumb_shows_bare_legend():
         legend = str(app.query_one("#mcp-perm-legend", Static).renderable)
         assert legend == (
             "• override · ⚠ definition changed · ⚑ high-risk floor · "
-            "Space cycles Inherit → Ask → Allow → Off"
+            "Space cycles Inherit → Ask → Allow → Off · shift+space bulk "
+            "set · C clears overrides (visible rows only)"
         )
 
 
@@ -1608,3 +1616,96 @@ async def test_update_matrix_renders_discovery_hint_line():
         await pilot.pause()
         legend = str(app.query_one("#mcp-perm-legend", Static).renderable)
         assert "no tools yet" not in legend
+
+
+# -- Wave F (2026-09-11 MCP Hub UX program, ADR-149): bulk actions --------
+
+
+@pytest.mark.asyncio
+async def test_shift_space_on_tool_row_posts_bulk_state_for_visible_tools():
+    """ADR-149: shift+space posts ONE BulkStateRequested carrying the
+    server's visible tool rows and the cursor row's own next cycled state
+    (Wave B order: first press from Inherit = Ask)."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        rows = [
+            _global_row(),
+            _server_row(server_key="local:docs", server_label="docs"),
+            _tool_row(server_key="local:docs", server_label="docs", tool_name="fetch"),
+            _tool_row(server_key="local:docs", server_label="docs", tool_name="search"),
+        ]
+        await canvas.update_matrix(rows, kill_switch=False, preview="")
+        await pilot.pause()
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=2)
+        await pilot.press("shift+space")
+        await pilot.pause()
+
+        assert len(app.events) == 1
+        event = app.events[0]
+        assert isinstance(event, MCPPermissionsMode.BulkStateRequested)
+        assert event.server_key == "local:docs"
+        assert sorted(event.tool_names) == ["fetch", "search"]
+        assert event.new_state == "ask"  # Wave B: cycle_ui_state(None) == "ask"
+
+
+@pytest.mark.asyncio
+async def test_bulk_clear_posts_only_overridden_visible_rows():
+    """ADR-149: C posts BulkClearRequested with ONLY the server's visible
+    tool rows that currently hold an override (cycle_current not None)."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        rows = [
+            _global_row(),
+            _server_row(server_key="local:docs", server_label="docs"),
+            _tool_row(
+                server_key="local:docs",
+                server_label="docs",
+                tool_name="fetch",
+                cycle_current="allow",
+            ),
+            _tool_row(server_key="local:docs", server_label="docs", tool_name="search"),
+        ]
+        await canvas.update_matrix(rows, kill_switch=False, preview="")
+        await pilot.pause()
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=2)
+        await pilot.press("C")
+        await pilot.pause()
+
+        assert len(app.events) == 1
+        event = app.events[0]
+        assert isinstance(event, MCPPermissionsMode.BulkClearRequested)
+        assert event.server_key == "local:docs"
+        assert list(event.tool_names) == ["fetch"]
+
+
+@pytest.mark.asyncio
+async def test_bulk_keys_noop_on_global_row_with_hint_not_toast():
+    """ADR-149: the global row owns no server -- both bulk keys no-op
+    against it via the legend hint line (the spec's 'existing hint
+    Static'), never a toast, and never a posted message."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix(
+            [_global_row()], kill_switch=False, preview=""
+        )
+        await pilot.pause()
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+
+        notified: list[object] = []
+        app.notify = lambda *a, **k: notified.append(a)  # type: ignore[method-assign]
+        await pilot.press("shift+space")
+        await pilot.press("C")
+        await pilot.pause()
+
+        assert not app.events
+        assert not notified
+        legend = str(app.query_one("#mcp-perm-legend", Static).renderable)
+        assert "Bulk actions need a server" in legend
