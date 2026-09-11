@@ -5009,18 +5009,17 @@ class ChatScreen(BaseAppScreen):
     ) -> ConsoleProviderSelection:
         """Return an owning-session provider selection without switching tabs.
 
-        Served from the per-pass memo inside a `_console_derivation_scope`
-        (task-15452): one draft-edit sync built this 7 times for the same
-        session.
+        Reuse an enclosing derivation memo, or share config reads only for
+        this synchronous selection. The next independent call remains fresh.
         """
-        memo = self._console_derivation_memo
-        memo_key = ("provider_selection", session_id)
-        if memo is not None and memo_key in memo:
-            return memo[memo_key]
-        selection = self._build_console_provider_selection_uncached(session_id)
-        if memo is not None:
+        with self._console_derivation_scope():
+            memo = self._console_derivation_memo
+            memo_key = ("provider_selection", session_id)
+            if memo_key in memo:
+                return memo[memo_key]
+            selection = self._build_console_provider_selection_uncached(session_id)
             memo[memo_key] = selection
-        return selection
+            return selection
 
     def _build_console_provider_selection_uncached(
         self, session_id: str | None = None
