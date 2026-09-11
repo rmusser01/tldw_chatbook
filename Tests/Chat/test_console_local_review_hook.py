@@ -1547,3 +1547,43 @@ def test_hook_passes_rationale_onto_local_pending_rows(tmp_path):
     )
     assert seen[0][0].rationale == "Listing the workspace to find the config"
     assert seen[0][1].rationale == ""
+
+
+def test_a_no_app_headless_round_is_not_recorded_as_a_local_user_denial(tmp_path):
+    """task-32280 (Qodo #2597 #8): `request_mcp_approvals` fails CLOSED when
+    no app is wired -- no card is ever shown, so no user decides anything.
+    It returned a bare `{key: "deny"}` dict, which `approval_was_unanswered`
+    reads as "answered", so THIS hook wrote `record_user_denial()` and the
+    local audit trail claimed a person pressed Deny.
+
+    Driven through the REAL `request_mcp_approvals` (not a stub returning
+    the same shape), because the bug lived in what that method returns.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import ApprovalDecisions
+
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=object()
+    )
+    assert controller.app is None  # the branch under test
+
+    p = provider(ASK, tmp_path)
+    denials: list[str] = []
+    p.record_user_denial = denials.append
+
+    seen: list[dict] = []
+
+    def _headless_round(pending):
+        decisions = controller.request_mcp_approvals(pending)
+        seen.append(decisions)
+        return decisions
+
+    hook = build_local_review_hook(p, _headless_round)
+    verdicts = hook(
+        [ToolCall(name="fs_list", args={"path": "."}, call_id="call-1")], RUN
+    )
+
+    # Fails closed, exactly as before.
+    assert verdicts["call-1"] == USER_DENIED_REFUSAL.format(name="fs_list")
+    assert isinstance(seen[0], ApprovalDecisions)
+    assert seen[0].unresolved_keys == frozenset({"call-1"})
+    assert denials == [], "a headless fail-closed deny was audited as the user's"

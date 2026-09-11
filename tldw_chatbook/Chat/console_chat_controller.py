@@ -13098,7 +13098,20 @@ class ConsoleChatController:
         if not unique_keys:
             return {}
         if self.app is None:
-            return {key: "deny" for key in unique_keys}
+            # Qodo #2597 #8: no UI is wired, so no card can be shown and
+            # nobody can answer -- this fails CLOSED, but it is NOT a user
+            # denial. Returned as a bare dict it looked exactly like one to
+            # `approval_was_unanswered()`, and both review hooks then wrote
+            # a `record_user_denial()` audit row claiming a person picked
+            # Deny. Every key here is unresolved, by construction.
+            # No `denied-unresolved` audit row is written (or possible)
+            # here: the execution log is reached through
+            # `self.app.unified_mcp_service`, and this branch exists
+            # precisely because there is no app. `unresolved_keys` is what
+            # keeps the hooks from inventing a user decision instead.
+            headless = ApprovalDecisions({key: "deny" for key in unique_keys})
+            headless.unresolved_keys = frozenset(unique_keys)
+            return headless
         event = threading.Event()
         decisions: dict[str, str] = {}
         round_id = str(uuid4())
