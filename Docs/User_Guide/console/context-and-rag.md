@@ -674,10 +674,12 @@ send — they used to display as staged while delivering nothing. Notes
 send a real excerpt of the note body; media and conversation handoffs
 currently send only a short generic label naming the item (e.g. "Media
 staged: \<title\>"), not an excerpt of the content itself — upgrading
-that to a real excerpt is still open (task-2376). A few other handoff
-kinds (skills, watchlists/collections snapshots, quizzes, personas) can
-still show as staged while the model receives nothing at all for them —
-that gap is also still open (task-2375).
+that to a real excerpt is still open (task-2376). Other handoff kinds
+(skills, watchlists/collections snapshots, quizzes, personas) cannot
+reach the model at all yet: their Sources rows render **Listed — not
+sent** (expanding a row says so explicitly) instead of Ready, because
+the send-side capture only accepts notes, media, and conversation
+sources (task-2375 tracks teaching capture the rest).
 
 To gather evidence *before* sending, use the Inspector's **Live work
 sources** card: type a question into "Ask Library sources before sending"

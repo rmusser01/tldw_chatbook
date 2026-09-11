@@ -23,6 +23,37 @@ SUBSTRING_SECRET_METADATA_KEYS = frozenset(
 )
 
 EVIDENCE_STATUSES = frozenset({"available", "blocked", "missing", "stale", "unknown"})
+
+#: Source types the send-side normalizer
+#  (``RAG_Search.local_citation_capture._SOURCE_ALIASES``) accepts. A
+# staged reference with an "available" status but a source_type OUTSIDE
+# this set renders in the tray but is REJECTED on send -- task-2375's
+# "staged while the model receives nothing" class (skills-context,
+# wc-context, and any future handoff kind). Keep in sync with that
+# allowlist; mirrored here (rather than imported) because the capture
+# module's mapping is private and Chat must not depend on RAG_Search
+# internals (the sync direction is tested below).
+DELIVERABLE_EVIDENCE_SOURCE_TYPES = frozenset(
+    {"media", "media_db", "media-db", "note", "notes", "conversation",
+     "conversations", "chat", "chat_history", "chat-history"}
+)
+
+
+def reference_can_deliver(reference: "EvidenceReference") -> bool:
+    """Return whether a reference's source_type survives send-side capture.
+
+    Args:
+        reference: Staged evidence reference.
+
+    Returns:
+        True when the source type is in the normalizer's allowlist (the
+        reference's content can reach the model); False when it is a
+        listed-only handoff kind (TASK-32330).
+    """
+    return (
+        str(reference.source_type or "").strip().lower()
+        in DELIVERABLE_EVIDENCE_SOURCE_TYPES
+    )
 CITATION_STATUSES = frozenset(
     {"validated", "blocked", "unknown", "stale", "missing", "uncited"}
 )

@@ -119,6 +119,18 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
                         row.snippet or "No snippet available.",
                         markup=False,
                     ),
+                    *(
+                        # TASK-32330: listed-only rows state what happens.
+                        [
+                            Static(
+                                "This handoff kind is listed for the run; "
+                                "its content is not sent to the model.",
+                                markup=False,
+                            )
+                        ]
+                        if row.status == "listed"
+                        else []
+                    ),
                     Static(
                         f"Authority: {row.authority}",
                         markup=False,
