@@ -3535,6 +3535,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_sync_counter: int = 0
         self._library_notes_sync_active_token: int | None = None
         self._library_notes_sync_running: bool = False
+        self._library_notes_pairing_task: asyncio.Task | None = None
         self._library_notes_auto_sync_timer: Timer | None = None
         # The folder box's live (possibly uncommitted) text. Typing updates
         # only this field -- persisting to the TOML config on every
@@ -5956,6 +5957,7 @@ class LibraryScreen(BaseAppScreen):
         """
         # A local thread read may outlive this screen. Revoke apply authority
         # before any awaited shutdown work can yield back to its completion.
+        self._supersede_library_notes_navigation()
         self._library_onboarding_generation += 1
         self._library_conversation_request_generation += 1
         self._invalidate_library_prompts_browse()
@@ -25555,6 +25557,90 @@ class LibraryScreen(BaseAppScreen):
         else:
             self._cancel_library_notes_auto_sync_timer()
         _sync_library_canvas(self, "notes")
+
+    @on(Button.Pressed, "#library-notes-sync-review")
+    def handle_library_notes_pairing_review(self, event: Button.Pressed) -> None:
+        """Review the actual selected folder without starting a sync pass."""
+        event.stop()
+        if self._library_notes_sync_active_token is not None:
+            return
+        self.run_worker(self._review_library_notes_pairing(), group="notes-pairing-review")
+
+    async def _review_library_notes_pairing(self) -> None:
+        from sqlite3 import Error as SQLiteError
+
+        from ...DB.ChaChaNotes_DB import CharactersRAGDBError
+        from ...Notes.sync_service import NotesSyncService
+        from ...Widgets.Library.notes_recovery_dialog import NotesRecoveryDialog
+
+        try:
+            folder = validate_path_simple(
+                Path(self._library_notes_sync_folder()).expanduser(), require_exists=True
+            )
+            notes = getattr(self.app_instance, "notes_service", None)
+            db = self._resolve_library_notes_sync_db()
+            if not folder.is_dir() or notes is None or db is None:
+                raise ValueError("Notes folder or service unavailable")
+            service = NotesSyncService(notes_service=notes, db=db)
+            user = self._library_notes_user_id()
+            navigation = self._library_notes_navigation_generation
+
+            def current() -> bool:
+                return bool(
+                    self.is_attached and self._library_notes_view == "sync"
+                    and navigation == self._library_notes_navigation_generation
+                    and Path(self._library_notes_sync_folder()).expanduser() == folder
+                    and self._library_notes_user_id() == user
+                    and getattr(self.app_instance, "notes_service", None) is notes
+                    and self._resolve_library_notes_sync_db() is db
+                )
+
+            async def call(method, *args):
+                if not current() or self._library_notes_sync_active_token is not None:
+                    raise ValueError("Notes selection changed or is busy")
+                self._library_notes_sync_counter += 1
+                token = self._library_notes_sync_counter
+                self._library_notes_sync_active_token = token
+                self._library_notes_sync_running = True
+
+                def invoke():
+                    from ...Backup_Recovery.local_content_lifetime import (
+                        worker_databases,
+                    )
+
+                    with notes._db_lock:
+                        targets = (
+                            db, notes.unified_db_template, notes._db_instances.get(user)
+                        )
+                    with worker_databases(set(targets)):
+                        return method(*args)
+
+                task = asyncio.create_task(self._run_library_service_call(
+                    invoke, isolate_in_worker=True
+                ))
+                self._library_notes_pairing_task = task
+
+                def retired(done):
+                    if not done.cancelled():
+                        done.exception()
+                    self._library_notes_pairing_task = None
+                    self._finish_library_notes_sync_run(token)
+
+                task.add_done_callback(retired)
+                return await asyncio.shield(task)
+
+            # Review never resumes a retained automatic schedule.
+            self._cancel_library_notes_auto_sync_timer()
+            self._library_notes_sync_auto = False
+            review = await call(service.preview_recovery, folder, user)
+            if current():
+                async def approve(expected):
+                    return await call(service.approve_recovery, expected, user)
+                await self.app.push_screen(NotesRecoveryDialog(
+                    review, current=current, approve=approve
+                ))
+        except (OSError, ValueError, RuntimeError, SQLiteError, CharactersRAGDBError) as error:
+            self._notify_library_notes_sync_warning(f"Pairing review unavailable: {error}")
 
     @on(Button.Pressed, "#library-notes-sync-run")
     def handle_library_notes_sync_run(self, event: Button.Pressed) -> None:

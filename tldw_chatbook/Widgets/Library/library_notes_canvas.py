@@ -1473,6 +1473,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     compact=True,
                     disabled=sync_state.running,
                 )
+            yield Button(
+                "Review recovered pairing…",
+                id="library-notes-sync-review",
+                classes="library-canvas-action",
+                compact=True,
+                disabled=sync_state.running,
+            )
             # ``sync_status_line``'s own tested contract is that a failed status
             # always starts with the literal prefix "failed" -- safe to key the
             # error styling off that prefix here.

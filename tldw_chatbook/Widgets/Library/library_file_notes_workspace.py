@@ -937,6 +937,8 @@ class LibraryFileNotesWorkspace(Vertical):
         self._runtime_lock = Lock()
         self._service_lock = RLock()
         self._root_generation = 0
+        self._pairing_review_generation = 0
+        self._pairing_review_task: asyncio.Task | None = None
         self._root_transitioning = False
         self._path_transitioning = False
         self._shutdown = False
@@ -1191,6 +1193,9 @@ class LibraryFileNotesWorkspace(Vertical):
                 id="file-notes-choose-root",
                 compact=True,
             )
+            yield Button(
+                "Review recovered pairing…", id="file-notes-recovery-review", compact=True,
+            )
         with Horizontal(id="file-notes-body"):
             with Vertical(id="file-notes-navigator"):
                 with Horizontal(id="file-notes-search-row"):
@@ -1391,6 +1396,7 @@ class LibraryFileNotesWorkspace(Vertical):
 
     def on_unmount(self) -> None:
         """Pause timers; Textual cancels node workers during removal."""
+        self._pairing_review_generation += 1
         self._active = False
         if self._save_state == "saving":
             self._save_state = "dirty"
@@ -4981,6 +4987,74 @@ class LibraryFileNotesWorkspace(Vertical):
                 return
             self.select_deleted(relative_path)
 
+    @on(Button.Pressed, "#file-notes-recovery-review")
+    def _request_pairing_review(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._pairing_review_task is not None or self._path_transitioning:
+            return
+        self.run_worker(self._review_pairing(), group="file-notes-pairing-review")
+
+    async def _review_pairing(self) -> None:
+        from sqlite3 import Error as SQLiteError
+
+        from .notes_recovery_dialog import NotesRecoveryDialog
+
+        service = self._service
+        generation = self._root_generation
+        binding = self._session_binding
+        self._pairing_review_generation += 1
+        review_generation = self._pairing_review_generation
+        if service is None or binding is None:
+            self._set_action_status("Choose a local folder before reviewing pairing.")
+            return
+
+        def current() -> bool:
+            return (
+                not self._path_result_is_stale(service, generation)
+                and self._session_binding == binding
+                and self._pairing_review_generation == review_generation
+            )
+
+        async def call(method, *args):
+            if not current():
+                raise ValueError("File Notes selection changed")
+            transition = self._hold_path_transition()
+            if transition.__enter__() is None:
+                transition.__exit__(None, None, None)
+                raise ValueError("File Notes folder is busy")
+
+            async def native():
+                try:
+                    return await asyncio.to_thread(method, *args)
+                finally:
+                    transition.__exit__(None, None, None)
+
+            task = asyncio.create_task(native())
+            self._pairing_review_task = task
+
+            def retired(done):
+                if not done.cancelled():
+                    done.exception()
+                self._pairing_review_task = None
+
+            task.add_done_callback(retired)
+            return await asyncio.shield(task)
+
+        try:
+            # Approval does not trigger the periodic replica reconciliation.
+            if self._poll_timer is not None:
+                self._poll_timer.pause()
+            review = await call(service.preview_recovery)
+            if current():
+                async def approve(expected):
+                    return await call(service.approve_recovery, expected)
+                await self.app.push_screen(NotesRecoveryDialog(
+                    review, current=current, approve=approve
+                ))
+        except (OSError, ValueError, RuntimeError, SQLiteError) as error:
+            if current():
+                self._set_action_status(f"Pairing review unavailable: {error}")
+
     @on(Button.Pressed, "#file-notes-choose-root")
     async def _choose_root(self, event: Button.Pressed) -> None:
         event.stop()
@@ -6808,3 +6882,5 @@ class LibraryFileNotesWorkspace(Vertical):
     async def _refresh_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         await self.refresh_files()
+        if self._poll_timer is not None:
+            self._poll_timer.resume()
