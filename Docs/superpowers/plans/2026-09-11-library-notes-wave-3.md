@@ -106,7 +106,7 @@
 ### Task 10: Idea — capture a Console answer into a Library note
 
 **Tasks:** 32146
-**Files:** `tldw_chatbook/Chat/console_chat_controller.py` or the Console message action seam (`chat_message_enhanced.py` actions), `tldw_chatbook/Notes/` create path with provenance keywords, `library_notes_controller.py` (open the new note), `Docs/User_Guide/console/*.md` and `library/notes.md`.
+**Files (corrected after #2591 / TASK-32312):** `tldw_chatbook/Chat/console_message_actions.py` (the action registry — a new row), `tldw_chatbook/UI/Console_Modules/message.py` (`ConsoleMessageController` handler, injected like `save_console_video_copy`), `tldw_chatbook/Widgets/Console/console_transcript.py` + `console_message_more_menu.py` (menu and route), the Save-as flow (`console_save_as_modal.py`, `_console_save_as_destinations`) as the shape for receipt + Open-note hand-off, `tldw_chatbook/Notes/` create path with provenance keywords, `Docs/User_Guide/console/*.md` and `library/notes.md`. NOT `chat_message_enhanced.py` (legacy Chat tab) and NOT `console_chat_controller.py` (the send/turn controller).
 **Design:** a message action "Save as note" creating a Database note whose title is the first line, body the answer, keywords `console`, `conversation:<id>`; a receipt with "Open note"; no LLM call. Read the task's ACs. Tests on the real action route; live capture from Console → Library; guides; stamps; inventory check for any new log call.
 
 ### Task 11: Backlinks persistence
