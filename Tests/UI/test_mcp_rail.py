@@ -846,3 +846,59 @@ def test_short_state_legend_words_cover_every_state():
 
     for label in STATE_LABELS.values():
         assert label.lower() in _SHORT_STATE_LABELS
+
+
+# -- Wave D (2026-09-11 MCP Hub UX program, ADR-148): rail IA split --------
+
+
+def _agent_snap():
+    from tldw_chatbook.MCP.readiness import agent_tools_readiness
+
+    return agent_tools_readiness(enabled=True)
+
+
+class AgentRailApp(RailApp):
+    def compose(self) -> ComposeResult:
+        yield MCPRail(
+            source="local",
+            snapshots=[_snap("local:docs", "docs")],
+            selected_server_key=None,
+            scope_options=[("Personal", "personal")],
+            scope_value="personal",
+            scope_ref_options=[],
+            scope_ref_value=None,
+            agent_snapshot=_agent_snap(),
+            id="mcp-rail",
+        )
+
+
+@pytest.mark.asyncio
+async def test_rail_renders_agent_tools_section_and_row():
+    app = AgentRailApp()
+    async with app.run_test() as pilot:
+        headings = [
+            str(widget.renderable)
+            for widget in app.query(".mcp-rail-heading")
+        ]
+        assert headings == ["Source", "Servers", "Agent tools"]
+        rows = list(app.query("Button.mcp-rail-row"))
+        labels = [str(row.label) for row in rows]
+        assert any("Agent tools" in label for label in labels)
+        agent_button = next(
+            row for row in rows if "Agent tools" in str(row.label)
+        )
+        await pilot.click(f"#{agent_button.id}")
+        await pilot.pause()
+        assert app.events, "agent row click must post ServerSelected"
+        assert app.events[-1].server_key == "agent:builtin"
+
+
+@pytest.mark.asyncio
+async def test_rail_omits_agent_section_without_snapshot():
+    app = RailApp()  # no agent_snapshot kwarg
+    async with app.run_test() as pilot:
+        headings = [
+            str(widget.renderable)
+            for widget in app.query(".mcp-rail-heading")
+        ]
+        assert "Agent tools" not in headings

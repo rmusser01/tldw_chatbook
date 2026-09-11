@@ -271,6 +271,7 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
         scope_value: str,
         scope_ref_options: list[tuple[str, str]],
         scope_ref_value: str | None,
+        agent_snapshot: ReadinessSnapshot | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -281,6 +282,10 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
         self.scope_value = scope_value
         self.scope_ref_options = scope_ref_options
         self.scope_ref_value = scope_ref_value
+        # ADR-148 Wave D: the in-process agent tool catalog's rail row --
+        # rendered as its own section AFTER the server rows, never inside
+        # `snapshots` (the servers overview/callouts stay server-only).
+        self.agent_snapshot = agent_snapshot
         self._row_keys: list[str | None] = []
         # The value each scope/scope-ref Select was actually constructed
         # with on the most recent compose() (post-clamp — see compose()'s
@@ -326,6 +331,7 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
         scope_value: str,
         scope_ref_options: list[tuple[str, str]],
         scope_ref_value: str | None,
+        agent_snapshot: ReadinessSnapshot | None = None,
     ) -> None:
         self.source = source
         self.snapshots = snapshots
@@ -334,6 +340,7 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
         self.scope_value = scope_value
         self.scope_ref_options = scope_ref_options
         self.scope_ref_value = scope_ref_value
+        self.agent_snapshot = agent_snapshot
         self.refresh(recompose=True)
 
     def compose(self) -> ComposeResult:
@@ -379,9 +386,14 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
             if layout_width <= 0
             else max(8, min(_MAX_ROW_LABEL, layout_width - _ROW_CHROME))
         )
-        if self.snapshots:
+        legend_snaps = list(self.snapshots)
+        if self.agent_snapshot is not None:
+            legend_snaps.append(self.agent_snapshot)
+        if legend_snaps:
             yield Static(
-                _present_states_legend(self.snapshots, short=budget < _LEGEND_SHORT_BUDGET),
+                _present_states_legend(
+                    legend_snaps, short=budget < _LEGEND_SHORT_BUDGET
+                ),
                 id="mcp-rail-state-legend",
                 markup=False,
             )
@@ -447,6 +459,32 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
             row.tooltip = escape_markup(snap.message or snap.label)
             row.set_class(snap.server_key == self.selected_server_key, "is-active")
             yield row
+        # ADR-148 Wave D: the in-process agent tool catalog gets its own
+        # rail section -- one row, keyed by the store identity
+        # permission_store.BUILTIN_TOOL_SERVER_KEY ("agent:builtin"), so
+        # no rail row ever shares a server_key with the built-in server.
+        if self.agent_snapshot is not None:
+            yield Static(
+                "Agent tools", classes="destination-section mcp-rail-heading"
+            )
+            self._row_keys.append(self.agent_snapshot.server_key)
+            agent_row = Button(
+                _row_label(self.agent_snapshot, pad_width),
+                id=f"{MCP_RAIL_ROW_PREFIX}{len(self._row_keys) - 1}",
+                classes=(
+                    "mcp-rail-row console-action-subdued "
+                    f"{STATE_CSS_CLASSES[self.agent_snapshot.state]}"
+                ),
+                compact=True,
+            )
+            agent_row.tooltip = escape_markup(
+                self.agent_snapshot.message or self.agent_snapshot.label
+            )
+            agent_row.set_class(
+                self.agent_snapshot.server_key == self.selected_server_key,
+                "is-active",
+            )
+            yield agent_row
         if self.source == "server":
             with Vertical(id="mcp-rail-scope"):
                 yield Label("Scope", classes="form-label")
