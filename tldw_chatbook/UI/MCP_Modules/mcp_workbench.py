@@ -24,6 +24,9 @@ from textual.widgets import ContentSwitcher, DataTable
 from textual.worker import Worker
 
 from tldw_chatbook.Agents.builtin_tool_gate import (
+    LOCAL_TOOLS_MASTER_KEY,
+)
+from tldw_chatbook.Agents.builtin_tool_gate import (
     BuiltinPermRow,
     LOCAL_TOOLS_DEFAULT_ENABLED,
     builtin_permission_rows,
@@ -73,6 +76,8 @@ from tldw_chatbook.MCP.permission_store import (
     resolve_builtin_state,
 )
 from tldw_chatbook.MCP.readiness import (
+    AGENT_TOOLS_SERVER_KEY,
+    agent_tools_readiness,
     HubAction,
     ReadinessSnapshot,
     ReadinessState,
@@ -623,6 +628,10 @@ class MCPWorkbench(Container):
         self._scope: str = "personal"
         self._scope_ref: str | None = None
         self._snapshots: list[ReadinessSnapshot] = []
+        # ADR-148 Wave D: the Agent tools rail row's snapshot -- rides
+        # BESIDE _snapshots so the overview table, callouts, worst-state
+        # summary, and preselection heuristics stay server-only.
+        self._agent_snapshot: ReadinessSnapshot | None = None
         # T6: raw local-profile catalog records keyed by profile_id, kept in
         # sync with `_snapshots` by `_collect_snapshots()` -- readiness
         # snapshots don't carry every field the add/edit form needs
@@ -847,6 +856,7 @@ class MCPWorkbench(Container):
                 scope_value=self._scope,
                 scope_ref_options=[],
                 scope_ref_value=self._scope_ref,
+                agent_snapshot=None,
                 id="mcp-hub-rail",
                 classes="destination-workbench-pane",
             )
@@ -1281,6 +1291,20 @@ class MCPWorkbench(Container):
         service = self._service()
         if self._source == "local":
             self._server_mutations_available = False
+            # ADR-148 Wave D: the agent-tools rail row is derived, not a
+            # server -- it rides beside _snapshots so the overview table,
+            # callouts, worst-state summary, and preselection heuristics
+            # stay server-only.
+            self._agent_snapshot = agent_tools_readiness(
+                enabled=coerce_bool_setting(
+                    get_cli_setting(
+                        "console",
+                        LOCAL_TOOLS_MASTER_KEY,
+                        LOCAL_TOOLS_DEFAULT_ENABLED,
+                    ),
+                    LOCAL_TOOLS_DEFAULT_ENABLED,
+                )
+            )
             snapshots.append(
                 builtin_readiness(
                     enabled=bool(get_cli_setting("mcp", "enabled", False)),
@@ -1368,6 +1392,13 @@ class MCPWorkbench(Container):
         for snap in self._snapshots:
             if snap.server_key == server_key:
                 return snap
+        # ADR-148 Wave D: the Agent tools rail row resolves from its own
+        # snapshot -- it is deliberately never in `_snapshots`.
+        if (
+            server_key == AGENT_TOOLS_SERVER_KEY
+            and self._agent_snapshot is not None
+        ):
+            return self._agent_snapshot
         return None
 
     def _display_snapshot(self, snapshot: ReadinessSnapshot) -> ReadinessSnapshot:
@@ -1454,6 +1485,7 @@ class MCPWorkbench(Container):
                 scope_value=self._scope,
                 scope_ref_options=[],
                 scope_ref_value=self._scope_ref,
+                agent_snapshot=self._agent_snapshot,
             )
             canvas = self.query_one(MCPServersMode)
             await canvas.update_overview(

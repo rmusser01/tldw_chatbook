@@ -288,8 +288,8 @@ async def test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers():
         await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
         assert workbench.active_mode == "servers"
-        # builtin + docs rows (+ "All servers")
-        assert len(list(app.query("Button.mcp-rail-row"))) == 3
+        # builtin + docs rows (+ "All servers" + the Agent tools row)
+        assert len(list(app.query("Button.mcp-rail-row"))) == 4
         canvas = app.query_one(MCPServersMode)
         assert canvas.query_one("#mcp-servers-overview").display
 
@@ -352,7 +352,11 @@ async def test_workbench_at_100x30_keeps_server_master_switch_reachable(monkeypa
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         await app.workers.wait_for_complete()
-        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}1")
+        # ADR-148 Wave D: gates live in the AGENT row's detail. Selected via
+        # the shared path -- at 100x30 the fourth rail row can sit below the
+        # fold, and this test is about layout reachability, not click routing.
+        workbench = app.query_one(MCPWorkbench)
+        await workbench._select_server_key("agent:builtin")
         await pilot.pause()
 
         master_row = app.query_one("#mcp-gate-local_tools_enabled", Button)
@@ -991,7 +995,9 @@ async def test_builtin_flag_toggle_saves_setting_and_reloads_catalog(monkeypatch
     app = WorkbenchApp()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}1")  # builtin row
+        # ADR-148 Wave D: this test exercises the BUILT-IN server's [mcp]
+        # toggles, which stay in the built-in row's detail (row 1).
+        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}1")
         await pilot.pause()
         checkbox = app.query_one("#mcp-builtin-enabled", Checkbox)
         assert checkbox.value is True
@@ -1046,7 +1052,9 @@ async def test_builtin_expose_flag_toggle_saves_matching_key(monkeypatch):
     app = WorkbenchApp()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}1")  # builtin row
+        # ADR-148 Wave D: this test exercises the BUILT-IN server's [mcp]
+        # toggles, which stay in the built-in row's detail (row 1).
+        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}1")
         await pilot.pause()
         await pilot.click("#mcp-builtin-expose-resources")
         await pilot.pause()
@@ -1114,7 +1122,9 @@ async def test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog(monke
     app = WorkbenchApp()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}1")  # builtin row
+        # ADR-148 Wave D: gates live in the AGENT row's detail (row 3:
+        # All=0, builtin=1, docs=2, agent=3 under WorkbenchApp's records)
+        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}3")
         await pilot.pause()
 
         # The [console]-section master switch must save under ITS OWN
@@ -1224,7 +1234,9 @@ async def test_focus_is_preserved_across_a_gate_toggle_save_and_resync(monkeypat
     app = WorkbenchApp()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}1")  # builtin row
+        # ADR-148 Wave D: gates live in the AGENT row's detail (row 3:
+        # All=0, builtin=1, docs=2, agent=3 under WorkbenchApp's records)
+        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}3")
         await pilot.pause()
 
         first_gate_id = f"mcp-gate-{_GATEABLE_BUILTINS[0].gate_key}"
@@ -1270,7 +1282,9 @@ async def test_double_activation_of_a_gate_row_never_writes_an_mcp_key(monkeypat
     app = WorkbenchApp()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}1")  # builtin row
+        # ADR-148 Wave D: gates live in the AGENT row's detail (row 3:
+        # All=0, builtin=1, docs=2, agent=3 under WorkbenchApp's records)
+        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}3")
         await pilot.pause()
 
         gate_key = _GATEABLE_BUILTINS[0].gate_key
@@ -11652,3 +11666,70 @@ async def test_non_default_tool_policy_profile_shows_console_context_hint(tmp_pa
         text = str(hint.renderable)
         assert "Console" in text
         assert "Ask" in text
+
+
+# -- Wave D (2026-09-11 MCP Hub UX program, ADR-148): rail IA split --------
+
+
+@pytest.mark.asyncio
+async def test_agent_tools_rail_row_routes_to_agent_detail(monkeypatch):
+    """ADR-148 Wave D: the Agent tools rail row is selectable, opens the
+    agent detail (Tool gates visible, no [mcp] toggles), stays OUT of the
+    servers overview table, and scopes the Permissions preview to nothing
+    (the unscoped summary -- agent:builtin is never in the hub catalog)."""
+    monkeypatch.setattr(
+        mcp_workbench_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: default,
+    )
+    app = ProblemRecordsApp([])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+
+        # Not a server row: absent from the overview table...
+        table = app.query_one("#mcp-servers-table", DataTable)
+        table_keys = [
+            table.coordinate_to_cell_key((row, 0))[0].value
+            for row in range(table.row_count)
+        ]
+        assert "agent:builtin" not in table_keys
+        # ...but present in the rail and selectable.
+        await pilot.click("#mcp-rail-row-2")  # 0 All, 1 built-in, 2 agent
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert workbench._selected_server_key == "agent:builtin"
+        assert app.query_one("#mcp-servers-detail").display is True
+        assert list(app.query("#mcp-detail-tool-gates Checkbox"))
+        assert not list(app.query("#mcp-detail-builtin-toggles Checkbox"))
+
+        workbench.set_mode("permissions")
+        await pilot.pause()
+        preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
+        assert preview.startswith("global default:")
+
+
+@pytest.mark.asyncio
+async def test_agent_snapshot_state_follows_local_master_switch(monkeypatch):
+    monkeypatch.setattr(
+        mcp_workbench_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            True if key == "local_tools_enabled" else default
+        ),
+    )
+    app = ProblemRecordsApp([])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        from tldw_chatbook.MCP.readiness import ReadinessState
+
+        assert app.query_one(MCPWorkbench)._agent_snapshot is not None
+        assert (
+            app.query_one(MCPWorkbench)._agent_snapshot.state
+            is ReadinessState.READY
+        )
