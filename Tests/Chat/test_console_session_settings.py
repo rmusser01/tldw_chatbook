@@ -3359,54 +3359,83 @@ def test_summary_state_carries_structured_sampling_fields():
 def _registry_config() -> dict:
     return {
         "custom_endpoints": {
-            "gpu": {"display_name": "GPU llama", "family": "llama_cpp",
-                    "base_url": "http://192.168.1.5:8080"},
-            "paid": {"display_name": "Paid compat", "family": "openai_compatible",
-                     "base_url": "https://api.example.com/v1",
-                     "api_key_env": "PAID_KEY"},
+            "gpu": {
+                "display_name": "GPU llama",
+                "family": "llama_cpp",
+                "base_url": "http://192.168.1.5:8080",
+            },
+            "paid": {
+                "display_name": "Paid compat",
+                "family": "openai_compatible",
+                "base_url": "https://api.example.com/v1",
+                "api_key_env": "PAID_KEY",
+            },
         }
     }
 
+
 def test_custom_endpoint_readiness_is_family_readiness():
     readiness = build_console_settings_readiness(
-        ConsoleSessionSettings(provider="custom-ep:gpu", model="m",
-                               base_url="http://192.168.1.5:8080"),
-        app_config=_registry_config(), environ={})
+        ConsoleSessionSettings(
+            provider="custom-ep:gpu", model="m", base_url="http://192.168.1.5:8080"
+        ),
+        app_config=_registry_config(),
+        environ={},
+    )
     assert readiness.label == "Ready"
     assert readiness.native_send_supported is True
 
+
 def test_custom_endpoint_keyed_family_requires_key():
     readiness = build_console_settings_readiness(
-        ConsoleSessionSettings(provider="custom-ep:paid", model="m",
-                               base_url="https://api.example.com/v1"),
-        app_config=_registry_config(), environ={})
+        ConsoleSessionSettings(
+            provider="custom-ep:paid", model="m", base_url="https://api.example.com/v1"
+        ),
+        app_config=_registry_config(),
+        environ={},
+    )
     assert readiness.native_send_supported is False
 
+
 def test_provider_settings_resolves_custom_endpoint_aliases():
-    settings_view = custom_endpoint_provider_settings(_registry_config(), "custom-ep:paid")
+    settings_view = custom_endpoint_provider_settings(
+        _registry_config(), "custom-ep:paid"
+    )
     assert settings_view["api_base_url"] == "https://api.example.com/v1"
     assert settings_view["api_key_env"] == "PAID_KEY"
+
 
 def test_unresolvable_custom_endpoint_falls_back_to_generic_family():
     identity = resolve_console_provider_identity("custom-ep:ghost")
     assert identity.is_supported is True
     assert identity.execution_key == "custom"
 
+
 def test_provider_options_append_registry_entries_after_builtins():
-    options = build_console_provider_options({"openai": ["m"]}, app_config=_registry_config())
+    options = build_console_provider_options(
+        {"openai": ["m"]}, app_config=_registry_config()
+    )
     values = [o.value for o in options]
     assert values.index("custom") < values.index("custom-ep:gpu")
     labels = {o.value: o.label for o in options}
     assert labels["custom-ep:gpu"] == "GPU llama"
 
+
 def test_effective_configuration_resolves_custom_endpoint():
     effective = resolve_effective_chat_configuration(
-        _registry_config(), provider="custom-ep:paid", model=None)
+        _registry_config(), provider="custom-ep:paid", model=None
+    )
     assert effective.provider == "custom-ep:paid"
     assert effective.base_url == "https://api.example.com/v1"
 
+
 def test_custom_endpoint_sessions_survive_restart():
-    settings = ConsoleSessionSettings(provider="custom-ep:gpu", model="m",
-                                      base_url="http://192.168.1.5:8080")
-    assert console_session_endpoint_survives_restart(
-        settings, app_config=_registry_config(), environ={}) is True
+    settings = ConsoleSessionSettings(
+        provider="custom-ep:gpu", model="m", base_url="http://192.168.1.5:8080"
+    )
+    assert (
+        console_session_endpoint_survives_restart(
+            settings, app_config=_registry_config(), environ={}
+        )
+        is True
+    )

@@ -1165,15 +1165,22 @@ def _build_locked_default_mutation(
     # (that write is what makes "Save as default" boot into the entry).
     from tldw_chatbook.Chat.custom_endpoint_registry import (
         CUSTOM_ENDPOINT_ID_PREFIX,
+        split_custom_endpoint_id,
     )
 
-    registry_entry_provider = canonical_provider.startswith(
-        CUSTOM_ENDPOINT_ID_PREFIX.replace("-", "_")
-    )
-    if registry_entry_provider:
-        intent = replace(
-            intent,
-            endpoint_patch=None,
+    registry_slug = split_custom_endpoint_id(canonical_provider)
+    if registry_slug is not None and intent.action is (
+        ConsoleSettingsAction.SAVE_MODEL_DEFAULT
+    ):
+        # ADR-146: per-model generation defaults have no durable registry
+        # destination yet (the entry carries endpoint and model list only),
+        # so Save-as-model-default for a registry entry fails closed with a
+        # named reason instead of persisting an empty mutation that reports
+        # success. Make-new-chat-default remains supported via chat_defaults.
+        raise ValueError(
+            "Model defaults cannot be saved for a registry endpoint; the "
+            "entry under [custom_endpoints] is the endpoint and model "
+            "carrier. Use Make default for new chats, or edit the entry."
         )
     raw_section_name = _raw_provider_section_name(
         snapshot.raw_values,
@@ -1183,7 +1190,20 @@ def _build_locked_default_mutation(
     patch = intent.endpoint_patch
     endpoint_key: str | None = None
     readiness_config = snapshot.effective_values
-    if patch is not None:
+    if patch is not None and registry_slug is not None:
+        # ADR-146: a registry entry's endpoint edit previews against the
+        # ENTRY's base_url (the carrier the seam resolves), not an
+        # api_settings table keyed by a custom-ep id.
+        import copy
+
+        readiness_config = copy.deepcopy(dict(snapshot.effective_values))
+        entries = dict(readiness_config.get("custom_endpoints", {}))
+        if registry_slug in entries:
+            entry_view = dict(entries[registry_slug])
+            entry_view["base_url"] = patch.value.strip()
+            entries[registry_slug] = entry_view
+            readiness_config["custom_endpoints"] = entries
+    elif patch is not None:
         endpoint_key = _configured_endpoint_key(canonical_provider, raw_provider)
         effective_section_name = _raw_provider_section_name(
             snapshot.effective_values,
@@ -1233,16 +1253,30 @@ def _build_locked_default_mutation(
     )
     section_values: dict[tuple[str, ...], Mapping[str, object]] = {}
     delete_keys: dict[tuple[str, ...], tuple[str, ...]] = {}
-    if not registry_entry_provider:
+    if registry_slug is None:
         section_values[profile_path] = profile_values
         delete_keys[profile_path] = tuple(profile_deletes)
     if intent.action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT:
         section_values[("chat_defaults",)] = {
-            "provider": canonical_provider,
+            # Registry ids persist in their canonical dashed spelling
+            # (``custom-ep:<slug>``); the underscore form only ever exists
+            # transiently as provider_config_key's canonicalization.
+            "provider": (
+                f"{CUSTOM_ENDPOINT_ID_PREFIX}{registry_slug}"
+                if registry_slug is not None
+                else canonical_provider
+            ),
             "model": literal_model,
         }
 
-    if patch is not None:
+    if patch is not None and registry_slug is not None:
+        # ADR-146: an endpoint edit for a registry entry updates the
+        # entry's own base_url (the section write merges, preserving the
+        # entry's other keys); never mint an api_settings table for it.
+        section_values[("custom_endpoints", registry_slug)] = {
+            "base_url": patch.value.strip()
+        }
+    elif patch is not None:
         assert endpoint_key is not None
         section_values[("api_settings", raw_section_name)] = {
             endpoint_key: patch.value.strip()

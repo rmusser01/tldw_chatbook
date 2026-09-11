@@ -1736,11 +1736,93 @@ def test_make_default_for_registry_entry_writes_only_chat_defaults(
     assert outcome.runtime_published is True
     saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
     assert saved["chat_defaults"] == {
-        "provider": "custom_ep:vale",
+        "provider": "custom-ep:vale",
         "model": LITERAL_MODEL,
     }
     assert "custom_ep:vale" not in saved.get("api_settings", {})
     assert saved["api_settings"]["custom"] == {"api_key": "test-key"}
-    assert saved["custom_endpoints"]["vale"]["base_url"] == (
-        "http://127.0.0.1:9999/v1"
+    assert saved["custom_endpoints"]["vale"]["base_url"] == ("http://127.0.0.1:9999/v1")
+
+
+def test_registry_entry_endpoint_patch_updates_the_entry_base_url(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """An authorized endpoint edit for a registry entry updates the entry.
+
+    Args:
+        tmp_path: Temporary directory holding the isolated CLI config file.
+        monkeypatch: Pytest fixture redirecting ``TLDW_CONFIG_PATH``.
+    """
+    config_path = tmp_path / "config.toml"
+    _write_config(
+        config_path,
+        {
+            "custom_endpoints": {
+                "gpu": {
+                    "display_name": "GPU llama",
+                    "base_url": "http://192.168.1.5:8080",
+                    "family": "llama_cpp",
+                }
+            },
+            "api_settings": {"llama_cpp": {}},
+            "chat_defaults": {"provider": "anthropic", "model": "old-model"},
+        },
     )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    outcome = apply_console_default_intent(
+        replace(
+            _intent(
+                action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+                field_mask=FULL_MODEL_DEFAULT_FIELDS,
+                endpoint_patch=ConsoleEndpointPatch(
+                    value="http://192.168.1.9:8080",
+                    bound_provider_config_key="custom-ep:gpu",
+                    dirty=True,
+                    checked=True,
+                ),
+            ),
+            provider_config_key="custom-ep:gpu",
+        )
+    )
+
+    assert outcome.runtime_published is True
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["custom_endpoints"]["gpu"]["base_url"] == "http://192.168.1.9:8080"
+    assert saved["custom_endpoints"]["gpu"]["display_name"] == "GPU llama"
+    assert "api_settings" not in saved.get("custom_ep", {})
+    assert "custom-ep:gpu" not in saved.get("api_settings", {})
+
+
+def test_registry_entry_save_model_default_fails_closed(tmp_path, monkeypatch) -> None:
+    """Save-as-model-default for a registry entry refuses loudly.
+
+    Args:
+        tmp_path: Temporary directory holding the isolated CLI config file.
+        monkeypatch: Pytest fixture redirecting ``TLDW_CONFIG_PATH``.
+    """
+    config_path = tmp_path / "config.toml"
+    before = {
+        "custom_endpoints": {
+            "vale": {
+                "display_name": "Vale endpoint",
+                "base_url": "http://127.0.0.1:9999/v1",
+                "family": "openai_compatible",
+            }
+        },
+        "chat_defaults": {"provider": "anthropic", "model": "old-model"},
+    }
+    _write_config(config_path, before)
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    outcome = apply_console_default_intent(
+        replace(
+            _intent(),
+            provider_config_key="custom-ep:vale",
+        )
+    )
+
+    assert outcome.runtime_published is False
+    assert outcome.failure_phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
+    assert tomllib.loads(config_path.read_text(encoding="utf-8")) == before

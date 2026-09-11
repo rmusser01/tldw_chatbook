@@ -905,11 +905,18 @@ def build_console_provider_options(
     of an alphabetical-by-config-key order that shuffles the display labels.
     Option values stay raw provider config keys (task-191).
 
-    With ``app_config``, registry entries (ADR-146) follow the sorted
-    built-ins as a final run: value ``custom-ep:<slug>``, label
-    ``display_name``, ordered by creation (config file order) then display
-    name. ``app_config=None`` keeps the built-in-only result so existing
-    callers are unchanged.
+    Args:
+        providers_models: Configured provider -> model ids mapping feeding
+            the WIP-marked configured-provider options.
+        app_config: Full CLI config mapping. When given, registry entries
+            (ADR-146) follow the sorted built-ins as a final run: value
+            ``custom-ep:<slug>``, label ``display_name``, ordered by creation
+            (config file order) then display name. None keeps the
+            built-in-only result so existing callers are unchanged.
+
+    Returns:
+        The ordered provider options, values carrying raw provider config
+        keys (or registry ids) and labels carrying display names.
     """
     supported_provider_keys = supported_console_provider_readiness_keys(
         CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
@@ -935,7 +942,9 @@ def build_console_provider_options(
         {
             *(
                 key
-                for key in (provider_config_key(provider) for provider in providers_models)
+                for key in (
+                    provider_config_key(provider) for provider in providers_models
+                )
                 if key
             ),
             *(entry.readiness_key for entry in catalog_entries),
@@ -1517,9 +1526,7 @@ def build_console_settings_readiness(
     credential_source: CredentialSource = "none"
     if readiness.api_key_source:
         credential_source = (
-            "environment"
-            if readiness.api_key_source.startswith("env:")
-            else "stored"
+            "environment" if readiness.api_key_source.startswith("env:") else "stored"
         )
 
     if not readiness.requires_api_key:
@@ -1537,8 +1544,7 @@ def build_console_settings_readiness(
         credential = "present_unverified"
 
     evidence_is_current = bool(
-        exact_identity_evidence
-        and (not readiness.requires_api_key or readiness.ready)
+        exact_identity_evidence and (not readiness.requires_api_key or readiness.ready)
     )
     snapshot = readiness.snapshot(
         selected_model=settings.model,
