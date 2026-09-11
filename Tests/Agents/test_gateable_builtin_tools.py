@@ -107,8 +107,13 @@ def test_read_class_blurbs_promise_a_prompt_before_every_run():
 
     The three write-class rows (marked ``⚠``) do NOT carry it: they say what
     they change on disk, and their approval story is the card itself.
+
+    task-32284 (Qodo #2594 #6): the sentence used to read "Asks you each
+    time before running", which the approval card itself contradicts -- its
+    "Approve for session" and "Always allow" buttons are exactly the longer
+    scopes that stop the asking. The copy now names that escape hatch.
     """
-    sentence = "Asks you each time before running."
+    sentence = "Asks before running unless you approve a longer scope."
     per_call = {
         "read_file",
         "list_directory",

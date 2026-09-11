@@ -863,7 +863,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "ReadFileTool",
         "read_file",
         "Read file",
-        "Read a file you point the assistant at. Asks you each time before running.",
+        "Read a file you point the assistant at. Asks before running unless you approve a longer scope.",
     ),
     GateableTool(
         "list_directory_enabled",
@@ -871,7 +871,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "ListDirectoryTool",
         "list_directory",
         "List directory",
-        "Browse the contents of a folder. Asks you each time before running.",
+        "Browse the contents of a folder. Asks before running unless you approve a longer scope.",
     ),
     GateableTool(
         "write_file_enabled",
@@ -903,7 +903,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "GlobFiles",
         "glob_files",
         "Find files",
-        "Match file names by pattern (like *.md). Asks you each time before running.",
+        "Match file names by pattern (like *.md). Asks before running unless you approve a longer scope.",
     ),
     GateableTool(
         "grep_files_enabled",
@@ -911,7 +911,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "GrepFiles",
         "grep_files",
         "Search in files",
-        "Search inside files for text. Asks you each time before running.",
+        "Search inside files for text. Asks before running unless you approve a longer scope.",
     ),
     GateableTool(
         "expand_document_enabled",
@@ -919,7 +919,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "ExpandDocumentTool",
         "expand_document",
         "Expand document",
-        "Read the whole document behind a search result. Asks you each time before running.",
+        "Read the whole document behind a search result. Asks before running unless you approve a longer scope.",
     ),
 )
 

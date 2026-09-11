@@ -11341,9 +11341,15 @@ def test_read_class_tool_copy_mentions_per_call_approval():
     task-32284 moved the wizard's private `_TOOL_COPY` table onto
     `_GATEABLE_BUILTINS` (see `test_tools_step_copy_comes_from_the_shared_
     gate_table` below), so this reads the catalog blurbs instead.
+
+    task-32284 (Qodo #2594 #6): "Asks you each time before running" was a
+    promise the approval card breaks on purpose -- "Approve for session"
+    and "Always allow" are right there on it. The sentence now names that
+    longer scope instead of denying it exists.
     """
     from tldw_chatbook.Agents.tool_catalog import gateable_builtin_tools
 
+    sentence = "Asks before running unless you approve a longer scope."
     blurbs = {t.tool_name: t.blurb for t in gateable_builtin_tools()}
 
     for tool_name in (
@@ -11354,10 +11360,11 @@ def test_read_class_tool_copy_mentions_per_call_approval():
         "expand_document",
     ):
         desc = blurbs[tool_name]
-        assert "asks you each time" in desc.lower(), (tool_name, desc)
+        assert desc.endswith(f" {sentence}"), (tool_name, desc)
 
     for tool_name in ("write_file", "create_note", "update_note"):
         desc = blurbs[tool_name]
+        assert sentence not in desc, (tool_name, desc)
         assert "asks you each time" not in desc.lower(), (tool_name, desc)
 
 
