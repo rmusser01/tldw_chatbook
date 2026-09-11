@@ -8,6 +8,7 @@ from typing import Any
 
 from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Vertical
 from textual.message import Message
 from textual.widgets import Button, Label, Select, Static
@@ -203,6 +204,15 @@ def _row_label(
 class MCPRail(RecomposeCaptureGuard, Vertical):
     """Left rail for the MCP workbench. Index-based row ids; keys in a list.
 
+    F2 (2026-09-11 UX review): arrow keys (and j/k aliases) move the
+    selection through the rows while focus is inside the rail -- the same
+    ServerSelected path a row click takes, mirroring table-cursor
+    semantics. Clamped at both ends (no wrap); focus follows the newly
+    selected row so consecutive presses keep working without re-focusing.
+    The Source/Scope Selects consume their own arrows while focused, which
+    is the correct split: widget focus wins, rail navigation is the
+    fallback for the rail itself and its rows.
+
     ``sync_state()`` (below) drives ``self.refresh(recompose=True)`` on every
     resync; ``RecomposeCaptureGuard`` (task-637) keeps a stale mouse capture
     from leaking app-wide when that recompose tears down a row/Select the
@@ -210,6 +220,13 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
     ``BaseAppScreen`` fix, one level down: the rail isn't a screen, so it
     never inherited that guard).
     """
+
+    BINDINGS = [
+        Binding("up", "move_selection(-1)", show=False),
+        Binding("down", "move_selection(1)", show=False),
+        Binding("k", "move_selection(-1)", show=False),
+        Binding("j", "move_selection(1)", show=False),
+    ]
 
     BUNDLED_CSS = """
     MCPRail {
@@ -309,6 +326,10 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
         # fixed budget never pay a recompose (or the mount-echo/render
         # churn that comes with it) for a resize that changes nothing.
         self._row_budget: int = _MAX_ROW_LABEL
+        # F2: set by sync_state when the rail owned focus; consumed by the
+        # compose it triggers, which schedules the actual refocus onto the
+        # selected row (children freshly built at that point).
+        self._refocus_after_recompose: bool = False
 
     def on_resize(self) -> None:
         """F-057: re-truncate row labels when the width-derived budget
@@ -343,7 +364,32 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
         self.scope_ref_options = scope_ref_options
         self.scope_ref_value = scope_ref_value
         self.agent_snapshot = agent_snapshot
+        # F2: the recompose below remounts every row, destroying whichever
+        # row held focus -- without restoring it, arrow navigation (and any
+        # keyboard use of the rail) dies after the first selection because
+        # focus falls outside the rail. Restore onto the SELECTED row, and
+        # only when the rail owned focus in the first place (never steal it
+        # from the canvas the user is typing in).
+        focused = None
+        try:
+            focused = self.screen.focused if self.is_mounted else None
+        except Exception:
+            focused = None
+        if focused is not None and self in focused.ancestors_with_self:
+            # F2: schedule the focus restoration for the compose that this
+            # recompose is about to run -- restoring from sync_state itself
+            # races (the callback can land against the pre-recompose
+            # children, whose destruction drops focus again). Compose-time
+            # scheduling runs with the new children already built.
+            self._refocus_after_recompose = True
         self.refresh(recompose=True)
+
+    def _focus_selected_row(self) -> None:
+        try:
+            index = self._row_keys.index(self.selected_server_key)
+        except ValueError:
+            index = 0
+        self._focus_row_index(index)
 
     def compose(self) -> ComposeResult:
         yield Static("Source", classes="destination-section mcp-rail-heading")
@@ -557,6 +603,12 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
                         "select stays disabled until one exists."
                     )
                 yield scope_ref_select
+        # F2: compose is the one place the freshly built rows exist -- if
+        # the resync that triggered this recompose noted the rail owned
+        # focus, land it on the selected row now.
+        if self._refocus_after_recompose:
+            self._refocus_after_recompose = False
+            self.call_after_refresh(self._focus_selected_row)
         # (No scope selects render for non-server sources; the per-instance
         # echo tags only ever exist on the instances that have them, so the
         # handlers below need no rail-level state to consult or reset.)
@@ -620,3 +672,30 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
             is_blank = event.value is Select.BLANK or event.value is Select.NULL
             ref = None if is_blank else str(event.value)
             self.post_message(self.ScopeChanged(self.scope_value, ref))
+
+    def action_move_selection(self, delta: int) -> None:
+        """F2: move the selection one row (clamped), posting the same
+        `ServerSelected` a row click posts, then focus the new row's
+        button after the resync-triggered recompose so the next press
+        lands without the user re-focusing."""
+        keys = self._row_keys
+        if not keys:
+            return
+        try:
+            index = keys.index(self.selected_server_key)
+        except ValueError:
+            # A selection that is not (or no longer) one of the rail's
+            # rows (e.g. a server-source record cleared by a source
+            # switch) -- arrows resume from the "All servers" end.
+            index = 0
+        new_index = max(0, min(len(keys) - 1, index + delta))
+        self.post_message(self.ServerSelected(keys[new_index]))
+        self.call_after_refresh(self._focus_row_index, new_index)
+
+    def _focus_row_index(self, index: int) -> None:
+        try:
+            self.query_one(
+                f"#{MCP_RAIL_ROW_PREFIX}{index}", Button
+            ).focus()
+        except Exception:
+            pass

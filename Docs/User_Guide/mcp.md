@@ -27,7 +27,8 @@ organized into four modes: Servers, Tools, Permissions, and Audit.
 
 Below ~120 terminal columns the layout adapts: the detail panel stacks
 under the main area as a compact, scrollable band instead of squeezing
-three unreadable columns.
+three unreadable columns. In the left rail, ↑/↓ (or `j`/`k`) move the
+selection between servers once a rail row has focus.
 
 ## Getting there
 

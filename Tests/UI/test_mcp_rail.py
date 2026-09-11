@@ -858,6 +858,28 @@ def _agent_snap():
 
 
 class AgentRailApp(RailApp):
+    """RailApp + the real contract's selection feedback: the host (the
+    workbench, in the app) owns selection state and re-syncs the rail
+    after every ServerSelected -- arrow navigation advances from the
+    CURRENT selection, so the harness must close that loop too."""
+
+    def on_mcp_rail_server_selected(self, event: MCPRail.ServerSelected) -> None:
+        super().on_mcp_rail_server_selected(event)
+        rail = self.query_one(MCPRail)
+        # Mirror the workbench contract: re-sync the rail with the new
+        # selection (not a bare attribute poke) so the rail's own
+        # focus-restoration path runs exactly as it does in the app.
+        rail.sync_state(
+            source=rail.source,
+            snapshots=rail.snapshots,
+            selected_server_key=event.server_key,
+            scope_options=rail.scope_options,
+            scope_value=rail.scope_value,
+            scope_ref_options=rail.scope_ref_options,
+            scope_ref_value=rail.scope_ref_value,
+            agent_snapshot=rail.agent_snapshot,
+        )
+
     def compose(self) -> ComposeResult:
         yield MCPRail(
             source="local",
@@ -902,3 +924,57 @@ async def test_rail_omits_agent_section_without_snapshot():
             for widget in app.query(".mcp-rail-heading")
         ]
         assert "Agent tools" not in headings
+
+
+# -- F2 (2026-09-11 MCP Hub UX review): rail keyboard navigation ----------
+
+
+@pytest.mark.asyncio
+async def test_rail_arrow_keys_move_selection_through_rows():
+    """F2: up/down move the selection through the rail's rows (All servers,
+    server rows, Agent tools) via the same ServerSelected path a click
+    uses, clamping at the ends (never wrapping). Focus follows the newly
+    selected row so consecutive presses keep working."""
+    app = AgentRailApp()  # rows: All servers(0), docs(1), agent(2)
+    async with app.run_test() as pilot:
+        # Start focused on a rail row (a click's after-state).
+        await pilot.click("#mcp-rail-row-1")
+        await pilot.pause()
+        assert app.events[-1].server_key == "local:docs"
+
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.events[-1].server_key == "agent:builtin"
+
+        # Clamp at the bottom (no wrap to "All servers").
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.events[-1].server_key == "agent:builtin"
+
+        # Paced like real typing: each selection triggers the host's
+        # sync/recompose, and the NEXT key must land after the rail's
+        # focus restoration -- exactly the cadence a keyboard user has.
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.events[-1].server_key == "local:docs"
+        await pilot.press("up")
+        await pilot.pause()
+        # up from docs -> "All servers" (None), then clamp.
+        assert app.events[-1].server_key is None
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.events[-1].server_key is None
+
+
+@pytest.mark.asyncio
+async def test_rail_j_and_k_alias_arrow_navigation():
+    app = AgentRailApp()
+    async with app.run_test() as pilot:
+        await pilot.click("#mcp-rail-row-0")  # All servers
+        await pilot.pause()
+        await pilot.press("j")
+        await pilot.pause()
+        assert app.events[-1].server_key == "local:docs"
+        await pilot.press("k")
+        await pilot.pause()
+        assert app.events[-1].server_key is None
