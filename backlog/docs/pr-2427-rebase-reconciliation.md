@@ -3994,3 +3994,52 @@ inventory rebuild is unchanged:604 owners,1351 TASK492,55 TASK31551,7669 TASK494
 Independent six-file review finds no issues; no production code or generated
 inventory artifact changes. Publication precedes exact-thread replies and
 resolutions. The existing size-budget Qodo thread remains open.
+
+### September10 latest Console rebase qualification
+
+Published7c9bc7942a includes the approved focus correction and six Qodo fixes.
+All six exact review threads were replied to and resolved (replies3985783348,
+3985783466,3985783567,3985783668,3985783722,3985783831). The size-budget thread
+PRRT_kwDOOcyyl86hU_qn remains open. Published-head Fast Lane and derived-artifact
+workflow34560234635 completed successfully; that result does not qualify the
+subsequent rebase.
+
+Step158 replays260 commits without conflicts onto dev
+3afa68f1b99103ec8b5b5f19921ac480ad9344ac, reaching local89143266ba. Independent
+review confirms the normalized whole-tree delta from saved8b28404995 is exactly
+the twelve incoming dev files; earlier repairs and incoming TASK32311/ADR083
+behavior are preserved. Library runtime/widget/focus tests and the six Qodo
+files retain their verified bytes. Remote dev still equals3afa68f1b9 at the
+post-verification read; remote PR head still equals7c9bc7942a before publication.
+
+The complete five-file Console native cohort is terminal:271 passed,8 warnings,
+418.73s (`/private/tmp/pr2427-console-dev-native.log`). Files: character-avatar,
+avatar-geometry-offloop, rail-reconciliation, tick-gating, workspace-controller.
+Its final native inventory is NOT clean:500 live descriptors include493 SQLite
+handles, zero instance-lock handles, stdio, the already measured pytest
+selector-loop/socketpair baseline, and one process-lifetime faulthandler log.
+Exact final SQLite attribution:438 handles first seen in character-avatar
+tests,48 in imported avatar-geometry-offloop fixtures, and7 in
+test_rail_height_drives_adaptive_cap_through_the_mounted_ui. These are final
+live handles, not cumulative additions or a count of distinct databases.
+Report:
+`/private/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-console-dev-native.NDidYy/fd_identity.jsonl`.
+
+Read-only diagnosis identifies the avatar fixture's current-thread-only
+close_connection after worker-thread reads; its imported offloop fixtures
+execute in the original avatar module, so blindly patching the importing
+module's builder cannot establish ownership. The workspace case retains its
+own adaptive_cap_chats.db and WAL/SHM handles. Any repair must drain admitted
+work before exact-owner quiescence and protect failure/cancellation and foreign
+owners. No shared fixture, runtime, cleanup policy or test assertion has been
+changed for these new findings; no global cleanup or forced GC was used.
+
+All seven post-rebase preflight checks pass
+(`/private/tmp/pr2427-console-dev-preflight.log`). Size/private-owner cohort:
+126 passed,13 failed,2 warnings,3.55s
+(`/private/tmp/pr2427-console-dev-size.log`). The same13 ceilings fail;
+ChatScreen is16889/16811 and LibraryScreen32724/31689. No cap was raised.
+The proposed pure Handoff-summary helper move remains separately design-gated
+and is not implemented. All local test processes are terminal. AC1/3/4 and
+normal protected merge remain open for resource repair, size paydown and
+final-head review/checks. The unrelated untracked September8 plan is untouched.
