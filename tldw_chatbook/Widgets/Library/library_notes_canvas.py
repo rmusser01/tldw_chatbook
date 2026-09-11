@@ -2437,19 +2437,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             return
         self.presentation_state = state
         self.compact = state.compact
-        # A MOUNTED pane whose children are between removal and remount has
-        # none of the surfaces below. `_apply_post_compose_state` documents
-        # the sequence that produces it and guards its own call; the guard
-        # belongs here instead, because callers reach this method directly.
-        # The backlinks loader is one of them and it is a WORKER, so the
-        # NoMatches this used to raise killed the app rather than skipping a
-        # paint (reproduced twice on dev by the wave-3 editor-keys group).
-        # Returning is safe and complete: the state is already stored above,
-        # and the recompose that removed these children paints from it.
-        authority_matches = self.query(f"#{self.authority_id}")
-        if not authority_matches or not self.query("#library-note-title"):
-            return
-        authority = authority_matches.first(Static)
+        authority = self.query_one(f"#{self.authority_id}", Static)
         authority_copy = self._authority_copy()
         if self._static_text(authority) != authority_copy:
             authority.update(authority_copy)
