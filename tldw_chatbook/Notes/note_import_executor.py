@@ -528,9 +528,14 @@ class LocalNoteImportTarget:
                 expected_version,
             ),
         )
-        if result.rowcount == 1:
+        # Read the count BEFORE anything else runs on this cursor:
+        # `cursor.execute` returns the cursor ITSELF, so the link writes below
+        # overwrite `result.rowcount` and the return value would report them
+        # instead of the note update (18 tests in this file caught it).
+        updated = result.rowcount == 1
+        if updated:
             CharactersRAGDB.replace_note_links(cursor, note_id, payload.content)
-        return result.rowcount == 1
+        return updated
 
     def _sync_keywords(
         self,

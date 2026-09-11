@@ -13322,3 +13322,25 @@ seeding, and make the test that PINS your migration drop it first — otherwise
 that test asserts against the scaffold and would pass with the migration's DDL
 deleted. The tell that you need this: your new code writes to the table from a
 method a fixture calls, not only from the migration.
+
+## `cursor.execute()` returns the cursor, so a follow-up write rewrites the `rowcount` you were about to check (TASK-32186, 2026-09-11)
+
+**What happened.** Adding note-link maintenance to
+`LocalNoteImportTarget._update_note` turned
+
+    result = cursor.execute("UPDATE notes SET …")
+    return result.rowcount == 1
+
+into the same lines with `replace_note_links(cursor, …)` — a DELETE plus an
+executemany — inserted between them. `sqlite3.Cursor.execute` returns the
+cursor **itself**, so `result is cursor`: the return value stopped reporting
+the note update and started reporting the link writes. Every optimistic-update
+path in the importer began reading as a conflict — 18 tests in
+`Tests/Notes/test_note_import_executor.py`. A targeted run of the one test I
+had added for the new behaviour was green; only the whole FILE showed it.
+
+**What to do.** Bind the count to a local the moment the statement returns
+(`updated = result.rowcount == 1`) before any other statement touches that
+cursor. And when a change adds a write inside an existing method, run that
+method's whole test FILE, not just your new test: the tests that catch a
+clobbered out-parameter are the ones you did not write.
