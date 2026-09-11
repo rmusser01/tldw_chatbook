@@ -2,17 +2,17 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Two filter-scoped bulk keys on the Permissions matrix — `shift+space` applies the cursor row's next cycled state to a server's visible tool rows; `C` clears its visible overrides (ADR-149).
+**Goal:** Two filter-scoped bulk keys on the Permissions matrix — `shift+space` applies the cursor row's next cycled state to a server's visible tool rows; `C` clears its visible overrides (ADR-150).
 
 **Architecture:** The canvas (which alone knows visibility) computes the scope and posts one message per gesture; the workbench remains the single writer, executing the bulk as N ordinary profile-scoped `set_tool_state` calls with raw-shell rows skipped and named in the echo. No new store API; audit granularity unchanged (per-row logging).
 
 **Tech Stack:** Textual key bindings (`shift+space`, `C` — no conflicts with the screen's `1-4/a/r/t`), pytest + Pilot, existing PermissionsApp harness.
 
-**Spec:** `Docs/superpowers/specs/2026-09-11-mcp-hub-bulk-permission-actions-design.md`; ADR: `backlog/decisions/149-mcp-hub-bulk-permission-actions.md`.
+**Spec:** `Docs/superpowers/specs/2026-09-11-mcp-hub-bulk-permission-actions-design.md`; ADR: `backlog/decisions/150-mcp-hub-bulk-permission-actions.md`.
 
 ## Global Constraints
 
-- Every write goes through `_call_profile_scoped(service.set_tool_state, ...)` under the SAME validated `PermissionProfileContext` as a single press — no batch store API (ADR-149).
+- Every write goes through `_call_profile_scoped(service.set_tool_state, ...)` under the SAME validated `PermissionProfileContext` as a single press — no batch store API (ADR-150).
 - Raw-shell rows are skipped and the skip is named in the echo (`· N skipped (raw shell)`); raw shell stays a two-state control.
 - The **global row is excluded** — both keys no-op against it via the legend hint line (not a toast); no-op likewise when the server has zero *visible* tool rows.
 - `C` writes only rows that currently hold an override (visible-scoped); the echo says "N visible overrides cleared" and the tooltip/legend teaches the full-clear recipe (clear the filter, then C).
@@ -112,7 +112,7 @@ async def test_bulk_keys_noop_on_global_row_with_hint_not_toast():
 ```python
 @pytest.mark.asyncio
 async def test_shift_space_bulk_sets_visible_tools_of_one_server(tmp_path):
-    """ADR-149: shift+space applies the cursor row's next state to the
+    """ADR-150: shift+space applies the cursor row's next state to the
     server's VISIBLE tool rows only (Wave B order: first press from
     Inherit = Ask), with one echo and no other server touched."""
     app = PermissionsApp(tmp_path / "mcp_permissions.json")

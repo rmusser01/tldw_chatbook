@@ -1618,12 +1618,12 @@ async def test_update_matrix_renders_discovery_hint_line():
         assert "no tools yet" not in legend
 
 
-# -- Wave F (2026-09-11 MCP Hub UX program, ADR-149): bulk actions --------
+# -- Wave F (2026-09-11 MCP Hub UX program, ADR-150): bulk actions --------
 
 
 @pytest.mark.asyncio
 async def test_shift_space_on_tool_row_posts_bulk_state_for_visible_tools():
-    """ADR-149: shift+space posts ONE BulkStateRequested carrying the
+    """ADR-150: shift+space posts ONE BulkStateRequested carrying the
     server's visible tool rows and the cursor row's own next cycled state
     (Wave B order: first press from Inherit = Ask)."""
     app = PermissionsModeApp()
@@ -1653,7 +1653,7 @@ async def test_shift_space_on_tool_row_posts_bulk_state_for_visible_tools():
 
 @pytest.mark.asyncio
 async def test_bulk_clear_posts_only_overridden_visible_rows():
-    """ADR-149: C posts BulkClearRequested with ONLY the server's visible
+    """ADR-150: C posts BulkClearRequested with ONLY the server's visible
     tool rows that currently hold an override (cycle_current not None)."""
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
@@ -1686,7 +1686,7 @@ async def test_bulk_clear_posts_only_overridden_visible_rows():
 
 @pytest.mark.asyncio
 async def test_bulk_keys_noop_on_global_row_with_hint_not_toast():
-    """ADR-149: the global row owns no server -- both bulk keys no-op
+    """ADR-150: the global row owns no server -- both bulk keys no-op
     against it via the legend hint line (the spec's 'existing hint
     Static'), never a toast, and never a posted message."""
     app = PermissionsModeApp()

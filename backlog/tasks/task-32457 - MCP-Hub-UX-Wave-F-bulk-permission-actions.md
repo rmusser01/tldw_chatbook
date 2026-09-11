@@ -12,7 +12,7 @@ dependencies: []
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-ADR-149 Wave F: shift+space applies the cursor row's next cycled state to a server's VISIBLE tool rows; C clears its visible overrides. Filter is the scope; every write stays an ordinary profile-scoped set_tool_state call; raw-shell rows skipped and named in the echo. Plan: Docs/superpowers/plans/2026-09-11-mcp-hub-bulk-permission-actions.md.
+ADR-150 Wave F: shift+space applies the cursor row's next cycled state to a server's VISIBLE tool rows; C clears its visible overrides. Filter is the scope; every write stays an ordinary profile-scoped set_tool_state call; raw-shell rows skipped and named in the echo. Plan: Docs/superpowers/plans/2026-09-11-mcp-hub-bulk-permission-actions.md.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -29,6 +29,6 @@ ADR-149 Wave F: shift+space applies the cursor row's next cycled state to a serv
 - **Design catch from the RED tests:** one captured PermissionProfileContext cannot span the batch — each write changes the profile digest, so write #2 fails `stale_profile` (the single-press path never hits this; it writes once). Fixed with a per-write context re-capture from `_tool_policy_inventory()` plus a selection-identity guard (profile id + selector generation unchanged, else the stale toast and stop; partial writes stand, each idempotent).
 - Wave-B interplay verified: first `shift+space` from Inherit applies Ask to the visible set.
 - Spec open questions resolved to defaults (in-plan): per-row execution-log entries unchanged; shift+space on a server-default row applies that row's own next state.
-- ADR: ADR-149 (linked); no additional ADR.
+- ADR: ADR-150 (linked); no additional ADR.
 - Verification: test_mcp_workbench 348 passed (full); permissions/servers/rail/tools 185 passed; permission resolution/store 119 passed; doc-contract unchanged at the pre-existing 39 failures; ruff before=after on touched files.
 <!-- SECTION:NOTES:END -->
