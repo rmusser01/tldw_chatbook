@@ -1425,21 +1425,24 @@ class TestLibraryConversationSeams:
 
         assert item["timestamp"] == "preserve-this-timestamp"
 
-    def test_list_delegates_and_echoes_pagination(self):
+    @pytest.mark.parametrize("archive_scope", ["active", "archived", "all"])
+    def test_list_delegates_and_echoes_pagination(self, archive_scope):
         class FakeLibraryDB:
             def __init__(self):
                 self.calls = []
 
-            def list_library_conversations_page(self, *, limit, offset):
-                self.calls.append(("list", limit, offset))
+            def list_library_conversations_page(self, *, limit, offset, archive_scope):
+                self.calls.append(("list", limit, offset, archive_scope))
                 return {"items": [{"id": "conv-1"}], "total": 7}
 
         db = FakeLibraryDB()
         service = ChatConversationService(db)
 
-        result = service.list_library_conversations(limit=3, offset=6)
+        result = service.list_library_conversations(
+            limit=3, offset=6, archive_scope=archive_scope
+        )
 
-        assert db.calls == [("list", 3, 6)]
+        assert db.calls == [("list", 3, 6, archive_scope)]
         assert result == {
             "items": [{"id": "conv-1"}],
             "total": 7,
@@ -1447,21 +1450,24 @@ class TestLibraryConversationSeams:
             "limit": 3,
         }
 
-    def test_search_delegates_and_echoes_pagination(self):
+    @pytest.mark.parametrize("archive_scope", ["active", "archived", "all"])
+    def test_search_delegates_and_echoes_pagination(self, archive_scope):
         class FakeLibraryDB:
             def __init__(self):
                 self.calls = []
 
-            def search_library_conversations_page(self, *, query, limit, offset):
-                self.calls.append(("search", query, limit, offset))
+            def search_library_conversations_page(self, *, query, limit, offset, archive_scope):
+                self.calls.append(("search", query, limit, offset, archive_scope))
                 return {"items": [{"id": "conv-2", "matched_fields": ["title"]}], "total": 1}
 
         db = FakeLibraryDB()
         service = ChatConversationService(db)
 
-        result = service.search_library_conversations(query="needle", limit=5, offset=10)
+        result = service.search_library_conversations(
+            query="needle", limit=5, offset=10, archive_scope=archive_scope
+        )
 
-        assert db.calls == [("search", "needle", 5, 10)]
+        assert db.calls == [("search", "needle", 5, 10, archive_scope)]
         assert result == {
             "items": [{"id": "conv-2", "matched_fields": ["title"]}],
             "total": 1,

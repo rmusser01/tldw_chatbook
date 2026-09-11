@@ -1059,6 +1059,8 @@ def run_agent_loop(
     _MODEL_RETRY_POLICY = RetryPolicy(max_attempts=0, base_delay=1.0, max_delay=30.0)
     budget = config.budget
     steps: list[AgentStep] = []
+    from tldw_chatbook.Chat.local_reasoning import EXCHANGE_CONTINUATION_KEY
+
     messages = list(initial_messages)
     # PR3b Task 4: how much of `messages` is protocol-coherent -- i.e. up
     # to the LAST drain boundary (the pre-model-call point where every
@@ -1272,7 +1274,9 @@ def run_agent_loop(
             pass
         return step
 
-    def _outcome(status: str, **kw) -> RunOutcome:
+    def _outcome(
+        status: str, *, assistant_message: dict | None = None, **kw
+    ) -> RunOutcome:
         # Reports run spend on every terminal path; reads enclosing steps/
         # spawned/total_tokens at call time (no nonlocal, like add()).
         #
@@ -1293,7 +1297,9 @@ def run_agent_loop(
         ]
         if status == RUN_DONE:
             final_messages = final_messages + [
-                {"role": "assistant", "content": kw.get("final_text", "")}
+                dict(assistant_message)
+                if assistant_message is not None
+                else {"role": "assistant", "content": kw.get("final_text", "")}
             ]
         return RunOutcome(
             status,
@@ -1476,6 +1482,7 @@ def run_agent_loop(
                 {
                     "role": "user",
                     "content": BUDGET_WRAPUP_INSTRUCTION.format(kind=kind),
+                    EXCHANGE_CONTINUATION_KEY: True,
                 }
             )
             wrap_turn = (
@@ -1591,7 +1598,13 @@ def run_agent_loop(
                             if steer_source == STEERING_SOURCE_REDIRECT
                             else format_steering_message(steer_source, steer_text)
                         )
-                        messages.append({"role": "user", "content": steer_message})
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": steer_message,
+                                EXCHANGE_CONTINUATION_KEY: True,
+                            }
+                        )
                         add(
                             STEP_STEERING,
                             summary=steer_message[:200],
@@ -1911,7 +1924,13 @@ def run_agent_loop(
                         if steer_source == STEERING_SOURCE_REDIRECT
                         else format_steering_message(steer_source, steer_text)
                     )
-                    messages.append({"role": "user", "content": content})
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": content,
+                            EXCHANGE_CONTINUATION_KEY: True,
+                        }
+                    )
                     add(
                         STEP_STEERING,
                         summary=content[:200],
@@ -2089,7 +2108,9 @@ def run_agent_loop(
             # Emptiness was already classified before the continuation block
             # above (review I2), so a turn reaching here has real text.
             consecutive_empty_turns = 0
-            return _outcome(RUN_DONE, final_text=turn.text)
+            return _outcome(
+                RUN_DONE, final_text=turn.text, assistant_message=turn.assistant_message
+            )
         if not restoring_batch:
             messages.append(
                 turn.assistant_message or {"role": "assistant", "content": turn.text}

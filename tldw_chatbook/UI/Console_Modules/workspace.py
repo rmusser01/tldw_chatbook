@@ -3389,6 +3389,13 @@ class ConsoleWorkspaceController:
                 self._sync_console_workspace_context()
             return cached
         membership_revision = self._canonical_membership_revision
+        cache_token = self._console_persisted_rows_cache_token
+        archive_states_before = dict(
+            getattr(self.app_instance, "_conversation_archive_states", {})
+        )
+        archive_was_inflight = bool(
+            getattr(self.app_instance, "_conversation_archive_inflight", ())
+        )
         try:
             result = await self._persisted_console_browser_rows(
                 query,
@@ -3414,6 +3421,50 @@ class ConsoleWorkspaceController:
         rows, _total, error = result
         if not error:
             self._record_canonical_owner_rows(rows)
+        from ...Chat.conversation_archive_actions import (
+            local_conversation_service,
+            storage_call,
+        )
+
+        store = self._console_chat_store
+        native_ids = [
+            str(session.persisted_conversation_id)
+            for session in (store.sessions() if store is not None else ())
+            if session.persisted_conversation_id
+        ]
+        try:
+            states = await storage_call(
+                local_conversation_service(self.app_instance),
+                "get_conversation_archive_states",
+                native_ids,
+            )
+        except Exception:  # noqa: BLE001 - keep current rows when recovery reads fail
+            logger.debug("Archive state refresh unavailable")
+            states = {}
+        # Both database reads await: retain ownership through the last one,
+        # including any archive receipt that settled while its snapshot loaded.
+        if (
+            (
+                refresh_key is not None
+                and self._console_persisted_rows_refresh_key != refresh_key
+            )
+            or membership_revision != self._canonical_membership_revision
+            or cache_token != self._console_persisted_rows_cache_token
+            or archive_was_inflight
+            or getattr(self.app_instance, "_conversation_archive_inflight", ())
+            or archive_states_before
+            != getattr(self.app_instance, "_conversation_archive_states", {})
+        ):
+            if (
+                refresh_key is not None
+                and self._console_persisted_rows_refresh_key == refresh_key
+            ):
+                self._console_persisted_rows_refresh_key = None
+                self._sync_console_workspace_context()
+            return result
+        cached_states = getattr(self.app_instance, "_conversation_archive_states", {})
+        cached_states.update(states)
+        self.app_instance._conversation_archive_states = cached_states
         self._console_persisted_rows_cache = result
         self._console_persisted_rows_cache_key = (query, current_conversation_id)
         self._console_persisted_rows_cache_at = time.monotonic()
@@ -3462,6 +3513,10 @@ class ConsoleWorkspaceController:
         appearances = self._console_conversation_appearance_map(conversation_ids)
         for group in materialized_groups:
             for raw_row in group:
+                if getattr(self.app_instance, "_conversation_archive_states", {}).get(
+                    str(raw_row.conversation_id or "")
+                ):
+                    continue
                 row = self._apply_console_browser_star_state(raw_row, starred_ids)
                 row = self._apply_console_browser_appearance_state(row, appearances)
                 identity = self._console_browser_display_identity(row)
@@ -3480,6 +3535,10 @@ class ConsoleWorkspaceController:
         seen: set[tuple[str, ...]] = set()
         for group in row_groups:
             for row in group:
+                if getattr(self.app_instance, "_conversation_archive_states", {}).get(
+                    str(row.conversation_id or "")
+                ):
+                    continue
                 identity = self._console_browser_display_identity(row)
                 if not identity[-1] or identity in seen:
                     continue
@@ -4023,7 +4082,7 @@ class ConsoleWorkspaceController:
 
     # -- Workspace switcher / rename / archive / create ---------------------
 
-    def _open_console_workspace_switcher(self) -> None:
+    def _open_console_workspace_switcher(self, *, show_archived: bool = False) -> None:
         """Open the active Console workspace switcher."""
         registry_service = getattr(
             self.app_instance, "workspace_registry_service", None
@@ -4033,51 +4092,200 @@ class ConsoleWorkspaceController:
                 "Workspace service is not ready.", severity="warning"
             )
             return
-        try:
-            workspaces = tuple(registry_service.list_workspaces())
-            active_workspace = registry_service.get_active_workspace()
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Unable to open Console workspace switcher"
-            )
-            self.app_instance.notify(
-                "Workspace registry could not be read.",
-                severity="error",
-            )
-            return
-        if not workspaces:
-            self.app_instance.notify(
-                "Create one with the rail's New button or in Settings > Workspaces.",
-                severity="warning",
-            )
-            return
+        from tldw_chatbook.Chat.conversation_archive_actions import storage_call
 
-        active_workspace_id = (
-            active_workspace.workspace_id if active_workspace is not None else None
+        receipt = getattr(self, "_console_workspace_archive_receipt", None)
+        # A completion received while away remains reachable on the next visit.
+        show_archived = show_archived or receipt is not None
+        request = object()
+        self._console_workspace_switcher_request = request
+
+        def _current() -> bool:
+            return (
+                self._console_workspace_switcher_request is request
+                and self._screen.is_mounted
+                and self._screen.app.screen is self._screen
+            )
+
+        async def _open() -> None:
+            try:
+                workspaces = tuple(
+                    await storage_call(
+                        registry_service, "list_workspaces", include_archived=True
+                    )
+                )
+                active_workspace = await storage_call(
+                    registry_service, "get_active_workspace"
+                )
+            except Exception:
+                logger.exception("Unable to open Console workspace switcher")
+                if not _current():
+                    return
+                self.app_instance.notify(
+                    "Workspace registry could not be read.",
+                    severity="error",
+                )
+                return
+            if not _current():
+                return
+            if not workspaces:
+                self.app_instance.notify(
+                    "Create one with the rail's New button or in Settings > Workspaces.",
+                    severity="warning",
+                )
+                return
+
+            active_workspace_id = (
+                active_workspace.workspace_id if active_workspace is not None else None
+            )
+
+            def _switch_to(workspace_id: str) -> None:
+                self._switch_console_workspace(workspace_id)
+
+            def _apply_workspace_switch(
+                result: tuple[str, str] | None,
+            ) -> None:
+                if not result:
+                    return
+                action, workspace_id = result
+                if action == "switch":
+                    _switch_to(workspace_id)
+                elif action == "rename":
+                    self._open_console_workspace_rename(workspace_id)
+                elif action == "archive":
+                    self._confirm_console_workspace_archive(workspace_id)
+                elif action in {"restore", "restore_as"}:
+                    self._restore_console_workspace(
+                        workspace_id, rename=action == "restore_as"
+                    )
+
+            self.push_screen(
+                ConsoleWorkspaceSwitcherModal(
+                    workspaces=workspaces,
+                    active_workspace_id=active_workspace_id,
+                    show_archived=show_archived,
+                ),
+                callback=_apply_workspace_switch,
+            )
+            if getattr(self, "_console_workspace_archive_receipt", None) is receipt:
+                self._console_workspace_archive_receipt = None
+
+        self._screen.app.run_worker(
+            _open(), group="console-workspace-switcher", exclusive=True
         )
 
-        def _switch_to(workspace_id: str) -> None:
-            self._switch_console_workspace(workspace_id)
+    def _restore_console_workspace(
+        self,
+        workspace_id: str,
+        *,
+        rename: bool = False,
+        expected_record: WorkspaceRecord | None = None,
+    ) -> None:
+        """Restore asynchronously without changing active workspace or session."""
+        from tldw_chatbook.Chat.conversation_archive_actions import storage_call
 
-        def _apply_workspace_switch(
-            result: tuple[str, str] | None,
-        ) -> None:
-            if not result:
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        request = object()
+        self._console_workspace_restore_request = request
+
+        def _current() -> bool:
+            return (
+                self._console_workspace_restore_request is request
+                and self._screen.is_mounted
+                and self._screen.app.screen is self._screen
+            )
+
+        def _failed(exc: WorkspaceRegistryServiceError) -> None:
+            if not _current():
                 return
-            action, workspace_id = result
-            if action == "switch":
-                _switch_to(workspace_id)
-            elif action == "rename":
-                self._open_console_workspace_rename(workspace_id)
-            elif action == "archive":
-                self._confirm_console_workspace_archive(workspace_id)
+            self.app_instance.notify(
+                f"Could not restore workspace: {exc}. Retry from Show archived; "
+                "use Restore as if the name is in use.",
+                severity="warning",
+            )
+            self._open_console_workspace_switcher(show_archived=True)
 
-        self.push_screen(
-            ConsoleWorkspaceSwitcherModal(
-                workspaces=workspaces,
-                active_workspace_id=active_workspace_id,
-            ),
-            callback=_apply_workspace_switch,
+        async def _restore(name: str | None = None) -> None:
+            if not _current():
+                return
+
+            async def _complete_restore() -> None:
+                try:
+                    restored = await storage_call(
+                        registry, "unarchive_workspace", workspace_id, name=name
+                    )
+                except WorkspaceRegistryServiceError as exc:
+                    _failed(exc)
+                    return
+                # A committed restore invalidates cached data even if the user left.
+                self._invalidate_console_persisted_rows_cache()
+                if not _current():
+                    return
+                self.run_worker(
+                    self._sync_native_console_chat_ui(),
+                    exclusive=True,
+                    group="console-sync",
+                )
+                self.app_instance.notify(
+                    f"Restored {restored.name}. Active workspace unchanged; use Switch to open it.",
+                    severity="information",
+                )
+
+            # Cancelling the exclusive worker cannot cancel a SQLite write
+            # already executing in a thread or skip its cache publication.
+            operation = asyncio.create_task(_complete_restore())
+            operations = getattr(
+                self.app_instance, "_workspace_lifecycle_operations", None
+            )
+            if operations is None:
+                operations = self.app_instance._workspace_lifecycle_operations = set()
+            operations.add(operation)
+            operation.add_done_callback(operations.discard)
+            operation.add_done_callback(
+                lambda task: None if task.cancelled() else task.exception()
+            )
+            await asyncio.shield(operation)
+
+        def _rename_finished(name: str | None) -> None:
+            if name:
+                self._screen.app.run_worker(
+                    _restore(name), group="console-workspace-restore", exclusive=True
+                )
+
+        async def _prepare() -> None:
+            try:
+                record = await storage_call(registry, "get_workspace", workspace_id)
+            except WorkspaceRegistryServiceError as exc:
+                _failed(exc)
+                return
+            if not _current():
+                return
+            if expected_record is not None and record != expected_record:
+                self.app_instance.notify(
+                    "Workspace changed since archive. Review it in Show archived before restoring.",
+                    severity="warning",
+                )
+                self._open_console_workspace_switcher(show_archived=True)
+                return
+            if record is None or not record.archived:
+                self.app_instance.notify(
+                    "Workspace is no longer archived.", severity="warning"
+                )
+                return
+            if rename:
+                self.push_screen(
+                    ConsoleWorkspaceRenameModal(
+                        current_name=record.name, restoring=True
+                    ),
+                    callback=_rename_finished,
+                )
+            else:
+                await _restore()
+
+        self._screen.app.run_worker(
+            _prepare(), group="console-workspace-restore", exclusive=True
         )
 
     def _open_console_workspace_rename(self, workspace_id: str) -> None:
@@ -4128,7 +4336,7 @@ class ConsoleWorkspaceController:
         )
 
     def _confirm_console_workspace_archive(self, workspace_id: str) -> None:
-        """Confirm and archive a workspace (TASK-714)."""
+        """Confirm and archive a workspace without blocking registry storage."""
         registry_service = getattr(
             self.app_instance, "workspace_registry_service", None
         )
@@ -4137,57 +4345,211 @@ class ConsoleWorkspaceController:
                 "Workspace service is not ready.", severity="warning"
             )
             return
-        record = registry_service.get_workspace(workspace_id)
-        if record is None:
-            self.app_instance.notify(
-                "Workspace is no longer available.", severity="warning"
-            )
-            return
-        was_active = bool(record.active)
+        from tldw_chatbook.Chat.conversation_archive_actions import (
+            capture_console_archive_draft,
+            storage_call,
+            workspace_archive_refusal,
+        )
+        from tldw_chatbook.Widgets.Console.console_workspace_switcher_modal import (
+            WorkspaceArchiveReceiptModal,
+        )
 
-        # ConfirmationDialog awaits its confirm callback, so this must be a
-        # coroutine function.
-        async def _archive() -> None:
-            try:
-                registry_service.archive_workspace(workspace_id)
-            except WorkspaceRegistryServiceError as exc:
-                self.app_instance.notify(str(exc), severity="warning")
+        request = object()
+        self._console_workspace_archive_request = request
+        dialog = None
+        archived_record = None
+
+        def _current() -> bool:
+            return (
+                self._console_workspace_archive_request is request
+                and self._screen.is_mounted
+                and self._screen.app.screen in (self._screen, dialog)
+            )
+
+        def _refusal() -> str | None:
+            capture_console_archive_draft(self.app_instance, screen=self._screen)
+            return workspace_archive_refusal(self.app_instance, workspace_id)
+
+        def _failed(message: str) -> None:
+            if _current():
+                self.app_instance.notify(message, severity="warning")
+
+        async def _prepare() -> None:
+            nonlocal dialog
+            refusal = _refusal()
+            if refusal:
+                _failed(refusal)
                 return
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "Unable to archive Console workspace"
+            try:
+                record = await storage_call(
+                    registry_service, "get_workspace", workspace_id
+                )
+            except WorkspaceRegistryServiceError as exc:
+                _failed(str(exc))
+                return
+            except Exception:  # noqa: BLE001 - UI storage boundary offers retry
+                logger.opt(exception=True).warning("Unable to read Console workspace")
+                _failed(
+                    "Workspace could not be read. Retry from the workspace switcher."
+                )
+                return
+            if not _current():
+                return
+            if record is None:
+                self.app_instance.notify(
+                    "Workspace is no longer available.", severity="warning"
+                )
+                return
+            was_active = bool(record.active)
+            confirmation_cancelled = False
+            receipt_shown = False
+
+            async def _complete_archive() -> None:
+                nonlocal archived_record
+                try:
+                    archived_record = await storage_call(
+                        registry_service, "archive_workspace", workspace_id
+                    )
+                except WorkspaceRegistryServiceError as exc:
+                    _failed(str(exc))
+                    return
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "Unable to archive Console workspace"
+                    )
+                    if _current():
+                        self.app_instance.notify(
+                            "Workspace could not be archived.", severity="error"
+                        )
+                    return
+                # Commit completion survives cancellation of the confirming UI.
+                self._invalidate_console_persisted_rows_cache()
+                if self._console_workspace_archive_request is request:
+                    self._console_workspace_archive_receipt = archived_record
+                if not _current():
+                    return
+                self._sync_console_chat_core_state()
+                if was_active:
+                    self._activate_console_session_for_workspace(DEFAULT_WORKSPACE_ID)
+                suffix = (
+                    " Console switched to the Default workspace." if was_active else ""
                 )
                 self.app_instance.notify(
-                    "Workspace could not be archived.", severity="error"
+                    f"Archived {record.name}. Its conversations stay saved in "
+                    f"Library.{suffix}",
+                    severity="information",
                 )
-                return
-            self._sync_console_chat_core_state()
-            if was_active:
-                self._activate_console_session_for_workspace(DEFAULT_WORKSPACE_ID)
-            self._sync_console_workspace_context()
-            self.run_worker(
-                self._sync_native_console_chat_ui(),
-                exclusive=True,
-                group="console-sync",
-            )
-            suffix = " Console switched to the Default workspace." if was_active else ""
-            self.app_instance.notify(
-                f"Archived {record.name}. Its conversations stay saved in "
-                f"Library.{suffix}",
-                severity="information",
-            )
+                if confirmation_cancelled:
+                    await _show_receipt()
 
-        self.push_screen(
-            ConfirmationDialog(
+            async def _archive() -> None:
+                nonlocal confirmation_cancelled
+                if not _current():
+                    return
+                refusal = _refusal()
+                if refusal:
+                    _failed(refusal)
+                    return
+                store = getattr(
+                    getattr(self.app_instance, "console_runtime", None),
+                    "chat_store",
+                    None,
+                )
+                reserved = (
+                    {
+                        session.persisted_conversation_id
+                        for session in store.sessions()
+                        if session.workspace_id == workspace_id
+                        and session.persisted_conversation_id
+                    }
+                    if store is not None
+                    else set()
+                )
+                inflight = getattr(
+                    self.app_instance, "_conversation_archive_inflight", None
+                )
+                if inflight is None:
+                    inflight = self.app_instance._conversation_archive_inflight = set()
+                if reserved & inflight:
+                    _failed("An archive change is already in progress.")
+                    return
+                inflight.update(reserved)
+
+                async def _complete_reserved_archive() -> None:
+                    try:
+                        await _complete_archive()
+                    finally:
+                        inflight.difference_update(reserved)
+
+                operation = asyncio.create_task(_complete_reserved_archive())
+                operations = getattr(
+                    self.app_instance, "_workspace_lifecycle_operations", None
+                )
+                if operations is None:
+                    operations = self.app_instance._workspace_lifecycle_operations = (
+                        set()
+                    )
+                operations.add(operation)
+                operation.add_done_callback(operations.discard)
+                operation.add_done_callback(
+                    lambda task: None if task.cancelled() else task.exception()
+                )
+                try:
+                    await asyncio.shield(operation)
+                except asyncio.CancelledError:
+                    confirmation_cancelled = True
+                    raise
+
+            def _recovery(action: str | None) -> None:
+                if action == "view":
+                    self._open_console_workspace_switcher(show_archived=True)
+                elif action == "undo":
+                    self._restore_console_workspace(
+                        workspace_id, expected_record=archived_record
+                    )
+
+            async def _show_receipt() -> None:
+                nonlocal receipt_shown
+                if (
+                    not receipt_shown
+                    and archived_record is not None
+                    and _current()
+                    and self._screen.app.screen is self._screen
+                ):
+                    receipt_shown = True
+                    if (
+                        getattr(self, "_console_workspace_archive_receipt", None)
+                        is archived_record
+                    ):
+                        self._console_workspace_archive_receipt = None
+                    await self.push_screen(
+                        WorkspaceArchiveReceiptModal(name=record.name),
+                        callback=_recovery,
+                    )
+                    self.run_worker(
+                        self._sync_native_console_chat_ui(),
+                        exclusive=True,
+                        group="console-sync",
+                    )
+
+            async def _after_archive(confirmed: bool | None) -> None:
+                if confirmed or confirmation_cancelled:
+                    await _show_receipt()
+
+            dialog = ConfirmationDialog(
                 title="Archive workspace?",
                 message=(
                     f"Archive {record.name}? Its conversations stay saved and "
                     "remain visible in Library; the workspace disappears from "
-                    "the switcher and the Console browser."
+                    "the active switcher list and the Console browser. Recover it using Show archived."
                 ),
                 confirm_label="Archive",
                 confirm_callback=_archive,
             )
+            self.push_screen(dialog, callback=_after_archive)
+
+        self._screen.app.run_worker(
+            _prepare(), group="console-workspace-archive", exclusive=True
         )
 
     def _create_console_workspace(self) -> None:
@@ -4304,8 +4666,21 @@ class ConsoleWorkspaceController:
         *,
         row_key: str = "",
         target_workspace_id: str | None = None,
+        resume_if: Callable[[], bool] | None = None,
     ) -> bool | None:
-        """Open one saved conversation for both the flat browser and Tree."""
+        """Open a saved conversation while its optional resume claim is current.
+
+        Args:
+            conversation_id: Saved conversation identity or native session key.
+            row_key: Optional browser row that owns the selected scope.
+            target_workspace_id: Fallback workspace for a cold load.
+            resume_if: Optional predicate rechecked after token preparation and
+                before changing the active session.
+
+        Returns:
+            True after activation, False for a missing row, or None when the
+            request is superseded or presentation fails.
+        """
 
         conversation_id = str(conversation_id or "").strip()
         explicit_row_key = str(row_key or "").strip()
@@ -4320,8 +4695,7 @@ class ConsoleWorkspaceController:
         prior_browser_workspace_id: str | None = None
         if browser_row is not None:
             prior_browser_workspace_id = (
-                self._active_console_workspace_id_for_conversation_search()
-                or None
+                self._active_console_workspace_id_for_conversation_search() or None
             )
             row_conversation_id = str(browser_row.conversation_id or "").strip()
             session_id = self._session_id_for_browser_row_fn(browser_row)
@@ -4351,12 +4725,11 @@ class ConsoleWorkspaceController:
                         if browser_row is not None
                         else target_workspace_id
                     ),
+                    resume_if=resume_if,
                 )
             finally:
                 try:
-                    self._set_conversation_row_loading_fn(
-                        row_conversation_id, False
-                    )
+                    self._set_conversation_row_loading_fn(row_conversation_id, False)
                 except BaseException:
                     logger.opt(exception=True).warning(
                         "Unable to clear Console conversation-row loading state"
@@ -4384,6 +4757,8 @@ class ConsoleWorkspaceController:
             from .conversation_token_preparation import prepare_conversation_tokens
 
             await prepare_conversation_tokens(self._screen, store, session_id)
+            if resume_if is not None and not resume_if():
+                return None
             if prior_active_session_id != session_id:
                 self._capture_console_draft_switch_snapshot()
                 controller.switch_session(session_id)
@@ -5340,6 +5715,8 @@ class ConsoleWorkspaceController:
         target_scope_type: str | None = None,
         target_workspace_id: str | None = None,
         reuse_existing: bool = False,
+        preserve_persisted_scope: bool = False,
+        resume_if: Callable[[], bool] | None = None,
     ) -> bool | None:
         """Load a persisted saved conversation into a native Console session.
 
@@ -5349,6 +5726,8 @@ class ConsoleWorkspaceController:
             target_workspace_id: Optional fallback workspace for cold hydration.
             reuse_existing: Prefer an open runtime after validating the saved
                 record. History opts in; explicit fresh-session callers do not.
+            preserve_persisted_scope: Restore the saved workspace or global scope.
+            resume_if: Optional ownership predicate carried through activation.
 
         Returns:
             True on success; None on a transient failure this method already
@@ -5396,6 +5775,9 @@ class ConsoleWorkspaceController:
             )
             return None
 
+        if resume_if is not None and not resume_if():
+            return None
+
         if tree is None:
             # TASK-717: missing record - the caller owns this failure's UX
             # (honest toast + marking the row visibly broken), so do not
@@ -5405,7 +5787,7 @@ class ConsoleWorkspaceController:
             )
             return False
 
-        if reuse_existing:
+        if reuse_existing or preserve_persisted_scope:
             matches = [
                 session
                 for session in store.sessions()
@@ -5417,12 +5799,15 @@ class ConsoleWorkspaceController:
                     matches[0],
                 )
                 return await self.open_console_workspace_conversation(
-                    f"native:{session.id}"
+                    f"native:{session.id}", resume_if=resume_if
                 )
 
         conversation = tree.get("conversation")
         if not isinstance(conversation, dict):
             conversation = {}
+        if preserve_persisted_scope:
+            target_workspace_id = conversation.get("workspace_id") or None
+            target_scope_type = "workspace" if target_workspace_id else "global"
         session = None
         hydration = self._console_session_settings_for_resume(conversation)
         if not isinstance(hydration, ConsoleGenerationSettingsHydration):
@@ -5456,6 +5841,13 @@ class ConsoleWorkspaceController:
             from .conversation_token_preparation import prepare_conversation_tokens
 
             await prepare_conversation_tokens(self._screen, store, session.id)
+            if resume_if is not None and not resume_if():
+                store.rollback_restored_session(
+                    session.id,
+                    expected_session=session,
+                    prior_active_session_id=prior_active_session_id,
+                )
+                return None
             store.switch_session(session.id)
             self._set_active_workspace_for_console_session(session.id)
             self._sync_console_retrieval_scope_row()
