@@ -210,6 +210,93 @@ def test_explicit_local_model_review_and_retirement(tmp_path, route):
     _run(tmp_path, route, "local", script=_REVIEW)
 
 
+_PROJECTION_IDENTITY = _REVIEW.replace(
+    "if sys.argv[1]=='changed':",
+    r"""
+from types import SimpleNamespace
+from tldw_chatbook.RAG_Search.recovery import _model
+service=SimpleNamespace(embeddings=wrapper)
+identity, native=_model(service)
+assert len(identity)==64 and _model(service)==(identity,native)
+record=wrapper.factory._cache[wrapper.factory.config.default_model_id]
+backend=record['embed'].__self__
+assert native[:3]==(id(backend),id(backend._model),id(backend._tok))
+assert not activation.allowed('generation','config')
+mode=sys.argv[1]
+if mode=='identity_changed':
+ path=model/'config.json';path.write_bytes(path.read_bytes()+b' ')
+elif mode=='identity_receipt':
+ next(activation._generation('generation').glob('local-embedding-*.json')).unlink()
+elif mode=='identity_owner':
+ (activation._generation('generation')/('approved-'+bootstrap._key('models.artifacts')+'.json')).unlink()
+elif mode=='identity_settings':
+ wrapper.factory.config.models[wrapper.factory.config.default_model_id].device='auto'
+elif mode=='identity_closed':
+ # A stale cache entry with plausible imported Hub fields cannot authorize a
+ # disposed native borrower, even when its Python model objects remain alive.
+ loaded_model,loaded_tokenizer=backend._model,backend._tok
+ backend.close()
+ backend._model,backend._tok=loaded_model,loaded_tokenizer
+ backend._model.config._commit_hash='a'*40
+ backend._tok.init_kwargs['_commit_hash']='a'*40
+if mode!='identity_stable':
+ try:_model(service)
+ except RAGActivationRequired:pass
+ else:raise AssertionError('stale or unapproved local model supplied projection identity')
+if mode=='identity_closed':wrapper.factory._cache.clear()
+if sys.argv[1]=='changed':
+""",
+    1,
+)
+
+
+@pytest.mark.parametrize(
+    "route",
+    [
+        "identity_stable",
+        "identity_changed",
+        "identity_receipt",
+        "identity_owner",
+        "identity_settings",
+        "identity_closed",
+    ],
+)
+def test_projection_identity_requires_current_reviewed_native_local_model(
+    tmp_path, route
+):
+    _run(tmp_path, route, "local", script=_PROJECTION_IDENTITY)
+
+
+_ORDINARY_PINNED_MODEL = _TINY_MODEL.replace(
+    "model=data/'local-bert';model.mkdir(mode=0o700)",
+    "model=data/'snapshots'/('b'*40);model.mkdir(parents=True,mode=0o700)",
+) + r"""
+from types import SimpleNamespace
+import pytest
+from tldw_chatbook.RAG_Search.simplified.embeddings_wrapper import EmbeddingsServiceWrapper
+from tldw_chatbook.RAG_Search.recovery import _model
+wrapper=EmbeddingsServiceWrapper(str(model),device='cpu')
+try:
+ assert wrapper.create_embedding('local model content').shape==(16,)
+ backend=wrapper.factory._cache[wrapper.factory.config.default_model_id]['embed'].__self__
+ # The installed model loader extracts its revision from the snapshot path.
+ # This tokenizer does not retain one, so preserve the existing revision refusal
+ # without imposing a recovery review on an ordinary, unrestored installation.
+ assert backend._model.config._commit_hash=='b'*40
+ assert '_commit_hash' not in backend._tok.init_kwargs
+ service=SimpleNamespace(embeddings=wrapper)
+ with pytest.raises(ValueError,match='^projection_model_revision_unavailable$'):
+  _model(service)
+finally:wrapper.close()
+assert not blocked_attempts()
+print('retired and reopened')
+"""
+
+
+def test_ordinary_local_snapshot_does_not_require_recovery_review(tmp_path):
+    _run(tmp_path, "ordinary", "local", script=_ORDINARY_PINNED_MODEL)
+
+
 _ORDINARY = (
     _TINY_MODEL
     + r"""

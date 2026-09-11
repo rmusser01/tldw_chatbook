@@ -12,13 +12,14 @@ import re
 import struct
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from tldw_chatbook.Backup_Recovery.rag_inventory import recovery_adapters
 from tldw_chatbook.Backup_Recovery.rag_projection_lifetime import participant
 
+from .activation import RAGActivationRequired, native_worker
 from .activation import async_guarded as activation_async_guarded
-from .activation import native_worker
 
 _LIMIT = 100_000
 _RECORDING = ContextVar("rag_recovery_recording", default=None)
@@ -162,29 +163,44 @@ def _model(service):
             or backend._pool is not _masked_mean
         ):
             raise ValueError("projection_model_identity_unavailable")
-        model, tokenizer = backend._model, backend._tok
-        revision = getattr(model.config, "_commit_hash", None)
-        tokenizer_revision = tokenizer.init_kwargs.get("_commit_hash")
-        if (
-            not isinstance(revision, str)
-            or not re.fullmatch(r"[0-9a-f]{40}", revision)
-            or tokenizer_revision != revision
-        ):
-            raise ValueError("projection_model_revision_unavailable")
-        identity = _digest(
-            (
-                "installed-hf-masked-mean-v1",
-                revision,
-                model.config.to_dict(),
-                backend._max_len,
-                str(backend._dtype),
+        from .model_recovery import reviewed_local_identity
+
+        configured = Path(spec.model_name_or_path).expanduser()
+        local = (
+            configured.is_absolute()
+            or configured.exists()
+            or spec.model_name_or_path.startswith(("./", "../"))
+        )
+        # A configured local model must retain its actual reviewed native
+        # borrower. Imported Hub fields cannot replace that authority.
+        with reviewed_local_identity(backend) as (local_identity, borrowed):
+            if local and not borrowed:
+                raise RAGActivationRequired("local_model_closed")
+            model, tokenizer = backend._model, backend._tok
+            revision = getattr(model.config, "_commit_hash", None)
+            tokenizer_revision = tokenizer.init_kwargs.get("_commit_hash")
+            if local_identity is None and (
+                not isinstance(revision, str)
+                or not re.fullmatch(r"[0-9a-f]{40}", revision)
+                or tokenizer_revision != revision
+            ):
+                raise ValueError("projection_model_revision_unavailable")
+            identity = _digest(
+                (
+                    "installed-local-hf-masked-mean-v1"
+                    if local_identity is not None
+                    else "installed-hf-masked-mean-v1",
+                    local_identity if local_identity is not None else revision,
+                    model.config.to_dict(),
+                    backend._max_len,
+                    str(backend._dtype),
+                )
             )
-        )
-        versions = tuple(
-            (name, tuple(value.shape), str(value.dtype), value._version)
-            for name, value in model.named_parameters()
-        )
-        return identity, (id(backend), id(model), id(tokenizer), versions)
+            versions = tuple(
+                (name, tuple(value.shape), str(value.dtype), value._version)
+                for name, value in model.named_parameters()
+            )
+            return identity, (id(backend), id(model), id(tokenizer), versions)
 
 
 def _failure(error):

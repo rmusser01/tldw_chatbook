@@ -448,6 +448,41 @@ class LocalEmbeddingLifetime:
 participant = LocalEmbeddingLifetime()
 
 
+@contextmanager
+def reviewed_local_identity(backend):
+    """Yield a reviewed digest and native borrower presence while holding scopes."""
+    item = participant._borrowers.get(backend)
+    if item is None:
+        yield None, False
+        return
+    with participant.operation(), item[4]:
+        if participant._borrowers.get(backend) is not item:
+            raise RAGActivationRequired("local_model_closed")
+        _, leases, cfg, expected, _ = item
+        with _review(cfg, retained=leases) as (review, records, _):
+            if review != expected or bool(records) != (review is not None):
+                raise RAGActivationRequired("local_model_review_changed")
+            _require(records)
+            with ExitStack() as stack:
+                for path, lease in leases.items():
+                    if not stack.enter_context(
+                        execution_scope(("models.artifacts",), path, retained=lease)
+                    ):
+                        raise RAGActivationRequired()
+                identity = (
+                    _digest(
+                        (
+                            "reviewed-local-hf-v1",
+                            records[0][1].closure_digest,
+                            _settings(cfg),
+                        )
+                    )
+                    if review is not None
+                    else None
+                )
+                yield identity, True
+
+
 def recovered_load(function):
     """Retain actual source holds through the loaded native object's lifetime."""
 
