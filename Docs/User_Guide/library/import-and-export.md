@@ -141,7 +141,24 @@ respectively — a single fixed "original copies full media files…" caption
 used to show regardless of the selected option) (shown only when media is
 in scope), "Choose destination…"
 above "No destination chosen", and the "Export bundle (.zip)" submit
-button. A "Cancel" button appears while an export is running. Once an
+button. The chooser opens on **original** — full fidelity — so a bundle
+only loses content when you ask it to (task-32353).
+
+Directly above the submit button, two quiet lines say what pressing it
+will write, before you press it (task-32353): a **bundle line** —
+"Bundle: 2 media items · full files · about 4 KB" — naming the item count,
+the fidelity the chooser is set to, and the estimated size; and a
+**contents list** naming the items themselves, up to 20 of them, then
+"+ N more". Where the size cannot be known up front (an "Everything"
+export spans four sources, only one of which can be measured beforehand)
+the line says "size known once it runs" rather than guessing, and the
+contents list is absent. Both appear once counting finishes.
+
+When the submit button is off, its reason is on the line directly beneath
+it — "Choose a destination before exporting.", "Nothing to export in this
+scope.", "Waiting for item counts before exporting.", or "An export is
+already running." (task-32362). It is the same sentence the tooltip shows,
+so a keyboard-first reader never has to hover to find out why. A "Cancel" button appears while an export is running. Once an
 export finishes, a receipt line appears above the submit button and stays
 there — it updates in place after each further export and survives
 switching to another rail row and back, for the rest of the session.
@@ -254,9 +271,11 @@ destination, or leaving the Import canvas cancels pending consent.
 | Export control | What it does |
 |---|---|
 | "Export name" | Pre-filled "Library export 2026-07-31" (today's date); becomes the bundle's display name. |
-| "quality: thumbnail" | Press to open a one-row strip of thumbnail / compressed / original (✓ on the active one) right under the button; pick one directly, or press the button again / Escape to close without changing. The helper line underneath always describes the option currently showing. Only "original" copies full media files into the zip; the others keep the package small. |
+| "quality: original" | Opens on "original" (full fidelity, task-32353). Press to open a one-row strip of thumbnail / compressed / original (✓ on the active one) right under the button; pick one directly, or press the button again / Escape to close without changing. The helper line underneath always describes the option currently showing. Only "original" copies full media files into the zip; the others keep the package small. |
+| "Bundle: N media items · full files · about X KB" | What pressing Export will actually write: the item count, the fidelity the quality chooser is set to, and the estimated size. Reads "size known once it runs" when the scope's size cannot be measured up front. Appears once counting finishes. |
+| The contents list | The titles of the items going into the bundle, up to 20, then "+ N more". Absent when the scope's items cannot be enumerated before the run. |
 | "Choose destination…" | Opens "Choose Export Destination". Whatever you pick is normalized to end in `.zip`; if that file already exists, an "Overwrites <name>" note appears (informational — exporting proceeds and replaces it). |
-| "Export bundle (.zip)" | Enabled once counting has finished, the scope is non-empty, and a destination is chosen. "Nothing to export in this scope." appears when the scope is empty; either way, hovering the button always shows a tooltip naming the same reason it's disabled (or "Write the bundle to the chosen destination." once it's ready) — a disabled press can never look like it silently did nothing. |
+| "Export bundle (.zip)" | Enabled once counting has finished, the scope is non-empty, and a destination is chosen. "Nothing to export in this scope." appears when the scope is empty; either way, the reason is printed on the line directly below the button AND repeated in its tooltip (or "Write the bundle to the chosen destination." once it's ready) — a disabled press can never look like it silently did nothing. |
 | "Cancel" | Visible only while an export is running; stops it. The quiet line above keeps reporting progress throughout ("Exporting (N items)…" at first, then the phase it's on — "Collecting notes…  3/12", "Packaging archive…  5/9 files"), and once the write has run for about three seconds that same line gains " · still working · Cancel" pointing at this button. Pressing it leaves "Cancelling…" until the run reports back. |
 | "✓ exported · N items · X KB · path" | Appears after the first successful export this session; the count and size are read back from the written archive's own manifest, so they report what actually landed rather than what was selected. Stays until the next successful export replaces it. (A receipt restored from an earlier session, before those facts were recorded, still shows as "Last export: <path> · <relative time>".) |
 | "✗ export produced no content · N items were selected" | The run collected none of the N items you selected, so no bundle was written at all — nothing on disk to mistake for a real export. The submit button becomes "Retry export". (A single-item selection reads "· 1 item was selected".) |
@@ -924,3 +943,10 @@ and the file dialogs' "File name" box takes a typed or pasted absolute/"~"
 path, jumping the listing to it, with Ctrl+A selecting the field.)*
 
 *Verified against fix/library-crit9-import — 2026-09-10 (task-32216: "Show details" leaves focus on the row action it toggled instead of the Keywords field 25 rows up; task-32231: a run of identical settled outcomes collapses into one "✗ failed · N files · reason" row with "Show the N files", "Retry all" and "Dismiss all"; a group whose members need a different transcription model offers no bare "Retry all", matching those rows' own actions; a group never spans two imports.)*
+
+*Verified against fix/library-crit10-export — 2026-09-11 (task-32353: the
+quality chooser opens on "original" instead of "thumbnail", so a bundle only
+loses content when asked, and a bundle line plus a contents list state what
+the export will write — count, fidelity, estimated size, and the item titles
+— before the button is pressed; task-32362: a blocked "Export bundle (.zip)"
+prints its reason on the line below it, not only in a tooltip.)*

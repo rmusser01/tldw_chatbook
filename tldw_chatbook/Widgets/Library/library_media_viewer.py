@@ -417,6 +417,19 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                     id="library-media-reader-more",
                     compact=True,
                 )
+        if find_reason:
+            # task-32362 (critique #10, A cap 42): the "\u25cb" said blocked and
+            # nothing said why unless you hovered -- the same gap task-31981
+            # closed for Generate, one toolbar over. Yielded AFTER the
+            # ``ds-toolbar`` Horizontal closes, not inside it: mixing a
+            # Static in with the toolbar's Buttons is this canvas's known
+            # non-rendering failure mode (see ``compose``).
+            yield Static(
+                find_reason,
+                id="library-media-reader-find-reason",
+                classes="library-media-action-reason",
+                markup=False,
+            )
         # The same condition the More button above is composed under: a stale
         # ``more_open`` carried onto a server-only detail would otherwise paint
         # an empty actions row under a button that is no longer there.

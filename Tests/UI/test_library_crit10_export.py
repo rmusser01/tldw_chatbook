@@ -7,9 +7,9 @@ count, fidelity, estimated size) and a contents list now sit directly above
 the button.
 
 task-32362 -- "Export bundle (.zip)" carried no inline reason ("No
-destination chosen" sat three rows up). It now renders the reason on the
-line below the button, in the ``library-media-action-reason`` grammar
-task-31981 established.
+destination chosen" sat three rows up), and the Reader's "○ Find" had one
+only on hover. Both now render the reason on the line below the control, in
+the ``library-media-action-reason`` grammar task-31981 established.
 
 Widget-render and geometry assertions use a real Textual ``Pilot``
 (``App.run_test()``) against the consolidated widget CSS the real app loads;
@@ -28,7 +28,11 @@ from tldw_chatbook.Library.library_export_state import (
     EXPORT_BUTTON_NO_DESTINATION_TOOLTIP,
     build_library_export_form_state,
 )
+from tldw_chatbook.Library.library_media_viewer_state import (
+    build_library_media_viewer_state,
+)
 from tldw_chatbook.Widgets.Library.library_export_canvas import LibraryExportCanvas
+from tldw_chatbook.Widgets.Library.library_media_viewer import LibraryMediaViewer
 
 
 def _state(**overrides):
@@ -166,3 +170,53 @@ def test_the_inline_reason_and_the_tooltip_cannot_drift():
     ):
         assert state.submit_blocked_reason == export_button_tooltip(state)
     assert _state().submit_blocked_reason == ""
+
+
+# --- task-32362: the Reader's "○ Find" ---------------------------------------
+
+
+class _ReaderHost(ConsolidatedCSSApp):
+    def __init__(self, viewer: LibraryMediaViewer):
+        super().__init__()
+        self._viewer = viewer
+
+    def compose(self):
+        yield self._viewer
+
+
+def _reader(**kwargs) -> LibraryMediaViewer:
+    """A Reader on a real item with content but no analysis yet."""
+    return LibraryMediaViewer(
+        build_library_media_viewer_state(
+            {
+                "id": 1,
+                "title": "Attention Is All You Need",
+                "type": "article",
+                "content": "body text",
+                "analysis_content": "",
+            }
+        ),
+        id="library-media-viewer",
+        **kwargs,
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_blocked_find_carries_its_reason_under_the_toolbar():
+    viewer = _reader(reader_mode="analysis")
+    app = _ReaderHost(viewer)
+    async with app.run_test(size=(235, 52)) as pilot:
+        find = pilot.app.query_one("#library-media-reader-find", Button)
+        reason = pilot.app.query_one("#library-media-reader-find-reason", Static)
+        assert find.disabled
+        assert str(find.label).startswith("○ ")
+        assert str(reason.renderable) == find.tooltip
+        assert reason.region.y >= find.region.y + find.region.height
+
+
+@pytest.mark.asyncio
+async def test_an_available_find_mounts_no_reason_line():
+    app = _ReaderHost(_reader(reader_mode="read"))
+    async with app.run_test(size=(235, 52)) as pilot:
+        assert pilot.app.query_one("#library-media-reader-find", Button).disabled is False
+        assert not pilot.app.query("#library-media-reader-find-reason")
