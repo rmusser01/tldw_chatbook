@@ -18,10 +18,13 @@ folders ([Notes](notes.md)) and Prompt collections
 > create/rename/delete Collections manager. That surface no longer ships:
 > the generic Collections tables are read-only recovery data (see
 > [Legacy Collections data](#legacy-collections-data) below), and the row
-> opens the captures reading list documented here. Whether the row keeps
-> the name "Collections" or becomes "Captures" is an open product
-> decision (task-32057 AC#1) — the name may change; the surface described
-> here is what ships.
+> opens the captures reading list documented here. The name question is
+> now settled (task-32057 AC#1, 2026-09-11): the feature is called
+> **Collections** in the rail and on the canvas, and **Quick Capture** is
+> the name of one action on it — the button that saves a URL — not of the
+> screen. The local Collections service stays **read-only**: there is no
+> schema migration, no membership model and no "Add to collection"
+> affordance anywhere in the app.
 
 ## Getting there
 
@@ -57,6 +60,7 @@ right.
 
 **Capture list (middle):**
 
+- **Collections** — the canvas heading, the same name the rail row carries.
 - **Quick Capture** — opens the save form (see
   [Common tasks](#common-tasks)). Disabled with its reason in the tooltip
   when the active authority cannot capture.
@@ -73,11 +77,21 @@ right.
   The row you have loaded in the reader is prefixed `Loaded in Reader`; a
   row you just clicked whose detail is still arriving reads `Selected ·
   loading`.
-- **Range line** — `1–20 of 57`, or `0–0 of 0` when the scope is empty, or
-  `Page N · total unavailable` when a refresh failed.
-- **Previous** / **Next** — 20 captures per page. Each carries its reason
-  as a tooltip when it is not pressable ("No current next page is
-  available.").
+- **Empty state**, one of two sentences — never both, and never the wrong
+  one. With no filter set: "No saved captures yet · press Quick Capture
+  above to save a page by URL." With a filter (search text, domain, tags or
+  a date bound): "No captures match these filters · clear them to see
+  everything saved."
+- **Range line** — `1–20 of 57 · Page 1 of 3`, or `0–0 of 0` when the scope
+  is empty, or `Page N · total unavailable` when a refresh failed.
+- **Previous** / **Next** — 20 captures per page. They are drawn **only
+  when a second page exists**: a scope that fits on one page has nowhere to
+  page to, so the page number, the boundary reason and both controls are
+  suppressed, exactly as on every other Library list. A disabled control
+  carries a leading **○** and its reason as a tooltip ("Already on the
+  first page.", "No more results."). Paging is **paused**, not absent,
+  while a page is stale — the controls stay, disabled, reading "No current
+  next page is available.".
 
 **Reader (right):** empty until you select a capture ("Select a capture to
 read it here."), then:
@@ -110,7 +124,7 @@ read it here."), then:
 | Sort: … | Cycles the sort order in place; the label always names the order in force. |
 | Filter captures | Free-text search inside the current scope. |
 | Scope sub-rows | All Captures, Saved, Reading, Read, Archived, Favorites, then your saved searches. The selected scope carries the count. |
-| Previous / Next | Move by exact 20-capture pages. |
+| Previous / Next | Move by exact 20-capture pages. Drawn only when a second page exists. |
 | Mark Read / Favorite / Move to Archive | Status actions on the loaded capture. Archiving leaves a `Moved to Archive · was <status>.` receipt with **Undo**. |
 | Open Original | Opens the capture's original URL in your browser. |
 | Read / Highlights / Notes / Info | Reader modes over the one loaded capture. |
@@ -239,3 +253,10 @@ so the rail borrowed the unfiltered total for one load window. The
 unfiltered prefetch now answers only for the unfiltered scope, a page whose
 authority has gone is never painted, and a count read that fails or runs out
 of deadline shows "(—)" with a Details sentence instead of vanishing.)*
+
+*Verified against fix/library-crit10-pagers — 2026-09-11 (task-32057 AC#1
+decided and task-32352: one name — the canvas heading is "Collections" and
+"Quick Capture" is only the save-a-URL button; the empty state no longer
+tells a profile that never captured anything to clear filters it never set;
+the pager at `0–0 of 0` draws no controls at all, per task-32354's shared
+single-page rule. Live at 235x52, 100x30 and 60x24 on a seeded profile.)*
