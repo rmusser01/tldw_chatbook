@@ -2,12 +2,17 @@
 
 import json
 import os
+import subprocess  # nosec B404: fixed private child programs.
+import sys
 import tempfile
 from pathlib import Path
 
 import pytest
 
 from Tests.Backup_Recovery.test_complete_roundtrip import _run_profile_child
+from Tests.ProductionApp.test_backup_restore_end_to_end import (
+    native_package,  # noqa: F401
+)
 
 _PRIVATE = r"""
 import asyncio,hashlib,json,os,sys,threading
@@ -21,6 +26,9 @@ keyring.set_keyring(Keyring())
 fixture=Path(os.environ['MULTIVOLUME_FIXTURE'])
 image=Path(os.environ['MULTIVOLUME_IMAGE'])
 selector=Path(os.environ['TLDW_CONFIG_PATH'])
+if os.environ.get('MULTIVOLUME_INSTALLED'):
+ import tldw_chatbook
+ assert Path(tldw_chatbook.__file__).resolve().is_relative_to(Path(os.environ['MULTIVOLUME_INSTALLED']))
 from tldw_chatbook.Backup_Recovery.native_files import pinned_directory,native_identity
 from tldw_chatbook.Backup_Recovery.qualification import qualified_for
 with pinned_directory(image) as fd:
@@ -110,7 +118,8 @@ from tldw_chatbook.Backup_Recovery.plan_records import load_plan
 seed=json.loads((fixture/'seed.json').read_text())
 assert selector.read_bytes().hex()==seed['config_hex']
 assert hashlib.sha256(Path(seed['archive']).read_bytes()).hexdigest()==seed['archive_sha256']
-archive=acquire(Path(seed['archive']),fixture/'acquired',ArchiveLimits(),None,threading.Event())
+reviewed=os.environ.get('MULTIVOLUME_REVIEWED')=='1'
+archive=acquire(Path(seed['archive']),fixture/('reviewed-acquired' if reviewed else 'acquired'),ArchiveLimits(),None,threading.Event())
 doc=verify_sealed(archive);assert doc.consistency=='coherent' and len(doc.profile_ids)==1
 target=preview_capture((selector,),options={})
 (fixture/'target-preview.json').write_text(json.dumps({'complete':target.complete,'issues':target.issues,'blocking':[{'owner':item.owner,'id':item.logical_id,'path':str(item.path),'status':item.status} for item in target.items if item.owner=='unknown' or item.status in {'unsupported','unavailable','missing_required'}]},indent=2))
@@ -122,7 +131,7 @@ current_profile=current.logical_id.split(':')[1]
 def current_key(key):
  prefix='profile:'+source_profile+':'
  return 'profile:'+current_profile+':'+key[len(prefix):] if key.startswith(prefix) else key
-manual=fixture/'inactive';manual.mkdir(mode=0o700)
+manual=fixture/'inactive';manual.mkdir(mode=0o700,exist_ok=reviewed)
 roots={row.logical_id:row for row in doc.directories if row.parent_id is None}
 mapping={};deferred={'agents.history','eval.definitions','tts.voices','persona.visual_identity_builtin'}
 for index,(key,root) in enumerate(roots.items()):
@@ -144,10 +153,11 @@ safety=tuple(item.logical_id for item in target.items if item.owner=='persona.vi
 before={str(item.path):hashlib.sha256(item.path.read_bytes()).hexdigest() for item in target.items if item.status=='included' and item.path is not None}
 (fixture/'reviewed-mapping.json').write_text(json.dumps({'destinations':{key:str(path) for key,path in mapping.items()},'safety_scope':safety,'profile_name':name},indent=2))
 try:
- plan=plan_restore(archive,mode='replace',destinations=mapping,target=target,profile_names={source_profile:name},safety_scope=safety)
- (fixture/'control').mkdir(mode=0o700)
- journal=Journal(fixture/'control','two-device-stage')
- candidate=stage_restore(archive,plan,fixture/'work',threading.Event(),journal=journal)
+ omissions=tuple(json.loads((fixture/'credential-review.json').read_text())['issues']) if reviewed else ()
+ plan=plan_restore(archive,mode='replace',destinations=mapping,target=target,profile_names={source_profile:name},safety_scope=safety,acknowledged_credential_issues=omissions)
+ (fixture/'control').mkdir(mode=0o700,exist_ok=reviewed)
+ journal=Journal(fixture/'control','two-device-reviewed-stage' if reviewed else 'two-device-stage')
+ candidate=stage_restore(archive,plan,fixture/('reviewed-work' if reviewed else 'work'),threading.Event(),journal=journal)
 except Exception as error:
  (fixture/'stage-refusal.json').write_text(json.dumps({'type':type(error).__name__,'args':error.args},default=str));raise
 assert load_plan(journal)==plan
@@ -170,7 +180,7 @@ print('ACTUAL_TWO_DEVICE_REPLACEMENT_CANDIDATE_STAGED',flush=True)
 )
 
 
-def test_actual_two_device_capture_plans_and_stages_replacement(tmp_path):
+def _two_device_fixture(tmp_path, installed=None):
     supplied = os.environ.get("TLDW_TEST_APFS_MOUNT")
     if not supplied:
         pytest.skip("requires the explicitly mounted disposable APFS fixture")
@@ -217,6 +227,11 @@ def test_actual_two_device_capture_plans_and_stages_replacement(tmp_path):
         TLDW_DISABLE_CONFIG_WATCH="1",
         PYTHONPATH=str(Path(__file__).resolve().parents[2]),
     )
+    if installed is not None:
+        environment["MULTIVOLUME_INSTALLED"] = str(installed)
+        environment["PYTHONPATH"] = os.pathsep.join(
+            (str(installed), environment["PYTHONPATH"])
+        )
     (root / "fixture.json").write_text(
         json.dumps({"image": str(image), "selector": str(selector)})
     )
@@ -228,3 +243,253 @@ def test_actual_two_device_capture_plans_and_stages_replacement(tmp_path):
         evidence["original_files_unchanged"]
         and evidence["blocked_network_attempts"] == 0
     )
+    return root, environment
+
+
+def test_actual_two_device_capture_plans_and_stages_replacement(tmp_path):
+    _two_device_fixture(tmp_path)
+
+
+_INTERRUPT = "".join(  # noqa: FLY002 - fixed child source with literal braces.
+    (
+        _PRIVATE,
+        r"""
+import sqlite3,zipfile
+from contextlib import closing
+from tldw_chatbook.Backup_Recovery import publication,replacement
+from tldw_chatbook.Backup_Recovery.archive_reader import acquire,verify_sealed
+from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
+from tldw_chatbook.Backup_Recovery.journal import Journal
+from tldw_chatbook.Backup_Recovery.plan_records import load_plan
+seed=json.loads((fixture/'seed.json').read_text())
+staged=json.loads((fixture/'stage-evidence.json').read_text())
+plan=load_plan(Journal(fixture/'control',staged['operation']))
+original_capture=replacement.capture_verify_rollback
+safety_checked=False
+def capture_checked(*args,**kwargs):
+ global safety_checked
+ try:path=original_capture(*args,**kwargs)
+ except replacement.RollbackCredentialReviewRequired as error:
+  from collections import Counter
+  assert not os.environ.get('MULTIVOLUME_REVIEWED')
+  material=next(kwargs['work_root'].glob('originals-*/credential-recovery.json'))
+  records=json.loads(material.read_text())['records']
+  assert len(records)==17 and all(row['status']=='unreadable' and row['remappable'] is False for row in records)
+  assert Counter(row['kind'] for row in records)=={'citation':5,'generation':8,'server':4}
+  assert {row['purpose'] for row in records if row['kind']=='server'}=={'api_key','bearer_token','access_token','refresh_token'}
+  assert set(error.issues)=={'credential_unreadable:'+row['id'] for row in records}
+  (fixture/'credential-review.json').write_text(json.dumps({'issues':error.issues,'records':records},indent=2))
+  raise
+ # Independent decryption happens before the publisher receives this result.
+ archive=acquire(path,fixture/'safety-readback',ArchiveLimits(),b'two-device safety',threading.Event())
+ manifest=verify_sealed(archive)
+ assert archive.encrypted_source is not None and manifest.consistency=='coherent'
+ values={}
+ with zipfile.ZipFile(archive.path) as contents:
+  for owner,query,key,wanted in (('db.chachanotes.primary','SELECT content FROM notes WHERE id=?',seed['note'],'Current host value'),('research.local','SELECT query FROM research_sessions WHERE id=?',seed['research'],'Current image value')):
+   row=next(row for row in manifest.files if row.owner_id==owner)
+   copied=fixture/('safety-'+owner+'.sqlite');copied.write_bytes(contents.read(row.payload))
+   with closing(sqlite3.connect(copied.as_uri()+'?mode=ro',uri=True)) as connection:
+    value=connection.execute(query,(key,)).fetchone()
+   assert value==(wanted,),value
+   values[owner]={'logical_id':row.logical_id,'value':value[0],'payload_sha256':hashlib.sha256(copied.read_bytes()).hexdigest()}
+ (fixture/'safety-evidence.json').write_text(json.dumps({'ciphertext':str(path),'ciphertext_sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'sealed_digest':archive.digest,'values':values,'checked_before_first_move':True},indent=2))
+ safety_checked=True
+ return path
+replacement.capture_verify_rollback=capture_checked
+original_begin=publication._begin_move
+original_complete=publication._complete_move
+original_publish=publication.publish_new
+completed_devices=[]
+def record_exit(journal,parent,intent,boundary):
+ records=journal._records(parent)
+ assert any(row.event=='rollback_verified' for row in records)
+ (fixture/'interruption.json').write_text(json.dumps({'operation':journal.operation_id,'boundary':boundary,'intent':intent.model_dump(),'completed_devices':completed_devices,'records':[row.model_dump() for row in records]},indent=2))
+ assert not blocked_attempts(),blocked_attempts()
+ os._exit(91)
+active=None
+def begin(journal,parent,item,step):
+ global active
+ assert safety_checked
+ assert any(row.event=='rollback_verified' for row in journal._records(parent))
+ intent=original_begin(journal,parent,item,step)
+ active=(journal,parent,intent)
+ if os.environ['MULTIVOLUME_BOUNDARY']=='between_devices' and completed_devices and intent.source.device!=completed_devices[-1]:
+  record_exit(journal,parent,intent,'between_devices')
+ return intent
+def complete(journal,parent,prepared,intent,*,moved):
+ original_complete(journal,parent,prepared,intent,moved=moved)
+ if moved:completed_devices.append(intent.source.device)
+def publish(source,destination,**kwargs):
+ original_publish(source,destination,**kwargs)
+ if os.environ['MULTIVOLUME_BOUNDARY']=='image_native' and destination==Path(seed['research_path']):
+  journal,parent,intent=active
+  assert intent.step=='publish' and intent.source.device==image_device
+  assert not source.exists() and destination.exists()
+  record_exit(journal,parent,intent,'image_native')
+publication._begin_move=begin
+publication._complete_move=complete
+publication.publish_new=publish
+try:replacement.replace(plan,Path(staged['candidate']),control_root=fixture/'control',rollback_password=b'two-device safety',cancel=threading.Event())
+except replacement.RollbackCredentialReviewRequired:
+ from tldw_chatbook.Backup_Recovery import bootstrap
+ root=bootstrap.default_bootstrap_root();pending=bootstrap._records(root)[0]
+ assert len(pending)==1
+ operation=pending[0]['operation_id'];journal=Journal(fixture/'control',operation)
+ with journal._locked(exclusive=False) as parent:records=journal._records(parent)
+ assert [row.event for row in records]==['candidate_staged','prepared']
+ assert not bootstrap.startup_permission(selector,root)[0]
+ assert replacement.recover_replacement(operation,control_root=fixture/'control',action='abort',rollback_password=None,cancel=threading.Event())=='aborted'
+ assert bootstrap.startup_permission(selector,root)[0]
+ with journal._locked(exclusive=False) as parent:after=journal._records(parent)
+ assert after[-1].event=='prepublication_aborted'
+ (fixture/'review-abort.json').write_text(json.dumps({'operation':operation,'before':[row.model_dump() for row in records],'after':[row.model_dump() for row in after]},indent=2))
+ assert not blocked_attempts(),blocked_attempts()
+ sys.exit(92)
+raise AssertionError('native interruption boundary was not reached')
+""",
+    )
+)
+
+_RECOVER = (
+    _PRIVATE
+    + r"""
+from tldw_chatbook.Backup_Recovery import bootstrap,replacement,publication
+from tldw_chatbook.Backup_Recovery.journal import Journal,_Prepared,_MoveIntent,_evidence_digest
+from tldw_chatbook.Backup_Recovery.archive_reader import acquire,verify_sealed
+from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
+seed=json.loads((fixture/'seed.json').read_text())
+interrupted=json.loads((fixture/'interruption.json').read_text())
+safety=json.loads((fixture/'safety-evidence.json').read_text())
+operation=interrupted['operation'];root=bootstrap.default_bootstrap_root()
+pending,profiles=bootstrap._records(root)
+assert any(row['operation_id']==operation for row in pending)
+assert not bootstrap.startup_permission(selector,root)[0]
+journal=Journal(fixture/'control',operation)
+with journal._locked(exclusive=False) as parent:records=journal._records(parent)
+prepared=_Prepared.model_validate(next(row.evidence for row in records if row.event=='prepared'))
+verified=next(row.evidence for row in records if row.event=='rollback_verified')
+assert verified['ciphertext']['path']==safety['ciphertext']
+assert verified['sealed_digest']==safety['sealed_digest']
+assert hashlib.sha256(Path(safety['ciphertext']).read_bytes()).hexdigest()==safety['ciphertext_sha256']
+for owner,value in safety['values'].items():
+ group=next(row for row in verified['sqlite_groups'] if row['owner_id']==owner)
+ assert group['logical_id']==value['logical_id'] and group['payload_digest']==value['payload_sha256']
+ assert group['artifacts'] and set(group['artifacts'])<=set(verified['coverage'])
+ expected=Path(seed['research_path']) if owner=='research.local' else selector.parent/'custom'/'notes.db'
+ assert Path(group['source']['path'])==expected
+ assert group['source']['device']==(image_device if owner=='research.local' else host_device)
+first_move=next(index for index,row in enumerate(records) if row.event=='move_intended')
+assert next(index for index,row in enumerate(records) if row.event=='rollback_verified')<first_move
+intent=_MoveIntent.model_validate(interrupted['intent'])
+assert not any(row.event=='move_observed' and row.evidence['intent_digest']==_evidence_digest(intent.model_dump()) for row in records)
+assert publication._move_position(intent)==('after' if interrupted['boundary']=='image_native' else 'before')
+if interrupted['boundary']=='between_devices':
+ assert interrupted['completed_devices'] and intent.source.device!=interrupted['completed_devices'][-1]
+assert {item.previous.device for item in prepared.artifacts if item.previous is not None}=={host_device,image_device}
+for item in prepared.artifacts:
+ if item.previous is not None:
+  assert Path(item.retained).parent.stat().st_dev==item.previous.device
+before=[row.model_dump() for row in records]
+action=os.environ['MULTIVOLUME_ACTION']
+outcome=replacement.recover_replacement(operation,control_root=fixture/'control',action=action,rollback_password=b'two-device safety',cancel=threading.Event())
+assert outcome==('committed' if action=='finish' else 'rolled_back'),outcome
+with journal._locked(exclusive=False) as parent:after=journal._records(parent)
+assert after[-1].event==outcome
+assert not any(row['operation_id']==operation for row in bootstrap._records(root)[0])
+assert bootstrap.startup_permission(selector,root)[0]
+if action=='rollback':
+ for item in prepared.artifacts:
+  if item.previous is not None:
+   assert publication._matches(item.previous,item.target)
+   if item.previous_metadata is not None:
+    assert publication._matches(item.previous_metadata,item.target,metadata=True)
+assert hashlib.sha256(Path(safety['ciphertext']).read_bytes()).hexdigest()==safety['ciphertext_sha256']
+assert hashlib.sha256(Path(seed['archive']).read_bytes()).hexdigest()==seed['archive_sha256']
+(fixture/'recovery-evidence.json').write_text(json.dumps({'operation':operation,'action':action,'outcome':outcome,'before':before,'after':[row.model_dump() for row in after],'fence_cleared':True,'safety_sha256':safety['ciphertext_sha256']},indent=2))
+assert not blocked_attempts(),blocked_attempts()
+print('ACTUAL_TWO_DEVICE_RECOVERY',outcome,flush=True)
+"""
+)
+
+_READ_RECOVERED = (
+    _PRIVATE
+    + r"""
+from tldw_chatbook.cli import main_cli_runner
+sys.argv=['tldw-chatbook','--help']
+try:main_cli_runner()
+except SystemExit as error:assert error.code in (None,0),error
+from tldw_chatbook.app import TldwCli
+seed=json.loads((fixture/'seed.json').read_text())
+async def main():
+ app=TldwCli()
+ try:
+  from tldw_chatbook.config import get_cli_config_path
+  assert get_cli_config_path()==selector
+  assert app.chachanotes_db.db_path==selector.parent/'custom'/'notes.db'
+  values=[app.chachanotes_db.get_note_by_id(seed['note'])['content'],app.local_research_service.get_session(seed['research'])['query']]
+  assert values==seed['archived_values' if os.environ['MULTIVOLUME_ACTION']=='finish' else 'current_values'],values
+  assert app.local_research_service.db_path==Path(seed['research_path'])
+  assert app.local_research_service.db_path.stat().st_dev==image_device
+  assert app.chachanotes_db.db_path.stat().st_dev==host_device
+  (fixture/'native-readback.json').write_text(json.dumps({'values':values,'note':seed['note'],'research':seed['research'],'blocked_network_attempts':len(blocked_attempts())},indent=2))
+  assert not blocked_attempts(),blocked_attempts()
+ finally:
+  await app._shutdown_app_owned_lifecycles()
+  await app.tts_service.close();await app.tts_service.wait_closed()
+asyncio.run(main())
+print('FRESH_TWO_DEVICE_NATIVE_READBACK',flush=True)
+"""
+)
+
+
+@pytest.mark.parametrize("action", ["finish", "rollback"])
+@pytest.mark.parametrize("boundary", ["between_devices", "image_native"])
+def test_actual_two_device_interruption_recovers(
+    tmp_path,
+    native_package,  # noqa: F811 - imported pytest fixture.
+    boundary,
+    action,
+):
+    root, environment = _two_device_fixture(tmp_path, native_package)
+    environment.update(MULTIVOLUME_BOUNDARY=boundary, MULTIVOLUME_ACTION=action)
+    script = root / "interrupt.py"
+    script.write_text(_INTERRUPT)
+    with (root / "interrupt.log").open("w") as output:
+        result = subprocess.run(  # nosec B603: fixed interpreter and private script.
+            [sys.executable, str(script)],
+            cwd=Path(__file__).resolve().parents[2],
+            env=environment,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            timeout=35,
+            check=False,
+        )
+    assert result.returncode == 92, (root / "interrupt.log").read_text()
+    (root / "stage-before-review.json").write_bytes(
+        (root / "stage-evidence.json").read_bytes()
+    )
+    environment["MULTIVOLUME_REVIEWED"] = "1"
+    _run_profile_child(root, "reviewed-stage", _STAGE, environment)
+    with (root / "reviewed-interrupt.log").open("w") as output:
+        # The full profile kept moving through 34.696s of the old 35s cap.
+        # Allow its remaining native moves; Admission's own deadline is unchanged.
+        result = subprocess.run(  # nosec B603: fixed interpreter and private script.
+            [sys.executable, str(script)],
+            cwd=Path(__file__).resolve().parents[2],
+            env=environment,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            timeout=90,
+            check=False,
+        )
+    assert result.returncode == 91, (root / "reviewed-interrupt.log").read_text()
+    # Rollback still made native progress at 88.385s of the original 90s cap.
+    _run_profile_child(
+        root,
+        "recover",
+        _RECOVER,
+        environment,
+        timeout=180 if action == "rollback" else 90,
+    )
+    _run_profile_child(root, "native-readback", _READ_RECOVERED, environment)
