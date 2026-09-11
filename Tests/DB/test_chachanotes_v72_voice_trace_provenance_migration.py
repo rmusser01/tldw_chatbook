@@ -98,7 +98,7 @@ def test_genuine_v70_upgrades_without_rewriting_semantic_rows(tmp_path: Path) ->
     migrated = CharactersRAGDB(path, "v72-migrated")
     try:
         connection = migrated.get_connection()
-        assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION == 72
+        assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         assert (
             tuple(
                 tuple(row)
@@ -185,7 +185,7 @@ def test_genuine_v71_preserves_archived_rows_columns_indexes_and_triggers(
     current = CharactersRAGDB(path, "archive-after-voice")
     try:
         connection = current.get_connection()
-        assert _version(connection) == 72
+        assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         assert dict(current.get_conversation_by_id(conversation_id)) == archived_before
         assert (
             tuple(
