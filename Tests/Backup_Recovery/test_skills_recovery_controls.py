@@ -132,9 +132,11 @@ async def run():
   await wait_for(lambda:activation.allowed(witness['generation'],'skills'))
   if action!='empty':trust.ensure_skill_trusted('demo')
   assert not trust.script_execution_granted('demo')
+  assert not activation.allowed(witness['generation'],'config')
   assert not activation.allowed(witness['generation'],'mcp.local')
   assert all((historical/name).read_bytes()==data for name,data in history.items())
 asyncio.run(run())
+assert not activation.allowed(witness['generation'],'config')
 if action not in ('approve','empty','resume'):
  assert not activation.allowed(witness['generation'],'skills')
  assert trust.trust_store.store_dir.exists()==(action=='foreign')

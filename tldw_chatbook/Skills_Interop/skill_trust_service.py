@@ -121,7 +121,7 @@ def _execution_scope(service):
                     stack.callback(leases[source].close)
                 if not stack.enter_context(
                     execution_scope(
-                        ("config", "skills"), source, retained=leases[source]
+                        ("skills",), source, retained=leases[source]
                     )
                 ):
                     allowed = False

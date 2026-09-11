@@ -55,7 +55,9 @@ restored=destination/'data'/'Local'/'skills';historical=restored/'trust'
 history={p.relative_to(historical).as_posix():p.read_bytes() for p in historical.rglob('*') if p.is_file()}
 trust=service(restored);local=LocalSkillsService(store_dir=restored,trust_service=trust)
 _,profiles,_=bootstrap._control_records(bootstrap.default_bootstrap_root());witness=next(p['activation'] for p in profiles if p['selector']==str(destination/'config'/'config.toml'))
-activation=ActivationStore(Path(witness['store_root']));activation.approve(witness['generation'],'config')
+activation=ActivationStore(Path(witness['store_root']))
+assert not activation.allowed(witness['generation'],'config')
+assert not activation.allowed(witness['generation'],'mcp.local')
 """
 
 _MANUAL = (
@@ -94,6 +96,7 @@ else:
  assert trust.trust_store.store_dir.name=='recovery-'+witness['generation']
  assert trust.reduced_rollback_protection and trust.key_cache is None
  assert activation.allowed(witness['generation'],'skills')
+ assert not activation.allowed(witness['generation'],'config')
  assert not activation.allowed(witness['generation'],'mcp.local')
  trust.ensure_skill_trusted('demo')
  assert not trust.script_execution_granted('demo')
@@ -186,6 +189,13 @@ assert trust.trust_store.store_dir!=old
 assert trust.trust_posture()=='locked'
 trust.unlock_with_passphrase('fresh-passphrase');trust.ensure_skill_trusted('demo')
 assert trust.script_execution_granted('demo')
+from tldw_chatbook.Backup_Recovery import bootstrap
+from tldw_chatbook.Backup_Recovery.activation import ActivationStore
+_,profiles,_=bootstrap._control_records(bootstrap.default_bootstrap_root())
+witness=next(p['activation'] for p in profiles if p['selector']==str(bootstrap.effective_config_path()))
+activation=ActivationStore(Path(witness['store_root']))
+assert not activation.allowed(witness['generation'],'config')
+assert not activation.allowed(witness['generation'],'mcp.local')
 assert not blocked_attempts()
 print('retired and reopened')
 """
