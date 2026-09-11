@@ -11,6 +11,7 @@ from markdown_it import MarkdownIt
 
 from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
@@ -631,6 +632,19 @@ class ConsoleMessageActionService:
                 if action_id == "speak"
                 else (action_id, label)
                 for action_id, label in completed_actions
+            ]
+        presentation = message.activity_presentation
+        if (
+            isinstance(presentation, ConsoleActivityPresentation)
+            and presentation.kind == "thinking"
+            and presentation.status == "unavailable"
+        ):
+            # TASK-32312: content-free proprietary evidence has no editable
+            # text; only displayable thinking blocks offer the edit action.
+            completed_actions = [
+                (action_id, label)
+                for action_id, label in completed_actions
+                if action_id != "edit"
             ]
         if message.status == "failed" and self._is_assistant_message(message):
             # Retry regenerates a failed ASSISTANT response. A failed USER row —
