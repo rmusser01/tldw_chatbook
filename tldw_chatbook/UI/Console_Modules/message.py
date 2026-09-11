@@ -2135,15 +2135,6 @@ class ConsoleMessageController:
         Args:
             message_id: Console transcript message to capture.
         """
-        notes_scope_service = getattr(self.app_instance, "notes_scope_service", None)
-        save_note = getattr(notes_scope_service, "save_note", None)
-        if not callable(save_note):
-            self.app_instance.notify(
-                "Saving as a Note is unavailable: Notes service is not ready.",
-                severity="warning",
-            )
-            return
-
         try:
             message = self._ensure_console_chat_store().get_message(message_id)
         except KeyError:
@@ -2154,48 +2145,21 @@ class ConsoleMessageController:
             return
 
         content = self._console_message_content(message)
-        try:
-            result = save_note(
-                scope=ScopeType.LOCAL_NOTE.value,
-                title=console_answer_note_title(content),
-                content=content,
-                note_id=None,
-                version=None,
-                user_id=self._console_notes_owner_id(),
-                workspace_id=None,
-                keywords=console_note_provenance_keywords(
-                    conversation_id=self._current_console_conversation_id(),
-                    message_id=message_id,
-                ),
-            )
-            if inspect.isawaitable(result):
-                result = await result
-        except Exception as exc:
-            logger.opt(exception=True).warning("Console capture-note failed.")
-            self.app_instance.notify(
-                f"Saving the answer as a Note failed: {escape_markup(str(exc))}",
-                severity="error",
-            )
-            return
-        if not result:
-            self.app_instance.notify(
-                "Saving the answer as a Note failed.", severity="error"
-            )
-            return
-        self._last_console_action = ConsoleActionResult(
+        note_id = await self._write_console_note(
+            title=console_answer_note_title(content),
+            content=content,
+            keywords=console_note_provenance_keywords(
+                conversation_id=self._current_console_conversation_id(),
+                message_id=message_id,
+            ),
             action_id="capture-note",
-            status="completed",
-            visible_copy="Saved answer as Note.",
+            saved_copy="Saved answer as Note.",
             target_message_id=message_id,
             target_content=content,
         )
-        self.app_instance.notify("Saved answer as Note.", severity="success")
-        # `save_note` returns the created row (a Mapping) whenever keywords
-        # are supplied, which they always are here; anything else means the
-        # note landed but its id is unknown, so the receipt is skipped
-        # rather than offering a hand-off that cannot resolve.
-        note_id = result.get("id") if isinstance(result, Mapping) else None
-        if isinstance(note_id, str) and note_id:
+        # A note that landed without a known id gets no receipt rather than
+        # a hand-off that cannot resolve.
+        if note_id is not None:
             await self._offer_captured_note_handoff(note_id)
 
     async def _offer_captured_note_handoff(self, note_id: str) -> None:
@@ -2289,62 +2253,96 @@ class ConsoleMessageController:
         # FB-07 (TASK-2154.17): success confirmations read as success.
         self.app_instance.notify("Saved message as Note.", severity="success")
 
+    async def _write_console_note(
+        self,
+        *,
+        title: str,
+        content: str,
+        keywords: list[str],
+        action_id: str,
+        saved_copy: str,
+        target_message_id: str | None = None,
+        target_content: str | None = None,
+    ) -> str | None:
+        """Write one local Note through the notes seam; notify either way.
+
+        The one save/notify tail behind the TASK-31759 span actions and
+        task-32146's capture (fix round 1 folded capture's own copy of it
+        in here): service lookup, ``save_note``, the failure toasts, and
+        the ``_last_console_action`` receipt.
+
+        Returns:
+            The created note's id when the service reports one (it returns
+            the created row whenever keywords are supplied), else ``None``
+            -- for an unavailable service, a failed write, or a result
+            carrying no id.
+        """
+        notes_scope_service = getattr(self.app_instance, "notes_scope_service", None)
+        save_note = getattr(notes_scope_service, "save_note", None)
+        if not callable(save_note):
+            self.app_instance.notify(
+                "Saving as a Note is unavailable: Notes service is not ready.",
+                severity="warning",
+            )
+            return None
+        try:
+            result = save_note(
+                scope=ScopeType.LOCAL_NOTE.value,
+                title=title,
+                content=content,
+                note_id=None,
+                version=None,
+                # TASK-31759 review: notes are owned by the configured
+                # notes identity (app.notes_user_id drives every local
+                # note view/ingest), NOT current_user -- saving under a
+                # different id would make the note invisible in the
+                # library.
+                user_id=self._console_notes_owner_id(),
+                workspace_id=None,
+                keywords=keywords,
+            )
+            if inspect.isawaitable(result):
+                result = await result
+        except Exception as exc:
+            logger.opt(exception=True).warning("Console note action failed.")
+            self.app_instance.notify(
+                f"Saving as a Note failed: {escape_markup(str(exc))}",
+                severity="error",
+            )
+            return None
+        if not result:
+            self.app_instance.notify("Saving as a Note failed.", severity="error")
+            return None
+        self._last_console_action = ConsoleActionResult(
+            action_id=action_id,
+            status="completed",
+            visible_copy=saved_copy,
+            target_message_id=target_message_id,
+            target_content=target_content,
+        )
+        self.app_instance.notify(saved_copy, severity="success")
+        note_id = result.get("id") if isinstance(result, Mapping) else None
+        return note_id if isinstance(note_id, str) and note_id else None
+
     def _save_console_note_draft(
         self, draft: "ConsoleNoteDraft", *, action_id: str, saved_copy: str
     ) -> None:
-        """Persist a controller-built note draft; notify either way.
+        """Persist a controller-built note draft on the note worker group.
 
-        Shared tail of the TASK-31759 More-menu note actions: the draft
-        already carries title/content (and its provenance header); this
-        writes it through the same notes seam as save-as Note.
+        Shared entry of the TASK-31759 More-menu note actions: the draft
+        already carries title/content (and its provenance header).
         """
-
-        async def _run() -> None:
-            notes_scope_service = getattr(
-                self.app_instance, "notes_scope_service", None
-            )
-            save_note = getattr(notes_scope_service, "save_note", None)
-            if not callable(save_note):
-                self.app_instance.notify(
-                    "Saving as a Note is unavailable: Notes service is not ready.",
-                    severity="warning",
-                )
-                return
-            try:
-                result = save_note(
-                    scope=ScopeType.LOCAL_NOTE.value,
-                    title=draft.title,
-                    content=draft.content,
-                    note_id=None,
-                    version=None,
-                    # TASK-31759 review: notes are owned by the configured
-                    # notes identity (app.notes_user_id drives every local
-                    # note view/ingest), NOT current_user -- saving under a
-                    # different id would make the note invisible in the
-                    # library.
-                    user_id=self._console_notes_owner_id(),
-                    workspace_id=None,
-                    keywords=["console"],
-                )
-                if inspect.isawaitable(result):
-                    result = await result
-            except Exception as exc:
-                logger.opt(exception=True).warning("Console note action failed.")
-                self.app_instance.notify(
-                    f"Saving as a Note failed: {exc}", severity="error"
-                )
-                return
-            if not result:
-                self.app_instance.notify("Saving as a Note failed.", severity="error")
-                return
-            self._last_console_action = ConsoleActionResult(
+        self.run_worker(
+            self._write_console_note(
+                title=draft.title,
+                content=draft.content,
+                keywords=["console"],
                 action_id=action_id,
-                status="completed",
-                visible_copy=saved_copy,
-            )
-            self.app_instance.notify(saved_copy, severity="success")
-
-        self.run_worker(_run(), exclusive=True, group="console-note-actions")
+                saved_copy=saved_copy,
+            ),
+            exclusive=True,
+            group="console-note-actions",
+        )
 
     async def _summarize_console_span_as_note(self, message_id: str) -> None:
         """Summarize the active-path span up to message_id into a Note.
@@ -2812,7 +2810,6 @@ class ConsoleMessageController:
             ("console-message-action-keep-", "keep"),
             ("console-message-action-review-changes-", "review-changes"),
             ("console-message-action-save-as-", "save-as"),
-            ("console-message-action-capture-note-", "capture-note"),
             ("console-message-action-save-transcript-note-", "save-transcript-note"),
             ("console-message-action-summarize-note-", "summarize-note"),
             ("console-message-action-save-image-", "save-image"),

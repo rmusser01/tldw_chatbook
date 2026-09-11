@@ -182,11 +182,17 @@ def _speech_visible(message: ConsoleChatMessage) -> bool:
 def _capturable_assistant_answer(message: ConsoleChatMessage) -> bool:
     """Whether this row is a finished assistant answer worth capturing.
 
-    task-32146: same three conditions Manual Speak reads for -- a completed
-    ASSISTANT row with text. A pending/streaming row has no final answer to
+    task-32146: a completed ASSISTANT row with text. Spelled out here rather
+    than borrowed from ``_speech_visible`` (fix round 1, review finding 6)
+    so a future trust or TTS-availability condition on speech never gates
+    capture by accident. A pending/streaming row has no final answer to
     file, and a USER row is the question, not the answer.
     """
-    return _speech_visible(message)
+    return (
+        message.role is ConsoleMessageRole.ASSISTANT
+        and message.status == "complete"
+        and bool(message.content.strip())
+    )
 
 
 def resolve_console_header_speech(

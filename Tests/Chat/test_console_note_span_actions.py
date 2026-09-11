@@ -234,11 +234,19 @@ def _build_screen():
 
 
 def _dispatch_event(action_id: str, message_id: str):
+    """One Button.Pressed shaped as ``ConsoleTranscript.
+    dispatch_captured_message_action`` posts it after a More-menu choice:
+    the id plus both ``console_*`` attributes the dispatcher reads first.
+    (task-32146 fix round 1: the bare-id form only ever reached the
+    dispatcher's prefix table, which production never uses for More rows.)
+    """
     from types import SimpleNamespace
 
     return SimpleNamespace(
         button=SimpleNamespace(
-            id=f"console-message-action-{action_id}-{message_id}"
+            id=f"console-message-action-{action_id}-{message_id}",
+            console_action_id=action_id,
+            console_message_id=message_id,
         ),
         stop=lambda: None,
     )
