@@ -11,6 +11,9 @@ Group `notes-details` of the critique-10 fix wave:
 - task-32357: the Details panel speaks outcomes -- no "WIP", no bare
   eligible/blocked arithmetic, and the DB sizes behind a Diagnostics
   disclosure.
+- task-32360 AC#2, handed to this group by the coordinator because both
+  measured losses are composed in this group's canvas: below 64 columns the
+  Notes status line and the browse toolbar must not be cut mid-word.
 """
 
 from __future__ import annotations
