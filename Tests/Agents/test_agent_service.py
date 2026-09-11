@@ -389,7 +389,13 @@ def _schema(name: str, description: str = "compact") -> ToolSchema:
 def _canvas_schemas() -> tuple[ToolSchema, ...]:
     return tuple(
         _schema(name, f"{name} schema")
-        for name in ("canvas_list", "canvas_read", "canvas_create", "canvas_update")
+        for name in (
+            "canvas_list",
+            "canvas_read",
+            "canvas_create",
+            "canvas_update",
+            "canvas_guide",
+        )
     )
 
 
@@ -423,16 +429,25 @@ def _canvas_registry():
     return registry, allowed, provider, authority
 
 
-@pytest.mark.parametrize("disclosed_name", ("canvas_create", "canvas_update"))
+@pytest.mark.parametrize(
+    "disclosed_names",
+    (
+        {"canvas_create"},
+        {"canvas_update"},
+        {"canvas_guide"},
+        CANVAS_TOOL_NAMES - {"canvas_guide"},
+        CANVAS_TOOL_NAMES,
+    ),
+)
 def test_model_request_guidance_tracks_the_exact_disclosed_canvas_schema_set(
-    db, disclosed_name
+    db, disclosed_names
 ):
     service = AgentService(
         db=db, registry=ToolCatalogRegistry(), chat_call=lambda **_: {}
     )
     config = dataclasses.replace(CFG, native_tools=True)
-    disclosed_schema = next(
-        schema for schema in _canvas_schemas() if schema.name == disclosed_name
+    disclosed_schemas = tuple(
+        schema for schema in _canvas_schemas() if schema.name in disclosed_names
     )
 
     request = service._build_model_request(
@@ -440,13 +455,19 @@ def test_model_request_guidance_tracks_the_exact_disclosed_canvas_schema_set(
         "openai",
         [],
         [{"role": "user", "content": "build it"}],
-        (disclosed_schema,),
+        disclosed_schemas,
     )
     system = request.messages[0]["content"]
 
-    assert disclosed_name in system
-    assert "V1 supports inline HTML/CSS and classic scripts" in system
-    for undisclosed_name in CANVAS_TOOL_NAMES - {disclosed_name}:
+    from tldw_chatbook.Canvas.guide import CANVAS_OFFER_POLICY
+
+    assert CANVAS_OFFER_POLICY in system
+    for disclosed_name in disclosed_names:
+        assert disclosed_name in system
+    assert ("V1 supports inline HTML/CSS and classic scripts" in system) == (
+        bool(disclosed_names & {"canvas_create", "canvas_update"})
+    )
+    for undisclosed_name in CANVAS_TOOL_NAMES - disclosed_names:
         assert undisclosed_name not in system
 
 
@@ -711,6 +732,8 @@ def test_first_request_plan_drops_discovery_tools_when_only_no_tool_request_fits
 def test_first_request_plan_counts_canvas_guidance_before_direct_disclosure(
     monkeypatch,
 ):
+    from tldw_chatbook.Canvas.guide import CANVAS_OFFER_POLICY
+
     registry, allowed, _provider, _authority = _canvas_registry()
     config = AgentConfig(
         model="m",
@@ -722,12 +745,15 @@ def test_first_request_plan_counts_canvas_guidance_before_direct_disclosure(
     )
     monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 100)
     monkeypatch.setattr(
-        agent_service, "provider_supports_native_tools", lambda *_a: True
+        agent_service, "provider_supports_native_tools", lambda *_a, **_k: True
     )
     monkeypatch.setattr(agent_service, "catalog_schema_tokens", lambda *_a, **_k: 5)
 
+    measured_systems = []
+
     def count(messages, *_args, **_kwargs):
         system = str(messages[0].get("content", ""))
+        measured_systems.append(system)
         return 91 if CANVAS_RUNTIME_GUIDANCE in system else 80
 
     monkeypatch.setattr(agent_service, "_count_model_messages", count)
@@ -750,6 +776,7 @@ def test_first_request_plan_counts_canvas_guidance_before_direct_disclosure(
     assert plan.active_schemas == ()
     assert plan.offer_find_load is True
     assert plan.system_prompt == "discovery"
+    assert any(CANVAS_OFFER_POLICY in system for system in measured_systems)
 
 
 def test_first_request_plan_stops_before_provider_when_even_no_tool_request_fails(
@@ -3023,6 +3050,9 @@ def test_load_tools_adds_canvas_guidance_on_the_next_budgeted_request(db):
     post_load_system = chat.calls[1]["messages_payload"][0]["content"]
     assert CANVAS_RUNTIME_GUIDANCE not in pre_load_system
     assert CANVAS_RUNTIME_GUIDANCE in post_load_system
+    from tldw_chatbook.Canvas.guide import CANVAS_OFFER_POLICY
+
+    assert CANVAS_OFFER_POLICY in post_load_system
 
 
 def test_protocol_rerenders_when_replacement_changes_same_named_schema(

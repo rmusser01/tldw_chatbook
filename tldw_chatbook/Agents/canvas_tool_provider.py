@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 
 from tldw_chatbook.Canvas.guide import (
     CANVAS_GUIDE_PATHS,
+    CANVAS_OFFER_POLICY,
     MAX_CANVAS_GUIDE_RESULT_BYTES,
     read_canvas_guide,
 )
@@ -61,14 +62,13 @@ CANVAS_ARTIFACT_TOOL_NAMES = frozenset(
 )
 CANVAS_TOOL_NAMES = CANVAS_ARTIFACT_TOOL_NAMES | {"canvas_guide"}
 CANVAS_MUTATION_TOOL_NAMES = frozenset({"canvas_create", "canvas_update"})
-_CANVAS_USE_GUIDANCE = (
-    "Canvas: use Canvas when a visual, interactive, or iteratively revised "
-    "single-page artifact materially helps."
-)
+_CANVAS_USE_GUIDANCE = CANVAS_OFFER_POLICY
 _CANVAS_TOOL_GUIDANCE = {
     "canvas_guide": (
         "After the user requests or accepts Canvas, call canvas_guide for a "
-        "focused authoring topic."
+        "needed topic: basics, controls, mermaid, or repair. Reuse topics already "
+        "in context. This reads documentation; it does not create an artifact "
+        "or admit a runtime profile."
     ),
     "canvas_list": "Call canvas_list for reachable Canvases.",
     "canvas_read": "Call canvas_read for complete selected HTML and revision_id.",

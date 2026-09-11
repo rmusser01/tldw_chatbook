@@ -317,11 +317,8 @@ async def test_submit_refusal_never_invokes_accepted_hook():
 
 
 @pytest.mark.asyncio
-async def test_submit_success_still_invokes_accepted_hook_before_assistant_row():
-    """The Qodo-3 reorder must not regress the successful path: the hook
-    still fires exactly once, and still fires strictly before the
-    ASSISTANT placeholder is appended (store order stays
-    [USER, ..., ASSISTANT])."""
+async def test_submit_success_invokes_accepted_hook_after_placeholder_before_provider():
+    """Successful skill sends announce acceptance after committing the placeholder."""
     skills = _Skills("inline")
     store = persisted_console_store()
     gateway = _RecordingGateway()
@@ -333,20 +330,27 @@ async def test_submit_success_still_invokes_accepted_hook_before_assistant_row()
         skills_service=skills,
     )
     assistant_rows_seen_at_hook_time = []
+    provider_calls_seen_at_hook_time = []
 
     def _on_accepted():
         session_id = store.active_session_id
         messages = store.messages_for_session(session_id) if session_id else []
         assistant_rows_seen_at_hook_time.append(
-            [m for m in messages if m.role is ConsoleMessageRole.ASSISTANT]
+            [
+                (m.status, m.content)
+                for m in messages
+                if m.role is ConsoleMessageRole.ASSISTANT
+            ]
         )
+        provider_calls_seen_at_hook_time.append(len(gateway.payloads))
 
     controller.on_submission_accepted = _on_accepted
 
     result = await controller.submit_draft("$code-review go")
 
     assert result.accepted is True
-    assert assistant_rows_seen_at_hook_time == [[]]
+    assert assistant_rows_seen_at_hook_time == [[("pending", "")]]
+    assert provider_calls_seen_at_hook_time == [0]
 
 
 @pytest.mark.asyncio
