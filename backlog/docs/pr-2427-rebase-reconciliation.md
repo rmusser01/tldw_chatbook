@@ -3945,3 +3945,52 @@ project configuration are byte-identical. Post-rebase all seven preflight
 checks pass (`/private/tmp/pr2427-handoff-rebased-preflight.log`). All local
 verification processes are terminal. Publication follows this documentation
 checkpoint; the unrelated untracked September8 plan remains untouched.
+
+### September10 approved focus fixture correction
+
+Step156 is approved. With the original disabled-row target, the new pre-release
+focus-acquisition assertion fails before the locator is released
+(`/private/tmp/pr2427-focus-acquisition-red.log`). The corrected fixture uses
+the existing rail Search Input, asserts attached/enabled and actual focus, and
+retains the original SUPERSEDED, selected-ID, canvas-identity and exact-focus
+assertions. The exact case passes1 test,3 warnings,4.10s
+(`/private/tmp/pr2427-focus-acquisition-green.log`). Independent review finds no
+issues; scoped Ruff and whitespace pass. No production source was modified.
+
+Complete four-file native rerun is terminal:136 passed,3 warnings,164.43s
+(`/private/tmp/pr2427-approved-focus-native.log`). Final inventory has only
+stdio plus the previously attributed pytest selector-loop/socketpair baseline;
+no SQLite/instance-lock retention. Exact report:
+`/private/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-approved-focus-native.lnCrls/fd_identity.jsonl`.
+All seven derived checks pass (`/private/tmp/pr2427-focus-qodo-preflight.log`).
+The13 separate architecture size failures remain; no ceiling or runtime policy
+changed. Dev still equals0fcb79e596 at this verification checkpoint.
+
+### September10 six additional Qodo findings
+
+Step157 verifies and repairs comments3985730238/240/242 with callable
+documentation/types only. The complete gateway file passes15 tests after
+permission for its test-owned localhost listener
+(`/private/tmp/pr2427-qodo-gateway-escalated.log`). The initial sandbox-denied
+listener run remains recorded, not treated as a product failure. Both complete
+Live Notes tests and both selected scripted-authority cases pass; no inference
+or external service is invoked (`/private/tmp/pr2427-qodo-callable-tests.log`).
+Complete-module normalized AST equivalence, including unchanged assertion and
+fixture lifetimes, passes via `/private/tmp/pr2427-qodo-callable-verify.py`;
+changed-range Google-doc/type lint and formatting pass.
+
+Comments3985730245/249 are corrected against the actual registered descriptor
+table and ADR113:21 Library tools comprise15 item reads over five types plus
+six chunking/note-write tools; generic Collections tools are retired, and
+document expansion overlaps four of five direct item-get seams. Comment
+3985730254 removes only the identical duplicate task_31551_calls:0 literal.
+Evaluated expected mapping remains identical, and both real fixture variants
+produce it (`/private/tmp/pr2427-qodo-inventory-proof.EGxjuB/mapping-proof.log`).
+Complete diagnostic-inventory, Library tool contract, MCP Library tools and MCP
+documentation-contract files pass238 tests,8 warnings,178.33s
+(`/private/tmp/pr2427-qodo-inventory.ILhOfa/tests.log`). Actual production
+inventory rebuild is unchanged:604 owners,1351 TASK492,55 TASK31551,7669 TASK494,
+12 sinks (`/private/tmp/pr2427-qodo-inventory-proof.EGxjuB/inventory.log`).
+Independent six-file review finds no issues; no production code or generated
+inventory artifact changes. Publication precedes exact-thread replies and
+resolutions. The existing size-budget Qodo thread remains open.

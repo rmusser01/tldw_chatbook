@@ -3503,7 +3503,6 @@ def test_inventory_excludes_nested_virtualenv_but_keeps_application_sources(
         "task_492_calls": 0,
         "task_31551_calls": 0,
         "task_494_calls": 1,
-        "task_31551_calls": 0,
         "path_privacy_candidate_calls": 0,
     }
 

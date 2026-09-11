@@ -11663,6 +11663,11 @@ async def test_scripted_mounted_sample_uses_real_composer_queue_and_fs_write(
 def test_scripted_authority_renews_only_the_admitted_fs_write_definition(
     tmp_path: Path,
 ) -> None:
+    """Renew the admitted fs_write definition without authorizing fs_edit.
+
+    Args:
+        tmp_path: Temporary directory for the isolated workspace authority.
+    """
     from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
     from tldw_chatbook.Chat.console_chat_controller import (
         capture_run_admitted_workspace_roots,
@@ -11701,6 +11706,11 @@ def test_scripted_authority_renews_only_the_admitted_fs_write_definition(
 def test_scripted_authority_refuses_a_session_outside_the_fixture_workspace(
     tmp_path: Path,
 ) -> None:
+    """Refuse scripted tool authority for a session in another workspace.
+
+    Args:
+        tmp_path: Temporary directory for the isolated workspace authority.
+    """
     prepare = getattr(profile, "prepare_scripted_local_tool_authority", None)
     assert callable(prepare)
     runtime = profile.prepare_workspace_runtime(tmp_path / "authority", arm="disabled")
