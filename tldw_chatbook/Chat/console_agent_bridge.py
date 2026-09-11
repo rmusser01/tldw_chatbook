@@ -1460,6 +1460,7 @@ def _refusal_statuses() -> Mapping[str, ConsoleActivityStatus]:
         LOCAL_KILL_SWITCH_REFUSAL,
         LOCAL_ROOT_CHANGED_REFUSAL,
         LOCAL_TIMEOUT_REFUSAL,
+        LOCAL_USER_DENY_REFUSAL,
     )
     from tldw_chatbook.Agents.raw_shell_tool_provider import RAW_SHELL_DENY_REFUSAL
 
@@ -1471,12 +1472,13 @@ def _refusal_statuses() -> Mapping[str, ConsoleActivityStatus]:
         CONTROLLER_KILL_SWITCH_REFUSAL: "blocked_kill_switch",
         LOCAL_KILL_SWITCH_REFUSAL: "blocked_kill_switch",
         MCP_KILL_SWITCH_REFUSAL: "blocked_kill_switch",
-        # LOCAL_DENY_REFUSAL is returned for BOTH a configured Off and an
-        # explicit card Deny (`local_tool_provider._invoke`'s else-branch),
-        # so it cannot claim either authority. Follow-up: give the local
-        # provider its own user-deny refusal string and this row can split
-        # into `denied` + `blocked_off` like the MCP one below.
-        LOCAL_DENY_REFUSAL: "blocked",
+        # Qodo #7: that follow-up landed. `LOCAL_DENY_REFUSAL` used to be
+        # returned for BOTH a configured Off and an explicit card Deny, so
+        # it could claim neither authority and rendered the generic
+        # "blocked"; the local provider now has its own user-deny string and
+        # the row splits into `denied` + `blocked_off` like the MCP pair.
+        LOCAL_USER_DENY_REFUSAL: "denied",
+        LOCAL_DENY_REFUSAL: "blocked_off",
         MCP_DENY_REFUSAL: "blocked_off",
         # Qodo #3: the raw-shell provider's Off refusal names the same fact
         # MCP's does ("set to Off"), so it renders the same way -- it used to

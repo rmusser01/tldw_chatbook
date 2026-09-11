@@ -48,6 +48,7 @@ from tldw_chatbook.Tools.workspace_tool_executor import (
 
 from ..config import coerce_bool_setting, get_cli_setting
 from .agent_models import ToolCatalogEntry, ToolResult, ToolSchema
+from .builtin_tool_gate import DENIAL_POLICY
 from .mcp_tool_provider import MCPPendingCall
 from .project_instruction_resolver import InstructionPromotionSnapshot
 from .project_instruction_runtime import PromotionSnapshotRevalidation
@@ -116,6 +117,20 @@ AskUserCallback = Callable[[list[dict[str, Any]]], dict[str, Any]]
 
 # Pinned refusal strings (spec §3.3) — tests assert on these verbatim.
 LOCAL_DENY_REFUSAL = "blocked by local tool permissions (set to Off)"
+#: Qodo #7 (task-32280). `LOCAL_DENY_REFUSAL` used to be returned for BOTH a
+#: configured Off and the user's own Deny on the approval card, so the
+#: activity marker could not name either authority and rendered the generic
+#: "blocked" for a refusal the user had made by hand a second earlier --
+#: `_refusal_statuses()` carried a written-down follow-up saying exactly
+#: this. Split: this string is the USER's decision, `LOCAL_DENY_REFUSAL` is
+#: now only ever a configured Off (which is what lets it claim "set to Off"
+#: honestly, and lets the bridge map it to `blocked_off`). Worded like the
+#: MCP twin (`mcp_tool_provider.USER_DENY_REFUSAL`) and sharing its
+#: `DENIAL_POLICY` clause: it tells the model a person decided, so retrying
+#: or rephrasing is pointless. Deliberately NOT byte-identical to the MCP
+#: string -- `_refusal_statuses()` is a dict keyed by these constants, and
+#: two providers sharing one key would silently collapse to one row.
+LOCAL_USER_DENY_REFUSAL = f"local tool call denied by the user. {DENIAL_POLICY}"
 LOCAL_TIMEOUT_REFUSAL = "user did not approve within the time limit; do not retry"
 LOCAL_KILL_SWITCH_REFUSAL = "blocked — local tools are switched off"
 # Fix Round H (PR-T3 review), Item 1. `_verdict_for()`'s permission-resolver
@@ -1556,8 +1571,12 @@ class LocalToolProvider:
         """Execute one tool call. Never raises across the boundary.
 
         Fail-closed: only an explicit "allow" verdict executes; "deny" and
-        any unrecognized verdict refuse with LOCAL_DENY_REFUSAL (mirrors
-        MCPToolProvider._apply_verdict's fallthrough), "gate_error" (Fix
+        any unrecognized verdict refuse with LOCAL_DENY_REFUSAL when the
+        resolver genuinely said Off (``PERMISSION_OFF``) and with
+        LOCAL_USER_DENY_REFUSAL otherwise -- the user's own card Deny, which
+        used to share the Off string and left the transcript unable to name
+        either authority (Qodo #7). Both mirror
+        MCPToolProvider._apply_verdict's fallthrough, "gate_error" (Fix
         Round H, Item 1: the permission resolver raised rather than
         genuinely resolving) with LOCAL_GATE_ERROR_REFUSAL -- a DIFFERENT
         string from LOCAL_DENY_REFUSAL, since the tool's actual configured
@@ -1865,8 +1884,20 @@ class LocalToolProvider:
             result = ToolResult.blocked(LOCAL_GATE_ERROR_REFUSAL)
         else:
             # "deny" and any unrecognized verdict fail closed the same way.
+            # Qodo #7: the TEXT now names who refused -- `LOCAL_DENY_REFUSAL`
+            # only where the resolver actually said "deny" (a configured
+            # Off, `PERMISSION_OFF`), the user's own string everywhere else.
+            # Keyed on PERMISSION_OFF rather than on APPROVAL_REFUSED so an
+            # unreasoned verdict never makes the "set to Off" claim, which
+            # the bridge now renders as "blocked (Off)". The AUDIT decision
+            # is deliberately unchanged ("denied" either way) -- this seam's
+            # vocabulary, see `record_decision`.
             self._record_decision_safe(self.hub_tool_for(name), "denied")
-            result = ToolResult.blocked(LOCAL_DENY_REFUSAL)
+            result = ToolResult.blocked(
+                LOCAL_DENY_REFUSAL
+                if gate.refusal_reason is LocalToolInvocationReason.PERMISSION_OFF
+                else LOCAL_USER_DENY_REFUSAL
+            )
         return LocalToolInvocationResult(
             result=result,
             final_gate=gate.verdict,

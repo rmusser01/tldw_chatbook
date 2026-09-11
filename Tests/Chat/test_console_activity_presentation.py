@@ -23,6 +23,7 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_KILL_SWITCH_REFUSAL,
     LOCAL_ROOT_CHANGED_REFUSAL,
     LOCAL_TIMEOUT_REFUSAL,
+    LOCAL_USER_DENY_REFUSAL,
 )
 from tldw_chatbook.Agents.mcp_tool_provider import (
     DENY_REFUSAL as MCP_DENY_REFUSAL,
@@ -262,7 +263,10 @@ def test_direct_controller_review_results_name_who_refused(
         ("tool is set to Off: calculator", "blocked_off"),
         (user_denial_refusal("calculator"), "denied"),
         ("tool requires approval and none was granted: calculator", "blocked"),
-        (LOCAL_DENY_REFUSAL, "blocked"),
+        # Qodo #7: split -- the string below can only mean Off now, and the
+        # user's own Deny has its own.
+        (LOCAL_DENY_REFUSAL, "blocked_off"),
+        (LOCAL_USER_DENY_REFUSAL, "denied"),
         (LOCAL_TIMEOUT_REFUSAL, "blocked"),
         (LOCAL_KILL_SWITCH_REFUSAL, "blocked_kill_switch"),
         (LOCAL_GATE_ERROR_REFUSAL, "blocked"),
@@ -376,19 +380,40 @@ def test_structured_success_outcome_overrides_payload_collision(collision: str) 
     )
 
 
-def test_local_deny_refusal_never_claims_an_authority_it_cannot_know() -> None:
-    """`local_tool_provider` returns this one string for a card Deny AND for a
-    configured Off, so narrowing it either way would be a false claim."""
-    assert (
-        classify_activity_status(STEP_TOOL_RESULT, f"ERROR: {LOCAL_DENY_REFUSAL}")
-        == "blocked"
-    )
-    assert (
-        classify_activity_status(
-            STEP_TOOL_RESULT, LOCAL_DENY_REFUSAL, tool_outcome="blocked"
+def test_local_refusals_name_the_authority_that_actually_refused() -> None:
+    """Qodo #7, replacing `test_local_deny_refusal_never_claims_an_authority_
+    it_cannot_know`.
+
+    `local_tool_provider` used to return ONE string for a card Deny AND for
+    a configured Off, so the only honest word was the generic "blocked" --
+    the transcript then contradicted the card the user had just answered.
+    The provider now returns a distinct string per authority, so each one
+    renders its own word, in both the `ERROR:`-wrapped and structured
+    `outcome="blocked"` shapes.
+    """
+    for refusal, expected, word in (
+        (LOCAL_DENY_REFUSAL, "blocked_off", "blocked (Off)"),
+        (LOCAL_USER_DENY_REFUSAL, "denied", "denied by you"),
+    ):
+        assert (
+            classify_activity_status(STEP_TOOL_RESULT, f"ERROR: {refusal}") == expected
         )
-        == "blocked"
-    )
+        assert (
+            classify_activity_status(
+                STEP_TOOL_RESULT, refusal, tool_outcome="blocked"
+            )
+            == expected
+        )
+        assert (
+            build_step_activity_presentation(
+                STEP_TOOL_RESULT,
+                tool_name="fs_list",
+                result=refusal,
+                tool_outcome="blocked",
+            ).status
+            == expected
+        )
+        assert console_activity_status_word(expected) == word
 
 
 def test_raw_shell_off_renders_the_off_word_not_the_generic_one() -> None:
