@@ -69,7 +69,7 @@ def _config_targets(data, profile, config_target, doc, plan, owners):
     from tldw_chatbook.Widgets.Tamagotchi.recovery import _ConfiguredPets
     from tldw_chatbook.Workspaces.recovery import _ChangeTracking
 
-    from .config_adapter import _Definition
+    from .config_adapter import _Definition, _Diagnostics
     from .profile_paths import DATABASE_PATHS, database_path, user_data_dir
     from .rag_inventory import _Definitions as _RAGDefinitions
     from .rag_inventory import _Projections
@@ -142,6 +142,11 @@ def _config_targets(data, profile, config_target, doc, plan, owners):
             expected = owner._restore_path(
                 profile, payload, directories[payload.root_id]
             )
+        elif type(owner) is _Diagnostics:
+            expected = owner._restore_path(configured, payload.relative_path)
+            if selected[payload.logical_id] != expected:
+                raise ValueError("owner_relocation_unverified:diagnostics.logs")
+            continue
         elif isinstance(owner, _Definition):
             expected = owner._definition_path(configured)
         elif type(owner) is _Artifacts:

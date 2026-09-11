@@ -692,13 +692,7 @@ class _Generated(_RawDeclaration):
 
 
 class _Diagnostics(_RawDeclaration):
-    def discover(self, config):
-        import os
-
-        from .bootstrap import pinned_directory
-
-        context = discovery_context(config)
-        root = user_data_dir(config)
+    def _log_path(self, config):
         name = setting(config, "logging", "log_filename", "tldw_cli_app.log")
         if (
             type(name) is not str
@@ -708,7 +702,35 @@ class _Diagnostics(_RawDeclaration):
             or "\\" in name
         ):
             raise ValueError("invalid_diagnostic_selector")
-        paths = {root / name}
+        return user_data_dir(config) / name
+
+    def _restore_path(self, config, relative_path):
+        """Bind only the installed log basename and its decimal rotations."""
+        path = self._log_path(config)
+        if (
+            type(relative_path) is str
+            and relative_path
+            and "/" not in relative_path
+            and "\\" not in relative_path
+        ):
+            suffix = relative_path.removeprefix(path.name + ".")
+            if relative_path == path.name or (
+                relative_path.startswith(path.name + ".")
+                and suffix.isascii()
+                and suffix.isdigit()
+            ):
+                return path.with_name(relative_path)
+        raise ValueError("owner_relocation_unverified:diagnostics.logs")
+
+    def discover(self, config):
+        import os
+
+        from .bootstrap import pinned_directory
+
+        context = discovery_context(config)
+        path = self._log_path(config)
+        root, name = path.parent, path.name
+        paths = {path}
         try:
             with pinned_directory(root) as parent:
                 with os.scandir(parent) as entries:
