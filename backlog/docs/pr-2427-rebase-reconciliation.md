@@ -4104,3 +4104,41 @@ whitespace pass; Screen Ruff remains exactly49 baseline findings, with identical
 code/message multiplicities and no additions. Sequential independent spec and
 code-quality reviews found no issues. All local test processes are terminal.
 TASK31932 remains In Progress; normal protected merge remains blocked.
+
+### September10 composer-width rebase qualified
+
+Step160 rebased all266 commits from5cdda8bd43 onto fetched dev
+d80d85d9714513c48ef7cff5582cada537546f48 atb4226385c4750804f01e06979211fec0716290f6.
+The single on_resize conflict preserves the upstream docstring and cached voice
+replay plus this PR's attachment-width sync before reason sync. Independent
+review confirms the whole-tree delta is exactly the four incoming files; after
+normalizing diff offsets/index hashes, its hunks match the incoming delta.
+All prior action/Redirect/attachment assertions and incoming voice budget/cache,
+same-turn idle restoration and preparing exemption remain. No review findings.
+Formatter parity is still exact; its mapped move commit is
+f6274c1e5aa6862d8fc50ac9320c6ace468c9dad, now recorded in blame-ignore metadata.
+
+Complete reason-width/dictation/dictation-streaming native qualification:
+131 passed,3 warnings,308.12s, exit0. Log:
+`/private/tmp/pr2427-composer-dev-native.log`; native report:
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-composer-dev-native.BkEa7C/fd_identity.jsonl`.
+Final six descriptors are stdio plus the measured pytest event-loop pair/selector
+baseline; zero SQLite and zero instance-lock handles. This does not resolve the
+separate avatar/offloop/workspace493SQLite finding.
+
+Complete support/packaging/preload/size guards:50 passed,14 failed,2 warnings,
+8.79s (`/private/tmp/pr2427-composer-guards.log`): same13 size breaches and
+preload504/500, no caps raised. Composer/runtime-test Ruff and whitespace pass.
+All seven derived checks pass across the ordinary preflight and exact Mermaid
+retry: `/private/tmp/pr2427-composer-preflight.log` records six passes and a
+sandbox-unavailable pinned input; `/private/tmp/pr2427-composer-mermaid.log`
+records all six generated Mermaid outputs reproducing with declared pinned
+public inputs. An initial isolated-mode standalone script attempt could not
+import its sibling module; the documented non-isolated script invocation passed.
+No generated artifacts changed. All local verification processes are terminal.
+
+Immediately before publication, remote PR still equals8d7fdf68485bf4b293033c6af4ea7c39243754d6,
+but dev advanced again to423ae37c1b5394cb596d0d975c1579c9e6f790d3. Inspect that
+delta before any further integration; this evidence qualifiesd80, not the new
+unread tip. Fresh paginated review still has only the existing size thread open.
+TASK31932 AC1/3/4 and normal protected merge remain open.
