@@ -3220,7 +3220,6 @@ class LibraryFileNotesGitPanel(Vertical):
                     # -- to the editor, or to another control in this panel
                     # -- was the user's. Only an untouched focus is still
                     # ours to place.
-                    import os
                     if self._entry_focus_is_still_ours(anchor):
                         self._commit_list_focus_pending = True
                 if self._commit_list_focus_pending:
