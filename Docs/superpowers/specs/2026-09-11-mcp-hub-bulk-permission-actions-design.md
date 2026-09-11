@@ -71,12 +71,31 @@ already does for scoping. Rejected (YAGNI).
   one new message each (`BulkStateRequested`, `BulkClearRequested`)
   carrying the cursor row's `(server_key, profile_context)` — the
   workbench remains the single writer.
+- Both keys operate on the cursor row's **server scope**: any tool row
+  or that server's default row. The **global row is excluded** — it owns
+  no server, and both keys no-op against it (the existing hint Static,
+  not a toast, says so). No-op likewise when the server has zero
+  *visible* tool rows.
+- Scope is the **currently visible (post-filter) tool rows** of that
+  server — the filter is the bulk's selector, which is the power-user
+  mental model the filter already serves. Consequence, made explicit: a
+  filter that hides some rows means `C` clears only the *visible*
+  overrides; the echo wording pins this (`"{label}: {N} visible
+  overrides cleared"`), the tooltip teaches the full-clear recipe
+  ("clear the filter, then C"), and the unfiltered preview's override
+  count continues to report any remainder honestly.
 - Footer hint (Permissions mode only): `shift+space bulk set · C clear
   overrides`. Legend gains one clause: "shift+space applies the next
-  state to the server's visible tools; C clears its overrides."
+  state to the server's visible tools; C clears its visible overrides."
 - Echo shape (pinned copy): `"{server_label}: {N} tools → {label}"` /
-  `"{server_label}: {N} overrides cleared"` — same transient-echo
-  mechanism Space uses today.
+  the clear wording above — same transient-echo mechanism Space uses
+  today.
+- Wave-B interplay (cycle reorder lands first): "the row's next cycled
+  state" is computed with the same `cycle_ui_state` the plain press
+  uses, so after the reorder the first `shift+space` from Inherit
+  applies **Ask** to the visible set — the bulk path inherits the
+  safety ordering for free and can never bulk-apply Allow as a first
+  press from Inherit.
 
 **Write path** (`mcp_workbench`)
 - Iterate visible tool rows of the server; skip raw-shell rows (and say
@@ -111,9 +130,10 @@ already does for scoping. Rejected (YAGNI).
 
 ## Open questions (for reviewer)
 
-1. Should `C` require the cursor on that server's *tool* row, or also
-   work from its server-default row? (Design: both — the server identity
-   is what matters.)
-2. Should bulk writes record a single aggregated execution-log entry, or
+1. Should bulk writes record a single aggregated execution-log entry, or
    is per-row logging (current behavior per write) acceptable? (Design:
    per-row, unchanged — audit granularity should not decrease.)
+2. Should `shift+space` on a server-default row apply the server
+   default's next state, or the *global* cycle? (Design: the row's own
+   next state, identical to what a plain Space on that row would
+   produce — one rule, no special cases.)

@@ -2,7 +2,7 @@
 
 Date: 2026-09-11
 Status: Draft (awaiting review)
-Review basis: MCP screen UX review 2026-09-11 (Finding F6 / Low-15), evidence screenshot `07` (100 cols)
+Review basis: MCP screen UX review 2026-09-11 (Finding F6 / Low-15); evidence PNG in Docs/superpowers/specs/assets/2026-09-11-mcp-hub-ux/ (07, 100 cols)
 ADR: backlog/decisions/148-mcp-hub-rail-ia-and-responsive-triad.md
 Related: F-057 (width-aware table columns + rail truncation), `_COMPACT_WIDTH = 120`, fix/console-rail-ux precedent
 
@@ -55,14 +55,20 @@ usable. Adopted as a baseline layer under (a), not as the fix.
 
 ## Design (approach a + c)
 
-**Grid switch** (`mcp_workbench.BUNDLED_CSS` + `_agentic_terminal.tcss`
-lockstep copy): `.mcp-compact #mcp-hub-grid` becomes a vertical layout
-(`grid-rows: 1fr auto` or an equivalent nested Horizontal/Vertical
-restructure if Textual's layout model requires it — implementation
-detail: prefer restructuring `compose()` into
-`Vertical[Horizontal[rail, canvas], inspector]` and toggling classes, so
-the CSS stays declarative). `on_resize`/`_sync_compact_class` already
-toggle the class; no new triggers.
+**Grid switch** (`mcp_workbench.compose()` + BUNDLED_CSS + the
+`_agentic_terminal.tcss` lockstep copy): introduce one wrapper —
+`#mcp-hub-grid` contains `#mcp-hub-main-row` (a `Horizontal` holding the
+rail and canvas, which keep their existing ids) and the inspector as a
+sibling. At wide widths the grid is horizontal (`main-row | inspector`,
+today's layout). At compact widths one bundle rule flips orientation:
+`.mcp-compact #mcp-hub-grid { layout: vertical; }` — the `layout:`
+override has in-repo precedent (`css/screen_feature_watchlists.tcss`,
+`css/widget_defaults_self.tcss`), and the established app-bundle-beats-
+DEFAULT_CSS tie-break is what makes the toggle reliable.
+`on_resize`/`_sync_compact_class` already toggle the class; no new
+triggers, no widget moves, all existing pane ids (`#mcp-hub-rail`,
+`#mcp-hub-canvas`, `#mcp-hub-inspector`) are stable, so the triad tests
+keep querying unchanged.
 
 **Inspector band**: `max-height: 12; overflow-y: auto; min-height: 4`.
 The Advanced collapsible renders collapsed inside the band regardless of

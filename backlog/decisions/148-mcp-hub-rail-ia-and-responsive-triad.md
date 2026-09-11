@@ -10,18 +10,28 @@ Related: ADR-032 (local:__local__ synthetic hub key), ADR-053 (built-in stdio se
 
 1. The MCP Hub rail presents **two sections**: `Servers` (the built-in
    MCP stdio server, local stdio profiles, server-source records) and
-   `Agent tools` (one row fronting the in-process agent tool catalog's
-   registration gates). The `Tool gates` checkbox group moves from the
-   built-in server's detail pane to the Agent-tools row's detail pane.
-   The built-in server row keeps only the `[mcp]` enable/expose controls
-   that actually govern it. The agent-tools row reuses the existing
-   `builtin:tldw_chatbook` hub identity — this is a presentation split,
-   not a new registry key, so Tools mode, the Permissions matrix, and
-   all permission semantics are untouched.
+   `Agent tools` (one row, keyed `agent:builtin` — a store identity that
+   already exists as `BUILTIN_TOOL_SERVER_KEY` but has no rail presence;
+   no two rail rows ever share a `server_key`). The `Tool gates`
+   checkbox group moves from the built-in server's detail pane to the
+   Agent-tools row's detail pane. The built-in server row keeps only the
+   `[mcp]` enable/expose controls that actually govern it. The
+   `builtin:tldw_chatbook` inventory group's display label becomes
+   `tldw_chatbook (external MCP)` and the Console-side local group's
+   label gains `(Console agents)`, so the same tool names legitimately
+   appearing under both surfaces (two separate permission domains: the
+   agent path and the external MCP server) read as intentional rather
+   than duplicated by accident. Selecting the agent-tools row renders
+   the unscoped Permissions summary — it never counts a hub group it
+   does not represent. These are presentation and label changes only:
+   no store key, store entry, or permission resolution semantic changes.
 2. Below `_COMPACT_WIDTH` (120 columns), the triad **stacks the
    inspector below the canvas** instead of squeezing three columns: a
    bounded, internally scrolling inspector band under a rail+canvas
-   row. Mid-word CSS breaks and unpinned Select widths are eliminated
+   row, via a `layout: vertical` toggle on the grid container plus a
+   `Horizontal` wrapper for the rail+canvas row (the `layout:` override
+   has in-repo precedent, e.g. `css/screen_feature_watchlists.tcss`).
+   Mid-word CSS breaks and unpinned Select widths are eliminated
    regardless of width; the Advanced collapsible renders collapsed
    inside the band at compact widths.
 

@@ -2,7 +2,7 @@
 
 Date: 2026-09-11
 Status: Draft (awaiting review)
-Review basis: MCP screen UX review 2026-09-11 (Finding F4b), evidence screenshots `01/03/08`
+Review basis: MCP screen UX review 2026-09-11 (Finding F4b); evidence PNGs in Docs/superpowers/specs/assets/2026-09-11-mcp-hub-ux/ (01, 03, 08)
 ADR: backlog/decisions/148-mcp-hub-rail-ia-and-responsive-triad.md
 Related: ADR-032 (local:__local__), ADR-053 (built-in stdio server), task-2240 (single-problem preselection), F-054
 
@@ -26,14 +26,34 @@ subsystems:
 The conflation forces explanatory copy everywhere (subheadings, notes,
 doc paragraphs) and still leaks the mismatch through the preview label.
 
+## Identity map (verified against code, 2026-09-11)
+
+The conflation involves **three distinct store identities**, which any
+split must keep honest:
+
+| Identity | What it is | Where it appears today |
+| --- | --- | --- |
+| `builtin:tldw_chatbook` (`BUILTIN_SERVER_KEY`) | The standalone MCP stdio server **and** its published inventory group (30 HubTools via `builtin_tools_from_inventory`, label `tldw_chatbook`) | Rail row; Servers detail; a full Permissions/Tools section |
+| `local:__local__` (ADR-032) | Console/agent workspace-web-Watchlists tools (`fs_*`, `git_*`, `shell_exec`, `watchlists_*`) | Tools table + Permissions section "Local workspace, web, and Watchlists" |
+| `agent:builtin` (`BUILTIN_TOOL_SERVER_KEY`, permission_store.py:1618) | In-process agent built-ins (`read_file`, `list_directory`, …) | Permissions-only extra section (`_builtin_permission_matrix_rows`); **never in `_last_hub_tools`** |
+
+**Additionally discovered during this verification pass:** the same tool
+names (e.g. `fs_edit`) render as rows under BOTH `local:__local__` and
+`builtin:tldw_chatbook` — two separate store entries, so an Allow on one
+does not affect the other — and nothing in the matrix distinguishes the
+two surfaces. The split below fixes the labels; exact row overlap is
+confirmed and pinned by a test at implementation time.
+
 ## Goals
 
 - The rail presents **two honest sections**: `Servers` (built-in MCP server
   + local profiles + server-source records) and `Agent tools` (the
   in-process catalog the Console uses).
 - Each section's detail pane renders only the controls that govern it.
-- The Permissions preview label matches the group it counts.
-- The Wave-A stopgap (F4a preview label suffix) is superseded and removed.
+- The Permissions matrix labels say which surface each section governs
+  (`tldw_chatbook (external MCP)` vs the Console agent groups); selecting
+  the agent-tools row renders the **unscoped** preview summary (it never
+  miscounts a group it doesn't represent).
 
 ## Non-goals
 
@@ -43,18 +63,28 @@ doc paragraphs) and still leaks the mismatch through the preview label.
   master switch + workspace root).
 - No new keybindings beyond the rail navigation already shipped in the
   bounded waves.
+- No deduplication of the underlying store entries (the two surfaces are
+  genuinely separate permission domains); this spec only labels them so
+  the duplication reads as intentional.
 
 ## Approaches considered
 
 **(a) Second rail section `Agent tools` with one pseudo-row (recommended).**
-The rail grows a section heading plus a single row keyed by the existing
-hub server key `builtin:tldw_chatbook` (no new keys — Tools/Permissions
-already group under it; only the rail presentation changes). The built-in
-row keeps `[mcp]` enable/expose toggles + `Copy client config`; the
-`Tool gates` group moves under the new row's detail view. The preview
-label comes from `server_label`, which becomes `Agent tools (built-in)`.
-Trade-off: one more rail row and a detail-routing branch; cheapest honest
-fix because every downstream surface already keys on the same identity.
+The rail grows a section heading plus a single row keyed `agent:builtin`
+—a store identity that already exists (`BUILTIN_TOOL_SERVER_KEY`) but
+has no rail presence, so no rail row ever shares a `server_key` (two
+rows on one key would break `MCPRail`'s `_row_keys`/`is-active` selection
+identity). The built-in row keeps `[mcp]` enable/expose toggles +
+`Copy client config`; the `Tool gates` group moves under the new row's
+detail view. The `builtin:tldw_chatbook` inventory group's display label
+becomes `tldw_chatbook (external MCP)` (label only — the key, and every
+store entry under it, is untouched). Selecting the agent row scopes the
+Permissions preview to nothing it can count: `_build_permission_preview`
+finds no `agent:builtin` group in `_last_hub_tools` (verified — agent
+built-ins are never in the hub catalog) and falls to the unscoped
+"global default · N overrides" summary, which is the honest answer.
+Trade-off: one more rail row, a new snapshot source value, and a
+detail-routing branch.
 
 **(b) Rebadge + relocate.** Rename the built-in row "App MCP server" and
 move `Tool gates` into the Tools-mode local-config panel. Trade-off: no
@@ -88,13 +118,21 @@ are the base set only (View details / Open tool catalog / Open audit) —
 no Connect/Check (nothing to connect). `OPEN_TOOL_CATALOG` already
 switches to Tools mode.
 
-**Permissions** (`mcp_workbench._build_permission_preview`): no special
-case needed once `server_label` is honest; F4a's suffix hack is deleted.
+**Permissions** (`hub_tool_catalog.builtin_tools_from_inventory` +
+`mcp_workbench`): the inventory group's `server_label` becomes
+`tldw_chatbook (external MCP)` — this is the display fix for the
+duplicate-row confusion (the Console-side groups keep their existing
+labels, with the local group's label gaining `(Console agents)` at the
+same time so the pairing reads as deliberate). Preview behavior needs no
+special case: selecting the agent row finds no hub group and renders the
+unscoped summary; selecting the built-in server row scopes to the
+external-MCP group under its new honest label. The Wave-A preview-suffix
+stopgap (F4a) is dropped from Wave A and never lands — this spec
+replaces it.
 
-**View state**: saved selections of `builtin:tldw_chatbook` restore onto
-the agent-tools row when the saved mode was permissions/tools (the key is
-identical; only Servers-mode detail routing branches). No migration file
-needed — document the semantic in `get_view_state()`.
+**View state**: the agent row's key `agent:builtin` is new to the rail;
+saved selections of `builtin:tldw_chatbook` keep restoring onto the
+built-in *server* row exactly as today. No migration, no ambiguity.
 
 **Readiness model** (`MCP/readiness.py`): new snapshot builder mirrors
 `builtin_readiness()`'s shape; no new `ReadinessState` values.
@@ -105,7 +143,10 @@ needed — document the semantic in `get_view_state()`.
 - `Tests/UI/test_mcp_servers_mode.py`: gates group renders under agent
   detail, absent from built-in detail; built-in pointer line present.
 - `Tests/UI/test_mcp_workbench.py`: selection routing; preview label;
-  view-state restore across the split.
+  view-state restore across the split; a new test pinning the
+  duplicate-row disambiguation (a tool name present under both
+  `local:__local__` and `builtin:tldw_chatbook` renders two rows whose
+  section labels name the two surfaces).
 - Update the task-2240 preselection test: on a fresh install the lone
   *problem* row is still the built-in server (off/opt-in) — preselection
   semantics unchanged, but the asserted detail contents change.
