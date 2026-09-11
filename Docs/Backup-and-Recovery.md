@@ -154,6 +154,29 @@ local contents, and explicitly rebuild derived indexes when required. Missing mo
 files are setup requirements; restore does not automatically download them. Historic
 queued work and old permissions do not authorize replay.
 
+For an existing local HF embedding model, use **Settings → Library/RAG** with the
+active RAG profile selected and any draft changes saved or discarded:
+
+1. Choose **Review local model**. Check the displayed model directory, file count,
+   and recovery generations, then choose **Approve local model**. This records
+   only the model review; it does not load or download a model or rebuild an index.
+2. Choose **Review recovery**, inspect the RAG owners, sources, and prerequisites,
+   then choose **Approve RAG owners**. Model permission and RAG permission are
+   separate; neither approval completes index validation.
+3. When the required local sources and model are available, choose
+   **Reconcile / rebuild** and confirm that action. This explicitly rebuilds and
+   verifies the index before recovered semantic retrieval can become available.
+
+Changing the model or active settings invalidates the displayed review. Request a
+fresh review rather than reusing an earlier confirmation.
+
+The reviewed local-HF rebuild and retrieval route is qualified within the running
+process. Reusing its saved projection after a fresh application launch remains
+unavailable: a valid model-review receipt alone does not verify the saved vectors.
+The app must retain that refusal until the projection prerequisites are met through
+an explicit qualified reconciliation or rebuild. Restarting does not automatically
+rebuild or approve the index; local source-content inspection remains available.
+
 Archive format, owner schema, helper, and native filesystem capabilities are checked
 independently. A newer archive is not automatically compatible with an older app.
 Unsupported formats may permit selected inert extraction without permitting an

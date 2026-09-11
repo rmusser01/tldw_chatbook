@@ -25,7 +25,7 @@ dependencies:
 - task-32006
 - task-32007
 - task-32008
-updated_date: 2026-09-11 14:58
+updated_date: 2026-09-11 14:59
 ---
 
 ## Description
@@ -81,4 +81,5 @@ Final capture Stage1 independent review subsequently available and APPROVED: /pr
 Next original finite Stage2a released: test-only plan_restore attempt against actual Stage1 capture with all roots and common destination for shared builtin concrete tree. Source preflight /private/tmp/two-profile-stage2-preflight.md predicts destination_collision. Author may factor private seed/capture helper preserving Stage1 assertions, add one permanent regression; no production changes/native authority mutations/fake inventory, no restore/fullmatrix claim. Native run coordinated after current model UI/core cohort.
 39cfec085 core3 and78bd37031 Settings localmodel review committed after final independent approvals/tenpass combined workflow. 5f529fba7 two-profile capture likewise committed. Release doc refresh now authorized ONLY Docs/Backup-and-Recovery.md and backlog/docs/backup-recovery-release-evidence.md to reflect these exact bounded delivered controls/evidence and explicit HF freshprocess projection reuse unavailable; no release qualification promotion or speculative guidance. Actual Stage2a planner red1/35.50s destination_collision documented; no support claim.
 Stage2a actual Complete2profile capture→boundedacquire→explicitall54root restoreplan now1pass20.95s with minimal exact-shared-tree planner support, /private/tmp/two-profile-stage2a-planner-positive.log. No actualpublication/openclaim. Newcomponentstageandnegative/compatibility18pass1.44s verifies existingphysicaldedup and ordinarysynthetic/file behaviors. Independent childaliasfinding corrected with nativebehaviorred→green. Stage2a test preserves allfiveStage1 childprograms byte-identical and originalseed/capture functionbody apart from factoring/return. Plan-only support readycommit; next original finiteStage2b executor/publication/freshmounted2profile reads needs separate tests, no scopeexpansion.
+Doc2 final bounded update reflects committed5f529 capture,39cfec085 modelcore,78bd37031 Settings, plus root Stage2a amendment after322aea0c2 plannercommit: actual plan-only1pass20.95s and component/compatibility18pass1.44s, no isolatedpublish/openclaim. Pprose2+corrected staleStage1 citation independently Aapproved /private/tmp/recovery-local-model-docs-independent-review.md; root checked exact finalcapturegit hashes and replaced pre-finaljsoncitation with finalreview. Userguide buttonsequence/source-backed HFfreshreopen limitation preserved. Links/diffcheck pass, no prose tests warranted.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
