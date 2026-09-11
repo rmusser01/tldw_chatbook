@@ -986,6 +986,29 @@ class LibraryIngestController:
             shortcuts.insert(2, ("r", "retry"))
         return tuple(shortcuts)
 
+    def _resync_library_ingest_footer(self) -> None:
+        """Re-register the Ingest footer when its state-derived set changed.
+
+        task-32364 AC#3 (fix round 1): every other entry in this set turns on
+        a REGISTRY event, and the registry listener was the only thing that
+        re-registered -- it fires once the import is already running. The
+        Enter label is the first entry driven by FORM state, so without this
+        the first Enter opened the Start gate and the footer went on
+        advertising "check this path" while Enter now started the import: the
+        same wrong-label defect, moved onto the more expensive press.
+
+        Deduped on the registration tuple, so an unchanged set costs nothing.
+        """
+        if (
+            self._library_selected_row_id != LIBRARY_ROW_INGEST_MEDIA
+            or self._library_screen_suspended
+        ):
+            return
+        shortcuts = self._library_ingest_shortcuts_for_current_state()
+        registration = ("library", tuple(shortcuts))
+        if self._footer_shortcut_registration != registration:
+            self.register_footer_shortcuts(source="library", shortcuts=shortcuts)
+
     def _sync_library_ingest_rail_for_width(self, width: int) -> None:
         """Auto-collapse the rail only while narrow Ingest needs the space."""
         # The grid carries a wide min-width and can report its virtual width
@@ -1152,12 +1175,7 @@ class LibraryIngestController:
                 self._library_ingest_suspended_activity = True
             else:
                 self._update_library_ingest_dynamic_regions()
-                shortcuts = self._library_ingest_shortcuts_for_current_state()
-                registration = ("library", tuple(shortcuts))
-                if self._footer_shortcut_registration != registration:
-                    self.register_footer_shortcuts(
-                        source="library", shortcuts=shortcuts
-                    )
+                self._resync_library_ingest_footer()
         registry = self._library_ingest_registry()
         counts_fn = getattr(registry, "counts", None)
         counts = counts_fn() if callable(counts_fn) else {}
@@ -2069,6 +2087,12 @@ class LibraryIngestController:
         # (task-2042) In-place for the same reason as the trigger: the
         # result can land while the user is typing or mid-click.
         self._update_library_ingest_dynamic_regions()
+        # task-32364 AC#3 (fix round 1): this is the seam every Start-gate
+        # transition passes through, and the gate now drives a FOOTER label.
+        # The line above only re-registers as a side effect of its STRUCTURAL
+        # branch (a changed type-group set), so a gate that opens without one
+        # left the footer naming the previous step's action.
+        self._resync_library_ingest_footer()
 
     @on(Button.Pressed, "#library-ingest-start")
     def handle_library_ingest_start(self, event: Button.Pressed) -> None:

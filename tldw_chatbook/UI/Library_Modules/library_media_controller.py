@@ -946,6 +946,14 @@ class LibraryMediaController:
         screen = self._screen
         if not screen._library_loaded or screen._library_lookup_error:
             return None
+        # Review finding 1 (fix round 1): the count is sometimes a LOWER
+        # BOUND -- a bounded preview page with no `total` -- which is why
+        # the screen keeps this flag and why every other consumer renders
+        # "5+" rather than "5". A scope line stating a flat "of 5" beside a
+        # rail saying "5+" is exactly the claim this line exists to avoid,
+        # so an unknown total drops the "of M" half instead.
+        if not screen._local_source_total_known.get("media", True):
+            return None
         return screen._local_source_counts.get("media")
 
 
