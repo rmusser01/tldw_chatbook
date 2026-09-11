@@ -118,7 +118,19 @@ class ArchiveManifest(Record):
 
 
 @dataclass(frozen=True)
+class EncryptedSource:
+    """Local authenticated acquisition binding; never read from a manifest."""
+
+    path: Path
+    digest: str
+    identity: tuple[int, int, int, int, int]
+    plaintext_digest: str
+    manifest_digest: str
+
+
+@dataclass(frozen=True)
 class SealedArchive:
     path: Path
     digest: str
     manifest_bytes: bytes
+    encrypted_source: EncryptedSource | None = None

@@ -17,10 +17,12 @@ from .journal import (
     _CandidateReceipt,
     _DirectoryState,
     _evidence_digest,
+    _IsolatedProfile,
     _matches,
     _Object,
     _Prepared,
     _PublicationContext,
+    _RetainedCredentials,
     _Rollback,
     _states,
     observe_artifact,
@@ -247,6 +249,20 @@ def finalize_candidate(candidate: Path, plan: RestorePlan, journal, *, session) 
         elif prior.evidence != proof:
             raise ValueError("finalization_activation_changed")
         check_installed()
+        catalog_proof = None
+        if prepared.isolated_profiles:
+            catalog = next(
+                (row for row in records if row.event == "catalog_registered"), None
+            )
+            catalog_proof = {
+                "generation": prepared.generation,
+                "activation_digest": _evidence_digest(proof),
+                "records": _catalog_proof(journal, prepared, register=catalog is None),
+            }
+            if catalog is None:
+                journal._append(parent, "catalog_registered", catalog_proof)
+            elif catalog.evidence != catalog_proof:
+                raise ValueError("finalization_catalog_changed")
         if committed is None:
             journal._append(
                 parent,
@@ -254,11 +270,19 @@ def finalize_candidate(candidate: Path, plan: RestorePlan, journal, *, session) 
                 {
                     "generation": prepared.generation,
                     "activation_digest": _evidence_digest(proof),
+                    "catalog_digest": _evidence_digest(catalog_proof)
+                    if catalog_proof
+                    else None,
                 },
             )
         journal._flush_records(parent)
         _finalization_session(session, context, prepared)
         check_installed()
+        if (
+            catalog_proof
+            and _catalog_proof(journal, prepared) != catalog_proof["records"]
+        ):
+            raise ValueError("finalization_catalog_changed")
         if (
             _activation_proof(journal, context, prepared.generation, selectors, owners)
             != proof["records"]
@@ -285,6 +309,26 @@ def finalize_candidate(candidate: Path, plan: RestorePlan, journal, *, session) 
                 os.unlink(name, dir_fd=bootstrap)
             flush_directory(bootstrap)
     return prepared.generation
+
+
+def _catalog_proof(journal, prepared, *, register=False):
+    """Register/recheck real catalog locators and retained encrypted material."""
+    from .profile_catalog import ProfileCatalog, _name
+
+    if prepared.retained_credentials is not None:
+        item = prepared.retained_credentials.ciphertext
+        if not _matches(item, item.path):
+            raise ValueError("retained_ciphertext_changed")
+    catalog = ProfileCatalog(journal.root.parent)
+    records = []
+    for entry in prepared.isolated_profiles:
+        config, data = Path(entry.config), Path(entry.data)
+        if register:
+            catalog.register(entry.profile_id, config, data)
+        if catalog.resolve(entry.profile_id) != (config, data):
+            raise ValueError("catalog_mapping_changed")
+        records.append(observe_artifact(catalog.root / _name(entry.profile_id)))
+    return sorted(records, key=lambda row: row["path"])
 
 
 def _pending(journal, context, *, targets=(), durable=False, committed=None):
@@ -730,6 +774,52 @@ def _prepare(
         )
         recheck_targets(plan)
         document = _descriptor(candidate, plan)
+        isolated_profiles = [
+            _IsolatedProfile.model_validate(row)
+            for row in document.get("isolated_profiles", [])
+        ]
+        retained_credentials = document.get("retained_credentials")
+        if isolated_profiles:
+            configs = {
+                row.logical_id.split(":")[1]: str(dict(plan.restore)[row.logical_id])
+                for row in doc.files
+                if row.owner_id == "config" and row.logical_id in dict(plan.restore)
+            }
+            if (
+                plan.mode != "isolated"
+                or len({row.profile_id for row in isolated_profiles})
+                != len(isolated_profiles)
+                or len({row.installation_id for row in isolated_profiles})
+                != len(isolated_profiles)
+                or {row.source_profile: row.config for row in isolated_profiles}
+                != configs
+                or len(isolated_profiles) != len(configs)
+                or any(
+                    row.data
+                    != str(
+                        dict(plan.selectors).get(
+                            f"profile:{row.source_profile}:paths.data_dir"
+                        )
+                    )
+                    for row in isolated_profiles
+                )
+            ):
+                raise ValueError("isolated_catalog_intent_invalid")
+            if doc.credential_policy != "exclude" and retained_credentials is None:
+                raise ValueError("encrypted_retention_required")
+        if retained_credentials is not None:
+            retained = _RetainedCredentials.model_validate(retained_credentials)
+            if (
+                not isolated_profiles
+                or Path(retained.ciphertext.path)
+                != journal.root.parent
+                / ("isolated-" + journal.operation_id)
+                / "credentials.age"
+                or retained.plaintext_digest != receipt.archive_digest
+                or retained.manifest_digest != receipt.manifest_digest
+                or not _matches(retained.ciphertext, retained.ciphertext.path)
+            ):
+                raise ValueError("encrypted_retention_unverified")
         containers = {
             row["destination"]: row["candidate"]
             for row in document.get("containers", [])
@@ -918,6 +1008,8 @@ def _prepare(
             {
                 "generation": generation,
                 "mode": plan.mode,
+                "isolated_profiles": [row.model_dump() for row in isolated_profiles],
+                "retained_credentials": retained_credentials,
                 "artifacts": artifacts,
                 "publication": context.model_dump(),
                 "installed_paths": installed_paths,

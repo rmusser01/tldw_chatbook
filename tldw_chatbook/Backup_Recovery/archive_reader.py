@@ -1,26 +1,26 @@
 """Bounded inspection of completed private copies, never live restore paths.
 
-Only the sealed path is retained. Consumers must verify its digest immediately
+Acquired paths carry local byte identities. Consumers verify the sealed digest immediately
 before using it; owner-only permissions are not a filesystem immutability promise.
 """
 
-from contextlib import contextmanager
 import hashlib
 import json
 import os
-from pathlib import Path, PurePosixPath
 import shutil
 import stat
 import struct
-from threading import Event
 import unicodedata
 import uuid
 import zipfile
 import zlib
+from contextlib import contextmanager
+from pathlib import Path, PurePosixPath
+from threading import Event
 
 from pydantic import ValidationError
 
-from .archive_models import ArchiveManifest, SealedArchive
+from .archive_models import ArchiveManifest, EncryptedSource, SealedArchive
 from .limits import ArchiveLimits
 from .native_files import (
     create_private_directory,
@@ -519,6 +519,8 @@ def acquire(
             ):
                 raise ValueError("source_changed")
         path = copied
+        encrypted_digest = _hash(copied, cancel) if encrypted else None
+        copied_identity = _identity(copied.stat(follow_symlinks=False))
         if encrypted:
             from .crypto import transform
 
@@ -532,13 +534,28 @@ def acquire(
                 input_limit=limits.input_bytes,
                 output_limit=limits.decrypted_bytes,
                 space_check=lambda count: _space(operation, count),
+                expected_input_sha256=encrypted_digest,
             )
         digest = _hash(path, cancel)
         manifest_bytes = _inspect(path, limits, encrypted, cancel, digest)
         if digest != _hash(path, cancel):
             raise ValueError("sealed_changed")
         _check(cancel)
-        sealed = SealedArchive(path, digest, manifest_bytes)
+        provenance = None
+        if encrypted:
+            if (
+                copied_identity != _identity(copied.stat(follow_symlinks=False))
+                or _hash(copied, cancel) != encrypted_digest
+            ):
+                raise ValueError("encrypted_source_changed")
+            provenance = EncryptedSource(
+                copied,
+                encrypted_digest,
+                copied_identity,
+                digest,
+                hashlib.sha256(manifest_bytes).hexdigest(),
+            )
+        sealed = SealedArchive(path, digest, manifest_bytes, provenance)
         completed = True
         return sealed
     except (
@@ -584,3 +601,65 @@ def verify_sealed(
     ):
         raise ValueError("sealed_changed")
     return doc
+
+
+def retain_encrypted(
+    sealed: SealedArchive, destination: Path, cancel: Event
+) -> EncryptedSource:
+    """Retain the exact ciphertext authenticated by acquisition, without a password.
+
+    Metadata is local acquisition output, never inferred from a sibling filename.
+    A writer receipt or plaintext acquisition carries no such binding.
+    """
+    source = sealed.encrypted_source
+    if source is None:
+        raise ValueError("encrypted_acquisition_required")
+    verify_sealed(sealed, cancel)
+    if (
+        source.plaintext_digest != sealed.digest
+        or source.manifest_digest != hashlib.sha256(sealed.manifest_bytes).hexdigest()
+    ):
+        raise ValueError("encrypted_source_changed")
+    with (
+        pinned_directory(source.path.parent) as parent,
+        _regular(source.path) as incoming,
+    ):
+        info = os.fstat(incoming.fileno())
+
+        def check():
+            named = os.stat(source.path.name, dir_fd=parent, follow_symlinks=False)
+            if (
+                source.identity != _identity(os.fstat(incoming.fileno()))
+                or source.identity != _identity(named)
+                or named.st_nlink != 1
+                or named.st_uid != os.geteuid()
+                or named.st_mode & 0o077
+            ):
+                raise ValueError("encrypted_source_changed")
+
+        check()
+        _space(destination.parent, info.st_size)
+        digest = hashlib.sha256()
+        with create_private_file(destination) as fd:
+            while chunk := incoming.read(_BUFFER):
+                _check(cancel)
+                digest.update(chunk)
+                view = memoryview(chunk)
+                while view:
+                    count = os.write(fd, view)
+                    if not count:
+                        raise OSError("write_failed")
+                    view = view[count:]
+            check()
+            if digest.hexdigest() != source.digest:
+                raise ValueError("encrypted_source_changed")
+        verify_sealed(sealed, cancel)
+        if _hash(destination, cancel) != source.digest:
+            raise ValueError("retained_ciphertext_changed")
+        return EncryptedSource(
+            destination,
+            source.digest,
+            _identity(destination.stat(follow_symlinks=False)),
+            sealed.digest,
+            source.manifest_digest,
+        )

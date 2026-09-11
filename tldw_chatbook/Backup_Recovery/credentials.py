@@ -341,13 +341,15 @@ def _material(staging):
     return records
 
 
-def plan_credential_scopes(staging: Path) -> Mapping[str, str]:
+def plan_credential_scopes(
+    staging: Path, *, isolated: bool = False
+) -> Mapping[str, str]:
     """Plan only: caller journals this mapping before applying any credential."""
     plans = {}
     for record in _material(staging):
         if record["status"] != "captured":
             continue
-        if record["kind"] != "server" or not record["remappable"]:
+        if isolated or record["kind"] != "server" or not record["remappable"]:
             plans[record["id"]] = json.dumps(
                 {"action": "retain", "material": _fingerprint(record)}
             )

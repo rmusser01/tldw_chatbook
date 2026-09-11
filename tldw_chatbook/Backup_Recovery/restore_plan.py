@@ -600,7 +600,14 @@ def plan_restore(
         metadata.append((record.logical_id, desired, applied))
     parents = set()
     root_paths = set(destinations.values())
-    for root in root_paths:
+    if mode == "isolated":
+        supplied_directories = {path for key, path in restore if key in directories}
+        for key, path in selectors.items():
+            if key.endswith(":paths.data_dir") and path not in supplied_directories:
+                if any(root in path.parents for root in root_paths):
+                    raise ValueError("isolated_data_container_overlap")
+                parents.add(path)
+    for root in root_paths | parents.copy():
         parent = root.parent
         while not parent.exists():
             if parent not in root_paths:

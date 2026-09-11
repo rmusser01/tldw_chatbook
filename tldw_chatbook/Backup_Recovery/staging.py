@@ -212,6 +212,8 @@ def stage_restore(
     cancel: Event,
     *,
     journal=None,
+    isolated_profiles=(),
+    retained_credentials=None,
 ) -> Path:
     """Return a private candidate descriptor with explicit per-volume artifacts.
 
@@ -222,6 +224,8 @@ def stage_restore(
     reader._check(cancel)
     if type(plan) is not RestorePlan or plan.archive_digest != archive.digest:
         raise ValueError("archive_plan_mismatch")
+    if isolated_profiles and plan.mode != "isolated":
+        raise ValueError("isolated_plan_required")
     doc = _document(archive)
     recheck_targets(plan)
     for _, live in (*plan.restore, *plan.retire, *plan.preserve):
@@ -305,6 +309,36 @@ def stage_restore(
         from .storage_admission import _preview_reads
 
         with _preview_reads():
+            credentials = {}
+            if isolated_profiles:
+                from dataclasses import replace
+
+                from .credentials import plan_credential_scopes, process_credentials
+                from .models import Inventory
+
+                if doc.credential_policy != "exclude":
+                    if retained_credentials is None:
+                        raise ValueError("encrypted_retention_required")
+                    _copy(
+                        stage / "payload" / "credential-recovery.json",
+                        stage / "credential-recovery.json",
+                        cancel,
+                    )
+                    credentials = dict(plan_credential_scopes(stage, isolated=True))
+                    (stage / "credential-recovery.json").unlink()
+                rebound = tuple(
+                    replace(item, path=extracted[key])
+                    for key, item in items.items()
+                    if key in extracted and key in selected
+                )
+                issues = process_credentials(
+                    stage,
+                    Inventory(rebound, False, "", ()),
+                    mode="exclude",
+                    encrypted=False,
+                )
+                if issues:
+                    raise ValueError(issues[0])
             for payload in doc.files:
                 if payload.logical_id not in selected:
                     continue
@@ -381,9 +415,8 @@ def stage_restore(
                 )
                 if previous != validated[item.logical_id]:
                     raise ValueError("shared_candidate_mismatch")
-        credentials = {}
         material = stage / "payload" / "credential-recovery.json"
-        if doc.credential_policy != "exclude":
+        if doc.credential_policy != "exclude" and not isolated_profiles:
             from .credentials import _material, plan_credential_scopes
 
             if not material.exists():
@@ -415,7 +448,7 @@ def stage_restore(
         by_volume = {}
         work_device = stage.stat().st_dev
         root_candidates = {}
-        for root_id, destination in plan.destinations:
+        for root_id, destination in (*plan.destinations, *plan.containers):
             parent = _ancestor(destination.parent)
             device = parent.stat().st_dev
             if device not in by_volume:
@@ -436,9 +469,7 @@ def stage_restore(
             candidates[root_id] = root_candidates[destination]
         containers = []
         for key, destination in plan.containers:
-            device = _ancestor(destination.parent).stat().st_dev
-            candidate = by_volume[device] / key.replace(":", "-")
-            create_private_directory(candidate)
+            candidate = root_candidates[destination]
             info = candidate.stat()
             containers.append(
                 {
@@ -601,6 +632,8 @@ def stage_restore(
             "containers": containers,
             "credential_scopes": credentials,
             "private_roots": [str(path) for path in volume_roots],
+            "isolated_profiles": list(isolated_profiles),
+            "retained_credentials": retained_credentials,
         }
         with (
             create_private_file(stage / "candidate.json") as fd,

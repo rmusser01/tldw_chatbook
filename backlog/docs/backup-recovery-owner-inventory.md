@@ -2880,6 +2880,8 @@ private staged copies. Model lease rows retain their existing cohort status.
 | tldw_chatbook/Backup_Recovery/archive_reader.py | _regular | open | 1 | generic_boundary | reviewed archive input |
 | tldw_chatbook/Backup_Recovery/archive_reader.py | acquire | create_private_file | 1 | disposable | private archive staging |
 | tldw_chatbook/Backup_Recovery/archive_reader.py | acquire | write | 1 | disposable | private archive staging |
+| tldw_chatbook/Backup_Recovery/archive_reader.py | retain_encrypted | create_private_file | 1 | qualified | operation-owned encrypted credential archive retained after authenticated acquisition |
+| tldw_chatbook/Backup_Recovery/archive_reader.py | retain_encrypted | write | 1 | qualified | operation-owned encrypted credential archive retained after authenticated acquisition |
 | tldw_chatbook/Backup_Recovery/archive_reader.py | verify_sealed | ZipFile | 1 | generic_boundary | private archive validation |
 | tldw_chatbook/Backup_Recovery/archive_writer.py | _package | ZipFile | 1 | disposable | private output staging |
 | tldw_chatbook/Backup_Recovery/archive_writer.py | _package | create_private_file | 1 | disposable | private output staging |

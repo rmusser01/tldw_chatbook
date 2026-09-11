@@ -7,14 +7,14 @@ helper exit. Callers must supply an owner-private staging directory for decrypt.
 import hashlib
 import io
 import os
-from pathlib import Path
 import platform
 import stat
 import struct
 import subprocess
 import tempfile
-from threading import Event, Lock, Thread
 import time
+from pathlib import Path
+from threading import Event, Lock, Thread
 from typing import Annotated, BinaryIO, Callable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -91,9 +91,11 @@ def _pipes(
     input_limit: int | None = None,
     output_limit: int | None = None,
     space_check: Callable[[int], None] | None = None,
+    expected_input_sha256: str | None = None,
 ) -> None:
     """Pump all three pipes concurrently, retaining no input or diagnostics."""
     failed = Event()
+    input_digest = hashlib.sha256()
     process = subprocess.Popen(
         [str(binary), mode],
         stdin=subprocess.PIPE,
@@ -117,6 +119,7 @@ def _pipes(
                         failed.set()
                         return
                     _write_all(pipe, data)
+                    input_digest.update(data)
         except (OSError, ValueError):
             failed.set()
 
@@ -180,6 +183,11 @@ def _pipes(
         or (deadline and time.monotonic() > deadline)
     ):
         raise CryptoError("transform_failed")
+    if (
+        expected_input_sha256 is not None
+        and input_digest.hexdigest() != expected_input_sha256
+    ):
+        raise CryptoError("input_changed")
 
 
 def _write_all(output: BinaryIO, data: bytes) -> None:
@@ -302,6 +310,7 @@ def transform(
     input_limit: int = _MAX_CONTAINER,
     output_limit: int = _MAX_CONTAINER,
     space_check: Callable[[int], None] | None = None,
+    expected_input_sha256: str | None = None,
 ) -> None:
     """Stream an age transform to a new private file, or raise a fixed code.
 
@@ -347,6 +356,7 @@ def transform(
                     input_limit=input_limit,
                     output_limit=output_limit,
                     space_check=space_check,
+                    expected_input_sha256=expected_input_sha256,
                 )
                 output.flush()
                 os.fsync(output.fileno())

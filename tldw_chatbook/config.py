@@ -76,7 +76,9 @@ logger.debug("CRITICAL DEBUG: config.py module is being imported/executed NOW.")
 # Client ID used by the Server API itself when writing to sync logs
 SERVER_CLIENT_ID = "SERVER_API_V1"
 # Client ID for the CLI application instance for its local databases
-CLI_APP_CLIENT_ID = "tldw_cli_local_instance_v1"
+from tldw_chatbook.Backup_Recovery.isolated_restore import installation_client_id
+
+CLI_APP_CLIENT_ID = installation_client_id()
 
 # --- Path to the CLI's configuration file ---
 DEFAULT_CONFIG_PATH = profile_paths.default_config_path()

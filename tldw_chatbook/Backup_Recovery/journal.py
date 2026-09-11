@@ -151,9 +151,32 @@ class _Progress(_Evidence):
     )
 
 
+class _IsolatedProfile(_Evidence):
+    source_profile: str = Field(min_length=1, max_length=256)
+    profile_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    installation_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    config: str
+    data: str
+
+    @field_validator("config", "data")
+    @classmethod
+    def absolute_path(cls, value):
+        return _Object.absolute_path(value)
+
+
+class _RetainedCredentials(_Evidence):
+    ciphertext: _Object
+    plaintext_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class _Prepared(_Evidence):
     generation: str = Field(min_length=1, max_length=256)
     mode: Literal["isolated", "replace"]
+    isolated_profiles: list[_IsolatedProfile] = Field(
+        default_factory=list, max_length=4096
+    )
+    retained_credentials: _RetainedCredentials | None = None
     artifacts: list[_Artifact] = Field(default_factory=list, max_length=MAX_EVENTS)
     rollback_sources: list[_RollbackSource] = Field(
         default_factory=list, max_length=MAX_EVENTS
@@ -395,9 +418,16 @@ class _ActivationRecorded(_Evidence):
     records: list[_Object] = Field(min_length=3, max_length=MAX_EVENTS)
 
 
+class _CatalogRecorded(_Evidence):
+    generation: str
+    activation_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    records: list[_Object] = Field(min_length=1, max_length=4096)
+
+
 class _Committed(_Evidence):
     generation: str = Field(min_length=1, max_length=256)
     activation_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    catalog_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class _Event(_Evidence):
@@ -414,6 +444,7 @@ class _Event(_Evidence):
         "artifact_published",
         "installed_validated",
         "activation_recorded",
+        "catalog_registered",
         "committed",
         "directory_metadata_started",
         "directory_metadata_applied",
@@ -455,6 +486,12 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
     if events and events[-1] == "committed":
         allowed = set()
     elif events and events[-1] == "activation_recorded":
+        allowed = (
+            {"catalog_registered"}
+            if prepared_record.evidence.get("isolated_profiles")
+            else {"committed"}
+        )
+    elif events and events[-1] == "catalog_registered":
         allowed = {"committed"}
     elif events and events[-1] == "installed_validated":
         allowed.add("activation_recorded")
@@ -474,6 +511,7 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
         "artifact_published": _Progress,
         "installed_validated": _Installed,
         "activation_recorded": _ActivationRecorded,
+        "catalog_registered": _CatalogRecorded,
         "committed": _Committed,
         "directory_metadata_started": _DirectoryIntent,
         "directory_metadata_applied": _DirectoryProgress,
@@ -549,10 +587,29 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
                 raise ValueError("activation_context_invalid")
             for selector in validated.selectors:
                 _Object.absolute_path(selector)
+        elif isinstance(validated, _CatalogRecorded):
+            prepared = _Prepared.model_validate(prepared_record.evidence)
+            if (
+                validated.generation != prepared.generation
+                or validated.activation_digest != _evidence_digest(prior[-1].evidence)
+                or len(validated.records) != len(prepared.isolated_profiles)
+                or len({row.path for row in validated.records})
+                != len(validated.records)
+            ):
+                raise ValueError("catalog_context_invalid")
         elif isinstance(validated, _Committed):
-            if validated.generation != prior[-1].evidence[
-                "generation"
-            ] or validated.activation_digest != _evidence_digest(prior[-1].evidence):
+            activation = next(
+                row for row in prior if row.event == "activation_recorded"
+            )
+            catalog = next(
+                (row for row in prior if row.event == "catalog_registered"), None
+            )
+            if (
+                validated.generation != activation.evidence["generation"]
+                or validated.activation_digest != _evidence_digest(activation.evidence)
+                or validated.catalog_digest
+                != (_evidence_digest(catalog.evidence) if catalog else None)
+            ):
                 raise ValueError("commit_context_invalid")
         elif isinstance(validated, (_DirectoryIntent, _DirectoryProgress)):
             prepared = _Prepared.model_validate(prepared_record.evidence)
@@ -812,6 +869,8 @@ class Journal:
 
     def record(self, event: str, evidence: Mapping[str, object]) -> None:
         """Flush one strictly typed exclusive record; failed writes remain evidence."""
+        if event == "catalog_registered":
+            raise ValueError("catalog_finalization_required")
         if event == "rollback_verified" and (
             evidence.get("sqlite_groups") or evidence.get("projection_groups")
         ):
