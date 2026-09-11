@@ -226,8 +226,8 @@ _TOOL_GATE_NOTE_TEXT = (
 # when the server starts -- so external clients pick it up on their next
 # launch even though the agent half is live next run.
 _TOOL_GATE_RESTART_NOTE_TEMPLATE = (
-    "{names} also reaches external MCP clients — that half applies on their "
-    "next client launch."
+    "Also published to external MCP clients: {names} — that half applies on "
+    "their next client launch."
 )
 
 _LOCAL_TOOLS_INCLUDED_TEXT = (
