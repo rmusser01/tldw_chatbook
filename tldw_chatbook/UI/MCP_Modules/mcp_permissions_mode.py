@@ -400,6 +400,9 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         Binding("space", "cycle_state", "Cycle permission", show=False),
     ]
 
+    class RecoveryReviewRequested(Message, namespace="mcp_permissions_mode"):
+        """Request explicit review of the current restored MCP roots."""
+
     class StateCycleRequested(Message, namespace="mcp_permissions_mode"):
         """Posted by a Space press on the matrix's cursor row.
 
@@ -496,6 +499,17 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         self._kill_switch: bool = False
 
     def compose(self) -> ComposeResult:
+        yield Button(
+            "Review restored MCP roots",
+            id="mcp-perm-recovery-review",
+            classes="console-action-secondary",
+            compact=True,
+        )
+        yield Static(
+            "Restored permissions stay inactive until reviewed. Review creates fresh "
+            "Ask/local defaults; connecting and granting tools remain separate actions.",
+            markup=False,
+        )
         yield Button(
             _kill_switch_label(self._kill_switch),
             id="mcp-perm-kill-switch",
@@ -797,6 +811,10 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
     # -- events -----------------------------------------------------------
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "mcp-perm-recovery-review":
+            event.stop()
+            self.post_message(self.RecoveryReviewRequested())
+            return
         if event.button.id != "mcp-perm-kill-switch":
             return
         event.stop()
