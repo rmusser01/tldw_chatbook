@@ -11,6 +11,10 @@ from pathlib import Path
 from threading import get_ident
 from typing import TYPE_CHECKING, Any, Mapping, Optional
 
+from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
+    ProducerLifetime,
+    producer_call,
+)
 from tldw_chatbook.Sync_Interop.sync_state import SyncV2ProfileMode
 from tldw_chatbook.Sync_Interop.validation import (
     validate_outgoing_envelope_scope,
@@ -80,6 +84,7 @@ def _sync_call(method=None, *, delegate=False, local=False):
     if method is None:
         return partial(_sync_call, delegate=delegate, local=local)
 
+    @producer_call
     @wraps(method)
     async def call(self, *args, **kwargs):
         with _sync_execution_scope(self, delegate=delegate, local=local):
@@ -91,6 +96,18 @@ def _sync_call(method=None, *, delegate=False, local=False):
 class ServerSyncService:
     """Policy-gated access to the server sync transport endpoints."""
 
+    def _maintenance_close_admission(self):
+        """Fence new calls before lower storage admission closes."""
+        self._producer_lifetime.close()
+
+    async def _maintenance_drain(self, deadline):
+        """Wait for accepted calls without cancelling their native work."""
+        return await self._producer_lifetime.drain(deadline)
+
+    def _maintenance_resume(self):
+        """Reopen only after accepted work and ordinary storage have settled."""
+        self._producer_lifetime.resume()
+
     def __init__(
         self,
         client: Optional[TLDWAPIClient],
@@ -99,6 +116,7 @@ class ServerSyncService:
         policy_enforcer: Any | None = None,
         state_repository: Any | None = None,
     ) -> None:
+        self._producer_lifetime = ProducerLifetime()
         self.client = client
         self.client_provider = client_provider
         self.policy_enforcer = policy_enforcer

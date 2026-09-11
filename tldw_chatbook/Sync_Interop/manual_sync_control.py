@@ -5,6 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal, Mapping, MutableMapping, Sequence
 
+from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
+    ProducerLifetime,
+    producer_call,
+)
 from tldw_chatbook.Sync_Interop.conflict_review import (
     SyncV2ConflictReviewItem,
     SyncV2ConflictReviewService,
@@ -50,6 +54,18 @@ class ManualSyncRunResult:
 class ManualSyncControlService:
     """Build manual Sync v2 previews and execute sync only on explicit request."""
 
+    def _maintenance_close_admission(self):
+        """Fence new calls before lower storage admission closes."""
+        self._producer_lifetime.close()
+
+    async def _maintenance_drain(self, deadline):
+        """Wait for accepted calls without cancelling their native work."""
+        return await self._producer_lifetime.drain(deadline)
+
+    def _maintenance_resume(self):
+        """Reopen only after accepted work and ordinary storage have settled."""
+        self._producer_lifetime.resume()
+
     def __init__(
         self,
         *,
@@ -74,6 +90,7 @@ class ManualSyncControlService:
             None.
         """
 
+        self._producer_lifetime = ProducerLifetime()
         self.state_repository = state_repository
         self.local_first_sync_service = local_first_sync_service
         self.dataset_keys = dataset_keys if dataset_keys is not None else {}
@@ -174,6 +191,7 @@ class ManualSyncControlService:
             profile=profile,
         )
 
+    @producer_call
     async def run_once(
         self,
         *,

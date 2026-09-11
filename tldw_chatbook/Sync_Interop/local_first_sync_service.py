@@ -6,6 +6,9 @@ import hashlib
 import json
 from typing import TYPE_CHECKING, Any, Mapping
 
+from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
+    ProducerLifetime,
+)
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
 from tldw_chatbook.Sync_Interop.sync_state import is_local_first_sync_profile_mode
 from tldw_chatbook.Sync_Interop.validation import (
@@ -24,6 +27,18 @@ if TYPE_CHECKING:
 class LocalFirstSyncService:
     """Push local envelopes, pull remote envelopes, and apply them locally."""
 
+    def _maintenance_close_admission(self):
+        """Fence new calls before lower storage admission closes."""
+        self._producer_lifetime.close()
+
+    async def _maintenance_drain(self, deadline):
+        """Wait for accepted calls without cancelling their native work."""
+        return await self._producer_lifetime.drain(deadline)
+
+    def _maintenance_resume(self):
+        """Reopen only after accepted work and ordinary storage have settled."""
+        self._producer_lifetime.resume()
+
     def __init__(
         self,
         *,
@@ -32,6 +47,7 @@ class LocalFirstSyncService:
         local_store: Any,
         dataset_keys: dict[str, bytes] | None = None,
     ) -> None:
+        self._producer_lifetime = ProducerLifetime()
         self.server_service = server_service
         self.state_repository = state_repository
         self.local_store = local_store

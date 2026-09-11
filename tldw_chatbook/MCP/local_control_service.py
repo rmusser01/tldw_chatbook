@@ -8,6 +8,11 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 from uuid import uuid4
 
+from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
+    ProducerLifetime,
+    producer_call,
+)
+
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.Library.library_tool_contract import (
@@ -128,6 +133,18 @@ class MCPGovernanceDenied(PermissionError):
 
 
 class LocalMCPControlService:
+    def _maintenance_close_admission(self):
+        """Fence new calls before lower storage admission closes."""
+        self._producer_lifetime.close()
+
+    async def _maintenance_drain(self, deadline):
+        """Wait for accepted calls without cancelling their native work."""
+        return await self._producer_lifetime.drain(deadline)
+
+    def _maintenance_resume(self):
+        """Reopen only after accepted work and ordinary storage have settled."""
+        self._producer_lifetime.resume()
+
     def __init__(
         self,
         *,
@@ -137,6 +154,7 @@ class LocalMCPControlService:
         policy_enforcer: Any | None = None,
         runtime_delegate: LocalMCPRuntimeDelegate | None = None,
     ) -> None:
+        self._producer_lifetime = ProducerLifetime()
         self.store = store
         self.client = client
         self.manifest_provider = manifest_provider or _default_manifest_provider
@@ -231,6 +249,7 @@ class LocalMCPControlService:
         record = LocalExternalMCPProfile.from_input_dict(strict_input)
         return self.store.save_profile(record).to_dict()
 
+    @producer_call
     @guarded
     async def connect_profile(self, profile_id: str) -> dict[str, Any]:
         self._require_allowed("mcp.external_profiles.launch.local")
@@ -258,11 +277,13 @@ class LocalMCPControlService:
         self.store.save_discovery_snapshot(profile.profile_id, snapshot)
         return snapshot
 
+    @producer_call
     async def disconnect_profile(self, profile_id: str) -> bool:
         self._require_allowed("mcp.external_profiles.launch.local")
         client = self._get_client()
         return await client.disconnect_from_server(profile_id)
 
+    @producer_call
     @guarded
     async def test_external_profile(self, profile_id: str) -> dict[str, Any]:
         self._require_allowed("mcp.external_profiles.trigger.local")
@@ -275,6 +296,7 @@ class LocalMCPControlService:
             "prompts": len(snapshot.get("prompts", [])),
         }
 
+    @producer_call
     @guarded
     async def execute_external_tool(
         self,
@@ -306,6 +328,7 @@ class LocalMCPControlService:
             raise RuntimeError(payload["error"])
         return payload
 
+    @producer_call
     @guarded
     async def refresh_external_profile(self, profile_id: str) -> dict[str, Any]:
         self._require_allowed("mcp.external_profiles.observe.local")
@@ -495,6 +518,7 @@ class LocalMCPControlService:
             "diagnostics": self.runtime_delegate.get_protocol_diagnostics(),
         }
 
+    @producer_call
     @request_guard
     async def run_runtime_request(
         self, method: str, params: Mapping[str, Any] | None = None
@@ -538,6 +562,7 @@ class LocalMCPControlService:
             "governance": self._compact_governance_preview(governance),
         }
 
+    @producer_call
     @batch_guard
     async def run_runtime_batch(
         self, requests: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...]
@@ -629,6 +654,7 @@ class LocalMCPControlService:
             "results": results,
         }
 
+    @producer_call
     @guarded
     async def execute_tool(
         self, tool_name: str, arguments: Mapping[str, Any] | None = None
@@ -671,6 +697,7 @@ class LocalMCPControlService:
             "governance": self._compact_governance_preview(governance),
         }
 
+    @producer_call
     @guarded
     async def read_resource(self, resource_uri: str) -> dict[str, Any]:
         self._require_allowed("mcp.inventory.observe.local")
@@ -708,6 +735,7 @@ class LocalMCPControlService:
             "governance": self._compact_governance_preview(governance),
         }
 
+    @producer_call
     @guarded
     async def get_prompt(
         self, prompt_name: str, arguments: Mapping[str, Any] | None = None

@@ -23,6 +23,11 @@ from urllib.parse import urlsplit
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
+    ProducerLifetime,
+    producer_call,
+)
+
 from .activation import client_guard, guarded
 
 _MCP_PROTOCOL_VERSION = "2025-03-26"
@@ -330,6 +335,7 @@ class _StdioJSONRPCConnection:
         request_timeout_seconds: float = _REQUEST_TIMEOUT_SECONDS,
         on_transport_failure: Optional[Callable[[], Awaitable[None]]] = None,
     ) -> None:
+        self._producer_lifetime = ProducerLifetime()
         self.process = process
         self.client_name = client_name
         self.request_timeout_seconds = request_timeout_seconds
@@ -447,6 +453,7 @@ class _StdioJSONRPCConnection:
         raise MCPClientError("MCP catalog page limit exceeded")
 
     @guarded
+    @producer_call
     async def call_tool(
         self, tool_name: str, arguments: Dict[str, Any]
     ) -> SimpleNamespace:
@@ -460,6 +467,7 @@ class _StdioJSONRPCConnection:
         return SimpleNamespace(content=result.get("content", []))
 
     @guarded
+    @producer_call
     async def read_resource(self, resource_uri: str) -> SimpleNamespace:
         result = await self.request(
             "resources/read",
@@ -476,6 +484,7 @@ class _StdioJSONRPCConnection:
         )
 
     @guarded
+    @producer_call
     async def get_prompt(
         self,
         prompt_name: str,
@@ -493,6 +502,7 @@ class _StdioJSONRPCConnection:
         )
 
     @guarded
+    @producer_call
     async def request(
         self,
         method: str,
@@ -600,6 +610,7 @@ class _StdioJSONRPCConnection:
         if cancelled:
             raise asyncio.CancelledError
 
+    @producer_call
     async def notify(
         self, method: str, params: Optional[Dict[str, Any]] = None
     ) -> None:
@@ -874,8 +885,148 @@ class _PendingConnection:
 class MCPClient:
     """MCP Client for connecting to external MCP servers."""
 
+    def _maintenance_close_admission(self):
+        """Fence new calls before lower storage admission closes."""
+        self._producer_lifetime.close()
+
+    async def _maintenance_drain(self, deadline):
+        """Drain calls, then stop established stdio children and verify exit."""
+        if not await self._producer_lifetime.drain(deadline):
+            return False
+        if (
+            self._connect_reservations
+            or set(self.servers) != set(self.sessions)
+            or self.sessions.keys() & self._pending_connections.keys()
+        ):
+            return False
+        if self._maintenance_sessions is None:
+            sessions = tuple(self.sessions.items())
+            if any(
+                type(session) is not _StdioJSONRPCConnection
+                or type(session.process) is not asyncio.subprocess.Process
+                for _, session in sessions
+            ):
+                return False
+            pending = tuple(self._pending_connections.items())
+            if any(
+                type(owner) is not _PendingConnection
+                or type(owner.process) is not asyncio.subprocess.Process
+                or (
+                    owner.session is not None
+                    and (
+                        type(owner.session) is not _StdioJSONRPCConnection
+                        or owner.session.process is not owner.process
+                    )
+                )
+                for _, owner in pending
+            ):
+                return False
+            self._maintenance_sessions = sessions
+            self._maintenance_pending = pending
+            for _, owner in pending:
+                if owner.session is not None:
+                    owner.session._producer_lifetime.close()
+            for _, session in sessions:
+                session._producer_lifetime.close()
+        # A failed initialization may retain a native child after the connect
+        # call returned. Keep its fence until positive exit; do not kill pending
+        # work to obtain capture. Only then retire its retained bookkeeping.
+        for _, owner in self._maintenance_pending:
+            if owner.process.returncode is None:
+                return False
+            if (
+                owner.session is not None
+                and not await owner.session._producer_lifetime.drain(deadline)
+            ):
+                return False
+        for _, session in self._maintenance_sessions:
+            if not await session._producer_lifetime.drain(deadline):
+                return False
+        if self._maintenance_cleanup is not None and self._maintenance_cleanup.done():
+            try:
+                self._maintenance_cleanup.result()
+            except (asyncio.CancelledError, OSError, RuntimeError):
+                if any(
+                    session.process.returncode is None
+                    for _, session in self._maintenance_sessions
+                ):
+                    return False
+                # Failed termination remains fenced until actual native exit.
+                # Once exit is known, retry bookkeeping with the same handles.
+                self._maintenance_cleanup = None
+        if self._maintenance_cleanup is None:
+
+            async def cleanup():
+                for server_id, session in self._maintenance_sessions:
+                    await self._bounded_teardown_connection(server_id, session=session)
+                for server_id, owner in self._maintenance_pending:
+                    await self._bounded_teardown_connection(server_id, pending=owner)
+
+            self._maintenance_cleanup = asyncio.create_task(cleanup())
+        # A cancelled or timed-out maintenance waiter does not cancel teardown.
+        while not self._maintenance_cleanup.done():
+            remaining = deadline - _monotonic()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(0.01, remaining))
+        try:
+            self._maintenance_cleanup.result()
+        except (asyncio.CancelledError, OSError, RuntimeError):
+            return False
+        return self._maintenance_children_exited()
+
+    def _maintenance_children_exited(self):
+        """Use retained native handles, never empty session maps as exit proof."""
+        return (
+            self._maintenance_sessions is not None
+            and self._maintenance_pending is not None
+            and all(
+                owner.process.returncode is not None
+                for _, owner in self._maintenance_pending
+            )
+            and all(
+                session.process.returncode is not None
+                for _, session in self._maintenance_sessions
+            )
+            and not self.sessions
+            and not self.servers
+            and not self._pending_connections
+            and not self._connect_reservations
+        )
+
+    def _maintenance_resume(self):
+        """Reopen ordinary explicit connects; never replay saved definitions."""
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+        if self._maintenance_cleanup is not None:
+            if not self._maintenance_cleanup.done():
+                raise RecoveryRequired("runtime_work_not_settled")
+            try:
+                self._maintenance_cleanup.result()
+            except (asyncio.CancelledError, OSError, RuntimeError):
+                raise RecoveryRequired("runtime_work_not_settled") from None
+            if not self._maintenance_children_exited():
+                raise RecoveryRequired("runtime_work_not_settled")
+        elif (
+            self._maintenance_sessions is not None
+            or self._maintenance_pending is not None
+            or self.sessions
+            or self.servers
+            or self._pending_connections
+            or self._connect_reservations
+        ):
+            raise RecoveryRequired("runtime_work_not_settled")
+        self._producer_lifetime.resume()
+        self._maintenance_sessions = None
+        self._maintenance_pending = None
+        self._maintenance_cleanup = None
+
     def __init__(self, name: str = "tldw_chatbook_client"):
         """Initialize the MCP client."""
+        self._maintenance_sessions = None
+        self._maintenance_pending = None
+        self._maintenance_cleanup = None
+        self._producer_lifetime = ProducerLifetime()
         self.name = name
         self.sessions: Dict[str, _StdioJSONRPCConnection] = {}
         self.servers: Dict[str, Dict[str, Any]] = {}
@@ -884,6 +1035,7 @@ class MCPClient:
 
         logger.info("MCP Client '{}' initialized", name)
 
+    @producer_call
     @client_guard
     async def connect_to_server(
         self,
@@ -1026,6 +1178,7 @@ class MCPClient:
             if self._connect_reservations.get(server_id) is reservation:
                 self._connect_reservations.pop(server_id, None)
 
+    @producer_call
     async def disconnect_from_server(self, server_id: str) -> bool:
         """Disconnect from an MCP server.
 
@@ -1085,6 +1238,7 @@ class MCPClient:
                 f"Server {server_id} returned no discoverable capabilities"
             )
 
+    @producer_call
     @client_guard
     async def call_tool(
         self, server_id: str, tool_name: str, arguments: Dict[str, Any]
@@ -1115,6 +1269,7 @@ class MCPClient:
             logger.error("Error calling tool {} on {}: {}", tool_name, server_id, e)
             return {"error": str(e)}
 
+    @producer_call
     @client_guard
     async def read_resource(self, server_id: str, resource_uri: str) -> Dict[str, Any]:
         """Read a resource from a connected server.
@@ -1148,6 +1303,7 @@ class MCPClient:
             )
             return {"error": str(e)}
 
+    @producer_call
     @client_guard
     async def get_prompt(
         self,
@@ -1331,6 +1487,7 @@ class MCPClient:
             "prompts": self.get_server_prompts(server_id),
         }
 
+    @producer_call
     async def disconnect_all(self) -> None:
         """Disconnect from all servers."""
         server_ids = list(

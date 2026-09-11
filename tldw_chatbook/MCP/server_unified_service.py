@@ -5,6 +5,11 @@ from typing import Any, Callable, TYPE_CHECKING
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
+    ProducerLifetime,
+    producer_call,
+)
+
 from tldw_chatbook.runtime_policy.enforcement import (
     ServicePolicyEnforcer,
     classify_backend_exception,
@@ -28,6 +33,18 @@ from .unified_control_models import (
 class ServerUnifiedMCPService:
     """Resolve server-side MCP browse capabilities and provide section reads."""
 
+    def _maintenance_close_admission(self):
+        """Fence new calls before lower storage admission closes."""
+        self._producer_lifetime.close()
+
+    async def _maintenance_drain(self, deadline):
+        """Wait for accepted calls without cancelling their native work."""
+        return await self._producer_lifetime.drain(deadline)
+
+    def _maintenance_resume(self):
+        """Reopen only after accepted work and ordinary storage have settled."""
+        self._producer_lifetime.resume()
+
     def __init__(
         self,
         *,
@@ -36,6 +53,7 @@ class ServerUnifiedMCPService:
         policy_enforcer: ServicePolicyEnforcer | None = None,
         target_store: ConfiguredServerTargetStore | None = None,
     ) -> None:
+        self._producer_lifetime = ProducerLifetime()
         self.client = client
         self.client_factory = client_factory
         self.policy_enforcer = policy_enforcer
@@ -3379,5 +3397,5 @@ for _operation_name in _REMOTE_SERVER_OPERATIONS:
     setattr(
         ServerUnifiedMCPService,
         _operation_name,
-        guarded(getattr(ServerUnifiedMCPService, _operation_name)),
+        guarded(producer_call(getattr(ServerUnifiedMCPService, _operation_name))),
     )

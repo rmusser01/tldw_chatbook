@@ -13,6 +13,11 @@ from loguru import logger
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
+from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
+    ProducerLifetime,
+    producer_call,
+)
+
 from .activation import action_guard, guarded, server_branch_guard
 from .execution_log import MCPExecutionLog, build_record
 from .hub_tool_catalog import HubTool
@@ -181,6 +186,18 @@ _RAW_TOOL_CALL_REFUSED_MESSAGE = RAW_TOOL_CALL_REFUSED_MESSAGE
 class UnifiedMCPControlPlaneService:
     """Destination-local orchestration for local/server Unified MCP browse flows."""
 
+    def _maintenance_close_admission(self):
+        """Fence new calls before lower storage admission closes."""
+        self._producer_lifetime.close()
+
+    async def _maintenance_drain(self, deadline):
+        """Wait for accepted calls without cancelling their native work."""
+        return await self._producer_lifetime.drain(deadline)
+
+    def _maintenance_resume(self):
+        """Reopen only after accepted work and ordinary storage have settled."""
+        self._producer_lifetime.resume()
+
     def __init__(
         self,
         *,
@@ -189,6 +206,7 @@ class UnifiedMCPControlPlaneService:
         local_service: Any,
         server_service: Any,
     ) -> None:
+        self._producer_lifetime = ProducerLifetime()
         self.target_store = target_store
         self.context_store = context_store
         self.local_service = local_service
@@ -210,11 +228,13 @@ class UnifiedMCPControlPlaneService:
     def selected_source(self) -> str:
         return self.context.selected_source
 
+    @producer_call
     async def load_context(self) -> UnifiedMCPContext:
         if self.context_store is not None:
             self.context = self.context_store.load()
         return self.context
 
+    @producer_call
     async def select_source(self, source: str) -> UnifiedMCPContext:
         normalized_source = (
             "server" if str(source or "").strip() == "server" else "local"
@@ -231,6 +251,7 @@ class UnifiedMCPControlPlaneService:
         return self.context
 
     @guarded
+    @producer_call
     async def select_server_target(self, server_id: str | None) -> UnifiedMCPContext:
         target = self._resolve_target(server_id)
         if target is None:
@@ -256,6 +277,7 @@ class UnifiedMCPControlPlaneService:
         return self.context
 
     @server_branch_guard
+    @producer_call
     async def select_scope(
         self, scope: str | None, scope_ref: str | None = None
     ) -> UnifiedMCPContext:
@@ -281,6 +303,7 @@ class UnifiedMCPControlPlaneService:
         return self.context
 
     @server_branch_guard
+    @producer_call
     async def select_section(self, section: str | None) -> UnifiedMCPContext:
         if self.context.selected_source != "server":
             self.context = replace(self.context, selected_section=section)
@@ -300,6 +323,7 @@ class UnifiedMCPControlPlaneService:
         return self.context
 
     @server_branch_guard
+    @producer_call
     async def load_section(self, section: str | None = None) -> dict[str, Any]:
         effective_section = section or self.context.selected_section or "overview"
         if self.context.selected_source == "server":
@@ -1116,6 +1140,7 @@ class UnifiedMCPControlPlaneService:
         )
 
     @action_guard
+    @producer_call
     async def run_action(
         self, action_name: str, payload: dict[str, Any] | None = None
     ) -> Any:
@@ -2200,23 +2225,27 @@ class UnifiedMCPControlPlaneService:
         return result
 
     @guarded
+    @producer_call
     async def connect_local_profile(self, profile_id: str) -> dict:
         return await self._run_local_lifecycle(
             "connect", profile_id, self.local_service.connect_profile(profile_id)
         )
 
+    @producer_call
     async def disconnect_local_profile(self, profile_id: str) -> bool:
         return await self._run_local_lifecycle(
             "disconnect", profile_id, self.local_service.disconnect_profile(profile_id)
         )
 
     @guarded
+    @producer_call
     async def test_local_profile(self, profile_id: str) -> dict:
         return await self._run_local_lifecycle(
             "test", profile_id, self.local_service.test_external_profile(profile_id)
         )
 
     @guarded
+    @producer_call
     async def refresh_local_profile(self, profile_id: str) -> dict:
         return await self._run_local_lifecycle(
             "refresh",
@@ -2224,12 +2253,15 @@ class UnifiedMCPControlPlaneService:
             self.local_service.refresh_external_profile(profile_id),
         )
 
+    @producer_call
     async def save_local_profile(self, payload: dict) -> dict:
         return self.local_service.save_external_profile(dict(payload or {}))
 
+    @producer_call
     async def delete_local_profile(self, profile_id: str) -> bool:
         return bool(self.local_service.delete_external_profile(profile_id))
 
+    @producer_call
     async def local_external_catalog(self) -> list[dict]:
         # Records (profile fields + discovery_snapshot + is_connected) still
         # come from the local service so governance enforcement and
@@ -2320,6 +2352,7 @@ class UnifiedMCPControlPlaneService:
             )
 
     @guarded
+    @producer_call
     async def execute_hub_tool(
         self,
         server_key: str,
@@ -2520,6 +2553,7 @@ class UnifiedMCPControlPlaneService:
         return result
 
     @guarded
+    @producer_call
     async def test_hub_tool(
         self,
         server_key: str,
@@ -2662,6 +2696,7 @@ class UnifiedMCPControlPlaneService:
             raise RawToolCallRefusedError(_RAW_TOOL_CALL_REFUSED_MESSAGE)
 
     @guarded
+    @producer_call
     async def execute_advanced_tool(
         self, tool_name: str, arguments: dict[str, Any] | None = None
     ) -> Any:

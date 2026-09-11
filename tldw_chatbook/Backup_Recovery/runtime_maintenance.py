@@ -184,6 +184,24 @@ class RuntimeMaintenance:
         app = self.app
         runtime = app.console_runtime
         service = app.tts_service
+        # These concrete callers must drain before exactly the installed child
+        # they invoke. An injected alternate child is not covered by this order.
+        for caller_name, child_name, installed_name in (
+            (
+                "manual_sync_control_service",
+                "local_first_sync_service",
+                "local_first_sync_service",
+            ),
+            ("local_first_sync_service", "server_service", "server_sync_service"),
+            ("sync_scope_service", "server_service", "server_sync_service"),
+            ("unified_mcp_service", "local_service", "local_mcp_control_service"),
+            ("unified_mcp_service", "server_service", "server_unified_mcp_service"),
+        ):
+            caller = getattr(app, caller_name, None)
+            if caller is not None and getattr(caller, child_name, None) is not getattr(
+                app, installed_name, None
+            ):
+                raise RecoveryRequired("runtime_owner_unqualified")
         return tuple(
             id(owner)
             for owner in (
@@ -194,6 +212,13 @@ class RuntimeMaintenance:
                 app.evaluation_orchestrator,
                 app.local_audio_services_service,
                 app.file_notes_session_owner,
+                getattr(app, "manual_sync_control_service", None),
+                getattr(app, "local_first_sync_service", None),
+                getattr(app, "sync_scope_service", None),
+                getattr(app, "server_sync_service", None),
+                getattr(app, "local_mcp_control_service", None),
+                getattr(app, "unified_mcp_service", None),
+                getattr(app, "server_unified_mcp_service", None),
                 app._tts_handler,
                 app._stts_handler,
                 app._tts_voice_bundle_service,
@@ -296,6 +321,72 @@ class RuntimeMaintenance:
         if not await delivery.drain(delivery.owner, deadline):
             raise RecoveryRequired("runtime_work_not_settled")
         await _settle_stage(views, self.closed, deadline)
+        # Accepted sync calls may still publish cursors/error state. Drain the
+        # actual caller layers while SyncStateRepository admission remains open.
+        for declarations in (
+            (
+                (
+                    "manual_sync_control_service",
+                    "Sync_Interop.manual_sync_control",
+                    "ManualSyncControlService",
+                ),
+            ),
+            (
+                (
+                    "local_first_sync_service",
+                    "Sync_Interop.local_first_sync_service",
+                    "LocalFirstSyncService",
+                ),
+                (
+                    "sync_scope_service",
+                    "Sync_Interop.sync_scope_service",
+                    "SyncScopeService",
+                ),
+            ),
+            (
+                (
+                    "server_sync_service",
+                    "Sync_Interop.server_sync_service",
+                    "ServerSyncService",
+                ),
+            ),
+            (
+                (
+                    "unified_mcp_service",
+                    "MCP.unified_control_plane_service",
+                    "UnifiedMCPControlPlaneService",
+                ),
+            ),
+            (
+                (
+                    "local_mcp_control_service",
+                    "MCP.local_control_service",
+                    "LocalMCPControlService",
+                ),
+                (
+                    "server_unified_mcp_service",
+                    "MCP.server_unified_service",
+                    "ServerUnifiedMCPService",
+                ),
+            ),
+        ):
+            await _settle_stage(
+                [
+                    _bind(getattr(app, attribute, None), module, name)
+                    for attribute, module, name in declarations
+                ],
+                self.closed,
+                deadline,
+            )
+        # The installed service may have lazily created its client while its
+        # previously accepted connect call drained. Never instantiate one here.
+        local_mcp = getattr(app, "local_mcp_control_service", None)
+        self._local_mcp_client = None if local_mcp is None else local_mcp.client
+        await _settle_stage(
+            [_bind(self._local_mcp_client, "MCP.client", "MCPClient")],
+            self.closed,
+            deadline,
+        )
         # Bundle import/export calls the profile service, which can in turn
         # acquire TTS and managed-artifact leases. Settle each caller first.
         for hooks in (
@@ -434,11 +525,41 @@ class RuntimeMaintenance:
             or getattr(self.app, "_backup_runtime_maintenance", None) is not self
             or tuple(self.app.screen_stack) != self.screens
             or self._owner_snapshot() != self._owners
+            or (getattr(self.app, "local_mcp_control_service", None) is not None
+                and self.app.local_mcp_control_service.client is not self._local_mcp_client)
             or self.unsaved_editors()
         ):
             raise RecoveryRequired("participant_runtime_coverage_incomplete")
         if not pause.drain(time.monotonic()):
             raise RecoveryRequired("runtime_native_resources_not_settled")
+
+
+async def _resume_monitor(runtime):
+    """Retain the monitor task while accepted native work prevents reopening."""
+    cancellation = None
+    while True:
+        try:
+            await runtime.resume()
+        except asyncio.CancelledError as error:
+            cancellation = cancellation or error
+            if runtime.pause is None and not runtime.closed:
+                break
+        except RecoveryRequired as error:
+            if error.args != ("runtime_work_not_settled",) or not runtime.closed:
+                raise
+            # A timed-out capture is refused, but its same-task runtime owner
+            # must remain available to finish native cleanup and reverse resume.
+            runtime.app._backup_maintenance_error = "runtime_work_not_settled"
+            hook = runtime.closed[-1]
+            try:
+                await hook.drain(hook.owner, time.monotonic() + 0.1)
+                await asyncio.sleep(0.01)
+            except asyncio.CancelledError as error:
+                cancellation = cancellation or error
+        else:
+            break
+    if cancellation is not None:
+        raise cancellation
 
 
 async def monitor_app(app):
@@ -490,7 +611,7 @@ async def monitor_app(app):
             # The same task must retain local-pause authority throughout native
             # reacquisition; moving resume into a separate task invalidates it.
             try:
-                await runtime.resume()
+                await _resume_monitor(runtime)
             finally:
                 if runtime.pause is None and not runtime.closed:
                     app._backup_runtime_maintenance = None
