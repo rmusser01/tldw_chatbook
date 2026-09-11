@@ -83,7 +83,44 @@ test_root=Path(os.environ['TLDW_F9_TEST_ROOT'])
 import tldw_chatbook
 assert Path(tldw_chatbook.__file__).resolve()==package/'tldw_chatbook'/'__init__.py'
 encrypted=os.environ['TLDW_F9_TEST_ENCRYPTED']=='1'
+credentials=os.environ['TLDW_F9_TEST_CREDENTIALS']=='1'
+assert not credentials or encrypted
 password=b'private F9 archive passphrase' if encrypted else None
+credential_observations=[]
+credential_shapes=[]
+credential_read_errors=[]
+if credentials:
+ from collections import Counter
+ from tldw_chatbook.Backup_Recovery import credentials as credential_owner
+ process_credentials=credential_owner.process_credentials
+ def observed_credentials(stage,inventory,**options):
+  issues=process_credentials(stage,inventory,**options)
+  if options['mode']=='include':
+   try:material=json.loads(credential_owner._read(stage/'credential-recovery.json'))
+   except Exception as error:
+    credential_read_errors.append({'type':type(error).__name__,'issues':list(issues)})
+    raise
+   records=material['records']
+   credential_shapes.append({'issues':list(issues),'records':[{key:value for key,value in row.items() if key!='value'} for row in records]})
+   assert material['version']==1 and material['mode']=='include'
+   assert len(records)==17 and len({row['id'] for row in records})==17
+   assert all(row['status']=='unreadable' and row['remappable'] is False and 'value' not in row for row in records)
+   assert Counter(row['kind'] for row in records)=={'citation':5,'generation':8,'server':4}
+   owners={str(item.path.relative_to(stage)):item.owner for item in inventory.items if item.path is not None}
+   citations=[row for row in records if row['kind']=='citation']
+   assert {owners[row['file']] for row in citations}=={'db.chachanotes.primary','chat.attachments','study.local','quiz.local','notes.sync_bindings'}
+   assert all(row['service']=='tldw_chatbook.citation-provenance.v1' for row in citations)
+   generation=[row for row in records if row['kind']=='generation']
+   assert {(row['service'],row['username']) for row in generation}=={('tldw_chatbook_imagegen',name) for name in ('swarmui','openrouter','novita','together','modelstudio','fal','gemini')}|{('tldw_chatbook_videogen','minimax')}
+   servers=[row for row in records if row['kind']=='server']
+   assert {row['purpose'] for row in servers}=={'api_key','bearer_token','access_token','refresh_token'}
+   assert {row['server_id'] for row in servers}=={'http://127.0.0.1:8000'} and all('binding' not in row for row in servers)
+   assert all(owners[row['file']]=='config' for row in generation)
+   assert all(owners[row['file']]=='mcp.targets' for row in servers)
+   assert set(issues)=={'credential_unreadable:'+row['id'] for row in records} and len(issues)==17
+   credential_observations.append({'issues':list(issues),'records':records})
+  return issues
+ credential_owner.process_credentials=observed_credentials
 diagnostics=(fixture/'ui-stacks.log').open('w')
 faulthandler.dump_traceback_later(100,file=diagnostics)
 async def main():
@@ -136,12 +173,41 @@ async def main():
    assert screen.query_one('#backup-encrypted',Checkbox).value
    screen.query_one('#backup-password',Input).value=password.decode()
    screen.query_one('#backup-password-confirm',Input).value=password.decode()
+  if credentials:
+   screen.query_one('#backup-credentials',Checkbox).focus();await pilot.press('space')
+   assert screen.query_one('#backup-credentials',Checkbox).value
   await press('#backup-review')
   await ready(lambda:not screen.query_one('#backup-create',Button).disabled)
   assert 'Complete coverage' in str(screen.query_one('#backup-coverage',Static).render())
   await press('#backup-create')
-  created,state=await finished('backup')
-  assert state['result']['archive_verified'] and state['result']['complete'],dict(state)
+  refused=None
+  if credentials:
+   await ready(lambda:app.recovery_service.current() is not None and app.recovery_service.current()['kind']=='backup')
+   refused=app.recovery_service.current()['operation_id']
+   rejection=await asyncio.to_thread(app.recovery_service.wait,refused,timeout=65)
+   (fixture/'ui-credential-observed-shape.json').write_text(json.dumps({'captures':credential_shapes,'read_errors':credential_read_errors},indent=2))
+   assert rejection['state']=='failed' and rejection['issues']==('review_required',),dict(rejection)
+   assert len(credential_observations)==1
+   reviewed=set(credential_observations[0]['issues'])
+   assert set(rejection['review_issues'])==reviewed
+   assert not destination.exists() and selector.read_bytes()==original_config
+   await ready(lambda:len(screen.query('.backup-acknowledge-credential'))==17)
+   boxes=list(screen.query('.backup-acknowledge-credential'))
+   assert {box.name for box in boxes}==reviewed and all(not box.value for box in boxes)
+   for box in boxes:
+    box.scroll_visible(immediate=True);box.focus();await pilot.press('space')
+    assert box.value
+   screen.query_one('#backup-password',Input).value=password.decode()
+   screen.query_one('#backup-password-confirm',Input).value=password.decode()
+   await press('#backup-review')
+   await ready(lambda:not screen.query_one('#backup-create',Button).disabled)
+   assert set(screen._reviewed[2]['acknowledged_credential_issues'])==reviewed
+   await press('#backup-create')
+  created,state=await finished('backup',refused)
+  assert state['result']['archive_verified'] and state['result']['complete'] is (not credentials),dict(state)
+  if credentials:
+   assert len(credential_observations)==2 and set(credential_observations[1]['issues'])==reviewed
+   (fixture/'ui-credential-observations.json').write_text(json.dumps(credential_observations,indent=2))
   assert not state['result'].get('restoration_validated',False)
   assert not screen.query_one('#backup-password',Input).value
   assert not screen.query_one('#backup-password-confirm',Input).value
@@ -151,11 +217,14 @@ async def main():
   acquired=await asyncio.to_thread(archive_reader.acquire,destination,fixture/'readback',ArchiveLimits(),password,threading.Event())
   assert (acquired.encrypted_source is not None) is encrypted
   doc=archive_reader.verify_sealed(acquired)
-  assert doc.consistency=='coherent' and len(doc.profile_ids)==1
+  assert doc.consistency==('partial' if credentials else 'coherent') and len(doc.profile_ids)==1
+  if credentials:assert reviewed.issubset(doc.report.lines)
+  assert doc.credential_policy==('include' if credentials else 'exclude')
   assert selector.read_bytes()==original_config
   with zipfile.ZipFile(acquired.path) as archive:
    for row in doc.files:
-    if row.owner_id in {'config','config.history'}:assert b'synthetic-f9-secret' not in archive.read(row.payload)
+    if row.owner_id=='config':assert (b'synthetic-f9-secret' in archive.read(row.payload)) is credentials
+    if row.owner_id=='config.history' and not credentials:assert b'synthetic-f9-secret' not in archive.read(row.payload)
   await press('#backup-open-inspect')
   screen.query_one('#backup-source',Input).value=str(destination)
   if encrypted:screen.query_one('#backup-inspect-password',Input).value=password.decode()
@@ -167,6 +236,7 @@ async def main():
   producers={row.logical_id:row for row in doc.producer_inventory}
   ordinary={'db.chachanotes.primary','chat.attachments','notes.sync_bindings','quiz.local','study.local','db.media.primary','research.local','db.prompts.primary','chatbooks.registry','db.evals','db.library_collections','db.library_ingest_jobs','db.scheduled_tasks','db.subscriptions','db.workspaces','kanban.local','mcp.targets','notifications.client','runtime.event_state','runtime.sync_state','writing.local'}
   trees={'chat.dictionaries':'chat_dicts','chatbooks.archives':'chatbooks','rag.definitions':'rag_profiles'}
+  assert not any(tuple(slot.get('owners',()))==('recovery.credentials',) for slot in screen._inspection_summary['destination_slots'])
   for index,slot in enumerate(screen._inspection_summary['destination_slots']):
    key=slot['logical_id']
    if slot['kind']=='data_root':target=restored/'data'
@@ -190,9 +260,13 @@ async def main():
   await press('#backup-start-restore')
   restored_operation,state=await finished('restore',created)
   assert state['result']['restoration_validated'] and not state['result'].get('opened',False),dict(state)
+  if credentials:
+   retained=list(app.recovery_service.control_root.glob('isolated-*/credentials.age'))
+   assert len(retained)==1
+   assert hashlib.sha256(retained[0].read_bytes()).digest()==hashlib.sha256(destination.read_bytes()).digest()
   config_path,data_path=ProfileCatalog(app.recovery_service.control_root).resolve(state['result']['profile_id'])
   core=next(row for row in doc.files if row.owner_id=='db.chachanotes.primary')
-  installed={'config':str(config_path),'core':str(dict(plan.restore)[core.logical_id]),'note':note,'after':after,'package':str(package)}
+  installed={'config':str(config_path),'core':str(dict(plan.restore)[core.logical_id]),'note':note,'after':after,'package':str(package),'credentials':credentials}
   (fixture/'ui-installed.json').write_text(json.dumps(installed))
   assert config_path==restored/'config'/'config.toml' and data_path==restored/'data'
   original_call=subprocess.call
@@ -220,7 +294,7 @@ async def main():
   assert app.chachanotes_db.get_note_by_id(after)['content']=='Resumed native writer'
   assert app.chachanotes_db.get_note_by_id(note)['content']=='Captured through F9'
   assert not blocked_attempts(),blocked_attempts()
-  (fixture/'ui-result.json').write_text(json.dumps({'backup':created,'restore':restored_operation,'open':opened_operation,'archive_sha256':hashlib.sha256(destination.read_bytes()).hexdigest(),'source_preserved':True,'opened':True,'encrypted':encrypted}))
+  (fixture/'ui-result.json').write_text(json.dumps({'backup':created,'restore':restored_operation,'open':opened_operation,'archive_sha256':hashlib.sha256(destination.read_bytes()).hexdigest(),'source_preserved':True,'opened':True,'encrypted':encrypted,'credentials':credentials}))
  assert app.recovery_service._closed
 asyncio.run(main())
 faulthandler.cancel_dump_traceback_later()
@@ -289,9 +363,13 @@ def native_package(tmp_path_factory):
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="Native macOS terminal cell")
-@pytest.mark.parametrize("encrypted", [False, True], ids=["plain", "encrypted"])
+@pytest.mark.parametrize(
+    "encrypted,credentials",
+    [(False, False), (True, False), (True, True)],
+    ids=["plain", "encrypted", "encrypted_credentials"],
+)
 def test_f9_created_archive_restores_and_opens_through_actual_controls(
-    tmp_path, encrypted, native_package
+    tmp_path, encrypted, credentials, native_package
 ):
     """Keep the real terminal suspend path while driving finite native fixtures."""
     import pty
@@ -308,6 +386,7 @@ def test_f9_created_archive_restores_and_opens_through_actual_controls(
         TLDW_DISABLE_CONFIG_WATCH="1",
         TERM="xterm-256color",
         TLDW_F9_TEST_ENCRYPTED="1" if encrypted else "0",
+        TLDW_F9_TEST_CREDENTIALS="1" if credentials else "0",
         TLDW_F9_PACKAGE=str(native_package),
         TLDW_F9_TEST_ROOT=str(Path(__file__).resolve().parents[2]),
         PYTHONPATH=os.pathsep.join(
@@ -354,3 +433,4 @@ def test_f9_created_archive_restores_and_opens_through_actual_controls(
     result = json.loads((tmp_path / "ui-result.json").read_text())
     assert result["source_preserved"] and result["opened"]
     assert result["encrypted"] is encrypted
+    assert result["credentials"] is credentials

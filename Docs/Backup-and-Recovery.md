@@ -51,6 +51,10 @@ and setup requirements, then **Confirm reviewed restore**. After successful
 validation and publication, use **Restored profiles** to open the profile in a
 separate process. Opening it does not switch the running application's storage.
 
+An isolated restore retains included credentials in an encrypted recovery copy;
+they do not need a destination slot. The restored configuration is sanitized, and
+credentials still require the applicable local setup before use.
+
 These results mean different things:
 
 | Result | Meaning |

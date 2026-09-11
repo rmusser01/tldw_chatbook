@@ -399,6 +399,7 @@ class RecoveryService:
                         }
                     )
                     for row in roots
+                    if row["owners"] != ("recovery.credentials",)
                 )
                 + tuple(
                     MappingProxyType(
