@@ -4,7 +4,7 @@ title: Built-in server tools are missing from Tools mode and the Permissions mat
 status: Done
 assignee: []
 created_date: '2026-09-10 19:14'
-updated_date: '2026-09-10 20:09'
+updated_date: '2026-09-11 06:31'
 labels:
   - mcp
   - permissions
@@ -82,5 +82,5 @@ Modified files: `tldw_chatbook/UI/MCP_Modules/mcp_tools_mode.py`,
 `tldw_chatbook/UI/MCP_Modules/mcp_workbench.py`,
 `Tests/UI/test_mcp_tools_mode.py`, `Tests/UI/test_mcp_workbench.py`.
 Full trace, live captures and red/green evidence:
-`.superpowers/sdd/2026-09-10-approval-card-fix-wave/task-13-report.md`.
+`.superpowers/sdd/2026-09-10-approval-card-fix-wave/task-13-report.md`. Whole-branch review round (R24, commit aa95995aad) added the missing mcp.md docs-pass stamp for this task, in the same form as its neighbours: 'Docs pass 2026-09-10 (task-32283, against code and tests, not a live screen)' -- the selected server's own group now leads both Tools mode and the Permissions matrix, and Open tool catalog drills straight to that server rather than to the top of an unfiltered list. Docs only; no code change in this round. Files: Docs/User_Guide/mcp.md.
 <!-- SECTION:NOTES:END -->
