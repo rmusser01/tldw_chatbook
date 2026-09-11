@@ -11696,6 +11696,31 @@ def test_adapter_wire_kwargs_hands_providers_serializable_messages() -> None:
     assert payload[1]["tool_calls"][0]["function"]["arguments"] == '{"query": "x"}'
 
 
+@pytest.mark.asyncio
+async def test_custom_endpoint_openai_compatible_resolves_entry_url() -> None:
+    """An openai_compatible entry executes as the custom family with the
+    entry's URL (ADR-146), never the endpoint-not-saved guard."""
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "custom_endpoints": {
+                "paid": {
+                    "display_name": "Paid",
+                    "family": "openai_compatible",
+                    "base_url": "https://api.example.com/v1",
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="custom-ep:paid",
+            explicit_model="m",
+            base_url="https://api.example.com/v1",
+        )
+    )
+
     assert resolved.ready is True
     assert resolved.readiness_key == "custom"
     assert resolved.execution_key == "custom-openai-api"
