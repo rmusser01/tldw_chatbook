@@ -13,6 +13,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.events import Resize
 from textual.widgets import Button, Input, Markdown, Static, TextArea
 
 from tldw_chatbook.Library.library_notes_state import (
@@ -133,6 +134,39 @@ def _toolbar_shape(pane_width: int, compact: bool) -> tuple[bool, bool]:
         pane_width >= _TOOLBAR_MERGE_MIN_WIDTH,
         0 < pane_width < _TOOLBAR_STACK_MIN_WIDTH and not compact,
     )
+
+
+#: Cells a compact toolbar Button costs beyond its own label: the compact
+#: sheet's ``padding: 0 1`` (2) plus its ``margin: 0 1 0 0`` (1), plus the
+#: cell Textual's Button reserves for its own edge. MEASURED at 60x24, where
+#: the three browse actions resolved regions of 7, 16 and 10 cells for the
+#: 3-, 12- and 6-character labels "New", "Sort: Newest" and "Select".
+_TOOLBAR_ACTION_CHROME = 4
+
+
+def browse_row_overflows(pane_width: int, labels: tuple[str, ...]) -> bool:
+    """Whether these actions cannot all be painted on one row of the pane.
+
+    task-32360 AC#2 (critique #10, handed over from the layout branch): at
+    60 columns the Notes list pane resolves to 32 cells and the three browse
+    actions need 33, so the compact sheet's ``overflow-x: hidden`` cropped
+    the last one to "Sel" -- a half word, which is exactly what that AC
+    forbids. The decision is made from the labels ABOUT to be rendered
+    rather than from a width constant, because a disabled action grows a
+    "○ " marker (2 more cells) that a constant cannot see.
+
+    Args:
+        pane_width: Columns the list pane has, or 0 when unmeasured (the
+            first frame of a visit, before the reader shell resolves) --
+            which keeps the single-row shape it has always had.
+        labels: The rendered action labels, markers included.
+
+    Returns:
+        ``True`` when the row needs more cells than the pane has.
+    """
+    if pane_width <= 0:
+        return False
+    return sum(len(label) + _TOOLBAR_ACTION_CHROME for label in labels) > pane_width
 
 
 def compose_note_row_label(
@@ -502,6 +536,17 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.load_state = load_state
         self.load_message = load_message
         self.authority_id = authority_id
+        #: task-32360: cells the browse toolbar row needed the last time it
+        #: was composed, so ``on_resize`` can re-decide the row split once
+        #: this pane's real width is known, and that measured width.
+        self._browse_row_needed = 0
+        self._measured_width = 0
+        #: task-32356: create mode's template disclosure. Canvas-local on
+        #: purpose -- nothing outside this widget reads or writes it, so it
+        #: needs no ``LibraryNotesState`` field and no kwargs plumbing. It
+        #: resets whenever the canvas leaves create mode (``sync_state``),
+        #: so arriving at Create always shows the one folded row.
+        self.templates_open = False
         self._tree_pager_focus_id: str | None = None
         self._tree_pager_focus_guard: Callable[[], bool] | None = None
         self._tree_pager_focus_generation = 0
@@ -662,8 +707,17 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
         Subclasses that render beside a pane already naming the authority
         return ``""`` -- see ``LibraryNoteWorkPane`` (task-32063).
+
+        task-32360 AC#2 (critique #10): the compact sheet caps this line at
+        two rows, and at 60 columns the pane is 32 cells wide, where the
+        full line takes three -- so "files." was simply cut off the bottom,
+        with no ellipsis and no way to know something was missing. Compact
+        drops the prefix instead: the source strip directly above already
+        says "Library notes | Folder files", so the authority is named on
+        screen either way, and what is left ("Ready · Next: Create a note
+        or add from files.") fits the two rows whole.
         """
-        return NOTES_AUTHORITY_PREFIX
+        return "" if self.compact else NOTES_AUTHORITY_PREFIX
 
     def _authority_copy(self) -> str:
         """Describe Library storage, current status, and the next action."""
@@ -707,7 +761,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 "Creating note…" if self.create_running else "Ready"
             )
             next_action = (
-                "" if self.create_running else "Choose Blank note or a template."
+                ""
+                if self.create_running
+                # task-32356: Blank note is the answer nearly every time,
+                # so the line names it as the default rather than posing
+                # the nine-way question the canvas no longer asks.
+                else "Start typing, or choose a template."
             )
             return line(status, f"Next: {next_action}" if next_action else "")
         if self.mode == "import":
@@ -737,6 +796,48 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         status = status or ("Updating notes…" if running else "Ready")
         next_action = "" if running else "Create a note or add from files."
         return line(status, f"Next: {next_action}" if next_action else "")
+
+    def _effective_pane_width(self) -> int:
+        """The width the toolbar shapes itself to.
+
+        ``pane_width`` is the screen's contract -- the Items pane width the
+        reader layout resolved -- and wins whenever it has arrived. It is
+        ``0`` on a canvas composed before its shell exists, and task-32360
+        AC#2 measured a narrow route where no later sync ever carried the
+        real one, leaving the width-aware toolbar (task-32127) permanently
+        on its "not measured yet" shape. This widget's OWN rendered width
+        is the honest fallback for exactly that case.
+        """
+        return self.pane_width or self._measured_width
+
+    def _toolbar_decisions(self, width: int) -> tuple[bool, bool, bool]:
+        """The three width-driven shape answers for one pane width."""
+        merged, stacked = _toolbar_shape(width, self.compact)
+        overflow = bool(self._browse_row_needed) and 0 < width < self._browse_row_needed
+        return merged, stacked, overflow
+
+    def on_resize(self, event: Resize) -> None:
+        """Re-decide the toolbar's shape once this pane has a real width.
+
+        Recomposing only when an answer actually flips keeps this from
+        looping: the decisions are a pure function of the width. It never
+        writes ``pane_width`` -- that attribute is the screen's contract and
+        is asserted against the resolved layout (``test_list_toolbar_uses_
+        the_width_the_pane_has_after_a_round_trip``); the canvas is a few
+        cells narrower than the pane that holds it at wide sizes.
+
+        Args:
+            event: Textual's resize event, carrying this canvas's own size.
+        """
+        if self.mode != "list":
+            return
+        width = event.size.width
+        if width <= 0 or width == self._measured_width:
+            return
+        before = self._toolbar_decisions(self._effective_pane_width())
+        self._measured_width = width
+        if before != self._toolbar_decisions(self._effective_pane_width()):
+            self.refresh(recompose=True)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Refuse row/action presses while this canvas is resident but hidden.
@@ -771,6 +872,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         if not self.display:
             event.stop()
             event.prevent_default()
+            return
+        # task-32356: the create canvas's template disclosure. Handled here
+        # rather than on the screen because nothing outside this widget reads
+        # the open/closed state -- same reason it is not a canvas kwarg.
+        if event.button.id == "library-note-from-template":
+            event.stop()
+            self.templates_open = True
+            # Without this the recompose drops focus out of the canvas
+            # entirely (measured: onto the Items pane grip), so a keyboard
+            # user who opened the templates could not then walk into them.
+            self.preserve_same_id_focus_after_recompose()
+            self.refresh(recompose=True)
 
     def sync_state(
         self,
@@ -865,6 +978,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.create_status = create_status
         self.load_state = load_state
         self.load_message = load_message
+        if mode != "create":
+            # task-32356: arriving at Create always shows the one folded row.
+            self.templates_open = False
         if previous_mode != mode:
             self.remove_class(f"library-notes-mode-{previous_mode}")
             self.add_class(f"library-notes-mode-{mode}")
@@ -1131,7 +1247,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             # pane can hold both groups. Below the threshold the merged row
             # clipped its last action off the pane, which is worse than the
             # third row it saves (review round 1).
-            merged, stacked = _toolbar_shape(self.pane_width, self.compact)
+            pane_width = self._effective_pane_width()
+            merged, stacked = _toolbar_shape(pane_width, self.compact)
             action_rows: Horizontal | None = None
             if merged:
                 action_rows = Horizontal(id="library-notes-action-rows")
@@ -1144,19 +1261,54 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 if action_rows is not None:
                     browse_actions.styles.width = "auto"
                 browse_actions.display = not sort_choices_visible
+                new_label = library_disabled_action_label("New", running)
+                sort_base = f"Sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')}"
+                sort_disabled = running or sort_blocked
+                sort_label = library_disabled_action_label(sort_base, sort_disabled)
+                select_disabled = rendered_count == 0 or running
+                select_label = library_disabled_action_label(
+                    "Select", select_disabled
+                )
+                # task-32360 AC#2: three actions need 33 cells and the
+                # narrow pane has 32, so the last one used to be cropped
+                # mid-word ("Sel"). It moves to a row of its own instead --
+                # the same "one group per row" shape ``stacked`` already
+                # uses for a narrow pane, which the compact sheet's
+                # height-1 toolbar pin rules out for a single row.
+                self._browse_row_needed = sum(
+                    len(label) + _TOOLBAR_ACTION_CHROME
+                    for label in (new_label, sort_label, select_label)
+                )
+                browse_overflow = browse_row_overflows(
+                    pane_width, (new_label, sort_label, select_label)
+                )
+                select_button = Button(
+                    select_label,
+                    id="library-notes-select-toggle",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=select_disabled,
+                    tooltip=(
+                        (
+                            running_tooltip
+                            if running
+                            else LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
+                        )
+                        if select_disabled
+                        else None
+                    ),
+                )
                 with browse_actions:
                     yield Button(
-                        library_disabled_action_label("New", running),
+                        new_label,
                         id="library-notes-new",
                         classes="library-canvas-action",
                         compact=True,
                         disabled=running,
                         tooltip=running_tooltip if running else None,
                     )
-                    sort_base = f"Sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')}"
-                    sort_disabled = running or sort_blocked
                     yield Button(
-                        library_disabled_action_label(sort_base, sort_disabled),
+                        sort_label,
                         id="library-notes-sort",
                         classes="library-canvas-action",
                         compact=True,
@@ -1169,23 +1321,17 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                             else None
                         ),
                     )
-                    select_disabled = rendered_count == 0 or running
-                    yield Button(
-                        library_disabled_action_label("Select", select_disabled),
-                        id="library-notes-select-toggle",
-                        classes="library-canvas-action",
-                        compact=True,
-                        disabled=select_disabled,
-                        tooltip=(
-                            (
-                                running_tooltip
-                                if running
-                                else LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
-                            )
-                            if select_disabled
-                            else None
-                        ),
+                    if not browse_overflow:
+                        yield select_button
+                if browse_overflow:
+                    browse_overflow_row = Horizontal(
+                        id="library-notes-browse-actions-overflow",
+                        classes="ds-toolbar",
                     )
+                    browse_overflow_row.styles.height = "auto"
+                    browse_overflow_row.display = not sort_choices_visible
+                    with browse_overflow_row:
+                        yield select_button
                 if sort_choices_visible:
                     # task-14902: composed through the ONE shared strip builder
                     # (this control is the pattern's precedent; the media type /
@@ -1614,7 +1760,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             "This folder is managed by sync; change its sync root instead."
         )
         stale_reason = "This branch may be out of date; retry it before changing it."
-        _, stacked = _toolbar_shape(self.pane_width, self.compact)
+        _, stacked = _toolbar_shape(self._effective_pane_width(), self.compact)
         with (Vertical if stacked else Horizontal)(
             id="library-notes-tree-actions", classes="ds-toolbar"
         ):
@@ -2535,34 +2681,42 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 compact=True,
                 disabled=self.create_running,
             )
-            from tldw_chatbook.Event_Handlers.notes_events import NOTE_TEMPLATES
-
-            # The pure builder excludes the "blank" template (it duplicates the
-            # Blank note action above) and pre-resolves each template's title so
-            # the row's muted secondary line shows the exact title the created
-            # note will get (date placeholders already substituted).
-            rows = build_library_note_template_rows(NOTE_TEMPLATES)
-            yield Static(
-                "From a template",
-                id="library-notes-template-section",
-                classes="destination-section",
-                markup=False,
+            # task-32356 (critique #10, A cap 10): the eight dated templates
+            # used to stand open under Blank note, so every new note cost a
+            # read of nine rows at the moment of lowest patience. They fold
+            # behind one row now -- and ``ctrl+n``/``n`` skip this canvas
+            # entirely for the blank answer (``action_library_notes_new``).
+            yield Button(
+                "From a template…",
+                id="library-note-from-template",
+                classes="library-notes-create-row",
+                compact=True,
+                disabled=self.create_running,
             )
-            for index, row in enumerate(rows):
-                label = (
-                    f"{row.label}\n{row.resolved_title}"
-                    if row.resolved_title
-                    else row.label
-                )
-                button = Button(
-                    label,
-                    id=f"library-notes-template-{index}",
-                    classes="library-notes-create-row library-notes-template-row",
-                    compact=True,
-                )
-                button.template_key = row.template_key
-                button.disabled = self.create_running
-                yield button
+            if self.templates_open:
+                from tldw_chatbook.Event_Handlers.notes_events import NOTE_TEMPLATES
+
+                # The pure builder excludes the "blank" template (it
+                # duplicates the Blank note action above) and pre-resolves
+                # each template's title so the row's muted secondary line
+                # shows the exact title the created note will get (date
+                # placeholders already substituted).
+                rows = build_library_note_template_rows(NOTE_TEMPLATES)
+                for index, row in enumerate(rows):
+                    label = (
+                        f"{row.label}\n{row.resolved_title}"
+                        if row.resolved_title
+                        else row.label
+                    )
+                    button = Button(
+                        label,
+                        id=f"library-notes-template-{index}",
+                        classes="library-notes-create-row library-notes-template-row",
+                        compact=True,
+                    )
+                    button.template_key = row.template_key
+                    button.disabled = self.create_running
+                    yield button
             yield Static(
                 self.create_status,
                 id="library-notes-create-status",
