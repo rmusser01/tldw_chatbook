@@ -17,6 +17,9 @@ from typing import Any
 from tldw_chatbook.Backup_Recovery.rag_inventory import recovery_adapters
 from tldw_chatbook.Backup_Recovery.rag_projection_lifetime import participant
 
+from .activation import async_guarded as activation_async_guarded
+from .activation import native_worker
+
 _LIMIT = 100_000
 _RECORDING = ContextVar("rag_recovery_recording", default=None)
 
@@ -458,6 +461,7 @@ async def recheck_projection(observation, service, **sources):
 
 
 @participant.async_operation
+@activation_async_guarded
 async def rebuild_projection(
     service,
     indexing_db,
@@ -514,7 +518,9 @@ async def rebuild_projection(
         if old["rows"] and _digest(old["rows"]) != previous.index_digest:
             raise ValueError("projection_shared_source_scope_required")
         for doc_id in sorted({row[0] for row in old["rows"].values()}):
-            await asyncio.to_thread(service.vector_store.delete_document, doc_id)
+            await asyncio.to_thread(
+                native_worker(service, service.vector_store.delete_document), doc_id
+            )
             if doc_id not in entries:
                 summary["removed"] += 1
         values = list(entries.values())

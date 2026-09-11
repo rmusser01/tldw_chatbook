@@ -2876,6 +2876,7 @@ private staged copies. Model lease rows retain their existing cohort status.
 | tldw_chatbook/Backup_Recovery/replacement.py | _copy_verified_payload | create_private_file | 1 | disposable | private rollback verification |
 | tldw_chatbook/Backup_Recovery/replacement.py | _copy_verified_payload | write | 1 | disposable | private rollback verification |
 | tldw_chatbook/Backup_Recovery/archive_reader.py | _inspect | ZipFile | 1 | generic_boundary | reviewed archive input |
+| tldw_chatbook/RAG_Search/activation.py | _settings_identity | open | 1 | generic_boundary | read-only config and rag.definitions recovery review |
 | tldw_chatbook/Backup_Recovery/archive_reader.py | _regular | open | 1 | generic_boundary | reviewed archive input |
 | tldw_chatbook/Backup_Recovery/archive_reader.py | acquire | create_private_file | 1 | disposable | private archive staging |
 | tldw_chatbook/Backup_Recovery/archive_reader.py | acquire | write | 1 | disposable | private archive staging |

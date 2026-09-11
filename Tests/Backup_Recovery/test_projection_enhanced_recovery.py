@@ -16,7 +16,7 @@ selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="'+str(data
 selector.chmod(0o600)
 os.environ.update(RAG_EMBEDDING_MODEL='mock', RAG_PERSIST_DIR=str(data/'vectors'), RAG_CHUNK_SIZE='400', RAG_CHUNK_OVERLAP='0')
 from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
-from tldw_chatbook.Backup_Recovery.activation import bind_activation
+from tldw_chatbook.Backup_Recovery.activation import ActivationStore, bind_activation
 from tldw_chatbook.Backup_Recovery.control_records import admission_authority, register_pending
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.RAG_Indexing_DB import RAGIndexingDB
@@ -53,6 +53,13 @@ if route == 'ordinary':
  assert service.vector_store.recovery_snapshot()==before
  print('retired and reopened');sys.exit(0)
 
+# Prepare only the lightweight unloaded wrapper in ordinary setup. Creating
+# a new model wrapper after restoration separately requires model-owner review.
+if route == 'unloaded_hf':
+ from tldw_chatbook.RAG_Search.simplified.embeddings_wrapper import EmbeddingsServiceWrapper
+ unloaded_embeddings = EmbeddingsServiceWrapper(model_name='sentence-transformers/all-MiniLM-L6-v2',device='cpu',cache_dir=str(data/'models'))
+ assert not unloaded_embeddings.factory._cache
+
 # Open the actual service/model before selecting the new local generation.
 # This test does not qualify automatic model acquisition during construction.
 service.vector_store.close(); media.close_connection(); tracking.close()
@@ -64,8 +71,9 @@ authority.register('profile',(selector.parent,data))
 control = base/'operation';control.mkdir(mode=0o700)
 register_pending(root,'restore',('profile',),control,(selector,))
 with authority.maintenance(('profile',),3) as session:
- bind_activation(root,'restore',selector,'generation',('config',),session=session)
+ bind_activation(root,'restore',selector,'generation',('config','rag.definitions','rag.projections','db.rag_indexing'),session=session)
 (root/('pending-'+bootstrap._key('restore')+'.json')).unlink()
+for owner in ('config','rag.definitions','rag.projections','db.rag_indexing'): ActivationStore(control/'activation').approve('generation',owner)
 try:
  asyncio.run(search())
 except (RuntimeError,ValueError) as error:
@@ -123,8 +131,7 @@ elif route == 'parent_config': service.config.chunking.enable_parent_retrieval =
 elif route == 'parent_switch': service.enable_parent_retrieval = True
 elif route == 'unknown_model': service.embeddings.factory = object()
 elif route == 'unloaded_hf':
- from tldw_chatbook.RAG_Search.simplified.embeddings_wrapper import EmbeddingsServiceWrapper
- service.embeddings = EmbeddingsServiceWrapper(model_name='sentence-transformers/all-MiniLM-L6-v2',device='cpu')
+ service.embeddings = unloaded_embeddings
  assert not service.embeddings.factory._cache
  assert 'projection_model_identity_unavailable' in asyncio.run(verify()).issues
  assert not service.embeddings.factory._cache

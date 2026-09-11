@@ -68,6 +68,9 @@ from .citations import Citation, CitationType, merge_citations
 from .config import RAGConfig, DEFAULT_HYBRID_POOL_MULTIPLIER
 from .collection_fingerprint import fingerprinted_collection_name, collection_provenance
 from ..generation import register_service, service_query
+from ..activation import async_guarded as activation_async_guarded
+from ..activation import guarded as activation_guarded
+from ..activation import native_worker, require_local_model_construction
 from ..fusion import (
     reciprocal_rank_fusion,
     resolve_hybrid_alpha,
@@ -702,6 +705,7 @@ class RAGService:
     - Citation generation for source attribution
     """
 
+    @activation_guarded
     def __init__(self, config: Optional[RAGConfig] = None):
         """
         Initialize RAG service with configuration.
@@ -710,6 +714,7 @@ class RAGService:
             config: RAG configuration (uses defaults if None)
         """
         self.config = config or RAGConfig()
+        require_local_model_construction(self.config)
 
         # Unrecognized `fts_match_construction` values already seen, so the
         # use-time resolver warns once per service rather than once per
@@ -752,6 +757,8 @@ class RAGService:
             device=self.config.device,
             cache_dir=cache_dir,
         )
+
+        self.embeddings._rag_activation_config = self.config
 
         # Initialize vector store
         logger.info(f"Initializing {self.config.vector_store_type} vector store")
@@ -837,6 +844,7 @@ class RAGService:
 
     @timeit("rag_indexing_document")
     @projection_lifetime.async_operation
+    @activation_async_guarded
     async def index_document(
         self,
         doc_id: str,
@@ -1018,6 +1026,7 @@ class RAGService:
         return asyncio.run(self.index_document(doc_id, content, **kwargs))
 
     @projection_lifetime.async_operation
+    @activation_async_guarded
     async def index_batch(
         self,
         documents: List[Dict[str, Any]],
@@ -1074,6 +1083,7 @@ class RAGService:
         return results
 
     @projection_lifetime.async_operation
+    @activation_async_guarded
     async def index_batch_optimized(
         self,
         documents: List[Dict[str, Any]],
@@ -1164,6 +1174,7 @@ class RAGService:
     @timeit("rag_search_operation")
     @projection_lifetime.async_operation
     @service_query
+    @activation_async_guarded
     async def search(
         self,
         query: str,
@@ -3011,6 +3022,7 @@ class RAGService:
         return chunks
 
     @projection_lifetime.async_operation
+    @activation_async_guarded
     async def _store_chunks(
         self,
         ids: List[str],
@@ -3022,7 +3034,7 @@ class RAGService:
         # to_thread explicitly transfers this accepted operation context.
         # The outer retained coroutine joins native completion before retirement.
         await asyncio.to_thread(
-            self.vector_store.add, ids, embeddings, documents, metadata
+            native_worker(self, self.vector_store.add), ids, embeddings, documents, metadata
         )
         from ..recovery import record_stored_chunks
 
@@ -4230,6 +4242,7 @@ class RAGService:
         await self.cache.clear_async()
         logger.info("Cleared embeddings and search result caches")
 
+    @activation_guarded
     def clear_index(self):
         """Clear the vector store index."""
         self.vector_store.clear()

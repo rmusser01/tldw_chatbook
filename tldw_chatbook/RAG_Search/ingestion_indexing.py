@@ -67,6 +67,9 @@ from tldw_chatbook.Backup_Recovery.rag_projection_lifetime import (
 
 from ..config import get_cli_setting
 from ..Utils.optional_deps import embeddings_rag_deps_installed
+from .activation import RAGActivationRequired
+from .activation import async_guarded as activation_async_guarded
+from .activation import execution as activation_execution
 
 logger = logger.bind(module="ingestion_indexing")
 
@@ -252,7 +255,17 @@ def _close_discarded_rag_service(service: Any) -> None:
         logger.debug(f"Error closing discarded shared RAG service build: {e}")
 
 
-def get_shared_rag_service(profile_name: Optional[str] = None) -> Optional[Any]:
+def get_shared_rag_service(profile_name: str | None = None) -> Any | None:
+    """Resolve the installed service only while its actual sources permit use."""
+    try:
+        with activation_execution(_shared_service):
+            return _get_shared_rag_service(profile_name)
+    except RAGActivationRequired:
+        logger.info("rag_activation_required")
+        return None
+
+
+def _get_shared_rag_service(profile_name: str | None = None) -> Any | None:
     """Get (or lazily create) the process-wide RAG service instance.
 
     Both the ingestion indexer and the search paths
@@ -514,6 +527,7 @@ class IndexRemoval:
     item_id: str
     item_type: str
     document_id: str
+    source_path: Path | None = None
 
 
 def _coerce_timestamp(value: Any) -> datetime:
@@ -672,19 +686,31 @@ def conversation_index_entry(
 
 def _default_indexing_db() -> Optional[Any]:
     """Create the default RAG indexing-state DB under the user data dir."""
-    try:
-        from ..DB.RAG_Indexing_DB import RAGIndexingDB
-        from ..config import get_rag_indexing_db_path
+    from ..config import get_rag_indexing_db_path
 
-        return RAGIndexingDB(get_rag_indexing_db_path())
-    except Exception as e:
-        logger.warning(
-            f"Could not open RAG indexing-state DB (indexing will not be incremental): {e}"
-        )
-        return None
+    return _open_indexing_db(get_rag_indexing_db_path())
+
+
+def _open_indexing_db(path: Path) -> Optional[Any]:
+    """Admit the actually selected tracking owner before native initialization."""
+    # Opening SQLite can change journal mode and schema. Denial must escape
+    # without selecting the ordinary best-effort untracked-indexing fallback.
+    with activation_execution(sources=(("db.rag_indexing", path),)):
+        try:
+            from ..DB.RAG_Indexing_DB import RAGIndexingDB
+
+            return RAGIndexingDB(path)
+        except RAGActivationRequired:
+            raise
+        except Exception as e:
+            logger.warning(
+                f"Could not open RAG indexing-state DB (indexing will not be incremental): {e}"
+            )
+            return None
 
 
 @projection_lifetime.async_operation
+@activation_async_guarded
 async def index_entries(
     service: Any,
     indexing_db: Optional[Any],
@@ -830,6 +856,7 @@ async def _clear_service_search_cache(service: Any) -> None:
 
 
 @projection_lifetime.async_operation
+@activation_async_guarded
 async def remove_entries(
     service: Any,
     indexing_db: Optional[Any],
@@ -970,6 +997,10 @@ class IngestionIndexer:
         token = None
         queued = False
         try:
+            from .activation import _call_scope
+
+            with _call_scope({"self": self, "entry": entry}):
+                pass
             with self._thread_lock:
                 if self._stopped:
                     return False
@@ -997,6 +1028,10 @@ class IngestionIndexer:
         token = None
         queued = False
         try:
+            from .activation import _call_scope
+
+            with _call_scope({"self": self, "entry": removal}):
+                pass
             with self._thread_lock:
                 if self._stopped:
                     return False
@@ -1086,19 +1121,11 @@ class IngestionIndexer:
 
     def _get_indexing_db(self) -> Optional[Any]:
         if not self._indexing_db_resolved:
-            self._indexing_db_resolved = True
             if self._indexing_db_path is not None:
-                try:
-                    from ..DB.RAG_Indexing_DB import RAGIndexingDB
-
-                    self._indexing_db = RAGIndexingDB(self._indexing_db_path)
-                except Exception as e:
-                    logger.warning(
-                        f"Could not open RAG indexing-state DB at {self._indexing_db_path}: {e}"
-                    )
-                    self._indexing_db = None
+                self._indexing_db = _open_indexing_db(self._indexing_db_path)
             else:
                 self._indexing_db = _default_indexing_db()
+            self._indexing_db_resolved = True
         return self._indexing_db
 
     def _run(self) -> None:
@@ -1166,6 +1193,7 @@ class IngestionIndexer:
             asyncio.set_event_loop(None)
             loop.close()
 
+    @activation_async_guarded
     async def _process_batch(self, batch: List[Any]) -> None:
         service = self._get_service()
         if service is None:
@@ -1403,6 +1431,7 @@ def _media_post_delete_hook(db: Any, media_id: int, media_uuid: Optional[str]) -
                 item_id=str(media_id),
                 item_type=ITEM_TYPE_MEDIA,
                 document_id=f"media_{media_id}",
+                source_path=db.db_path,
             )
         )
     except Exception as e:
@@ -1523,6 +1552,7 @@ async def reconcile_media_index(
             item_id=item_id,
             item_type=ITEM_TYPE_MEDIA,
             document_id=f"media_{item_id}",
+            source_path=media_db.db_path,
         )
         for item_id in sorted(set(tracked) - active_ids)
     ]
@@ -1604,6 +1634,7 @@ def _batched(
 
 
 @projection_lifetime.async_operation
+@activation_async_guarded
 async def backfill_semantic_index(
     *,
     media_db: Optional[Any] = None,

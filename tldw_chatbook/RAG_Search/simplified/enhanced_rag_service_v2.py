@@ -21,6 +21,8 @@ from tldw_chatbook.Backup_Recovery.rag_projection_lifetime import participant as
 from .enhanced_rag_service import EnhancedRAGService
 from .rag_service import MetadataAllowlist
 from .config import RAGConfig
+from ..activation import async_guarded as activation_async_guarded
+from ..activation import guarded as activation_guarded
 from .vector_store import SearchResult, SearchResultWithCitations
 from ..reranker import create_reranker_from_config
 from ..parallel_processor import (
@@ -76,6 +78,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
     - Configuration profiles and A/B testing
     """
 
+    @activation_guarded
     def __init__(
         self,
         config: Optional[Union[RAGConfig, ProfileConfig, str]] = None,
@@ -207,6 +210,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
     @timeit("rag_search_v2")
     @projection_lifetime.async_operation
     @service_query
+    @activation_async_guarded
     async def search(
         self,
         query: str,
@@ -364,6 +368,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
 
         return results
 
+    @activation_async_guarded
     async def index_batch_optimized(
         self,
         documents: List[Dict[str, Any]],
@@ -418,6 +423,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
 
         return results
 
+    @activation_guarded
     def switch_profile(self, profile_name: str):
         """
         Switch to a different configuration profile.

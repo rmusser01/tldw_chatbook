@@ -28,6 +28,9 @@ from typing import Any, Collection, Dict, List, Mapping, Optional, Protocol, Uni
 
 import psutil
 from loguru import logger
+from ..activation import guarded as activation_guarded
+from ..activation import execution as activation_execution
+from contextlib import nullcontext
 
 from tldw_chatbook.Metrics.metrics_logger import (
     log_counter,
@@ -187,6 +190,7 @@ class ChromaVectorStore:
     """
 
     @projection_lifetime.sync_operation
+    @activation_guarded
     def __init__(
         self,
         persist_directory: Union[str, Path],
@@ -285,7 +289,12 @@ class ChromaVectorStore:
                 from chromadb.config import Settings
 
                 settings = Settings(anonymized_telemetry=False, allow_reset=True)
-                with projection_lifetime.opening(self.persist_directory) as borrower:
+                creation = (
+                    activation_execution(self)
+                    if not (self.persist_directory / "chroma.sqlite3").exists()
+                    else nullcontext()
+                )
+                with creation, projection_lifetime.opening(self.persist_directory) as borrower:
                     self._client = chromadb.PersistentClient(
                         path=str(self.persist_directory), settings=settings
                     )
@@ -312,20 +321,27 @@ class ChromaVectorStore:
                 "ip": "ip",  # inner product
             }
 
-            self._collection = self.client.get_or_create_collection(
-                name=self.collection_name,
-                metadata={
-                    **self.collection_metadata,
-                    # hnsw:space is index-determining — keep it LAST so a stray
-                    # collection_metadata key can never override the real metric.
-                    "hnsw:space": metric_map.get(self.distance_metric, "cosine"),
-                },
-            )
+            from chromadb.errors import NotFoundError
+
+            try:
+                self._collection = self.client.get_collection(self.collection_name)
+            except NotFoundError:
+                with activation_execution(self):
+                    self._collection = self.client.get_or_create_collection(
+                        name=self.collection_name,
+                        metadata={
+                            **self.collection_metadata,
+                            # hnsw:space is index-determining — keep it LAST so a stray
+                            # collection_metadata key can never override the real metric.
+                            "hnsw:space": metric_map.get(self.distance_metric, "cosine"),
+                        },
+                    )
             logger.info(f"Using collection: {self.collection_name}")
         return self._collection
 
     @timeit("vector_store_add_documents")
     @store_operation
+    @activation_guarded
     def add(
         self,
         ids: List[str],
@@ -663,6 +679,7 @@ class ChromaVectorStore:
         return citations
 
     @store_operation
+    @activation_guarded
     def delete_collection(self, name: str) -> bool:
         """Delete a collection.
 
@@ -687,6 +704,7 @@ class ChromaVectorStore:
             return False
 
     @store_operation
+    @activation_guarded
     def delete_document(self, doc_id: str) -> None:
         """Delete all chunks belonging to a document (no-op when absent).
 
@@ -703,6 +721,7 @@ class ChromaVectorStore:
         )
 
     @store_operation
+    @activation_guarded
     def clear(self) -> None:
         """Clear all data from the current collection."""
         try:
@@ -774,6 +793,7 @@ class ChromaVectorStore:
             return {"name": self.collection_name, "count": 0, "error": str(e)}
 
     @store_operation
+    @activation_guarded
     def add_documents(
         self,
         collection_name: str,
@@ -1006,6 +1026,7 @@ class InMemoryVectorStore:
             else:
                 break
 
+    @activation_guarded
     def add(
         self,
         ids: List[str],
@@ -1396,6 +1417,7 @@ class InMemoryVectorStore:
 
         return results_with_citations
 
+    @activation_guarded
     def delete_collection(self, name: str) -> bool:
         """Delete a specific collection."""
         deleted = False
@@ -1413,6 +1435,7 @@ class InMemoryVectorStore:
 
         return deleted
 
+    @activation_guarded
     def delete_document(self, doc_id: str) -> None:
         """Delete all chunks belonging to a document (no-op when absent).
 
@@ -1443,6 +1466,7 @@ class InMemoryVectorStore:
             f"Deleted {len(removed_ids)} chunks for document {doc_id} from in-memory store"
         )
 
+    @activation_guarded
     def clear(self) -> None:
         """Clear all data."""
         self.ids.clear()
@@ -1505,6 +1529,7 @@ class InMemoryVectorStore:
 
         return stats
 
+    @activation_guarded
     def add_documents(
         self,
         collection_name: str,

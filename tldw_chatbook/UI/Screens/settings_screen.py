@@ -13932,7 +13932,7 @@ class SettingsScreen(BaseAppScreen):
         self._library_rag_backfill_in_flight = False
 
     @work(exclusive=True, thread=True, group="settings-rag-backfill")
-    def _rag_backfill_worker(self) -> None:
+    def _rag_backfill_worker(self, *, reconcile_for_recovery: bool = False) -> None:
         """Bulk-index existing media/notes/conversations into the active
         profile's resolved vector collection.
 
@@ -13993,7 +13993,7 @@ class SettingsScreen(BaseAppScreen):
                 self.app.call_from_thread(
                     self.app.notify,
                     "RAG backfill could not start: the shared RAG service "
-                    "is unavailable right now. Try again shortly.",
+                    "is unavailable. Review recovery permissions and local model setup.",
                     severity="error",
                 )
                 return
@@ -14017,6 +14017,7 @@ class SettingsScreen(BaseAppScreen):
                     chachanotes_db=chachanotes_db,
                     rag_service=rag_service,
                     progress_callback=_progress,
+                    reconcile_for_recovery=reconcile_for_recovery,
                 )
             )
         except Exception as e:
@@ -14159,6 +14160,9 @@ class SettingsScreen(BaseAppScreen):
         )
         with Horizontal(classes="settings-action-row"):
             yield Button("Backfill", id="settings-library-rag-index-backfill")
+        with Horizontal(classes="settings-action-row"):
+            yield Button("Review recovery", id="settings-library-rag-recovery-review")
+            yield Button("Reconcile / rebuild", id="settings-library-rag-recovery-reconcile")
 
     def _queue_rag_select_suppression(
         self, select: Select, expected_value: object
@@ -19842,6 +19846,87 @@ class SettingsScreen(BaseAppScreen):
         self._set_library_rag_preview_banner(None)
         self.app.notify(message, severity="error")
 
+    def _rag_recovery_sources(self):
+        """Observe already-open local owners without constructing index services."""
+        return tuple(
+            ("rag.projections", database.db_path)
+            for name in ("media_db", "chachanotes_db")
+            if (database := getattr(self.app_instance, name, None)) is not None
+            and not getattr(database, "is_memory_db", False)
+        )
+
+    @work(exclusive=True, thread=True, group="settings-rag-recovery-review")
+    def _rag_recovery_review_worker(self, fingerprint: str | None = None) -> None:
+        """Review or approve the same current settings; neither action indexes."""
+        from ...RAG_Search.activation import (
+            approve_recovery_review,
+            preview_recovery_review,
+        )
+        from ...RAG_Search.simplified.active_config import resolve_active_rag_config
+
+        try:
+            config = resolve_active_rag_config()
+            sources = self._rag_recovery_sources()
+            if fingerprint is None:
+                review = preview_recovery_review(config, sources=sources)
+                self.app.call_from_thread(self._show_rag_recovery_review, review)
+            else:
+                approve_recovery_review(config, fingerprint, sources=sources)
+                self.app.call_from_thread(
+                    self.app.notify,
+                    "RAG owner review approved. Configuration and model setup remain "
+                    "separate. Use Reconcile / rebuild when prerequisites are ready.",
+                )
+        except (OSError, ValueError, RuntimeError):
+            self.app.call_from_thread(
+                self.app.notify,
+                "Recovery review is unavailable or changed. Request a fresh review.",
+                severity="warning",
+            )
+
+    def _show_rag_recovery_review(self, review) -> None:
+        """Display only the owner's sanitized current-generation preview."""
+        if not review.owners:
+            self.app.notify("No restored RAG owners require this review.")
+            return
+        message = (
+            f"Model: {review.model}\nProvider host: {review.provider_host}\n"
+            f"Owners: {', '.join(review.owners)}\n"
+            f"Prerequisites: {', '.join(review.prerequisites) or 'none reported'}\n"
+            "Sources:\n" + "\n".join(review.sources) +
+            "\nApprove these RAG owners for the displayed local generation? "
+            "Approval does not rebuild the index or approve configuration or models."
+        )
+        self.app.push_screen(
+            ConfirmationDialog(
+                title="Review restored RAG execution", message=message,
+                confirm_label="Approve RAG owners",
+            ),
+            lambda accepted: self._rag_recovery_review_worker(review.fingerprint)
+            if accepted else None,
+        )
+
+    @on(Button.Pressed, "#settings-library-rag-recovery-review")
+    def handle_library_rag_recovery_review(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._rag_recovery_review_worker()
+
+    @on(Button.Pressed, "#settings-library-rag-recovery-reconcile")
+    def handle_library_rag_recovery_reconcile(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.app.push_screen(
+            ConfirmationDialog(
+                title="Reconcile restored search index",
+                message="Rebuild and verify this profile's index from available local "
+                "sources? Configuration, RAG owners and model setup must already "
+                "permit execution. This can take a while for large libraries.",
+                confirm_label="Reconcile / rebuild",
+            ),
+            lambda accepted: self._trigger_library_rag_index_backfill(
+                reconcile_for_recovery=True
+            ) if accepted else None,
+        )
+
     @on(Button.Pressed, "#settings-library-rag-index-backfill")
     def handle_library_rag_index_backfill(self, event: Button.Pressed) -> None:
         event.stop()
@@ -19855,7 +19940,9 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         self._trigger_library_rag_index_backfill()
 
-    def _trigger_library_rag_index_backfill(self) -> None:
+    def _trigger_library_rag_index_backfill(
+        self, *, reconcile_for_recovery: bool = False
+    ) -> None:
         if self._library_rag_backfill_in_flight:
             self.app.notify("Backfill is already running.", severity="warning")
             return
@@ -19864,7 +19951,10 @@ class SettingsScreen(BaseAppScreen):
             "Backfill started — this may take a while for large libraries.",
             severity="information",
         )
-        self._rag_backfill_worker()
+        if reconcile_for_recovery:
+            self._rag_backfill_worker(reconcile_for_recovery=True)
+        else:
+            self._rag_backfill_worker()
 
     @on(Button.Pressed, "#settings-library-rag-profile-clone")
     def handle_library_rag_profile_clone(self, event: Button.Pressed) -> None:

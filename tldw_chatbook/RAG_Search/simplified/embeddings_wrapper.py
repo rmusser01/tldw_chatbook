@@ -6,6 +6,9 @@ that provides thread-safe caching, multiple providers, and async support.
 """
 
 from types import SimpleNamespace
+from ..activation import async_guarded as activation_async_guarded
+from ..activation import guarded as activation_guarded
+from ..activation import source_paths
 from typing import List, Optional, Dict, Any, Union
 from loguru import logger
 import os
@@ -186,6 +189,7 @@ class EmbeddingsServiceWrapper:
         self._api_key = api_key
         self._base_url = base_url
         self._cache_dir = cache_dir
+        self._rag_activation_sources = source_paths(self)
         self._use_mock_backend = str(model_name).lower() in {
             "mock",
             "mock-embedding-model",
@@ -275,6 +279,7 @@ class EmbeddingsServiceWrapper:
 
         self._ensure_initialized()
 
+    @activation_guarded
     def _ensure_initialized(self):
         """Ensure the factory is initialized when first needed."""
         if self.factory is not None:
@@ -433,6 +438,7 @@ class EmbeddingsServiceWrapper:
         return config
 
     @timeit("embeddings_create_operation")
+    @activation_guarded
     def create_embeddings(self, texts: List[str]) -> np.ndarray:
         """
         Create embeddings for texts using the configured model.
@@ -605,6 +611,7 @@ class EmbeddingsServiceWrapper:
             return 1536
         return 384
 
+    @activation_async_guarded
     async def create_embeddings_async(self, texts: List[str]) -> np.ndarray:
         """
         Async version of create_embeddings.
@@ -672,6 +679,7 @@ class EmbeddingsServiceWrapper:
             )
             raise RuntimeError(f"Async embedding creation failed: {e}") from e
 
+    @activation_guarded
     def create_embedding(self, text: str) -> np.ndarray:
         """
         Create embedding for a single text.
@@ -692,6 +700,7 @@ class EmbeddingsServiceWrapper:
             logger.debug(f"After conversion: shape={result.shape}")
         return result
 
+    @activation_async_guarded
     async def create_embedding_async(self, text: str) -> np.ndarray:
         """
         Async version of create_embedding for single text.
@@ -726,6 +735,7 @@ class EmbeddingsServiceWrapper:
             return None
 
     @timeit("embeddings_prefetch_models")
+    @activation_guarded
     def prefetch_model(self, model_ids: Optional[List[str]] = None):
         """
         Prefetch and cache models for faster first-use.

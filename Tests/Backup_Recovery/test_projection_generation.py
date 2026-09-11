@@ -53,9 +53,9 @@ authority.register('profile',(selector.parent,data))
 control=base/'operation';control.mkdir(mode=0o700)
 register_pending(root,'restore',('profile',),control,(selector,))
 with authority.maintenance(('profile',),3) as session:
- bind_activation(root,'restore',selector,'generation',('config',),session=session)
+ bind_activation(root,'restore',selector,'generation',('config','rag.definitions','rag.projections','db.rag_indexing'),session=session)
 (root/('pending-'+bootstrap._key('restore')+'.json')).unlink()
-ActivationStore(control/'activation').approve('generation','config')
+[ActivationStore(control/'activation').approve('generation',owner) for owner in ('config','rag.definitions','rag.projections','db.rag_indexing')]
 route=sys.argv[1]
 if route=='independent':
  other=base/'unrelated.toml';other.write_text('[general]\n');other.chmod(0o600)
@@ -117,9 +117,9 @@ if route in positive_routes:
   control2=base/'operation2';control2.mkdir(mode=0o700)
   register_pending(root,'restore-again',('profile',),control2,(selector,))
   with authority.maintenance(('profile',),3) as session:
-   bind_activation(root,'restore-again',selector,'generation-new',('config',),session=session)
+   bind_activation(root,'restore-again',selector,'generation-new',('config','rag.definitions','rag.projections','db.rag_indexing'),session=session)
   (root/('pending-'+bootstrap._key('restore-again')+'.json')).unlink()
-  ActivationStore(control2/'activation').approve('generation-new','config')
+  [ActivationStore(control2/'activation').approve('generation-new',owner) for owner in ('config','rag.definitions','rag.projections','db.rag_indexing')]
  if route=='relaunch':
   child="""import asyncio, json, sys
 from pathlib import Path
@@ -326,9 +326,9 @@ authority.register('profile',(selector.parent,media.db_path))
 control=base/'operation';control.mkdir(mode=0o700)
 register_pending(root,'restore',('profile',),control,(selector,))
 with authority.maintenance(('profile',),3) as session:
- bind_activation(root,'restore',selector,'generation',('config',),session=session)
+ bind_activation(root,'restore',selector,'generation',('config','rag.definitions','rag.projections','db.rag_indexing'),session=session)
 (root/('pending-'+bootstrap._key('restore')+'.json')).unlink()
-ActivationStore(control/'activation').approve('generation','config')
+[ActivationStore(control/'activation').approve('generation',owner) for owner in ('config','rag.definitions','rag.projections','db.rag_indexing')]
 route=sys.argv[1]
 if route=='independent':
  other=base/'unrelated.toml';other.write_text('[general]\n');other.chmod(0o600)
@@ -419,9 +419,9 @@ authority.register('profile',(selector.parent,prompts.db_path))
 control=base/'operation';control.mkdir(mode=0o700)
 register_pending(root,'restore',('profile',),control,(selector,))
 with authority.maintenance(('profile',),3) as session:
- bind_activation(root,'restore',selector,'generation',('config',),session=session)
+ bind_activation(root,'restore',selector,'generation',('config','rag.definitions','rag.projections','db.rag_indexing'),session=session)
 (root/('pending-'+bootstrap._key('restore')+'.json')).unlink()
-ActivationStore(control/'activation').approve('generation','config')
+[ActivationStore(control/'activation').approve('generation',owner) for owner in ('config','rag.definitions','rag.projections','db.rag_indexing')]
 route=sys.argv[1]
 if route=='independent':
  other=base/'unrelated.toml';other.write_text('[general]\n');other.chmod(0o600)
@@ -501,9 +501,9 @@ authority.register('profile',(selector.parent,prompts.db_path))
 control=base/'operation';control.mkdir(mode=0o700)
 register_pending(root,'restore',('profile',),control,(selector,))
 with authority.maintenance(('profile',),3) as session:
- bind_activation(root,'restore',selector,'generation',('config',),session=session)
+ bind_activation(root,'restore',selector,'generation',('config','rag.definitions','rag.projections','db.rag_indexing'),session=session)
 (root/('pending-'+bootstrap._key('restore')+'.json')).unlink()
-ActivationStore(control/'activation').approve('generation','config')
+[ActivationStore(control/'activation').approve('generation',owner) for owner in ('config','rag.definitions','rag.projections','db.rag_indexing')]
 route=sys.argv[1]
 if route=='independent':
  other=base/'unrelated.toml';other.write_text('[general]\n');other.chmod(0o600)

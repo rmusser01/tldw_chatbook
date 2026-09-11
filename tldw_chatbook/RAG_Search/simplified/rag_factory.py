@@ -10,11 +10,14 @@ from typing import Optional
 from loguru import logger
 
 from .config import RAGConfig
+from ..activation import guarded as activation_guarded
+from ..activation import ordinary_configuration, require_local_model_construction
 from .enhanced_rag_service_v2 import EnhancedRAGServiceV2
 from .collection_indexes import maybe_adopt_legacy_collection
 from ..config_profiles import get_profile_manager
 
 
+@activation_guarded
 def create_rag_service(
     profile_name: str = "hybrid_basic", config: Optional[RAGConfig] = None, **kwargs
 ) -> EnhancedRAGServiceV2:
@@ -43,11 +46,13 @@ def create_rag_service(
             # Ultimate fallback - create minimal config
             logger.warning("No profiles available, creating minimal configuration")
             fallback_config = config or RAGConfig()
+            require_local_model_construction(fallback_config)
             # Adopt a pre-fingerprint 'default' collection on this path too, so
             # the (unreachable-in-practice) no-profiles fallback still preserves
             # an existing index instead of opening an empty fingerprinted one.
             try:
-                maybe_adopt_legacy_collection(fallback_config)
+                if ordinary_configuration(fallback_config):
+                    maybe_adopt_legacy_collection(fallback_config)
             except Exception as e:  # never block service creation on migration
                 logger.debug(f"Legacy collection adoption skipped: {e}")
             return EnhancedRAGServiceV2(
@@ -69,11 +74,13 @@ def create_rag_service(
     # Override with explicit config if provided
     if config:
         rag_config = config
+    require_local_model_construction(rag_config)
 
     # Adopt a pre-fingerprint 'default' collection under this config's
     # fingerprint on first persistent construction (idempotent, race-safe).
     try:
-        maybe_adopt_legacy_collection(rag_config)
+        if ordinary_configuration(rag_config):
+            maybe_adopt_legacy_collection(rag_config)
     except Exception as e:  # never block service creation on migration
         logger.debug(f"Legacy collection adoption skipped: {e}")
 
