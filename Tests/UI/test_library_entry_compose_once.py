@@ -2229,14 +2229,14 @@ async def test_pending_conversation_open_cannot_overwrite_same_route_user_select
         assert isinstance(owner, LibraryConversationsCanvas)
         owner.sync_state(screen._build_library_conversations_state())
         await pilot.pause()
-        focus = next(
-            row
-            for row in screen.query(".library-conversation-row")
-            if getattr(row, "conversation_id", "") == "chat-1"
-        )
+        # The pending locator disables conversation rows; Search remains actionable.
+        focus = screen.query_one("#library-search-input", Input)
+        assert focus.is_attached
+        assert not focus.disabled
         focus.focus()
         await pilot.pause()
 
+        assert screen.focused is focus, "Focus must be acquired before locator release."
         release.set()
         result = await await_background_task(
             task,

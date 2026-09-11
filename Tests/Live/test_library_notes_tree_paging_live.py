@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
 
@@ -32,8 +34,15 @@ SIZES = ((160, 50), (120, 35), (100, 30), (80, 24))
 
 
 @pytest.fixture
-def live_notes_db(tmp_path):
-    """Own all connections to the walkthrough's single temporary database."""
+def live_notes_db(tmp_path: Path) -> Iterator[CharactersRAGDB]:
+    """Own all connections to the walkthrough's single temporary database.
+
+    Args:
+        tmp_path: Temporary directory containing the walkthrough database.
+
+    Yields:
+        The database whose connections are quiesced during fixture teardown.
+    """
     db = CharactersRAGDB(tmp_path / "notes-live.db", client_id="task-18917-live")
     try:
         yield db
@@ -43,7 +52,12 @@ def live_notes_db(tmp_path):
         assert db.registered_connection_count() == 0
 
 
-def test_live_notes_db_quiesces_worker_connections_on_failure(tmp_path):
+def test_live_notes_db_quiesces_worker_connections_on_failure(tmp_path: Path) -> None:
+    """Quiesce every owned database connection when the walkthrough fails.
+
+    Args:
+        tmp_path: Temporary directory containing the fixture's database.
+    """
     fixture = live_notes_db.__wrapped__(tmp_path)
     try:
         db = next(fixture)

@@ -48,7 +48,8 @@ async def test_split_json_waits_for_the_complete_utf8_body(split: int) -> None:
 
 
 @pytest.mark.asyncio
-async def test_valid_json_prefix_does_not_hide_trailing_invalid_content():
+async def test_valid_json_prefix_does_not_hide_trailing_invalid_content() -> None:
+    """Reject trailing invalid content after an otherwise valid JSON prefix."""
     stream = _stream()
     stream.feed_data(b"{}")
     task = asyncio.create_task(_read(stream))
@@ -60,7 +61,8 @@ async def test_valid_json_prefix_does_not_hide_trailing_invalid_content():
 
 
 @pytest.mark.asyncio
-async def test_exact_limit_is_accepted_at_eof():
+async def test_exact_limit_is_accepted_at_eof() -> None:
+    """Accept a complete JSON body exactly at the request size limit."""
     stream = _stream()
     stream.feed_data(b'"' + b"x" * 62 + b'"')
     stream.feed_eof()
@@ -68,7 +70,8 @@ async def test_exact_limit_is_accepted_at_eof():
 
 
 @pytest.mark.asyncio
-async def test_oversized_chunked_body_is_refused_without_waiting_for_eof():
+async def test_oversized_chunked_body_is_refused_without_waiting_for_eof() -> None:
+    """Reject oversized chunked input before EOF without consuming its tail."""
     stream = _stream()
     stream.feed_data(b'"' + b"x" * 63)
     task = asyncio.create_task(_read(stream))
@@ -81,7 +84,12 @@ async def test_oversized_chunked_body_is_refused_without_waiting_for_eof():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("body", (b"", b"{", b'"\xff"'))
-async def test_malformed_complete_body_remains_bad_request(body):
+async def test_malformed_complete_body_remains_bad_request(body: bytes) -> None:
+    """Reject complete bodies containing empty, invalid JSON, or invalid UTF-8 input.
+
+    Args:
+        body: Malformed bytes supplied as the complete request body.
+    """
     stream = _stream()
     stream.feed_data(body)
     stream.feed_eof()
@@ -90,7 +98,8 @@ async def test_malformed_complete_body_remains_bad_request(body):
 
 
 @pytest.mark.asyncio
-async def test_cancelled_partial_read_propagates_cancellation():
+async def test_cancelled_partial_read_propagates_cancellation() -> None:
+    """Propagate cancellation while waiting for the rest of a partial body."""
     stream = _stream()
     stream.feed_data(b"{")
     task = asyncio.create_task(_read(stream))

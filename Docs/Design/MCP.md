@@ -315,14 +315,18 @@ Export conversations in various formats.
   - `format`: Export format (markdown, json, text)
 - **Returns**: Formatted conversation content
 
-### Library Tools (read-only, descriptor-backed)
+### Library Tools (descriptor-backed)
 
 In addition to the standalone tools above, the in-process local MCP surface
-exposes 18 read-only `library_*` tools — `library_list_*`, `library_get_*`, and
-`library_search_*` for each of Media, Notes, Prompts, Skills, Conversations,
-and Collections. The same shared service and all 18 tools are also callable by
+exposes 21 `library_*` tools. These include 15 read-only tools — `library_list_*`,
+`library_get_*`, and `library_search_*` for each of Media, Notes, Prompts,
+Skills, and Conversations — plus six chunking and note-write tools:
+`library_get_media_structure`, `library_get_media_chunk`,
+`library_list_chunk_specs`, `library_save_chunk_spec`, `library_rechunk_media`,
+and `library_save_note`. The retired generic Collections list/get/search tools
+are not registered. The same shared service and all 21 tools are also callable by
 Console agents when that conversation allows assistant Library access and its
-**Direct / RAG selector** chooses Direct. They answer
+**Direct / RAG selector** chooses Direct. The 15 read-only tools answer
 factual Library questions (list, count, view, lexical search) without touching
 the RAG/embedding pipeline.
 

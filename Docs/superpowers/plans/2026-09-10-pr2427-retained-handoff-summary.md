@@ -80,7 +80,7 @@ task_tmp=$(mktemp -d "$TMPDIR/pr2427-handoff-native.XXXXXX")
 ```
 
 Inspect the final native inventory and terminal exit code. The already measured pytest-asyncio kqueue/socketpair and intended faulthandler log are not application leaks; do not add cleanup hooks without new attribution. Run existing size/private-owner guards, report all residual failures, and verify preflight with the pinned local Mermaid source cache. Screen starts32715/31689 and13 original ceilings fail; this scoped correctness repair does not claim to pay down that separate debt.
-- [ ] Record RED/GREEN/native/review evidence in task/report and commit this bounded repair. Publish current PR progress without claiming merge readiness while other gates remain open.
+- [x] Record RED/GREEN/native/review evidence in task/report and commit this bounded repair. Publish current PR progress without claiming merge readiness while other gates remain open.
 
 ## Verification checkpoint
 
@@ -94,3 +94,11 @@ focus was never acquired. Do not mark that original case green or weaken its
 oracle. Its separate fixture correction awaits approval. All seven preflight
 checks pass; the13 existing size failures remain. Exact logs and native path
 are in backlog/docs/pr-2427-rebase-reconciliation.md.
+
+The follow-up fixture correction was explicitly approved and implemented in
+TASK31932 step156. Its pre-release focus precondition fails on the old disabled
+row, then passes with the existing enabled Search Input. Independent review
+confirms all original race-result, selected-ID, owner and exact-focus assertions
+remain. Complete four-file native rerun now passes136 tests,3 warnings,164.43s,
+with zero SQLite/instance-lock retention. This closes the recorded fixture
+failure, not the separate13 size-limit failures.
