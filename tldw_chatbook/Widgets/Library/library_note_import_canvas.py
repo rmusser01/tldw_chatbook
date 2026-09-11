@@ -12,6 +12,7 @@ from textual.message import Message
 from textual.widgets import Button, Collapsible, Input, Static
 
 from tldw_chatbook.Library.library_note_import_state import (
+    UNIFORM_RUN_MIN,
     LibraryNoteImportItemSnapshot,
     LibraryNoteImportSnapshot,
 )
@@ -83,8 +84,10 @@ task-32250: the row's job is to state the resulting title, its keywords and
 its link count. Those came last and were the first thing the row lost.
 """
 
-_UNIFORM_RUN_MIN = 8
-"""Rows that must share a folder and an outcome before they collapse to one."""
+# The threshold is the pager's (task-32250): it budgets a page by rendered
+# rows, and a collapsed run renders as one, so a second threshold here would
+# make every page count wrong.
+_UNIFORM_RUN_MIN = UNIFORM_RUN_MIN
 
 
 def _bounded_row_name(name: str) -> str:
@@ -120,6 +123,28 @@ def _uniform_runs(
 ) -> tuple[tuple[LibraryNoteImportItemSnapshot, ...], ...]:
     """Split one rendered group into consecutive interchangeable runs."""
     return tuple(tuple(run) for _, run in groupby(items, key=_run_key))
+
+
+def _run_disclosure(title: str, *, dom_token: str) -> Collapsible:
+    """Return a one-line disclosure for a collapsed run of identical rows.
+
+    The app-wide ``Collapsible`` rule (a round border, a 3-row title, a 3-row
+    floor and a bottom margin) is app-tier and beats this widget's own
+    BUNDLED_CSS whatever its specificity -- five lines of chrome for a summary
+    that has to cost the page one, because the pager budgets by rendered rows.
+    Inline styles are the one tier above it (task-32250).
+    """
+    disclosure = Collapsible(
+        title=title,
+        id=f"note-import-run-{dom_token}",
+        classes="note-import-run",
+        collapsed=True,
+    )
+    disclosure.styles.min_height = 1
+    disclosure.styles.margin = 0
+    disclosure.styles.padding = 0
+    disclosure.styles.border = ("none", "transparent")
+    return disclosure
 
 
 def _run_summary(run: tuple[LibraryNoteImportItemSnapshot, ...]) -> str:
@@ -470,10 +495,18 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
             self.refresh(recompose=True)
 
     def on_mount(self) -> None:
+        self._tighten_run_disclosures()
         self.call_after_refresh(self._update_overflow_hint)
 
     def _after_recompose(self) -> None:
+        self._tighten_run_disclosures()
         self.call_after_refresh(self._update_overflow_hint)
+
+    def _tighten_run_disclosures(self) -> None:
+        """Keep a collapsed run's title one line, as the pager budgeted for."""
+        for title in self.query(".note-import-run > CollapsibleTitle"):
+            title.styles.height = 1
+            title.styles.padding = 0
 
     def _update_overflow_hint(self) -> None:
         try:
@@ -761,11 +794,9 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                 # task-32250: 23 near-identical rows are not a review. One
                 # summary row states the shared outcome; the disclosure keeps
                 # every individual decision one press away.
-                with Collapsible(
-                    title=_run_summary(run),
-                    id=f"note-import-run-{dom_tokens[run[0].item_id]}",
-                    classes="note-import-run",
-                    collapsed=True,
+                with _run_disclosure(
+                    _run_summary(run),
+                    dom_token=dom_tokens[run[0].item_id],
                 ):
                     for item in run:
                         yield from self._compose_review_item(

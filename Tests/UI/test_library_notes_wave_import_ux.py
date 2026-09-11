@@ -1111,7 +1111,9 @@ def test_pagination_keeps_each_group_contiguous() -> None:
             item_id=f"item-{index:03d}",
             source=ImportSource(
                 kind=ImportSourceKind.DIRECTORY_MEMBER,
-                display_path=f"vault/{classification.value}/{index:03d}.md",
+                # A folder each: interchangeable rows collapse to one summary
+                # row and would then all fit on a single page (task-32250).
+                display_path=f"vault/{classification.value}-{index:03d}/note.md",
                 source_path=Path(f"/private/vault/{index:03d}.md"),
             ),
             payloads=(
@@ -1167,6 +1169,7 @@ def test_pagination_keeps_each_group_contiguous() -> None:
     assert [item.classification.value for item in second.items] == (
         ["new"] * 5 + ["unsupported"] * 5
     )
+    assert first.page_count == 2
 
 
 def test_the_review_takes_the_pane_while_it_is_the_task_in_hand() -> None:
@@ -1201,3 +1204,147 @@ def test_the_review_takes_the_pane_while_it_is_the_task_in_hand() -> None:
     assert (reviewing.library_open, reviewing.items_open) == (False, False)
     # Choosing a source is not the same task: the list stays where it was.
     assert choosing.items_open is True
+
+
+# --- task-32256 (relationship descriptions) --------------------------------
+
+_IMPORT_ONCE_COPY = (
+    "Import once — Copy files into Notes. Later changes to the originals "
+    "are not tracked."
+)
+_KEEP_SYNCED_COPY = (
+    "Keep a folder synced — Create a lasting connection. Changes continue "
+    "between the folder and Notes."
+)
+
+
+def _relationship_copy(app) -> list[Static]:
+    body = app.query_one("#notes-sync-body")
+    return [
+        child
+        for child in body.children
+        if isinstance(child, Static) and "—" in _plain(child)
+    ]
+
+
+@pytest.mark.parametrize("width", (235, 113, 60))
+async def test_both_relationship_descriptions_render_complete(width: int) -> None:
+    """The screen whose whole job is to explain the two relationships.
+
+    235 is the wide terminal; 113 is the share the reader pane actually gets
+    there; 60 is the narrow floor, where the copy must WRAP rather than be
+    cut -- a clipped description would be a truncated explanation delivered
+    at the point of an irreversible-feeling choice (task-32256).
+    """
+    app = _ChooserHost()
+
+    async with app.run_test(size=(width, 40)) as pilot:
+        await pilot.pause()
+        descriptions = _relationship_copy(app)
+        rendered = [(_plain(child), child.size.width, child.size.height) for child in descriptions]
+
+    texts = [text for text, _, _ in rendered]
+    assert _IMPORT_ONCE_COPY in texts
+    assert _KEEP_SYNCED_COPY in texts
+    for text, cells, lines in rendered:
+        # Either the line fits, or it wraps onto as many lines as it needs.
+        # What it must never do is stop mid-sentence.
+        assert cells * lines >= len(text), (text, cells, lines)
+
+
+def test_the_pager_and_the_canvas_find_the_same_runs() -> None:
+    """Two run definitions would make every page count wrong (task-32250).
+
+    The pager budgets a page by rendered rows and a collapsed run renders as
+    one, so if the canvas drew a boundary the pager did not, a full page would
+    render short or overflow.
+    """
+    from itertools import groupby
+
+    from tldw_chatbook.Library.library_note_import_state import (
+        project_library_note_import_snapshot,
+        review_run_key,
+        show_review,
+        begin_checking,
+        add_selected_file,
+        initial_note_import_snapshot,
+        set_destination_segments,
+    )
+    from tldw_chatbook.Notes.note_import_plan_models import (
+        ImportAction,
+        ImportBounds,
+        ImportClassification,
+        ImportPreviewItem,
+        ImportSource,
+        ImportSourceKind,
+        NoteImportPlan,
+        ParsedNotePayload,
+        ProposedFolderMembership,
+    )
+    from tldw_chatbook.Widgets.Library import library_note_import_canvas as canvas
+
+    def _row(folder: str, index: int, classification: ImportClassification):
+        importable = classification is ImportClassification.NEW
+        return ImportPreviewItem(
+            item_id=f"{folder}-{index}",
+            source=ImportSource(
+                kind=ImportSourceKind.DIRECTORY_MEMBER,
+                display_path=f"vault/{folder}/{index:03d}.md",
+                source_path=Path(f"/private/vault/{folder}/{index:03d}.md"),
+            ),
+            payloads=(
+                (ParsedNotePayload(title=f"N{index}", content="Body"),)
+                if importable
+                else ()
+            ),
+            memberships=(
+                (
+                    ProposedFolderMembership(
+                        payload_index=0, folder_segments=("vault", folder)
+                    ),
+                )
+                if importable
+                else ()
+            ),
+            classification=classification,
+            reason="Ready." if importable else "Not a note.",
+            default_action=ImportAction.CREATE_NEW if importable else ImportAction.SKIP,
+            selected_action=(
+                ImportAction.CREATE_NEW if importable else ImportAction.SKIP
+            ),
+            allowed_actions=(
+                (ImportAction.SKIP, ImportAction.CREATE_NEW)
+                if importable
+                else (ImportAction.SKIP,)
+            ),
+            match=None,
+            replace_content=False,
+            add_membership=importable,
+        )
+
+    rows = [_row("Archive", index, ImportClassification.NEW) for index in range(1, 13)]
+    rows += [_row("Inbox", index, ImportClassification.NEW) for index in range(1, 4)]
+    rows += [
+        _row("Canvas", index, ImportClassification.UNSUPPORTED) for index in range(1, 3)
+    ]
+    plan = NoteImportPlan(
+        bounds=ImportBounds(
+            max_files=200,
+            max_file_bytes=1_000_000,
+            max_total_bytes=5_000_000,
+            max_depth=8,
+        ),
+        items=tuple(rows),
+        proposed_folder_paths=(("vault",),),
+    )
+    state = set_destination_segments(
+        add_selected_file(initial_note_import_snapshot(), Path("/private/vault/a.md")),
+        ("vault",),
+    )
+    state = show_review(begin_checking(state), plan)
+    projected = project_library_note_import_snapshot(state)
+
+    pager_runs = [len(tuple(run)) for _, run in groupby(state.page.items, key=review_run_key)]
+    canvas_runs = [len(run) for run in canvas._uniform_runs(projected.preview_items)]
+
+    assert pager_runs == canvas_runs == [12, 3, 2]

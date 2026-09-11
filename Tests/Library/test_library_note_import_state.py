@@ -319,7 +319,9 @@ def test_destination_input_retains_raw_text_and_exposes_inline_validation() -> N
 
 
 def test_review_page_is_bounded_and_clamps_after_plan_changes() -> None:
-    plan = _plan(*(_item(number) for number in range(1, 58)))
+    # Each source sits in its own folder, so each costs the page one rendered
+    # row (task-32250: the budget counts rows, not sources).
+    plan = _plan(*(_distinct_item(number) for number in range(1, 58)))
     state = _file_review(plan, page_size=10_000)
 
     assert state.page.page_size == MAX_IMPORT_REVIEW_PAGE_SIZE
@@ -332,6 +334,34 @@ def test_review_page_is_bounded_and_clamps_after_plan_changes() -> None:
     last = set_review_page(state, 999)
     assert last.page.page_number == 3
     assert len(last.page.items) == 7
+
+
+def test_a_run_of_interchangeable_sources_is_never_cut_by_a_page_break() -> None:
+    """task-32250 AC#2/AC#4: one folder showed as two runs with two counts.
+
+    45 Archive notes used to straddle three pages as "New (23)", "New (22)"
+    and "New (13)". They render as one summary row, and the pager budgets by
+    rendered rows, so they arrive whole.
+    """
+    plan = _plan(*(_item(number) for number in range(1, 46)))
+    state = _file_review(plan)
+
+    assert state.page.page_count == 1
+    assert len(state.page.items) == 45
+    assert dict(state.page.group_totals) == {"new": 45}
+
+
+def _distinct_item(number: int) -> ImportPreviewItem:
+    """One review row that shares no folder with any other."""
+    item = _item(number)
+    return replace(
+        item,
+        source=replace(
+            item.source,
+            kind=ImportSourceKind.DIRECTORY_MEMBER,
+            display_path=f"vault/folder-{number}/record.md",
+        ),
+    )
 
 
 def test_unresolved_collision_blocks_approval_until_an_explicit_resolution() -> None:

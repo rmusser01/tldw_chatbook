@@ -653,7 +653,9 @@ async def test_review_mutation_preserves_the_current_bounded_page(
             item_id=f"item-{number:06d}",
             source=replace(
                 base.items[0].source,
-                display_path=f"note-{number:02d}.md",
+                # A folder each: a run of interchangeable rows collapses to
+                # one summary row and would fit on one page (task-32250).
+                display_path=f"folder-{number:02d}/note.md",
             ),
         )
         for number in range(1, 27)
@@ -745,7 +747,11 @@ async def test_cancel_sets_the_executor_event_and_waits_for_partial_receipt(
 
 
 def _grouped_plan(source: Path) -> NoteImportPlan:
-    """One plan of 30 NEW items, so page 1 holds 25 of them and page 2 five."""
+    """One plan of 30 NEW items, so page 1 holds 25 of them and page 2 five.
+
+    A folder each: interchangeable rows in one folder collapse to a single
+    summary row and would then all fit on one page (task-32250).
+    """
     base = _plan(source)
     items = tuple(
         replace(
@@ -753,7 +759,7 @@ def _grouped_plan(source: Path) -> NoteImportPlan:
             item_id=f"item-{number:06d}",
             source=replace(
                 base.items[0].source,
-                display_path=f"note-{number:02d}.md",
+                display_path=f"folder-{number:02d}/note.md",
             ),
         )
         for number in range(1, 31)

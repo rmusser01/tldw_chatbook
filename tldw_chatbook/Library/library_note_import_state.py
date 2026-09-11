@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from itertools import groupby
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
@@ -22,6 +23,7 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     ImportAction,
     ImportMatchKind,
     ImportPreviewItem,
+    NON_IMPORTABLE_CLASSIFICATIONS,
     NoteImportPlan,
     REVIEW_CLASSIFICATION_ORDER,
     RootCollisionChoice,
@@ -33,6 +35,24 @@ from tldw_chatbook.Notes.note_import_planner import apply_item_override
 
 
 MAX_IMPORT_REVIEW_PAGE_SIZE = 25
+"""Rendered rows one review page may hold.
+
+task-32250: this used to count sources, so a page cut wherever the 25th
+source fell -- through the middle of a group, and through the middle of a run
+of interchangeable rows, which then appeared twice with two different counts.
+A page is filled by what it RENDERS instead, and a collapsed run renders as
+one row, so the whole of a 45-note Archive folder costs a page one line.
+"""
+
+MAX_IMPORT_REVIEW_PAGE_ITEMS = 200
+"""Hard ceiling on the sources one page may mount, whatever they render as."""
+
+UNIFORM_RUN_MIN = 8
+"""Interchangeable rows that collapse to one summary row with a disclosure.
+
+Shared with the canvas on purpose: the pager budgets by rendered rows, so a
+different threshold there would mis-count every page.
+"""
 
 MAX_RECEIPT_SKIPPED_ROWS = 50
 """Rows the receipt lists by name before it falls back to the count alone."""
@@ -288,16 +308,60 @@ def _review_order(plan: NoteImportPlan | None) -> tuple[ImportPreviewItem, ...]:
     )
 
 
+def review_run_key(item: ImportPreviewItem) -> tuple[str, ...]:
+    """Return what makes two review rows interchangeable at a glance.
+
+    The canvas collapses a run of these into one summary row, and the pager
+    budgets by rendered rows, so both have to agree on where a run starts and
+    ends -- hence one definition (task-32250).
+    """
+    folder, _, _ = item.source.display_path.rpartition("/")
+    non_importable = item.classification in NON_IMPORTABLE_CLASSIFICATIONS
+    return (
+        folder,
+        item.classification.value,
+        item.selected_action.value,
+        item.reason if non_importable else "",
+        _membership_summary(item),
+    )
+
+
+def _paginate(
+    ordered: tuple[ImportPreviewItem, ...], rows_per_page: int
+) -> tuple[tuple[ImportPreviewItem, ...], ...]:
+    """Fill pages by rendered rows, never cutting through a run."""
+    pages: list[tuple[ImportPreviewItem, ...]] = []
+    current: list[ImportPreviewItem] = []
+    rendered = 0
+    for _, grouped in groupby(ordered, key=review_run_key):
+        run = tuple(grouped)
+        for start in range(0, len(run), MAX_IMPORT_REVIEW_PAGE_ITEMS):
+            chunk = run[start : start + MAX_IMPORT_REVIEW_PAGE_ITEMS]
+            cost = 1 if len(chunk) >= UNIFORM_RUN_MIN else len(chunk)
+            overflows = rendered + cost > rows_per_page or (
+                len(current) + len(chunk) > MAX_IMPORT_REVIEW_PAGE_ITEMS
+            )
+            if current and overflows:
+                pages.append(tuple(current))
+                current = []
+                rendered = 0
+            current.extend(chunk)
+            rendered += cost
+    if current:
+        pages.append(tuple(current))
+    return tuple(pages) or ((),)
+
+
 def _page(
     plan: NoteImportPlan | None, page_number: int, page_size: int
 ) -> NoteImportPage:
     size = min(max(int(page_size), 1), MAX_IMPORT_REVIEW_PAGE_SIZE)
     ordered = _review_order(plan)
     total = len(ordered)
-    page_count = max(1, (total + size - 1) // size)
+    pages = _paginate(ordered, size)
+    page_count = len(pages)
     number = min(max(int(page_number), 1), page_count)
-    start = (number - 1) * size
-    items = ordered[start : start + size]
+    items = pages[number - 1]
     totals = Counter(item.classification.value for item in ordered)
     return NoteImportPage(
         items=items,
