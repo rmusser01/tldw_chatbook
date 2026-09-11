@@ -537,7 +537,10 @@ class LocalToolProvider:
             permission-store "allow" with definition_hash); None means the
             decision executes this turn but is not persisted.
         record_decision: (HubTool, decision) -> None audit hook for refusals
-            (MCP parity: "denied" / "denied-timeout" only -- MCP records
+            (MCP parity, task-32280 fix round: "denied" for a person's card
+            Deny, "denied-policy" for a configured Off, "denied-killswitch"
+            for the kill switch, "denied-unresolved" for a gate that raised,
+            and "denied-timeout" for a card that expired -- MCP records
             successful executions service-side via execute_hub_tool, which
             has no local analogue); None means no recording.
         todo_store: Optional stable-ID task store for this Console session.
@@ -989,6 +992,37 @@ class LocalToolProvider:
             stale=False,
             executable=True,
         )
+
+    def record_user_denial(self, name: str) -> None:
+        """Audit a card "Deny" the local review hook resolved BEFORE dispatch.
+
+        task-32280 fix round: mirrors ``MCPToolProvider.record_user_denial``.
+        ``run_agent_loop`` turns any non-"proceed" verdict from the review
+        hook straight into the call's result and skips the dispatch chain
+        entirely, so `invoke_detailed()` -- which records every refusal IT
+        reaches -- never runs for a hook-level denied call. So the denial
+        is recorded here, where it becomes final, through the same
+        ``record_decision`` seam and the same ``"denied"`` decision the
+        card-Deny branch inside ``invoke_detailed()`` writes for a stamped
+        deny (``local_tool_provider.py``'s ``APPROVAL_REFUSED`` branch).
+
+        No double-recording: the runtime never dispatches the call this
+        denial belongs to, so `invoke_detailed()` never runs for it. A
+        same-name SIBLING call the user approved is dispatched and
+        recorded on its own by `invoke_detailed()`.
+
+        Args:
+            name: The bare local tool name the card refused. A name this
+                provider does not own is silently ignored (defensive only
+                -- `build_local_review_hook`'s own `pending` list already
+                filters to names this provider owns via
+                `pending_gate_for`).
+        """
+        try:
+            hub = self.hub_tool_for(name)
+        except KeyError:
+            return
+        self._record_decision_safe(hub, "denied")
 
     def timeout_for(self, tool_id: str) -> float | None:
         """Per-call timeout override; every local tool but ``web_deep_search``

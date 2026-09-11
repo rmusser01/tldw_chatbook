@@ -413,6 +413,39 @@ def test_combined_hook_runs_remaining_hooks_after_a_raise(tmp_path):
     assert p2._stamps == {(RUN, "fs_list"): "deny"}  # fresh THIS-turn decision
 
 
+def test_hook_level_card_deny_lands_in_the_execution_log_exactly_once(tmp_path):
+    """task-32280 fix round (Critical review finding).
+
+    Mirrors `test_mcp_tool_provider.py::
+    test_hook_level_card_deny_lands_in_the_execution_log_exactly_once`: a
+    hook-level deny is turned straight into the call's result by
+    `run_agent_loop`, which skips dispatch entirely, so
+    `LocalToolProvider.invoke_detailed()` -- the only thing that otherwise
+    records a local refusal -- never runs for it. Drives the REAL provider
+    through the REAL `build_local_review_hook` so a fake cannot paper over
+    the gap; the split `denied`/`denied-policy`/`denied-unresolved` tokens
+    added to `invoke_detailed()` are dead code for this path otherwise.
+    """
+    recorded: list[tuple[str, str]] = []
+    p = LocalToolProvider(
+        workspace_root=tmp_path,
+        resolve_state=lambda hub: ASK,
+        record_decision=lambda hub, decision: recorded.append((hub.name, decision)),
+    )
+    hook = build_local_review_hook(p, lambda pending: {"fs_list": "deny"})
+
+    verdicts = hook(
+        [ToolCall(name="fs_list", args={"path": "."}, call_id="c-1")], RUN
+    )
+
+    assert verdicts.get("c-1", "proceed") != "proceed", (
+        f"precondition: the denied call must not be dispatched: {verdicts}"
+    )
+    assert recorded == [("fs_list", "denied")], (
+        "the user's Deny left no row in the execution log: " f"{recorded}"
+    )
+
+
 # -- _compose_local_provider -------------------------------------------------
 
 

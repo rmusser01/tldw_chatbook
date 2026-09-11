@@ -395,6 +395,27 @@ def test_record_tool_decision_writes_policy_denied_record(tmp_path):
     assert record["error_category"] == "denied"
 
 
+def test_record_tool_decision_writes_kill_switch_denied_record(tmp_path):
+    """task-32280 fix round (review Minor 2): a caller that relies on this
+    method's own error_category derivation (no explicit error_category=)
+    used to fall all the way through to the generic "blocked" category for
+    a kill-switch refusal -- losing the one fact that made the row worth
+    its own decision token in the first place."""
+    service, fake, client, store = _service(tmp_path)
+
+    service.record_tool_decision(
+        "local:docs", "search", decision="denied-killswitch", initiator="agent"
+    )
+
+    record = _log_records(store)[0]
+    assert record["decision"] == "denied-killswitch"
+    assert record["initiator"] == "agent"
+    assert record["ok"] is False
+    assert record["duration_ms"] == 0
+    assert record["status"] == "blocked"
+    assert record["error_category"] == "kill_switch"
+
+
 def test_record_tool_decision_defaults_initiator_to_agent(tmp_path):
     service, fake, client, store = _service(tmp_path)
 

@@ -5016,6 +5016,14 @@ class UnifiedMCPControlPlaneService:
                     else (
                         "approval_timeout"
                         if "timeout" in decision
+                        # task-32280 fix round (Minor 2): the kill switch had
+                        # no branch of its own here, so a call site that
+                        # relies on this derivation (rather than passing an
+                        # explicit error_category) fell all the way through
+                        # to the generic "blocked" -- losing the one fact
+                        # that made the row worth its own decision token.
+                        else "kill_switch"
+                        if decision == KILL_SWITCH_DENIED_DECISION
                         else "approval_cancelled"
                         # task-32280 fix round: the cancelled-mid-approval
                         # row moved to "denied-unresolved" (nobody answered

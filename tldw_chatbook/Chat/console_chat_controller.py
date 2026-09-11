@@ -2195,10 +2195,18 @@ def build_local_review_hook(
             decisions,
         )
 
+        # task-32280 fix round (Critical): mirrors the MCP hook's own
+        # record_user_denial call a few hundred lines up. `run_agent_loop`
+        # turns any non-"proceed" verdict straight into the call's result
+        # and skips dispatch entirely, so `LocalToolProvider.invoke_detailed`
+        # -- the only thing that otherwise records a local refusal -- never
+        # runs for a hook-level denied call. Record at the point the denial
+        # becomes final, through the provider's own audit seam.
         verdicts: dict[str, str] = {row.llm_name: "proceed" for row in pending}
         for row in pending:
             if _decision_for(row) != "deny":
                 continue
+            provider.record_user_denial(row.llm_name)
             key = str(getattr(row, "call_id", "") or "") or row.llm_name
             verdicts[key] = USER_DENIED_REFUSAL.format(name=row.llm_name)
         return verdicts
