@@ -804,3 +804,34 @@ def test_deliverable_source_types_mirror_the_capture_allowlist():
     )
 
     assert DELIVERABLE_EVIDENCE_SOURCE_TYPES == frozenset(_SOURCE_ALIASES)
+
+
+def test_server_owned_reference_is_labeled_listed_not_ready():
+    """Qodo 2614 #1: an "available" SERVER-owned reference of a deliverable
+    source kind never reaches the model either -- the capture path skips
+    non-local owners before the source-kind allowlist is even consulted,
+    so the tray must not call it Ready."""
+    bundle = EvidenceBundle(
+        bundle_id="bundle-remote",
+        query="q",
+        references=(
+            EvidenceReference(
+                evidence_id="S1",
+                source_id="media-9",
+                source_type="media",
+                title="Server media",
+                snippet="Body",
+                authority_label="server",
+                status="available",
+                source_owner="server",
+            ),
+        ),
+    )
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="Server media",
+        payload={"query": "q", "evidence_bundle": bundle.to_payload()},
+        status="staged",
+    )
+    state = ConsoleStagedContextState.from_live_work(launch)
+    assert state.source_rows[0].status == "listed"

@@ -786,3 +786,31 @@ def test_changed_files_overflow_tail_is_clickable():
     # The inert per-file rows stay inert.
     file_row = next(r for r in rows if r.row_id == "env-file-0")
     assert not file_row.clickable
+
+
+def test_status_glyph_lives_inside_the_expand_marker_budget():
+    """Qodo 2614 #12: the glyph prefix must not push a long label past the
+    row budget and let the terminal ellipsis swallow the expand chevron."""
+    from tldw_chatbook.Chat.console_environment_state import (
+        _with_status_glyph_and_expand_marker,
+        _with_expand_marker,
+        _with_status_glyph,
+        SINGLE_LINE_ROW_BUDGET,
+    )
+
+    long_branch = "feature/" + "very-long-branch-name-" * 6
+    composed = _with_status_glyph_and_expand_marker(
+        long_branch, "blocked", "branch-row", frozenset()
+    )
+    assert composed.startswith("⚠ ")
+    assert composed.endswith(" ▸"), "expand marker must survive the budget"
+
+    # The composed row never exceeds the plain marker row by more than the
+    # glyph prefix's own width.
+    plain = _with_expand_marker(long_branch, "branch-row", frozenset())
+    assert len(composed) <= len(plain) + 2  # "⚠ " prefix
+
+    # Negative control: the old composition (glyph applied after the
+    # marker) is the shape that could overflow.
+    legacy = _with_status_glyph(plain, "blocked")
+    assert len(legacy) > SINGLE_LINE_ROW_BUDGET

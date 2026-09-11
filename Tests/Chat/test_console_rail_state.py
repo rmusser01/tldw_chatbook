@@ -1210,3 +1210,67 @@ def test_explicit_right_toggle_writes_marker_and_kills_auto_open_distinguishabil
     assert console_rail_right_open_explicit(later) is True
     # ...and the right_open key itself survives (it was explicitly chosen).
     assert later["right_open"] is True
+
+
+# --- Qodo 2614 #2/#5: the explicit marker's write and persistence paths --------
+
+
+def test_stored_serializer_preserves_right_open_explicit():
+    """Qodo 2614 #5: the stored-preferences serializer (the config-file
+    persistence boundary) must retain the right_open_explicit marker the
+    updated-preferences serializer writes, or the explicit gesture is
+    dropped on save and auto-open resurrects a rail the user closed."""
+    from tldw_chatbook.Chat.console_rail_state import (
+        console_rail_right_open_explicit,
+        serialize_console_rail_stored_preferences,
+        serialize_console_rail_updated_preferences,
+        coerce_console_rail_preferences,
+    )
+
+    explicit = serialize_console_rail_updated_preferences(
+        coerce_console_rail_preferences(None),
+        None,
+        left_open=None,
+        right_open=False,
+        character_toggled=False,
+        explicit_right_toggle=True,
+    )
+    assert console_rail_right_open_explicit(explicit)
+    round_tripped = serialize_console_rail_stored_preferences(explicit)
+    assert console_rail_right_open_explicit(round_tripped), (
+        "persistence dropped the explicit right-rail marker"
+    )
+
+
+def test_reveal_derived_right_close_does_not_mark_explicit():
+    """Qodo 2614 #2: the Context reveal path derives right_open=False only
+    to resolve the compact-width conflict; persisting that derivation must
+    NOT record an explicit Inspector gesture (which would permanently kill
+    the 118-128 auto-open band for a user who only opened Context)."""
+    from tldw_chatbook.Chat.console_rail_state import (
+        coerce_console_rail_preferences,
+        console_rail_right_open_explicit,
+        serialize_console_rail_updated_preferences,
+    )
+
+    derived = serialize_console_rail_updated_preferences(
+        coerce_console_rail_preferences(None),
+        None,
+        left_open=True,
+        right_open=False,
+        character_toggled=False,
+        explicit_right_toggle=False,
+    )
+    assert derived["right_open"] is False  # the conflict IS resolved...
+    assert not console_rail_right_open_explicit(derived)  # ...but not explicit
+
+    # A direct Inspector toggle still marks.
+    direct = serialize_console_rail_updated_preferences(
+        coerce_console_rail_preferences(None),
+        None,
+        left_open=None,
+        right_open=False,
+        character_toggled=False,
+        explicit_right_toggle=True,
+    )
+    assert console_rail_right_open_explicit(direct)

@@ -40,16 +40,23 @@ DELIVERABLE_EVIDENCE_SOURCE_TYPES = frozenset(
 
 
 def reference_can_deliver(reference: "EvidenceReference") -> bool:
-    """Return whether a reference's source_type survives send-side capture.
+    """Return whether a reference can reach the model on send (TASK-32330).
+
+    Mirrors BOTH gates the send-side capture path applies, in the same
+    order: the local-owner check first (``RAG_Search.local_citation_
+    capture.normalize_console_evidence_references`` skips non-local
+    owners before anything else), then the source-kind allowlist.
 
     Args:
         reference: Staged evidence reference.
 
     Returns:
-        True when the source type is in the normalizer's allowlist (the
-        reference's content can reach the model); False when it is a
-        listed-only handoff kind (TASK-32330).
+        True when the reference's content can reach the model; False when
+        it is listed-only (a non-local owner, or a handoff source kind
+        the normalizer rejects -- skills-context, wc-context, ...).
     """
+    if str(reference.source_owner).strip().lower() != "local":
+        return False
     return (
         str(reference.source_type or "").strip().lower()
         in DELIVERABLE_EVIDENCE_SOURCE_TYPES

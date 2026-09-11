@@ -807,6 +807,8 @@ CONSOLE_COST_TTL_TICK_SECONDS = 10.0
 # scan). Network work -- the `gh` PR/checks fetch -- is a separate tier with
 # its own 60s TTL and never rides this tick; see
 # `UI/Console_Modules/environment.py`.
+#: TASK-32327: how long the responsive rail-collapse notice stays up.
+CONSOLE_RAIL_COLLAPSE_NOTICE_TIMEOUT_SECONDS = 6
 CONSOLE_ENVIRONMENT_POLL_SECONDS = 10.0
 # DOM ids of the Inspect-rail `ConsoleInspectorSection`s whose rows are
 # focus-restorable (`UI/Console_Modules/right_rail.py`), keyed by the
@@ -2620,6 +2622,8 @@ class ChatScreen(BaseAppScreen):
         self._set_console_rail_preference(
             left_open=preference_changes["left_open"],
             right_open=preference_changes.get("right_open"),
+            # Derived conflict resolution, not an Inspector gesture.
+            explicit_right_toggle=False,
         )
 
     @on(Button.Pressed, "#console-inspector-rail-collapse")
@@ -2681,18 +2685,46 @@ class ChatScreen(BaseAppScreen):
     def action_toggle_console_context_rail(self) -> None:
         """Toggle the Context rail; mirror alt+i's contract (TASK-32320).
 
-        Not gated on the rail being displayed (a collapsed rail at narrow
-        widths is exactly when the way back matters); opening moves focus
-        into the rail on a content control (TASK-32321's map already
-        provides one), closing returns focus to the composer.
+        Qodo 2614 #3/#4 fixes, and why direction is VISIBILITY-derived:
+
+        * (#3) Opening routes through ``console_context_reveal_preferences``
+          like the handle and control-bar routes do, so a compact-band
+          Inspector conflict is actually resolved instead of silently
+          winning against the rail the user just asked for.
+        * (#4) Direction comes from EFFECTIVE visibility, not raw widget
+          display nor the stored preference alone. Preference-derived
+          direction silently breaks the conflict case (a priority-collapsed
+          rail with an open preference would record a CLOSE on a press
+          that meant "show me"); display-derived direction could not
+          record anything while force-hidden. The visibility contract:
+          Alt+C SHOWS the rail (reveal path -- write-through records the
+          explicit marker per TASK-2154.2 even when the value is already
+          True, and conflicts are resolved); Alt+C HIDES it when shown
+          (preference False). While force-hidden below the width budget
+          the press is the way BACK (TASK-24604's alt+i contract), and
+          the preference flips when the rail is visible.
         """
         if self._focus_console_setup_modal_if_blocking():
             return
-        opening = not self._is_console_widget_displayed("console-left-rail")
-        self._set_console_rail_preference(left_open=opening)
+        available_columns = self._console_rail_available_columns()
+        rail_state = self._current_console_rail_state(
+            available_columns=available_columns
+        )
+        opening = not rail_state.left_open
         if not opening:
+            self._set_console_rail_preference(left_open=False)
             self._focus_console_workbench_target("console-native-composer")
             return
+        preference_changes = console_context_reveal_preferences(
+            rail_state, available_columns
+        )
+        # The right_open change (when present) is a DERIVED conflict
+        # resolution, not an Inspector gesture -- see the serializer.
+        self._set_console_rail_preference(
+            left_open=preference_changes["left_open"],
+            right_open=preference_changes.get("right_open"),
+            explicit_right_toggle=False,
+        )
         # The rail is already composed (it defaults open and only display
         # flips), so focus can land immediately; still deferred one refresh
         # so a just-reopened rail has mounted its targets.
@@ -4752,6 +4784,8 @@ class ChatScreen(BaseAppScreen):
             self._set_console_rail_preference(
                 left_open=preference_changes["left_open"],
                 right_open=preference_changes.get("right_open"),
+                    # Derived conflict resolution, not an Inspector gesture.
+                    explicit_right_toggle=False,
             )
         elif action_id == "run-library-rag":
             self._open_console_library_search()
@@ -13586,6 +13620,7 @@ class ChatScreen(BaseAppScreen):
         right_open: bool | None = None,
         section_updates: Mapping[str, bool] | None = None,
         notify_on_failure: bool = True,
+        explicit_right_toggle: bool = True,
     ) -> ConsoleRailState:
         """Persist requested Console rail preference changes and return new state."""
         if left_open is not None or right_open is not None or "character" in (section_updates or {}):
@@ -13648,6 +13683,7 @@ class ChatScreen(BaseAppScreen):
                 left_open=left_open,
                 right_open=right_open,
                 character_toggled=character_toggled,
+                explicit_right_toggle=explicit_right_toggle,
             )
             rail_state_config[preference_key.value] = serialized
             self._save_console_rail_preferences(
@@ -21940,7 +21976,11 @@ class ChatScreen(BaseAppScreen):
             )
         for message, severity in notices:
             try:
-                self.app_instance.notify(message, severity=severity, timeout=6)
+                self.app_instance.notify(
+                    message,
+                    severity=severity,
+                    timeout=CONSOLE_RAIL_COLLAPSE_NOTICE_TIMEOUT_SECONDS,
+                )
             except Exception:  # noqa: BLE001 -- a notice must never break layout
                 logger.debug("console rail collapse notice failed", exc_info=True)
 

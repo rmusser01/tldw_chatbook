@@ -393,3 +393,91 @@ async def test_alt_c_toggles_the_context_rail_from_any_focus():
         assert focused is not None
         assert left_rail in focused.ancestors_with_self
         assert focused.id != "console-context-rail-collapse"
+
+
+# --- Qodo 2614 #3/#4: the Context toggle's state derivation -------------------
+
+
+@pytest.mark.asyncio
+async def test_alt_c_below_the_width_budget_is_the_way_back_not_a_flip():
+    """Qodo 2614 #4: below the responsive width budget the rail is hidden
+    regardless of preference. The toggle must not silently record a CLOSE
+    for a press that means "show me" -- the press is the way back
+    (alt+i's TASK-24604 contract), and the preference flips when visible."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = KeyboardHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await pilot.pause(0.2)
+
+        left_rail = console.query_one("#console-left-rail")
+
+        # Hide when visible: preference flips to closed.
+        await pilot.press("alt+c")
+        await pilot.pause()
+        await pilot.pause()
+        assert left_rail.display is False
+        state = console._current_console_rail_state()
+        assert state.preferred_left_open is False
+
+        # Widen, reopen, then force-hide: pressing Alt+C while hidden must
+        # keep the OPEN preference (the way back), not record a close.
+        await pilot.press("alt+c")
+        await pilot.pause()
+        await pilot.pause()
+        assert left_rail.display is True
+        # 90 columns would NOT force-hide: the explicit toggle above wrote
+        # ADR-043's marker, granting compact-override authority >=70 cols.
+        # Below the single-pane threshold (84) the rail force-collapses
+        # regardless of marker or preference.
+        await pilot.resize_terminal(60, 48)
+        await pilot.pause(0.3)
+        assert left_rail.display is False  # single-pane force-collapse
+
+        await pilot.press("alt+c")
+        await pilot.pause()
+        state = console._current_console_rail_state()
+        assert state.preferred_left_open is True, (
+            "Alt+C while force-hidden must not silently record a close"
+        )
+
+
+@pytest.mark.asyncio
+async def test_alt_c_opening_resolves_the_compact_inspector_conflict():
+    """Qodo 2614 #3: opening Context in the 100-150 band must route through
+    the conflict-aware reveal (closing the conflicting Inspector) instead
+    of letting Inspector priority silently re-collapse Context."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = KeyboardHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await pilot.pause(0.2)
+
+        right_rail = console.query_one("#console-right-rail")
+        await pilot.press("alt+i")  # explicit Inspector open
+        await pilot.pause()
+        await pilot.pause()
+        assert right_rail.display is True
+
+        # Enter the conflict band with both preferences open.
+        await pilot.resize_terminal(120, 48)
+        await pilot.pause(0.3)
+        # Inspector priority may have already collapsed Context's display.
+        left_rail = console.query_one("#console-left-rail")
+        assert left_rail.display is False
+
+        # Alt+C must actually reveal Context (closing Inspector), not lose.
+        await pilot.press("alt+c")
+        await pilot.pause()
+        await pilot.pause()
+        assert left_rail.display is True, (
+            "Alt+C opened Context but Inspector priority kept it hidden"
+        )
+        assert right_rail.display is False
+        # (The reveal's derived Inspector closure not marking an explicit
+        # gesture is pinned at the serializer seam in
+        # test_reveal_derived_right_close_does_not_mark_explicit.)

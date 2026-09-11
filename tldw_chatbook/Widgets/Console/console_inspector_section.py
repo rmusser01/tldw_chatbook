@@ -44,14 +44,13 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 from rich.cells import cell_len
+from rich.markup import escape
 from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches, QueryError
 from textual.message import Message
-from rich.markup import escape
-
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Widgets.destination_rail import GLYPH_COLLAPSED, GLYPH_EXPANDED

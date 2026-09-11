@@ -497,6 +497,12 @@ def serialize_console_rail_stored_preferences(raw: Any) -> dict[str, bool]:
         serialized.pop("character_open")
     if console_rail_left_open_explicit(raw):
         serialized[CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY] = True
+    # Qodo 2614 #5: this is the config-file persistence boundary -- a
+    # marker that survives the updated-preferences serializer but not this
+    # one is dropped on save, and the auto-open check reads the stored
+    # payload back.
+    if console_rail_right_open_explicit(raw):
+        serialized[CONSOLE_RAIL_RIGHT_OPEN_EXPLICIT_KEY] = True
     if console_character_disclosure_explicit(raw):
         serialized[CONSOLE_CHARACTER_DISCLOSURE_EXPLICIT_KEY] = True
     return serialized
@@ -509,12 +515,20 @@ def serialize_console_rail_updated_preferences(
     left_open: bool | None,
     right_open: bool | None,
     character_toggled: bool,
+    explicit_right_toggle: bool = True,
 ) -> dict[str, bool]:
     """Serialize a manual change while preserving untouched disclosure intent."""
     serialized = serialize_console_rail_preferences(preferences)
     if left_open is not None or console_rail_left_open_explicit(prior_stored):
         serialized[CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY] = True
-    if right_open is not None or console_rail_right_open_explicit(prior_stored):
+    # Qodo 2614 #2: the Context reveal path derives right_open=False to
+    # resolve the compact-width conflict -- that is not a user gesture
+    # toward the Inspector, so it must not record one (which would kill
+    # the 118-128 auto-open band). Only a DIRECT right-rail toggle (or a
+    # previously recorded marker) writes the marker.
+    if (right_open is not None and explicit_right_toggle) or (
+        console_rail_right_open_explicit(prior_stored)
+    ):
         serialized[CONSOLE_RAIL_RIGHT_OPEN_EXPLICIT_KEY] = True
     if character_toggled or console_character_disclosure_explicit(prior_stored):
         serialized[CONSOLE_CHARACTER_DISCLOSURE_EXPLICIT_KEY] = True

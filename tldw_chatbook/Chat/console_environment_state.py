@@ -388,6 +388,34 @@ def _with_status_glyph(text: str, status: str) -> str:
     return f"{glyph} {text}" if glyph else text
 
 
+def _with_status_glyph_and_expand_marker(
+    label: str,
+    status: str,
+    row_id: str,
+    expanded: frozenset[str],
+    *,
+    budget: int = SINGLE_LINE_ROW_BUDGET,
+) -> str:
+    """Compose the status glyph and the expand marker within ONE budget.
+
+    Qodo 2614 #12: applying ``_with_status_glyph`` AFTER
+    ``_with_expand_marker`` let the glyph ride outside the marker's
+    ellipsize budget, so a long status-bearing label could push the row
+    past the rail width and the terminal's own ellipsis swallowed the
+    trailing expand chevron. The glyph is now applied first and the marker
+    helper receives the budget MINUS the glyph's cells, so the marker
+    stays inside the row either way.
+    """
+    glyph = status_glyph(status)
+    if not glyph:
+        return _with_expand_marker(label, row_id, expanded, budget=budget)
+    prefix = f"{glyph} "
+    marked = _with_expand_marker(
+        label, row_id, expanded, budget=budget - cell_len(prefix)
+    )
+    return prefix + marked
+
+
 # TASK-31664: trailing-marker convention. Enter on a rail row used to have
 # FIVE outcome classes that read identically -- expand-in-place, navigate
 # to another surface (in-app or the OS browser), insert text into the
@@ -653,8 +681,8 @@ def project_environment_section(
 
     rows.append(InspectorSectionRow(
         row_id=ENV_ROW_CHANGES,
-        primary_text=_with_status_glyph(
-            _with_expand_marker("Changes", ENV_ROW_CHANGES, expanded), status
+        primary_text=_with_status_glyph_and_expand_marker(
+            "Changes", status, ENV_ROW_CHANGES, expanded
         ),
         secondary_text=_with_stale_marker(
             signed_change_counts(git.adds, git.dels), git.stale
@@ -706,9 +734,8 @@ def project_environment_section(
 
     rows.append(InspectorSectionRow(
         row_id=ENV_ROW_BRANCH,
-        primary_text=_with_status_glyph(
-            _with_expand_marker(_branch_primary(git), ENV_ROW_BRANCH, expanded),
-            status,
+        primary_text=_with_status_glyph_and_expand_marker(
+            _branch_primary(git), status, ENV_ROW_BRANCH, expanded
         ),
         secondary_text=_with_stale_marker(_branch_secondary(git), git.stale),
         status=status, clickable=True,
@@ -801,9 +828,8 @@ def project_environment_section(
                 checks_status = "done"
             rows.append(InspectorSectionRow(
                 row_id=ENV_ROW_CHECKS,
-                primary_text=_with_status_glyph(
-                    _with_expand_marker(checks_primary, ENV_ROW_CHECKS, expanded),
-                    checks_status,
+                primary_text=_with_status_glyph_and_expand_marker(
+                    checks_primary, checks_status, ENV_ROW_CHECKS, expanded
                 ),
                 secondary_text=(
                     f"{pr.passing_count} passed · {pending} pending" if failing else ""
@@ -919,11 +945,11 @@ def project_tasks_section(
         ac = f"{bt.ac_done}/{bt.ac_total} ACs · " if bt.ac_total else ""
         rows.append(InspectorSectionRow(
             row_id=TASKS_ROW_HEAD,
-            primary_text=_with_status_glyph(
-                _with_expand_marker(
-                    f"task-{bt.task_id} · {bt.status}", TASKS_ROW_HEAD, expanded
-                ),
+            primary_text=_with_status_glyph_and_expand_marker(
+                f"task-{bt.task_id} · {bt.status}",
                 _STATUS_ROW_CLASS.get(bt.status, ""),
+                TASKS_ROW_HEAD,
+                expanded,
             ),
             secondary_text=f"{ac}{bt.title}",
             status=_STATUS_ROW_CLASS.get(bt.status, ""),

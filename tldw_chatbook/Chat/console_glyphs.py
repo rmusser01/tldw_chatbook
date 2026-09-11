@@ -75,5 +75,10 @@ def status_glyph(status: str) -> str:
 
     Args:
         status: Row status class ("" means no status -> no glyph).
+
+    Returns:
+        The shared glyph for a known status, else "" (no glyph) -- callers
+        prefix only when a glyph exists, so unknown and empty statuses
+        render unmarked.
     """
     return STATUS_GLYPHS.get(str(status or ""), "")
