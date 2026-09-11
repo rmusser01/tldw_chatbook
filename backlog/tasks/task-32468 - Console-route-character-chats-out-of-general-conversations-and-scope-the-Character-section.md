@@ -1,0 +1,151 @@
+---
+id: TASK-32468
+title: >-
+  Console: route character chats out of general conversations and scope the
+  Character section
+status: Done
+assignee:
+  - '@robert'
+created_date: '2026-09-11 14:58'
+updated_date: '2026-09-11 15:08'
+labels: []
+dependencies: []
+priority: high
+---
+
+## Renumbering provenance
+
+Renumbered twice: originally TASK-32312, then TASK-32458. Both ids collided
+with tasks arriving on dev while this branch was in review (`task-32312 -
+Console-edit-displayable-thinking-block-text-in-place.md`, then `task-32458 -
+Renumber-nav-tabs-Artifacts-...`); per the 2026-08-21 owner rule (TASK-19601)
+the older arrival keeps the id each time.
+
+
+Renumbered from TASK-32312 on 2026-09-11. The id collided with `task-32312 -
+Console-edit-displayable-thinking-block-text-in-place.md`, which arrived on dev
+while this task's branch was in review; per the 2026-08-21 owner rule
+(TASK-19601) the older arrival keeps the id and this younger task renumbers.
+No dependencies or doc/code references pointed at the old id beyond this file
+and its own commit message.
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Character conversations currently appear in the Conversations section's flat list mixed with regular chats, and the Character section counts every local character conversation regardless of workspace scope. Apply the one-owner routing rule end to end: character conversations leave the flat lane (they belong to the Character section, or their workspace Tree node when workspace-scoped), and the Character section's browse/page/search/unavailable queries exclude workspace-scoped character conversations.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [x] Global/Default character conversations no longer render in the Conversations flat list (persisted and live native rows)
+- [x] Workspace-scoped character conversations appear only in their workspace Tree node (never under their character)
+- [x] Character section recent groups, per-character paging, keyword search, and unavailable queries exclude workspace-scoped character conversations
+- [x] Character row identity (character_id/character_label) survives normalization and the markers overlay
+- [x] Targeted tests cover the routing rules; docs updated
+<!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no\nADR path: N/A\nReason: routing policy over existing data and queries; no schema, storage, or interface-boundary change.\n\n1. TDD: state-builder tests — character rows (global or Default scope) leave the flat Chats lane; identity survives normalization and overlay.\n2. TDD: controller tests — persisted global rows carry character_id/character_label from the cards DB; live native character sessions carry identity through local_character_id().\n3. TDD: repository tests — recent groups, per-character paging exclude workspace-scoped character conversations (workspace wins).\n4. Implement the shared _CHARACTER_SCOPE_SQL predicate across the Character section's read queries (browse, page, keyword, unavailable); leave repair/indexing paths unfiltered.\n5. Update Docs/User_Guide/console/sessions-tabs-workspaces.md.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Summary.** Character conversations now follow the rail's one-owner rule
+end to end: they no longer appear in the Conversations section's flat list,
+and the Character section's groups, paging, keyword search, and unavailable
+pages count and list only global/Default-scope character conversations
+(workspace-scoped character chats stay in their workspace's Tree node).
+
+**Approach.**
+
+- `Workspaces/conversation_browser_state.py`: `ConsoleConversationBrowser
+  InputRow`/`Row` gained `character_id`/`character_label`; `_belongs_to_chats`
+  (the flat lane's predicate) excludes rows with a character id. Identity is
+  threaded through `_normalize_input_row`, `_to_browser_row`, and the markers
+  overlay, so excluded rows stay self-describing for their owning lanes.
+- `UI/Console_Modules/workspace.py`: the persisted global/Default fetch reads
+  `character_id` from the normalized conversation payload (already present —
+  no service or DB API change) and labels it from a new
+  `_console_browser_character_labels()` helper over
+  `chachanotes_db.list_character_cards` (deleted cards degrade to an empty
+  label). `_native_console_browser_rows` carries the live session's
+  `local_character_id()`/`character_name`.
+- `DB/character_conversation_search.py`: one shared `_CHARACTER_SCOPE_SQL`
+  predicate (global/NULL scope, or workspace scope bound to Default/NULL)
+  applied to the Character section's eight read queries — recent-group
+  summaries and rows, per-character count and keyset page, keyword-search
+  count and candidates, and the unavailable total/sources. Repair and
+  keyword-index maintenance paths stay unfiltered: they maintain data health,
+  not lane ownership, and a workspace-scoped chat with a missing card still
+  needs repair visibility.
+
+**Tests (TDD; each watched failing first).** State-builder: flat lane
+excludes global and Default-scoped character rows; identity survives
+normalization and the overlay. Controller: persisted rows route character
+identity with cards-DB labels and degraded fallback; the built flat state
+shows no character rows end-to-end; native character sessions carry
+identity. Repository: recent groups and per-character paging exclude
+workspace-scoped conversations. Runs: 23 state tests, 84 navigation/state
+tests, 57 repository tests (incl. 2 new), 61 Character-context UI tests
+pass. `test_console_workspace_controller.py` shows 2 pre-existing failures
+on clean dev (constructor-docstring gap for `notify_character_navigation`;
+one cancellation rollback case) — verified identical with this branch's
+changes stashed.
+
+**Docs.** `Docs/User_Guide/console/sessions-tabs-workspaces.md`: the
+Conversations section now states character conversations never appear there,
+and the Character section states the workspace-wins exclusion.
+
+**Modified files.** `tldw_chatbook/Workspaces/conversation_browser_state.py`,
+`tldw_chatbook/UI/Console_Modules/workspace.py`,
+`tldw_chatbook/DB/character_conversation_search.py`,
+`Tests/Workspaces/test_console_conversation_browser_state.py`,
+`Tests/UI/test_console_workspace_controller.py`,
+`Tests/DB/test_character_conversation_search_projection.py`, and the doc
+above.
+
+
+**Review round (Qodo, PR #2609).** All seven findings addressed:
+
+1. *(High)* Character chats crowding out flat-lane pagination: the flat
+   fetch now excludes character conversations AT THE SERVICE QUERY --
+   `ChatConversationService.list_conversations` gained a `character_scope`
+   parameter (forwarded to the storage filter, applied before counts and
+   pagination) and `_persisted_console_browser_rows` passes
+   `character_scope="generic"`. Totals and page slots count only generic
+   rows. Service-level test added.
+2. Keyword/unavailable coverage: repository tests now pin workspace-scoped
+   exclusion on the keyword-search path (with a built index) and the
+   unavailable-page path, not just recent groups and paging.
+3./4. My two repository tests moved to real in-memory SQLite databases and
+   Google-style docstrings.
+5./7. Label resolution no longer lists 500 cards: it resolves ONLY the
+   distinct character ids present on candidate rows via per-id card
+   lookups (`get_character_card_by_id`, non-deleted cards only) and skips
+   the database entirely when no candidate row carries a character id.
+6. `_fetch_workspace_rows` (workspace Tree paging) populates
+   `character_id`/`character_label` with the same normalization and shared
+   label resolver; test proves both fields survive workspace paging,
+   including the deleted-card degradation.
+
+Verification after the round: 397 passed across the six affected suites
+(state, subagents, navigation, payloads, conversation service, workspace
+controller, Character context, repository) with zero failures; ruff clean
+for all new code.
+
+**Persistent-diagnostic pin (CI, Derived Artifacts guard).** The review round's
+label resolver added one DEBUG diagnostic in
+`tldw_chatbook/UI/Console_Modules/workspace.py` ("Unable to read character
+card {} for Console browser"). Reviewed per the guard's procedure: it
+interpolates only the parsed integer character id -- no user content,
+secrets, paths, or URLs reach a persistent sink. Inventory pin updated via
+`check_persistent_diagnostic_inventory.py --write` and committed with this
+note.
+
+**ADR check.** Not required — routing policy over existing data and queries;
+no schema, storage, or interface-boundary change.
+
+**Lessons.** None generalizable beyond this task surfaced.
+<!-- SECTION:NOTES:END -->

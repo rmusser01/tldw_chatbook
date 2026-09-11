@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Quantity × Unit Price Calculator</title>
+<style>
+body { margin: 0; padding: 16px; font-family: sans-serif; color: #182536; background-color: #ffffff; }
+main { max-width: 480px; margin: 0 auto; }
+h1 { font-size: 24px; }
+p { line-height: 1.5; }
+label { display: block; margin: 20px 0 8px; }
+input { box-sizing: border-box; width: 100%; padding: 10px; font-size: 18px; border-width: 1px; border-style: solid; border-color: #536579; border-radius: 4px; }
+input:focus { outline: 3px solid #245d91; outline-offset: 2px; }
+.result { margin-top: 24px; padding: 16px; border-width: 1px; border-style: solid; border-color: #536579; border-radius: 4px; background-color: #f2f6fa; }
+.result output { font-size: 26px; font-weight: bold; }
+</style>
+</head>
+<body>
+<main>
+<h1>Quantity × Unit Price</h1>
+<p>Enter a quantity and a unit price to see the total. Quantity must be a whole number from 0 to 1,000,000; unit price from 0 to 1,000,000.</p>
+<label for="quantity">Quantity (whole units)</label>
+<input id="quantity" type="number" min="0" max="1000000" step="1" value="2">
+<label for="unit-price">Unit price</label>
+<input id="unit-price" type="number" min="0" max="1000000" step="0.01" value="12.50">
+<div class="result">
+<p>Total: <output id="total" for="quantity unit-price" aria-live="polite">25.00</output></p>
+</div>
+</main>
+<script>
+const quantity = document.getElementById("quantity");
+const unitPrice = document.getElementById("unit-price");
+const total = document.getElementById("total");
+function updateTotal() {
+  const count = Number(quantity.value);
+  const price = Number(unitPrice.value);
+  if (quantity.value.trim() === "" || unitPrice.value.trim() === "" ||
+      !Number.isFinite(count) || !Number.isFinite(price) ||
+      !Number.isInteger(count) || count < 0 || count > 1000000 ||
+      price < 0 || price > 1000000) {
+    total.textContent = "Enter values within the stated limits.";
+    return;
+  }
+  total.textContent = (count * price).toFixed(2);
+}
+quantity.addEventListener("input", updateTotal);
+quantity.addEventListener("change", updateTotal);
+unitPrice.addEventListener("input", updateTotal);
+unitPrice.addEventListener("change", updateTotal);
+updateTotal();
+</script>
+</body>
+</html>

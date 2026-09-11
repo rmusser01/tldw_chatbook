@@ -114,11 +114,11 @@ def failure_status_text(summary: str, exc: BaseException, *, next_step: str) -> 
         next_step: The suggested user action, as a full sentence.
 
     Returns:
-        ``"<summary> (<ExcType>). <next_step> Details are in Logs (F8)."``
+        ``"<summary> (<ExcType>). <next_step> Details are in Logs (F3)."``
     """
     kind = type(exc).__name__
     return redact_secret_text(
-        f"{summary} ({kind}). {next_step} Details are in Logs (F8)."
+        f"{summary} ({kind}). {next_step} Details are in Logs (F3)."
     )
 
 

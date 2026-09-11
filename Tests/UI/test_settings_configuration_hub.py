@@ -1321,7 +1321,7 @@ def _painted_settings_widget(screen, widget) -> str:
 async def test_settings_schedules_gate_is_painted_and_persists_recovery_action(
     monkeypatch, tmp_path, size
 ):
-    """F9 Settings owns the global gate at normal and compact sizes."""
+    """F4 Settings owns the global gate at normal and compact sizes."""
     config_path = tmp_path / "config.toml"
     config_path.write_text(
         "[scheduling]\nbriefing_schedules_enabled = false\n",

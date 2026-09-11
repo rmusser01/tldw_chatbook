@@ -21,6 +21,10 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAutoRetrieve,
     ConsoleLibraryPolicySnapshot,
 )
+from tldw_chatbook.Chat.citation_evidence_models import (
+    EvidenceBundle,
+    EvidenceReference,
+)
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 
 
@@ -253,6 +257,29 @@ def test_console_inspector_state_combines_readiness_artifact_and_recovery_rows()
     assert rows_by_label["Retrieval"].status == "blocked"
     assert "RAG/source" not in rows_by_label
     assert rows_by_label["Approvals"].status == "ready"
+
+
+def test_console_inspector_state_live_work_shows_waiting_for_approval():
+    """task-32345: a pending approval outranks the run/live-work title.
+
+    Unlike ``run_active``'s "Generating…", which is a fact about the model
+    (a generation is in flight), a pending approval is a fact about the
+    USER (a card is waiting on them) -- and it is the more current one.
+    """
+    state = ConsoleInspectorState.from_values(
+        live_work_title="Daily papers", run_active=True, approval_count=1
+    )
+
+    rows_by_label = {row.label: row for row in state.rows}
+    assert rows_by_label["Live work"].value == "Waiting for your approval"
+    assert "Generating" not in rows_by_label["Live work"].value
+
+    # The ordinary run_active case (no pending approval) is unchanged.
+    running = ConsoleInspectorState.from_values(
+        live_work_title="Daily papers", run_active=True, approval_count=0
+    )
+    assert running.rows[1].label == "Live work"
+    assert running.rows[1].value == "Generating…"
 
 
 def test_console_inspector_state_omits_mcp_row_by_default():
@@ -699,3 +726,112 @@ def test_next_send_estimate_skips_schemas_that_cannot_serialize():
     without = estimate_console_next_send_tokens(payload_messages=_FIRST_SEND_MESSAGES)
 
     assert total == without
+
+
+# --- TASK-32330: staged rows that cannot deliver must not say "Ready" --------
+
+
+def test_non_deliverable_handoff_reference_is_labeled_listed_not_ready():
+    """TASK-32330 (task-2375 residual): a skills/watchlists handoff stages
+    an "available" reference whose source_type the send-side normalizer
+    REJECTS (not in _SOURCE_ALIASES), so the model receives nothing --
+    while the tray rendered "Ready". Such references now carry an honest
+    "listed" status with copy that says what will actually happen.
+    """
+    bundle = EvidenceBundle(
+        bundle_id="handoff-evidence",
+        query="Use the skill",
+        references=(
+            EvidenceReference(
+                evidence_id="S1",
+                source_id="local:skill:summarize-notes",
+                source_type="skills-context",
+                title="Local Agent Skill: summarize-notes",
+                snippet="Local Agent Skill summarize-notes staged.",
+                authority_label="local",
+                content_ref="local:skill:summarize-notes",
+            ),
+        ),
+    )
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="skills",
+        title="Local Agent Skill: summarize-notes",
+        payload={"query": "Use the skill", "evidence_bundle": bundle.to_payload()},
+        status="staged",
+    )
+    state = ConsoleStagedContextState.from_live_work(launch)
+    assert state.source_rows, "handoff bundle reference must render a primary row"
+    row = state.source_rows[0]
+    assert row.status == "listed"
+    assert row.status.title() == "Listed"
+
+
+def test_deliverable_library_reference_stays_ready():
+    """A notes/media/conversation reference (in the normalizer allowlist)
+    keeps its honest Ready status."""
+    bundle = EvidenceBundle(
+        bundle_id="bundle-notes",
+        query="q",
+        references=(
+            EvidenceReference(
+                evidence_id="S1",
+                source_id="note-1",
+                source_type="notes",
+                title="Note",
+                snippet="Body",
+                authority_label="local",
+                status="available",
+            ),
+        ),
+    )
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="Note",
+        payload={"query": "q", "evidence_bundle": bundle.to_payload()},
+        status="staged",
+    )
+    state = ConsoleStagedContextState.from_live_work(launch)
+    assert state.source_rows[0].status == "ready"
+
+
+def test_deliverable_source_types_mirror_the_capture_allowlist():
+    """TASK-32330: the deliverable predicate must stay in sync with the
+    send-side normalizer's allowlist, or a future source kind would
+    silently regress to the "Ready but delivers nothing" lie."""
+    from tldw_chatbook.RAG_Search.local_citation_capture import _SOURCE_ALIASES
+    from tldw_chatbook.Chat.citation_evidence_models import (
+        DELIVERABLE_EVIDENCE_SOURCE_TYPES,
+    )
+
+    assert DELIVERABLE_EVIDENCE_SOURCE_TYPES == frozenset(_SOURCE_ALIASES)
+
+
+def test_server_owned_reference_is_labeled_listed_not_ready():
+    """Qodo 2614 #1: an "available" SERVER-owned reference of a deliverable
+    source kind never reaches the model either -- the capture path skips
+    non-local owners before the source-kind allowlist is even consulted,
+    so the tray must not call it Ready."""
+    bundle = EvidenceBundle(
+        bundle_id="bundle-remote",
+        query="q",
+        references=(
+            EvidenceReference(
+                evidence_id="S1",
+                source_id="media-9",
+                source_type="media",
+                title="Server media",
+                snippet="Body",
+                authority_label="server",
+                status="available",
+                source_owner="server",
+            ),
+        ),
+    )
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="Server media",
+        payload={"query": "q", "evidence_bundle": bundle.to_payload()},
+        status="staged",
+    )
+    state = ConsoleStagedContextState.from_live_work(launch)
+    assert state.source_rows[0].status == "listed"

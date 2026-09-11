@@ -1463,6 +1463,27 @@ def test_readiness_reports_ready_for_keyless_supported_generic_provider() -> Non
     assert readiness.native_send_supported is True
 
 
+def test_keyless_provider_with_stored_key_reports_not_required_without_source() -> None:
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(
+            provider="custom", model="x", base_url="http://127.0.0.1:1"
+        ),
+        app_config={
+            "api_settings": {
+                "custom": {
+                    "api_key": "dummy",
+                    "api_url": "http://127.0.0.1:1",
+                }
+            }
+        },
+        environ={},
+    )
+
+    assert readiness.credential == "not_required"
+    assert readiness.credential_source == "none"
+    assert readiness.operability == "ready_to_send"
+
+
 def test_readiness_allows_configured_url_with_trailing_slash() -> None:
     readiness = build_console_settings_readiness(
         ConsoleSessionSettings(
@@ -3262,3 +3283,37 @@ class TestReadinessKeySetCaching:
         )
         assert session_settings._supported_readiness_keys() == fresh
         assert session_settings._send_capable_readiness_keys() == fresh
+
+
+def _build_console_settings_summary_state_for_test():
+    """Build a summary from a real settings object with known values."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        ConsoleSessionSettings,
+        ConsoleSettingsContextEstimate,
+        build_console_settings_summary_state,
+        build_console_settings_readiness,
+    )
+
+    settings = ConsoleSessionSettings(
+        provider="openai",
+        model="gpt-test",
+        temperature=0.7,
+        top_p=0.9,
+        max_tokens=4096,
+    )
+    return build_console_settings_summary_state(
+        settings,
+        ConsoleSettingsContextEstimate(
+            used_tokens=None, token_limit=None, label="Context: unavailable"
+        ),
+        build_console_settings_readiness(settings, app_config={}),
+    )
+
+
+def test_summary_state_carries_structured_sampling_fields():
+    """TASK-32338: the left rail's Model section must not regex-parse the
+    formatted sampling_row; the summary carries the two values it renders
+    as structured fields."""
+    state = _build_console_settings_summary_state_for_test()
+    assert state.temperature == "0.70"
+    assert state.max_tokens == "4096"

@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from textual.app import ComposeResult
 from textual.containers import Horizontal
+from textual.geometry import Region
 from textual.widgets import Button, Collapsible, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
@@ -325,8 +326,13 @@ async def test_review_shows_at_least_fifteen_rows_at_235x52() -> None:
     app = _ImportHost(
         _import_snapshot(
             phase="review",
-            status_line="Review 25 items before import.",
-            preview_items=tuple(_item(index) for index in range(1, 26)),
+            status_line="Review 25 sources before import.",
+            # Distinct folders: a run of interchangeable rows collapses to one
+            # summary row instead (task-32250), which this test is not about.
+            preview_items=tuple(
+                replace(_item(index), name=f"vault/Folder {index}/note.md")
+                for index in range(1, 26)
+            ),
             can_import=True,
             import_disabled_reason="",
         )
@@ -750,6 +756,47 @@ async def test_group_actions_say_they_only_change_this_page() -> None:
         assert labels == {"Skip all on this page", "Create all on this page"}
 
 
+# --- task-32257 -----------------------------------------------------------
+
+
+async def test_a_disabled_import_control_carries_its_reason_as_text() -> None:
+    """The reason lived on the tooltip, so the control said only 'unavailable'."""
+    app = _ImportHost(
+        _import_snapshot(
+            phase="review",
+            status_line="Review 1 item before import.",
+            preview_items=(_item(1),),
+            can_import=False,
+            import_disabled_reason="Choose how to handle the folder name collision.",
+        )
+    )
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        label = str(app.query_one("#note-import-import", Button).label)
+
+    assert "Import selected items" in label
+    assert "Choose how to handle the folder name collision" in label
+
+
+async def test_a_disabled_check_control_carries_its_reason_as_text() -> None:
+    """Check selection shares the helper, so it shared the defect (32257)."""
+    app = _ImportHost(
+        _import_snapshot(
+            phase="select",
+            can_check=False,
+            check_disabled_reason="Choose a source first.",
+        )
+    )
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        label = str(app.query_one("#note-import-check", Button).label)
+
+    assert "Check selection" in label
+    assert "Choose a source first" in label
+
+
 def test_the_canvas_takes_its_non_importable_set_from_the_planner_enum() -> None:
     """task-32176: one source of truth for what cannot be imported."""
     from tldw_chatbook.Notes.note_import_plan_models import (
@@ -766,6 +813,631 @@ def test_the_canvas_takes_its_non_importable_set_from_the_planner_enum() -> None
     assert set(library_note_import_canvas._CLASSIFICATION_LABELS) == {
         classification.value for classification in ImportClassification
     }
+
+
+# --- task-32258 (one import, three surfaces) -------------------------------
+#
+# The numbers are produced by the real chain -- real discovery, parser,
+# planner, receipt ledger and executor over a real temp ChaChaNotes database
+# -- because the disagreement being pinned is between two real denominators:
+# the review counts SOURCES, while the ledger counts PLANNED CHANGES (one per
+# note a source creates). A fake receipt could not reproduce it.
+
+
+def _real_import_controller(root: Path):
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
+    from tldw_chatbook.Notes.note_import_discovery import discover_import_sources
+    from tldw_chatbook.Notes.note_import_execution_models import (
+        approve_note_import_plan,
+    )
+    from tldw_chatbook.Notes.note_import_executor import (
+        LocalNoteImportTarget,
+        NoteImportExecutor,
+    )
+    from tldw_chatbook.Notes.note_import_parsers import parse_import_sources
+    from tldw_chatbook.Notes.note_import_plan_models import ImportBounds
+    from tldw_chatbook.Notes.note_import_planner import (
+        analyze_root_collision,
+        apply_item_override,
+        classify_import_batch,
+        confirm_uncertain_match,
+        resolve_root_collision,
+    )
+    from tldw_chatbook.Notes.note_import_receipts import NoteImportReceiptRepository
+    from tldw_chatbook.UI.Library_Modules.library_note_import_controller import (
+        LibraryNoteImportController,
+    )
+
+    database = CharactersRAGDB(root / "chachanotes.db", "wave-import-test")
+    published: list[object] = []
+    controller = LibraryNoteImportController(
+        bounds=ImportBounds(
+            max_files=1_000,
+            max_file_bytes=16 * 1024 * 1024,
+            max_total_bytes=256 * 1024 * 1024,
+            max_depth=32,
+        ),
+        database=lambda: database,
+        folder_repository=lambda: LocalNoteFolderRepository(database),
+        receipt_repository=lambda: NoteImportReceiptRepository(root / "receipts.db"),
+        discover_import_sources=discover_import_sources,
+        parse_import_sources=parse_import_sources,
+        classify_import_batch=classify_import_batch,
+        analyze_root_collision=analyze_root_collision,
+        resolve_root_collision=resolve_root_collision,
+        confirm_uncertain_match=confirm_uncertain_match,
+        apply_item_override=apply_item_override,
+        approve_note_import_plan=approve_note_import_plan,
+        executor_factory=lambda db, folders, ledger: NoteImportExecutor(
+            target=LocalNoteImportTarget(db=db, folder_repository=folders),
+            receipt_repository=ledger,
+        ),
+        publish_snapshot=published.append,
+        refresh_after_settlement=lambda: None,
+    )
+    return controller, published
+
+
+async def test_one_import_leaves_review_progress_and_receipt_reconciled(
+    tmp_path: Path,
+) -> None:
+    """Review said 66, progress said 67, the receipt said 59 + 8 (task-32258)."""
+    vault = tmp_path / "vault"
+    (vault / "Notes").mkdir(parents=True)
+    (vault / "Notes" / "one.md").write_text("# One\n\nBody.\n", encoding="utf-8")
+    (vault / "Notes" / "two.md").write_text("# Two\n\nBody.\n", encoding="utf-8")
+    # One source, two notes: this is where the two denominators separate.
+    (vault / "rows.csv").write_text(
+        "title,content\nCSV one,first\nCSV two,second\n", encoding="utf-8"
+    )
+    (vault / "picture.png").write_bytes(b"not a note")
+
+    (tmp_path / "profile").mkdir()
+    controller, _published = _real_import_controller(tmp_path / "profile")
+    controller.accept_selected_path(vault, is_folder=True)
+    await controller.check()
+
+    review = controller.presentation_snapshot
+    sources = len(controller.snapshot.plan.items)
+    assert review.status_line == f"Review {sources} sources before import."
+
+    progress_totals: list[int] = []
+    inner = controller._publish_snapshot
+
+    def capture(snapshot):
+        if snapshot.phase == "importing":
+            progress_totals.append(snapshot.progress_total)
+        inner(snapshot)
+
+    controller._publish_snapshot = capture
+    await controller.approve_and_execute()
+
+    settled = controller.presentation_snapshot
+    receipt = controller.snapshot.receipt
+    # Every surface counts something it names, and the two denominators are
+    # reconciled out loud rather than left to contradict each other.
+    assert set(progress_totals) == {receipt.total}
+    assert receipt.total > sources  # the CSV source creates two notes
+    assert (
+        receipt.imported + receipt.updated + receipt.skipped + receipt.failed
+        == receipt.total
+    )
+    assert settled.receipt_detail == (
+        f"{receipt.total} planned changes from {sources} reviewed sources."
+    )
+    assert settled.receipt_line == (
+        f"{receipt.imported} notes created · {receipt.skipped} file skipped"
+    )
+    # …and the outcome is stated once: the header carries the session state,
+    # the receipt line the counts, the detail the denominators.
+    assert settled.status_line == "Import completed."
+    assert "created" not in settled.status_line
+    assert "created" not in settled.receipt_detail
+
+
+# --- task-32250 (pagination, elision, pane) --------------------------------
+
+
+async def test_a_review_row_states_its_outcome_without_elision_at_235x52() -> None:
+    """Every New row used to end "· ke…" -- the row's whole point, cut off."""
+    long_name = (
+        "vault/Inbox/A note with an extremely long file name that keeps going "
+        "and going so the list has to clip or wrap it somewhere sensible.md"
+    )
+    app = _ImportHost(
+        _import_snapshot(
+            phase="review",
+            status_line="Review 1 source before import.",
+            preview_items=(
+                replace(
+                    _item(1),
+                    name=long_name,
+                    effect_summary=(
+                        "Content: create 1 new note: Long name · keywords "
+                        "archive, inbox · 2 links."
+                    ),
+                    membership_summary="Create in vault / Inbox.",
+                ),
+            ),
+        )
+    )
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        summary = app.query_one(".note-import-row-text", Static)
+        text = _plain(summary)
+        # Nothing is clipped at this width.
+        assert summary.size.width >= len(text)
+
+    # The decision-bearing half survives …
+    assert "keywords archive, inbox" in text
+    assert "2 links" in text
+    assert "Create in vault / Inbox" in text
+    # … the path gives way for it, keeping the name a reader recognises …
+    assert "somewhere sensible.md" in text
+    assert "…" in text
+
+
+async def test_a_long_uniform_run_collapses_to_one_summary_row() -> None:
+    """23 near-identical Archive rows are not a review (task-32250 AC#4)."""
+    items = tuple(
+        replace(_item(index), name=f"vault/Archive/Archived note {index:03d}.md")
+        for index in range(1, 24)
+    )
+    app = _ImportHost(
+        _import_snapshot(
+            phase="review",
+            status_line="Review 23 sources before import.",
+            preview_items=items,
+        )
+    )
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        runs = list(app.query(".note-import-run").results(Collapsible))
+        assert len(runs) == 1
+        title = str(runs[0].title)
+        assert "vault/Archive" in title
+        assert "23 files" in title
+        assert "Create all" in title
+        assert "vault / Archive" in title
+        # Nothing is hidden: every individual decision is one press away.
+        assert runs[0].collapsed is True
+        assert len(runs[0].query(".note-import-row")) == 23
+
+
+async def test_a_short_run_is_not_collapsed() -> None:
+    """A handful of rows stays readable as rows (task-32250 AC#4)."""
+    items = tuple(
+        replace(_item(index), name=f"vault/Archive/note {index}.md")
+        for index in range(1, 4)
+    )
+    app = _ImportHost(
+        _import_snapshot(
+            phase="review",
+            status_line="Review 3 sources before import.",
+            preview_items=items,
+        )
+    )
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        assert not app.query(".note-import-run")
+        assert len(app.query(".note-import-row")) == 3
+
+
+async def test_a_group_heading_says_what_its_count_means_on_this_page() -> None:
+    """"New (23)" then "New (22)" were the same words for different numbers."""
+    app = _ImportHost(
+        _import_snapshot(
+            phase="review",
+            status_line="Review 30 sources before import.",
+            preview_items=(
+                replace(_item(1), name="vault/One/a.md"),
+                replace(_item(2), name="vault/Two/b.md"),
+                replace(
+                    _item(3),
+                    name="vault/Canvas/Overview.canvas",
+                    classification="unsupported",
+                    action="skip",
+                    reason="Obsidian canvas — not a note.",
+                ),
+            ),
+            group_totals=(("new", 30), ("unsupported", 1)),
+            page=1,
+            page_count=2,
+        )
+    )
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        headings = [
+            _plain(heading)
+            for heading in app.query(".note-import-group-heading").results(Static)
+        ]
+
+    assert "New (2 of 30 on this page)" in headings
+    # A group that fits entirely on the page keeps the plain count.
+    assert "Unsupported (1)" in headings
+
+
+async def test_the_pager_says_which_end_of_the_review_it_is_at() -> None:
+    """A disabled pager and an active one looked identical (task-32250 AC#5)."""
+    app = _ImportHost(
+        _import_snapshot(
+            phase="review",
+            status_line="Review 30 sources before import.",
+            preview_items=(_item(1),),
+            page=2,
+            page_count=2,
+        )
+    )
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        previous = app.query_one("#note-import-page-previous", Button)
+        following = app.query_one("#note-import-page-next", Button)
+
+    assert previous.disabled is False
+    assert str(previous.label) == "Previous page"
+    assert following.disabled is True
+    assert "last page" in str(following.label)
+
+
+def test_pagination_keeps_each_group_contiguous() -> None:
+    """A page used to hold slices of three different groups (task-32250 AC#2).
+
+    The pure state is the right level for this: the canvas can only render
+    the page it is handed, so the ordering contract belongs to the pager.
+    """
+    from tldw_chatbook.Library.library_note_import_state import (
+        _page as build_page,
+    )
+    from tldw_chatbook.Notes.note_import_plan_models import (
+        ImportAction,
+        ImportBounds,
+        ImportClassification,
+        ImportPreviewItem,
+        ImportSource,
+        ImportSourceKind,
+        NoteImportPlan,
+        ParsedNotePayload,
+        ProposedFolderMembership,
+    )
+
+    def _row(index: int, classification: ImportClassification) -> ImportPreviewItem:
+        importable = classification is ImportClassification.NEW
+        return ImportPreviewItem(
+            item_id=f"item-{index:03d}",
+            source=ImportSource(
+                kind=ImportSourceKind.DIRECTORY_MEMBER,
+                # A folder each: interchangeable rows collapse to one summary
+                # row and would then all fit on a single page (task-32250).
+                display_path=f"vault/{classification.value}-{index:03d}/note.md",
+                source_path=Path(f"/private/vault/{index:03d}.md"),
+            ),
+            payloads=(
+                (ParsedNotePayload(title=f"N{index}", content="Body"),)
+                if importable
+                else ()
+            ),
+            memberships=(
+                (ProposedFolderMembership(payload_index=0, folder_segments=("vault",)),)
+                if importable
+                else ()
+            ),
+            classification=classification,
+            reason="Ready." if importable else "Not a note.",
+            default_action=ImportAction.CREATE_NEW if importable else ImportAction.SKIP,
+            selected_action=(
+                ImportAction.CREATE_NEW if importable else ImportAction.SKIP
+            ),
+            allowed_actions=(
+                (ImportAction.SKIP, ImportAction.CREATE_NEW)
+                if importable
+                else (ImportAction.SKIP,)
+            ),
+            match=None,
+            replace_content=False,
+            add_membership=importable,
+        )
+
+    # Interleaved on disk, exactly as a real vault walk produces them.
+    rows = []
+    for index in range(1, 31):
+        rows.append(_row(index, ImportClassification.NEW))
+        if index % 6 == 0:
+            rows.append(_row(1000 + index, ImportClassification.UNSUPPORTED))
+    plan = NoteImportPlan(
+        bounds=ImportBounds(
+            max_files=200,
+            max_file_bytes=1_000_000,
+            max_total_bytes=5_000_000,
+            max_depth=8,
+        ),
+        items=tuple(rows),
+        proposed_folder_paths=(("vault",),),
+    )
+
+    first = build_page(plan, 1, 25)
+    second = build_page(plan, 2, 25)
+
+    assert {item.classification.value for item in first.items} == {"new"}
+    assert dict(first.group_totals) == {"new": 30, "unsupported": 5}
+    # The split group's rows are contiguous: page 2 finishes New, then starts
+    # Unsupported. No page holds two slices of the same group.
+    assert [item.classification.value for item in second.items] == (
+        ["new"] * 5 + ["unsupported"] * 5
+    )
+    assert first.page_count == 2
+
+
+def test_the_review_takes_the_pane_while_it_is_the_task_in_hand() -> None:
+    """task-32250 AC#6: the list keeps no share while a review is open.
+
+    Driven through the screen's real preference derivation, because the
+    override has to survive the same resolver the shell calls.
+    """
+    from dataclasses import replace as _replace
+
+    from tldw_chatbook.Utils.adaptive_reader_state import (
+        AdaptiveReaderLayoutPreferences,
+    )
+
+    screen = _minimal_notes_screen()
+    controller = screen._notes_controller
+    preferences = AdaptiveReaderLayoutPreferences(
+        library_open=True, items_open=True, custom_widths_enabled=False
+    )
+
+    controller._library_notes_view = "import"
+    controller._library_note_import_snapshot = _replace(
+        controller._library_note_import_snapshot, phase="review"
+    )
+    reviewing = controller._library_notes_work_first_preferences(preferences)
+
+    controller._library_note_import_snapshot = _replace(
+        controller._library_note_import_snapshot, phase="select"
+    )
+    choosing = controller._library_notes_work_first_preferences(preferences)
+
+    assert (reviewing.library_open, reviewing.items_open) == (False, False)
+    # Choosing a source is not the same task: the list stays where it was.
+    assert choosing.items_open is True
+
+
+# --- task-32256 (relationship descriptions) --------------------------------
+
+_IMPORT_ONCE_COPY = (
+    "Import once — Copy files into Notes. Later changes to the originals "
+    "are not tracked."
+)
+_KEEP_SYNCED_COPY = (
+    "Keep a folder synced — Create a lasting connection. Changes continue "
+    "between the folder and Notes."
+)
+
+
+def _relationship_copy(app) -> list[Static]:
+    body = app.query_one("#notes-sync-body")
+    return [
+        child
+        for child in body.children
+        if isinstance(child, Static) and "—" in _plain(child)
+    ]
+
+
+def _rendered_text(widget: Static) -> str:
+    """Return what the widget actually PAINTS, wrapped lines joined.
+
+    Asserting on ``renderable.plain`` is vacuous for a truncation bug: the
+    source text is what truncation never touches (task-32256 review, finding
+    6). Textual wraps on spaces and the strip keeps no trailing blanks, so
+    joining the strips with one space reconstructs the sentence exactly when
+    -- and only when -- every word of it reached the screen.
+    """
+    size = widget.size
+    strips = widget.render_lines(Region(0, 0, size.width, size.height))
+    return " ".join(strip.text.rstrip() for strip in strips)
+
+
+@pytest.mark.parametrize("width", (235, 113, 60))
+async def test_both_relationship_descriptions_render_complete(width: int) -> None:
+    """The screen whose whole job is to explain the two relationships.
+
+    235 is the wide terminal; 113 is the share the reader pane actually gets
+    there; 60 is the narrow floor, where the copy must WRAP rather than be
+    cut -- a clipped description would be a truncated explanation delivered
+    at the point of an irreversible-feeling choice (task-32256).
+    """
+    app = _ChooserHost()
+
+    async with app.run_test(size=(width, 40)) as pilot:
+        await pilot.pause()
+        descriptions = _relationship_copy(app)
+        painted = [_rendered_text(child) for child in descriptions]
+        sizes = [(child.size.width, child.size.height) for child in descriptions]
+
+    assert _IMPORT_ONCE_COPY in painted
+    assert _KEEP_SYNCED_COPY in painted
+    # Nothing is ever painted as half a word, at any of the three widths.
+    assert not any("…" in text for text in painted)
+    # Below the width where a sentence fits it wraps rather than clipping.
+    for text, (cells, lines) in zip(painted, sizes):
+        assert cells * lines >= len(text), (text, cells, lines)
+
+
+def test_the_pager_and_the_canvas_find_the_same_runs() -> None:
+    """Two run definitions would make every page count wrong (task-32250).
+
+    The pager budgets a page by rendered rows and a collapsed run renders as
+    one, so if the canvas drew a boundary the pager did not, a full page would
+    render short or overflow.
+    """
+    from itertools import groupby
+
+    from tldw_chatbook.Library.library_note_import_state import (
+        add_selected_file,
+        begin_checking,
+        initial_note_import_snapshot,
+        project_library_note_import_snapshot,
+        review_run_key,
+        set_destination_segments,
+        show_review,
+    )
+    from tldw_chatbook.Notes.note_import_plan_models import (
+        ImportAction,
+        ImportBounds,
+        ImportClassification,
+        ImportPreviewItem,
+        ImportSource,
+        ImportSourceKind,
+        NoteImportPlan,
+        ParsedNotePayload,
+        ProposedFolderMembership,
+    )
+    from tldw_chatbook.Widgets.Library import library_note_import_canvas as canvas
+
+    def _row(folder: str, index: int, classification: ImportClassification):
+        importable = classification is ImportClassification.NEW
+        return ImportPreviewItem(
+            item_id=f"{folder}-{index}",
+            source=ImportSource(
+                kind=ImportSourceKind.DIRECTORY_MEMBER,
+                display_path=f"vault/{folder}/{index:03d}.md",
+                source_path=Path(f"/private/vault/{folder}/{index:03d}.md"),
+            ),
+            payloads=(
+                (ParsedNotePayload(title=f"N{index}", content="Body"),)
+                if importable
+                else ()
+            ),
+            memberships=(
+                (
+                    ProposedFolderMembership(
+                        payload_index=0, folder_segments=("vault", folder)
+                    ),
+                )
+                if importable
+                else ()
+            ),
+            classification=classification,
+            reason="Ready." if importable else "Not a note.",
+            default_action=ImportAction.CREATE_NEW if importable else ImportAction.SKIP,
+            selected_action=(
+                ImportAction.CREATE_NEW if importable else ImportAction.SKIP
+            ),
+            allowed_actions=(
+                (ImportAction.SKIP, ImportAction.CREATE_NEW)
+                if importable
+                else (ImportAction.SKIP,)
+            ),
+            match=None,
+            replace_content=False,
+            add_membership=importable,
+        )
+
+    rows = [_row("Archive", index, ImportClassification.NEW) for index in range(1, 13)]
+    rows += [_row("Inbox", index, ImportClassification.NEW) for index in range(1, 4)]
+    rows += [
+        _row("Canvas", index, ImportClassification.UNSUPPORTED) for index in range(1, 3)
+    ]
+    plan = NoteImportPlan(
+        bounds=ImportBounds(
+            max_files=200,
+            max_file_bytes=1_000_000,
+            max_total_bytes=5_000_000,
+            max_depth=8,
+        ),
+        items=tuple(rows),
+        proposed_folder_paths=(("vault",),),
+    )
+    state = set_destination_segments(
+        add_selected_file(initial_note_import_snapshot(), Path("/private/vault/a.md")),
+        ("vault",),
+    )
+    state = show_review(begin_checking(state), plan)
+    projected = project_library_note_import_snapshot(state)
+
+    pager_runs = [len(tuple(run)) for _, run in groupby(state.page.items, key=review_run_key)]
+    canvas_runs = [len(run) for run in canvas._uniform_runs(projected.preview_items)]
+
+    assert pager_runs == canvas_runs == [12, 3, 2]
+    # …and they agree on the ORDER of the groups those runs sit in, which is
+    # what the pager budgeted the page against (review finding 8).
+    from tldw_chatbook.Notes.note_import_plan_models import (
+        REVIEW_CLASSIFICATION_ORDER,
+    )
+
+    assert canvas._REVIEW_ORDER == tuple(
+        classification.value for classification in REVIEW_CLASSIFICATION_ORDER
+    )
+    assert tuple(canvas._CLASSIFICATION_LABELS) == canvas._REVIEW_ORDER
+
+
+async def test_a_bracketed_folder_name_is_not_parsed_as_markup() -> None:
+    """The run summary is user-derived text (task-32262 review, finding 3).
+
+    Every other Static on this canvas sets ``markup=False``; the collapsed-run
+    summary reaches ``Collapsible(title=…)``, whose ``Content.from_text``
+    defaults to markup ON — so a vault folder named ``[@click=app.quit]``
+    became a live action link and the folder name vanished from the row.
+    ``normalize_folder_name`` accepts that name, so it is reachable.
+    """
+    hostile = "[@click=app.quit]Archive"
+    items = tuple(
+        replace(_item(index), name=f"vault/{hostile}/note {index}.md")
+        for index in range(1, 12)
+    )
+    app = _ImportHost(
+        _import_snapshot(
+            phase="review",
+            status_line="Review 11 sources before import.",
+            preview_items=items,
+        )
+    )
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        title = app.query_one(".note-import-run", Collapsible).query_one(
+            "CollapsibleTitle"
+        )
+        rendered = title.label
+
+    assert hostile in rendered.plain
+    assert rendered.spans == []
+
+
+async def test_a_run_too_big_for_one_page_says_so_on_both_halves() -> None:
+    """250 identical rows read "250 files" on page 1 and "50 files" on page 2.
+
+    That is the shape task-32250 was filed about, one level down. The run is
+    bounded at the mount ceiling by design; the summary has to say which of
+    the two numbers it means, the way the group heading already does.
+    """
+    items = tuple(
+        replace(_item(index), name=f"vault/Archive/note {index:03d}.md")
+        for index in range(1, 51)
+    )
+    app = _ImportHost(
+        _import_snapshot(
+            phase="review",
+            status_line="Review 250 sources before import.",
+            preview_items=items,
+            group_totals=(("new", 250),),
+            run_totals=((("vault/Archive", "new", "create_new", "", items[0].membership_summary), 250),),
+            page=2,
+            page_count=2,
+        )
+    )
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        title = str(app.query_one(".note-import-run", Collapsible).title)
+
+    assert "50 of 250 files" in title
+    assert "vault/Archive" in title
 
 
 # --- task-32242: the older ingest browser gets the same two guarantees ------

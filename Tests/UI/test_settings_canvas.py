@@ -1,4 +1,4 @@
-"""Canonical F9 Settings Canvas policy controls."""
+"""Canonical F4 Settings Canvas policy controls."""
 
 from __future__ import annotations
 

@@ -23,8 +23,11 @@ from tldw_chatbook.Chat.console_chat_store import (
 )
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.thinking_blocks import (
+    MAX_THINKING_TEXT_BYTES,
     DisplayableThinkingBlock,
+    ProprietaryThinkingBlock,
     ThinkingEnvelope,
+    ThinkingEnvelopeValidationError,
     dump_thinking_blocks_json,
     parse_thinking_blocks_json,
 )
@@ -1105,3 +1108,250 @@ def test_configured_sync_without_committed_source_fails_before_non_db_write(
     assert persistence.projections == []
     after = store._generation_variant(store._message_or_raise("assistant-1"))
     assert replace(after, id=before.id) == before
+
+
+def _memory_thinking_store(
+    envelope: ThinkingEnvelope | None = None,
+) -> tuple[ConsoleChatStore, str]:
+    store = ConsoleChatStore()
+    session = store.create_session(title="thinking-edit")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="the answer"
+    )
+    if envelope is not None:
+        store.replace_message_thinking(message.id, envelope)
+    return store, message.id
+
+
+def test_edit_thinking_block_updates_text_and_persists_projection(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id, repository = _database(tmp_path / "edit-thinking.sqlite")
+    _insert(db, repository, _acceptance(conversation_id))
+    canonical = dump_thinking_blocks_json(_thinking("old reasoning"))
+    _raw_semantic_corruption(
+        db,
+        "UPDATE messages SET content = 'old answer', thinking_blocks_json = ?, "
+        "assistant_generation_state = 'complete' WHERE id = 'assistant-1'",
+        (canonical,),
+    )
+    store, _session_id = _restored_store(db, conversation_id)
+
+    edited = store.update_message_thinking_block(
+        "assistant-1", "reasoning-1", "cleaned reasoning"
+    )
+    row = db.get_message_by_id("assistant-1")
+
+    assert edited.content == "old answer"
+    assert edited.thinking is not None
+    assert edited.thinking.blocks[0].text == "cleaned reasoning"
+    assert edited.thinking.blocks[0].block_id == "reasoning-1"
+    assert edited.thinking.blocks[0].source_format == "think_tag"
+    assert row["content"] == "old answer"
+    assert row["thinking_blocks_json"] == dump_thinking_blocks_json(edited.thinking)
+
+
+def test_edit_thinking_block_updates_selected_variant_envelope(tmp_path: Path) -> None:
+    db, conversation_id, repository = _database(tmp_path / "edit-variant.sqlite")
+    _insert(db, repository, _acceptance(conversation_id))
+    store, _session_id = _restored_store(db, conversation_id)
+    live = _install_thinking_variant(store)
+    assert live.variants is not None
+    content_before = live.content
+
+    edited = store.update_message_thinking_block(
+        "assistant-1", "reasoning-1", "cleaned reasoning"
+    )
+    message = store.get_message("assistant-1")
+
+    assert message.variants is not None
+    assert message.variants.selected_index == 0
+    selected = message.variants.variants[0]
+    assert selected.thinking is not None
+    assert selected.thinking.blocks[0].text == "cleaned reasoning"
+    other = message.variants.variants[1]
+    assert other.thinking is not None
+    assert other.thinking.blocks[0].text == "non-database reasoning"
+    assert edited.thinking is not None
+    assert edited.thinking.blocks[0].text == "cleaned reasoning"
+    assert message.content == content_before
+
+
+def test_edit_thinking_block_rejects_blank_text() -> None:
+    store, message_id = _memory_thinking_store(_thinking("reasoning"))
+
+    with pytest.raises(ValueError, match="blank"):
+        store.update_message_thinking_block(message_id, "reasoning-1", "   ")
+
+
+def test_edit_thinking_block_rejects_unknown_block() -> None:
+    store, message_id = _memory_thinking_store(_thinking("reasoning"))
+
+    with pytest.raises(ValueError, match="Unknown thinking block"):
+        store.update_message_thinking_block(message_id, "missing-1", "new text")
+
+    unchanged = store.get_message(message_id)
+    assert unchanged.thinking is not None
+    assert unchanged.thinking.blocks[0].text == "reasoning"
+
+
+def test_edit_thinking_block_rejects_owner_without_thinking() -> None:
+    store, message_id = _memory_thinking_store(None)
+
+    with pytest.raises(ValueError, match="no thinking"):
+        store.update_message_thinking_block(message_id, "reasoning-1", "new text")
+
+
+def test_edit_thinking_block_rejects_proprietary_block() -> None:
+    envelope = ThinkingEnvelope(
+        (
+            DisplayableThinkingBlock(
+                block_id="reasoning-1",
+                round_ordinal=0,
+                provider="llama_cpp",
+                model="test-model",
+                protocol="chat_completions",
+                source_format="think_tag",
+                status="complete",
+                text="visible reasoning",
+            ),
+            ProprietaryThinkingBlock(
+                block_id="private-1",
+                round_ordinal=1,
+                provider="moonshot",
+                model="kimi-k3",
+                protocol="chat_completions",
+                source_format="preserved_reasoning",
+                status="complete",
+            ),
+        )
+    )
+    store, message_id = _memory_thinking_store(envelope)
+
+    with pytest.raises(ValueError, match="Proprietary thinking"):
+        store.update_message_thinking_block(message_id, "private-1", "leaked text")
+
+    unchanged = store.get_message(message_id)
+    assert isinstance(unchanged.thinking.blocks[1], ProprietaryThinkingBlock)
+
+
+def test_edit_thinking_block_rejects_start_anchored_token_injection() -> None:
+    envelope = ThinkingEnvelope(
+        (
+            DisplayableThinkingBlock(
+                block_id="reasoning-1",
+                round_ordinal=0,
+                provider="llama_cpp",
+                model="test-model",
+                protocol="chat_completions",
+                source_format="start_anchored_think",
+                status="complete",
+                text="honest reasoning",
+            ),
+        )
+    )
+    store, message_id = _memory_thinking_store(envelope)
+
+    with pytest.raises(ValueError, match="think"):
+        store.update_message_thinking_block(
+            message_id, "reasoning-1", "cleaned <think>injected</think>"
+        )
+
+    unchanged = store.get_message(message_id)
+    assert unchanged.thinking.blocks[0].text == "honest reasoning"
+
+
+def test_edit_thinking_block_rejects_streaming_owner() -> None:
+    store, message_id = _memory_thinking_store(_thinking("reasoning"))
+    store._message_or_raise(message_id).status = "streaming"
+
+    with pytest.raises(ValueError, match="finish"):
+        store.update_message_thinking_block(message_id, "reasoning-1", "new text")
+
+
+def test_edit_thinking_block_rejects_disabled_generation_actions() -> None:
+    store, message_id = _memory_thinking_store(_thinking("reasoning"))
+    store._message_or_raise(message_id).thinking_actions_enabled = False
+
+    with pytest.raises(ConsoleThinkingCompatibilityError):
+        store.update_message_thinking_block(message_id, "reasoning-1", "new text")
+
+
+def test_edit_thinking_block_rejects_non_assistant_owner() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session(title="user-row")
+    user = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="hello"
+    )
+
+    with pytest.raises(ValueError, match="assistant"):
+        store.update_message_thinking_block(user.id, "reasoning-1", "new text")
+
+
+def test_edit_thinking_block_rejects_oversized_text() -> None:
+    store, message_id = _memory_thinking_store(_thinking("reasoning"))
+
+    with pytest.raises(ThinkingEnvelopeValidationError):
+        store.update_message_thinking_block(
+            message_id, "reasoning-1", "x" * (MAX_THINKING_TEXT_BYTES + 1)
+        )
+
+
+def test_edit_thinking_block_rejects_stale_expected_text() -> None:
+    store, message_id = _memory_thinking_store(_thinking("reasoning"))
+
+    with pytest.raises(ValueError, match="changed while editing"):
+        store.update_message_thinking_block(
+            message_id,
+            "reasoning-1",
+            "cleaned reasoning",
+            expected_text="stale prefill text",
+        )
+
+    unchanged = store.get_message(message_id)
+    assert unchanged.thinking is not None
+    assert unchanged.thinking.blocks[0].text == "reasoning"
+
+
+def test_edit_thinking_block_accepts_matching_expected_text() -> None:
+    store, message_id = _memory_thinking_store(_thinking("reasoning"))
+
+    edited = store.update_message_thinking_block(
+        message_id,
+        "reasoning-1",
+        "cleaned reasoning",
+        expected_text="reasoning",
+    )
+
+    assert edited.thinking is not None
+    assert edited.thinking.blocks[0].text == "cleaned reasoning"
+
+
+def test_thinking_edit_reconcile_records_sync_version_hash(tmp_path: Path) -> None:
+    db, conversation_id, repository = _database(tmp_path / "edit-sync-hash.sqlite")
+    _insert(db, repository, _acceptance(conversation_id))
+    canonical = dump_thinking_blocks_json(_thinking("old reasoning"))
+    _raw_semantic_corruption(
+        db,
+        "UPDATE messages SET content = 'old answer', thinking_blocks_json = ?, "
+        "assistant_generation_state = 'complete' WHERE id = 'assistant-1'",
+        (canonical,),
+    )
+    store, _session_id = _restored_store(db, conversation_id)
+
+    class _ReconcileProducer:
+        source = db
+
+        def reconcile_chat_message_intent(self, **_kwargs: object) -> dict[str, object]:
+            return {
+                "status": "enqueued",
+                "outbox_entry": {"envelope": {"payload_hash": "hash-after-edit"}},
+            }
+
+    store.sync_v2_server_profile_id = "server-a"
+    store.sync_v2_chat_producer = _ReconcileProducer()
+
+    store.update_message_thinking_block("assistant-1", "reasoning-1", "cleaned")
+
+    stable_key = f"{conversation_id}:assistant-1"
+    assert store._sync_v2_message_versions.get(stable_key) == "hash-after-edit"
