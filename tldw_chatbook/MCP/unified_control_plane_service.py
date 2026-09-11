@@ -313,6 +313,15 @@ class UnifiedMCPControlPlaneService:
         # empty, and `clear_session_approvals()` is the only other way
         # entries leave this set.
         self._session_approvals: set[tuple[str, str, str]] = set()
+        #: Qodo #2597 #9 / #2600 #16: the ONE lock guarding
+        #: `_session_approvals`. Agent worker threads grant while the UI
+        #: thread lists, and `tuple(a_set)` is not an atomic snapshot --
+        #: a mutation mid-copy raises `RuntimeError`, which the workbench
+        #: swallows into an EMPTY listing, blanking every " (session)"
+        #: marker and Revoke row for that render. Every read and every
+        #: mutation below holds it; snapshots are copied under it and
+        #: filtered/sorted after release.
+        self._session_approvals_lock = threading.Lock()
 
     def _ensure_hub_test_state(
         self,
@@ -4876,13 +4885,15 @@ class UnifiedMCPControlPlaneService:
         if expected_profile_digest is None and expected_revision is None:
             # Compatibility seam for non-UI callers. Captured UI approvals
             # always supply the digest (and imported revision) below.
-            self._session_approvals.add((profile_id, server_key, tool_name))
+            with self._session_approvals_lock:
+                self._session_approvals.add((profile_id, server_key, tool_name))
             return
         store = self.permission_store
         if store is None:
             if expected_profile_digest is not None or expected_revision is not None:
                 raise ProfileMutationError("stale_profile")
-            self._session_approvals.add((profile_id, server_key, tool_name))
+            with self._session_approvals_lock:
+                self._session_approvals.add((profile_id, server_key, tool_name))
             return
         with store.mutation_fence():
             snapshot = store.read_snapshot_strict()
@@ -4905,7 +4916,8 @@ class UnifiedMCPControlPlaneService:
             )
             if expected_revision is not None and revision != expected_revision:
                 raise ProfileMutationError("stale_revision")
-            self._session_approvals.add((profile_id, server_key, tool_name))
+            with self._session_approvals_lock:
+                self._session_approvals.add((profile_id, server_key, tool_name))
 
     def is_session_approved(
         self,
@@ -4929,7 +4941,8 @@ class UnifiedMCPControlPlaneService:
             ``False`` otherwise. Always ``False`` on a fresh instance or
             after an app restart -- the grant is not persisted.
         """
-        return (profile_id, server_key, tool_name) in self._session_approvals
+        with self._session_approvals_lock:
+            return (profile_id, server_key, tool_name) in self._session_approvals
 
     def list_session_approvals(
         self, *, profile_id: str = "default"
@@ -4953,16 +4966,18 @@ class UnifiedMCPControlPlaneService:
             ``profile_id``. Empty on a fresh instance -- grants are never
             persisted.
         """
-        # R24: iterate a SNAPSHOT -- an agent worker thread calls
-        # `approve_for_session` concurrently, and a set mutated mid-iteration
-        # raises `RuntimeError`, which the caller
-        # (`MCPWorkbench._session_approvals_for_row`) swallows into an empty
-        # listing: every " (session)" suffix vanishes for that render.
+        # R24 / Qodo #2597 #9: copy under the lock -- `tuple(a_set)` is
+        # NOT an atomic snapshot, and a concurrent `approve_for_session`
+        # from an agent worker thread raises `RuntimeError` mid-copy, which
+        # the caller (`MCPWorkbench._session_approvals_for_row`) swallows
+        # into an empty listing: every " (session)" suffix and Revoke row
+        # vanishes for that render. Filter and sort AFTER release -- the
+        # independent copy needs no lock.
+        with self._session_approvals_lock:
+            snapshot = tuple(self._session_approvals)
         return sorted(
             (server_key, tool_name)
-            for approved_profile, server_key, tool_name in tuple(
-                self._session_approvals
-            )
+            for approved_profile, server_key, tool_name in snapshot
             if approved_profile == profile_id
         )
 
@@ -4989,21 +5004,28 @@ class UnifiedMCPControlPlaneService:
             or granted under a different profile).
         """
         key = (profile_id, server_key, tool_name)
-        if key not in self._session_approvals:
-            return False
-        self._session_approvals.discard(key)
+        with self._session_approvals_lock:
+            if key not in self._session_approvals:
+                return False
+            self._session_approvals.discard(key)
         return True
 
     def clear_session_approvals(self, *, profile_id: str | None = None) -> None:
         """Discard approvals for one profile, or all approvals when omitted."""
-        if profile_id is None:
-            self._session_approvals.clear()
-            return
-        self._session_approvals = {
-            approval
-            for approval in self._session_approvals
-            if approval[0] != profile_id
-        }
+        with self._session_approvals_lock:
+            if profile_id is None:
+                self._session_approvals.clear()
+                return
+            # Mutate IN PLACE: rebinding the attribute would leave a
+            # concurrent reader holding the old set (and the lock guarding
+            # a set nobody writes to any more).
+            self._session_approvals.difference_update(
+                {
+                    approval
+                    for approval in self._session_approvals
+                    if approval[0] == profile_id
+                }
+            )
 
     def record_tool_decision(
         self,
