@@ -177,10 +177,33 @@ the saved preference.
 
 Below 64 columns an ordinary Library route shows one stage at a time: either
 the rail or the canvas. Activating a rail destination opens its canvas; use
-**‹ Library** (or **< Library** with ASCII glyphs) to return. Widening restores
+**‹ Library** (or **< Library** with ASCII glyphs) to return, or press
+**Escape** — the footer names it as `esc back to Library`. Widening restores
 the co-present layout and prior focus/scroll position when no newer action has
 replaced it.
 
+The destinations with a three-pane reader (Media, Conversations, Notes,
+Prompts, Skills, Collections) close their Library pane at that width too, and
+Escape there does the same thing — **unless the canvas you are on already owns
+Escape**. A surface with its own exit keeps it: a reader with an item open goes
+back to its list, an editor back to its list, an armed delete confirmation
+cancels, and Notes keeps its own Escape throughout (Notes still returns to the
+rail — through its own key, not this one). The footer never names a return the
+key would not perform; at 60 columns it may not have room to name the surface's
+own exit either, so treat Escape as "back one step" and read the chip when
+there is one. Above 64 columns a closed Library pane is an ordinary collapsed
+pane one grip away, and Escape keeps its usual step-back through the visible
+panes.
+
+At this width the footer has room for one canvas key, and the way back wins it:
+`esc back to Library` replaces the `/` and `F6` hints rather than being dropped
+after them. Both keys still work; widen the terminal to see them named again.
+
+A pane with nothing open gives its columns to its sibling: on Prompts, Skills,
+Collections and Conversations the list widens to fill the canvas while the
+"Select something to open it here." pane holds only its own floor, and
+choosing an item restores the reading split. The landing hub is capped at a
+readable measure rather than stretched across the whole canvas.
 - **Header line** — reads **Library | Local**, or **Library | Server:
   \<label\>** when a server runtime is configured.
 - **Left rail**, top to bottom. A new empty profile first sees the compact
@@ -851,3 +874,13 @@ cutting to "Navigati". task-32226: rail text typed on another canvas and
 never submitted no longer seeds the Search / RAG query box. task-32230: the
 Details DB sizes take a line each, and the Handoff line names the blocked
 item's reason and its next step.)*
+
+*Verified against fix/library-crit9-shell — 2026-09-10 (task-32225: Escape
+returns to the rail below 64 columns on every adaptive-reader destination and
+the footer names it; task-32217: an empty work pane hands its columns to the
+list, and the landing hub is capped at 96 cells).*
+
+*Verified against fix/library-crit9-shell — 2026-09-10, fix round 1
+(task-32225: the return chip stands down wherever a canvas owns Escape itself,
+so the footer never names a return the key would not perform; task-32228:
+Conversations arrives with its first row focused like every other browse list).*

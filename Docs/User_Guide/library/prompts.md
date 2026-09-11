@@ -506,3 +506,7 @@ scrolls, rather than implying it is always on screen. The one-page pager rule
 behind this page's Previous/Next behaviour is now one shared helper across
 Media, Conversations and Prompts, with no change to what any of them
 renders.)*
+
+*Verified against fix/library-crit9-shell — 2026-09-10 (task-32217: with no
+prompt open the list takes the columns the "Select a prompt to edit it here."
+pane was holding — measured at 235 columns, list 50 → 134 cells).*
