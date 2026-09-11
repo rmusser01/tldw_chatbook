@@ -261,6 +261,16 @@ button, the Model section's **Configure** button in the left rail, or the
   applies to this session only. Save as default also writes provider +
   streaming defaults to config."
 
+Need another server beyond the built-in providers? **New endpoint…**, next
+to **Base URL**, creates a named custom endpoint without leaving the modal:
+pick a template (blank OpenAI-compatible, any provider, or an existing named
+entry), adjust family, URL, and models, name it, and **Create**. The entry
+is saved to `config.toml` immediately and becomes selectable here, so unlike
+a typed-in URL it never trips the "Endpoint not saved" block, and
+conversations using it survive restart. Renaming, editing, and deletion
+(with a guard that detaches conversations first) live in **F9 ▸ Providers &
+Models ▸ Custom endpoints**.
+
 For a faster switch, **Alt+M** opens the quick **Model** popover —
 provider, model, and temperature without the full modal.
 
