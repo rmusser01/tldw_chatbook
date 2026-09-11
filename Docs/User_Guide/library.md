@@ -230,13 +230,22 @@ readable measure rather than stretched across the whole canvas.
     Skills, Collections, Search / RAG), **Create** (New note, New prompt,
     New skill), **Study** (Study decks, Flashcards, Quizzes), and
     **Import / Export** (Import…, Export). Each row is one line: the
-    title with its count, plus a dim plain-language gloss on the jargon
-    rows (e.g. "Search / RAG — find all"), shown consistently across
-    visits — a row's gloss never flickers on or off just because its
-    count arrived. On narrow terminals the gloss drops first; a handful
-    of rows (Conversations, Flashcards, Collections) then fall back to a
-    short label ("Chats", "Cards", "Sets") instead of an ellipsis, so no
-    row label ever cuts off mid-word and the count always stays visible.
+    title with its count, plus a dim plain-language gloss on some of the
+    jargon rows (Media — "your files", Prompts — "reuse", Skills — "AI
+    add-ons", Search / RAG — "find all"). A gloss renders whole or not at
+    all, and never flickers on or off just because a count arrived. Two
+    rows stay bare on purpose: **Conversations** and **Notes** are
+    already plain words and carry no gloss. **Collections** does have one
+    — "saved captures" — but it is the longest, and it needs 34 cells of
+    row width where the rail's default gives it 33, so on an ordinary
+    wide terminal that row reads bare. Widen the rail past the default
+    (Settings offers up to 48 cells) and the gloss appears; so does the
+    single-pane narrow stage below 64 columns, where the rail takes the
+    whole terminal rather than a fraction of it. When a row's title and
+    count together would otherwise be cut mid-word, a handful of rows
+    (Conversations, Flashcards, Collections) fall back to a short label
+    ("Chats", "Cards", "Captures") instead of an ellipsis, so no row
+    label ever cuts off mid-word and the count always stays visible.
     The three Study rows are hand-offs (they are a
     two-step trip out of Library), so they group under their own section —
     one row each. That click opens a
@@ -260,7 +269,7 @@ readable measure rather than stretched across the whole canvas.
 - **Footer** — shows the keys that work where you are. The full rail offers
   "/ focus search"; Get started keeps focus on its visible actions. The
   landing adds "i import content"
-  and "n new note" (single-letter accelerators for the hub actions);
+  and "ctrl+n new note" (the hub's own accelerators);
   the Search / RAG canvas adds "u use Library
   context in Console", "o open evidence", and an "enter" hint that names
   whatever Enter does on the control you are focused on;
@@ -269,8 +278,9 @@ readable measure rather than stretched across the whole canvas.
   list" instead; the Export canvas adds "esc back to Media" (or whichever
   canvas opened it — "esc back to hub" from the rail); and a Study
   staging canvas adds "esc back to hub". Every hint is a per-key
-  "key action" pair — the Notes editor, for example, shows "ctrl+s save
-  note | esc back to notes".
+  "key action" pair — the Notes editor, for example, shows
+  "esc back to notes" and nothing else, because the note is already
+  saved and there is no save key to advertise.
   While a text field has focus the footer leads with `typing in field`,
   names the Escape chip for that surface (`esc leave field` where nothing
   else owns the key — a list canvas keeps its own `esc focus rail`), and
@@ -329,7 +339,7 @@ leading `▸` uses cannot collide on one control.
 | **Explore all tools** | Reveals and remembers the complete Library without changing section disclosures. |
 | **Back to Get started** | Returns an explicitly expanded, still-empty Library to the Get started landing and compact rail, with focus on **Import…**. It is offered only after you have explicitly expanded a still-empty Library from Get started, and never after graduation. |
 | **Search Library…** | Type a query and press Enter: lands on the Search / RAG canvas and runs it (empty submit just opens the canvas) — see [Search & RAG](library/search-and-rag.md). **x** beside the box empties it. The box shows the live query only on the Search / RAG canvas; every other canvas gets an empty box, and returning to Search / RAG restores the query and its results. Text typed into the box on another canvas and never submitted is discarded when you leave — it never becomes the Search / RAG query. |
-| **Chunking Lab** / **Try selected text** | Under **Details ▸ Actions**, above the line "Chunking Lab — compare how text is split for search". Opens a full-screen A/B tool; **Escape** there returns to the Library canvas you came from, including from the sample editor. |
+| **Chunking Lab** / **Try selected text** | Under **Details ▸ Actions**, below the line "Chunking Lab — compare how text is split for search". Opens a full-screen A/B tool; **Escape** there returns to the Library canvas you came from, including from the sample editor. |
 | **▾** / **▸** (section headers) | Open or collapse that rail section — see [State glyphs](#state-glyphs). |
 
 ### Browse rows
@@ -542,17 +552,29 @@ you're on:
   Library…** box in the full Library, or **Import…** in Get started; it never
   leaves the canvas or changes what's shown.
 - **A pending bulk-delete confirmation on the Media list** (Select mode's
-  "Delete selected", which swaps the list's toolbar for "Delete N
-  selected items? This moves them to trash.") — Escape cancels it in
+  **Delete**, which puts "Delete N selected items? You can undo right
+  away, or restore later from Trash." above the list's toolbar and swaps
+  that toolbar for **Delete** / **Cancel**) — Escape cancels it in
   place, exactly like its own **Cancel** button, instead of moving focus
-  to the rail; the footer's hint reads "cancel delete" while it's armed.
+  to the rail; the footer chip reads "esc cancel delete" while it's
+  armed.
   Confirming with **Delete** when only some items can be removed leaves
   the failed one(s) checked and focuses the first of them, rather than
   leaving nothing focused or landing on an item you never selected.
 - **In an item's viewer or editor** (the media viewer; the Notes,
-  Prompts, or Skills editor) — Escape returns to that list, re-focusing
-  its first row, exactly like pressing **‹ Back to list**. A dirty note
-  or prompt edit vetoes the exit the same way Back does.
+  Prompts, or Skills editor) — Escape does exactly what **‹ Back to
+  list** does on that surface, which is not the same on every editor.
+  Notes autosave, so a note edit is already saved when you leave it:
+  Escape returns to the list at once, re-focusing its first row, the
+  editor's only footer chip is "esc back to notes", and its status line
+  reads "Next: Keep editing; changes save automatically." Only a
+  *blocked* save holds a note open, and it says what to fix — see
+  [Notes](library/notes.md). Nothing autosaves in the Prompts or Skills
+  editor: while you have unsaved edits, leaving the editor (Back,
+  Escape, another row, another screen) is blocked until you save or
+  resolve the edit. Skills says so when it refuses; Prompts refuses
+  without a message today, so Escape looks like it did nothing — see
+  [Prompts](library/prompts.md).
 - **Editing, deleting, or re-analyzing inside the media viewer** — the
   media viewer's Edit / Delete / Edit analysis forms have no dirty-edit
   guard, so a first Escape only discards that one form and returns to the
@@ -945,3 +967,7 @@ pane handles paint their own name down the column, and the note editor's
 deliberate claim on the rail's width is stated where the rail is described;
 task-32359: a focused rail row carries the house `█` bar, so it is no longer
 the same picture as the active destination).*
+
+*Verified against fix/library-crit10-docs — 2026-09-11 (task-32366: 14
+critique-10 claims reconciled; surface fixes in task-32346, 32348, 32349,
+32354, 32355).*

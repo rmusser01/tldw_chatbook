@@ -249,9 +249,10 @@ to list** then reloads the current search/collection/sort/page scope before show
 it; the membership outcome never says that the Prompt itself was saved.
 
 Nothing autosaves here. While you have unsaved edits the meta line shows an "Unsaved
-changes" marker, and leaving the editor (Back, another row, another screen) is
-blocked until you save or resolve the edit. The save-status line reports the
-outcome:
+changes" marker, and leaving the editor (Back, Escape, another row, another screen)
+is blocked until you save or resolve the edit. The block is silent today — Escape
+looks like it did nothing rather than saying why it refused. The save-status line
+reports the outcome:
 
 - "Saved."
 - "Name already in use — pick another or open the existing prompt." —
@@ -519,3 +520,9 @@ row on a canvas titled Prompts no longer opens with "Prompt · " — a plain
 Prompt reads `Local · has system and user text`, while Recipe and the other
 artifact types still name themselves — and the lane summary says what the
 prompt has instead of the schema's "System + User".)*
+
+*Verified against fix/library-crit10-docs — 2026-09-11, fix round 1 (task-32366:
+the dirty-edit block now names Escape alongside Back, and says the block is
+silent today — `_exit_library_prompt_editor_guarded` returns False without
+notifying, filed as task-32393. `library.md`'s Escape section states the same
+veto in the same words.)*

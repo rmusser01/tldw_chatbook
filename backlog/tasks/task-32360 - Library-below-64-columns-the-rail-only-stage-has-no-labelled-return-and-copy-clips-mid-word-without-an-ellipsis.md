@@ -3,10 +3,10 @@ id: TASK-32360
 title: >-
   Library below 64 columns: the rail-only stage has no labelled return and copy
   clips mid-word without an ellipsis
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-11 06:18'
-updated_date: '2026-09-11 09:05'
+updated_date: '2026-09-11 11:10'
 labels:
   - library
   - layout
@@ -143,4 +143,11 @@ Pinned by `Tests/UI/test_library_crit10_notes_details.py::
 test_notes_copy_is_not_clipped_mid_word_below_64_columns` (red first against
 the unpatched canvas), and verified live at 60x24 on a 7-note profile
 (`crit10/wave/notes-details/caps/cap-13-power-notes-60x24-no-midword-clip.txt`).
+
+---
+
+**Closed (task-32366, wave close-out).** All three ACs are ticked and all three
+fixes are on dev: AC#1 and AC#3 with the layout branch (PR #2603, merged
+09:25:37Z) and AC#2 with the notes-details branch (PR #2605, merged 10:43:59Z,
+dev `d3cdfff10d`).
 <!-- SECTION:NOTES:END -->
