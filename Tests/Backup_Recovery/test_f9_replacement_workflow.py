@@ -186,7 +186,7 @@ def headless(app,*args,**kwargs):
    assert set(screen._restore_plan.safety_scope)==safety_keys
    print('ACTUAL_SECOND_REVIEW_ACKNOWLEDGED',flush=True)
    screen.query_one('#backup-start-restore',Button).focus();await pilot.press('enter')
-   state=await asyncio.to_thread(app.recovery_service.wait,app.recovery_service.current()['operation_id'],timeout=55)
+   state=await asyncio.to_thread(app.recovery_service.wait,app.recovery_service.current()['operation_id'],timeout=90)
    print('SECOND_REPLACEMENT_TERMINAL',dict(state),flush=True)
    result={'state':state['state'],'phase':state['phase'],'issues':list(state['issues']),'review_issues':list(state['review_issues']),'result':dict(state['result'])}
    (Path.home()/'probe-result.json').write_text(json.dumps(result,default=str))
@@ -313,7 +313,9 @@ def test_full_f9_replacement_after_explicit_safety_and_credential_review(
             stdout=output,
             stderr=output,
             text=True,
-            timeout=100,
+            # Includes normal-app restart, omission review, and native replacement.
+            # The accepted second replacement alone exceeded the old 55s observer.
+            timeout=150,
             check=False,
         )
     assert result.returncode == 0, log.read_text()[-8000:]

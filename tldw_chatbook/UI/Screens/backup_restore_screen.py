@@ -66,6 +66,9 @@ class BackupRestoreScreen(Screen):
         self._safety_scope_seen = ()
         self._rollback_copy_id = None
         self._rollback_plan = None
+        self._requested_rollback_operation = None
+        self._rollback_selection = None
+        self._later_review_codes_seen = ()
         self._media_review = None
         self._media_offset = 0
 
@@ -242,6 +245,7 @@ class BackupRestoreScreen(Screen):
                     )
                     yield Button("Review later rollback", id="backup-later-review")
                     yield Static("", id="backup-later-preview", markup=False)
+                    yield Vertical(id="backup-later-credential-review")
                     yield Input(
                         placeholder="New safety-copy password",
                         password=True,
@@ -357,6 +361,7 @@ class BackupRestoreScreen(Screen):
         )
         self.query_one("#backup-later-form").display = False
         self._rollback_copy_id = self._rollback_plan = None
+        self._forget_later_credential_review()
         for identifier, visible in (
             ("backup-review", mode == "create"),
             ("backup-create", mode == "create"),
@@ -691,6 +696,7 @@ class BackupRestoreScreen(Screen):
     @on(Button.Pressed, ".backup-review-rollback")
     def _select_rollback(self, event):
         self._invalidate()
+        self._forget_later_credential_review()
         self._rollback_copy_id = event.button.name
         self.query_one("#backup-later-form").display = True
         self.query_one("#backup-later-preview", Static).update(
@@ -710,18 +716,38 @@ class BackupRestoreScreen(Screen):
                 "Select the current configuration and enter the old recovery-copy password."
             )
             return
+        acknowledged = tuple(
+            box.name
+            for box in self.query(".backup-acknowledge-later-credential")
+            if box.value
+            and not box.disabled
+            and box.name in self._later_review_codes_seen
+        )
+        self._requested_rollback_operation = None
         self._invalidate()
         self._preview_rollback(
-            self.app, self._revision, self._rollback_copy_id, target, password.encode()
+            self.app,
+            self._revision,
+            self._rollback_copy_id,
+            target,
+            password.encode(),
+            acknowledged,
         )
         self._clear_passwords()
 
     @work(exclusive=True, thread=True, group="backup-later-review")
-    def _preview_rollback(self, app, revision, operation, target, password):
+    def _preview_rollback(
+        self, app, revision, operation, target, password, acknowledged
+    ):
+        from tldw_chatbook.Backup_Recovery.capture import CaptureReviewRequired
+
         try:
             inventory = self.service.preview_backup((target,), options={})
             plan = self.service.preview_rollback(
-                operation, old_password=password, target=inventory
+                operation,
+                old_password=password,
+                target=inventory,
+                acknowledged_credential_issues=acknowledged,
             )
         except (OSError, ValueError, RuntimeError) as error:
             self._deliver(
@@ -731,11 +757,12 @@ class BackupRestoreScreen(Screen):
                 operation,
                 None,
                 self.service.issue_code(error),
+                error.issues if isinstance(error, CaptureReviewRequired) else (),
             )
         else:
             self._deliver(app, self._rollback_ready, revision, operation, plan, None)
 
-    def _rollback_ready(self, revision, operation, plan, issue):
+    def _rollback_ready(self, revision, operation, plan, issue, review_issues=()):
         if (
             not self.is_mounted
             or self._mode != "copies"
@@ -753,6 +780,16 @@ class BackupRestoreScreen(Screen):
             )
         self.query_one("#backup-later-preview", Static).update(message)
         self.query_one("#backup-later-start", Button).disabled = plan is None
+        codes = tuple(code for code in review_issues if code.startswith("credential_"))
+        if codes:
+            self._later_review_codes_seen = codes
+            self.run_worker(
+                self._show_later_credential_review(
+                    revision, self._later_selection(), codes, pending=False
+                ),
+                exclusive=True,
+                group="later-credential-review",
+            )
 
     @on(Button.Pressed, "#backup-later-start")
     def _start_rollback(self):
@@ -771,7 +808,8 @@ class BackupRestoreScreen(Screen):
             )
             return
         try:
-            self.service.start_rollback(
+            self._rollback_selection = self._later_selection()
+            self._requested_rollback_operation = self.service.start_rollback(
                 self._rollback_copy_id,
                 self._rollback_plan,
                 old_password=old.encode(),
@@ -906,6 +944,7 @@ class BackupRestoreScreen(Screen):
         self.query_one("#backup-start-restore", Button).disabled = True
         self._rollback_plan = None
         self.query_one("#backup-later-start", Button).disabled = True
+        self.query_one("#backup-later-confirm", Checkbox).value = False
 
     @on(Input.Changed)
     @on(Checkbox.Changed)
@@ -924,6 +963,8 @@ class BackupRestoreScreen(Screen):
             self._sync_replacement_host()
             if event.control.id == "backup-source":
                 self._clear_inspection(dismiss_current=True)
+            if event.control.id == "backup-later-target":
+                self._forget_later_credential_review()
             control = event.control
             if not control.has_class("backup-acknowledge-credential") and not (
                 isinstance(control, Input) and control.password
@@ -942,6 +983,19 @@ class BackupRestoreScreen(Screen):
         self._safety_scope_seen = ()
         self.query_one("#backup-safety-scope").display = False
         for box in self.query(".backup-safety-member"):
+            box.value = False
+            box.disabled = True
+
+    def _later_selection(self):
+        return self._rollback_copy_id, str(Path(self._input("backup-later-target")).expanduser())
+
+    def _forget_later_credential_review(self):
+        """Omission decisions belong to the selected copy and current target."""
+        self._requested_rollback_operation = None
+        self._rollback_selection = None
+        self._later_review_codes_seen = ()
+        self.query_one("#backup-later-credential-review").display = False
+        for box in self.query(".backup-acknowledge-later-credential"):
             box.value = False
             box.disabled = True
 
@@ -1186,6 +1240,20 @@ class BackupRestoreScreen(Screen):
                     exclusive=True,
                     group="restore-credential-review",
                 )
+            if (
+                current["kind"] == "later_rollback"
+                and current["operation_id"] == self._requested_rollback_operation
+                and self._rollback_selection == self._later_selection()
+                and self._mode == "copies"
+                and codes and codes != self._later_review_codes_seen
+            ):
+                self._later_review_codes_seen = codes
+                self.run_worker(
+                    self._show_later_credential_review(
+                        self._revision, self._rollback_selection, codes, pending=True
+                    ),
+                    exclusive=True, group="later-credential-review",
+                )
         self.query_one("#backup-status", Static).update(text)
         self.query_one("#backup-cancel", Button).disabled = (
             current["state"] != "running"
@@ -1245,6 +1313,55 @@ class BackupRestoreScreen(Screen):
                 for code in codes
             ),
         )
+
+    async def _show_later_credential_review(
+        self, revision, selection, codes, *, pending
+    ):
+        if (
+            not self.is_mounted
+            or self._mode != "copies"
+            or revision != self._revision
+            or selection != self._later_selection()
+            or codes != self._later_review_codes_seen
+        ):
+            return
+        self._invalidate()
+        revision = self._revision
+        area = self.query_one("#backup-later-credential-review", Vertical)
+        await area.remove_children()
+        if (
+            not self.is_mounted
+            or self._mode != "copies"
+            or revision != self._revision
+            or selection != self._later_selection()
+            or codes != self._later_review_codes_seen
+        ):
+            return
+        area.display = True
+        await area.mount(
+            Static(
+                (
+                    "The new safety copy could not include these credentials. No later rollback was published. "
+                    "Choose Abort untouched replacement above. "
+                    if pending
+                    else "Review these unavailable credential scopes. "
+                )
+                + "Then select each omission you accept, re-enter the old copy password, and review later rollback again.",
+                markup=False,
+            ),
+            *(
+                Checkbox(
+                    Text("Acknowledge safety-copy omission: " + code),
+                    name=code,
+                    classes="backup-acknowledge-later-credential",
+                )
+                for code in codes
+            ),
+        )
+
+        if pending and self._mode == "copies" and selection == self._later_selection():
+            # The omission review invalidated the terminal poll's earlier list.
+            self._refresh_list(self.app, self._revision, "copies")
 
     def _deliver(self, app, callback, *args):
         """Discard a read-only preview after its view or application exits."""

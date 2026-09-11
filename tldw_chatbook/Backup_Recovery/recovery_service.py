@@ -295,6 +295,10 @@ class RecoveryService:
         operation = self.start_rollback_preview(operation_id, **choices)
         state = self.wait(operation)
         if state["state"] != "succeeded":
+            if state["review_issues"]:
+                from .capture import CaptureReviewRequired
+
+                raise CaptureReviewRequired(state["review_issues"])
             raise ValueError(state["issues"][0])
         return state["result"]["plan"]
 
