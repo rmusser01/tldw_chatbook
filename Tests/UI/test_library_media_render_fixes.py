@@ -3616,15 +3616,40 @@ def _match_reason_items() -> list[dict]:
     ]
 
 
-@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.parametrize(
+    ("size", "expected"),
+    [
+        (
+            (235, 52),
+            [
+                "article · added 2m ago · keyword: notes · loa…",
+                "article · added 2m ago",
+                "article · added 2m ago · keyword: notesandmo…",
+            ],
+        ),
+        (
+            (100, 30),
+            [
+                "article · added 2m ago · keyword: not…",
+                "article · added 2m ago",
+                "article · added 2m ago · keyword: not…",
+            ],
+        ),
+    ],
+    ids=["wide", "narrow"],
+)
 @pytest.mark.asyncio
-async def test_keyword_only_rows_paint_the_keyword_that_matched(size):
+async def test_keyword_only_rows_paint_the_keyword_that_matched(size, expected):
     """The reason is WORDS on the secondary line, and only where it is needed.
 
     ``Field notes`` matched the query in its own painted title, so it says
     nothing extra; the two rows whose match lives in a keyword name it. The
     keyword is capped at ten characters because the Items pane's floor is
     36 cells -- ``notesandmorestuff`` would push the line past it whole.
+
+    task-32347 made both sizes tighter and the expectations are now
+    per-size rather than shared: labelling the age costs 10 cells on every
+    row, so the narrow pane clips the term it used to paint whole.
     """
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_match_reason_items())
@@ -3637,11 +3662,13 @@ async def test_keyword_only_rows_paint_the_keyword_that_matched(size):
 
         lines = _painted_item_lines(host, screen)
         secondaries = [line.strip() for line in lines if "article · " in line]
-        assert secondaries == [
-            "article · added 2m ago · keyword: notes",
-            "article · added 2m ago",
-            "article · added 2m ago · keyword: notesandmo…",
-        ], secondaries
+        # task-32347 cost, pinned rather than hidden: labelling the age
+        # ("added 2m ago", 12 cells where "2m" was 2) made every secondary
+        # 10 cells longer, and task-32364 AC#1 adds "· loaded" to whichever
+        # row the Reader holds. The first row now spends its last cells on
+        # that suffix and ellipsises inside the pane instead of painting the
+        # whole keyword reason.
+        assert secondaries == expected, secondaries
 
 
 
@@ -3692,10 +3719,17 @@ async def test_keyword_reason_clips_at_the_36_cell_items_floor():
         secondaries = [
             line.strip(" │") for line in lines if "article · " in line
         ]
+        # task-32347 made this worse and the pin says so rather than
+        # softening: with the age labelled, the ~28 cells this pane leaves a
+        # row are spent before the keyword LABEL starts, so at the floor the
+        # reason is not merely cut short -- it is gone. Whether that is an
+        # acceptable price for an unambiguous age is a product call, not a
+        # test's; it is recorded here so nobody re-derives "the cap makes it
+        # fit" from a pin that never said so.
         assert secondaries == [
-            "article · 2m · keyword: n…",
+            "article · added 2m ago · …",
             "article · added 2m ago",
-            "article · 2m · keyword: n…",
+            "article · added 2m ago · …",
         ], secondaries
         # The row without a reason still paints whole -- the shortfall is the
         # suffix's own cost, not a regression in the base secondary line.
@@ -4103,7 +4137,9 @@ async def test_saving_an_analysis_marks_its_row_analysed_without_a_refetch():
 
         _titles, after = _painted_media_rows(host, screen)
         assert [line.strip() for line in after] == [
-            _ANALYSED_SECONDARY,
+            # task-32364 AC#1: this row is the one open in the Reader, so
+            # it carries the state word on its fact line.
+            f"{_ANALYSED_SECONDARY} · loaded",
             "document · added 5m ago",
             "document · added 5m ago",
             "document · added 5m ago",
