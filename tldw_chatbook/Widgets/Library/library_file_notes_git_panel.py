@@ -807,7 +807,6 @@ class LibraryFileNotesGitPanel(Vertical):
         min-width: 0;
     }
 
-
     #file-notes-git-commit-workflow,
     #file-notes-git-push-workflow {
         display: none;
