@@ -480,6 +480,18 @@ class RuntimeMaintenance:
             self.closed,
             deadline,
         )
+        embedding = sys.modules.get("tldw_chatbook.RAG_Search.model_recovery")
+        await _settle_stage(
+            [
+                _bind(
+                    None if embedding is None else embedding.participant,
+                    "RAG_Search.model_recovery",
+                    "LocalEmbeddingLifetime",
+                )
+            ],
+            self.closed,
+            deadline,
+        )
         if tuple(app.screen_stack) != self.screens:
             raise RecoveryRequired("runtime_screens_changed")
         if self._owner_snapshot() != self._owners:

@@ -50,6 +50,12 @@ from typing import (  # noqa: E402
 # Third-Party Libraries
 import requests  # noqa: E402
 from loguru import logger  # noqa: E402
+from tldw_chatbook.RAG_Search.model_recovery import (
+    model_operation,
+    recovered_close,
+    recovered_encode,
+    recovered_load,
+)
 from pydantic import (  # noqa: E402
     BaseModel,
     Field,
@@ -236,6 +242,7 @@ class HFModelCfg(BaseModel):
     provider: Literal["huggingface"] = "huggingface"
     model_name_or_path: str
     trust_remote_code: bool = False
+    local_files_only: bool = False
     max_length: int = 512
     device: Optional[str] = None
     batch_size: int = 32
@@ -317,6 +324,7 @@ class CacheRecord(TypedDict):
 class _HuggingFaceEmbedder:
     """Wraps HF model/tokenizer; exposes poolable, dtype/device-aware embedding."""
 
+    @recovered_load
     def __init__(self, cfg: HFModelCfg):
         # Resolve torch/transformers on first real use. `_build()` already
         # gates construction of this class on both being available, but this
@@ -349,6 +357,7 @@ class _HuggingFaceEmbedder:
                 self._tok = AutoTokenizer.from_pretrained(
                     cfg.model_name_or_path,
                     trust_remote_code=cfg.trust_remote_code,
+                    local_files_only=cfg.local_files_only,
                     cache_dir=cache_dir,
                     revision=cfg.revision,  # Pin to specific revision if provided
                 )
@@ -368,6 +377,7 @@ class _HuggingFaceEmbedder:
                     cfg.model_name_or_path,
                     torch_dtype=dtype,
                     trust_remote_code=cfg.trust_remote_code,
+                    local_files_only=cfg.local_files_only,
                     cache_dir=cache_dir,
                     revision=cfg.revision,  # Pin to specific revision if provided
                     low_cpu_mem_usage=False,  # Avoid meta tensors
@@ -417,6 +427,7 @@ class _HuggingFaceEmbedder:
                     cfg.model_name_or_path,
                     torch_dtype=self._dtype,
                     trust_remote_code=cfg.trust_remote_code,
+                    local_files_only=cfg.local_files_only,
                     cache_dir=cache_dir,
                     revision=cfg.revision,
                     low_cpu_mem_usage=False,  # Avoid meta tensors
@@ -447,6 +458,7 @@ class _HuggingFaceEmbedder:
                     cfg.model_name_or_path,
                     torch_dtype=self._dtype,
                     trust_remote_code=cfg.trust_remote_code,
+                    local_files_only=cfg.local_files_only,
                     cache_dir=cache_dir,
                     revision=cfg.revision,
                     low_cpu_mem_usage=False,
@@ -474,6 +486,7 @@ class _HuggingFaceEmbedder:
             out = self._model(**inp).last_hidden_state
             return self._pool(out, inp["attention_mask"])
 
+    @recovered_encode
     def embed(
         self, texts: List[str], *, as_list: bool = False
     ) -> np.ndarray | List[List[float]]:
@@ -498,6 +511,7 @@ class _HuggingFaceEmbedder:
         joined = torch.cat(vecs, dim=0).float().cpu().numpy()
         return joined.tolist() if as_list else joined
 
+    @recovered_close
     def close(self) -> None:
         del self._model, self._tok
         _ensure_torch()
@@ -750,6 +764,7 @@ class EmbeddingFactory:
         logger.info(f"_build: Loaded model {model_id} in {build_time:.2f}s")
         return rec
 
+    @model_operation
     def embed(
         self, texts: List[str], *, model_id: Optional[str] = None, as_list: bool = False
     ):
@@ -862,6 +877,7 @@ class EmbeddingFactory:
         vecs = await self.async_embed([text], model_id=model_id, as_list=as_list)
         return vecs[0] if as_list else vecs.squeeze(0)
 
+    @model_operation
     def prefetch(self, model_ids: List[str]):
         """Download / load given model ids in advance (bypasses eviction)."""
         for mid in model_ids:

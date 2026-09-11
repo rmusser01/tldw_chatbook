@@ -191,7 +191,9 @@ def require_local_model_construction(config):
     if _mock_model(config.embedding.model):
         return
     if not ordinary_configuration(config):
-        raise RAGActivationRequired("rag_model_setup_required")
+        from .model_recovery import config_spec, require_local_embedding
+
+        require_local_embedding(config_spec(config))
 
 
 def ordinary_configuration(config):
@@ -364,7 +366,12 @@ def _review_scope(config, sources):
             ):
                 prerequisites.add("config_review_required")
         if not _mock_model(config.embedding.model) and witnesses:
-            prerequisites.add("local_model_setup_required")
+            from .model_recovery import config_spec, require_local_embedding
+
+            try:
+                require_local_embedding(config_spec(config))
+            except (OSError, ValueError, RuntimeError):
+                prerequisites.add("local_model_setup_required")
         targets = sorted(
             {
                 (w["store_root"], w["generation"], owner)
