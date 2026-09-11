@@ -13341,3 +13341,14 @@ Two corollaries worth keeping:
   `except` block that already released the setup authority for the *other*
   failure. Two half-cleanups is the bug; one release for every failure is the
   fix, and it is the smaller diff.
+
+### Canvas CSS must survive browser parsing as well as compilation (2026-09-10)
+
+During TASK-32313, both new HTML guide examples passed the Canvas compiler but
+Chromium refused their plans with `invalid-plan`. Inspecting CSSOM declarations
+showed that `background` expanded into unallowlisted `background-position-x/y`,
+and `border` expanded into unallowlisted `border-image-*` properties. Replacing
+those shorthands with `background-color`, `border-width`, `border-style`, and
+`border-color` made the exact packaged examples execute without changing pinned
+runtime assets. Compiler acceptance alone does not qualify authoring examples;
+run their exact source through the actual renderer and exercise the controls.

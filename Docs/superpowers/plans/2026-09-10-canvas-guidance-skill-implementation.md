@@ -120,14 +120,14 @@ existing setup route; a skipped browser test is not evidence that examples work.
 **Read:** `Canvas/authoring.py`, `Canvas/static/mermaid-authoring.txt`,
 `Docs/Canvas/V1_RUNTIME_COMPATIBILITY.md`, and `V2_RUNTIME_COMPATIBILITY.md`.
 
-- [ ] **1. Write reader and complete-example tests.** Cover all four topics, closed
+- [x] **1. Write reader and complete-example tests.** Cover all four topics, closed
   topic selection (non-string, unknown, path-shaped values), empty/missing/invalid
   UTF-8/oversized resources, and absence of file reads on module import. Use a
   temporary resource tree and monkeypatch only `guide.files` for failure cases.
   Parse fenced `html` examples with the existing MarkdownIt test dependency.
   `basics` and `controls` each have one complete example, `mermaid` reuses its two,
   and `repair` has workflow text without a fifth document to maintain.
-- [ ] **2. Run RED:**
+- [x] **2. Run RED:**
 
   ```bash
   "$CANVAS_PLAN_PY" -m pytest Tests/Canvas/test_guide.py -q
@@ -135,7 +135,7 @@ existing setup route; a skipped browser test is not evidence that examples work.
 
   Expect an import/assertion failure for the absent guide reader/resources, not a
   missing unrelated dependency. Fix test setup before treating another error as RED.
-- [ ] **3. Implement the small reader and topic map.** Use this complete core,
+- [x] **3. Implement the small reader and topic map.** Use this complete core,
   adding public API type hints/docstrings and the shared policy constant:
 
   ```python
@@ -167,7 +167,7 @@ existing setup route; a skipped browser test is not evidence that examples work.
   escaping/envelope overhead. Do not add a cache, profile selector, user-directory
   lookup, or a second Mermaid source. The raw-read bound prevents oversized
   package resources from requiring an unbounded read.
-- [ ] **4. Author the three guides to the approved spec.** Label examples with
+- [x] **4. Author the three guides to the approved spec.** Label examples with
   their required profile. `basics` has a compact passive-SVG comparison with
   readable labels and responsive layout. `controls` has a labeled numeric input,
   visible result, and script using `getElementById`, `addEventListener`, and
@@ -178,7 +178,7 @@ existing setup route; a skipped browser test is not evidence that examples work.
   Keep all topic bodies under the serialized 12 KiB ceiling rather than padding
   them toward it. Add exact `guides/basics.md`, `guides/controls.md`, and
   `guides/repair.md` package-data entries; leave pinned static assets untouched.
-- [ ] **5. Run GREEN and compile examples:**
+- [x] **5. Run GREEN and compile examples:**
 
   ```bash
   "$CANVAS_PLAN_PY" -m pytest Tests/Canvas/test_guide.py Tests/Canvas/test_authoring.py -q
@@ -189,7 +189,7 @@ existing setup route; a skipped browser test is not evidence that examples work.
   Retain existing tests' separate candidate semantics. Expected: every complete
   example compiles with its required currently admitted profile, and invalid
   resource cases refuse without partial output. Browser execution is Task 4.
-- [ ] **6. Commit only Task 1 files** after scoped static checks with message
+- [x] **6. Commit only Task 1 files** after scoped static checks with message
   `feat(canvas): package bounded on-demand authoring guides`.
 
 ## Task 2: Expose the scoped guide tool and safe projections
@@ -197,7 +197,7 @@ existing setup route; a skipped browser test is not evidence that examples work.
 **Modify:** `Agents/canvas_tool_provider.py`, `Agents/tool_catalog.py`,
 `Tests/Agents/test_canvas_tool_provider.py`, `Tests/Canvas/test_canvas_kill_switch.py`.
 
-- [ ] **1. Add provider/catalog RED tests.** Extend existing `_provider`/`_invoke`
+- [x] **1. Add provider/catalog RED tests.** Extend existing `_provider`/`_invoke`
   helpers and the genuine issuer-bound registration path. A minimal outcome test:
 
   ```python
@@ -221,7 +221,7 @@ existing setup route; a skipped browser test is not evidence that examples work.
   sees it; argument projections retain only the validated topic. Invalid
   guide-shaped payloads must fail closed with the existing projection-unavailable
   category, without echoing arbitrary body/error text.
-- [ ] **2. Run RED:**
+- [x] **2. Run RED:**
 
   ```bash
   "$CANVAS_PLAN_PY" -m pytest Tests/Agents/test_canvas_tool_provider.py Tests/Canvas/test_canvas_kill_switch.py -k 'guide' -q
@@ -229,7 +229,7 @@ existing setup route; a skipped browser test is not evidence that examples work.
 
   Expected: the missing fifth tool fails assertions; existing four-tool behavior
   remains the baseline.
-- [ ] **3. Add the schema and coordinated reserved names.** Introduce an explicit
+- [x] **3. Add the schema and coordinated reserved names.** Introduce an explicit
   `CANVAS_ARTIFACT_TOOL_NAMES` set for the four existing tools; make
   `CANVAS_TOOL_NAMES` their union with `canvas_guide`. Keep stable existing order
   and append the guide. Update `CANVAS_RESERVED_TOOL_NAMES` in `tool_catalog.py`
@@ -249,7 +249,7 @@ existing setup route; a skipped browser test is not evidence that examples work.
   Describe it as reading a focused authoring guide after the user requests or
   accepts Canvas. Add argument validation before resource access. Preserve
   `canvas_disabled`, `canvas_scope_unavailable`, and `invalid_arguments` handling.
-- [ ] **4. Add explicit guide dispatch and bounded serialization.** After the
+- [x] **4. Add explicit guide dispatch and bounded serialization.** After the
   existing live/run checks and `_validate_arguments`, read the selected topic.
   Catch missing/undecodable/invalid resources into a fixed `guide_unavailable`
   provider error; add fixed safe copy in `_ERROR_MESSAGES`. Do not expose paths or
@@ -267,7 +267,7 @@ existing setup route; a skipped browser test is not evidence that examples work.
   wrappers; loading it alone must not eagerly fetch the manual or Mermaid guide.
   Add only a short guide instruction to `_CANVAS_TOOL_GUIDANCE` so the new name
   is safe during ordinary guidance construction even before Task 3 refines policy.
-- [ ] **5. Extend closed projections.** Validate the exact successful key set
+- [x] **5. Extend closed projections.** Validate the exact successful key set
   `{status, topic, guide}`, known topic, string body, and the same serialized
   byte bound. Replace it for non-model audiences with
   `{status: "ok", topic: <known topic>, guide_bytes: <UTF-8 body size>}`.
@@ -275,7 +275,7 @@ existing setup route; a skipped browser test is not evidence that examples work.
   existing artifact shape checks unchanged. Guide results cannot populate
   `_context_canvas_profiles`; use the artifact-name set for that history reader.
   Do not emit a Canvas card or classify guide reads as reversible mutations.
-- [ ] **6. Run GREEN and retained provider checks:**
+- [x] **6. Run GREEN and retained provider checks:**
 
   ```bash
   "$CANVAS_PLAN_PY" -m pytest Tests/Agents/test_canvas_tool_provider.py Tests/Canvas/test_canvas_kill_switch.py Tests/Canvas/test_authoring.py -q
@@ -287,7 +287,7 @@ existing setup route; a skipped browser test is not evidence that examples work.
   update behavior pass. Add an actual AgentService round trip to existing provider
   persistence tests proving the guide body reaches the next model request but
   not stored Agent/tool records; a formatter unit test alone is insufficient.
-- [ ] **7. Commit the coordinated provider/catalog tests and implementation** with
+- [x] **7. Commit the coordinated provider/catalog tests and implementation** with
   message `feat(canvas): expose scoped guide tool with bounded projections`.
 
 ## Task 3: Wire offer-first guidance and the optional inline skill
@@ -298,7 +298,7 @@ existing setup route; a skipped browser test is not evidence that examples work.
 **Create:** `Docs/Examples/skills/canvas/SKILL.md`, `Tests/Skills/test_canvas_skill.py`.
 **Modify documentation:** `Docs/User_Guide/console/canvas.md`.
 
-- [ ] **1. Write focused RED tests for policy and disclosure.** Extend
+- [x] **1. Write focused RED tests for policy and disclosure.** Extend
   `test_canvas_discovery_hint_requires_the_actual_complete_run_allow_list`,
   `test_model_request_guidance_tracks_the_exact_disclosed_canvas_schema_set`,
   `test_first_request_plan_counts_canvas_guidance_before_direct_disclosure`, and
@@ -308,7 +308,7 @@ existing setup route; a skipped browser test is not evidence that examples work.
   appropriate, absent topics remain unloaded, unavailable names are not advertised,
   and the actual final guidance remains included in token estimation. Keep tests
   for exact historical profiles and current request budget behavior.
-- [ ] **2. Write skill RED tests through the existing services.** Pattern simple
+- [x] **2. Write skill RED tests through the existing services.** Pattern simple
   content/metadata checks after `Tests/Skills/test_web_research_skill.py`, but use
   the real trust service fixture pattern from `test_skill_trust_service.py` for
   trust claims; do not use `allow_untrusted_without_trust_service=True` as trust
@@ -320,7 +320,7 @@ existing setup route; a skipped browser test is not evidence that examples work.
   adapter for leading and embedded `$canvas`; capture the owning run's final
   tool set and make child spawning fail the test. Bare invocation must retain
   the clarify-before-authoring instruction.
-- [ ] **3. Run RED:**
+- [x] **3. Run RED:**
 
   ```bash
   "$CANVAS_PLAN_PY" -m pytest Tests/Skills/test_canvas_skill.py Tests/Chat/test_console_skill_substitution.py -q
@@ -329,7 +329,7 @@ existing setup route; a skipped browser test is not evidence that examples work.
 
   Expected: new policy/skill assertions fail for their missing behavior, not
   environmental setup. Existing generic skill semantics must stay intact.
-- [ ] **4. Define and reuse the short product policy.** Use this wording as the
+- [x] **4. Define and reuse the short product policy.** Use this wording as the
   shared constant, adapting only for clarity while keeping all conditions:
 
   > Offer Canvas only when a substantial visual or interaction materially helps.
@@ -347,7 +347,7 @@ existing setup route; a skipped browser test is not evidence that examples work.
   if only the guide is available. Loaded guidance describes just disclosed names.
   Guide-only guidance has no mutation/profile examples. Avoid new guide-body I/O
   during prompt construction; keep existing profile guidance authoritative.
-- [ ] **5. Write the optional skill.** Use native frontmatter:
+- [x] **5. Write the optional skill.** Use native frontmatter:
 
   ```yaml
   name: canvas
@@ -365,18 +365,18 @@ existing setup route; a skipped browser test is not evidence that examples work.
   available-evidence-only preview reporting, one failed repair stop, and normal
   untrusted/unavailable behavior. Do not invoke the skill as a model tool or add
   changes to `_BridgeSkillRunner`/skill-child permissions.
-- [ ] **6. Update user documentation.** Explain the offer and refusal flows,
+- [x] **6. Update user documentation.** Explain the offer and refusal flows,
   explicit requests/edits, and optional skill import from the repository's
   `Docs/Examples/skills/canvas` directory through Library > Skills. Link the actual
   example and explain review/trust is still required. State that ordinary Canvas
   use does not require installing the skill; never replace a refused invocation
   silently. Preserve existing source/save/preview/confirmed-action explanations.
-- [ ] **7. Run GREEN with the same commands**, plus
+- [x] **7. Run GREEN with the same commands**, plus
   `Tests/Chat/test_console_personal_context_snapshot.py` and exact affected
   Canvas nodes in `Tests/Chat/test_console_chat_controller.py` if their complete
   catalog fixtures changed. Expected: policy/disclosure/inline wiring work without
   a child run or expanded authority. These tests prove wiring, not model obedience.
-- [ ] **8. Commit only Task 3 files** with message
+- [x] **8. Commit only Task 3 files** with message
   `feat(canvas): offer before authoring and add inline canvas skill`.
 
 ## Task 4: Prove installed packaging and actual example interactions
@@ -385,20 +385,20 @@ existing setup route; a skipped browser test is not evidence that examples work.
 **Create:** `Tests/Canvas/browser/test_canvas_guide_examples.py`.
 **Read/reuse:** browser `test_canvas_zero_egress.py` and `test_canvas_mermaid.py`.
 
-- [ ] **1. Extend packaging tests.** Add the new module and three Markdown paths
+- [x] **1. Extend packaging tests.** Add the new module and three Markdown paths
   to `CANVAS_GATEWAY_PATHS`. Extend the existing wheel probe to import the reader
   from the built wheel, read all four topics, and check nonempty bounded text.
   Preserve its source/sdist byte comparison and isolated temporary working
   directory; verify the reader's module resolves inside `.whl/`, not this checkout.
   This documents a new contract even if Task 1 packaging already makes it pass.
-- [ ] **2. Add exact-example browser tests.** Extract examples from the actual
+- [x] **2. Add exact-example browser tests.** Extract examples from the actual
   topic reader with MarkdownIt rather than copying HTML into fixtures. Reuse
   `_wire_plan`, `_new_page`, `_load`, the Chromium/loopback fixtures, and egress
   assertion from `test_canvas_zero_egress.py`. Use the normal admitted profile
   snapshot for V2; do not force-enable a profile to claim shipped compatibility.
   Export/reuse its fixtures exactly as `test_canvas_mermaid.py` does. Mark the
   new tests `loopback_network`.
-- [ ] **3. Assert visible behavior.** Require a ready preview and expected text/SVG
+- [x] **3. Assert visible behavior.** Require a ready preview and expected text/SVG
   for all examples. For controls, set quantity to 3 and unit price to 7 using
   browser input events and require total to become 21; then test an invalid or
   empty input is handled visibly without uncaught runtime failure. Check the
@@ -406,7 +406,7 @@ existing setup route; a skipped browser test is not evidence that examples work.
   nodes/participant labels and no failure diagnostic. Confirm generated zero
   egress using the incumbent recorder. Capture narrow 390x844 and ordinary
   1280x800 views for inspection; do not modify the shell to fit a bad example.
-- [ ] **4. Run the bounded installed/browser checks:**
+- [x] **4. Run the bounded installed/browser checks:**
 
   ```bash
   "$CANVAS_PLAN_PY" -m pytest Tests/Packaging/test_canvas_gateway_distribution.py -q
@@ -418,7 +418,7 @@ existing setup route; a skipped browser test is not evidence that examples work.
   do not loosen the renderer/profile budgets or bypass browser failures. Record
   host/interpreter/browser versions, exact commands, counts, and skip/failure
   reasons. Broaden browser tests only if a failure requires adjacent investigation.
-- [ ] **5. Commit packaging/browser tests and any demonstrated example fixes**
+- [x] **5. Commit packaging/browser tests and any demonstrated example fixes**
   with message `test(canvas): verify packaged guides and browser examples`.
 
 ## Task 5: Record model behavior, review the diff, and close delivery
@@ -450,20 +450,20 @@ existing setup route; a skipped browser test is not evidence that examples work.
   a reasonable chat answer instead of offering, record it honestly; use a clear
   high-benefit comparison prompt to exercise the offer rather than counting a
   forced “offer now” instruction as spontaneous selection evidence.
-- [ ] **2. Record limitations and fixes.** Separate prompt/plumbing tests,
+- [x] **2. Record limitations and fixes.** Separate prompt/plumbing tests,
   compiled examples, browser evidence, and model behavior. If no authorized
   provider is available, mark model scenarios unrun and retain them as outstanding
   acceptance evidence; do not claim guaranteed consent compliance or token savings.
   Fix actual failures at the shared policy or example source, then rerun only
   affected checks. No new evaluation platform or new judge model is needed.
-- [ ] **3. Run final targeted regressions once after final changes.** Reuse the
+- [x] **3. Run final targeted regressions once after final changes.** Reuse the
   Task 1–4 commands and relevant selected nodes; do not repeat unchanged expensive
   browser/build runs without a reason. For static checks, derive the changed Python
   list from the execution baseline, run the repository's available Ruff checker and
   formatter against those files, and review any pre-existing formatting drift
   without unrelated reformatting. Run `git diff --check` and
   `python3 scripts/check_backlog_task_ids.py`. No full test sweep.
-- [ ] **4. Self-review and request scoped code review.** Verify every approved
+- [x] **4. Self-review and request scoped code review.** Verify every approved
   spec condition, exact reservations and projection shapes, correct primary-run
   authority, absence of guide text before demand, real import/trust semantics,
   and unchanged pinned assets. In particular:
@@ -476,7 +476,7 @@ existing setup route; a skipped browser test is not evidence that examples work.
   Expected: no changes to existing immutable static/grammar assets. The new guide
   files live outside that closure. Confirm documentation paths and package entries
   refer to actual files, and new skill/tool names do not shadow other providers.
-- [ ] **5. Finish the implementation task accurately.** Add implementation notes
+- [x] **5. Finish the implementation task accurately.** Add implementation notes
   with changed behavior, files, ADR links, evidence, and material limitations.
   Check each acceptance criterion only with its required evidence. Leave genuinely
   unverified criteria open. Record a lesson only if this work produced a reusable
@@ -484,11 +484,17 @@ existing setup route; a skipped browser test is not evidence that examples work.
   `docs(canvas): record guide and inline skill verification`; mark the implementation
   task Done via CLI only when its definition of done is satisfied.
 
-## Execution handoff
+## Execution status
 
-Independent [plan review](../reviews/2026-09-10-canvas-guidance-skill-plan-review.md)
-approved round 1 without blocking or advisory findings. The user
-has approved the spec; selecting subagent-driven or inline execution is the next
-workflow choice. There is no additional architecture decision to resolve before
-starting Task 1. Keep task ownership sequential where provider/guidance/test files
-overlap, even if using subagents.
+The user approved both design and implementation. TASK-32313 tracks delivery on
+`codex/canvas-guidance-skill-design`. Independent browser/package and skill/trust
+work proceeded alongside provider wiring with disjoint write scopes; shared
+provider and guidance changes remained sequential. The parent completed guidance
+wiring while the worker finished the separate skill/trust portion.
+
+Stages 1–4 are implemented, locally verified, and independently reviewed. Final
+quality review approved the code. Stage 5's actual model sample remains unrun
+because the user-specified
+llama.cpp endpoint is unreachable from this Mac. Keep TASK-32313 In Progress and
+its model-evidence criterion open until that sample is recorded. See the
+[QA record](../qa/2026-09-10-canvas-guidance-skill.md) for exact results and limits.
