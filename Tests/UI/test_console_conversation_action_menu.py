@@ -554,3 +554,52 @@ async def test_transcript_click_folds_the_menu(monkeypatch) -> None:
         assert not screen.query(ConsoleConversationActionMenu), (
             "a transcript press left the row action menu mounted"
         )
+
+
+@pytest.mark.asyncio
+async def test_fold_helper_dismisses_both_registries_without_focus_restore() -> None:
+    """Unit seam for _fold_row_action_menus_for_pointer (PR #2593 review).
+
+    Mounts one menu of EACH registry directly (no UI open path), parks
+    focus somewhere deliberate, calls the transcript helper, and asserts
+    every registered menu was dismissed with restore_focus=False -- i.e.
+    both gone and focus untouched (no yank back to the rail opener).
+    """
+    from tldw_chatbook.Chat.console_conversation_actions import (
+        ConversationMenuTarget,
+    )
+    from tldw_chatbook.Chat.console_workspace_actions import WorkspaceMenuTarget
+    from tldw_chatbook.Widgets.Console.console_workspace_action_menu import (
+        ConsoleWorkspaceActionMenu,
+    )
+
+    async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
+        screen = pilot.app.screen
+        transcript = screen.query_one("#console-native-transcript")
+        await screen.mount(
+            ConsoleConversationActionMenu(
+                target=ConversationMenuTarget(conversation_id="c1"),
+                opener_id="console-conversation-actions-0",
+                screen_x=4,
+                screen_y=6,
+            ),
+            ConsoleWorkspaceActionMenu(
+                target=WorkspaceMenuTarget(workspace_id="w1"),
+                opener_id="console-workspace-tree",
+                screen_x=4,
+                screen_y=14,
+            ),
+        )
+        await pilot.pause(0.3)
+        composer = screen.query_one("#console-native-composer")
+        screen.set_focus(composer)
+        await pilot.pause()
+
+        transcript._fold_row_action_menus_for_pointer()
+        await pilot.pause(0.3)
+
+        assert not screen.query(ConsoleConversationActionMenu)
+        assert not screen.query(ConsoleWorkspaceActionMenu)
+        assert pilot.app.focused is composer, (
+            "fold restored opener focus instead of honouring the press"
+        )
