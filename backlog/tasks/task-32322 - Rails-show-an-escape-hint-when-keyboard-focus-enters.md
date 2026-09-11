@@ -67,4 +67,16 @@ are pre-existing dev drift (verified on stashed clean tree).
 
 VERIFIED LIVE: 10 Tab presses walked focus Conversations header -> filter input -> rows, never leaving the rail. Current state: right rail gets a footer 'n/p Sections' hint only (chat_screen.py:5016-5017); no Esc/F6 escape hint, left rail gets nothing. Scope: extend the footer-hint mechanism.
 Live evidence: headless tmux run, scratch profile, 160x45 and 124x45 captures; code evidence re-verified in the implementation worktree.
+
+
+**Live-smoke amendment (2026-09-11).** The first implementation added a
+SECOND `on_descendant_focus`/used root-only `on_focus`+`on_blur` on the
+left rail — Python shadowing plus the wrong event class meant the hint
+never appeared in the real app even though the (manual-refresh) test
+passed. Live smoke in tmux caught it. Final shape: the refresh rides the
+rail's SURVIVING `on_descendant_focus` head and the existing
+`on_descendant_blur` (deferred, mirroring `_clear_focus_owner`), and the
+test now drives the real Alt+C flow with no manual refresh. Verified
+live: hint appears on rail entry, clears on Esc, returns on re-entry.
+Committed in b078be4f05 and 01ec1b39ad (CSS-variable follow-up).
 <!-- SECTION:NOTES:END -->
