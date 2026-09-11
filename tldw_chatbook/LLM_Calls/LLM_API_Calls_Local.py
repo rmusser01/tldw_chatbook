@@ -519,7 +519,7 @@ def _chat_with_openai_compatible_local_server(
                 "error_type": "data_error",
             },
         )
-        # task-32273: nothing here came back from the provider -- these are
+        # task-32342: nothing here came back from the provider -- these are
         # local payload-construction / response-parsing failures. Reporting
         # them as ChatBadRequestError(400) blamed the provider for a client
         # bug ("The provider rejected this request"). A real 4xx still

@@ -1288,7 +1288,7 @@ def chat_api_call(
                     provider=endpoint_lower, message=safe_message
                 ) from None
             if isinstance(e_chat_direct, ChatConfigurationError):
-                # task-32273: keep the carried status. Dropping it here
+                # task-32342: keep the carried status. Dropping it here
                 # restored the 500 default under the sensitive policy, and a
                 # client-side request-preparation failure carries none.
                 raise ChatConfigurationError(

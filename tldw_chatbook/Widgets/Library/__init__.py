@@ -11,6 +11,7 @@ from .library_conversations_canvas import LibraryConversationsCanvas
 from .library_conversation_reader import (
     LibraryConversationReader,
     library_conversation_block_sentence,
+    library_conversation_link_would_unblock,
 )
 from .library_adaptive_reader_shell import (
     LIBRARY_ADAPTIVE_READER_GRIP_CLASS,
@@ -134,6 +135,7 @@ __all__ = [
     "LibraryConversationsCanvas",
     "LibraryConversationReader",
     "library_conversation_block_sentence",
+    "library_conversation_link_would_unblock",
     "LibraryExportCanvas",
     "LibraryLandingAttentionAction",
     "LibraryLandingCanvas",

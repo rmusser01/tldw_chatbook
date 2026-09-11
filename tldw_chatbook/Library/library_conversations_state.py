@@ -221,7 +221,9 @@ def _secondary_text(message_count: int | None, age: str) -> str:
     if message_count is None:
         return "conversation"
     if age:
-        return f"{message_count} messages - {age}"
+        # task-32364 AC#2: every other Library list separates row facts with
+        # "·"; Conversations was the one hyphen.
+        return f"{message_count} messages · {age}"
     return f"{message_count} messages"
 
 

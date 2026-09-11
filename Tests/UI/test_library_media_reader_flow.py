@@ -1974,6 +1974,11 @@ def test_find_from_analysis_opens_the_bar_on_the_analysis_tab():
     fake._library_media_find_unavailable_reason = MethodType(
         LibraryScreen._library_media_find_unavailable_reason, fake
     )
+    # task-32348: the button handler and the ctrl+f action share one
+    # implementation, so the fake binds that too.
+    fake._toggle_library_media_find = MethodType(
+        LibraryScreen._toggle_library_media_find, fake
+    )
     LibraryScreen.handle_library_media_reader_find(
         fake, SimpleNamespace(stop=lambda: None)
     )
@@ -2164,7 +2169,9 @@ async def test_unmount_drains_pending_and_ambiguous_inflight_progress_writes():
 # ---------------------------------------------------------------------------
 
 
-def _reader_key_fake(*, view="viewer", external=False, substate=False, pending=False):
+def _reader_key_fake(
+    *, view="viewer", external=False, substate=False, pending=False, find_open=False
+):
     """A minimal screen fake for the Reader action-key check_action gates."""
     from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
 
@@ -2174,6 +2181,9 @@ def _reader_key_fake(*, view="viewer", external=False, substate=False, pending=F
         _media_state=SimpleNamespace(
             view=view,
             selected_media_id=media_id,
+            # task-32348: the trash gate reads this -- with the Find bar
+            # open the user is typing a query, not arming a delete.
+            find_open=find_open,
             reader_session=SimpleNamespace(
                 external_detail=external,
                 pending_request=object() if pending else None,
@@ -2218,6 +2228,12 @@ def test_reader_action_keys_gated_to_plain_local_viewer():
         "library_media_move_to_trash",
     ):
         assert LibraryScreen.check_action(listing, action, ()) is False, action
+
+    # task-32348 AC#2: with the Find bar open the caret is in a query field,
+    # so the one destructive single key stands down; the other two do not.
+    finding = _reader_key_fake(find_open=True)
+    assert LibraryScreen.check_action(finding, "library_media_move_to_trash", ()) is False
+    assert LibraryScreen.check_action(finding, "library_media_read_later", ()) is True
 
     # Qodo #2317: while a detail request is pending (mid-load/traversal), the
     # displayed detail is not yet the selected item -> all off.

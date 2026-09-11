@@ -274,7 +274,10 @@ async def test_new_note_canvas_focuses_blank_note_on_entry_and_arrows_move():
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
 
-        await pilot.press("n")
+        # task-32356: `n` creates the blank note itself now, so the canvas
+        # this pin is about is reached the way it is still reachable -- the
+        # rail's Create > New note row.
+        screen.query_one("#library-row-create-note").press()
         blank = await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
         for _ in range(60):
             if screen.focused is blank:
@@ -286,6 +289,15 @@ async def test_new_note_canvas_focuses_blank_note_on_entry_and_arrows_move():
         )
         assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE
 
+        # Down/Up still walk the canvas's rows; the eight templates sit
+        # behind the one row Down now reaches first (task-32356).
+        await pilot.press("down")
+        await pilot.pause()
+        opener = screen.query_one("#library-note-from-template", Button)
+        assert screen.focused is opener
+
+        await pilot.press("enter")
+        await _wait_for_selector(screen, pilot, "#library-notes-template-0")
         await pilot.press("down")
         await pilot.pause()
         first_template = screen.query_one("#library-notes-template-0", Button)
@@ -293,7 +305,10 @@ async def test_new_note_canvas_focuses_blank_note_on_entry_and_arrows_move():
 
         await pilot.press("up")
         await pilot.pause()
-        assert screen.focused is blank
+        assert screen.focused is screen.query_one("#library-note-from-template", Button)
+        await pilot.press("up")
+        await pilot.pause()
+        assert screen.focused is screen.query_one("#library-notes-create-blank", Button)
 
         # AC#1 is "Enter creates a note immediately" -- assert the outcome,
         # not just the focus that makes it possible.
@@ -314,7 +329,7 @@ async def test_tab_from_a_library_canvas_never_reaches_the_nav_bar():
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
 
-        await pilot.press("n")
+        screen.query_one("#library-row-create-note").press()
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
         await pilot.pause()
 
@@ -340,7 +355,7 @@ async def test_new_note_footer_enter_hint_follows_the_focused_control():
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
 
-        await pilot.press("n")
+        screen.query_one("#library-row-create-note").press()
         blank = await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
         blank.focus()
         await pilot.pause()
@@ -356,12 +371,14 @@ async def test_new_note_footer_enter_hint_follows_the_focused_control():
 
 
 @pytest.mark.asyncio
-async def test_ctrl_n_into_new_note_also_focuses_blank_note():
+async def test_the_retained_route_into_new_note_also_focuses_blank_note():
     """AC#1 covers *entering the canvas*, not one route into it.
 
-    Ctrl+N from the Notes list takes the retained-shell route
-    (``_try_switch_retained_library_notes_route``), which is a different
-    code path from the landing's ``n``; live, it left focus behind.
+    Entering Create from inside the Notes list takes the retained-shell
+    route (``_try_switch_retained_library_notes_route``), a different code
+    path from a landing entry; live, it left focus behind. task-32356 moved
+    the keys off this route (they create the note directly now), so the
+    route is exercised through the rail row that still takes it.
     """
     host = _build_library_host()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -373,15 +390,16 @@ async def test_ctrl_n_into_new_note_also_focuses_blank_note():
         await pilot.pause()
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
 
-        await pilot.press("ctrl+n")
+        screen.query_one("#library-row-create-note").press()
         blank = await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
         for _ in range(80):
             if screen.focused is blank:
                 break
             await pilot.pause(0.02)
         assert screen.focused is blank, (
-            f"Ctrl+N left focus on {getattr(screen.focused, 'id', None)!r}, "
-            "so Enter does not create a note."
+            "The retained route into Create left focus on "
+            f"{getattr(screen.focused, 'id', None)!r}, so Enter does not "
+            "create a note."
         )
 
 
