@@ -77,6 +77,24 @@ def test_always_on_names_match_the_default_catalog(tools_config):
 
 def test_build_gateable_tool_raises_rather_than_returning_none():
     """The constructor logs the reason, so failures must carry one."""
-    bogus = GateableTool("x_enabled", "no_such_module", "NoSuchTool", "x")
+    bogus = GateableTool(
+        "x_enabled", "no_such_module", "NoSuchTool", "x", "Bogus", "Not real."
+    )
     with pytest.raises(Exception):
         build_gateable_tool(bogus)
+
+
+def test_every_gateable_tool_carries_display_copy():
+    """task-32284: the table is THE copy source for every gate surface.
+
+    The first-run wizard's Tools step and the MCP hub's Tool gates pane both
+    render straight off these rows, so a row without copy ships a blank
+    switch -- the failure mode CLAUDE.md's "New Tool" checklist warns about,
+    which used to depend on remembering a second table in the wizard.
+    """
+    for entry in gateable_builtin_tools():
+        assert entry.title.strip(), f"{entry.tool_name} has no title"
+        assert entry.blurb.strip(), f"{entry.tool_name} has no blurb"
+        assert entry.title != entry.tool_name, (
+            f"{entry.tool_name}'s title is the raw id, not a human name"
+        )

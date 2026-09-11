@@ -202,28 +202,33 @@ _BUILTIN_CHECKBOX_KEYS: dict[str, str] = {
     "mcp-builtin-expose-prompts": "expose_prompts",
 }
 
-# task-3240: prefix for a [tools]/[console] gate Checkbox's id -- the
-# `(section, key)` each one edits is looked up from `_tool_gate_ids`
-# (instance state, rebuilt every `_tool_gate_widgets()` call from
-# `all_tool_gates()` -- see that method) rather than a second static table,
-# so it cannot drift from the enumerator that built the checkboxes.
+# task-3240: prefix for a [tools]/[console] gate row's id -- the `ToolGate`
+# each one edits is looked up from `_tool_gates_by_id` (instance state,
+# rebuilt every `_tool_gate_widgets()` call from `all_tool_gates()` -- see
+# that method) rather than a second static table, so it cannot drift from
+# the enumerator that built the rows.
 _TOOL_GATE_ID_PREFIX = "mcp-gate-"
 
-# task-3240 (spec §5): the adapted restart note for gate checkboxes -- NOT
+# task-3240 (spec §5) / task-32284: the adapted apply note -- NOT
 # `_builtin_toggle_widgets()`'s "next client launch" wording. These gates
-# affect the in-process AGENT tool catalog (BuiltinToolProvider/
-# LocalToolProvider construction), not the MCP client/server handshake --
-# no MCP client is involved at all.
+# affect the in-process AGENT tool catalog, not the MCP client/server
+# handshake. It says "next run", not "next restart", because that is what
+# the code does: `build_console_tool_registry()` constructs
+# `BuiltinToolProvider` and `_compose_local_provider()` constructs
+# `LocalToolProvider` once per Console agent run, each reading these keys
+# fresh (verified by flipping a gate in-process and rebuilding).
 _TOOL_GATE_NOTE_TEXT = (
-    "Applies on next app restart — tool providers build their catalogs at startup."
+    "Applies to the next Console agent run — each run builds its tool catalog fresh."
 )
 
-# task-3240 fix round 1 (Important 1c): the master switch's raw config key
-# ("local_tools_enabled") is unreadable as a checkbox label -- humanized
-# here, display-only. The Checkbox's `id` is still built from `gate.key`
-# (LOCAL_TOOLS_MASTER_KEY), never from this label, so the save/reload path
-# is untouched.
-_LOCAL_TOOLS_MASTER_LABEL = "Local workspace, web, and Watchlists tools (master switch)"
+# task-32284: the honest exception. A gate flagged `restart_required` also
+# decides what the built-in MCP SERVER publishes, and that list is built
+# when the server starts -- so external clients pick it up on their next
+# launch even though the agent half is live next run.
+_TOOL_GATE_RESTART_NOTE_TEMPLATE = (
+    "{names} also reaches external MCP clients — that half applies on their "
+    "next client launch."
+)
 
 _LOCAL_TOOLS_INCLUDED_TEXT = (
     "Includes web_search, web_fetch, and web_crawl, plus workspace file, "
@@ -431,12 +436,14 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         # F-057: the table width the current column set was fitted to
         # (0 = never fitted) -- `on_resize` refits only on real changes.
         self._table_width: int = 0
-        # task-3240: id -> (section, key) for the currently-mounted gate
-        # Checkboxes, rebuilt fresh by every `_tool_gate_widgets()` call --
-        # `on_checkbox_changed` reads it to route a toggle to the right
-        # `ToolGateChanged`. Empty whenever the detail isn't builtin-source
-        # (mirrors `_tool_gate_widgets()` returning `[]` there).
-        self._tool_gate_ids: dict[str, tuple[str, str]] = {}
+        # task-3240/task-32284: id -> the `ToolGate` each currently-mounted
+        # gate row renders, rebuilt fresh by every `_tool_gate_widgets()`
+        # call -- `on_button_pressed` reads it both to route the toggle to
+        # the right `ToolGateChanged` and to know which state it is
+        # flipping FROM (the row is a Button, so the displayed state lives
+        # here, not on the widget). Empty whenever the detail isn't
+        # builtin-source (mirrors `_tool_gate_widgets()` returning `[]`).
+        self._tool_gates_by_id: dict[str, ToolGate] = {}
 
     def on_resize(self) -> None:
         """F-057: refit the overview's column set when the table's rendered
@@ -1055,7 +1062,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
                 )
 
     def _focused_toggle_id(self) -> str | None:
-        """Id of this pane's [mcp]/gate Checkbox that currently has focus.
+        """Id of this pane's [mcp] Checkbox / gate Button that has focus.
 
         task-3240 fix round 1 (Critical 1). Mirrors `sources_pane.py`'s
         `_focused_create_field_id()`: `self.screen.focused` (never
@@ -1096,7 +1103,9 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         if focused_id is None:
             return
         try:
-            target = self.query_one(f"#{focused_id}", Checkbox)
+            # Untyped: the `[mcp]` toggles are Checkboxes, the gate rows are
+            # Buttons (task-32284) -- both are restored the same way.
+            target = self.query_one(f"#{focused_id}")
         except NoMatches:
             target = None
         if target is not None:
@@ -1204,34 +1213,37 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         if widgets:
             await container.mount_all(widgets)
 
-    def _gate_checkbox(self, gate: ToolGate, *, disabled: bool = False) -> Checkbox:
-        """Build one gate's Checkbox.
+    def _gate_button(self, gate: ToolGate, *, disabled: bool = False) -> Button:
+        """Build one gate's toggle Button.
+
+        task-32284: a Button whose label carries the state in TEXT
+        ("Read file: on ▸"), reusing `mcp_permissions_mode._kill_switch_
+        label()`'s idiom for the same reason it exists there -- a compact
+        Checkbox renders `▐X▌` in BOTH states (Textual's
+        `ToggleButton._button` always draws `X`; only the colour differs),
+        so a click that really did flip the config left the row looking
+        identical. The humanized name comes from `gate.title`, the ONE copy
+        table the first-run wizard also renders, so the two surfaces cannot
+        name the same tool differently.
 
         task-3240 fix round 1: `disabled` (Important 1b) is True for a
         LOCAL-group gate other than the master switch itself while that
         master is off -- re-evaluated fresh on every rebuild, so switching
         the master back on re-enables its dependents the very next resync
-        with no separate wiring. The master row's own label is humanized
-        (Important 1c) via `_LOCAL_TOOLS_MASTER_LABEL`; its `id` still
-        comes from `gate.key`, never from the label, so the save/reload
-        path is unaffected.
+        with no separate wiring. The `id` still comes from `gate.key`,
+        never from the label, so the save/reload path is unaffected.
         """
-        label = (
-            _LOCAL_TOOLS_MASTER_LABEL
-            if gate.key == LOCAL_TOOLS_MASTER_KEY
-            else gate.tool_name
-        )
-        return Checkbox(
-            label,
-            value=gate.enabled,
+        return Button(
+            f"{gate.title}: {'on' if gate.enabled else 'off'} ▸",
             id=f"{_TOOL_GATE_ID_PREFIX}{gate.key}",
+            classes="console-action-secondary",
             compact=True,
             tooltip=gate.description,
             disabled=disabled,
         )
 
     def _tool_gate_widgets(self) -> list[Widget]:
-        """Build the `[tools]`/`[console]` gate Checkbox rows (task-3240).
+        """Build the `[tools]`/`[console]` gate rows (task-3240).
 
         Builtin-source snapshots only, same gate as `_builtin_toggle_
         widgets()` -- spec review finding 5 (branch (b)): `_collect_
@@ -1242,19 +1254,18 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         pane is badged as the built-in MCP SERVER, but these checkboxes
         control the in-process AGENT tool catalog -- a different subsystem.
 
-        Also rebuilds `self._tool_gate_ids` (id -> (section, key)) fresh
-        from the same `all_tool_gates()` batch the checkboxes were built
-        from, so `on_checkbox_changed` can never route a toggle against a
-        stale mapping.
+        Also rebuilds `self._tool_gates_by_id` fresh from the same
+        `all_tool_gates()` batch the rows were built from, so
+        `on_button_pressed` can never route a toggle -- or read the state
+        it is flipping -- against a stale mapping.
         """
         snapshot = self._detail_snapshot
         if snapshot is None or snapshot.source != "builtin":
-            self._tool_gate_ids = {}
+            self._tool_gates_by_id = {}
             return []
         gates = all_tool_gates()
-        self._tool_gate_ids = {
-            f"{_TOOL_GATE_ID_PREFIX}{gate.key}": (gate.section, gate.key)
-            for gate in gates
+        self._tool_gates_by_id = {
+            f"{_TOOL_GATE_ID_PREFIX}{gate.key}": gate for gate in gates
         }
         builtin_gates = [gate for gate in gates if gate.group == "builtin"]
         local_gates = [gate for gate in gates if gate.group == "local"]
@@ -1276,7 +1287,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
                     markup=False,
                 )
             )
-            widgets.extend(self._gate_checkbox(gate) for gate in builtin_gates)
+            widgets.extend(self._gate_button(gate) for gate in builtin_gates)
         if local_gates:
             widgets.append(
                 Static(
@@ -1295,10 +1306,10 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
                 )
             )
             # task-3240 fix round 1 (Important 1): the master switch is
-            # always enabled itself (only ITS OWN checkbox toggles it) --
+            # always enabled itself (only ITS OWN row toggles it) --
             # every OTHER local-group gate is disabled while it's off, and
             # a dependency note explains why rather than leaving two
-            # apparently-independent checkboxes with no visible link.
+            # apparently-independent rows with no visible link.
             master_gate = next(
                 (g for g in local_gates if g.key == LOCAL_TOOLS_MASTER_KEY), None
             )
@@ -1313,7 +1324,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
                     )
                 )
             widgets.extend(
-                self._gate_checkbox(
+                self._gate_button(
                     gate,
                     disabled=(
                         not master_enabled and gate.key != LOCAL_TOOLS_MASTER_KEY
@@ -1329,6 +1340,20 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
                 markup=False,
             )
         )
+        # task-32284: name the gates the apply-on-next-run line does NOT
+        # cover, instead of telling every gate's user to restart.
+        restart_names = [gate.tool_name for gate in gates if gate.restart_required]
+        if restart_names:
+            widgets.append(
+                Static(
+                    _TOOL_GATE_RESTART_NOTE_TEMPLATE.format(
+                        names=", ".join(restart_names)
+                    ),
+                    id="mcp-gate-restart-note",
+                    classes="ds-field-row",
+                    markup=False,
+                )
+            )
         return widgets
 
     async def _rebuild_tool_gate_checkboxes(self) -> None:
@@ -1445,8 +1470,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             self.post_message(self.ServerRowSelected(server_key))
 
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
-        """Forward a detail-pane Checkbox toggle as `BuiltinFlagChanged` or
-        `ToolGateChanged` (task-3240), whichever id table matches.
+        """Forward a detail-pane `[mcp]` Checkbox toggle as `BuiltinFlagChanged`.
 
         Mount-echo note (verified against `textual.widgets._toggle_button.
         ToggleButton`, Task 10): the base class wraps its constructor's
@@ -1456,8 +1480,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         constructing/mounting a Checkbox with a non-default initial value
         does NOT itself fire `Changed`. No compare-before-post guard is
         needed here; `test_showing_builtin_detail_does_not_post_builtin_
-        flag_changed` in test_mcp_servers_mode.py pins this down, and its
-        task-3240 sibling pins the same for gate checkboxes.
+        flag_changed` in test_mcp_servers_mode.py pins this down.
         """
         checkbox_id = event.checkbox.id or ""
         key = _BUILTIN_CHECKBOX_KEYS.get(checkbox_id)
@@ -1465,14 +1488,22 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             event.stop()
             self.post_message(self.BuiltinFlagChanged(key, event.value))
             return
-        gate_target = self._tool_gate_ids.get(checkbox_id)
-        if gate_target is not None:
-            event.stop()
-            section, gate_key = gate_target
-            self.post_message(self.ToolGateChanged(section, gate_key, event.value))
+        # Gate rows are Buttons since task-32284 -- see `on_button_pressed`.
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
+        gate = self._tool_gates_by_id.get(button_id)
+        if gate is not None:
+            # task-32284: the row states its own state, so pressing it
+            # asks for the OPPOSITE of the state it is displaying -- read
+            # from the same batch that built the label, never from the
+            # widget (a Button has no value) or a fresh config read (which
+            # could race the workbench's save/resync).
+            event.stop()
+            self.post_message(
+                self.ToolGateChanged(gate.section, gate.key, not gate.enabled)
+            )
+            return
         if button_id == "mcp-add-server":
             event.stop()
             self.post_message(self.AddServerRequested())

@@ -355,16 +355,18 @@ async def test_workbench_at_100x30_keeps_server_master_switch_reachable(monkeypa
         await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}1")
         await pilot.pause()
 
-        checkbox = app.query_one("#mcp-gate-local_tools_enabled", Checkbox)
-        assert str(checkbox.label) == (
-            "Local workspace, web, and Watchlists tools (master switch)"
+        master_row = app.query_one("#mcp-gate-local_tools_enabled", Button)
+        # task-32284: the row is a toggle Button whose label carries the
+        # state in text, so the label is the name plus ": on ▸"/": off ▸".
+        assert str(master_row.label) == (
+            "Local workspace, web, and Watchlists tools (master switch): on ▸"
         )
-        checkbox.scroll_visible(animate=False, force=True, immediate=True)
-        checkbox.focus()
+        master_row.scroll_visible(animate=False, force=True, immediate=True)
+        master_row.focus()
         await pilot.pause()
         await pilot.pause()
-        assert checkbox.is_on_screen
-        assert app.focused is checkbox
+        assert master_row.is_on_screen
+        assert app.focused is master_row
 
         rendered = "\n".join(
             "".join(segment.text for segment in strip)
@@ -372,8 +374,8 @@ async def test_workbench_at_100x30_keeps_server_master_switch_reachable(monkeypa
         )
         assert "Local workspace, web, and Watchlists tools" in rendered
 
-        original = checkbox.value
-        await pilot.press("space")
+        original = str(master_row.label).endswith(": on ▸")
+        await pilot.press("enter")  # a Button activates on Enter, not Space
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -1113,39 +1115,40 @@ async def test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog(monke
         # through end to end rather than hardcoded anywhere on the path.
         # Turned ON first (Important 1): web_deep_search is disabled below
         # it until this happens.
-        master_checkbox = app.query_one("#mcp-gate-local_tools_enabled", Checkbox)
-        assert master_checkbox.value is False
+        master_button = app.query_one("#mcp-gate-local_tools_enabled", Button)
+        assert str(master_button.label).endswith(": off ▸")
         await pilot.click("#mcp-gate-local_tools_enabled")
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert ("console", "local_tools_enabled", True) in save_calls
-        master_checkbox = app.query_one("#mcp-gate-local_tools_enabled", Checkbox)
-        assert master_checkbox.value is True
+        master_button = app.query_one("#mcp-gate-local_tools_enabled", Button)
+        assert str(master_button.label).endswith(": on ▸")
 
-        checkbox_id = f"#mcp-gate-{WEB_DEEP_SEARCH_GATE_KEY}"
-        checkbox = app.query_one(checkbox_id, Checkbox)
-        assert checkbox.value is False  # nothing overridden yet -> default off
-        assert checkbox.disabled is False  # master is now on
+        gate_id = f"#mcp-gate-{WEB_DEEP_SEARCH_GATE_KEY}"
+        gate_row = app.query_one(gate_id, Button)
+        # nothing overridden yet -> default off, and said in text (task-32284)
+        assert str(gate_row.label).endswith(": off ▸")
+        assert gate_row.disabled is False  # master is now on
 
-        await pilot.click(checkbox_id)
+        await pilot.click(gate_id)
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
 
         assert ("tools", WEB_DEEP_SEARCH_GATE_KEY, True) in save_calls
-        reloaded_checkbox = app.query_one(checkbox_id, Checkbox)
-        assert reloaded_checkbox.value is True
+        reloaded_row = app.query_one(gate_id, Button)
+        assert str(reloaded_row.label).endswith(": on ▸")
 
         # Bidirectional (Minor 3): flip it back OFF and confirm the reload
         # reflects that too -- not just the off->on direction.
-        await pilot.click(checkbox_id)
+        await pilot.click(gate_id)
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert ("tools", WEB_DEEP_SEARCH_GATE_KEY, False) in save_calls
-        reloaded_again = app.query_one(checkbox_id, Checkbox)
-        assert reloaded_again.value is False
+        reloaded_again = app.query_one(gate_id, Button)
+        assert str(reloaded_again.label).endswith(": off ▸")
 
         # Bidirectional for the master switch too.
         await pilot.click("#mcp-gate-local_tools_enabled")
@@ -1153,8 +1156,8 @@ async def test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog(monke
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert ("console", "local_tools_enabled", False) in save_calls
-        master_checkbox_again = app.query_one("#mcp-gate-local_tools_enabled", Checkbox)
-        assert master_checkbox_again.value is False
+        master_again = app.query_one("#mcp-gate-local_tools_enabled", Button)
+        assert str(master_again.label).endswith(": off ▸")
 
 
 def _fake_tool_gate_config_seam(monkeypatch):
@@ -1203,8 +1206,9 @@ async def test_focus_is_preserved_across_a_gate_toggle_save_and_resync(monkeypat
     (`_GATEABLE_BUILTINS[0]`), that is `#mcp-builtin-expose-prompts` (the
     LAST `[mcp]` toggle, immediately preceding it in the DOM): a live,
     actionable Checkbox belonging to a completely different settings
-    group. Driven with a real keyboard Space (`pilot.press`), matching how
-    the reviewer measured the regression -- not `pilot.click`.
+    group. Driven with a real keypress (`pilot.press`), matching how the
+    reviewer measured the regression -- not `pilot.click`. task-32284 made
+    the gate rows Buttons, which activate on Enter, not Space.
     """
     from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
 
@@ -1217,12 +1221,12 @@ async def test_focus_is_preserved_across_a_gate_toggle_save_and_resync(monkeypat
         await pilot.pause()
 
         first_gate_id = f"mcp-gate-{_GATEABLE_BUILTINS[0].gate_key}"
-        checkbox = app.query_one(f"#{first_gate_id}", Checkbox)
-        checkbox.focus()
+        gate_row = app.query_one(f"#{first_gate_id}", Button)
+        gate_row.focus()
         await pilot.pause()
         assert app.focused is not None and app.focused.id == first_gate_id
 
-        await pilot.press("space")
+        await pilot.press("enter")
         await pilot.pause()
         await app.workers.wait_for_complete()
         # `Widget.focus()` only SCHEDULES the change (`app.call_later`) --
@@ -1234,16 +1238,18 @@ async def test_focus_is_preserved_across_a_gate_toggle_save_and_resync(monkeypat
         assert focused is not None, "focus must not be dropped by the resync"
         assert focused.id == first_gate_id, (
             f"focus drifted to {focused.id!r} instead of staying on the "
-            "toggled gate checkbox"
+            "toggled gate row"
         )
 
 
 @pytest.mark.asyncio
-async def test_double_space_on_a_gate_checkbox_never_writes_an_mcp_key(monkeypatch):
-    """Fix round 1 (Critical 1), the reviewer's exact repro: Space on a
-    gate checkbox, then Space again. Before the fix, the SECOND Space hit
-    whatever checkbox focus had drifted to post-resync -- for the first
-    gate checkbox, `#mcp-builtin-expose-prompts` -- silently writing
+async def test_double_activation_of_a_gate_row_never_writes_an_mcp_key(monkeypatch):
+    """Fix round 1 (Critical 1), the reviewer's exact repro: activate a
+    gate row, then activate it again (Enter since task-32284 made these
+    rows Buttons; Space back when they were Checkboxes). Before the fix,
+    the SECOND keypress hit whatever checkbox focus had drifted to
+    post-resync -- for the first gate row, `#mcp-builtin-expose-prompts`
+    -- silently writing
     `[mcp] expose_prompts = false` instead of toggling the gate a second
     time. Asserts against the REAL persisted config (`flags`) and the
     save-call list: only the gate's own `[tools]` key is ever written,
@@ -1262,17 +1268,17 @@ async def test_double_space_on_a_gate_checkbox_never_writes_an_mcp_key(monkeypat
 
         gate_key = _GATEABLE_BUILTINS[0].gate_key
         first_gate_id = f"mcp-gate-{gate_key}"
-        checkbox = app.query_one(f"#{first_gate_id}", Checkbox)
-        checkbox.focus()
+        gate_row = app.query_one(f"#{first_gate_id}", Button)
+        gate_row.focus()
         await pilot.pause()
 
-        await pilot.press("space")
+        await pilot.press("enter")
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
         await pilot.pause()
 
-        await pilot.press("space")
+        await pilot.press("enter")
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -1283,8 +1289,8 @@ async def test_double_space_on_a_gate_checkbox_never_writes_an_mcp_key(monkeypat
             ("tools", gate_key, False),
         ], save_calls
         assert all(section != "mcp" for section, _, _ in save_calls), (
-            "a second Space wrote an unrelated [mcp] key -- focus drifted "
-            f"off the gate checkbox: {save_calls}"
+            "a second activation wrote an unrelated [mcp] key -- focus "
+            f"drifted off the gate row: {save_calls}"
         )
         assert flags[("tools", gate_key)] is False
 

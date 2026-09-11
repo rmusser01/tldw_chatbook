@@ -123,8 +123,11 @@ decide MCP availability independently.
 ## Other registration gates (Servers mode ▸ Tool gates)
 
 Select the built-in server's row in Servers mode; its detail pane has a
-**Tool gates** group under the existing enable/expose checkboxes, split
-into two subheadings:
+**Tool gates** group under the existing enable/expose checkboxes. Each gate
+is a button that spells its own state out in text — `Read file: off ▸`,
+`Read file: on ▸` — and presses toggle it; the tool's plain-language name
+and one-line description are the same copy the first-run setup wizard
+shows. The group is split into two subheadings:
 
 - **Agent built-ins** — the app's own file, note and library tools: read /
   list / write a file, glob / grep the workspace, create / update a note,
@@ -137,17 +140,23 @@ into two subheadings:
   **Local workspace, web, and Watchlists tools (master switch)**, mirroring the
   direct Tools-mode control. `web_deep_search` (multi-query web research that
   may cost real money on paid providers) has an additional individual gate
-  underneath it. Unlike the local master and workspace root,
-  construction-time gates such as `web_deep_search` require an app restart.
+  underneath it, as does `ask_user` (the only gate here that is on by
+  default).
 
 The master switch governs the **Console/agent path only**. It does *not*
 control whether an enabled tool (e.g. `web_deep_search`) is exposed to
 *external* MCP clients connecting to chatbook's own server — that is a
 separate switch, `[mcp] expose_local_tools`, unrelated to this pane.
 
-Every checkbox here saves immediately and reads back the real config value
-after saving — never an optimistic guess. The pane's restart note applies to
-the construction-time registration gates. This pane is still labeled as the
+Every gate here saves immediately and reads back the real config value
+after saving — the label you end up looking at is what is really stored,
+never an optimistic guess. **When a change takes effect:** every gate in
+this group applies to the *next Console agent run* — each run builds its
+tool catalog fresh — so no app restart is needed. The one caveat, called
+out in its own note under the group, is `web_deep_search`: it is also
+published to *external* MCP clients, and that list is built when the
+built-in server starts, so that half follows the next client launch. This
+pane is still labeled as the
 built-in *MCP server* (the stdio process `python -m tldw_chatbook.MCP`
 clients launch) even though these particular checkboxes control the
 in-process *agent* tool catalog — a different subsystem sharing the same
@@ -156,7 +165,8 @@ detail pane for discoverability.
 If the local master is off, both the Permissions matrix's legend and the
 Tools-mode empty state explicitly name `web_search`, `web_fetch`, and
 `web_crawl` and point to the direct Tools-mode control. Other disabled gates
-still report the total number of gates that are off.
+still report the total number of gates that are off, and the legend names
+where they live: **MCP ▸ Servers ▸ built-in row ▸ Tool gates**.
 
 ### `expand_document` and the Library consent boundary
 
@@ -553,4 +563,10 @@ land in the existing **Blocked (Off)** / **Denied (no decision)** buckets.
 Docs pass 2026-09-10 (task-32281, against code and tests, not a live
 screen): added "Exact-input allow rules" — the inspector now lists each
 stored rule with a Remove action, and the Permissions matrix marks a tool
-that carries one with a `≡` suffix.*
+that carries one with a `≡` suffix. Docs pass 2026-09-10 (task-32284,
+against code and tests, not a live screen): the Tool gates rows are now
+buttons that state on/off in text under the tool's plain-language name
+(one copy table shared with the first-run wizard), and the old blanket
+"applies on next app restart" note is corrected — every gate here applies
+to the next Console agent run, with `web_deep_search`'s external-MCP
+publication the single next-client-launch exception.*

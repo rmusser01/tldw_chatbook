@@ -829,12 +829,23 @@ class GateableTool(NamedTuple):
         module_name: Module under ``tldw_chatbook.Tools`` defining it.
         factory_name: Class name to instantiate.
         tool_name: The name the LLM calls it by.
+        title: Plain-language name for every surface that offers the gate
+            (task-32284) -- the first-run wizard's Tools step and the MCP
+            hub's Tool gates pane both render it. Required, with no
+            fallback: a row without copy would ship a blank switch, which
+            is exactly the failure this field exists to make impossible.
+        blurb: One-line, user-facing description of what turning the gate
+            on allows -- shown under the wizard's switch and as the hub
+            row's tooltip. ``⚠`` marks a tool that creates or changes data
+            on disk (a static judgment mirroring its ``risk_tags``).
     """
 
     gate_key: str
     module_name: str
     factory_name: str
     tool_name: str
+    title: str
+    blurb: str
 
 
 #: Built-ins registered unconditionally -- no gate, cannot be turned off.
@@ -847,34 +858,68 @@ ALWAYS_ON_BUILTIN_NAMES: tuple[str, ...] = ("calculator", "get_current_datetime"
 #: since a provider only lists what its gates already permit.
 _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
     GateableTool(
-        "read_file_enabled", "file_operation_tools", "ReadFileTool", "read_file"
+        "read_file_enabled",
+        "file_operation_tools",
+        "ReadFileTool",
+        "read_file",
+        "Read file",
+        "Read a file you point the assistant at.",
     ),
     GateableTool(
         "list_directory_enabled",
         "file_operation_tools",
         "ListDirectoryTool",
         "list_directory",
+        "List directory",
+        "Browse the contents of a folder.",
     ),
     GateableTool(
-        "write_file_enabled", "file_operation_tools", "WriteFileTool", "write_file"
+        "write_file_enabled",
+        "file_operation_tools",
+        "WriteFileTool",
+        "write_file",
+        "Write file",
+        "⚠ Creates or overwrites files on disk.",
     ),
     GateableTool(
-        "create_note_enabled", "note_management_tools", "CreateNoteTool", "create_note"
+        "create_note_enabled",
+        "note_management_tools",
+        "CreateNoteTool",
+        "create_note",
+        "Create note",
+        "⚠ Adds new notes to your notebook.",
     ),
     GateableTool(
-        "update_note_enabled", "note_management_tools", "UpdateNoteTool", "update_note"
+        "update_note_enabled",
+        "note_management_tools",
+        "UpdateNoteTool",
+        "update_note",
+        "Update note",
+        "⚠ Edits your existing notes.",
     ),
     GateableTool(
-        "glob_files_enabled", "file_operation_tools", "GlobFiles", "glob_files"
+        "glob_files_enabled",
+        "file_operation_tools",
+        "GlobFiles",
+        "glob_files",
+        "Find files",
+        "Match file names by pattern (like *.md).",
     ),
     GateableTool(
-        "grep_files_enabled", "file_operation_tools", "GrepFiles", "grep_files"
+        "grep_files_enabled",
+        "file_operation_tools",
+        "GrepFiles",
+        "grep_files",
+        "Search in files",
+        "Search inside files for text.",
     ),
     GateableTool(
         "expand_document_enabled",
         "document_expansion_tool",
         "ExpandDocumentTool",
         "expand_document",
+        "Expand document",
+        "Read the whole document behind a search result.",
     ),
 )
 

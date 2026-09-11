@@ -11334,6 +11334,50 @@ async def test_tools_step_rows_are_described_and_do_not_overlap():
 
 
 @pytest.mark.asyncio
+async def test_tools_step_copy_comes_from_the_shared_gate_table():
+    """task-32284: ONE copy table, on `_GATEABLE_BUILTINS`.
+
+    The step used to keep its own `_TOOL_COPY` dict, which the MCP hub's
+    Tool gates pane could not see -- so the same gate read "Read file" in
+    setup and `read_file` in the hub. Both now render `GateableTool.title`
+    and `.blurb`.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.Agents.tool_catalog import gateable_builtin_tools
+    from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import ToolsStep
+
+    assert not hasattr(ToolsStep, "_TOOL_COPY"), (
+        "the local copy table is the thing this task removed"
+    )
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = ToolsStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="tools", title="Tools", step_number=5),
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        entries = list(gateable_builtin_tools())
+        names = [str(label.render()) for label in step.query(".setup-tool-name")]
+        assert names == [entry.title for entry in entries]
+        for entry in entries:
+            rendered = str(
+                step.query_one(
+                    f"#setup-tool-desc-{entry.tool_name}", Static
+                ).render()
+            )
+            assert rendered == entry.blurb
+
+
+@pytest.mark.asyncio
 async def test_progress_defaults_to_quick_track_and_titles_fit():
     """TASK-1499: Welcome anchors at the recommended 5-step count, and no
     step title exceeds the ~8-char budget the progress row can render."""

@@ -517,6 +517,72 @@ def test_all_tool_gates_enumerates_every_gate_with_sections_and_groups(monkeypat
     assert all(g.description for g in local_gates)
 
 
+def test_all_tool_gates_carry_display_titles_from_the_shared_table(monkeypatch):
+    """task-32284: every gate renders a human name, and the builtin rows take
+    theirs from `_GATEABLE_BUILTINS` -- the same rows the first-run wizard
+    reads, so the two surfaces cannot name the same tool differently."""
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.builtin_tool_gate import all_tool_gates
+    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
+
+    monkeypatch.setattr(config_module, "get_cli_setting", _no_override_get_cli_setting)
+
+    gates = all_tool_gates()
+    assert all(gate.title.strip() for gate in gates)
+    builtin_gates = gates[: len(_GATEABLE_BUILTINS)]
+    assert [g.title for g in builtin_gates] == [e.title for e in _GATEABLE_BUILTINS]
+    assert [g.description for g in builtin_gates] == [
+        e.blurb for e in _GATEABLE_BUILTINS
+    ]
+
+
+def test_only_externally_published_gates_are_flagged_restart_required(monkeypatch):
+    """task-32284 AC#3: the pane's note must be honest per gate.
+
+    Every provider in this pane is rebuilt per Console agent run
+    (`build_console_tool_registry` constructs `BuiltinToolProvider` and
+    `_compose_local_provider` constructs `LocalToolProvider` for each run),
+    so no gate here needs an app restart for the agent path. The single
+    exception is a gate that ALSO decides what the built-in MCP *server*
+    publishes to external clients: that list is built once when the server
+    starts.
+    """
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.builtin_tool_gate import all_tool_gates
+    from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
+
+    monkeypatch.setattr(config_module, "get_cli_setting", _no_override_get_cli_setting)
+
+    gates = all_tool_gates()
+    assert [g.key for g in gates if g.restart_required] == [WEB_DEEP_SEARCH_GATE_KEY]
+
+
+def test_tool_gate_breadcrumb_names_the_tool_gates_pane(monkeypatch):
+    """task-32284 AC#4: the Permissions legend's gate-off count says WHERE
+    the gates live -- "the built-in server detail" never named the pane."""
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        LOCAL_TOOLS_MASTER_KEY,
+        TOOL_GATES_PANE_PATH,
+        tool_gate_breadcrumb,
+    )
+
+    assert TOOL_GATES_PANE_PATH == "MCP ▸ Servers ▸ built-in row ▸ Tool gates"
+
+    monkeypatch.setattr(config_module, "get_cli_setting", _no_override_get_cli_setting)
+    everything_but_the_master_off = tool_gate_breadcrumb()
+    assert everything_but_the_master_off is not None
+    assert TOOL_GATES_PANE_PATH in everything_but_the_master_off
+
+    def only_master_off(section, key=None, default=None):
+        return False if key == LOCAL_TOOLS_MASTER_KEY else True
+
+    monkeypatch.setattr(config_module, "get_cli_setting", only_master_off)
+    master_off = tool_gate_breadcrumb()
+    assert master_off is not None
+    assert TOOL_GATES_PANE_PATH in master_off
+
+
 def test_all_tool_gates_enabled_is_coerced_not_raw_truthy(monkeypatch):
     """A quoted "false" must read as OFF -- the same class of bug
     task-3240's tool_catalog.py fix closed at the registration layer;
@@ -648,6 +714,7 @@ def test_count_off_tool_gates_constructs_no_tools(monkeypatch):
     (it runs on every Permissions-mode resync; construction also spams
     warnings for optional tools missing on this system)."""
     from tldw_chatbook.Agents import builtin_tool_gate, tool_catalog
+    from tldw_chatbook.Agents.builtin_tool_gate import TOOL_GATES_PANE_PATH
     from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
 
     def explode(entry):
@@ -662,7 +729,7 @@ def test_count_off_tool_gates_constructs_no_tools(monkeypatch):
     assert f"{off_count} tool gate(s)" in breadcrumb
     assert "workspace, web, and Watchlists master switch in Tools mode" in breadcrumb
     assert "local/web" not in breadcrumb
-    assert "built-in server detail" in breadcrumb
+    assert TOOL_GATES_PANE_PATH in breadcrumb
 
 
 def test_tool_gate_breadcrumb_reads_each_config_gate_once(monkeypatch):
