@@ -821,6 +821,9 @@ class LibrarySkillsController:
             LIBRARY_SKILLS_READER_PROFILE,
             previous=previous,
             priority=priority,
+            # task-32217 (critique #9 row 14): see the Prompts twin -- an empty
+            # work pane keeps its own floor and nothing more.
+            reader_has_item=self._library_skills_view != "list",
         )
         shell.sync_layout(layout)
         self._library_skills_reader_layout = layout

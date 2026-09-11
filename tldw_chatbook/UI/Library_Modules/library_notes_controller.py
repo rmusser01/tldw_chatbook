@@ -517,6 +517,12 @@ from textual.widgets import Button, Input, Static, TextArea
 
 from ...DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...config import get_cli_setting
+from ...Library.library_browse_location import (
+    claim_browse_directory,
+    remember_browse_directory,
+    validated_browse_directory,
+)
 from ...Library.library_export_scope import ExportScope
 from ...Library.library_note_import_state import (
     LibraryNoteImportSnapshot,
@@ -581,6 +587,7 @@ from ...Widgets.Library.library_notes_add_from_files_canvas import (
 from ...Widgets.Library.library_notes_canvas import (
     LIBRARY_NOTE_BACKLINK_DISPLAY_CAP,
     LibraryNotePresentationState,
+    notes_sort_is_blocked,
     resolve_database_note_status_channels,
 )
 from ...Widgets.Library.library_notes_sync_roots_canvas import (
@@ -3137,12 +3144,15 @@ class LibraryNotesController:
     def _library_notes_canvas_kwargs(self) -> dict[str, Any]:
         """Return every compose input for the mounted Database Notes canvas."""
         tree_projection = self._build_library_notes_tree_projection()
-        if tree_projection is not None and self._library_notes_sort_choices_visible:
-            # task-32128 (review round 2): Sort exists only on the flat
-            # fallback, so the tree arriving while the chooser is open must
-            # close the MODE, not just stop rendering it -- otherwise the
-            # footer keeps offering "choose sort" and the first Escape is
-            # spent on a chooser nothing is painting.
+        # task-32172 narrowed task-32128's "the tree arriving closes the
+        # chooser" pass: the tree composes Sort itself now, so only the one
+        # case the canvas still refuses to paint -- a filter window, whose
+        # order belongs to the search seam -- has to close the MODE too.
+        # Same predicate as the canvas, so the two cannot drift.
+        if self._library_notes_sort_choices_visible and notes_sort_is_blocked(
+            tree_projection=tree_projection,
+            filter_value=self._library_notes_filter,
+        ):
             self._library_notes_sort_choices_visible = False
         values: dict[str, Any] = {
             "list_state": None,
@@ -4432,10 +4442,17 @@ class LibraryNotesController:
         requested = str(getattr(event.button, "choice_value", "") or "")
         if requested not in {"newest", "oldest", "title"}:
             return
+        changed = requested != self._library_notes_sort
         self._library_notes_sort = requested
         self._library_notes_sort_choices_visible = False
         self._library_notes_select_mode = False
         self._library_notes_row_selection.clear()
+        if changed:
+            # task-32172: the sort value IS the tree's repository ORDER BY,
+            # so a new one has to be re-paged. Re-sorting the loaded window
+            # in place could not move a note across a page boundary, and the
+            # next page load would contradict it.
+            self._request_library_notes_tree_initial_load()
         _sync_library_canvas(self, "notes")
     @on(Button.Pressed, "#library-notes-new")
     async def handle_library_notes_new(self, event: Button.Pressed) -> None:
@@ -4603,14 +4620,42 @@ class LibraryNotesController:
         async def selected(path: Path | None) -> None:
             if path is None or not path.is_dir():
                 return
+            self._persist_library_notes_sync_location(path)
             controller = self._library_notes_sync_controller
             controller.set_setup("folder", str(path))
             if not controller.snapshot.setup.display_name:
                 controller.set_setup("display_name", path.name)
 
         self.app.push_screen(
-            FileOpen(title="Choose a folder to keep synced", offer_select_folder=True),
+            FileOpen(
+                title="Choose a folder to keep synced",
+                offer_select_folder=True,
+                location=self._library_notes_sync_browse_location(),
+            ),
             selected,
+        )
+
+    def _library_notes_sync_browse_location(self) -> str:
+        """Return where "Keep a folder synced" should open (task-32174 AC#2).
+
+        Keyed independently (``library.notes_sync``) from Import once and
+        the ingest browser -- each picker context remembers its own
+        last-used directory. The stored value is persisted user state, so it
+        is validated in ``library_browse_location`` before it is used.
+        """
+        remembered = validated_browse_directory(
+            get_cli_setting("library.notes_sync", "last_directory", None)
+        )
+        return str(remembered) if remembered is not None else str(Path.home())
+
+    def _persist_library_notes_sync_location(self, selected_path: Path) -> None:
+        """Off the event loop: remember the picked sync-folder directory."""
+        generation = claim_browse_directory("library.notes_sync", "last_directory")
+        self.run_worker(
+            lambda: remember_browse_directory(
+                "library.notes_sync", "last_directory", selected_path, generation
+            ),
+            thread=True,
         )
     @on(LibraryNotesAddFromFilesCanvas.CheckRequested)
     async def handle_library_notes_lasting_check(
@@ -5429,9 +5474,16 @@ class LibraryNotesController:
                     failure_message = (
                         "This deleted note changed elsewhere — refresh and try again."
                     )
-                except Exception:
-                    logger.opt(exception=True).warning(
-                        "Failed to restore a Library note"
+                except Exception as exc:  # noqa: BLE001 - degrade to a notice
+                    # task-32299: metadata only, by review. This is a
+                    # REVIEWED_METADATA_ONLY diagnostic (Tests/Architecture/
+                    # test_persistent_diagnostic_inventory.py) and the frame
+                    # holds the note record, so it keeps the error TYPE and
+                    # not the traceback the log-file sink would render locals
+                    # into.
+                    logger.warning(
+                        "Failed to restore a Library note; error_type={}",
+                        type(exc).__name__,
                     )
                     failure_message = "Could not restore this note."
 

@@ -844,6 +844,11 @@ class LibraryConversationReaderController:
             LIBRARY_CONVERSATION_READER_PROFILE,
             previous=previous,
             priority=priority,
+            # task-32217 (critique #9 row 14): the Reader holds its floor while
+            # it is showing only its empty state; ``selected_id`` (not
+            # ``loaded_id``) so the split does not flap during the load.
+            reader_has_item=self._library_conversation_reader_state.selected_id
+            is not None,
         )
         shell.sync_layout(layout)
         self._library_conversation_reader_layout = layout

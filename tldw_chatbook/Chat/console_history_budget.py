@@ -20,7 +20,6 @@ from tldw_chatbook.Chat.provider_continuation import (
     continuation_owner_group,
     validate_continuation_restore,
 )
-
 from tldw_chatbook.Utils.token_counter import (
     NON_TEXT_PART_TOKEN_ESTIMATE,
     count_tokens_messages,
@@ -179,6 +178,16 @@ def count_console_messages_tokens(
                 "content": (
                     f"{base_text} {json.dumps(tool_calls, default=str)}"
                 ).strip(),
+            }
+        reasoning = " ".join(
+            message[key]
+            for key in ("reasoning_content", "reasoning")
+            if isinstance(message.get(key), str) and message[key]
+        )
+        if reasoning:
+            entry = {
+                **entry,
+                "content": f"{entry.get('content') or ''} {reasoning}".strip(),
             }
         flattened.append(entry)
     return count_tokens_messages(flattened, model) + per_image_tokens * image_count
@@ -355,9 +364,7 @@ def prune_stale_tool_results(
             ):
                 candidates.append((index, message))
             index += 1
-    total_removable = sum(
-        len(message["content"]) - head for _i, message in candidates
-    )
+    total_removable = sum(len(message["content"]) - head for _i, message in candidates)
     if not candidates or total_removable < max(0, settings.min_reclaim_chars):
         return messages, ToolResultPruneStats()
     pruned = list(messages)
@@ -446,8 +453,7 @@ def retire_stale_images(
                         **message,
                         "content": [
                             _image_placeholder(part)
-                            if isinstance(part, dict)
-                            and part.get("type") != "text"
+                            if isinstance(part, dict) and part.get("type") != "text"
                             else part
                             for part in content
                         ],

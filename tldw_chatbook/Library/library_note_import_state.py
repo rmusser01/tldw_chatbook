@@ -24,6 +24,7 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     NoteImportPlan,
     RootCollisionChoice,
     RootCollisionState,
+    resolved_wikilink_count,
 )
 from tldw_chatbook.Notes.note_import_planner import apply_item_override
 
@@ -89,6 +90,9 @@ class NoteImportWorkflowSnapshot:
     # The reviewed plan is discarded when a new selection starts, so the rows
     # behind ``latest_receipt``'s skipped count are captured at settle time.
     latest_skipped_items: tuple[tuple[str, str], ...] = field(default=(), repr=False)
+    # Same reason for the links the batch resolved (task-32178): the count is
+    # a fact about the approved plan, which the next selection replaces.
+    latest_resolved_links: int = 0
     cancel_requested: bool = False
     decision_item_ids: frozenset[str] = frozenset()
     collision_rename_input: str = field(default="", repr=False)
@@ -247,6 +251,7 @@ class LibraryNoteImportSnapshot:
     obsidian_reason: str = ""
     skipped_count: int = 0
     skipped_items: tuple[tuple[str, str], ...] = field(default=(), repr=False)
+    resolved_links: int = 0
 
 
 def _page(
@@ -346,6 +351,7 @@ def clear_selection(
             latest_receipt=state.latest_receipt,
         ),
         latest_skipped_items=state.latest_skipped_items,
+        latest_resolved_links=state.latest_resolved_links,
         revision=state.revision + 1,
     )
 
@@ -714,6 +720,7 @@ def settle_import(
         latest_skipped_items=_skipped_items(
             state, min(receipt.skipped, MAX_RECEIPT_SKIPPED_ROWS)
         ),
+        latest_resolved_links=resolved_wikilink_count(state.approved_plan.plan),
         cancel_requested=False,
     )
 
@@ -874,9 +881,10 @@ def project_library_note_import_snapshot(
             if receipt
             else ""
         ),
-        receipt_detail=_receipt_detail(receipt),
+        receipt_detail=_receipt_detail(receipt, state.latest_resolved_links),
         skipped_count=receipt.skipped if receipt else 0,
         skipped_items=state.latest_skipped_items if receipt else (),
+        resolved_links=state.latest_resolved_links if receipt else 0,
         retryable_failures=receipt.retryable if receipt else 0,
         retry_available=state.can_retry,
         obsidian_available=state.vault_detected,
@@ -1028,7 +1036,10 @@ def _skipped_items(
     )[:limit]
 
 
-def _receipt_detail(receipt: ImportExecutionReceipt | None) -> str:
+def _receipt_detail(
+    receipt: ImportExecutionReceipt | None,
+    resolved_links: int = 0,
+) -> str:
     if receipt is None:
         return ""
     if receipt.state is ImportSessionState.CANCELLED:
@@ -1041,6 +1052,8 @@ def _receipt_detail(receipt: ImportExecutionReceipt | None) -> str:
         (receipt.updated, "note", "updated"),
         (receipt.skipped, "file", "skipped"),
         (receipt.failed, "file", "failed"),
+        # task-32178: Obsidian links that found a note in the same batch.
+        (resolved_links, "link", "resolved"),
     )
     parts = [
         f"{count} {noun if count == 1 else noun + 's'} {verb}"

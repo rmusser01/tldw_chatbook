@@ -11,10 +11,11 @@ import threading
 import uuid
 import weakref
 from collections.abc import Awaitable, Iterator, Mapping, Sequence
-from contextvars import copy_context
+from contextvars import ContextVar, copy_context
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from time import monotonic
 from types import GeneratorType, MappingProxyType
 from typing import Any, AsyncIterator, Callable, Literal, TypeVar, cast
 from urllib.parse import urlparse, urlunparse
@@ -97,6 +98,15 @@ from tldw_chatbook.Chat.console_trace_errors import (  # ADR-097 boot ratchet
 
 # ADR-097 boot ratchet: console_trace_settlement (which pulls the semantic-
 # revision stack) is deferred; its two symbols load at their use sites.
+from tldw_chatbook.Chat.local_reasoning import (
+    ReasoningReplayPolicy,
+    effective_replay_policy,
+    reasoning_mode_setting,
+    reasoning_override_key,
+    resolve_reasoning_policy,
+    supports_local_reasoning,
+    reasoning_template_kwargs,
+)
 from tldw_chatbook.Chat.console_thinking_history import (
     ProviderThinkingSidecar,
     ThinkingReplayTarget,
@@ -150,6 +160,9 @@ from tldw_chatbook.Utils.tls_trust import build_httpx_async_client
 
 DEFAULT_LLAMACPP_BASE_URL = "http://127.0.0.1:9099"
 PROBE_TIMEOUT_SECONDS = 5.0
+REASONING_METADATA_TTL_SECONDS = 60.0
+REASONING_METADATA_RETRY_SECONDS = 15.0
+REASONING_METADATA_CACHE_SIZE = 32
 """Per-request timeout for readiness probes (``/health``, ``/v1/models``)."""
 GENERATION_CONNECT_TIMEOUT_SECONDS = 10.0
 """Connect timeout for the owned HTTP client used for generation calls."""
@@ -1385,6 +1398,8 @@ class ConsoleProviderResolution:
     )
     thinking_stream_disposition: ReasoningDisposition = "ignored"
     thinking_round_trip_version: int | None = None
+    reasoning_replay: ReasoningReplayPolicy | None = field(default=None, kw_only=True)
+    local_structured_thinking: bool = field(default=False, kw_only=True)
 
     def __post_init__(self) -> None:
         valid_disposition = self.thinking_stream_disposition in {
@@ -1404,7 +1419,10 @@ class ConsoleProviderResolution:
     @property
     def may_emit_thinking(self) -> bool:
         """Whether this frozen adapter target can emit typed thinking evidence."""
-        return self.thinking_stream_disposition != "ignored"
+        return (
+            self.thinking_stream_disposition != "ignored"
+            or self.local_structured_thinking
+        )
 
 
 def _freeze_auxiliary_value(value: Any) -> Any:
@@ -1840,6 +1858,43 @@ def _unpack_local_completion_result(
     return result, False
 
 
+_local_reasoning_sink: ContextVar[Callable[[Mapping[str, Any]], bool] | None] = (
+    ContextVar("console_local_reasoning_sink", default=None)
+)
+
+
+def _structured_local_thinking(
+    item: Mapping[str, Any], *, provider: str, model: str, protocol: str
+) -> ProviderThinkingDelta | None:
+    if not supports_local_reasoning(provider, model) or "kimi" in model.lower():
+        return None
+    choices = item.get("choices")
+    if (
+        not isinstance(choices, list)
+        or not choices
+        or not isinstance(choices[0], Mapping)
+    ):
+        return None
+    row = choices[0].get("delta") or choices[0].get("message")
+    if not isinstance(row, Mapping):
+        return None
+    key = (
+        "reasoning"
+        if provider.lower() in {"ollama", "local_ollama"}
+        else "reasoning_content"
+    )
+    text = row.get(key)
+    if isinstance(text, str) and text:
+        return ProviderThinkingDelta(
+            text=text,
+            provider=provider,
+            model=model,
+            protocol=protocol,
+            source_format=key,
+        )
+    return None
+
+
 def _local_thinking_delta(
     text: str,
     *,
@@ -2122,6 +2177,7 @@ def build_llamacpp_chat_payload(
     frequency_penalty: float | None = None,
     reasoning_effort: str | None = None,
     thinking_budget_tokens: int | None = None,
+    reasoning_replay: ReasoningReplayPolicy | None = None,
 ) -> dict[str, Any]:
     """Build the OpenAI-compatible llama.cpp chat completion payload.
 
@@ -2202,6 +2258,12 @@ def build_llamacpp_chat_payload(
         template_kwargs = dict(payload.get("chat_template_kwargs") or {})
         template_kwargs["enable_thinking"] = False
         payload["chat_template_kwargs"] = template_kwargs
+    template_options = reasoning_template_kwargs("llama_cpp", reasoning_replay)
+    if template_options:
+        payload["chat_template_kwargs"] = {
+            **payload.get("chat_template_kwargs", {}),
+            **template_options,
+        }
     return payload
 
 
@@ -2311,6 +2373,8 @@ class ConsoleProviderGateway:
         self._normalized_writes_enabled = normalized_writes_enabled or (lambda: True)
         self._trace_compatibility_metrics = trace_compatibility_metrics
         self._adapter_admission_issuer = object()
+        self._reasoning_metadata_cache: dict[str, tuple[float, str | None, bool]] = {}
+        self.reasoning_policies: dict[str, ReasoningReplayPolicy] = {}
 
     @property
     def supports_durable_capture(self) -> bool:
@@ -2379,22 +2443,35 @@ class ConsoleProviderGateway:
         return adapter(*args, **kwargs)
 
     def _bind_trace_preparation(
-        self, signals: ConsoleProviderStreamSignals, owner: object,
-        *, boundary: object | None = None,
+        self,
+        signals: ConsoleProviderStreamSignals,
+        owner: object,
+        *,
+        boundary: object | None = None,
     ) -> None:
         """Bind recovery to the controller's exact frozen accepted continuation."""
-        if boundary is not None and getattr(boundary, "_accepted_preparation", None) is not owner:
+        if (
+            boundary is not None
+            and getattr(boundary, "_accepted_preparation", None) is not owner
+        ):
             raise TraceCallPersistenceError(boundary=boundary)
         signals._trace_preparation = _TraceAcceptedPreparation(
-            self._adapter_admission_issuer, owner, boundary,
+            self._adapter_admission_issuer,
+            owner,
+            boundary,
         )
 
-    def _trace_preparation_scope(self, signals: object) -> _TraceAcceptedPreparation | None:
+    def _trace_preparation_scope(
+        self, signals: object
+    ) -> _TraceAcceptedPreparation | None:
         aggregate = getattr(signals, "_aggregate", signals)
         scope = getattr(aggregate, "_trace_preparation", None)
         if scope is None:
             return None
-        if type(scope) is not _TraceAcceptedPreparation or scope.issuer is not self._adapter_admission_issuer:
+        if (
+            type(scope) is not _TraceAcceptedPreparation
+            or scope.issuer is not self._adapter_admission_issuer
+        ):
             raise TraceCallPersistenceError()
         return scope
 
@@ -2420,9 +2497,14 @@ class ConsoleProviderGateway:
                 # it does not authorize Capture On or a cold/foreign replay.
                 scope.construction_failure = None
                 return
-        if boundary is None or getattr(boundary, "_accepted_preparation", None) is not owner:
+        if (
+            boundary is None
+            or getattr(boundary, "_accepted_preparation", None) is not owner
+        ):
             raise TraceCallPersistenceError(boundary=boundary)
-        verify = getattr(getattr(boundary, "_factory", None), "_verify_owned_recovery", None)
+        verify = getattr(
+            getattr(boundary, "_factory", None), "_verify_owned_recovery", None
+        )
         if not callable(verify):
             raise TraceCallPersistenceError(boundary=boundary)
         verify(boundary, owner)
@@ -2440,11 +2522,19 @@ class ConsoleProviderGateway:
             or request.provenance is None
         ):
             raise TraceCallPersistenceError(boundary=boundary)
-        record = next((item for item in request.provenance.metadata
-                       if type(item) is RequestRouteTraceProvenance), None)
+        record = next(
+            (
+                item
+                for item in request.provenance.metadata
+                if type(item) is RequestRouteTraceProvenance
+            ),
+            None,
+        )
         if (
-            record is None or record.route is not ConsoleRequestRoute.AGENT_FIRST
-            or record.actor_id is None or record.chain_id is None
+            record is None
+            or record.route is not ConsoleRequestRoute.AGENT_FIRST
+            or record.actor_id is None
+            or record.chain_id is None
         ):
             raise TraceCallPersistenceError(boundary=boundary)
         return record.actor_id, record.chain_id
@@ -2454,7 +2544,8 @@ class ConsoleProviderGateway:
         request: PreparedProviderRequest,
         resolution: ConsoleProviderResolution,
         route: ConsoleRequestRoute | None,
-        *, signals: object = None,
+        *,
+        signals: object = None,
     ) -> object:
         """Create and reserve one distinct Capture-On call boundary."""
 
@@ -2478,7 +2569,9 @@ class ConsoleProviderGateway:
             assert self._trace_call_boundary_factory is not None
             if scope is not None and scope.boundary is not None and not scope.claimed:
                 boundary = scope.boundary
-                recover = getattr(getattr(boundary, "_factory", None), "_recover_owned_boundary", None)
+                recover = getattr(
+                    getattr(boundary, "_factory", None), "_recover_owned_boundary", None
+                )
                 if not callable(recover):
                     raise TraceCallPersistenceError(boundary=boundary)
                 scope.claimed = True
@@ -2703,8 +2796,17 @@ class ConsoleProviderGateway:
                         provider=resolution.execution_key or resolution.provider,
                         model=resolution.model or "",
                         protocol=_thinking_protocol(resolution),
-                        disposition=resolution.thinking_stream_disposition,
-                        round_trip_version=resolution.thinking_round_trip_version,
+                        disposition=(
+                            "displayable"
+                            if resolution.local_structured_thinking
+                            else resolution.thinking_stream_disposition
+                        ),
+                        round_trip_version=(
+                            THINKING_ENVELOPE_VERSION
+                            if resolution.local_structured_thinking
+                            else resolution.thinking_round_trip_version
+                        ),
+                        reasoning_replay=resolution.reasoning_replay,
                     ),
                     policy=thinking_policy,
                     sidecars=tuple(
@@ -2762,8 +2864,17 @@ class ConsoleProviderGateway:
                     provider=resolution.execution_key or resolution.provider,
                     model=resolution.model or "",
                     protocol=_thinking_protocol(resolution),
-                    disposition=resolution.thinking_stream_disposition,
-                    round_trip_version=resolution.thinking_round_trip_version,
+                    disposition=(
+                        "displayable"
+                        if resolution.local_structured_thinking
+                        else resolution.thinking_stream_disposition
+                    ),
+                    round_trip_version=(
+                        THINKING_ENVELOPE_VERSION
+                        if resolution.local_structured_thinking
+                        else resolution.thinking_round_trip_version
+                    ),
+                    reasoning_replay=resolution.reasoning_replay,
                 ),
                 policy=thinking_policy,
                 sidecars=tuple(
@@ -2867,6 +2978,7 @@ class ConsoleProviderGateway:
         )
         return prepare_provider_request(
             semantic,
+            reasoning_replay=resolution.reasoning_replay,
             wire_style=wire_style,
             model=resolution.model or "",
             provider=resolution.provider,
@@ -3104,6 +3216,106 @@ class ConsoleProviderGateway:
             **self._resolution_settings(config, model=model),
         )
 
+    async def _resolve_reasoning_history(
+        self, resolution: ConsoleProviderResolution, app_config: Mapping[str, object]
+    ) -> ConsoleProviderResolution:
+        """Read bounded optional template metadata; failure never blocks chat."""
+        if not supports_local_reasoning(resolution.provider, resolution.model or ""):
+            return resolution
+        console = app_config.get("console", {})
+        console = console if isinstance(console, Mapping) else {}
+        mode = reasoning_mode_setting(
+            console,
+            provider=resolution.provider,
+            endpoint=resolution.base_url,
+            model=resolution.model or "",
+        )
+        key = reasoning_override_key(
+            resolution.provider, resolution.base_url, resolution.model or ""
+        )
+        cached = self._reasoning_metadata_cache.get(key)
+        now = monotonic()
+        template, native_tools = cached[1:] if cached else (None, False)
+        if resolution.ready and (cached is None or now >= cached[0]):
+            from .local_reasoning import _LOCAL_FAMILIES
+
+            family = _LOCAL_FAMILIES.get(resolution.provider.lower())
+            # Ollama exposes Go templates; until reviewed, use its server default.
+            route = {"llama_cpp": "/props", "vllm": "/tokenizer_info"}.get(family)
+            if route:
+                base = resolution.base_url.rstrip("/").removesuffix("/chat/completions")
+                base = base.removesuffix("/v1")
+
+                async def read_template():
+                    async with self._active_http_client().stream(
+                        "GET",
+                        base + route,
+                        headers=self._authorization_headers(resolution.api_key),
+                        timeout=1.0,
+                    ) as response:
+                        response.raise_for_status()
+                        data = bytearray()
+                        async for chunk in response.aiter_bytes():
+                            data.extend(chunk)
+                            if len(data) > 262144:
+                                raise ValueError(
+                                    "Template metadata exceeds size limit."
+                                )
+                        payload = json.loads(data)
+                        return payload if isinstance(payload, dict) else {}
+
+                try:
+                    metadata = await asyncio.wait_for(read_template(), timeout=1.0)
+                    raw_template = metadata.get("chat_template")
+                    template = raw_template if isinstance(raw_template, str) else None
+                    caps = metadata.get("chat_template_caps", {})
+                    native_tools = (
+                        family == "llama_cpp"
+                        and isinstance(caps, Mapping)
+                        and caps.get("supports_tool_calls") is True
+                        and caps.get("supports_tools") is True
+                    )
+                    ttl = REASONING_METADATA_TTL_SECONDS
+                except (httpx.HTTPError, ValueError, TimeoutError):
+                    # Back off missing routes and keep the last successful facts.
+                    # Preferences are reapplied below, never cached with metadata.
+                    ttl = REASONING_METADATA_RETRY_SECONDS
+                self._reasoning_metadata_cache[key] = (
+                    monotonic() + ttl,
+                    template,
+                    native_tools,
+                )
+                while (
+                    len(self._reasoning_metadata_cache) > REASONING_METADATA_CACHE_SIZE
+                ):
+                    self._reasoning_metadata_cache.pop(
+                        next(iter(self._reasoning_metadata_cache))
+                    )
+        overrides = console.get("reasoning_native_tool_overrides", {})
+        if isinstance(overrides, Mapping) and overrides.get(key) is True:
+            native_tools = True
+        policy = resolve_reasoning_policy(
+            mode, template=template, native_tools=native_tools
+        )
+        self.reasoning_policies[key] = policy
+        while len(self.reasoning_policies) > REASONING_METADATA_CACHE_SIZE:
+            self.reasoning_policies.pop(next(iter(self.reasoning_policies)))
+        return replace(
+            resolution,
+            reasoning_replay=policy,
+            local_structured_thinking="kimi" not in (resolution.model or "").lower(),
+            **(
+                {
+                    "thinking_stream_disposition": "displayable",
+                    "thinking_round_trip_version": THINKING_ENVELOPE_VERSION,
+                }
+                if policy.verified
+                and resolution.reasoning_effort != "none"
+                and "kimi" not in (resolution.model or "").lower()
+                else {}
+            ),
+        )
+
     async def resolve_for_send(
         self, selection: ConsoleProviderSelection
     ) -> ConsoleProviderResolution:
@@ -3190,11 +3402,14 @@ class ConsoleProviderGateway:
                     streaming=selection.streaming,
                 )
             )
-            return replace(
-                resolved,
-                provider=identity.execution_key,
-                readiness_key=identity.readiness_key,
-                execution_key=identity.execution_key,
+            return await self._resolve_reasoning_history(
+                replace(
+                    resolved,
+                    provider=identity.execution_key,
+                    readiness_key=identity.readiness_key,
+                    execution_key=identity.execution_key,
+                ),
+                app_config,
             )
 
         if not identity.is_supported:
@@ -3427,7 +3642,7 @@ class ConsoleProviderGateway:
                     execution_key=identity.execution_key,
                 )
 
-        return ConsoleProviderResolution(
+        resolved = ConsoleProviderResolution(
             provider=selection.provider,
             base_url=effective_base_url or "",
             model=model,
@@ -3463,11 +3678,15 @@ class ConsoleProviderGateway:
             ),
         )
 
+        return await self._resolve_reasoning_history(resolved, app_config)
+
     async def stream_llamacpp_chat(
         self,
         *,
         base_url: str,
         model: str,
+        reasoning_replay: ReasoningReplayPolicy | None = None,
+        local_structured_thinking: bool = False,
         messages: list[Mapping[str, Any]],
         temperature: float | None = None,
         top_p: float | None = None,
@@ -3528,6 +3747,7 @@ class ConsoleProviderGateway:
             raise ValueError("invalid llama.cpp base URL")
 
         payload = build_llamacpp_chat_payload(
+            reasoning_replay=reasoning_replay,
             model=model,
             messages=messages,
             stream=True,
@@ -3568,6 +3788,25 @@ class ConsoleProviderGateway:
             async with stream_context as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
+                    if (
+                        thinking_stream_disposition == "displayable"
+                        or local_structured_thinking
+                    ) and line.startswith("data:"):
+                        try:
+                            structured_payload = json.loads(line[5:].strip())
+                        except (ValueError, TypeError):
+                            structured_payload = None
+                        if isinstance(structured_payload, Mapping):
+                            event = _structured_local_thinking(
+                                structured_payload,
+                                provider=provider,
+                                model=model,
+                                protocol=protocol,
+                            )
+                            if event is not None:
+                                received_content = True
+                                think_splitter = None
+                                yield event
                     chunk = self._content_from_sse_line(line)
                     if chunk:
                         received_content = True
@@ -3623,6 +3862,7 @@ class ConsoleProviderGateway:
         if on_fallback_transition is not None:
             await on_fallback_transition(stream_error is not None)
         fallback_payload = build_llamacpp_chat_payload(
+            reasoning_replay=reasoning_replay,
             model=model,
             messages=messages,
             stream=False,
@@ -3646,6 +3886,8 @@ class ConsoleProviderGateway:
             fallback_endpoint, fallback_payload
         )
         fallback_result = await self.complete_llamacpp_chat(
+            local_structured_thinking=local_structured_thinking,
+            reasoning_replay=reasoning_replay,
             base_url=normalized_base_url,
             model=model,
             messages=messages,
@@ -3706,6 +3948,8 @@ class ConsoleProviderGateway:
         *,
         base_url: str,
         model: str,
+        reasoning_replay: ReasoningReplayPolicy | None = None,
+        local_structured_thinking: bool = False,
         messages: list[Mapping[str, Any]],
         temperature: float | None = None,
         top_p: float | None = None,
@@ -3766,6 +4010,7 @@ class ConsoleProviderGateway:
 
         request_url = f"{normalized_base_url.rstrip('/')}/v1/chat/completions"
         payload = build_llamacpp_chat_payload(
+            reasoning_replay=reasoning_replay,
             model=model,
             messages=messages,
             stream=False,
@@ -3816,14 +4061,25 @@ class ConsoleProviderGateway:
                 **request_kwargs,
             )
         response.raise_for_status()
+        structured_event = (
+            _structured_local_thinking(
+                response.json(), provider=provider, model=model, protocol=protocol
+            )
+            if thinking_stream_disposition == "displayable" or local_structured_thinking
+            else None
+        )
         content = self._content_from_completion_response(response)
-        if content is None and strict_response:
+        if content is None and strict_response and structured_event is None:
             raise ChatProviderError(
                 "Provider returned an unsupported auxiliary response.",
                 provider="llama_cpp",
             )
         result = (
-            _split_local_completion_items(
+            _LocalCompletionResult(
+                items=(structured_event, *((content,) if content else ()))
+            )
+            if structured_event is not None
+            else _split_local_completion_items(
                 content or "",
                 provider=provider,
                 model=model,
@@ -3904,6 +4160,8 @@ class ConsoleProviderGateway:
                     # thinking settings (documented parity with cloud
                     # providers).
                     text = await self.complete_llamacpp_chat(
+                        local_structured_thinking=resolution.local_structured_thinking,
+                        reasoning_replay=resolution.reasoning_replay,
                         base_url=resolution.base_url,
                         model=model,
                         messages=messages,
@@ -4206,6 +4464,12 @@ class ConsoleProviderGateway:
                     f"{ceiling}). Compaction cannot remove this material.",
                     provider=resolution.provider,
                 )
+            resolution = replace(
+                resolution,
+                reasoning_replay=effective_replay_policy(
+                    resolution.reasoning_replay, prepared.semantic.thinking_policy
+                ),
+            )
             effective_resolution = replace(
                 resolution,
                 max_tokens=(
@@ -4228,7 +4492,10 @@ class ConsoleProviderGateway:
                 )
             else:
                 capture_off_admission = self._capture_off_admission(route)
-            if resolution.provider in {"llama_cpp", "local_llamacpp"}:
+            if (
+                resolution.provider in {"llama_cpp", "local_llamacpp"}
+                and not prepared.tools
+            ):
                 wire_messages = [thaw_json(item) for item in prepared.messages]
 
                 def capture_wire_payload(
@@ -4313,6 +4580,7 @@ class ConsoleProviderGateway:
                 verified_bundle: ProviderRequestShadowBundle | None = None
                 if capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON:
                     verified_wire = build_llamacpp_chat_payload(
+                        reasoning_replay=resolution.reasoning_replay,
                         model=resolution.model,
                         messages=wire_messages,
                         stream=resolution.streaming,
@@ -4372,6 +4640,7 @@ class ConsoleProviderGateway:
                     try:
                         budget = CaptureBudget()
                         wire = verified_wire or build_llamacpp_chat_payload(
+                            reasoning_replay=resolution.reasoning_replay,
                             model=resolution.model,
                             messages=wire_messages,
                             stream=resolution.streaming,
@@ -4428,6 +4697,8 @@ class ConsoleProviderGateway:
                     # close_exchange(status="error") before it re-raises.
                     try:
                         completion_result = await self.complete_llamacpp_chat(
+                            local_structured_thinking=resolution.local_structured_thinking,
+                            reasoning_replay=resolution.reasoning_replay,
                             base_url=resolution.base_url,
                             model=resolution.model,
                             messages=wire_messages,
@@ -4615,6 +4886,8 @@ class ConsoleProviderGateway:
 
                 try:
                     async for chunk in self.stream_llamacpp_chat(
+                        local_structured_thinking=resolution.local_structured_thinking,
+                        reasoning_replay=resolution.reasoning_replay,
                         base_url=resolution.base_url,
                         model=resolution.model,
                         messages=wire_messages,
@@ -4784,7 +5057,28 @@ class ConsoleProviderGateway:
             with contextlib.suppress(RuntimeError):
                 loop.call_soon_threadsafe(queue.put_nowait, item)
 
-        def worker() -> None:
+        structured_seen = False
+
+        def capture_structured(item: Mapping[str, Any]) -> bool:
+            nonlocal structured_seen
+            if not (
+                resolution.local_structured_thinking
+                or resolution.thinking_stream_disposition == "displayable"
+            ):
+                return False
+            event = _structured_local_thinking(
+                item,
+                provider=resolution.execution_key or resolution.provider,
+                model=resolution.model or "",
+                protocol=_thinking_protocol(resolution),
+            )
+            if event is None:
+                return False
+            structured_seen = True
+            enqueue(_QueueItem.thinking(event))
+            return True
+
+        def consume_provider() -> None:
             try:
                 kwargs = self._chat_api_kwargs_from_prepared(resolution, request)
                 kwargs = self._trace_surface_kwargs(trace_call_boundary, kwargs)
@@ -4926,16 +5220,21 @@ class ConsoleProviderGateway:
                 # history, so it is suppressed at GENERATION (not filtered
                 # by string equality — review minor m4: a real answer that
                 # happens to equal the copy text now flows through).
+                normalization_signals = (
+                    signals or ConsoleProviderStreamSignals().new_usage_call()
+                )
                 normalized_response = self.normalize_provider_response(
                     response,
                     suppress_fallback_copy=accumulator is not None,
-                    signals=signals,
+                    signals=normalization_signals,
                 )
                 while not stop_event.is_set():
                     try:
                         text = next(normalized_response)
                     except StopIteration:
                         break
+                    if structured_seen:
+                        think_splitter = None
                     split = think_splitter.feed(text) if think_splitter else None
                     thinking = split.thinking if split is not None else ""
                     visible = split.content if split is not None else text
@@ -4954,10 +5253,12 @@ class ConsoleProviderGateway:
                     if visible:
                         emitted_content = True
                     synthetic = (
-                        signals.take_synthetic_pending()
-                        if signals is not None and visible
+                        normalization_signals.take_synthetic_pending()
+                        if visible
                         else False
                     )
+                    if structured_seen and synthetic:
+                        continue
                     if signals is not None and visible:
                         # M3: the fallback UI copy this loop can receive
                         # from `normalize_provider_response` (NO_PROVIDER_
@@ -5070,6 +5371,13 @@ class ConsoleProviderGateway:
             finally:
                 close_response()
                 enqueue(_QueueItem.done())
+
+        def worker() -> None:
+            token = _local_reasoning_sink.set(capture_structured)
+            try:
+                consume_provider()
+            finally:
+                _local_reasoning_sink.reset(token)
 
         worker_task = asyncio.create_task(asyncio.to_thread(worker))
         try:
@@ -5458,7 +5766,18 @@ class ConsoleProviderGateway:
             ),
             "prompt_caching": resolution.prompt_caching,
         }
-        if resolution.execution_key == "qwencloud":
+        local = supports_local_reasoning(
+            resolution.execution_key or resolution.provider, resolution.model or ""
+        )
+        template_options = reasoning_template_kwargs(
+            resolution.execution_key or resolution.provider, resolution.reasoning_replay
+        )
+        if template_options:
+            kwargs["chat_template_kwargs"] = template_options
+        if local:
+            kwargs["api_base_url"] = resolution.base_url or None
+            kwargs["api_key_resolved"] = True
+        elif resolution.execution_key == "qwencloud":
             kwargs["api_mode"] = resolution.api_mode
             kwargs["api_base_url"] = resolution.base_url or None
         elif resolution.execution_key in {"moonshot", "zai"}:
@@ -5819,6 +6138,8 @@ def _content_from_sse_data(
 
 
 def _content_from_provider_mapping(item: Mapping[str, Any]) -> str | object:
+    sink = _local_reasoning_sink.get()
+    captured_reasoning = sink(item) if sink is not None else False
     choices = item.get("choices")
     if isinstance(choices, list) and choices:
         first = choices[0]
@@ -5829,6 +6150,8 @@ def _content_from_provider_mapping(item: Mapping[str, Any]) -> str | object:
             message = first.get("message")
             if isinstance(message, Mapping) and isinstance(message.get("content"), str):
                 return message["content"]
+            if captured_reasoning:
+                return _EMPTY_RESPONSE
             text = first.get("text")
             if isinstance(text, str):
                 return text

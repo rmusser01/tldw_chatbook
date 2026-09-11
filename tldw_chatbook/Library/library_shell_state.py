@@ -107,11 +107,38 @@ LIBRARY_BULK_ACTIONS_NO_SELECTION_REASON = "Select items to enable."
 # _agentic_terminal.tcss; this marker is the structural half.
 LIBRARY_DISABLED_ACTION_MARKER = "○"
 
+# task-32235 (critique #9 row 4): one meaning per glyph across every Library
+# canvas. "○" used to carry three at once -- a disabled action, an unchecked
+# source toggle, and a settled "skipped" outcome -- so the marker above keeps
+# the meaning it was invented for (blocked/disabled, the only non-colour cue
+# on dozens of tooltip-gated buttons) and the other two move here. The full
+# legend, including the ones that already had a home: "█" leading is the
+# keyboard cursor, "▸/▾" is disclosure, "✓" leading in a chooser is the
+# active value (LIBRARY_CHOICE_ACTIVE_MARKER), "▸ " leading on a rail row is
+# the destination you are on.
+#: A checkbox the user toggles, checked.
+LIBRARY_GLYPH_SELECTED = "☑"
+#: The same checkbox, unchecked.
+LIBRARY_GLYPH_UNSELECTED = "☐"
+#: A settled outcome: this one finished.
+LIBRARY_GLYPH_OUTCOME_DONE = "✓"
+#: A settled outcome: this one failed.
+LIBRARY_GLYPH_OUTCOME_FAILED = "✗"
+#: A settled outcome: this one was never attempted.
+LIBRARY_GLYPH_OUTCOME_SKIPPED = "–"
+
 # F-018 reason for the list canvases' Select toggle while the rendered
 # list is empty -- previously the only disabled Library action with no
 # reason anywhere at the control ("click does nothing, says nothing",
 # re-critique RC-07).
 LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP = "Nothing here to select yet."
+
+# task-32172: Sort re-pages the folder tree, but filter results come back
+# ranked by the search seam, so the control cannot own their order. Reason
+# and next step on the same line.
+LIBRARY_NOTES_SORT_FILTERED_TOOLTIP = (
+    "Filter results keep their own order. Clear the filter to sort."
+)
 
 
 #: Blank stand-in for the marker prefix, exactly as wide as it renders
@@ -321,6 +348,11 @@ class LibraryShellInput:
     skills_known: bool = True
     collections_count: int | None = None
     collections_known: bool = True
+    #: task-32103: True when the count read FAILED or timed out. The row
+    #: paints "(—)" instead of nothing, so a broken read is not mistaken for
+    #: a source whose count is off by design (Search / RAG). The Details
+    #: block carries the deadline sentence that explains it.
+    collections_count_unavailable: bool = False
     runtime_source: str = "local"
     server_label: str | None = None
     details_lines: tuple[str, ...] = ()
@@ -452,6 +484,7 @@ def build_library_shell_state(
             target_id="collections",
             count=state.collections_count,
             count_known=state.collections_known,
+            count_display=" (—)" if state.collections_count_unavailable else "",
             subtitle="saved captures",
             # Collections' authority-qualified capture count is fetched lazily
             # on first canvas

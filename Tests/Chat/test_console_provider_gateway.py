@@ -2521,7 +2521,10 @@ async def test_resolve_for_send_dispatches_llamacpp_selection():
     assert resolved.model == "server-model"
     assert resolved.thinking_stream_disposition == "ignored"
     assert resolved.thinking_round_trip_version is None
-    assert resolved.may_emit_thinking is False
+    # Explicit structured fields are captureable even when this model has
+    # no declared inline <think> parser.
+    assert resolved.local_structured_thinking is True
+    assert resolved.may_emit_thinking is True
 
 
 @pytest.mark.asyncio
@@ -2529,6 +2532,8 @@ async def test_same_llamacpp_endpoint_resolves_model_specific_thinking_replay():
     endpoint = "http://127.0.0.1:9099"
 
     async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/props":
+            return httpx.Response(404)
         assert request.url.path == "/health"
         return httpx.Response(200, json={"status": "ok"})
 
@@ -2694,7 +2699,10 @@ async def test_resolve_for_send_normalizes_scheme_less_llamacpp_base_url_before_
 
     assert resolved.ready is True
     assert resolved.base_url == "http://127.0.0.1:9099"
-    assert seen_urls == ["http://127.0.0.1:9099/v1/models"]
+    assert seen_urls == [
+        "http://127.0.0.1:9099/v1/models",
+        "http://127.0.0.1:9099/props",
+    ]
 
 
 @pytest.mark.asyncio
@@ -2733,6 +2741,8 @@ async def test_gateway_resolves_direct_llamacpp_without_importing_chat_functions
         return real_import(name, *args, **kwargs)
 
     async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/props":
+            return httpx.Response(404)
         assert request.url.path == "/health"
         return httpx.Response(200, json={"status": "ok"})
 
@@ -7973,6 +7983,11 @@ async def test_console_persisted_explicit_keyless_llamacpp_sends_no_authorizatio
 
     async def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
+        if request.url.path == "/props":
+            return httpx.Response(404)
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "ok"})
+        assert request.url.path == "/v1/chat/completions"
         return httpx.Response(
             200,
             content=(
@@ -8018,7 +8033,11 @@ async def test_console_persisted_explicit_keyless_llamacpp_sends_no_authorizatio
     assert resolution.ready is True
     assert resolution.api_key is None
     assert chunks == ["ok"]
-    assert [request.method for request in requests] == ["GET", "POST"]
+    assert [(request.method, request.url.path) for request in requests] == [
+        ("GET", "/health"),
+        ("GET", "/props"),
+        ("POST", "/v1/chat/completions"),
+    ]
     assert all("Authorization" not in request.headers for request in requests)
 
 
@@ -8028,6 +8047,11 @@ async def test_console_llamacpp_explicit_stored_source_reaches_probe_and_chat():
 
     async def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
+        if request.url.path == "/props":
+            return httpx.Response(404)
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "ok"})
+        assert request.url.path == "/v1/chat/completions"
         return httpx.Response(
             200,
             content=(
@@ -8073,7 +8097,13 @@ async def test_console_llamacpp_explicit_stored_source_reaches_probe_and_chat():
     assert resolution.ready is True
     assert resolution.api_key_source == "config:api_settings.llama_cpp.api_key"
     assert chunks == ["ok"]
+    assert [(request.method, request.url.path) for request in requests] == [
+        ("GET", "/health"),
+        ("GET", "/props"),
+        ("POST", "/v1/chat/completions"),
+    ]
     assert [request.headers.get("Authorization") for request in requests] == [
+        "Bearer stored-llama-request-canary",
         "Bearer stored-llama-request-canary",
         "Bearer stored-llama-request-canary",
     ]

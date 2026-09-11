@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, Callable, ContextManager, Sequence, cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
     from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
     from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot
     from tldw_chatbook.UI.Screens.change_review_screen import (
@@ -193,7 +194,10 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ProviderTurnMetadata,
 )
 from tldw_chatbook.Chat.console_chat_store import require_thinking_persistence_support
-from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
+from tldw_chatbook.Chat.console_thinking_capture import (
+    ThinkingCapture,
+    consume_call_thinking,
+)
 from tldw_chatbook.Chat.console_thinking_history import ProviderThinkingSidecar
 from tldw_chatbook.Chat.thinking_blocks import ThinkingEnvelope, ThinkingHistoryPolicy
 from tldw_chatbook.Chat.console_history_budget import DEFAULT_RESPONSE_RESERVATION
@@ -2312,8 +2316,10 @@ class _StreamingProviderResponse(dict[str, Any]):
         self,
         value: Mapping[str, Any],
         metadata: ProviderTurnMetadata | None,
+        thinking_envelope: ThinkingEnvelope | None = None,
     ) -> None:
         super().__init__(value)
+        self.thinking_envelope = thinking_envelope
         self._provider_continuation = (
             metadata.provider_continuation if metadata is not None else None
         )
@@ -2386,6 +2392,7 @@ def _fenced_project_instruction_payload_fits(
     model: str,
     provider: str,
     response_reserve_tokens: int,
+    reasoning_replay: ReasoningReplayPolicy | None = None,
 ) -> bool:
     """Validate the exact transformed fenced request before ledger advance."""
     try:
@@ -2396,6 +2403,7 @@ def _fenced_project_instruction_payload_fits(
             ),
             model,
             provider,
+            reasoning_replay=reasoning_replay,
         )
     except Exception:
         return False
@@ -2951,6 +2959,33 @@ class _StreamingModelAdapter:
             messages_payload, native_tools=self._native_tools
         )
         is_subagent = self._is_subagent(transport_messages)
+        # Resolve sidecars after the trace factory has built the neutral request.
+        # The reserved canonical key is valid only once its groups are attached.
+        # This temporary scalar also keeps mandatory continuation ownership separate.
+        call_thinking_owner_key = "_tldw_call_thinking_owner"
+        if not is_subagent and self._thinking_sidecar and self._thinking_owner_key:
+            historical_owners = {
+                sidecar.owner_message_id for sidecar in self._thinking_sidecar
+            }
+            for row in transport_messages:
+                historical_owner = row.get(self._thinking_owner_key)
+                if (
+                    isinstance(historical_owner, str)
+                    and historical_owner in historical_owners
+                ):
+                    row[call_thinking_owner_key] = historical_owner
+                if self._thinking_owner_key not in {
+                    call_thinking_owner_key,
+                    self._continuation_owner_key,
+                }:
+                    row.pop(self._thinking_owner_key, None)
+        transport_messages, call_sidecars = consume_call_thinking(
+            transport_messages, owner_key=call_thinking_owner_key
+        )
+        call_thinking_sidecar = (
+            () if is_subagent else self._thinking_sidecar
+        ) + call_sidecars
+        call_capture = ThinkingCapture(assistant_owner_id=new_opaque_id())
         # TASK-28227: a redirect aborts only the PRIMARY's in-flight
         # model stream. Children keep the plain cancel predicate --
         # cutting a fleet child's stream on a primary redirect would
@@ -2992,7 +3027,14 @@ class _StreamingModelAdapter:
         # parent/child turns, so keep that override immutable and call-local.
         call_resolution = self._resolution
         if model and model != self._resolution.model:
-            call_resolution = dataclass_replace(self._resolution, model=model)
+            # Endpoint/model metadata is frozen for the primary target; it is
+            # not rediscovered for overrides during a running agent loop.
+            call_resolution = dataclass_replace(
+                self._resolution,
+                model=model,
+                reasoning_replay=None,
+                local_structured_thinking=False,
+            )
         call_continuation_target = self._continuation_target
         if is_subagent and call_continuation_target is not None:
             call_continuation_target = dataclass_replace(
@@ -3064,9 +3106,9 @@ class _StreamingModelAdapter:
                     route_actor_id=route_actor_id,
                     route_chain_id=route_chain_id,
                     continuation_target=call_continuation_target,
-                    thinking_sidecar=() if is_subagent else self._thinking_sidecar,
+                    thinking_sidecar=call_thinking_sidecar,
                     thinking_policy=self._thinking_policy,
-                    thinking_owner_key=self._thinking_owner_key,
+                    thinking_owner_key=call_thinking_owner_key,
                     capture_mode=self._capture_mode,
                 )
                 stream_kwargs.pop("tools", None)
@@ -3083,17 +3125,16 @@ class _StreamingModelAdapter:
                     route_actor_id=route_actor_id,
                     route_chain_id=route_chain_id,
                     continuation_target=call_continuation_target,
-                    thinking_sidecar=() if is_subagent else self._thinking_sidecar,
+                    thinking_sidecar=call_thinking_sidecar,
                     thinking_policy=self._thinking_policy,
-                    thinking_owner_key=self._thinking_owner_key,
+                    thinking_owner_key=call_thinking_owner_key,
                     capture_mode=self._capture_mode,
                 )
                 stream_kwargs.pop("tools", None)
             elif (
-                not is_subagent
-                and (self._continuation_sidecar or self._thinking_sidecar)
-                and callable(prepare_request)
-            ):
+                call_thinking_sidecar
+                or (not is_subagent and self._continuation_sidecar)
+            ) and callable(prepare_request):
                 # The constructor sidecar belongs to the primary turn. A
                 # child has its own history and must never consume it.
                 dispatch_messages = prepare_request(
@@ -3104,11 +3145,13 @@ class _StreamingModelAdapter:
                     route_actor_id=route_actor_id,
                     route_chain_id=route_chain_id,
                     continuation_target=call_continuation_target,
-                    continuation_sidecar=self._continuation_sidecar,
+                    continuation_sidecar=()
+                    if is_subagent
+                    else self._continuation_sidecar,
                     continuation_owner_key=self._continuation_owner_key,
-                    thinking_sidecar=self._thinking_sidecar,
+                    thinking_sidecar=call_thinking_sidecar,
                     thinking_policy=self._thinking_policy,
-                    thinking_owner_key=self._thinking_owner_key,
+                    thinking_owner_key=call_thinking_owner_key,
                     capture_mode=self._capture_mode,
                 )
                 stream_kwargs.pop("tools", None)
@@ -3150,6 +3193,7 @@ class _StreamingModelAdapter:
                     chunk,
                     (ProviderThinkingDelta, ProviderProprietaryThinkingEvidence),
                 ):
+                    call_capture.observe(chunk)
                     if not is_subagent:
                         update = self._thinking_capture.observe(chunk)
                         if update.envelope is not None:
@@ -3307,7 +3351,10 @@ class _StreamingModelAdapter:
             )
         if usage is not None:
             response["usage"] = usage
-        return _StreamingProviderResponse(response, terminal_metadata)
+        call_envelope = call_capture.settle(
+            "stopped" if stream_cut() else "complete"
+        ).envelope
+        return _StreamingProviderResponse(response, terminal_metadata, call_envelope)
 
     @staticmethod
     def _is_subagent(messages_payload) -> bool:
@@ -4114,6 +4161,7 @@ def build_console_first_request_plan(
         allowed_tools=allowed_tools,
         budget=run_budget or console_run_budget(),
         native_tools=native_tools,
+        reasoning_replay=getattr(resolution, "reasoning_replay", None),
         workspace_context_note=workspace_note,
         response_reserve_tokens=response_reserve,
     )
@@ -4170,7 +4218,9 @@ def build_console_first_request_plan(
                 *schemas.runtime_schemas,
                 *schemas.active_schemas,
             ]
-            native = native_tools and provider_supports_native_tools(api_endpoint)
+            native = native_tools and provider_supports_native_tools(
+                api_endpoint, reasoning_replay=config.reasoning_replay
+            )
             native_schema_rows: list[dict] = []
             if native:
                 native_schema_rows = schemas_to_openai_tools(disclosed_schemas)
@@ -4198,6 +4248,7 @@ def build_console_first_request_plan(
                 ],
                 resolved_model,
                 api_endpoint,
+                reasoning_replay=config.reasoning_replay,
             )
             if native_schema_rows:
                 required_tokens += _count_model_messages(
@@ -4213,6 +4264,7 @@ def build_console_first_request_plan(
                     ],
                     resolved_model,
                     api_endpoint,
+                    reasoning_replay=config.reasoning_replay,
                 )
             available_input_tokens = max(
                 0, input_limit - response_reserve - required_tokens
@@ -4903,6 +4955,16 @@ class ConsoleAgentBridge:
         profile_context_service: Any | None = None,
         personal_context_snapshot: ProfileContextSnapshot | None = None,
     ) -> tuple[str, RunOutcome]:
+        replay = getattr(resolution, "reasoning_replay", None)
+        if replay is not None and thinking_policy in {"include", "exclude"}:
+            resolution = dataclass_replace(
+                resolution,
+                reasoning_replay=dataclass_replace(
+                    replay,
+                    mode="all" if thinking_policy == "include" else "off",
+                    source="conversation",
+                ),
+            )
         canvas_turn_controller = None
         canvas_run_id = None
         lifecycle_reader = getattr(canvas_provider, "lifecycle_binding", None)
@@ -5138,12 +5200,16 @@ class ConsoleAgentBridge:
                 final_payload_fits=(
                     None
                     if config.native_tools
-                    and provider_supports_native_tools(first_request_plan.api_endpoint)
+                    and provider_supports_native_tools(
+                        first_request_plan.api_endpoint,
+                        reasoning_replay=config.reasoning_replay,
+                    )
                     else lambda rows: _fenced_project_instruction_payload_fits(
                         rows,
                         model=config.model,
                         provider=first_request_plan.api_endpoint,
                         response_reserve_tokens=config.response_reserve_tokens,
+                        reasoning_replay=config.reasoning_replay,
                     )
                 ),
             )
@@ -5464,7 +5530,10 @@ class ConsoleAgentBridge:
             loop=turn_lifeline.loop,
             native_tools=(
                 config.native_tools
-                and provider_supports_native_tools(first_request_plan.api_endpoint)
+                and provider_supports_native_tools(
+                    first_request_plan.api_endpoint,
+                    reasoning_replay=config.reasoning_replay,
+                )
             ),
             provider_stream_signals=provider_stream_signals,
             continuation_sidecar=continuation_sidecar,

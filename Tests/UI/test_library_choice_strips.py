@@ -192,7 +192,10 @@ async def test_media_type_strip_opens_full_set_marks_active_and_picks():
         assert isinstance(chooser, OptionList)
         labels = {str(option.prompt) for option in chooser.options}
         # Full option set on screen, ✓ on the active option only.
-        assert labels == {"✓ All types", "audio", "video"}
+        # task-32210: the highlighted option also carries the house `█ `
+        # cursor (the screen opens the chooser on the active option, so
+        # "All types" wears both marks here).
+        assert labels == {"█ ✓ All types", "audio", "video"}
 
         chooser.highlighted = next(
             index
@@ -311,11 +314,13 @@ async def test_media_type_strip_keyboard_only_path():
         )
         chooser = screen.query_one("#library-media-type-choices", OptionList)
         assert chooser.highlighted == 0
-        assert str(chooser.highlighted_option.prompt) == "✓ All types"
+        # task-32210: `█ ` rides in front of the `✓` active marker and
+        # follows the cursor, so an arrow key is visible in plain text.
+        assert str(chooser.highlighted_option.prompt) == "█ ✓ All types"
 
         await pilot.press("down")
         await pilot.pause()
-        assert str(chooser.highlighted_option.prompt) == "audio"
+        assert str(chooser.highlighted_option.prompt) == "█ audio"
         await pilot.press("enter")
         await pilot.pause()
         await pilot.pause()
@@ -360,7 +365,9 @@ async def test_media_type_chooser_keeps_complete_facets_in_one_bounded_widget():
         assert len(chooser.children) == 0
         assert chooser.region.height <= 10
         assert getattr(chooser.get_option_at_index(0), "choice_value") is None
-        assert str(chooser.get_option_at_index(0).prompt) == "✓ All types"
+        # task-32210: index 0 is the highlighted option, so it wears `█ `;
+        # index 1 is not highlighted and stays bare.
+        assert str(chooser.get_option_at_index(0).prompt) == "█ ✓ All types"
         assert getattr(chooser.get_option_at_index(1), "choice_value") == "All"
         assert str(chooser.get_option_at_index(1).prompt) == "All"
         assert controller.applied_scope == applied_before

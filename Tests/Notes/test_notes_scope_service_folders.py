@@ -75,12 +75,17 @@ class RecordingFolderRepository:
         return self.folder_child_page
 
     def page_note_placements(
-        self, *, parent_id: str | None, limit: int, offset: int
+        self, *, parent_id: str | None, limit: int, offset: int, order: str = "title"
     ) -> NotePlacementPage:
         self._record(
             (
                 "page_note_placements",
-                {"parent_id": parent_id, "limit": limit, "offset": offset},
+                {
+                    "parent_id": parent_id,
+                    "limit": limit,
+                    "offset": offset,
+                    "order": order,
+                },
             )
         )
         return self.placement_page
@@ -103,6 +108,7 @@ class RecordingFolderRepository:
         page_size: int,
         preferred_folder_id: str | None = None,
         preferred_membership_id: str | None = None,
+        order: str = "title",
     ) -> NoteTreeLocation | None:
         self._record(
             (
@@ -112,6 +118,7 @@ class RecordingFolderRepository:
                     "page_size": page_size,
                     "preferred_folder_id": preferred_folder_id,
                     "preferred_membership_id": preferred_membership_id,
+                    "order": order,
                 },
             )
         )
@@ -502,7 +509,9 @@ LOCAL_FOLDER_CASES = [
         "notes.list.local",
         (
             "page_note_placements",
-            {"parent_id": "folder-1", "limit": 10, "offset": 20},
+            # task-32172: the placement order is a repository parameter now
+            # and the service defaults it to the pre-existing title order.
+            {"parent_id": "folder-1", "limit": 10, "offset": 20, "order": "title"},
         ),
         id="branch_page_placements",
     ),
@@ -532,6 +541,7 @@ LOCAL_FOLDER_CASES = [
                 "page_size": 50,
                 "preferred_folder_id": "folder-1",
                 "preferred_membership_id": "membership-1",
+                "order": "title",
             },
         ),
         id="tree_locator_placement_preferences",
@@ -547,6 +557,7 @@ LOCAL_FOLDER_CASES = [
                 "page_size": 50,
                 "preferred_folder_id": None,
                 "preferred_membership_id": None,
+                "order": "title",
             },
         ),
         id="tree_locator_placement_default_preferences",

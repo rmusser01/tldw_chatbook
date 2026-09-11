@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12, Textual 8.x, pytest (`.venv/bin/python -m pytest`), SQLite, TCSS bundle via `python3 tldw_chatbook/css/build_css.py`.
 
-**Spec:** the backlog task files `backlog/tasks/task-32272 … task-32291` (acceptance criteria are the binding contract) plus the review snapshot `.impeccable/critique/2026-09-10T17-31-53Z__hatbook-widgets-chat-widgets-chat-approval-card-py.md`.
+**Spec:** the backlog task files `backlog/tasks/task-32277 … task-32291` plus `task-32341 … task-32345` (acceptance criteria are the binding contract) plus the review snapshot `.impeccable/critique/2026-09-10T17-31-53Z__hatbook-widgets-chat-widgets-chat-approval-card-py.md`. Tasks 1-4 and 10 were filed as `task-32272 … task-32276` and renumbered to `task-32341 … task-32345` on 2026-09-10 after `dev` landed its own tasks on those ids; see each task file's `## Renumbering provenance`.
 
 ## Global Constraints
 
@@ -27,7 +27,7 @@
 
 ## Lane A — dev blockers (branch `fix/approval-wave-a-blockers`)
 
-### Task 1: Keyless provider with a stored api_key no longer crashes Console readiness (task-32272)
+### Task 1: Keyless provider with a stored api_key no longer crashes Console readiness (task-32341, filed as task-32272)
 
 **Files:**
 - Modify: `tldw_chatbook/Chat/console_session_settings.py:1384-1394` (credential facet derivation)
@@ -54,7 +54,7 @@ def test_keyless_provider_with_stored_key_reports_not_required_without_source(..
 - [ ] **Step 5: Live check** — launch with a scratch HOME (`HOME=<scratch> python -m tldw_chatbook.app` from the worktree root; config `[chat_defaults] provider="custom" model="x"` and `[api_settings.custom] api_key="dummy" api_url="http://127.0.0.1:1"`), confirm the app reaches Console without a traceback; quit. Record the command and result in the report.
 - [ ] **Step 6: Close the task file, commit.**
 
-### Task 2: Tool-call continuation serialises immutable arguments; client-side serialisation failures are not "provider HTTP 400" (task-32273)
+### Task 2: Tool-call continuation serialises immutable arguments; client-side serialisation failures are not "provider HTTP 400" (task-32342, filed as task-32273)
 
 **Files:**
 - Modify: the payload builder that emits the assistant `tool_calls` entries for re-send — trace from `tldw_chatbook/Chat/console_agent_bridge.py:3272` (`message["tool_calls"] = native_calls`) back to where each entry's `function.arguments` is set; `tldw_chatbook/Agents/agent_models.py:372` makes `ToolCall.arguments` a `MappingProxyType`.
@@ -74,7 +74,7 @@ def test_keyless_provider_with_stored_key_reports_not_required_without_source(..
 - [ ] **Step 7: Live check** with the repo's fake LLM: `python Docs/superpowers/qa/mcp-hub-phase5-2026-07/fake_llm_server.py 8899`, scratch HOME config `[chat_defaults] provider="custom" model="fake-model"`, `[api_settings.custom] api_url="http://127.0.0.1:8899" streaming=false`, `[mcp] enabled=true`; send "List the characters please."; the approval card must appear (three fake-server calls: find_tools, load_tools, list_characters). Record the fake server's log lines in the report.
 - [ ] **Step 8: Close the task file, commit.**
 
-### Task 3: Subscriptions DB tolerates a schema_version table holding older rows beside the current one (task-32274)
+### Task 3: Subscriptions DB tolerates a schema_version table holding older rows beside the current one (task-32343, filed as task-32274)
 
 **Files:**
 - Modify: `tldw_chatbook/DB/Subscriptions_DB.py:740-760` (version check) and the create script's `INSERT OR IGNORE INTO schema_version (version) VALUES (2)`.
@@ -87,7 +87,7 @@ def test_keyless_provider_with_stored_key_reports_not_required_without_source(..
 - [ ] **Step 5: Run** all `Tests/DB/test_subscriptions_db*.py` and `Tests/Subscriptions/test_subscriptions_db_connection_lifecycle.py`.
 - [ ] **Step 6: Close the task file, commit.**
 
-### Task 4: First agent send after restart: trace the stall, bound it, and show it (task-32275)
+### Task 4: First agent send after restart: trace the stall, bound it, and show it (task-32344, filed as task-32275)
 
 **Files:**
 - Investigate: `tldw_chatbook/Agents/mcp_tool_provider.py` (`compose_catalog`, built-in server connect), `tldw_chatbook/MCP/unified_control_plane_service.py` (`hub_lifecycle_timeout_seconds`, connect), `tldw_chatbook/MCP/client.py`, `tldw_chatbook/Chat/console_agent_bridge.py` (pre-provider setup), `tldw_chatbook/UI/Console_Modules/agent.py:246-260, 385-430` (activity line).
@@ -166,7 +166,7 @@ def test_keyless_provider_with_stored_key_reports_not_required_without_source(..
 - [ ] **Step 2: Red. Step 3: Implement** by routing the new action through the same code path as `handle_console_inspector_review_approval`. Add the key to the footer legend string (grep `Alt+I inspect` in the footer text and add `Alt+A approval`).
 - [ ] **Step 4: Run** the test file(s) plus `Tests/UI/test_console_agent_steering*.py` if they mount the screen. **Step 5: Close, commit.**
 
-### Task 10: Waiting-for-approval state on the activity line, run chip and inspector (task-32276)
+### Task 10: Waiting-for-approval state on the activity line, run chip and inspector (task-32345, filed as task-32276)
 
 **Files:**
 - Modify: `tldw_chatbook/UI/Console_Modules/agent.py:246-260, 385-430` (activity line; add state `waiting_approval` → `Waiting for your approval · <elapsed>`), `tldw_chatbook/Chat/console_chat_controller.py:22509` (run state copy — add `ConsoleRunState(ConsoleRunStatus.STREAMING, "Waiting for your approval.")` when `has_pending_approval_round(session_id)`), `tldw_chatbook/Widgets/Console/console_send_authority_summary.py:144` (already has `run = "Waiting for approval"` — make it the branch that fires for a pending approval, and make `Live work`/`Setup`/`Blocked impact` lines not say Generating / Recovery required / Provider configuration required in that case), `tldw_chatbook/Chat/console_display_state.py` (status chip).

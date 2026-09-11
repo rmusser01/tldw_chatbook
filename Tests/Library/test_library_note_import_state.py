@@ -911,3 +911,67 @@ def test_a_revisited_receipt_keeps_its_skipped_paths_after_a_new_selection() -> 
 
     assert projection.skipped_count == 1
     assert projection.skipped_items == expected
+
+
+# --- task-32178: the receipt reports resolved Obsidian links ---------------
+
+
+def _linked_settled_state():
+    """Settle a two-note batch where the first note links to the second."""
+    source = _item(1)
+    linking = replace(
+        source,
+        payloads=(
+            replace(
+                source.payloads[0],
+                wikilinks=("record-2", "Somewhere else"),
+            ),
+        ),
+    )
+    plan = _plan(linking, _item(2))
+    state = _file_review(plan)
+    approved = approve_note_import_plan(plan)
+    state = begin_importing(set_approved_plan(state, approved))
+    receipt = ImportExecutionReceipt(
+        approval_id=approved.approval_id,
+        state=ImportSessionState.COMPLETED,
+        total=2,
+        completed=2,
+        imported=2,
+        updated=0,
+        skipped=0,
+        failed=0,
+        retryable=0,
+    )
+    return settle_import(state, receipt)
+
+
+def test_receipt_counts_the_links_the_import_resolved() -> None:
+    """A link to a note outside the batch stays text and is not counted."""
+    projection = project_library_note_import_snapshot(_linked_settled_state())
+
+    assert projection.resolved_links == 1
+    assert projection.receipt_detail == (
+        "Import finished · 2 notes created · 1 link resolved"
+    )
+
+
+def test_a_revisited_receipt_keeps_its_resolved_link_count() -> None:
+    """Reopening Last import must not silently drop the count."""
+    state = _linked_settled_state()
+
+    projection = project_library_note_import_snapshot(
+        revisit_latest_receipt(clear_selection(state))
+    )
+
+    assert projection.resolved_links == 1
+
+
+def test_an_import_that_resolves_no_links_says_nothing_about_them() -> None:
+    """The line only appears when there is something to report."""
+    projection = project_library_note_import_snapshot(
+        _settled_state(imported=1, updated=0, skipped=1, failed=0)
+    )
+
+    assert projection.resolved_links == 0
+    assert "link" not in projection.receipt_detail

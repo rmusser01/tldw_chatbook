@@ -145,6 +145,9 @@ from ..Console_Modules.left_rail import (
     CONSOLE_RETRY_GENERATION_SETTINGS_ID,
     ConsoleLeftRail,
 )
+from ..Console_Modules.workspace import (
+    CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS as CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS,
+)
 from ..Console_Modules.message import ConsoleMessageController
 from ..Console_Modules.right_rail import ConsoleInspectorRail
 from ..Console_Modules.provider_continuation_recovery import (
@@ -775,13 +778,6 @@ CONSOLE_ACTIVE_RUN_STATUSES: tuple[ConsoleRunStatus, ...] = tuple(
 # is actively streaming (e.g. a sub-agent finished in a *different*
 # Console session/tab).
 CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS = 2.0
-# TASK-251 (audit P1 B1): the persisted conversation-browser rows behind
-# `_refresh_console_persisted_rows_cache` queries the DB per scope (global +
-# every workspace) on every 0.2s poll tick -- measured 11-70ms/tick. Modeled
-# directly on the sub-agent badge-count TTL cache above (same staleness
-# bound, same "explicit invalidation is a nice-to-have, the TTL is the
-# correctness backstop" philosophy).
-CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
 # Cost-ticker PR3 (task-5): the 0.2s transcript tick stops once a run leaves
 # an active status (`_start_console_transcript_sync_timer`), so a WARM
 # prompt cache that later goes EXPIRED on its own -- with no further sync
@@ -5134,6 +5130,7 @@ class ChatScreen(BaseAppScreen):
                         presentation_owners.pop(id(request))
 
         modal = ConsoleSessionSwitcherModal(
+            on_full_search=self.app_instance.open_conversation_archive,
             active_results=initial_results,
             history_loader=self._workspace.load_console_session_switcher_history,
             character_loader=self._load_console_character_switcher_page,
@@ -8258,7 +8255,7 @@ class ChatScreen(BaseAppScreen):
                 marshal_to_ui=lambda fn, *args: self.app.call_from_thread(fn, *args),
                 workspace_root_accessor=self._console_environment_root,
                 rail_open_accessor=(
-                    lambda: self.app.screen is self
+                    lambda: self._is_active_console_screen()
                     and self._is_console_widget_displayed("console-right-rail")
                 ),
                 on_snapshot=self._land_console_environment,
@@ -8266,9 +8263,24 @@ class ChatScreen(BaseAppScreen):
             self._console_environment_owner = owner
         return owner
 
+    def _is_active_console_screen(self) -> bool:
+        """True while this screen is the app's active screen.
+
+        task-32297: ``App.screen`` raises ``ScreenStackError`` once the stack
+        is empty (app teardown), and the environment poll timer can fire in
+        that window -- the Perf Guard tour tests hit it three times in one
+        day. An empty stack means "not active", not an error.
+        """
+        from textual.app import ScreenStackError
+
+        try:
+            return self.app.screen is self
+        except ScreenStackError:
+            return False
+
     def _poll_console_environment(self) -> None:
         """Keep hidden-panel ticks cold; preserve the owner's existing cadence."""
-        if self.app.screen is not self:
+        if not self._is_active_console_screen():
             return
         if (
             self._console_environment_owner is not None
@@ -16102,6 +16114,10 @@ class ChatScreen(BaseAppScreen):
             self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._start_resume_navigation_startup)
         else:
             self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_chat_handoff)
+            self.set_timer(
+                self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                self._consume_pending_conversation_resume,
+            )
             self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_console_roleplay_repair)
             # Mirrors the handoff timer above: the native composer is not
             # guaranteed to exist in the DOM yet at this exact point (it can
@@ -16193,6 +16209,7 @@ class ChatScreen(BaseAppScreen):
                 opened = await self._workspace.open_console_workspace_conversation(target)
         finally:
             self._resume_navigation_startup_in_progress = False
+        await self._consume_pending_conversation_resume()
         if opened is True:
             return
         store = self._ensure_console_chat_store()
@@ -16793,6 +16810,28 @@ class ChatScreen(BaseAppScreen):
         # fixing it belongs with whoever does.
         self._console_runtime().remount_pending_approval()
         self.sync_task_resume_state()
+
+    async def _consume_pending_conversation_resume(self) -> None:
+        """Consume recovery only while Console owns the visible screen."""
+        if self.app.screen is not self:
+            return
+        from ..Console_Modules.archive import consume_conversation_resume
+
+        await consume_conversation_resume(self)
+
+    @on(Button.Pressed, "#console-archive-chat")
+    async def _archive_current_saved_chat(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._session._sync_console_session_draft()
+        from ..Console_Modules.archive import archive_current_conversation
+
+        await archive_current_conversation(self)
+
+    @on(Button.Pressed, "#console-open-archive, #console-search-all")
+    def _open_saved_chat_search(self, event: Button.Pressed) -> None:
+        event.stop()
+        scope = "archived" if event.button.id == "console-open-archive" else "all"
+        self.app_instance.open_conversation_archive(archive_scope=scope)
 
     async def _consume_pending_chat_handoff(
         self,
@@ -17943,9 +17982,9 @@ class ChatScreen(BaseAppScreen):
             # stays coupled to the SAME combined condition as the stop
             # (not a bare "viewed session idle") so a long-running
             # background session cannot reintroduce the per-tick DB query
-            # TASK-251's TTL cache exists to prevent; the resulting bound
-            # on staleness is `CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS`
-            # (2s), the documented backstop for exactly this gap.
+            # TASK-251's TTL cache exists to prevent. The refresh interval
+            # is `CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS`; matching rows
+            # stay visible until the background refresh publishes its result.
             # task-15862: a wake delivery scheduled but not yet busy (the
             # coordinator's `_delivering` is set synchronously BEFORE its
             # asyncio task first runs) must not let a poll beat in that gap
@@ -18053,6 +18092,20 @@ class ChatScreen(BaseAppScreen):
         # restores it instead. Snapshot before submit_draft so the hook's
         # consumption is observable here.
         inflight_stash = self._console_inflight_send_stashes.get(session_id)
+        sending_session = next(
+            (item for item in controller.store.sessions() if item.id == session_id),
+            None,
+        )
+        sending_id = (
+            sending_session.persisted_conversation_id if sending_session else None
+        )
+        send_reservations = getattr(
+            self.app_instance, "_conversation_send_inflight", None
+        )
+        if send_reservations is None:
+            send_reservations = self.app_instance._conversation_send_inflight = {}
+        if sending_id:
+            send_reservations[sending_id] = send_reservations.get(sending_id, 0) + 1
         try:
             # F4 fix (Qodo wave): thread the session THIS worker was
             # dispatched for all the way into the controller -- previously
@@ -18061,7 +18114,65 @@ class ChatScreen(BaseAppScreen):
             # racing the scheduling gap between `run_worker(...)` and this
             # coroutine body actually running could submit into whichever
             # session the user switched TO instead of the dispatching one.
+            from ...Chat.conversation_archive_actions import conversation_send_refusal
+
+            session = next(
+                (item for item in controller.store.sessions() if item.id == session_id),
+                None,
+            )
+            reason = await conversation_send_refusal(
+                self.app_instance,
+                session.persisted_conversation_id if session else None,
+            )
+            if reason:
+                leaked_stash = self._console_inflight_send_stashes.pop(session_id, None)
+                if self._console_visible_draft_session_id == session_id:
+                    if leaked_stash is not None:
+                        self._restore_console_send_stash(leaked_stash)
+                elif session is not None:
+                    controller.store.set_session_draft(
+                        session_id,
+                        draft + ("\n" + session.draft if session.draft else ""),
+                    )
+                self.app_instance.notify(reason, severity="warning")
+                return
             result = await controller.run_prompt_chain(draft, session_id=session_id)
+        except asyncio.CancelledError:
+            # Archive admission adds an awaited read before submission can
+            # consume the keyboard stash. Return only this attempt's still
+            # unaccepted stash to its owner, preserving newer edits/tabs.
+            if (
+                inflight_stash is not None
+                and self._console_inflight_send_stashes.get(session_id)
+                is inflight_stash
+            ):
+                self._console_inflight_send_stashes.pop(session_id)
+                live_owner = next(
+                    (
+                        item
+                        for item in controller.store.sessions()
+                        if item.id == session_id
+                    ),
+                    None,
+                )
+                owner_composer = self._console_composer_or_none()
+                if (
+                    live_owner is not None
+                    and self.is_mounted
+                    and self._console_visible_draft_session_id == session_id
+                    and owner_composer is not None
+                ):
+                    owner_composer.restore_stashed_draft(inflight_stash)
+                    controller.store.set_session_draft(
+                        session_id, owner_composer.draft_text()
+                    )
+                elif live_owner is not None:
+                    controller.store.set_session_draft(
+                        session_id,
+                        inflight_stash.text
+                        + controller.store.session_draft(session_id),
+                    )
+            raise
         except Exception:
             # An unexpected submit crash must not eat the keypress-cleared
             # draft — and must not escape the worker (exit_on_error would
@@ -18076,6 +18187,12 @@ class ChatScreen(BaseAppScreen):
             )
             return
         finally:
+            if sending_id:
+                remaining = send_reservations.get(sending_id, 1) - 1
+                if remaining:
+                    send_reservations[sending_id] = remaining
+                else:
+                    send_reservations.pop(sending_id, None)
             if task is not None:
                 self._console_submit_session_by_task.pop(task, None)
         # TASK-251: a submit may have created/updated a persisted
@@ -18327,6 +18444,13 @@ class ChatScreen(BaseAppScreen):
 
     def _console_send_blocked_reason(self) -> str:
         """Return a user-facing reason if Console send cannot safely run."""
+        conversation_id = self._current_console_conversation_id()
+        if conversation_id in getattr(
+            self.app_instance, "_conversation_archive_inflight", ()
+        ):
+            return "Archive change in progress. Your draft is preserved."
+        # A cached archive flag may predate a restore by another writer.
+        # The awaited submit boundary checks durable state before any send.
         pending_launch = self._consume_pending_console_launch()
         if pending_launch is not None and _source_mentions_rag(pending_launch.source):
             evidence_state = build_console_evidence_display_state(pending_launch)
@@ -22845,16 +22969,35 @@ class ChatScreen(BaseAppScreen):
                 # `open_chat_with_handoff` payloads and vLLM "Use in
                 # Console" targets staged against a warm Chat screen were
                 # never applied. Same 0.15s settle hedge as on_mount.
-                self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_chat_handoff),
-                self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_console_prompt_insert),
-                self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self.consume_pending_console_provider_intent),
-                self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_conversation_settings_return
+                self.set_timer(
+                    self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                    self._consume_pending_chat_handoff,
                 ),
-                self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self.consume_pending_vllm_console_intent),
+                self.set_timer(
+                    self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                    self._consume_pending_conversation_resume,
+                ),
+                self.set_timer(
+                    self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                    self._consume_pending_console_prompt_insert,
+                ),
+                self.set_timer(
+                    self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                    self.consume_pending_console_provider_intent,
+                ),
+                self.set_timer(
+                    self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                    self._consume_pending_conversation_settings_return,
+                ),
+                self.set_timer(
+                    self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                    self.consume_pending_vllm_console_intent,
+                ),
                 # PR3a-2 Task 4: mirrors the on_mount claim -- a completion
                 # staged while the user was on another screen is claimed on
                 # resume too.
-                self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                self.set_timer(
+                    self.CONSUMER_SETTLE_HEDGE_SECONDS,
                     self._fleet.consume_pending_console_fleet_completion,
                 ),
             ]

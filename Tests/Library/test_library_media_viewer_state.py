@@ -758,14 +758,23 @@ def test_build_state_obsidian_note_with_heading_is_markdown():
     assert state.is_markdown is True
 
 
-def test_build_state_non_markdown_type_never_flagged_even_with_heading_syntax():
-    """A type outside the allowlist whose body happens to contain a line
-    starting with ``#`` (e.g. a hashtag) must never default to Rendered --
-    the media-type allowlist gates the content sniff.
+def test_build_state_flags_markdown_by_content_whatever_the_type():
+    """task-32234: the content sniff decides alone, for every media type.
 
-    task-31277 moved ``video``/``audio`` INTO the allowlist (sectioned
-    transcripts painted their ``##`` headings literally), so this pins the
-    gate on a type that is still outside it.
+    This pin used to assert the opposite -- that a type outside
+    ``_MARKDOWN_MEDIA_TYPES`` was never flagged even with heading syntax.
+    That allowlist ran BEFORE the sniff and was removed: it never proved
+    anything (ingestion maps .md, .txt, .csv and .log all onto
+    ``plaintext``) while every type it left out -- ``document``,
+    ``article``, ``pdf`` -- painted its real Markdown literally under a note
+    claiming there was none.
+
+    The accepted trade-off, unchanged in kind from what ``plaintext``
+    already carried: a body line that merely LOOKS like a heading (a
+    hashtag with a space after it, as below) now opens on Rendered. The
+    Raw toggle is one press away and nothing is hidden or altered, so a
+    wrong DEFAULT view is the cheaper error than a true heading painted as
+    literal hashes.
     """
     state = build_library_media_viewer_state(
         {
@@ -776,7 +785,20 @@ def test_build_state_non_markdown_type_never_flagged_even_with_heading_syntax():
         }
     )
     assert state.media_type == "pdf"
-    assert state.is_markdown is False
+    assert state.is_markdown is True
+
+    # The negative control the old pin also carried: no marker, no
+    # Rendered default, whatever the type.
+    plain = build_library_media_viewer_state(
+        {
+            "id": "m2",
+            "title": "Quarterly Report",
+            "type": "pdf",
+            "content": "Revenue grew 4% against a flat cost base.",
+        }
+    )
+    assert plain.media_type == "pdf"
+    assert plain.is_markdown is False
 
 
 def test_build_state_missing_content_is_never_markdown():
