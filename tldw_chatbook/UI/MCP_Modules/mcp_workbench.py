@@ -599,9 +599,33 @@ class MCPWorkbench(Container):
         width: 7fr;
         min-width: 30;
     }
+    /* ADR-148 Wave E: the main row carries the old rail+canvas share of
+    the grid (8 of 11 units) so the wide layout is geometrically
+    unchanged, one nesting level deeper. */
+    #mcp-hub-main-row {
+        width: 8fr;
+        min-width: 0;
+        height: 100%;
+        min-height: 0;
+    }
+    /* ADR-148 Wave E: below 120 cols the grid STACKS -- main row on top,
+    the inspector as a bounded, internally scrolling band underneath (the
+    old squeezed third column broke words mid-token at ~20 cols; the
+    `layout:` override has in-repo precedent, e.g.
+    screen_feature_watchlists.tcss). */
+    #mcp-hub-grid.mcp-compact {
+        layout: vertical;
+    }
+    #mcp-hub-grid.mcp-compact #mcp-hub-main-row {
+        width: 100%;
+        height: 1fr;
+    }
     #mcp-hub-grid.mcp-compact #mcp-hub-inspector {
-        width: 2fr;
-        min-width: 20;
+        width: 100%;
+        height: auto;
+        max-height: 12;
+        min-height: 4;
+        overflow-y: auto;
     }
     """
 
@@ -848,24 +872,28 @@ class MCPWorkbench(Container):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="mcp-hub-grid", classes="destination-workbench"):
-            yield MCPRail(
-                source=self._source,
-                snapshots=[],
-                selected_server_key=None,
-                scope_options=[("Personal", "personal")],
-                scope_value=self._scope,
-                scope_ref_options=[],
-                scope_ref_value=self._scope_ref,
-                agent_snapshot=None,
-                id="mcp-hub-rail",
-                classes="destination-workbench-pane",
-            )
-            with ContentSwitcher(
-                initial="mcp-mode-canvas-servers",
-                id="mcp-hub-canvas",
-                classes="destination-workbench-pane",
-            ):
-                yield MCPServersMode(id="mcp-mode-canvas-servers")
+            # ADR-148 Wave E: rail+canvas live in one main row so the
+            # compact class can stack the inspector UNDER it as a band
+            # instead of squeezing three columns (all pane ids unchanged).
+            with Horizontal(id="mcp-hub-main-row"):
+                yield MCPRail(
+                    source=self._source,
+                    snapshots=[],
+                    selected_server_key=None,
+                    scope_options=[("Personal", "personal")],
+                    scope_value=self._scope,
+                    scope_ref_options=[],
+                    scope_ref_value=self._scope_ref,
+                    agent_snapshot=None,
+                    id="mcp-hub-rail",
+                    classes="destination-workbench-pane",
+                )
+                with ContentSwitcher(
+                    initial="mcp-mode-canvas-servers",
+                    id="mcp-hub-canvas",
+                    classes="destination-workbench-pane",
+                ):
+                    yield MCPServersMode(id="mcp-mode-canvas-servers")
                 # task-2901: Tools/Permissions/Audit (T5/T6/T7 canvases —
                 # every `MCP_HUB_MODES` entry is a real canvas) arrive
                 # hidden behind the ContentSwitcher and are NOT composed

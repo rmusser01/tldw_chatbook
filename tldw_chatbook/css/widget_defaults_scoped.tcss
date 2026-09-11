@@ -814,9 +814,31 @@
         width: 7fr;
         min-width: 30;
     }
+    /* ADR-148 Wave E: the main row carries the old rail+canvas share of
+    the grid (8 of 11 units) so the wide layout is geometrically
+    unchanged, one nesting level deeper. */
+    MCPWorkbench #mcp-hub-main-row {
+        width: 8fr;
+        min-width: 0;
+        height: 100%;
+        min-height: 0;
+    }
+    /* ADR-148 Wave E: below 120 cols the grid STACKS -- main row on top,
+    the inspector as a bounded, internally scrolling band underneath (the
+    old squeezed third column broke words mid-token at ~20 cols). */
+    MCPWorkbench #mcp-hub-grid.mcp-compact {
+        layout: vertical;
+    }
+    MCPWorkbench #mcp-hub-grid.mcp-compact #mcp-hub-main-row {
+        width: 100%;
+        height: 1fr;
+    }
     MCPWorkbench #mcp-hub-grid.mcp-compact #mcp-hub-inspector {
-        width: 2fr;
-        min-width: 20;
+        width: 100%;
+        height: auto;
+        max-height: 12;
+        min-height: 4;
+        overflow-y: auto;
     }
 
 
