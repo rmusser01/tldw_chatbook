@@ -122,7 +122,9 @@ ago · analysed`). The age is labelled, because a bare "10m" on an `audio` or
 `video` row reads as the item's *length*; under a minute it reads **added
 just now**. The row that is open in the Reader ends **· loaded** (**·
 loading** while it is fetching) — the state is a fact about the row, so it
-sits with the other facts rather than in front of the title. The row re-reads its state from the database the moment an
+sits with the other facts rather than in front of the title.
+
+The row re-reads its state from the database the moment an
 analysis is saved — from the Reader's Generate, or from a bulk Analyze run —
 without re-paging the list; until task-31942 lands (the save does not yet
 commit durably), the mark can lag the Reader on a real profile. Its title row
@@ -139,8 +141,8 @@ reuses that same cell for its **☑/☐**, so a row never carries two markers.
 While a filter is active, a row it found only through one of its **keywords**
 adds **· keyword: \<term\>** — the filter searches titles, item text and
 keywords, so without it a hit whose title and body hold nothing you typed
-reads as a mistake (`article · added 2m ago · keyword: notes`). A row whose title or
-text carries the term already shows you why it is there and says nothing
+reads as a mistake (`article · added 2m ago · keyword: notes`). A row whose
+title or text carries the term already shows you why it is there and says nothing
 extra. Long tags are cut to ten columns (`keyword: quokkasand…`; five
 wide CJK characters, or five flag emoji) to keep the line short — the cut
 counts a flag by the two columns it paints and never leaves half of one, so

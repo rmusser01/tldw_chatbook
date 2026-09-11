@@ -321,8 +321,7 @@ path that has not been checked yet it runs the pre-check and the footer
 reads **`enter check this path`**; once the gate line clears the footer
 reads **`enter start import`** and Enter starts the import. With "⚠"
 warnings outstanding, Enter,Enter carries the same two-press consent as the
-Start button. **r** re-stages your last import
-of the session ("Retry this batch") when the queue has settled — inside a
+Start button. **r** re-stages your last import of the session ("Retry this batch") when the queue has settled — inside a
 text field it stays a letter. **Escape** first backs out of a pending
 "Press Start again" confirm (staying on the form), otherwise returns you
 to the Library landing (a half-filled form is kept, same as switching
