@@ -31,6 +31,7 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_NOTES,
     LIBRARY_ROW_CREATE_NOTE,
 )
+from tldw_chatbook.UI.Library_Modules.canvas_sync import _sync_library_canvas
 from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
     LibraryAdaptiveReaderPaneGrip,
 )
@@ -612,4 +613,122 @@ async def test_pane_grip_focus_is_visible_against_its_blurred_sibling():
         assert "reverse" in str(grip_a.styles.text_style).lower(), (
             f"expected a reverse (block-inverting) focus style, got "
             f"{grip_a.styles.text_style!r}"
+        )
+
+
+# --- task-32233: the Notes canvas keeps the same Escape contract -------------
+
+
+async def _open_notes_list(screen, pilot, *, folder_tree: bool = True):
+    """Land on the Notes list in one of its two layouts.
+
+    ``folder_tree`` is the shipped default (PR #2543): the branch loader
+    fills ``tree_branches`` and the canvas paints the folder projection.
+    Clearing those branches is the same state the canvas paints before the
+    first branch slice settles -- the plain database list.
+    """
+    screen.query_one("#library-row-browse-notes").press()
+    await _wait_for_selector(screen, pilot, "#library-notes-filter")
+    await pilot.pause()
+    if not folder_tree:
+        screen._notes_state.tree_branches = {}
+        _sync_library_canvas(screen, "notes")
+        await pilot.pause()
+        await pilot.pause()
+    assert bool(screen.query(".library-notes-tree-note-row")) is folder_tree, (
+        "the layout under test is not the one that got painted"
+    )
+    return screen.query_one("#library-notes-filter", Input)
+
+
+@pytest.mark.asyncio
+async def test_escape_from_the_notes_filter_box_blurs_and_the_next_key_is_a_canvas_key():
+    """AC#1: Escape must leave the Notes filter box, like every sibling list.
+
+    Live at dev 1077ac2dad the Notes filter box CLEARED on Escape and kept
+    the caret, so the next printable key was typed straight back into it --
+    ``library_notes_escape`` is declared first among this screen's Escape
+    bindings and its gate was True on the plain list, so the focus hop the
+    footer advertises was never reached.
+    """
+    host = _build_library_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        filter_box = await _open_notes_list(screen, pilot)
+
+        await pilot.press("slash")
+        await pilot.pause()
+        assert screen.focused is filter_box
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert screen.focused is not filter_box, screen.focused
+
+        before = screen.query_one("#library-notes-filter", Input).value
+        await pilot.press("n")
+        await pilot.pause()
+        assert screen.query_one("#library-notes-filter", Input).value == before, (
+            "`n` was typed into the Notes filter box after Escape."
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("layout", ["database", "folder_tree"])
+async def test_escape_on_the_plain_notes_list_focuses_the_rail_search_box(layout):
+    """AC#2: both Notes list layouts honour the footer's "esc focus rail".
+
+    The same destination ``/``, F6 and the Media/Prompts/Skills lists already
+    converge on (``_library_list_focus_rail_target``), so the chip is telling
+    the truth on every list canvas rather than all but this one.
+    """
+    host = _build_library_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_notes_list(screen, pilot, folder_tree=layout == "folder_tree")
+
+        assert ("esc", "focus rail") in (
+            screen._library_footer_shortcuts_for_current_state()
+        )
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert screen.focused is screen.query_one("#library-search-input", Input), (
+            f"Escape on the {layout} Notes list left focus on "
+            f"{screen.focused!r} while the footer said 'focus rail'."
+        )
+
+
+@pytest.mark.asyncio
+async def test_escape_from_the_rail_box_on_the_notes_list_still_blurs_to_the_canvas():
+    """AC#1: the Notes list completes the same two-step Escape ladder as Media.
+
+    The filter box hands Escape to the rail search box (the sibling test);
+    from there the hop would re-focus the widget that already has focus, so
+    Escape must blur to the canvas instead -- the case
+    ``library_blur_text_field`` was added for (task-32051). That binding is
+    declared after ``library_notes_escape``, whose gate covers the whole
+    Notes workflow, so on this canvas it never fired: live at dev 1077ac2dad
+    `abc` was typed into the rail box.
+    """
+    host = _build_library_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_notes_list(screen, pilot)
+        search_box = screen.query_one("#library-search-input", Input)
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert screen.focused is search_box
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert screen.focused is not search_box, screen.focused
+        assert not isinstance(screen.focused, Input), screen.focused
+        await pilot.press("n")
+        await pilot.pause()
+        assert screen.query_one("#library-search-input", Input).value == "", (
+            "`n` was typed into the rail search box after Escape."
         )

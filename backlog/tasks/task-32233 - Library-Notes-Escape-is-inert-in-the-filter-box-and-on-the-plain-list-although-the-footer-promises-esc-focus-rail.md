@@ -3,9 +3,10 @@ id: TASK-32233
 title: >-
   Library Notes: Escape is inert in the filter box and on the plain list
   although the footer promises 'esc focus rail'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-10 14:51'
+updated_date: '2026-09-11 01:30'
 labels:
   - library
   - notes
@@ -28,3 +29,13 @@ On the Notes canvas Escape in the filter box does nothing and the next printable
 - [ ] #2 Escape on the plain Notes list (database and folder-tree layouts) focuses the rail's Search Library… box exactly as the footer says
 - [ ] #3 Both cases are pinned in `Tests/UI/test_library_crit8_keyboard.py` alongside the Media pins
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Re-verify live at the current dev tip (both cases, both layouts)
+2. Pin both cases in Tests/UI/test_library_crit8_keyboard.py beside the Media pins (TDD red)
+3. Fix the Escape ladder so the Notes list reaches the shared focus-rail hop
+4. Live-verify at 235x52 and 100x30
+5. Docs stamp + notes
+<!-- SECTION:PLAN:END -->

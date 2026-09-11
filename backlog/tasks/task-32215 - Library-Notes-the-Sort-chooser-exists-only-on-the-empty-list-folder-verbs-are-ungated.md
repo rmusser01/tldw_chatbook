@@ -3,9 +3,10 @@ id: TASK-32215
 title: >-
   Library Notes: the Sort chooser exists only on the empty list; folder verbs
   are ungated
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-10 14:53'
+updated_date: '2026-09-11 01:30'
 labels:
   - library
   - notes
@@ -26,3 +27,12 @@ The empty Notes toolbar reads `New · Sort: Newest · ○ Select`; with seven no
 - [ ] #1 Sort is available on a populated Notes list in the same slot as its siblings
 - [ ] #2 Selection-scoped folder verbs appear only with a checked row or are gated with the inline-reason grammar
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Verify Sort presence on a populated list (PR #2558) -- do not write a second Sort control
+2. Verify whether the selection-scoped folder verbs are gated
+3. Pin + fix whatever half still stands
+4. Docs stamp + notes
+<!-- SECTION:PLAN:END -->
