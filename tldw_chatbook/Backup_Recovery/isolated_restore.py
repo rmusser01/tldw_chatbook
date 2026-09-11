@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess  # nosec B404
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 from threading import Event
 from typing import TYPE_CHECKING
@@ -38,12 +39,17 @@ def restore_isolated(
     """
     from . import archive_reader as reader
     from . import bootstrap
-    from .control_records import admission_authority, register_pending
+    from .control_records import (
+        UNBOUND_NAMESPACE,
+        admission_authority,
+        register_pending,
+    )
     from .journal import Journal, observe_artifact
     from .native_files import create_private_directory, pinned_directory
     from .restore_plan import RestorePlan, _ancestor, recheck_targets
     from .space import require_capacity
     from .staging import stage_restore
+    from .storage_admission import acquire_storage
 
     if (
         type(plan) is not RestorePlan
@@ -114,17 +120,33 @@ def restore_isolated(
             "plaintext_digest": proof.plaintext_digest,
             "manifest_digest": proof.manifest_digest,
         }
-    candidate = stage_restore(
-        archive,
-        plan,
-        work / "staging",
-        cancel,
-        journal=journal,
-        isolated_profiles=tuple(profiles),
-        retained_credentials=retained,
-    )
-    reader._check(cancel)
     authority = admission_authority(root)
+    with acquire_storage(None) as selected:
+        selection = selected.execution_context(None)
+        if selection[0] != root:
+            raise ValueError("isolated_stage_selection_changed")
+        # An ordinary live source keeps its existing shared staging path. A
+        # bound profile needs native authority only for the private copied bytes.
+        stage_scope = (
+            authority.maintenance((UNBOUND_NAMESPACE,), 30, cancel=cancel)
+            if selection[1] and UNBOUND_NAMESPACE not in selection[1]
+            else nullcontext()
+        )
+        with stage_scope as session:
+            candidate = stage_restore(
+                archive,
+                plan,
+                work / "staging",
+                cancel,
+                journal=journal,
+                isolated_profiles=tuple(profiles),
+                retained_credentials=retained,
+                session=session,
+            )
+            if selected.execution_context(None) != selection:
+                raise ValueError("isolated_stage_selection_changed")
+    # Retire the selected source lease before publication can drain that scope.
+    reader._check(cancel)
     names = ("isolated." + operation_id,)
     authority.register(names[0], tuple(ancestors))
     selectors = tuple(Path(row["config"]) for row in profiles)

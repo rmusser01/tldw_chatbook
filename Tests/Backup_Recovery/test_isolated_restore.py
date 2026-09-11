@@ -9,6 +9,67 @@ from tldw_chatbook.Backup_Recovery import archive_reader, crypto
 from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
 
 
+def test_actual_bound_profile_stages_new_isolated_config_without_source_changes(
+    tmp_path, monkeypatch, helper_resource_root
+):
+    from Tests.Backup_Recovery.test_current_generation_requirements import (
+        _healthy_replacement,
+    )
+    from Tests.Backup_Recovery.test_restore_plan import sealed
+    from tldw_chatbook.Backup_Recovery.control_records import UNBOUND_NAMESPACE
+    from tldw_chatbook.Backup_Recovery.isolated_restore import (
+        _launch_descriptor,
+        restore_isolated,
+    )
+    from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
+    from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
+    with _healthy_replacement(tmp_path, monkeypatch, helper_resource_root) as (
+        case,
+        _,
+        _,
+    ):
+        with acquire_storage(None) as selected:
+            _, names = selected.execution_context(None)
+            assert names and UNBOUND_NAMESPACE not in names
+        original = case[-1].read_bytes()
+        incoming = tmp_path / "isolated-input"
+        incoming.mkdir(mode=0o700)
+
+        def config_manifest(doc):
+            doc["owners"][0]["owner_id"] = "config"
+            doc["files"][0].update(
+                owner_id="config",
+                logical_id="profile:profile:config",
+                relative_path="config.toml",
+            )
+            doc["dependency_groups"][0]["members"] = ["profile:profile:config"]
+
+        archive = sealed(
+            incoming,
+            mutate=config_manifest,
+            data=b'[general]\nusers_name="new isolated"\n',
+        )
+        destination = tmp_path / "isolated-destination"
+        destination.mkdir(mode=0o700)
+        plan = plan_restore(
+            archive,
+            mode="isolated",
+            destinations={
+                "root": destination / "config",
+                "profile:profile:paths.data_dir": destination / "data",
+            },
+            target=None,
+            profile_names={"profile": "Recovered"},
+        )
+        control = tmp_path / "isolated-control"
+        profile = restore_isolated(archive, plan, control, Event())
+        assert _launch_descriptor(profile, control).config == str(
+            destination / "config" / "config.toml"
+        )
+        assert case[-1].read_bytes() == original
+
+
 def test_encrypted_acquisition_binds_retained_ciphertext(
     tmp_path, helper_resource_root, monkeypatch
 ):
