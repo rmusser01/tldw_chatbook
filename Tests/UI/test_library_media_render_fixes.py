@@ -1619,10 +1619,11 @@ def _plain_local_host() -> LibraryProductionCSSHarness:
     """Two local items with neither an author nor a URL.
 
     ``_two_media_items`` carries an author on both rows, so it can never
-    show the empty byline row task-31277 collapses. The type is ``pdf`` --
-    outside ``_MARKDOWN_MEDIA_TYPES`` -- so no Rendered|Raw strip can enter
-    the chrome count whatever the content sniffs as, and one deliberately
-    long line proves the reading measure.
+    show the empty byline row task-31277 collapses. The content is plain
+    prose with no Markdown marker, so no Rendered|Raw strip can enter the
+    chrome count (since task-32234 the content sniff decides that alone,
+    for every media type), and one deliberately long line proves the
+    reading measure.
     """
     app = _build_media_test_app()
     long_line = (
@@ -1634,8 +1635,8 @@ def _plain_local_host() -> LibraryProductionCSSHarness:
         {
             "id": f"media-{index}",
             "title": f"Roadmap Recording {index}",
-            # pdf is outside _MARKDOWN_MEDIA_TYPES, so no Rendered|Raw strip
-            # can appear and the chrome count is independent of the sniff.
+            # task-32234: the content above sniffs as plain prose, so no
+            # Rendered|Raw strip can appear whatever this type is.
             "type": "pdf",
             "last_modified": "2026-07-06T08:00:00Z",
             "keywords": ["roadmap"],

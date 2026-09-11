@@ -195,9 +195,11 @@ async def test_match_scroll_moves_the_visible_scroller_after_a_mode_round_trip()
             screen, service, 0,
             _markdown_wrapping_document(target_line, trailing_lines=200),
         )
-        # The fixture's media items are all video/audio/PDF, none of which
-        # `_is_markdown_media` ever considers -- force this one row's type
-        # into the allowlist so the content sniff above actually applies.
+        # task-32234 removed the media-type allowlist (the content sniff
+        # decides alone now), so this forcing is inert: nothing this test
+        # touches reads the type. The metadata lines it feeds are painted
+        # only by the Info tab, and this test never leaves Read. Kept purely
+        # so the fixture stays identical to the pre-32234 one.
         source = next(
             item for item in service.media_items if item["id"] == f"media-{backing_id}"
         )

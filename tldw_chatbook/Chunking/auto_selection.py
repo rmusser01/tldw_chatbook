@@ -141,7 +141,9 @@ MEDIA_TYPE_MAP: dict[str, str] = {
     # --- Notes-import family ---------------------------------------------------
     # DB/Client_Media_DB_v2.py save_obsidian_note() persists "obsidian_note"
     # through the same add_media_with_keywords seam; the Library viewer
-    # recognizes the type (_MARKDOWN_MEDIA_TYPES). No planner equivalent →
+    # recognizes markdown by a content sniff, not by type
+    # (library_media_viewer_state._is_markdown_media, task-32234).
+    # No planner equivalent →
     # identity (markdown-ish prose rides the generic sentence plan).
     "obsidian_note": "obsidian_note",
     # NOTE: Book_Ingestion_Lib._process_markup_or_plain_text's result dict
