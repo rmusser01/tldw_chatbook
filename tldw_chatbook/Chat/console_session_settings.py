@@ -894,6 +894,7 @@ def _provider_option_group_rank(
 
 def build_console_provider_options(
     providers_models: Mapping[str, Sequence[str]],
+    app_config: Mapping[str, object] | None = None,
 ) -> list[ConsoleSettingsOption]:
     """Return grouped, display-ordered Console provider options.
 
@@ -903,6 +904,12 @@ def build_console_provider_options(
     same visible order the Settings screen and First-Run Wizard teach, instead
     of an alphabetical-by-config-key order that shuffles the display labels.
     Option values stay raw provider config keys (task-191).
+
+    With ``app_config``, registry entries (ADR-146) follow the sorted
+    built-ins as a final run: value ``custom-ep:<slug>``, label
+    ``display_name``, ordered by creation (config file order) then display
+    name. ``app_config=None`` keeps the built-in-only result so existing
+    callers are unchanged.
     """
     supported_provider_keys = supported_console_provider_readiness_keys(
         CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
@@ -935,7 +942,7 @@ def build_console_provider_options(
         },
         key=_option_sort_key,
     )
-    return [
+    options = [
         ConsoleSettingsOption(
             label=provider_key
             if provider_key in supported_provider_keys
@@ -943,6 +950,42 @@ def build_console_provider_options(
             value=provider_key,
         )
         for provider_key in provider_keys
+    ]
+    options.extend(_custom_endpoint_provider_options(app_config))
+    return options
+
+
+def _custom_endpoint_provider_options(
+    app_config: Mapping[str, object] | None,
+) -> list[ConsoleSettingsOption]:
+    """Return registry entry options appended after the built-in providers.
+
+    ADR-146: each valid ``[custom_endpoints.<slug>]`` entry renders as a
+    first-class provider option -- value ``custom-ep:<slug>``, label
+    ``display_name`` -- after the built-in Custom & legacy group, ordered by
+    creation (config file order, which ``load_custom_endpoints`` preserves)
+    then display name. ``app_config=None`` yields no entries so callers that
+    predate the registry keep their built-in-only result.
+    """
+    if app_config is None:
+        return []
+    # Lazy import: custom_endpoint_registry imports this module for URL
+    # normalization, so a module-level import would cycle.
+    from tldw_chatbook.Chat.custom_endpoint_registry import (
+        CUSTOM_ENDPOINT_ID_PREFIX,
+        load_custom_endpoints,
+    )
+
+    indexed_entries = sorted(
+        enumerate(load_custom_endpoints(app_config).values()),
+        key=lambda indexed: (indexed[0], indexed[1].display_name.casefold()),
+    )
+    return [
+        ConsoleSettingsOption(
+            label=entry.display_name,
+            value=f"{CUSTOM_ENDPOINT_ID_PREFIX}{entry.slug}",
+        )
+        for _creation_index, entry in indexed_entries
     ]
 
 
@@ -1197,7 +1240,8 @@ def resolve_effective_chat_configuration(
         _mapping_value(app_config, "chat_defaults")
     )
     provider_id = _canonical_chat_provider_id(
-        _string_value(provider) or _string_setting(chat_defaults, "provider")
+        _string_value(provider) or _string_setting(chat_defaults, "provider"),
+        app_config,
     )
     provider_settings = _provider_settings(app_config, provider_id)
     candidates = (
@@ -1225,10 +1269,16 @@ def resolve_effective_chat_configuration(
 
 def build_canonical_chat_defaults_mutation(
     effective: EffectiveChatConfiguration,
+    app_config: Mapping[str, object] | None = None,
 ) -> dict[str, dict[str, str]]:
-    """Build the canonical provider/model fragment for an explicit save."""
+    """Build the canonical provider/model fragment for an explicit save.
+
+    ``app_config`` (when provided) keeps a resolvable custom-ep provider id
+    intact instead of collapsing it onto the generic ``custom`` slot, so a
+    saved default reboots onto the registry entry it selected.
+    """
     chat_defaults: dict[str, str] = {}
-    provider_id = _canonical_chat_provider_id(effective.provider)
+    provider_id = _canonical_chat_provider_id(effective.provider, app_config)
     model = _string_value(effective.model)
     if provider_id:
         chat_defaults["provider"] = provider_id
@@ -1864,7 +1914,24 @@ def _chat_defaults_with_streaming_compat(
     return compatible_defaults
 
 
-def _canonical_chat_provider_id(provider: str | None) -> str:
+def _canonical_chat_provider_id(
+    provider: str | None,
+    app_config: Mapping[str, object] | None = None,
+) -> str:
+    """Return the canonical provider id for a chat-defaults provider value.
+
+    A ``custom-ep:<slug>`` id whose registry entry resolves in ``app_config``
+    is returned unchanged (ADR-146: the entry -- not its family -- is the
+    persisted default, and the config-key normalization below would mangle
+    the prefix's hyphen into an underscore). Every other value keeps the
+    legacy-alias and readiness-key fallback chain.
+    """
+    # Lazy import: custom_endpoint_registry imports this module for URL
+    # normalization, so a module-level import would cycle.
+    from tldw_chatbook.Chat.custom_endpoint_registry import entry_for
+
+    if app_config is not None and entry_for(app_config, provider) is not None:
+        return str(provider)
     normalized = provider_config_key(provider)
     normalized = _LEGACY_CHAT_PROVIDER_ALIASES.get(normalized, normalized)
     return resolve_console_provider_identity(
@@ -2108,10 +2175,11 @@ def console_session_endpoint_survives_restart(
     """Return whether the session endpoint is backed for the next boot.
 
     ``True`` when the provider uses no endpoint, the session carries no
-    endpoint, or the session endpoint equals the restart fallback chain's
-    value (so re-deriving defaults next boot reproduces it). ``False`` means
-    the endpoint lives only in this session and is silently lost on restart
-    -- the task-16473 persistence trap.
+    endpoint, the session rides a resolvable registry entry (ADR-146: the
+    entry is the persisted endpoint carrier), or the session endpoint equals
+    the restart fallback chain's value (so re-deriving defaults next boot
+    reproduces it). ``False`` means the endpoint lives only in this session
+    and is silently lost on restart -- the task-16473 persistence trap.
 
     Args:
         settings: Console session settings carrying the endpoint to check.
@@ -2122,6 +2190,12 @@ def console_session_endpoint_survives_restart(
         Whether re-deriving defaults on the next boot would reproduce the
         session's endpoint.
     """
+    # Lazy import: custom_endpoint_registry imports this module for URL
+    # normalization, so a module-level import would cycle.
+    from tldw_chatbook.Chat.custom_endpoint_registry import entry_for
+
+    if entry_for(app_config, settings.provider) is not None:
+        return True
     provider_key = provider_config_key(settings.provider)
     provider_settings = _provider_settings(app_config, provider_key)
     base_url = _string_value(settings.base_url)

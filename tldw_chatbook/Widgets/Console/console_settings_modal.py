@@ -46,6 +46,9 @@ from tldw_chatbook.Chat.console_provider_support import (
     ConsoleGenerationControl,
     console_generation_control_support,
 )
+from tldw_chatbook.Chat.custom_endpoint_registry import (
+    CUSTOM_ENDPOINT_ID_PREFIX,
+)
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ChatDisplayNameError,
     normalize_chat_display_name,
@@ -6440,10 +6443,15 @@ class ConsoleSettingsModal(
 
         Option values stay raw provider config keys (task-191); only the
         rendered labels change, and the ``(WIP)`` marker from the underlying
-        option builder is preserved.
+        option builder is preserved. Registry entries (``custom-ep:<slug>``
+        values, ADR-146) already carry their ``display_name`` label from the
+        option builder, so they bypass the shared-catalog relabel unchanged.
         """
         options: list[tuple[str, str]] = []
         for option in self._provider_picker_options():
+            if option.value.startswith(CUSTOM_ENDPOINT_ID_PREFIX):
+                options.append((option.label, option.value))
+                continue
             label = provider_display_name(option.value)
             if option.label.endswith(" (WIP)"):
                 label = f"{label} (WIP)"
@@ -6452,7 +6460,11 @@ class ConsoleSettingsModal(
 
     def _provider_picker_options(self) -> list[ConsoleSettingsOption]:
         """Return known options while retaining an existing draft provider."""
-        options = list(build_console_provider_options(self._providers_models))
+        options = list(
+            build_console_provider_options(
+                self._providers_models, app_config=self._app_config
+            )
+        )
         current_provider = self._active_provider or self._settings.provider
         if current_provider and current_provider not in {
             option.value for option in options
