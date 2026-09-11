@@ -930,6 +930,26 @@ def _log_source_snapshot_failure(deadline_marker: str = "") -> None:
     )
 
 
+#: task-32246 AC#2: the Enter action of every control Tab can reach inside
+#: the open note editor, so the footer can name where focus is when the
+#: characters typed there would go nowhere. Read by
+#: ``LibraryScreen._library_focus_enter_label``.
+_LIBRARY_NOTE_EDITOR_ENTER_LABELS = {
+    "library-note-back": "back to list",
+    "library-note-context-back": "back to list",
+    "library-note-edit": "edit note",
+    "library-note-preview": "preview note",
+    "library-note-context": "show info",
+    "library-note-save": "save note",
+    "library-note-use-in-console": "use in Console",
+    "library-note-discard-new": "discard new note",
+    "library-note-context-copy": "copy note",
+    "library-note-context-export-md": "export Markdown",
+    "library-note-context-export-txt": "export text",
+    "library-note-context-delete": "delete note",
+}
+
+
 class LibraryScreen(BaseAppScreen):
     """Source material, imports/exports, conversations, and Search/RAG entry."""
 
@@ -4408,7 +4428,12 @@ class LibraryScreen(BaseAppScreen):
             return "cancel"
         if widget_id == "library-note-delete-confirm":
             return "delete"
-        return ""
+        # task-32246 AC#2: Tab out of the note body lands on the editor's
+        # first toolbar Button, which swallows whatever is typed next. The
+        # characters cannot land visibly there, so the footer names the
+        # control instead -- the AC's other branch, in the grammar the two
+        # surfaces above already use.
+        return _LIBRARY_NOTE_EDITOR_ENTER_LABELS.get(widget_id, "")
 
     @staticmethod
     def _review_footer_entries(
@@ -8023,10 +8048,18 @@ class LibraryScreen(BaseAppScreen):
                 self.LIBRARY_NOTES_CONTEXT_SHORTCUTS_COMPACT,
             )
         if region == "editor":
-            return self._notes_footer_tier(
+            tier = self._notes_footer_tier(
                 self.LIBRARY_NOTES_EDITOR_SHORTCUTS,
                 self.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT,
             )
+            # task-32246 AC#2: Tab out of the body lands on a toolbar Button,
+            # where typed characters go nowhere. Name it, so focus is never
+            # unaccounted for -- the honest-footer rule, applied to the
+            # editor the way the create canvas and delete prompt apply it.
+            enter_label = self._library_focus_enter_label()
+            if enter_label:
+                return ((("enter", enter_label)),) + tier
+            return tier
         if region == "create":
             if self._notes_state.create_running:
                 return ()
@@ -8555,6 +8588,31 @@ class LibraryScreen(BaseAppScreen):
         self._mark_library_notes_user_interaction()
         self._move_library_screen_focus(-1)
 
+    #: task-32246: the Tab region INSIDE an open note editor. The body is the
+    #: last focusable of ``#screen-content``, so one Tab out of it used to
+    #: wrap the whole cycle round to that region's first control --
+    #: ``#library-notes-source-database``, the browse chrome's source switch
+    #: above the editor. Live at dev 4a14b3f36f: the body lost its focus
+    #: border and "TAILEDIT" typed straight after vanished, because a Button
+    #: swallows printable keys; the switch's focus treatment is the same
+    #: background-and-bold it already wears for ``-selected``, which is why
+    #: the pane read as having nothing focused at all. Tab now closes inside
+    #: the editor the way it already closes inside the delete prompt
+    #: (``on_key``) and inside ``#screen-content`` (task-32052). F6 and
+    #: Escape remain the ways out, as the guide says.
+    _LIBRARY_NOTE_EDITOR_TAB_REGION = (
+        "#library-note-work-pane, #library-note-work-pane *"
+    )
+
+    def _library_note_editor_owns_tab(self, focused: Widget | None) -> bool:
+        """Whether Tab should cycle inside the open note editor."""
+        if focused is None or self._notes_state.view != "editor":
+            return False
+        return any(
+            node.id == "library-note-work-pane"
+            for node in focused.ancestors_with_self
+        )
+
     def _move_library_screen_focus(self, direction: int) -> Widget | None:
         """Cycle focus within the Library content, or app-wide from chrome.
 
@@ -8563,6 +8621,11 @@ class LibraryScreen(BaseAppScreen):
         ``_advance_library_ordinary_emergency_user_interaction``.
         """
         focused = self.focused
+        if self._library_note_editor_owns_tab(focused):
+            selector = self._LIBRARY_NOTE_EDITOR_TAB_REGION
+            if direction >= 0:
+                return self.focus_next(selector)
+            return self.focus_previous(selector)
         inside = focused is not None and any(
             node.id == "screen-content" for node in focused.ancestors
         )
