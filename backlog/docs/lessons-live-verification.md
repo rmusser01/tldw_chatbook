@@ -2561,8 +2561,20 @@ stderr and exit 1, no traceback, and it only misbehaved when PYTHONPATH
 pointed at my worktree, which sent me looking for a sitecustomize that did
 not exist.
 
+**The same hazard bit the test baseline, harder.** The wave also shared a
+detached `devbase` worktree at the merge-base, and a peer had left it DIRTY
+(a modified `test_library_notes_wave_list.py` plus an untracked new test
+file). My branch-vs-base FAILED-set diff for that one file was therefore
+comparing against a peer's edits, and it read as "base has a failure my
+branch does not" — i.e. as though my change had fixed something. It had
+not; the failing test only existed in the peer's copy. `git status` in the
+"base" worktree took two seconds and dissolved it.
+
 **What to do.** Run scratch scripts from a directory only you write to
-(`<scratch>/<group>-scripts/`), never from the shared wave root. When a
-Python process dies with output that belongs to no code you can find, list
-`*.py` in the cwd before anything else: `sys.path[0]` is the cwd, and a
-one-word filename there outranks site-packages.
+(`<scratch>/<group>-scripts/`), never from the shared wave root. Create
+your OWN detached base worktree for test comparisons and remove it when
+done — never reuse a shared one, and `git status` it before trusting a
+single number out of it. When a Python process dies with output that
+belongs to no code you can find, list `*.py` in the cwd before anything
+else: `sys.path[0]` is the cwd, and a one-word filename there outranks
+site-packages.
