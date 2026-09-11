@@ -28,6 +28,7 @@ from tldw_chatbook.Widgets.Library.library_media_content import (
 )
 from tldw_chatbook.Widgets.Library.library_media_viewer import (
     ANALYSIS_RENDERED_BLOCKED_BY_SEARCH,
+    LibraryMediaViewer,
 )
 from Tests.UI.test_library_shell import (
     LibraryProductionCSSHarness,
@@ -348,3 +349,103 @@ async def test_below_64_columns_the_viewer_names_escape_not_a_bare_status_word()
         chips = screen._library_footer_shortcuts_for_current_state()
         assert chips[0][0] == "esc", chips
         assert chips[1] == ("", "typing in field"), chips
+
+
+# --------------------------------------------------------------------------
+# Qodo review round
+# --------------------------------------------------------------------------
+
+
+def test_find_follows_the_analysis_the_reader_actually_shows():
+    """Qodo 1: ``detail_analysis_text`` read only the newest version, while
+    ``build_library_media_viewer_state`` prefers a top-level
+    ``analysis_content`` -- so on a detail carrying one with no versions the
+    Analysis tab displayed text while the Find gate reported none. Both
+    callers want "the analysis the Reader shows", and one of them says so in
+    its own docstring, so the precedence is fixed at the shared seam."""
+    from tldw_chatbook.Library.library_media_viewer_state import (
+        build_library_media_viewer_state,
+        detail_analysis_text,
+    )
+
+    top_level_only = {
+        "media_id": "1",
+        "title": "T",
+        "type": "article",
+        "analysis_content": "Top-level analysis",
+    }
+    assert detail_analysis_text(top_level_only) == "Top-level analysis"
+    assert (
+        build_library_media_viewer_state(top_level_only).analysis
+        == detail_analysis_text(top_level_only)
+    )
+
+    # Top level still wins over versions, and versions still answer alone.
+    both = dict(top_level_only, versions=[{"version_number": 1, "analysis_content": "V"}])
+    assert detail_analysis_text(both) == "Top-level analysis"
+    versions_only = {
+        "media_id": "1",
+        "title": "T",
+        "type": "article",
+        "versions": [{"version_number": 1, "analysis_content": "V"}],
+    }
+    assert detail_analysis_text(versions_only) == "V"
+
+
+def test_an_external_detail_is_searchable_whatever_mode_it_inherited():
+    """Qodo 4: ``_compose_active_body`` composes the Read body for EVERY
+    external detail (``external_detail or reader_mode == "read"``), so it
+    always has a bar to mount. The mode-only refusal treated one opened
+    after Info/Highlights as unsearchable -- a regression this round
+    introduced, since the gate used to return "" for every non-analysis
+    mode."""
+    from tldw_chatbook.Library.library_media_viewer_state import (
+        analysis_find_unavailable_reason,
+    )
+
+    for mode in ("info", "highlights", "read", "analysis"):
+        assert analysis_find_unavailable_reason(
+            mode=mode,
+            analysis="",
+            generating=False,
+            editing=False,
+            external=True,
+        ) == "", mode
+    # Local details keep the refusal.
+    assert analysis_find_unavailable_reason(
+        mode="info", analysis="x", generating=False, editing=False
+    ) == "This tab has no text to search · switch to Read or Analysis."
+
+
+@pytest.mark.asyncio
+async def test_pressing_raw_during_a_search_does_not_outlive_the_search():
+    """Qodo 3: the toggle strip's press handler wrote analysis_content_mode
+    unconditionally, so pressing the already-selected Raw during a search
+    made the mode stick and the inline promise ("clear the search to read it
+    rendered") false. Both controls are inert while the query forces Raw."""
+    host = _analysis_host(_MARKDOWN_ANALYSIS)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_first_media_reader(host, pilot)
+        await _switch_to_analysis(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
+        await _submit_content_search_query(screen, pilot, "point")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one(
+                "#library-media-viewer-content", LibraryMediaContentBody
+            ).active_mode == "raw",
+            message="The query never forced the Raw view.",
+        )
+        raw = screen.query_one("#library-media-analysis-content-mode-raw", Button)
+        assert raw.disabled is True, "Raw must not be pressable while it is forced"
+        viewer = screen.query_one(LibraryMediaViewer)
+        assert viewer.analysis_content_mode == "rendered"
+
+        await _submit_content_search_query(screen, pilot, "")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one(
+                "#library-media-viewer-content", LibraryMediaContentBody
+            ).active_mode == "rendered",
+            message="Clearing the query never restored the Rendered view.",
+        )

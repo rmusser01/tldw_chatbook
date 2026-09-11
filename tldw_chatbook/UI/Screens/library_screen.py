@@ -31693,6 +31693,7 @@ class LibraryScreen(BaseAppScreen):
             analysis=analysis,
             generating=self._media_state.generating_analysis,
             editing=self._media_state.editing_analysis,
+            external=self._media_state.reader_session.external_detail,
         )
 
     def _library_media_analysis_provider_reason(self) -> str:

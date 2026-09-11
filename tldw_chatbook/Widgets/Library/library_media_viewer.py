@@ -600,7 +600,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         is_markdown: bool | None = None,
         mode: str | None = None,
         prefix: str = "library-media",
-        rendered_blocked_reason: str = "",
+        blocked_reason: str = "",
     ) -> ComposeResult:
         """Render the Rendered|Raw toggle, for an item that can render.
 
@@ -654,19 +654,22 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             rendered_button = Button(
                 library_disabled_action_label(
                     "Rendered (selected)" if rendered_selected else "Rendered",
-                    bool(rendered_blocked_reason),
+                    bool(blocked_reason),
                 ),
                 id=f"{prefix}-content-mode-rendered",
                 compact=True,
             )
             rendered_button.set_class(rendered_selected, "-selected")
-            if rendered_blocked_reason:
+            if blocked_reason:
                 # Never a pressable control that changes nothing: while a
-                # query forces the Raw view (see ``_compose_analysis``),
-                # Rendered is refused with its reason rather than accepting
-                # the press and repainting the same body.
+                # query forces the Raw view (see ``_compose_analysis``) the
+                # strip reports the state and says why, and NEITHER half
+                # accepts a press -- Qodo on #2602 found that pressing the
+                # already-selected Raw wrote the stored preference, so
+                # clearing the query no longer restored Rendered and the
+                # line beneath became a false promise.
                 rendered_button.disabled = True
-                rendered_button.tooltip = rendered_blocked_reason
+                rendered_button.tooltip = blocked_reason
             yield rendered_button
             yield Static("|", id="library-media-content-mode-separator", markup=False)
             raw_selected = not rendered_selected
@@ -676,6 +679,9 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 compact=True,
             )
             raw_button.set_class(raw_selected, "-selected")
+            if blocked_reason:
+                raw_button.disabled = True
+                raw_button.tooltip = blocked_reason
             yield raw_button
 
     @on(Button.Pressed, "#library-media-analysis-content-mode-rendered")
@@ -1117,21 +1123,21 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             # task-31269: like Read, the bar is collapsed until Find opens
             # it -- an always-mounted bar stole focus on every item load and
             # swallowed the walk keys (critique #4 P0).
-            rendered_blocked = (
+            blocked = (
                 ANALYSIS_RENDERED_BLOCKED_BY_SEARCH if self.content_query else ""
             )
             yield from self._compose_content_mode_toggle(
                 is_markdown=analysis_is_markdown,
                 mode=analysis_mode,
                 prefix="library-media-analysis",
-                rendered_blocked_reason=rendered_blocked,
+                blocked_reason=blocked,
             )
-            if rendered_blocked and analysis_is_markdown:
+            if blocked and analysis_is_markdown:
                 # The reason reaches a keyboard-first reader, not only a
                 # mouse tooltip -- the same inline-reason grammar the
                 # Generate gate below uses (task-31981).
                 yield Static(
-                    rendered_blocked,
+                    blocked,
                     id="library-media-analysis-content-mode-reason",
                     classes="library-media-action-reason",
                     markup=False,
