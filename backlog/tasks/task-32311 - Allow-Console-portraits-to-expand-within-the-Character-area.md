@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-11 02:15'
-updated_date: '2026-09-11 03:21'
+updated_date: '2026-09-11 03:36'
 labels: []
 dependencies: []
 ---
@@ -24,6 +24,7 @@ Selected character portraits stop growing before filling the available image are
 - [x] #4 Character body grows with a taller terminal and shrinks back on resize, reserving measured control rows
 - [x] #5 After portrait and control updates settle, the left rail remains stationary without repeated fitting or scrolling
 - [x] #6 Saved-conversation background refresh uses a 10-second cache interval while explicit invalidation remains immediate
+- [x] #7 Mounted cache-refresh coverage proves stable rows through worker completion and rail reconciliation recovers from a missing Character header
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -39,6 +40,7 @@ Reason: user requested viewport-responsive Character section sizing, replacing i
 4. Add grow/shrink mounted regression and update fixed-ceiling assertions. Run targeted avatar and rail tests and static checks; document behavior.
 5. Investigate live rail motion. Keep the last matching persisted conversation rows visible during TTL refresh, verify query/invalidation boundaries, and confirm stability in the actual textual-serve app. Routine cache-display fix: no additional ADR required.
 6. Raise the saved-conversation cache TTL to 10 seconds as requested; retain explicit invalidation and verify existing cache-expiry tests. No additional ADR required for this polling-interval adjustment.
+7. Address Qodo review: add a mounted cache-expiry/worker-completion regression, guard Character header lookup during partial recomposition with a recovery test, and correct stale interval documentation. Routine fixes within ADR-083; no new ADR.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -59,6 +61,8 @@ Live verification follow-up: ran the actual application through its built-in tex
 Added three cache-expiry/query/selection regressions. Red: same-key expiry returned an empty list. Green: 131 targeted controller, tray guard, and tick tests passed; five unrelated failures reproduced on untouched dev ed6fd5db0a (constructor dependency documentation and four saved-chat opener cases). Changed-line Ruff formatting, Ruff lint, and diff checks pass. Two actual served browser captures 22.9 seconds apart have identical pixels across the full left rail, with Samira's portrait visible. Evidence: /private/tmp/rail-stable-first.png and /private/tmp/rail-stable-second.png. Removed temporary diagnostics. Added the populated-profile/cache-expiry verification lesson.
 
 Requested refresh-rate follow-up: raised the persisted conversation cache TTL from 2 to 10 seconds. The screen now re-exports the controller constant instead of retaining a duplicate 2-second value. Explicit invalidation, streaming, portrait geometry, and the separate appearance cache retain their behavior. Seven targeted cache/expiry/invalidation tests pass; Ruff lint, changed-line formatting, and diff checks pass. The running browser session will use the new interval after its next app restart.
+
+Qodo review follow-up: added a mounted ready-Console integration regression covering cache expiry, stable row identity/visible bounds/rail geometry while a real refresh worker is blocked, and publication of changed data after completion. Removing the stale-row fallback reproduced disappearing rows. Guarded the Character header lookup during prepare alongside the bounded-section lookup; the new partial-recomposition regression reproduced NoMatches before the fix and verifies flag recovery plus subsequent resizing. Removed the stale numeric TTL claim from transcript-timer documentation. Twelve targeted tick, recompose, and portrait tests pass; Ruff lint/format and diff checks pass.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

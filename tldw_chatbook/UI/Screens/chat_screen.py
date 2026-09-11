@@ -17982,9 +17982,9 @@ class ChatScreen(BaseAppScreen):
             # stays coupled to the SAME combined condition as the stop
             # (not a bare "viewed session idle") so a long-running
             # background session cannot reintroduce the per-tick DB query
-            # TASK-251's TTL cache exists to prevent; the resulting bound
-            # on staleness is `CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS`
-            # (2s), the documented backstop for exactly this gap.
+            # TASK-251's TTL cache exists to prevent. The refresh interval
+            # is `CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS`; matching rows
+            # stay visible until the background refresh publishes its result.
             # task-15862: a wake delivery scheduled but not yet busy (the
             # coordinator's `_delivering` is set synchronously BEFORE its
             # asyncio task first runs) must not let a poll beat in that gap

@@ -1240,6 +1240,12 @@ class ConsoleLeftRail(Vertical):
                     f"#console-bounded-section-{descriptor.section_id}",
                     ConsoleBoundedSection,
                 )
+                if descriptor.section_id == "character" and viewport_height > 0:
+                    header = self.query_one("#console-rail-section-header-character")
+                    section.max_content_lines = max(
+                        descriptor.max_content_lines,
+                        viewport_height - header.outer_size.height,
+                    )
             except (NoMatches, QueryError):
                 continue
             if (
@@ -1248,12 +1254,6 @@ class ConsoleLeftRail(Vertical):
                 and section.max_content_lines != adaptive_budget
             ):
                 section.max_content_lines = adaptive_budget
-            if descriptor.section_id == "character" and viewport_height > 0:
-                header = self.query_one("#console-rail-section-header-character")
-                section.max_content_lines = max(
-                    descriptor.max_content_lines,
-                    viewport_height - header.outer_size.height,
-                )
             section.set_allocation(None)
             if section.native_scroll_owner is None:
                 section.styles.height = "auto"

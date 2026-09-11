@@ -3151,3 +3151,31 @@ async def test_scroll_cost_probe_still_detects_pre_split_routing(
         assert burst > 0, (
             "the probe no longer observes the pre-split coalesced layout cost"
         )
+
+
+@pytest.mark.asyncio
+async def test_character_header_missing_during_prepare_does_not_latch_reconciliation():
+    host = ConsoleHarness(_build_test_app())
+    async with host.run_test(size=(180, 72)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-left-rail")
+        rail = console.query_one(ConsoleLeftRail)
+        await pilot.pause()
+        header = rail.query_one("#console-rail-section-header-character")
+        parent = header.parent
+        bounded = rail.query_one("#console-bounded-section-character")
+        await header.remove()
+        # The body remains while its header is temporarily absent.
+        rail._allocation_reconcile_scheduled = True
+        rail._prepare_allocation_reconcile()
+        for _ in range(3):
+            await pilot.pause()
+        assert not rail._allocation_reconcile_scheduled
+        await parent.mount(header, before=bounded)
+        await pilot.resize_terminal(180, 100)
+        for _ in range(4):
+            await pilot.pause()
+        assert bounded.max_content_lines == max(
+            35, rail._snapshot_outer_viewport_height() - header.outer_size.height
+        )
+        assert not rail._allocation_reconcile_scheduled
