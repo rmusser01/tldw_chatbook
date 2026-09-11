@@ -123,13 +123,49 @@ async def main():
   templates.save_template(template)
   durable_api=dict(persona=persona['id'],dictionary=dictionary['id'],dictionary_revision=dictionary_version['revision'],grammar=grammar['id'],feedback=feedback['feedback_id'],audio=audio['history_id'],template=template.name)
   durable_files={owner:dict(path=str(path),hex=path.read_bytes().hex()) for owner,path in (('chat.prompt_history',history.path),('ui.emoji_recents',selector.parent/'recent_emojis.json'),('ui.state',state),('ui.themes',theme),('personas',persona_service.persona_store_path),('chat.dictionary_history',dictionary_service.history_store_path),('chat.grammars',app.local_chat_grammars_service.store_path),('feedback',app.local_feedback_service.store_path),('audio.history',audio_service.history_store_path),('chunking.templates',templates.user_templates_dir/(template.name+'.json')))}
+  collections=app.local_library_collections_service
+  collection=collections.create_collection(name+' collection',description=name+' retained collection')
+  collection_member=collections.add_item_to_collection(collection.collection_id,source_type='note',source_id=str(note),title=name+' linked note')
+  workspaces=app.workspace_registry_service
+  workspace=workspaces.create_workspace(workspace_id=name+'-retained-workspace',name=name+' workspace',description=name+' retained workspace')
+  workspace_member=workspaces.link_membership(workspace.workspace_id,item_type='note',item_id=str(note),title=name+' linked note')
+  subscription=app.subscriptions_db.add_subscription(name=name+' dormant feed',type='rss',source='https://example.invalid/'+name+'.xml',description=name+' retained source',is_active=False,auto_ingest=False,auto_pause_threshold=3)
+  schedules=app.scheduling_service
+  assert schedules.owner_id=='local'
+  reminder=await schedules.create_reminder({'title':name+' disabled reminder','body':name+' retained body','schedule_kind':'one_time','run_at':'2099-01-01T00:00:00+00:00','enabled':False})
+  evaluations=app.local_evaluation_service
+  evaluation=evaluations.create_evaluation(name=name+' retained evaluation',eval_type='question_answer',eval_spec={'metrics':['accuracy']},description=name+' saved definition',metadata={'fixture':name})
+  kanban=app.local_kanban_service
+  board=await kanban.create_board({'name':name+' board','client_id':'roundtrip','description':name+' retained board'})
+  column=await kanban.create_list(board['id'],{'name':'Backlog','client_id':'roundtrip'})
+  card=await kanban.create_card(column['id'],{'title':name+' retained card','description':name+' card bytes','client_id':'roundtrip'})
+  import hashlib
+  from tldw_chatbook.runtime_policy.server_parity_models import NormalizedEventRecord
+  event_payload={'title':name+' retained event'}
+  event_hash=hashlib.sha256(json.dumps(event_payload,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+  event=NormalizedEventRecord(source_authority='local',server_profile_id=None,stream_name='local_notifications',stream_instance_id='local',event_kind='notification.created',entity_ref={'type':'notification','id':notification['id']},payload_hash=event_hash,event_id=name+'-retained-event',transport_type='local_producer',payload_kind='notification',payload=event_payload)
+  recorded_event=app.event_state_repository.record_event_and_advance_processed_cursor(event)
+  sync_key=dict(source_authority='local',server_profile_id=None,authenticated_principal_id=None,workspace_scope=workspace.workspace_id)
+  sync=app.sync_state_repository.set_sync_profile_state(**sync_key,last_error=name+' retained offline status')
+  registries={
+   'db.library_collections':dict(path=str(collections.db.db_path),id=collection.collection_id,member=collection_member),
+   'db.workspaces':dict(path=str(workspaces.db.db_path),id=workspace.workspace_id,member=workspace_member.membership_id),
+   'db.subscriptions':dict(path=str(app.subscriptions_db.db_path),id=subscription),
+   'db.scheduled_tasks':dict(path=str(schedules.db.db_path),id=reminder.id,run_at=reminder.run_at.isoformat()),
+   'db.evals':dict(path=str(evaluations.db.db_path),id=evaluation),
+   'kanban.local':dict(path=str(kanban.db_path),board=board['id'],column=column['id'],card=card['id']),
+   'runtime.event_state':dict(path=str(app.event_state_repository.db_path),key=recorded_event.event_key,event_id=event.event_id,hash=event_hash),
+   'runtime.sync_state':dict(path=str(app.sync_state_repository.db_path),key=sync_key,updated_at=sync['updated_at']),
+  }
+  from tldw_chatbook.config import get_user_data_dir
+  assert all(Path(value['path']).is_absolute() and Path(value['path']).is_relative_to(get_user_data_dir()) for value in registries.values())
   empty=get_private_chatbooks_dir()
   assert not list(empty.iterdir())
   jobs=LibraryIngestJobsDB(get_library_ingest_jobs_db_path(),'fixture')
   try:
    jobs.upsert_job(LibraryIngestJob('ingest-job-1',str(fixture/(name+'-input.txt')),state=IngestJobState.QUEUED))
   finally:jobs.close()
-  (fixture/(name+'-seed.json')).write_text(json.dumps(dict(note=note,deleted=deleted,conversation=conversation,message=message,media=media,prompt=prompt,research=session['id'],deleted_research=deleted_session['id'],empty=str(empty),domains=domains,durable_files=durable_files,durable_api=durable_api)))
+  (fixture/(name+'-seed.json')).write_text(json.dumps(dict(note=note,deleted=deleted,conversation=conversation,message=message,media=media,prompt=prompt,research=session['id'],deleted_research=deleted_session['id'],empty=str(empty),domains=domains,durable_files=durable_files,durable_api=durable_api,registries=registries)))
   assert not blocked_attempts(),blocked_attempts()
   print('SEEDED',name,flush=True)
  finally:
@@ -253,6 +289,39 @@ async def main():
     row=next(row for row in manifest['files'] if row['owner_id']==owner and source[row['logical_id']].path==Path(expected['path']))
     assert source[row['logical_id']].status=='included'
     assert (result.root/row['payload']).read_bytes()==bytes.fromhex(expected['hex'])
+   collections=next(row for row in manifest['files'] if row['owner_id']=='db.library_collections' and source[row['logical_id']].path.is_relative_to(fixture/label))
+   with closing(sqlite3.connect((result.root/collections['payload']).as_uri()+'?mode=ro',uri=True)) as db:
+    assert db.execute('SELECT name FROM library_collections WHERE name=?',(label+' collection',)).fetchall()==[(label+' collection',)]
+   for owner,expected in seed['registries'].items():
+    row=next(row for row in manifest['files'] if row['owner_id']==owner and source[row['logical_id']].path==Path(expected['path']))
+    assert source[row['logical_id']].status=='included'
+    with closing(sqlite3.connect((result.root/row['payload']).as_uri()+'?mode=ro',uri=True)) as db:
+     if owner=='db.library_collections':
+      assert db.execute('SELECT name,description FROM library_collections WHERE collection_id=?',(expected['id'],)).fetchone()==(label+' collection',label+' retained collection')
+      assert db.execute('SELECT collection_id,source_type,source_id,title FROM library_collection_items WHERE membership_id=?',(expected['member'],)).fetchone()==(expected['id'],'note',seed['note'],label+' linked note')
+     elif owner=='db.workspaces':
+      assert db.execute('SELECT name,description,authority,sync_status,active FROM workspace_records WHERE workspace_id=?',(expected['id'],)).fetchone()==(label+' workspace',label+' retained workspace','local-only','not-configured',0)
+      assert db.execute('SELECT workspace_id,item_type,item_id,title FROM workspace_memberships WHERE membership_id=?',(expected['member'],)).fetchone()==(expected['id'],'note',seed['note'],label+' linked note')
+     elif owner=='db.subscriptions':
+      assert db.execute('SELECT name,source,description,is_active,auto_ingest FROM subscriptions WHERE id=?',(expected['id'],)).fetchone()==(label+' dormant feed','https://example.invalid/'+label+'.xml',label+' retained source',0,0)
+     elif owner=='db.scheduled_tasks':
+      assert db.execute('SELECT owner_id,title,body,schedule_kind,run_at,enabled FROM reminder_tasks WHERE id=?',(expected['id'],)).fetchone()==('local',label+' disabled reminder',label+' retained body','one_time',expected['run_at'],0)
+     elif owner=='db.evals':
+      evaluation=db.execute('SELECT name,task_type,description,config_data,dataset_id FROM eval_tasks WHERE id=?',(expected['id'],)).fetchone()
+      assert evaluation[:3]==(label+' retained evaluation','question_answer',label+' saved definition') and evaluation[4] is None
+      assert json.loads(evaluation[3])=={'metrics':['accuracy'],'__tldw_eval_metadata__':{'fixture':label}}
+     elif owner=='kanban.local':
+      assert db.execute('SELECT name,description FROM kanban_boards WHERE id=?',(expected['board'],)).fetchone()==(label+' board',label+' retained board')
+      assert db.execute('SELECT board_id,name FROM kanban_lists WHERE id=?',(expected['column'],)).fetchone()==(expected['board'],'Backlog')
+      assert db.execute('SELECT board_id,list_id,title,description,due_date FROM kanban_cards WHERE id=?',(expected['card'],)).fetchone()==(expected['board'],expected['column'],label+' retained card',label+' card bytes',None)
+     elif owner=='runtime.event_state':
+      event=db.execute('SELECT event_id,source_authority,entity_ref,payload_hash,payload,transport_type FROM event_records WHERE event_key=?',(expected['key'],)).fetchone()
+      assert event[:2]==(expected['event_id'],'local') and event[3]==expected['hash'] and event[5]=='local_producer'
+      assert json.loads(event[2])=={'type':'notification','id':seed['domains']['notification']['id']}
+      assert json.loads(event[4])=={'title':label+' retained event'}
+     elif owner=='runtime.sync_state':
+      assert db.execute('SELECT source_authority,profile_mode,last_error,last_mirror_report_id,updated_at FROM sync_profile_state WHERE workspace_scope=?',(expected['key']['workspace_scope'],)).fetchone()==('local','local_only',label+' retained offline status',None,expected['updated_at'])
+     else:raise AssertionError(owner)
    for owner,leaf in (('db.chachanotes.primary','notes.db'),('db.media.primary','media.db'),('research.local','research.db')):
     row=next(row for row in manifest['files'] if row['owner_id']==owner and source[row['logical_id']].path==fixture/label/'custom'/leaf)
     with closing(sqlite3.connect(result.root/row['payload'])) as db:
@@ -582,6 +651,48 @@ async def main():
   from tldw_chatbook.Chunking.chunking_templates import ChunkingTemplateManager
   template=ChunkingTemplateManager().load_template(durable['template'])
   assert template is not None and template.description==label+' chunking template' and template.pipeline==[]
+  registries=seed['registries']
+  from tldw_chatbook.Library.library_tool_contract import make_public_id
+  collections=app.local_library_collections_service
+  retained=registries['db.library_collections'];collection=collections.get_collection(retained['id'])
+  assert collection.name==label+' collection' and collection.description==label+' retained collection' and collection.item_count==1
+  members=collections.get_library_collection(retained['id'])['members']
+  assert len(members)==1 and members[0]['membership_id']==retained['member']
+  assert members[0]['item_id']==make_public_id('note',str(seed['note'])) and members[0]['title']==label+' linked note'
+  workspaces=app.workspace_registry_service
+  retained=registries['db.workspaces'];workspace=workspaces.get_workspace(retained['id'])
+  assert workspace.name==label+' workspace' and workspace.description==label+' retained workspace'
+  assert workspace.authority=='local-only' and workspace.sync_status=='not-configured' and not workspace.active
+  members=workspaces.list_workspace_memberships(retained['id'])
+  assert len(members)==1 and members[0].membership_id==retained['member']
+  assert members[0].item_type=='note' and members[0].item_id==seed['note'] and members[0].title==label+' linked note'
+  subscription=app.subscriptions_db.get_subscription(registries['db.subscriptions']['id'])
+  assert subscription['name']==label+' dormant feed' and subscription['source']=='https://example.invalid/'+label+'.xml'
+  assert subscription['description']==label+' retained source' and not subscription['is_active'] and not subscription['auto_ingest']
+  retained=registries['db.scheduled_tasks'];reminder=await app.scheduling_service.get_reminder(retained['id'])
+  assert reminder.owner_id=='local' and not reminder.enabled and reminder.title==label+' disabled reminder'
+  assert reminder.body==label+' retained body' and reminder.run_at==datetime.fromisoformat(retained['run_at'])
+  evaluation=app.local_evaluation_service.get_evaluation(registries['db.evals']['id'])
+  assert evaluation['name']==label+' retained evaluation' and evaluation['description']==label+' saved definition'
+  assert evaluation['task_type']=='question_answer' and evaluation['dataset_id'] is None
+  assert evaluation['config_data']=={'metrics':['accuracy'],'__tldw_eval_metadata__':{'fixture':label}}
+  retained=registries['kanban.local'];kanban=app.local_kanban_service
+  board=await kanban.get_board(retained['board']);column=await kanban.get_list(retained['column']);card=await kanban.get_card(retained['card'])
+  assert board['name']==label+' board' and board['description']==label+' retained board'
+  assert column['board_id']==board['id'] and column['name']=='Backlog'
+  assert card['board_id']==board['id'] and card['list_id']==column['id'] and card['title']==label+' retained card'
+  assert card['description']==label+' card bytes' and card['due_date'] is None
+  retained=registries['runtime.event_state']
+  events=app.event_state_repository.list_events(source_authority='local',stream_name='local_notifications')
+  event=next(row for row in events if row['event_key']==retained['key'])
+  assert event['event_id']==retained['event_id'] and event['payload_hash']==retained['hash'] and event['transport_type']=='local_producer'
+  assert event['entity_ref']=={'type':'notification','id':seed['domains']['notification']['id']} and event['payload']=={'title':label+' retained event'}
+  retained=registries['runtime.sync_state'];sync=app.sync_state_repository.get_sync_profile_state(**retained['key'])
+  assert sync['last_error']==label+' retained offline status' and sync['updated_at']==retained['updated_at']
+  assert sync['source_authority']=='local' and sync['server_profile_id'] is None and sync['authenticated_principal_id'] is None
+  from tldw_chatbook.config import get_user_data_dir
+  current_paths={'db.library_collections':collections.db.db_path,'db.workspaces':workspaces.db.db_path,'db.subscriptions':app.subscriptions_db.db_path,'db.scheduled_tasks':app.scheduling_service.db.db_path,'db.evals':app.local_evaluation_service.db.db_path,'kanban.local':kanban.db_path,'runtime.event_state':app.event_state_repository.db_path,'runtime.sync_state':app.sync_state_repository.db_path}
+  assert all(Path(path).is_absolute() and Path(path).is_relative_to(get_user_data_dir()) and Path(path)!=Path(registries[owner]['path']) for owner,path in current_paths.items())
   assert core.get_note_by_id(seed['note'])['content']==label+' native note bytes'
   assert core.get_note_by_id(seed['deleted']) is None
   assert core.get_message_by_id(seed['message'])['content']==label+' message bytes'
