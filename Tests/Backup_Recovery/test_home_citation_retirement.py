@@ -257,7 +257,7 @@ def test_home_worker_retirement(tmp_path, route, outcome):
     _run(tmp_path, route, outcome)
 
 
-def _run(tmp_path, route, outcome, *, script=_SCRIPT):
+def _run(tmp_path, route, outcome, *, script=_SCRIPT, timeout=45):
     root = tmp_path.resolve()
     for name in ("home", "config", "data"):
         (root / name).mkdir(mode=0o700)
@@ -276,7 +276,7 @@ def _run(tmp_path, route, outcome, *, script=_SCRIPT):
         env=environment,
         capture_output=True,
         text=True,
-        timeout=45,
+        timeout=timeout,
     )
     assert result.returncode == 0, result.stderr[-6000:] + result.stdout[-1000:]
     assert "retired and reopened" in result.stdout

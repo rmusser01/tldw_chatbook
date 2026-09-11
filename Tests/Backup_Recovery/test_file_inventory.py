@@ -510,7 +510,7 @@ def test_installed_model_selection_includes_exact_dependency_closure(tmp_path):
         store.artifact_path(parent) / "model.onnx",
         store.artifact_path(dep) / "model.onnx",
     } <= included
-    assert any(item.logical_id.endswith(":participant_pending") for item in selected)
+    assert not any(item.logical_id.endswith(":participant_pending") for item in selected)
     assert not [
         item
         for item in selected

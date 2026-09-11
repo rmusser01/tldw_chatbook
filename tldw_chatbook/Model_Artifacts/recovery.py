@@ -369,16 +369,6 @@ class _Artifacts(_RawDeclaration):
                     ),
                 )
             )
-        if any(item.status in {"included", "included_directory"} for item in result):
-            result.append(
-                StorageItem(
-                    self.owner_id,
-                    storage_logical_id(context, self.owner_id, "participant_pending"),
-                    None,
-                    "unsupported",
-                    (),
-                )
-            )
         return tuple(result + missing)
 
 

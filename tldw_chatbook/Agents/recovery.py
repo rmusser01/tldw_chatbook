@@ -3,6 +3,7 @@
 import os
 import sqlite3
 from contextlib import closing
+from dataclasses import replace
 from pathlib import Path
 
 from tldw_chatbook.Backup_Recovery.models import (
@@ -111,12 +112,43 @@ class _RunLogs(_RawDeclaration):
             from tldw_chatbook.Backup_Recovery.file_inventory import _inventory_root
             from tldw_chatbook.Backup_Recovery.recovery_files import _tree_member_id
 
-            absent_default = (
-                not configured
-                and root == default_root
-                and _inventory_root(root, owner=self.owner_id, external=False).status
-                == "unused"
+            container = None
+            default_item = (
+                _inventory_root(root, owner=self.owner_id, external=False)
+                if not configured and root == default_root
+                else None
             )
+            absent_default = (
+                default_item is not None and default_item.status == "unused"
+            )
+            if default_item is not None and not absent_default:
+                key = _tree_member_id(context, self.owner_id, root, root)
+                container = replace(
+                    default_item,
+                    logical_id=key,
+                    dependencies=(storage_logical_id(context, "config"),),
+                    metadata=replace(default_item.metadata, root_id=key, parent_id=None)
+                    if default_item.metadata
+                    else None,
+                )
+                if container.status == "included":
+                    container = replace(container, status="unsupported")
+                # Own only the installed log container, never arbitrary sandbox
+                # content. Each permitted child is inspected by its log owner.
+                if container.status == "included_directory":
+                    try:
+                        from tldw_chatbook.Backup_Recovery.native_files import (
+                            pinned_directory,
+                        )
+
+                        with pinned_directory(root) as parent:
+                            if set(os.listdir(parent)) - names:
+                                container = replace(container, status="unsupported")
+                    except (OSError, ValueError, RuntimeError):
+                        container = replace(container, status="unavailable")
+                result.append(container)
+                if container.status != "included_directory":
+                    continue
             for leaf in sorted(names):
                 path = root / leaf
                 if absent_default:
@@ -130,7 +162,28 @@ class _RunLogs(_RawDeclaration):
                         )
                     )
                 else:
-                    result.extend(self._tree(config, path))
+                    group = self._tree(config, path)
+                    if container is not None:
+                        group = tuple(
+                            replace(
+                                item,
+                                dependencies=item.dependencies + (container.logical_id,)
+                                if item.path == path
+                                else item.dependencies,
+                                metadata=replace(
+                                    item.metadata,
+                                    root_id=container.logical_id,
+                                    relative_path=str(item.path.relative_to(root)),
+                                    parent_id=container.logical_id
+                                    if item.path == path
+                                    else item.metadata.parent_id,
+                                )
+                                if item.metadata
+                                else None,
+                            )
+                            for item in group
+                        )
+                    result.extend(group)
         if unused_runs is not None and (
             bound_root
             or any(item.status in {"included", "included_directory"} for item in result)
