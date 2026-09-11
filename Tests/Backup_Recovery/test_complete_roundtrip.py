@@ -196,13 +196,34 @@ async def main():
   }
   from tldw_chatbook.config import get_user_data_dir
   assert all(Path(value['path']).is_absolute() and Path(value['path']).is_relative_to(get_user_data_dir()) for value in registries.values())
-  empty=get_private_chatbooks_dir()
+  import hashlib
+  from tldw_chatbook.Chatbooks.database_paths import secure_chatbook_directory
+  from tldw_chatbook.Chatbooks.chatbook_models import ContentType
+  skills=app.local_skills_service;trust=app.local_skill_trust_service
+  skill=await skills.create_skill(name=name+'-retained-skill',content='---\nname: '+name+'-retained-skill\ndescription: '+name+' captured skill\n---\n'+name+' retained skill body\n',supporting_files={'references/retained.txt':name+' supporting text\n','scripts/retained.py':"print('inert retained "+name+" script')\n"})
+  trust.bootstrap_trust('private-roundtrip-skill-passphrase',salt=b'8'*32)
+  trust.grant_script_execution(skill['name'])
+  assert trust.script_execution_granted(skill['name'])
+  trusted=json.loads(trust.trust_store.manifest_path.read_text())['manifest']
+  snapshot=trusted['skills'][skill['name']]['snapshot_id']
+  assert (trust.trust_store.snapshots_dir/(snapshot+'.json')).is_file()
+  skill_files={path.relative_to(skills.store_dir).as_posix():path.read_bytes().hex() for path in sorted(skills.store_dir.rglob('*')) if path.is_file()}
+  books=app.local_chatbook_service
+  assert books.registry_path==fixture/'shared'/'tldw_chatbook_chatbooks.json'
+  archive=get_private_chatbooks_dir()/(name+'-retained.zip')
+  exported_book=await books.export_chatbook({'name':name+' retained book','output_path':str(archive),'content_selections':{ContentType.NOTE:[str(note)]}})
+  assert exported_book['success'],exported_book
+  book=await books.create_chatbook(name=name+' retained book',file_path=archive,metadata={'profile_label':name})
+  book_preview=await books.preview_chatbook(archive)
+  assert book_preview['success'],book_preview
+  local_content={'skill':{'name':skill['name'],'root':str(skills.store_dir),'files':skill_files,'generation':trusted['generation'],'snapshot':snapshot,'manifest':str(trust.trust_store.manifest_path.relative_to(skills.store_dir)),'marker':str(trust.trust_store.marker_store.marker_path.relative_to(skills.store_dir))},'book':{'record':book,'path':str(archive),'digest':hashlib.sha256(archive.read_bytes()).hexdigest(),'manifest':book_preview['manifest']},'registry':str(books.registry_path)}
+  empty=secure_chatbook_directory(get_private_chatbooks_dir()/'retained-empty')
   assert not list(empty.iterdir())
   jobs=LibraryIngestJobsDB(get_library_ingest_jobs_db_path(),'fixture')
   try:
    jobs.upsert_job(LibraryIngestJob('ingest-job-1',str(fixture/(name+'-input.txt')),state=IngestJobState.QUEUED))
   finally:jobs.close()
-  (fixture/(name+'-seed.json')).write_text(json.dumps(dict(note=note,deleted=deleted,conversation=conversation,message=message,media=media,prompt=prompt,research=session['id'],deleted_research=deleted_session['id'],empty=str(empty),domains=domains,durable_files=durable_files,durable_api=durable_api,registries=registries,config_history=config_history_record,note_template=note_template)))
+  (fixture/(name+'-seed.json')).write_text(json.dumps(dict(note=note,deleted=deleted,conversation=conversation,message=message,media=media,prompt=prompt,research=session['id'],deleted_research=deleted_session['id'],empty=str(empty),domains=domains,durable_files=durable_files,durable_api=durable_api,registries=registries,config_history=config_history_record,note_template=note_template,local_content=local_content)))
   assert not blocked_attempts(),blocked_attempts()
   print('SEEDED',name,flush=True)
  finally:
@@ -273,6 +294,9 @@ async def main():
  cancel=threading.Event();watchdog=asyncio.get_running_loop().call_later(55,cancel.set)
  try:
   selectors=tuple(fixture/label/'config.toml' for label in ('alpha','beta'))
+  registry=app.local_chatbook_service.registry_path
+  registry_before=registry.read_bytes()
+  (fixture/'chatbooks-registry-before.hex').write_text(registry_before.hex())
   options={'staging_parent':fixture}
   explicit=preview_capture(selectors,options=options)
   preview=preview_capture((),options=options)
@@ -320,8 +344,40 @@ async def main():
     assert row['root_id']==meta.root_id and row['parent_id']==meta.parent_id
     assert row['relative_path']==meta.relative_path
     assert row['metadata']=={'version':1,'mode':meta.mode,'mtime_ns':meta.mtime_ns}
+  assert not any(row['owner_id']=='runtime.chatbook_scratch' for row in manifest['files'])
+  scratch=[row for row in manifest['directories'] if row['logical_id'] in source and source[row['logical_id']].owner=='runtime.chatbook_scratch']
+  assert len(scratch)==2 and all(row['relative_path']=='' and row['parent_id'] is None for row in scratch)
   for label in ('alpha','beta'):
    seed=json.loads((fixture/(label+'-seed.json')).read_text())
+   profile=next(key.split(':')[1] for key,item in source.items() if item.owner=='config' and item.path==fixture/label/'config.toml')
+   for owner in ('skills','chatbooks.registry','chatbooks.archives'):
+    retained=[row for row in manifest['files'] if row['owner_id']==owner and row['logical_id'].startswith('profile:'+profile+':')]
+    assert retained,(label,owner,'missing populated local content')
+   local=seed['local_content'];skill=local['skill']
+   for relative,hex_data in skill['files'].items():
+    original=Path(skill['root'])/relative
+    rows=[row for row in manifest['files'] if row['owner_id']=='skills' and source[row['logical_id']].path==original]
+    assert len(rows)==1,(label,relative)
+    assert (result.root/rows[0]['payload']).read_bytes()==bytes.fromhex(hex_data)
+   trusted=json.loads(bytes.fromhex(skill['files'][skill['manifest']]))['manifest']
+   assert trusted['generation']==skill['generation'] and trusted['skills'][skill['name']]['snapshot_id']==skill['snapshot']
+   book=local['book']
+   archive_row=next(row for row in manifest['files'] if row['owner_id']=='chatbooks.archives' and source[row['logical_id']].path==Path(book['path']))
+   archive_bytes=(result.root/archive_row['payload']).read_bytes()
+   assert hashlib.sha256(archive_bytes).hexdigest()==book['digest']
+   registry_rows=[row for row in manifest['files'] if row['owner_id']=='chatbooks.registry']
+   assert len(registry_rows)==2
+   assert all(source[row['logical_id']].path==registry for row in registry_rows)
+   assert len({source[row['logical_id']].shared_group for row in registry_rows})==1 and source[registry_rows[0]['logical_id']].shared_group
+   assert len({(result.root/row['payload']).read_bytes() for row in registry_rows})==1
+   for registry_row in registry_rows:
+    document=json.loads((result.root/registry_row['payload']).read_text())
+    assert len(document['records'])==2
+    record=next(row for row in document['records'] if row['id']==book['record']['id'])
+    for field in ('id','name','metadata','created_at','updated_at'):assert record[field]==book['record'][field]
+    assert record['file_path'] is None and record['__chatbook_archive_reference']=={'logical_id':archive_row['logical_id']}
+    assert archive_row['logical_id'] in source[registry_row['logical_id']].dependencies
+   assert registry.read_bytes()==registry_before
    for owner,expected in seed['durable_files'].items():
     row=next(row for row in manifest['files'] if row['owner_id']==owner and source[row['logical_id']].path==Path(expected['path']))
     assert source[row['logical_id']].status=='included'
@@ -504,6 +560,7 @@ def _capture_two_profiles(tmp_path):
         selector.write_text(
             '[general]\nusers_name="default_user"\ndefault_tab="settings"\n'
             "[first_run]\nsetup_completed=true\n[splash_screen]\nenabled=false\n"
+            "[AppRAGSearchConfig.rag.indexing]\nenabled=false\n"
             f"[paths]\ndata_dir={json.dumps(str(profile / 'data'))}\n"
             "[database]\n"
             + "".join(
@@ -558,7 +615,7 @@ mapping={}
 # be reviewed explicitly instead of silently landing in a miscellaneous folder.
 custom={'db.chachanotes.primary','chat.attachments','notes.sync_bindings','quiz.local','study.local','db.media.primary','research.local'}
 ordinary={'db.evals','db.library_collections','db.library_ingest_jobs','db.scheduled_tasks','db.subscriptions','db.workspaces','kanban.local','mcp.targets','notifications.client','runtime.event_state','runtime.sync_state','writing.local','chat.prompt_history','personas','chat.dictionary_history','chat.grammars','feedback','audio.history'}
-trees={'chat.dictionaries':'chat_dicts','chatbooks.archives':'chatbooks','rag.definitions':'rag_profiles','chunking.templates':'chunking_templates','generation.styles':'image_generation_styles'}
+trees={'chat.dictionaries':'chat_dicts','chatbooks.archives':'chatbooks','skills':'skills','runtime.chatbook_scratch':'temp','rag.definitions':'rag_profiles','chunking.templates':'chunking_templates','generation.styles':'image_generation_styles'}
 for key,row in roots.items():
  owner=producer[key].owner_id
  if row.synthetic:
@@ -683,6 +740,34 @@ async def main():
   assert str(app.media_db.db_path)==expected['media']
   assert str(app.prompts_db.db_path)==expected['prompts']
   label=expected['label'];core=app.chachanotes_db
+  import hashlib,zipfile
+  skills=app.local_skills_service;trust=app.local_skill_trust_service
+  local=seed['local_content'];skill=local['skill']
+  assert str(skills.store_dir)==expected['skills'] and str(skills.store_dir)!=skill['root']
+  listed=await skills.list_skills()
+  retained=next(row for row in listed['skills'] if row['name']==skill['name'])
+  assert retained['description']==label+' captured skill' and retained['trust_blocked']
+  assert trust.recovery_posture()=='recovery_review'
+  assert not trust.script_execution_granted(skill['name'])
+  assert all((skills.store_dir/relative).read_bytes()==bytes.fromhex(hex_data) for relative,hex_data in skill['files'].items())
+  assert not list((skills.store_dir/'trust').glob('recovery-*'))
+  books=app.local_chatbook_service
+  assert books.registry_path==Path(expected['prompts']).with_name('tldw_chatbook_chatbooks.json')
+  registry_before=books.registry_path.read_bytes()
+  assert len(await books.list_chatbooks())==2
+  installed=json.loads((fixture/'stage2-installed.json').read_text())
+  for other in installed.values():
+   other_seed=json.loads((fixture/(other['label']+'-seed.json')).read_text());book=other_seed['local_content']['book']
+   record=await books.get_chatbook(book['record']['id'])
+   archive=Path(other['archives'])/Path(book['path']).name
+   assert record['file_path']==str(archive) and '__chatbook_archive_reference' not in record
+   for field in ('id','name','metadata','created_at','updated_at'):assert record[field]==book['record'][field]
+   assert hashlib.sha256(archive.read_bytes()).hexdigest()==book['digest']
+   preview=await books.preview_chatbook(archive)
+   assert preview['success'] and preview['manifest']==book['manifest'],preview
+   note_item=next(row for row in preview['manifest']['content_items'] if row['id']==str(other_seed['note']))
+   with zipfile.ZipFile(archive) as zipped:assert other['label']+' native note bytes' in zipped.read(note_item['file_path']).decode()
+  assert books.registry_path.read_bytes()==registry_before
   import tomllib
   from tldw_chatbook.config import read_cli_config_backup_serialized,get_cli_config_path
   from tldw_chatbook.Notes.template_store import read_templates
@@ -889,9 +974,15 @@ try:
    assert db.execute('SELECT deleted FROM research_sessions WHERE id=?',(seed['deleted_research'],)).fetchone()==(1,)
   with closing(sqlite3.connect(path_for('db.library_ingest_jobs').as_uri()+'?mode=ro',uri=True)) as db:
    assert db.execute('SELECT job_id,state FROM ingest_jobs').fetchall()==[('ingest-job-1','queued')]
-  empty=selected[f'profile:{profile}:chatbooks.archives']
+  skill_root=selected[f'profile:{profile}:skills']
+  skill=seed['local_content']['skill']
+  assert all((skill_root/relative).read_bytes()==bytes.fromhex(hex_data) for relative,hex_data in skill['files'].items())
+  archives=selected[f'profile:{profile}:chatbooks.archives']
+  book=seed['local_content']['book']
+  assert hashlib.sha256((archives/Path(book['path']).name).read_bytes()).hexdigest()==book['digest']
+  empty=archives/Path(seed['empty']).relative_to(Path(book['path']).parent)
   assert empty.is_dir() and not list(empty.iterdir())
-  installed[entry.profile_id]={'label':label,'installation_id':entry.installation_id,'config':entry.config,'core':str(core),'media':str(path_for('db.media.primary')),'prompts':str(path_for('db.prompts.primary'))}
+  installed[entry.profile_id]={'label':label,'installation_id':entry.installation_id,'config':entry.config,'core':str(core),'media':str(path_for('db.media.primary')),'prompts':str(path_for('db.prompts.primary')),'skills':str(skill_root),'archives':str(archives)}
  assert len({row['installation_id'] for row in installed.values()})==2
  assert len({row['core'] for row in installed.values()})==2
  assert len({row['prompts'] for row in installed.values()})==1
@@ -922,6 +1013,10 @@ for label in ('alpha','beta'):
  seed=json.loads((fixture/(label+'-seed.json')).read_text())
  assert all(Path(row['path']).read_bytes()==bytes.fromhex(row['hex']) for row in seed['durable_files'].values())
  assert Path(seed['config_history']['path']).read_bytes()==bytes.fromhex(seed['config_history']['hex'])
+ local=seed['local_content'];skill=local['skill']
+ assert all((Path(skill['root'])/relative).read_bytes()==bytes.fromhex(hex_data) for relative,hex_data in skill['files'].items())
+ assert hashlib.sha256(Path(local['book']['path']).read_bytes()).hexdigest()==local['book']['digest']
+ assert Path(local['registry']).read_bytes()==bytes.fromhex((fixture/'chatbooks-registry-before.hex').read_text())
 assert not blocked_attempts(),blocked_attempts()
 print('TWO_PROFILE_RESTORED_AND_OPENED',flush=True)
 """,
