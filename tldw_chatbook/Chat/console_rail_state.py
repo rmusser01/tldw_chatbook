@@ -86,6 +86,7 @@ CONSOLE_RAIL_INSPECTOR_LABEL = f"{GLYPH_COLLAPSE_LEFT} Inspector"
 #: right rail needs no marker because its closed default is distinguishable
 #: from an explicit ``right_open=True`` by value alone.
 CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY = "left_open_explicit"
+CONSOLE_RAIL_RIGHT_OPEN_EXPLICIT_KEY = "right_open_explicit"
 #: TASK-31244: distinguishes a user's Character disclosure gesture from a
 #: first-use default.  Presence of the old Boolean without this marker is a
 #: legacy preference and must remain authoritative until the first toggle.
@@ -345,6 +346,28 @@ def _coerce_bool(value: Any, fallback: bool) -> bool:
     return fallback
 
 
+def console_rail_right_open_explicit(stored_preferences: Any) -> bool:
+    """Return whether a stored payload marks ``right_open`` as user-toggled.
+
+    TASK-32328: mirrors ``console_rail_left_open_explicit`` (ADR-043's
+    marker pattern) for the Inspector rail. The 118-128-column auto-open
+    heuristic used to die on mere ``right_open`` KEY PRESENCE, so any
+    implicit writer that stored a preference permanently disabled it; with
+    this marker only an explicit user toggle does.
+
+    Args:
+        stored_preferences: Raw stored preference payload, if any.
+
+    Returns:
+        ``True`` only when the payload carries a truthy
+        ``right_open_explicit`` marker.
+    """
+    if not isinstance(stored_preferences, Mapping):
+        return False
+    value = stored_preferences.get(CONSOLE_RAIL_RIGHT_OPEN_EXPLICIT_KEY)
+    return isinstance(value, bool) and value
+
+
 def console_rail_left_open_explicit(stored_preferences: Any) -> bool:
     """Return whether a stored payload marks ``left_open`` as user-toggled.
 
@@ -474,6 +497,12 @@ def serialize_console_rail_stored_preferences(raw: Any) -> dict[str, bool]:
         serialized.pop("character_open")
     if console_rail_left_open_explicit(raw):
         serialized[CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY] = True
+    # Qodo 2614 #5: this is the config-file persistence boundary -- a
+    # marker that survives the updated-preferences serializer but not this
+    # one is dropped on save, and the auto-open check reads the stored
+    # payload back.
+    if console_rail_right_open_explicit(raw):
+        serialized[CONSOLE_RAIL_RIGHT_OPEN_EXPLICIT_KEY] = True
     if console_character_disclosure_explicit(raw):
         serialized[CONSOLE_CHARACTER_DISCLOSURE_EXPLICIT_KEY] = True
     return serialized
@@ -486,11 +515,21 @@ def serialize_console_rail_updated_preferences(
     left_open: bool | None,
     right_open: bool | None,
     character_toggled: bool,
+    explicit_right_toggle: bool = True,
 ) -> dict[str, bool]:
     """Serialize a manual change while preserving untouched disclosure intent."""
     serialized = serialize_console_rail_preferences(preferences)
     if left_open is not None or console_rail_left_open_explicit(prior_stored):
         serialized[CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY] = True
+    # Qodo 2614 #2: the Context reveal path derives right_open=False to
+    # resolve the compact-width conflict -- that is not a user gesture
+    # toward the Inspector, so it must not record one (which would kill
+    # the 118-128 auto-open band). Only a DIRECT right-rail toggle (or a
+    # previously recorded marker) writes the marker.
+    if (right_open is not None and explicit_right_toggle) or (
+        console_rail_right_open_explicit(prior_stored)
+    ):
+        serialized[CONSOLE_RAIL_RIGHT_OPEN_EXPLICIT_KEY] = True
     if character_toggled or console_character_disclosure_explicit(prior_stored):
         serialized[CONSOLE_CHARACTER_DISCLOSURE_EXPLICIT_KEY] = True
     elif not isinstance(prior_stored, Mapping) or "character_open" not in prior_stored:

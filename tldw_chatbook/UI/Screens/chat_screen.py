@@ -307,6 +307,7 @@ from ...Chat.console_command_grammar import (
 )
 from ...MCP.permission_prompt_reducer import format_permission_prompt_report
 from ...Chat.console_prefill import (
+    armed_prefill_row_value,
     ACTION_CLEAR,
     ACTION_ERROR,
     ACTION_ONE_SHOT,
@@ -470,6 +471,7 @@ from ...Chat.console_rail_state import (
     resolve_console_rail_priority,
     serialize_console_rail_stored_preferences,
     serialize_console_rail_updated_preferences,
+    console_rail_right_open_explicit,
 )
 from ...config import (
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
@@ -805,6 +807,8 @@ CONSOLE_COST_TTL_TICK_SECONDS = 10.0
 # scan). Network work -- the `gh` PR/checks fetch -- is a separate tier with
 # its own 60s TTL and never rides this tick; see
 # `UI/Console_Modules/environment.py`.
+#: TASK-32327: how long the responsive rail-collapse notice stays up.
+CONSOLE_RAIL_COLLAPSE_NOTICE_TIMEOUT_SECONDS = 6
 CONSOLE_ENVIRONMENT_POLL_SECONDS = 10.0
 # DOM ids of the Inspect-rail `ConsoleInspectorSection`s whose rows are
 # focus-restorable (`UI/Console_Modules/right_rail.py`), keyed by the
@@ -885,13 +889,27 @@ CONSOLE_FOCUS_REGISTRY = WorkbenchFocusRegistry(
 CONSOLE_PANE_COLLAPSED_STAND_IN = {
     "console-right-rail": "console-inspector-rail-handle",
 }
+#: TASK-32321: each rail's FIRST target is a content control, not the
+#: collapse button -- F6 used to land on the one control whose Enter hides
+#: the pane the user just entered (verified live: one F6 + one reflexive
+#: Enter collapsed the whole rail). The collapse buttons stay as fallbacks
+#: one stop later. Right rail follows TASK-24703's alt+i reasoning
+#: (authority summary first); left rail targets the pinned Terminal action.
 CONSOLE_FOCUS_TARGETS_BY_PANE = {
-    "console-left-rail": ("console-context-rail-collapse", "console-left-rail"),
+    "console-left-rail": (
+        "console-terminal-open",
+        "console-context-rail-collapse",
+        "console-left-rail",
+    ),
     "console-transcript-surface": (
         "console-native-transcript",
         "console-transcript-surface",
     ),
-    "console-right-rail": ("console-inspector-rail-collapse", "console-right-rail"),
+    "console-right-rail": (
+        "console-send-authority-summary",
+        "console-inspector-rail-collapse",
+        "console-right-rail",
+    ),
     "console-native-composer": ("console-native-composer",),
 }
 #: TASK-2154.11 (AC-02): Tab/Shift+Tab cycle WITHIN the focused widget's
@@ -1174,6 +1192,7 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     # card had no key binding at all before this, so its accelerator is
     # only discoverable if the footer teaches it.
     ("Alt+A", "approval"),
+    ("Alt+C", "context rail"),
     ("Ctrl+P", "palette"),
 )
 
@@ -1186,7 +1205,12 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
 #: toggle already gets for the same reason.
 CONSOLE_WORKBENCH_SHORTCUTS_SINGLE_PANE = (
     ("Alt+I", "inspect"),
-    *(pair for pair in CONSOLE_WORKBENCH_SHORTCUTS if pair[0] != "Alt+I"),
+    ("Alt+C", "context rail"),
+    *(
+        pair
+        for pair in CONSOLE_WORKBENCH_SHORTCUTS
+        if pair[0] not in ("Alt+I", "Alt+C")
+    ),
 )
 
 #: TASK-2154.8 (FR-06): while the first-run setup modal locks the composer,
@@ -1232,6 +1256,8 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
             # -- the footer advertises Alt+A but this never-truncating
             # reference didn't.
             ("Alt+A", "Review pending approval"),
+            ("Alt+C", "open or close the Context rail"),
+            ("Handle badges", "'N appr' = N approvals pending; 'art' = artifact ready"),
             ("Escape", "return to the composer"),
         ),
     ),
@@ -1929,6 +1955,12 @@ class ChatScreen(BaseAppScreen):
         # common widths. This routes through the same seam as the
         # inspector's button (`_route_console_pending_approval_focus`).
         Binding("alt+a", "review_pending_approval", "Approval", show=True),
+        # TASK-32320: the left rail's own toggle -- alt+c mirrors alt+i
+        # (C for Context) with the same not-gated-on-display and
+        # focus-into-the-rail contract. 'c' as a bare htop key would be
+        # swallowed by the focused transcript's own bindings, so it rides
+        # the alt chord like its sibling.
+        Binding("alt+c", "toggle_console_context_rail", "Context", show=True),
         Binding("alt+v", "paste_clipboard_image", "Paste image", show=True),
         # ctrl+shift+h, not alt+h: on macOS terminals "alt" is the Option
         # key, which types a composed character (˙) unless the profile
@@ -2590,6 +2622,8 @@ class ChatScreen(BaseAppScreen):
         self._set_console_rail_preference(
             left_open=preference_changes["left_open"],
             right_open=preference_changes.get("right_open"),
+            # Derived conflict resolution, not an Inspector gesture.
+            explicit_right_toggle=False,
         )
 
     @on(Button.Pressed, "#console-inspector-rail-collapse")
@@ -2647,6 +2681,58 @@ class ChatScreen(BaseAppScreen):
         # destructive, and is the thing they came to read. Falls back to the
         # pane's normal targets if it is not mounted.
         self.call_after_refresh(self._focus_opened_console_inspector_rail)
+
+    def action_toggle_console_context_rail(self) -> None:
+        """Toggle the Context rail; mirror alt+i's contract (TASK-32320).
+
+        Qodo 2614 #3/#4 fixes, and why direction is VISIBILITY-derived:
+
+        * (#3) Opening routes through ``console_context_reveal_preferences``
+          like the handle and control-bar routes do, so a compact-band
+          Inspector conflict is actually resolved instead of silently
+          winning against the rail the user just asked for.
+        * (#4) Direction comes from EFFECTIVE visibility, not raw widget
+          display nor the stored preference alone. Preference-derived
+          direction silently breaks the conflict case (a priority-collapsed
+          rail with an open preference would record a CLOSE on a press
+          that meant "show me"); display-derived direction could not
+          record anything while force-hidden. The visibility contract:
+          Alt+C SHOWS the rail (reveal path -- write-through records the
+          explicit marker per TASK-2154.2 even when the value is already
+          True, and conflicts are resolved); Alt+C HIDES it when shown
+          (preference False). While force-hidden below the width budget
+          the press is the way BACK (TASK-24604's alt+i contract), and
+          the preference flips when the rail is visible.
+        """
+        if self._focus_console_setup_modal_if_blocking():
+            return
+        available_columns = self._console_rail_available_columns()
+        rail_state = self._current_console_rail_state(
+            available_columns=available_columns
+        )
+        opening = not rail_state.left_open
+        if not opening:
+            self._set_console_rail_preference(left_open=False)
+            self._focus_console_workbench_target("console-native-composer")
+            return
+        preference_changes = console_context_reveal_preferences(
+            rail_state, available_columns
+        )
+        # The right_open change (when present) is a DERIVED conflict
+        # resolution, not an Inspector gesture -- see the serializer.
+        self._set_console_rail_preference(
+            left_open=preference_changes["left_open"],
+            right_open=preference_changes.get("right_open"),
+            explicit_right_toggle=False,
+        )
+        # The rail is already composed (it defaults open and only display
+        # flips), so focus can land immediately; still deferred one refresh
+        # so a just-reopened rail has mounted its targets.
+        self.call_after_refresh(self._focus_opened_console_context_rail)
+
+    def _focus_opened_console_context_rail(self) -> None:
+        """Place the caret on the left rail's first non-destructive target."""
+        self._focus_console_workbench_target("console-left-rail")
 
     def _focus_opened_console_inspector_rail(self) -> None:
         """Place the caret on the rail's most useful non-destructive target."""
@@ -4698,6 +4784,8 @@ class ChatScreen(BaseAppScreen):
             self._set_console_rail_preference(
                 left_open=preference_changes["left_open"],
                 right_open=preference_changes.get("right_open"),
+                    # Derived conflict resolution, not an Inspector gesture.
+                    explicit_right_toggle=False,
             )
         elif action_id == "run-library-rag":
             self._open_console_library_search()
@@ -5065,7 +5153,29 @@ class ChatScreen(BaseAppScreen):
         shortcuts = (("Ctrl+Shift+F", focus_label), *shortcuts)
         if self._console_inspector_active():
             shortcuts = (("n/p", "Sections"), *shortcuts)
+        # TASK-32322: with focus inside a rail, Tab is region-locked -- the
+        # exits are F6 and Esc, taught at the point of need. Preceded by
+        # nothing (prepended like the others: footer degradation drops
+        # hints from the END).
+        if self._console_rail_focus_active():
+            shortcuts = (("Esc", "composer · F6 panes"), *shortcuts)
         self.register_footer_shortcuts(source="console", shortcuts=shortcuts)
+
+    def _console_rail_focus_active(self) -> bool:
+        """Return whether live focus is inside either mounted rail (TASK-32322)."""
+        from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+
+        focused = self.app.focused
+        if not isinstance(focused, Widget):
+            return False
+        for rail_id in ("console-left-rail", "console-right-rail"):
+            try:
+                rail = self.query_one(f"#{rail_id}")
+            except (NoMatches, QueryError):
+                continue
+            if focused is rail or rail in focused.ancestors:
+                return True
+        return False
 
     def _console_inspector_active(self) -> bool:
         """Return whether live focus is the Inspector rail or a descendant."""
@@ -7303,6 +7413,9 @@ class ChatScreen(BaseAppScreen):
         # the (expensive) effective rail state only happens when the band
         # actually changes, not on every pixel of a resize drag.
         self._last_console_workspace_width_band: str | None = None
+        #: TASK-32327: rails whose responsive-collapse notice has
+        #: fired this session (once per rail, never per resize tick).
+        self._console_rail_collapse_notified: set[str] = set()
         self._console_guidance_dismissed = False
         self._console_first_send_completed_cached: bool | None = None
         # Fleet-UX expert review F2 (task-1232): one-time coach-mark shown
@@ -9064,6 +9177,12 @@ class ChatScreen(BaseAppScreen):
             self._open_change_review_current_mode()
             return
         if row_id == ENV_ROW_COMMIT_PUSH:
+            self._open_change_review_current_mode()
+            return
+        if row_id == "env-file-more":
+            # TASK-32333: the Changes block's overflow tail ("… N more —
+            # Review opens all") opens the same working-tree view as its
+            # neighbours -- destination follows the surface that offers it.
             self._open_change_review_current_mode()
             return
         if row_id == ENV_ROW_PR_OPEN and snapshot.pr.url:
@@ -13131,7 +13250,11 @@ class ChatScreen(BaseAppScreen):
             # were using to show one they never asked for. Between 118 and
             # 128 columns that swap happened on a single column of resize.
             return False
-        if isinstance(stored_preferences, dict) and "right_open" in stored_preferences:
+        if console_rail_right_open_explicit(stored_preferences):
+            # TASK-32328: only an EXPLICIT Inspector toggle kills the
+            # auto-open band. Key presence alone used to -- but implicit
+            # writers store ``right_open`` too, permanently disabling the
+            # heuristic for users who never chose.
             return False
         if (
             available_columns is None
@@ -13497,6 +13620,7 @@ class ChatScreen(BaseAppScreen):
         right_open: bool | None = None,
         section_updates: Mapping[str, bool] | None = None,
         notify_on_failure: bool = True,
+        explicit_right_toggle: bool = True,
     ) -> ConsoleRailState:
         """Persist requested Console rail preference changes and return new state."""
         if left_open is not None or right_open is not None or "character" in (section_updates or {}):
@@ -13559,6 +13683,7 @@ class ChatScreen(BaseAppScreen):
                 left_open=left_open,
                 right_open=right_open,
                 character_toggled=character_toggled,
+                explicit_right_toggle=explicit_right_toggle,
             )
             rail_state_config[preference_key.value] = serialized
             self._save_console_rail_preferences(
@@ -14336,7 +14461,8 @@ class ChatScreen(BaseAppScreen):
         if one_shot:
             prefill_rows.append(
                 ConsoleDisplayRow(
-                    "Prefill (next send only)", describe_prefill_preview(one_shot)
+                    "Prefill (next send only)",
+                    armed_prefill_row_value(one_shot),
                 )
             )
         session_settings = active_session.settings
@@ -14345,7 +14471,7 @@ class ChatScreen(BaseAppScreen):
         )
         if pinned:
             prefill_rows.append(
-                ConsoleDisplayRow("Prefill (pinned)", describe_prefill_preview(pinned))
+                ConsoleDisplayRow("Prefill (pinned)", armed_prefill_row_value(pinned))
             )
         return (
             ConsoleDisplayRow(
@@ -19708,15 +19834,12 @@ class ChatScreen(BaseAppScreen):
 
                 self.call_after_refresh(_restore_stop_button)
 
-    @on(Button.Pressed, "#console-attach-context")
-    async def handle_console_attach_context(self, event: Button.Pressed) -> None:
-        """Open the native Console file picker and stage the selected attachment."""
-        await self._handle_console_attach_context(event)
-
-    @on(Button.Pressed, "#console-staged-context-attach")
-    async def handle_console_staged_context_attach(self, event: Button.Pressed) -> None:
-        """Open the native Console file picker from the staged-context empty state."""
-        await self._handle_console_attach_context(event)
+    # TASK-32337: the two ``@on(Button.Pressed)`` handlers that used to
+    # live here ("#console-attach-context" and
+    # "#console-staged-context-attach") are removed -- no widget mounts
+    # either id anywhere (the tray's Attach button was removed by its
+    # redesign, and the file-picker flow is reached through the composer
+    # menu's "Attach file" entry, which routes via ComposerMenuAction).
 
     async def _handle_console_attach_context(
         self, event: Button.Pressed | None = None
@@ -21762,7 +21885,18 @@ class ChatScreen(BaseAppScreen):
         rail_state = self._current_console_rail_state(
             available_columns=event.size.width
         )
+        # TASK-32327: capture which rails the user could SEE before this
+        # band crossing, so a responsive force-close (not a user toggle --
+        # preferences are never rewritten here) can be named out loud
+        # instead of the rail silently vanishing.
+        left_was_open = bool(left_rail.display)
+        right_was_open = bool(right_rail.display)
         self._sync_console_rail_visibility_if_changed(rail_state)
+        self._notify_console_responsive_rail_collapse(
+            rail_state=rail_state,
+            left_was_open=left_was_open,
+            right_was_open=right_was_open,
+        )
         for focused_in_rail, focused_in_handle, rail_open, rail, handle, buttons in (
             (
                 focused_in_left_rail,
@@ -21793,6 +21927,62 @@ class ChatScreen(BaseAppScreen):
             button = self.query_one(button_selector, Button)
             if target.display and button.display:
                 button.focus()
+
+    def _notify_console_responsive_rail_collapse(
+        self,
+        *,
+        rail_state: "ConsoleRailState",
+        left_was_open: bool,
+        right_was_open: bool,
+    ) -> None:
+        """Name a responsive force-collapse once per session per rail (TASK-32327).
+
+        The width rules (force-collapse below 150/100 cols, single-pane
+        below 84, Inspector-priority in the 100-150 band) hide rails the
+        user had open WITHOUT rewriting their stored preference -- silent
+        disappearance from the user's point of view. This posts one
+        transient notice per rail per session naming what happened and how
+        to reopen, and deliberately skips rails whose stored preference
+        already says closed (the rule and the user then agree).
+        """
+        notices: list[tuple[str, str]] = []
+        if (
+            left_was_open
+            and not rail_state.left_open
+            and "left" not in self._console_rail_collapse_notified
+        ):
+            self._console_rail_collapse_notified.add("left")
+            notices.append(
+                (
+                    "Context rail collapsed — the terminal is too narrow "
+                    "for it. Reopen it from the Context handle "
+                    "(or widen the terminal).",
+                    "warning",
+                )
+            )
+        if (
+            right_was_open
+            and not rail_state.right_open
+            and "right" not in self._console_rail_collapse_notified
+        ):
+            self._console_rail_collapse_notified.add("right")
+            notices.append(
+                (
+                    "Inspector rail collapsed — the terminal is too narrow "
+                    "for it. Reopen it with Alt+I "
+                    "(or widen the terminal).",
+                    "warning",
+                )
+            )
+        for message, severity in notices:
+            try:
+                self.app_instance.notify(
+                    message,
+                    severity=severity,
+                    timeout=CONSOLE_RAIL_COLLAPSE_NOTICE_TIMEOUT_SECONDS,
+                )
+            except Exception:  # noqa: BLE001 -- a notice must never break layout
+                logger.debug("console rail collapse notice failed", exc_info=True)
 
     @on(DescendantBlur)
     @on(DescendantFocus)

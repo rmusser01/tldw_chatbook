@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 from rich.cells import cell_len
+from rich.markup import escape
 from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -797,10 +798,13 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
             # TASK-31664 I3: resolved at this render seam, not in the
             # (pure) projection that built `row.primary_text` -- see
             # `InspectorSectionRow.primary_text`'s docstring.
+            resolved_primary = resolve_glyph_text(row.primary_text)
+            row_widget._primary_text = resolved_primary
             self.query_one(f"#{self._row_primary_id(index)}", Static).update(
-                resolve_glyph_text(row.primary_text)
+                resolved_primary
             )
         if row.secondary_text != previous_row.secondary_text:
+            row_widget._secondary_text = row.secondary_text
             secondary = self.query_one(f"#{self._row_secondary_id(index)}", Static)
             secondary.update(row.secondary_text)
             # Same mounted shape (the structural key guarantees it), but an
@@ -815,6 +819,7 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                 )
             if row.status:
                 row_widget.add_class(f"console-inspector-section-row-{row.status}")
+        row_widget._refresh_tooltip()
 
 
 class ConsoleInspectorSectionRow(Vertical):
@@ -912,6 +917,22 @@ class ConsoleInspectorSectionRow(Vertical):
             self.add_class("console-inspector-section-row-child")
         if row.status:
             self.add_class(f"console-inspector-section-row-{row.status}")
+        self._refresh_tooltip()
+
+    def _refresh_tooltip(self) -> None:
+        """Carry the row's full text in a tooltip (TASK-32335).
+
+        The primary can ellipsize at paint time and the secondary is a
+        truncated last-step summary; the untruncated pair stays recoverable
+        via hover, matching the changed-files rows' convention. Markup is
+        escaped because a Textual tooltip is Rich-parsed content and row
+        text is user-adjacent (PR-T1 I1's lesson: untrusted text must not
+        reach a markup-parsed sink raw).
+        """
+        parts = [self._primary_text]
+        if self._secondary_text:
+            parts.append(self._secondary_text)
+        self.tooltip = escape("\n".join(parts))
 
     @property
     def _primary_id(self) -> str:
