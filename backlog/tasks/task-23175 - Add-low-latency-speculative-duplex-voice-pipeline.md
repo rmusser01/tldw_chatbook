@@ -4,7 +4,7 @@ title: Add low-latency speculative duplex voice pipeline
 status: In Progress
 assignee: []
 created_date: '2026-08-28 23:49'
-updated_date: '2026-09-11 03:58'
+updated_date: '2026-09-11 04:47'
 labels: []
 dependencies: []
 ---
@@ -167,6 +167,8 @@ Approved N1 follow-up: retired never-issued local proposals no longer receive la
 Approved startup-race repair: register the already-read bootstrap with the existing mailbox/receiver before starting pipe threads. Deterministic real-subprocess lease/early-close cases failed with child EOF before the reorder and pass after it; they preserve control sequence 2, startup credit suppression, early-close prevention of native start and both clean closure receipts. Independent review accepted production ordering and found one P3 test-helper exit-code gap; queued_startup-only propagation plus a wrong-root bootstrap refusal regression closed it (RED exit0 vs2, then GREEN). An initial malformed-transport exit oracle correctly triggered POSIX self-containment -9; its expected2 was a test assumption, not a runtime defect, and the discarded variant/evidence remain recorded. Final six-file targeted gate: 302 passed, zero skips, one existing Requests dependency warning,19.80s. Three changed Python files pass Ruff lint/format; diff checks clean; narrow re-review accepts with no remaining findings. Existing ADR098 applies; no new protocol, custody, timeout, priority or runtime boundary. Developer guide, process spec and incident-backed lesson updated. AC18 checked; overall task remains In Progress. This fixes a reproduced startup race present at the historical I1 boundary but cannot conclusively attribute the old incident without its missing stage/exit evidence. No app/audio/native hold, hardware/qualification, provider/model, soak or full-suite run. Protected19 and qualification/build identities unchanged. Exact commands, RED/GREEN/raw outputs, hashes and review retained at /private/tmp/tldw-voice-startup-race.R4Q8QY/evidence.md.
 
 2026-09-10: User explicitly approved updating PR #2504 to current dev and merging once verification passes. This supersedes the earlier merge hold only. Approved integration plan: Docs/superpowers/plans/2026-09-10-voice-pr-2504-final-rebase-and-merge.md. Pinned inputs: published 098f904355cf18ff523e9931fa449406827ab646, prior base 2e3389e694e93592a1c66e5c3416bf29a1057d6c, current dev 0fcb79e596b3e527778c56867cf7ee0c62c17894. Existing ADRs apply; no new ADR. No full suite, live audio, native/local model execution, installs or cleanup; automatic PR CI remains approved. Keep this broader qualification task In Progress.
+
+Approved PR CI fixture correction: incoming dev made FTS optional in the boot census, but the delayed-worker fake still targeted FTS. Select a current required sentinel without changing production policy, allowlists or budgets. Both fake-clock cases reproduced RED and now pass (2 passed, 2 existing warnings, 1.16s); scoped Ruff and diff checks pass. Existing September10 integration plan records this test-only correction (no new ADR). Task remains In Progress and release qualification remains hard off; fresh hosted checks and merge verification are still pending.
 <!-- SECTION:NOTES:END -->
 
 ## Implementation Notes — final native integration corrections, 2026-09-04

@@ -13075,6 +13075,12 @@ The mounted policy check also needed splash disabled in its isolated on-disk
 config: its six-second wait expired during the seven-second splash, and the
 factory snapshot alone does not control the compose-time configuration read.
 
+PR #2504's subsequent rebase retained a fake-clock regression that still delayed
+FTS after dev removed it from the required set. Both timing assertions failed
+because the actual required sentinels were already present. Select the delayed
+fixture from the current required set so the test continues to exercise waiting
+and timeout without restoring a deliberately optional worker requirement.
+
 ## Faking a decorated method deletes the decorator, and the bug can live there
 
 **task-32121, Library ▸ Folder files, 2026-09-09.** Critique #8's task-32055 gave

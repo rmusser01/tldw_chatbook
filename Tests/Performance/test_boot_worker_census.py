@@ -223,7 +223,8 @@ async def test_census_waits_for_the_serially_delayed_required_worker(monkeypatch
 
     now = 0.0
     required = sorted(EXPECTED_BOOT_WORKERS)
-    delayed = ("_backfill_chachanotes_messages_fts", "chachanotes-fts-backfill")
+    # Delay a required sentinel; staggered FTS is only allowlisted on current dev.
+    delayed = required[0]
     records = {"workers": [dict(name=n, group=g) for n, g in required if (n, g) != delayed]}
 
     async def sleep(seconds):

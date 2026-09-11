@@ -110,3 +110,17 @@ without conflicts, producing code checkpoint
 voice ownership/provider handlers. Verify its focused mounted geometry tests and
 the existing fake-only ConsoleHarness Hands-free controls; prior frozen inputs
 and cohort evidence above remain historical, not rewritten as new-head runs.
+
+## Approved CI fixture correction
+
+Perf Guard at `1e2b262085` exposed two fake-clock failures: incoming dev removed
+FTS from required boot sentinels, while this PR's delayed-worker regression still
+delayed FTS. Both failures reproduced locally without starting the app. The user
+approved selecting a currently required fixture member, verifying both arrival
+and missing-worker cases, then publishing and resuming normal CI. Production
+policy, required/allowed sets and budgets remain unchanged. ADR required: no;
+ADR path: N/A; reason: test-only fixture alignment, not a runtime-policy change.
+
+The two fake-clock cases changed from two expected assertion failures to two
+passes (1.16s, two existing dependency warnings). Scoped Ruff and diff checks
+pass. No real app, audio, provider or native work ran in these cases.
