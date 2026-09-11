@@ -428,6 +428,15 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
         with _ImportBody(id="note-import-body"):
             if state.phase in {"select", "destination"}:
                 yield from self._compose_selection(state)
+                # task-32259: "Check selection" acts on the summary three
+                # rows up, and floating it under a `1fr` body put it at
+                # screen row 49 of 52 with a selection summary at rows
+                # 7-11. This phase's content is bounded (a summary line,
+                # up to three source buttons, one destination field), so
+                # the action stands with it. The scrolling phases below
+                # keep the pinned floor -- their lists are unbounded and
+                # an action that scrolls away is worse than a far one.
+                yield from self._compose_primary_action(state)
             elif state.phase == "review":
                 yield from self._compose_review(state)
             elif state.phase == "importing":
@@ -442,7 +451,8 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
         )
         hint.display = False
         yield hint
-        yield from self._compose_primary_action(state)
+        if state.phase not in {"select", "destination"}:
+            yield from self._compose_primary_action(state)
 
     def _compose_primary_action(
         self, state: LibraryNoteImportSnapshot
