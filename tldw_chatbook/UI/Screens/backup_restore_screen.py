@@ -66,6 +66,8 @@ class BackupRestoreScreen(Screen):
         self._safety_scope_seen = ()
         self._rollback_copy_id = None
         self._rollback_plan = None
+        self._media_review = None
+        self._media_offset = 0
 
     def compose(self) -> ComposeResult:
         yield Static("Backup & Restore", id="backup-title")
@@ -260,6 +262,22 @@ class BackupRestoreScreen(Screen):
                         variant="warning",
                         disabled=True,
                     )
+            with Vertical(id="backup-media-form", classes="backup-form"):
+                yield Static("Recovered media in the current profile", markup=False)
+                yield Static(
+                    "Recorded sizes remain visible after deletion. References from earlier restores or other profiles can prevent cleanup.",
+                    markup=False,
+                )
+                yield Static("", id="backup-media-summary", markup=False)
+                yield Vertical(id="backup-media-list", classes="backup-form")
+                with Horizontal():
+                    yield Button("Previous page", id="backup-media-previous", disabled=True)
+                    yield Button("Next page", id="backup-media-next", disabled=True)
+                yield Static("", id="backup-media-review", markup=False)
+                yield Checkbox("I reviewed every affected reference and hold", id="backup-media-confirm")
+                yield Button("Delete reviewed asset", id="backup-media-delete", variant="error", disabled=True)
+                yield Button("Clean up reviewed orphan", id="backup-media-cleanup", variant="warning", disabled=True)
+                yield Button("Cancel review", id="backup-media-cancel")
         yield Static("", id="backup-message", markup=False)
         with Horizontal(id="backup-footer-actions"):
             yield Button("Review", id="backup-review")
@@ -325,6 +343,9 @@ class BackupRestoreScreen(Screen):
         self._mode = mode
         self._revision += 1
         self._preview = self._reviewed = None
+        self._media_review = None
+        self.query_one("#backup-media-confirm", Checkbox).value = False
+        self.query_one("#backup-media-form").display = mode == "media"
         self.query_one("#backup-home").display = mode == "home"
         self.query_one("#backup-create-form").display = mode == "create"
         self.query_one("#backup-inspect-form").display = mode == "inspect"
@@ -364,6 +385,159 @@ class BackupRestoreScreen(Screen):
     def _open_profiles(self):
         self._show_mode("profiles")
         self._refresh_list(self.app, self._revision, "profiles")
+
+    @on(Button.Pressed, "#backup-open-media")
+    def _open_media(self):
+        self._show_mode("media")
+        self._media_offset = 0
+        self._load_media(self.app, self._revision, 0)
+
+    @work(exclusive=True, thread=True, group="backup-media")
+    def _load_media(self, app, revision, offset):
+        try:
+            page = self.service.recovered_media_details(limit=20, offset=offset)
+        except (OSError, ValueError, RuntimeError):
+            page = None
+        self._deliver(app, self._media_ready, revision, page)
+
+    async def _media_ready(self, revision, page):
+        if not self.is_mounted or self._mode != "media" or revision != self._revision:
+            return
+        self._clear_media_review()
+        listing = self.query_one("#backup-media-list", Vertical)
+        await listing.remove_children()
+        details = page["details"] if page is not None else None
+        text = "Recovered media unavailable. Recheck the selected profile and local recovery state."
+        if page is not None:
+            text = "Current profile: " + page["config"] + "\n"
+            text += (
+                "No recovered-media catalog."
+                if details is None
+                else (
+                    f"Showing {details.offset + 1}–{details.offset + len(details.assets)} of {details.total} assets"
+                    if details.assets
+                    else "No assets on this page."
+                )
+            )
+        self.query_one("#backup-media-summary", Static).update(text)
+        self.query_one("#backup-media-previous", Button).disabled = (
+            details is None or not details.offset
+        )
+        self.query_one("#backup-media-next", Button).disabled = (
+            details is None or not details.has_more
+        )
+        if details is not None:
+            for asset in details.assets:
+                await listing.mount(
+                    Static(
+                        f"{asset.asset_id}\nCatalog state: {asset.state} · {asset.size} recorded bytes · {asset.media_type}\n{asset.reference_count} references · {asset.hold_count} recovery holds",
+                        markup=False,
+                    ),
+                    Button(
+                        "Review asset details",
+                        name=asset.asset_id,
+                        classes="backup-review-media",
+                    ),
+                )
+
+    @on(Button.Pressed, "#backup-media-previous")
+    @on(Button.Pressed, "#backup-media-next")
+    def _media_page(self, event):
+        self._media_offset = max(
+            0,
+            self._media_offset
+            + (20 if event.button.id == "backup-media-next" else -20),
+        )
+        self._revision += 1
+        self._clear_media_review()
+        self._load_media(self.app, self._revision, self._media_offset)
+
+    @on(Button.Pressed, ".backup-review-media")
+    def _review_media(self, event):
+        self._revision += 1
+        self._clear_media_review()
+        self._load_media_review(self.app, self._revision, event.button.name)
+
+    @work(exclusive=True, thread=True, group="backup-media-review")
+    def _load_media_review(self, app, revision, asset_id):
+        try:
+            review = self.service.review_recovered_media(asset_id)
+        except (OSError, ValueError, RuntimeError, KeyError):
+            review = None
+        self._deliver(app, self._media_review_ready, revision, review)
+
+    def _media_review_ready(self, revision, review):
+        if not self.is_mounted or self._mode != "media" or revision != self._revision:
+            return
+        self._media_review = review
+        text = "Asset review unavailable; refresh current-profile details."
+        if review is not None:
+            owner = review.asset
+            asset = owner.asset
+            refs = "\n".join(
+                f"Profile: {profile} · message: {message} · slug: {slug} · type: {kind}"
+                for profile, message, slug, kind in owner.references
+            )
+            holds = "\n".join(owner.holds)
+            text = (
+                f"Current profile: {review.source.config}\nAsset: {asset.asset_id}\nCatalog state: {asset.state} · {asset.size} recorded bytes\n"
+                "Deletion removes the payload and keeps deleted-reference history; all listed aliases are affected. Recovery holds block deletion. Orphan cleanup requires zero references and holds, including historical aliases.\n"
+                "Affected references (including historical/other profiles):\n"
+                + (refs or "None")
+                + "\nRecovery holds:\n"
+                + (holds or "None")
+            )
+        self.query_one("#backup-media-review", Static).update(text)
+        self._sync_media_actions()
+
+    def _clear_media_review(self):
+        self._media_review = None
+        self.query_one("#backup-media-confirm", Checkbox).value = False
+        self.query_one("#backup-media-review", Static).update("")
+        self._sync_media_actions()
+
+    @on(Button.Pressed, "#backup-media-cancel")
+    def _cancel_media_review(self):
+        self._revision += 1
+        self._clear_media_review()
+
+    @on(Checkbox.Changed, "#backup-media-confirm")
+    def _sync_media_actions(self):
+        review = self._media_review
+        ready = review is not None and review.asset.asset.state == "ready"
+        permitted = ready and not review.asset.holds
+        confirmed = self.query_one("#backup-media-confirm", Checkbox).value
+        for identifier, eligible in (
+            ("backup-media-delete", permitted),
+            ("backup-media-cleanup", ready and review.asset.asset.orphan_eligible),
+        ):
+            button = self.query_one("#" + identifier, Button)
+            button.display = bool(eligible)
+            button.disabled = not (eligible and confirmed)
+
+    @on(Button.Pressed, "#backup-media-delete")
+    @on(Button.Pressed, "#backup-media-cleanup")
+    def _mutate_media(self, event):
+        if (
+            self._media_review is None
+            or not self.query_one("#backup-media-confirm", Checkbox).value
+        ):
+            return
+        try:
+            self.service.start_recovered_media_action(
+                self._media_review,
+                action="delete"
+                if event.button.id == "backup-media-delete"
+                else "cleanup",
+                user_selected=True,
+            )
+        except (ValueError, RuntimeError):
+            self.query_one("#backup-message", Static).update(
+                "Asset action unavailable; review current details again."
+            )
+        self._revision += 1
+        self._clear_media_review()
+        self._refresh_status()
 
     @work(exclusive=True, thread=True, group="backup-list")
     def _refresh_list(self, app, revision, mode):
@@ -431,6 +605,7 @@ class BackupRestoreScreen(Screen):
                 f"Current profile\n{current['config']}{generation}\n{setup}",
                 id="backup-current-requirements", markup=False,
             ))
+            await listing.mount(Button("Recovered media details", id="backup-open-media"))
         if not entries and not pending and current is None:
             await listing.mount(Static("No local entries.", markup=False))
         for entry in entries:
@@ -742,6 +917,7 @@ class BackupRestoreScreen(Screen):
                 "backup-safety-password",
                 "backup-safety-confirm",
                 "backup-later-confirm",
+                "backup-media-confirm",
             }:
                 return
             self._invalidate()
@@ -1021,6 +1197,9 @@ class BackupRestoreScreen(Screen):
             self._last_terminal = current["operation_id"]
             if self._mode in ("copies", "profiles"):
                 self._refresh_list(self.app, self._revision, self._mode)
+            elif self._mode == "media" and current["kind"] == "recovered_media":
+                self._revision += 1
+                self._load_media(self.app, self._revision, self._media_offset)
 
     async def _show_credential_review(self, codes):
         self._invalidate()

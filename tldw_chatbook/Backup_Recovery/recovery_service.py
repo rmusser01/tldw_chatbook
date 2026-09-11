@@ -4,6 +4,8 @@ import os
 import shutil
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from threading import Event, RLock
 from types import MappingProxyType
@@ -16,6 +18,59 @@ from .recovery_copies import hold_recovery_copy, list_recovery_copies
 from .service_storage import default_control_root, ensure_storage
 
 __all__ = ["RecoveryService", "default_control_root", "issue_code"]
+
+
+@dataclass(frozen=True)
+class _RecoveredProfileSource:
+    config: Path
+    digest: str
+    witnesses: bytes
+    root: Path
+
+
+@dataclass(frozen=True)
+class _RecoveredProfileReview:
+    source: _RecoveredProfileSource
+    asset: object
+
+
+def _recovered_profile_source(selected, lease):
+    """Bind only the current selector's inert config and native generation."""
+    import hashlib
+    import json
+    import tomllib
+
+    from . import bootstrap
+    from .generation_witnesses import _witnesses
+    from .profile_paths import user_data_dir
+    from .storage_admission import _read_recovery_file
+
+    if bootstrap.effective_config_path() != selected:
+        raise ValueError("recovered_review_changed")
+    before = _witnesses(selected, lease)
+    raw = _read_recovery_file("config", selected, max_bytes=16 * 1024**2)
+    root = user_data_dir(tomllib.loads(raw.decode("utf-8"))) / "recovered_media"
+    if before != _witnesses(selected, lease):
+        raise ValueError("recovered_review_changed")
+    return _RecoveredProfileSource(
+        selected,
+        hashlib.sha256(raw).hexdigest(),
+        json.dumps(before, sort_keys=True, separators=(",", ":")).encode(),
+        root,
+    )
+
+
+@contextmanager
+def _selected_recovered_media(*, recheck_after=True):
+    from . import bootstrap
+    from .storage_admission import acquire_storage
+
+    selected = bootstrap.effective_config_path()
+    with acquire_storage(selected) as lease:
+        source = _recovered_profile_source(selected, lease)
+        yield source
+        if recheck_after and source != _recovered_profile_source(selected, lease):
+            raise ValueError("recovered_review_changed")
 
 
 def issue_code(error: Exception, *, kind: str = "") -> str:
@@ -62,6 +117,8 @@ def issue_code(error: Exception, *, kind: str = "") -> str:
         "preview_required",
         "archive_plan_mismatch",
         "recovery_operation_running",
+        "recovered_review_changed",
+        "recovered_asset_held",
     }
     if (
         isinstance(error, ValueError)
@@ -625,6 +682,59 @@ class RecoveryService:
 
     def recovery_copies(self):
         return list_recovery_copies(self.control_root)
+
+    def recovered_media_details(self, *, limit=20, offset=0):
+        """Read current-profile catalog facts without starting the media owner."""
+        from .recovered_media import list_recovered_media
+
+        with _selected_recovered_media() as source:
+            details = list_recovered_media(source.root, limit=limit, offset=offset)
+            return MappingProxyType(
+                {
+                    "config": str(source.config),
+                    "details": details,
+                    "status": "absent" if details is None else "available",
+                }
+            )
+
+    def review_recovered_media(self, asset_id):
+        from .recovered_media import review_recovered_asset
+
+        with _selected_recovered_media() as source:
+            return _RecoveredProfileReview(
+                source,
+                review_recovered_asset(source.root, asset_id),
+            )
+
+    def start_recovered_media_action(self, review, *, action, user_selected):
+        """Retain accepted checked owner work even when its view navigates away."""
+        if type(review) is not _RecoveredProfileReview or user_selected is not True:
+            raise ValueError("preview_required")
+        if action not in {"delete", "cleanup"}:
+            raise ValueError("recovery_action_unavailable")
+
+        def mutate(operation, cancel):
+            from .recovered_media import cleanup_reviewed_asset, delete_reviewed_asset
+
+            # Once the checked owner commits, later selector edits cannot undo
+            # that result. The accepted source lease remains held throughout.
+            with _selected_recovered_media(recheck_after=False) as source:
+                if source != review.source or review.asset.root != source.root:
+                    raise ValueError("recovered_review_changed")
+                archive_reader._check(cancel)
+                self._update(operation, phase="updating_recovered_media")
+                if action == "delete":
+                    delete_reviewed_asset(review.asset)
+                    changed = True
+                else:
+                    changed = cleanup_reviewed_asset(review.asset)
+            self._update(
+                operation,
+                phase="recovered_media_updated",
+                result={"asset_id": review.asset.asset.asset_id, "changed": changed},
+            )
+
+        return self._start("recovered_media", mutate)
 
     def delete_copy(self, operation_id, *, user_selected):
         from .recovery_copies import delete_recovery_copy
