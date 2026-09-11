@@ -39,7 +39,7 @@ navigation buttons — fix it and press Next again, or go Back.
 | Model | Default chat model | Settings ▸ Providers & Models |
 | RAG | Embedding model (needs the `embeddings_rag` extras) | Settings ▸ RAG |
 | Speech (full track) | Voice-input transcription language and precision | `[transcription]` in config.toml — no Settings category owns it yet |
-| Tools | Built-in tool gates (all off by default) | MCP ▸ Servers ▸ the built-in row ▸ **Tool gates**, or `[tools]` in config.toml — no Settings category owns them |
+| Tools | Built-in tool gates (all off by default) | MCP ▸ Servers ▸ built-in row ▸ **Tool gates**, or `[tools]` in config.toml — no Settings category owns them |
 | Notes sync | Folder + on/off toggle | [Library ▸ Notes](library/notes.md), the toolbar's Sync panel — not in Settings |
 | Appearance | Theme and splash screen card | Settings ▸ Appearance |
 | Voice | Spoken replies (sample + "Test and Hear"; endpoint/model under Advanced) | Settings ▸ Speech & TTS |

@@ -534,24 +534,25 @@ approval does.
 
 ### Session approvals
 
-**Approve for session** lasts until Chatbook exits or you revoke it — it is
-never written to disk, and it is not a permission change (the tool's
-Allow/Ask/Off setting is untouched). A tool holding one gets a `(session)`
-suffix on its State cell in the Permissions matrix, and selecting any tool
-row lists every live grant in the inspector with a **Revoke** button next to
-each. Revoking takes effect immediately: the next call to that tool asks
-again.
+The approval card's **This session** decision ("Every call to this tool until
+Chatbook exits") lasts until Chatbook exits or you revoke it — it is never
+written to disk, and it is not a permission change (the tool's Allow/Ask/Off
+setting is untouched). A tool holding one gets a `(session)` suffix on its
+State cell in the Permissions matrix, and selecting any tool row lists every
+live grant in the inspector with a **Revoke** button next to each. Revoking
+takes effect immediately: the next call to that tool asks again.
 
 ### Exact-input allow rules
 
-Alongside **Approve once** / **Approve for session** / **Always allow** /
-**Deny**, the approval card can offer a fifth choice: **Always allow this
-exact input**. Unlike **Always allow** — which sets the whole tool to
-Allow — this remembers only the *exact arguments shown on that card*: the
-same tool called again with different arguments still asks. It's scoped
-per tool, tied to that tool's current definition the same way **Always
-allow** is (a server that changes the tool's definition invalidates the
-rule, same rug-pull guard).
+Alongside **Once** / **This session** / **Always** / **Deny**, an MCP tool's
+approval card offers a fifth choice: **Always · these args**. Unlike
+**Always** — which sets the whole tool to Allow — this remembers only the
+*exact arguments shown on that card*: the same tool called again with
+different arguments still asks. It's scoped per tool, tied to that tool's
+current definition the same way **Always** is (a server that changes the
+tool's definition invalidates the rule, same rug-pull guard). See [the
+approval card](console/agent-runs-and-tools.md#approvals--tools-ask-before-they-run)
+for all five decisions and which tools offer which.
 
 A tool that carries one or more of these rules gets a `≡` marker on its
 State cell in the Permissions matrix (see the legend line under the

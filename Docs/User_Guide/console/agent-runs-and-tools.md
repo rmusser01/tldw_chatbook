@@ -251,7 +251,7 @@ The five decisions, with the scope line each one shows:
   built-in never does that from this card. The model's raw shell capability
   is its own shape again — **Run once**, **All shell · session**, **Deny** —
   and it starts on **Deny** rather than on the usual Once.
-- Bulk controls: **Approve all** sets every row to Approve once, **Submit**
+- Bulk controls: **Approve all** sets every row to **Once**, **Submit**
   applies each row's selected decision and resumes the run, **Deny all** sets
   every row to Deny.
 - When exactly one tool call is pending, the row also gets fast **Approve
@@ -1434,12 +1434,12 @@ Once a run's cumulative returned output passes an aggregate budget
 (256 KiB), results above a 4 KiB floor spill even under the ceiling.
 Standalone providers without a scratch root keep today's truncation exactly.
 
-For ordinary MCP/catalog tools, the approval card offers **Always allow
-this exact input** alongside the existing choices: it saves an allow scoped
-to exactly the arguments displayed on the card — the same tool called with
-different arguments still asks. Argument-scoped rules obey the same
-definition-hash rug-pull guard as whole-tool allows (a changed tool
-definition silently invalidates them), never quiet a high-risk-tagged tool,
+For ordinary MCP/catalog tools, the approval card offers **Always · these
+args** alongside the other decisions: it saves an allow scoped to exactly the
+arguments displayed on the card — the same tool called with different
+arguments still asks. Argument-scoped rules obey the same definition-hash
+rug-pull guard as whole-tool allows (a changed tool definition silently
+invalidates them), never quiet a high-risk-tagged tool,
 and can be extended by hand in `mcp_permissions.json` with
 `{"field": …, "pattern": …}` glob rules. Raw shell does not offer this
 option.
@@ -2055,7 +2055,7 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
 
 —
 *Verified against dev @ ff435772c — 2026-07-31; activity-line states
-re-verified live 2026-09-10 (task-32275, `Connecting tools…`). Named agents section added
+re-verified live 2026-09-10 (task-32344, `Connecting tools…`). Named agents section added
 against dev @ 3dd3e7431 — 2026-08-09 (fleet PR-1: driven live — Console
 delegated to a real named definition, the transcript showed the
 `[researcher]` sub-agent marker, and the reply visibly honored the
