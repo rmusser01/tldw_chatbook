@@ -29,7 +29,7 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Moving focus into the note Title by keyboard places the caret without selecting the existing title
-- [x] #2 A title replaced in one keystroke is recoverable: either undo inside the field restores it, or the change is not autosaved until the field is left
+- [x] #2 AMENDED (fix round 1, review F7 — originally "a title replaced in one keystroke is recoverable: either undo inside the field restores it, or the change is not autosaved until the field is left"): no single keystroke can replace the title in the first place. Both original branches were unavailable without new machinery this task does not ask for — Textual 8.2.8's `Input` has no undo (no `action_undo`, no `ctrl+z` binding), and deferring the autosave until the field is left would change the autosave contract for every note field. AC#1's fix removes the loss this criterion guards against rather than adding recovery after it.
 - [x] #3 Covered by a test: Shift+Tab into the Title followed by one character leaves the title intact apart from that character
 <!-- AC:END -->
 
