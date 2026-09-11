@@ -1278,6 +1278,23 @@ class MCPInspector(Vertical):
         # metadata-only preview the service issued for the visible panel.
         self._test_preview: ToolTestAdmissionPreview | None = None
 
+    def apply_compact_layout(self, compact: bool) -> None:
+        """ADR-148 Wave E: react to the workbench's compact-mode toggle.
+
+        Compact: collapse an OPEN Advanced collapsible -- its JSON dumps
+        are the least band-friendly content at ~100 cols -- WITHOUT
+        touching the persisted `advanced_visible` preference (widget
+        state only; leaving compact never re-expands it for you).
+        """
+        if not compact:
+            return
+        try:
+            collapsible = self.query_one("#mcp-adv-collapsible", Collapsible)
+        except NoMatches:
+            return
+        if not collapsible.collapsed:
+            collapsible.collapsed = True
+
     def _advanced_object_label(self) -> str:
         """Compute the "Showing: <object>" text for `#mcp-adv-object`.
 

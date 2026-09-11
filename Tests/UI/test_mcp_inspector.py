@@ -6218,3 +6218,33 @@ def test_render_section_payload_renders_error_payloads_as_one_line_status():
         "overview", {"source": "local", "error": ""}
     )
     assert "{" in blank_error
+
+
+# -- Wave E (2026-09-11 MCP Hub UX program, ADR-148): compact band ---------
+
+
+@pytest.mark.asyncio
+async def test_apply_compact_layout_collapses_open_advanced_without_persisting(
+    monkeypatch,
+):
+    """ADR-148 Wave E: a compact terminal collapses an OPEN Advanced
+    collapsible (its JSON dumps are the least band-friendly content) but
+    never touches the persisted `advanced_visible` preference -- leaving
+    compact never re-expands it for you."""
+    monkeypatch.setattr(
+        mcp_inspector_module,
+        "get_cli_setting",
+        _fake_get_cli_setting(advanced_open=True, advanced_visible=True),
+    )
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        inspector = app.query_one(MCPInspector)
+        collapsible = app.query_one("#mcp-adv-collapsible", Collapsible)
+        assert not collapsible.collapsed  # fixture: open and composed
+        persisted = inspector._advanced_visible
+
+        inspector.apply_compact_layout(True)
+        await pilot.pause()
+        assert app.query_one("#mcp-adv-collapsible", Collapsible).collapsed
+        assert inspector._advanced_visible is persisted

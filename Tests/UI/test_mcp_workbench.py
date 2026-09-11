@@ -11191,3 +11191,41 @@ async def test_compact_layout_stacks_inspector_below_as_bounded_band():
         assert inspector.region.width >= main_row.region.width - 1
         # The rail+canvas row keeps (nearly) the full width.
         assert main_row.region.width >= 90
+
+
+@pytest.mark.asyncio
+async def test_compact_band_renders_select_prompts_without_mid_word_breaks():
+    """The screenshot evidence for ADR-148 showed the Section select
+    clipped to 'Overvi|ew' at 100 cols. At the same size with the stacked
+    band, the full prompt renders on one line."""
+    import tldw_chatbook.UI.MCP_Modules.mcp_inspector as inspector_module
+    from textual.widgets import Collapsible
+
+    original = inspector_module.get_cli_setting
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        if key == "advanced_visible":
+            return True
+        return original(section, key, default)
+
+    inspector_module.get_cli_setting = fake_get_cli_setting
+    try:
+        app = WorkbenchApp()
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            # Wave E auto-collapse fired on the compact resize -- the user
+            # can still expand it, and WHEN THEY DO the old mid-word clip
+            # ("Overvi|ew") must be gone: the band is full-width now.
+            collapsible = app.query_one("#mcp-adv-collapsible", Collapsible)
+            assert collapsible.collapsed  # auto-collapsed at 100 cols
+            collapsible.collapsed = False
+            await pilot.pause()
+            section_select = app.query_one("#mcp-adv-section-select", Select)
+            assert section_select.region.width >= 9
+            rendered = "\n".join(
+                "".join(segment.text for segment in strip)
+                for strip in app.screen._compositor.render_strips()
+            )
+            assert "Overview" in rendered
+    finally:
+        inspector_module.get_cli_setting = original
