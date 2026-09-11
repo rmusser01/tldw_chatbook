@@ -1828,12 +1828,18 @@ with stray left-edge border fragments), and padding 0 1 so the full
    container has been `display = False` unconditionally since the utilities
    moved into Info -- so the muting was being spent on a line nobody could
    see while Info's `#library-note-context-meta`, the one that renders, had
-   no colour rule at all. The dead Static is gone; the rule moves to the
-   line it was always describing. */
+   no colour rule at all. The dead Static is gone; the COLOUR moves to the
+   line it was always describing.
+
+   Colour only. Review F2: carrying the old block's `width: 100%` and
+   `margin: 0 0 1 0` across with it changed Info's wide layout -- measured
+   at 170x48, the backlinks title and the "Reuse & Export"/"Danger" headers
+   each moved down a row (20 -> 21, 21 -> 22, 25 -> 26) because
+   `#library-note-context-meta` had never had a margin of its own. No
+   compact test could see it: the compact sheet already pins
+   `margin: 0` there with a more specific selector. */
 #library-note-context-meta {
-    width: 100%;
     color: $ds-text-muted;
-    margin: 0 0 1 0;
 }
 
 /* task-32143: the editor chrome strip -- one row at the bottom of the body

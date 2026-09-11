@@ -14,6 +14,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.events import Resize
 from textual.message_pump import NoActiveAppError
 from textual.widgets import Button, Input, Markdown, Static, TextArea
@@ -2758,30 +2759,55 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
     # --- editor chrome strip (task-32143) ---------------------------------
 
-    def update_note_chrome_facts(self, word_count: int | None = None) -> None:
+    def update_note_chrome_facts(
+        self,
+        word_count: int | None = None,
+        body: TextArea | None = None,
+    ) -> None:
         """Repaint the chrome strip's facts cell from the live editor.
 
-        No count of its own: the controller already scans the body for the
-        meta line on every change, so the number arrives with the
-        presentation state and the caret comes straight off the mounted
-        ``TextArea``. Nothing here reads the database.
+        Counts nothing: the controller already scans the body for the meta
+        line on every change, so the number arrives with the presentation
+        state, and the caret comes off the ``TextArea``. Nothing here reads
+        the database.
+
+        It is not free, though, and this docstring used to imply it was
+        (review F3). The cost was never the format -- it was the lookups,
+        and specifically ``if not self.query("#id")``: truth-testing a
+        ``DOMQuery`` walks the whole subtree, where ``query_one`` on an id
+        does not. Measured per call on a 35,310-byte note in the real
+        editor route: the old four-lookup sequence **263.6 us**, the two
+        lookups that replace it **0.7 us**, and the whole-body
+        ``len(text.split())`` the design ruled out **80.4 us**. So the
+        repaint had been costing ~3x the banned scan, and now costs ~1% of
+        it. The caret handler hands in the ``TextArea`` its own event
+        already carries; the rest share one ``try``. No debounce needed at
+        0.7 us -- add one only if this ever grows a real scan back.
 
         Args:
             word_count: The controller's count. Omitted by the caret and
                 resize handlers, which repaint from the last one fed in.
+            body: The editor body, when the caller already holds it (the
+                ``SelectionChanged`` event carries it). Looked up otherwise.
         """
         if word_count is not None:
             self._note_chrome_word_count = word_count
-        if not self.query("#library-note-chrome-facts"):
+        try:
+            facts = self.query_one("#library-note-chrome-facts", Static)
+            editing = bool(self.query_one("#library-note-editor-region").display)
+            if body is None:
+                body = self.query_one("#library-note-body", TextArea)
+        except NoMatches:
+            # Any mode but the editor, and the editor before it composes.
             return
-        facts = self.query_one("#library-note-chrome-facts", Static)
-        body = self.query_one("#library-note-body", TextArea)
-        editing = bool(self.query_one("#library-note-editor-region").display)
         try:
             wide = self.app.size.width >= NOTE_CHROME_FACTS_MIN_WIDTH
         except NoActiveAppError:
-            # Same answer as ``_authority_prefix``: a widget with no live
-            # app keeps the fuller copy.
+            # Same answer as ``_authority_prefix`` (:769), which reads this
+            # same ``self.app.size.width`` under its own guard and documents
+            # the choice as "a widget with no live app keeps the prefix:
+            # that is the answer that loses nothing". It catches ``Exception``
+            # where this catches the one error ``self.app`` actually raises.
             wide = True
         # Preview and Info have no caret to report, and a narrow terminal
         # has no room -- the save state owns the row alone in both cases.
@@ -2796,11 +2822,17 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
     @on(TextArea.SelectionChanged, "#library-note-body")
     def _note_chrome_follows_caret(self, event: TextArea.SelectionChanged) -> None:
         """Follow the caret: arrow keys never reach the presentation state."""
-        self.update_note_chrome_facts()
+        self.update_note_chrome_facts(body=event.text_area)
 
     @on(Resize)
     def _note_chrome_follows_width(self, event: Resize) -> None:
-        """Re-decide the 80-column gate; the compact flag only flips at 120."""
+        """Re-decide the 80-column gate; the compact flag only flips at 120.
+
+        Load-bearing for any resize that does not also cross 120 -- a
+        breakpoint crossing re-runs ``apply_session_state``, which decides
+        the gate anyway. Pinned by the 100 -> 79 -> 100 walk in
+        ``test_the_strip_is_hidden_off_the_editor_and_below_eighty_columns``.
+        """
         self.update_note_chrome_facts()
 
     def _compose_create(self) -> ComposeResult:

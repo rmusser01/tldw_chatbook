@@ -139,6 +139,48 @@ async def test_the_strip_reports_the_caret_line_after_a_multi_line_move():
         )
 
 
+# --- the meta line the strip replaced (AC#2), and what it must not move ----
+
+
+@pytest.mark.asyncio
+async def test_info_meta_line_is_muted_without_pushing_the_rows_below_it():
+    """The dead `#library-note-meta` took its colour to Info and nothing else.
+
+    Review F2: the first move carried the old block's `width: 100%` and
+    `margin: 0 0 1 0` across too, and that margin pushed Info's backlinks
+    title and its "Reuse & Export"/"Danger" headers down a row at wide
+    sizes -- invisible to every compact test, because the compact sheet
+    pins `margin: 0` there with a more specific selector. Wide only, since
+    that is the only stage where the margin applied.
+    """
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_note(screen, pilot)
+        screen.query_one("#library-note-context", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one("#library-note-context-region").display,
+            message="Info never opened.",
+        )
+        await pilot.pause()
+
+        # The dead line is gone and Info's carries the sentence (AC#2).
+        assert not screen.query("#library-note-meta")
+        meta = screen.query_one("#library-note-context-meta", Static)
+        assert "v" in str(meta.renderable)
+
+        # ...occupying exactly its own row: the next thing in the pane starts
+        # immediately under it, with no margin in between. (The muting itself
+        # is pinned by test_library_note_css_bounds_editor_body_and_mutes_meta.)
+        assert meta.region.height == 1
+        title = screen.query_one("#library-note-context-backlinks-title", Static)
+        assert title.region.y == meta.region.y + 1, (
+            "Info's meta line grew a margin and pushed the rows below it down"
+        )
+
+
 # --- the surfaces that have no caret, and the narrow terminal --------------
 
 
@@ -167,7 +209,21 @@ async def test_the_strip_is_hidden_off_the_editor_and_below_eighty_columns():
             message="The strip did not come back with the editor.",
         )
 
-        await pilot.resize_terminal(79, 24)
+        # Cross ONLY the strip's own 80-column gate. A resize that also
+        # crosses the 120-column compact breakpoint fires a full
+        # ``apply_session_state``, which re-decides the gate for free and
+        # would leave ``_note_chrome_follows_width`` unpinned: with that
+        # handler neutered, a 170 -> 79 step still passes (review F1).
+        # 100 -> 79 -> 100 stays below 120 throughout, so the handler is the
+        # only thing that can answer.
+        await pilot.resize_terminal(100, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one(FACTS, Static).display is True,
+            message="The strip was not showing at 100 columns.",
+        )
+
+        await pilot.resize_terminal(79, 30)
         await _wait_for_condition(
             pilot,
             lambda: screen.query_one(FACTS, Static).display is False,
@@ -175,7 +231,7 @@ async def test_the_strip_is_hidden_off_the_editor_and_below_eighty_columns():
         )
         assert screen.query_one("#library-note-status", Static).display is True
 
-        await pilot.resize_terminal(*LIBRARY_TEST_SIZE)
+        await pilot.resize_terminal(100, 30)
         await _wait_for_condition(
             pilot,
             lambda: screen.query_one(FACTS, Static).display is True,
