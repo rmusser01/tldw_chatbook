@@ -63,10 +63,16 @@ assembling the turn's tools and your profile. `⚙ read_file · 4s` names the
 tool that is running and how long it has been running, `Thinking… · 6s`
 means the tool finished and the model is composing the next round, and
 `Generating…` is the wait for the model's first response of the turn. That
-setup step is
-capped at ten seconds: if something it needs — an OS keychain prompt, for
-instance — does not answer in time, the send goes ahead without profile
-tools rather than waiting. The elapsed figure
+setup step is capped at ten seconds: if something it needs — an OS
+keychain prompt, for instance — does not answer in time, the send goes
+ahead without profile tools rather than waiting. Once an approval or
+confirm card is up and waiting on you, the line reads `Waiting for your
+approval · 12s` instead of `Thinking…` — a decision only you can make
+outranks whatever the model's last step happened to be — and the same
+applies to the "Run:" status chip above the composer and the Inspector's
+`Live work`/`Run` rows, which read "Waiting for your approval"/"Waiting
+for approval" rather than the generic run-in-progress copy while a card is
+pending. The elapsed figure
 advances while you watch. The line is live-only — it vanishes the moment
 the reply's own text arrives, and a conversation you reopen later shows the
 completed `Tool` rows below instead. During a fleet turn, while the primary
@@ -350,6 +356,11 @@ Permissions**; **Always · these args** stores a narrower rule instead — the
 same tool with different arguments still asks — and is removed from the
 tool's row in [MCP ▸ Tools](../mcp.md#exact-input-allow-rules). A **This
 session** grant is listed there too, with a **Revoke** beside it.
+
+**Always · these args** is narrower: it remembers only the exact
+arguments shown on that card, not the whole tool — the same tool called
+again with different arguments still asks. See [Exact-input allow
+rules](../mcp.md#exact-input-allow-rules) for where to review or remove one.
 
 With sub-agents running in parallel (see below), more than one approval card
 can be pending at once — cards aren't merged across sub-agents: each is
@@ -1580,8 +1591,8 @@ an equivalent boundary itself; review its arguments and permission policy.
 Console's standard web tools are `web_search` (find links), `web_fetch`
 (extract one URL), and `web_crawl` (bounded same-host crawl). They are local
 agent tools, not tools supplied by an external MCP server. They are registered
-by default. Configure their master switch in **MCP → Tools → Local workspace,
-web, and Watchlists tools**, then choose Allow, Ask, or Off for each tool in MCP
+by default. Configure their registration control in **MCP → Tools → Local
+workspace, web, and Watchlists tools**, then choose Allow, Ask, or Off for each tool in MCP
 Permissions. Console file authority comes from the Chat's private scratch plus
 explicit Workspace bindings, not a global confinement-directory field.
 `[mcp] expose_local_tools` is only for external MCP clients and does not enable
@@ -1945,7 +1956,13 @@ The other run-budget ceilings are unchanged.
 3. **Deny a risky tool call.** On the card, check the row's badges (e.g.
    "(high risk)"), set its select to **Deny** (or click the fast **Deny**
    button when it's the only row), then **Submit** if needed. The agent
-   continues without that tool result.
+   continues without that tool result. The transcript marker for that call
+   then reads `· denied by you` — a call refused by a permission set to Off
+   reads `· blocked (Off)` and one stopped by the kill switch reads
+   `· blocked (kill switch)`, so you can always tell your own decision from
+   a policy. Expanding the marker shows the refusal under **Sent to the
+   model**: that text is the instruction the agent received, not output from
+   the tool.
 4. **Check what a finished background run did.** Open its tab, expand the
    **Agent** rail section, skim the step and sub-agent lines, then click
    **View full log** for the untruncated record.
@@ -2396,3 +2413,12 @@ only built-ins are capped at the session; the path warning now quotes
 `blocked (kill switch)` transcript vocabulary with its **Sent to the model**
 disclosure. The approval-card SVG was regenerated from that card
 (`scripts/regen_approval_card_svg.py`).*
+
+*"Always · these args" named in the decision-option list, and its own short
+paragraph added, for TASK-32281 — 2026-09-10. Docs-only pass against code
+and tests, not a live screen: the option previously persisted an
+argument-scoped rule with no UI to list or remove it, and the Virtual CLI
+provider's verdict path silently dropped or denied it; both gaps are now
+closed (see [Exact-input allow rules](../mcp.md#exact-input-allow-rules) for
+the review/remove surface). The rest of this page is unchanged from the
+prior stamp.*

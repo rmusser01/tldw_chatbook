@@ -1624,7 +1624,15 @@ class MCPWorkbench(Container):
             workspace_root=workspace_root,
             visible=self._source == "local",
         )
-        await canvas.update_tools(tools, empty_diagnosis=diagnosis, states=states)
+        await canvas.update_tools(
+            tools,
+            empty_diagnosis=diagnosis,
+            states=states,
+            # task-32283: the rail's selected server leads the table, so a
+            # server whose label sorts late (`tldw_chatbook`) is never left
+            # below the fold behind every other server's rows.
+            selected_server_key=self._selected_server_key,
+        )
 
     @staticmethod
     def _local_tools_config_values() -> tuple[bool, str]:
@@ -2398,14 +2406,26 @@ class MCPWorkbench(Container):
                 cycle_current=server_cycle_current,
             )
         ]
+        session_approved = set(
+            self._session_approvals_for_row(self._tool_policy_profile_id)
+        )
         for row in rows_in:
+            builtin_state_label = format_tool_state_label(row.effective)
+            # task-32281 AC#2: same ≡ marker as the MCP matrix rows above.
+            if self._tool_has_arg_rules(
+                servers_payload, BUILTIN_TOOL_SERVER_KEY, row.name
+            ):
+                builtin_state_label = f"{builtin_state_label} ≡"
+            # task-32291 AC#1: same ` (session)` suffix as the MCP rows.
+            if (BUILTIN_TOOL_SERVER_KEY, row.name) in session_approved:
+                builtin_state_label = f"{builtin_state_label} (session)"
             matrix_rows.append(
                 PermRow(
                     kind="tool",
                     server_key=BUILTIN_TOOL_SERVER_KEY,
                     server_label=_BUILTIN_SECTION_LABEL,
                     tool_name=row.name,
-                    state_label=format_tool_state_label(row.effective),
+                    state_label=builtin_state_label,
                     tags_label="orphaned" if row.orphaned else "—",
                     cycle_current=self._raw_tool_state(
                         servers_payload, BUILTIN_TOOL_SERVER_KEY, row.name
@@ -2733,6 +2753,47 @@ class MCPWorkbench(Container):
         state = tool_entry.get("state")
         return state if state in STORE_STATES else None
 
+    @staticmethod
+    def _tool_has_arg_rules(
+        servers_payload: Mapping[str, Any], server_key: str, tool_name: str
+    ) -> bool:
+        """Whether the STORE payload carries any EXACT-INPUT allow rule for
+        one tool (task-32281) -- same raw-payload read shape as
+        `_raw_tool_state()` immediately above, checked alongside it so the
+        matrix's ``≡`` marker never needs its own store round-trip
+        (`servers_payload` is the caller's already-loaded profile slice).
+
+        Review round 1 (Minor 1): counts only ``args_json``-shaped rules --
+        the same filter `MCPPermissionStore.list_tool_arg_rules()` applies
+        (a hand-written ``{"field": ..., "pattern": ...}`` glob rule is
+        never returned there either). Picked over the alternative (listing
+        glob rules read-only in the inspector too) as the cheaper fix: it
+        keeps the marker and the list it's advertising in agreement without
+        adding a second rendering path for a rule shape this UI has never
+        offered a way to CREATE (only `add_tool_arg_rule()`'s exact-input
+        writer feeds this surface; glob rules are hand-edited-file-only).
+        """
+        server_entry = servers_payload.get(server_key)
+        if not isinstance(server_entry, Mapping):
+            return False
+        tools_entry = server_entry.get("tools")
+        if not isinstance(tools_entry, Mapping):
+            return False
+        tool_entry = tools_entry.get(tool_name)
+        if not isinstance(tool_entry, Mapping):
+            return False
+        rules = tool_entry.get("arg_rules")
+        # `servers_payload` here may be a FROZEN snapshot (`_tool_policy_
+        # inventory()`'s `read_profile_inventory_snapshot()`/`read_
+        # snapshot_strict()` path, via `permission_store._freeze_snapshot()`,
+        # which turns every list into a tuple) -- accept both.
+        if not isinstance(rules, (list, tuple)):
+            return False
+        return any(
+            isinstance(rule, Mapping) and isinstance(rule.get("args_json"), str) and rule.get("args_json")
+            for rule in rules
+        )
+
     def _build_permission_rows(
         self,
         tools: list[HubTool],
@@ -2780,6 +2841,9 @@ class MCPWorkbench(Container):
             )
         ]
         cascade_map: dict[tuple[str, str], tuple[str | None, str | None, str]] = {}
+        session_approved = set(
+            self._session_approvals_for_row(self._tool_policy_profile_id)
+        )
 
         tools_by_server: dict[str, list[HubTool]] = {}
         labels_by_key: dict[str, str] = {}
@@ -2787,8 +2851,13 @@ class MCPWorkbench(Container):
             tools_by_server.setdefault(tool.server_key, []).append(tool)
             labels_by_key.setdefault(tool.server_key, tool.server_label)
 
+        # task-32283: the rail-selected server's group leads the matrix,
+        # then the existing `(server_label, key)` order. With no selection
+        # the first term is constant and the order is exactly what it was.
+        selected_key = self._selected_server_key
         for server_key in sorted(
-            tools_by_server, key=lambda key: (labels_by_key[key], key)
+            tools_by_server,
+            key=lambda key: (key != selected_key, labels_by_key[key], key),
         ):
             server_label = labels_by_key[server_key]
             server_entry = servers_payload.get(server_key)
@@ -2823,13 +2892,29 @@ class MCPWorkbench(Container):
                 tool_cycle_current = self._raw_tool_state(
                     servers_payload, tool.server_key, tool.name
                 )
+                tool_state_label = self._tool_state_label(tool_effective)
+                # task-32281 AC#2: the marker rides the SAME State cell
+                # `_tool_state_label()` formats -- appended here rather than
+                # inside that shared helper, which `test_tool_state_label_
+                # marker_precedence` pins to one `EffectiveToolState` arg.
+                if self._tool_has_arg_rules(
+                    servers_payload, tool.server_key, tool.name
+                ):
+                    tool_state_label = f"{tool_state_label} ≡"
+                # task-32291 AC#1: a live session grant is a WORD, not a
+                # glyph -- it names a thing that expires, which no marker
+                # key entry could convey on its own. Appended last so the
+                # leading state word (`_perm_row_kind()`'s read) and the
+                # rule markers are both untouched.
+                if (tool.server_key, tool.name) in session_approved:
+                    tool_state_label = f"{tool_state_label} (session)"
                 rows.append(
                     PermRow(
                         kind="tool",
                         server_key=tool.server_key,
                         server_label=server_label,
                         tool_name=tool.name,
-                        state_label=self._tool_state_label(tool_effective),
+                        state_label=tool_state_label,
                         tags_label=", ".join(tool.tags) if tool.tags else "—",
                         cycle_current=tool_cycle_current,
                     )
@@ -3114,6 +3199,12 @@ class MCPWorkbench(Container):
                     self._effective_for_display(cycled_tool),
                     cascade=self._cascade_for_tool(cycled_tool),
                     profile_context=successor,
+                    arg_rules=self._arg_rules_for_row(
+                        cycled_tool, successor.profile_id
+                    ),
+                    session_approvals=self._session_approvals_for_row(
+                        successor.profile_id
+                    ),
                 )
 
     async def on_mcp_permissions_mode_kill_switch_toggled(
@@ -3497,6 +3588,14 @@ class MCPWorkbench(Container):
             self.set_mode("servers")
         elif event.action is HubAction.OPEN_TOOL_CATALOG:
             self.set_mode("tools")
+            # task-32283: land on the server the inspector was showing, not
+            # on an unfiltered catalog whose first screenful is some other
+            # server. `focus_server()` falls back to "All servers" when that
+            # server has no tools in the current catalog.
+            if event.server_key:
+                await self._mount_deferred_canvases()
+                if self.query(MCPToolsMode):
+                    await self.query_one(MCPToolsMode).focus_server(event.server_key)
         elif event.action is HubAction.OPEN_AUDIT:
             self.set_mode("audit")
         elif (
@@ -3826,10 +3925,17 @@ class MCPWorkbench(Container):
             return
         tool = self._tool_for_row_key(event.tool_id)
         effective = self._effective_for_display(tool) if tool is not None else None
+        arg_rules = (
+            self._arg_rules_for_row(tool, context.profile_id)
+            if tool is not None
+            else ()
+        )
         await inspector.show_tool(
             tool,
             effective=effective,
             profile_context=context,
+            arg_rules=arg_rules,
+            session_approvals=self._session_approvals_for_row(context.profile_id),
         )
 
     def _effective_for_display(self, tool: HubTool) -> EffectiveToolState:
@@ -3875,6 +3981,74 @@ class MCPWorkbench(Container):
                 )
                 return EffectiveToolState(state="deny", origin="gate_error")
         return EffectiveToolState(state="ask", origin="global_default")
+
+    def _arg_rules_for_row(
+        self, tool: HubTool, profile_id: str
+    ) -> tuple[dict[str, Any], ...]:
+        """One tool's stored exact-input allow rules, for the inspector's
+        permission block (task-32281) -- every real `show_tool()`/
+        `show_permission()` caller below fetches this fresh so the rendered
+        rule list (and its Remove buttons) never lags the store.
+
+        Defensive (never raises), mirroring `_effective_for_display()`'s
+        own fail-safe precedent immediately above: a broken read here must
+        not blank the whole permission explanation, just omit the rule
+        list -- a plain `EffectiveToolState`-style hard failure has no
+        analogous "fail closed" meaning for a read-only listing.
+        """
+        service = self._service()
+        list_rules = getattr(service, "list_tool_arg_rules", None)
+        if not callable(list_rules):
+            return ()
+        try:
+            return tuple(
+                list_rules(tool.server_key, tool.name, profile_id=profile_id)
+            )
+        except Exception as exc:
+            logger.warning(
+                "{}",
+                _safe_diagnostic_message(
+                    f"MCP arg-rule list failed for {tool.server_key}::{tool.name}",
+                    exc,
+                ),
+            )
+            return ()
+
+    def _session_approvals_for_row(
+        self, profile_id: str
+    ) -> tuple[tuple[str, str], ...]:
+        """Every live "Approve for session" grant in one profile
+        (task-32291) -- the matrix's ` (session)` suffix and the inspector's
+        revocable listing both read this.
+
+        One listing covers MCP tools AND the app's built-ins: the built-in
+        gate writes its grants into this same service under
+        `BUILTIN_TOOL_SERVER_KEY` (`BuiltinToolGate.stamp()`), so there is
+        no second store to merge in -- `BuiltinToolGate.list_session_
+        approvals()` is a scoped VIEW of these same entries, not a separate
+        set.
+
+        Defensive (never raises), same fail-safe precedent as
+        `_arg_rules_for_row()` above: a broken read omits the listing
+        rather than blanking the permission explanation around it.
+        """
+        service = self._service()
+        lister = getattr(service, "list_session_approvals", None)
+        if not callable(lister):
+            return ()
+        try:
+            return tuple(
+                (str(server_key), str(tool_name))
+                for server_key, tool_name in lister(profile_id=profile_id)
+            )
+        except Exception as exc:
+            logger.warning(
+                "{}",
+                _safe_diagnostic_message(
+                    "MCP session-approval list failed", exc
+                ),
+            )
+            return ()
 
     async def on_mcp_permissions_mode_row_selected(
         self, event: MCPPermissionsMode.RowSelected
@@ -3943,6 +4117,10 @@ class MCPWorkbench(Container):
                 effective,
                 cascade=None,
                 profile_context=context,
+                arg_rules=self._arg_rules_for_row(builtin_tool, context.profile_id),
+                session_approvals=self._session_approvals_for_row(
+                    context.profile_id
+                ),
             )
             return
         tool = (
@@ -3958,6 +4136,8 @@ class MCPWorkbench(Container):
             self._effective_for_display(tool),
             cascade=self._cascade_for_tool(tool),
             profile_context=context,
+            arg_rules=self._arg_rules_for_row(tool, context.profile_id),
+            session_approvals=self._session_approvals_for_row(context.profile_id),
         )
 
     # -- T7 (MCP Hub Phase 5): Audit mode ------------------------------------
@@ -4133,6 +4313,8 @@ class MCPWorkbench(Container):
             tool,
             effective=self._effective_for_display(tool),
             profile_context=context,
+            arg_rules=self._arg_rules_for_row(tool, context.profile_id),
+            session_approvals=self._session_approvals_for_row(context.profile_id),
         )
 
     async def on_mcp_inspector_audit_adjust_permission_requested(
@@ -4245,6 +4427,8 @@ class MCPWorkbench(Container):
             self._effective_for_display(tool),
             cascade=self._cascade_for_tool(tool),
             profile_context=context,
+            arg_rules=self._arg_rules_for_row(tool, context.profile_id),
+            session_approvals=self._session_approvals_for_row(context.profile_id),
         )
 
     async def on_mcp_inspector_reallow_requested(
@@ -4317,6 +4501,122 @@ class MCPWorkbench(Container):
             self._effective_for_display(tool),
             cascade=self._cascade_for_tool(tool),
             profile_context=successor,
+            arg_rules=self._arg_rules_for_row(tool, successor.profile_id),
+            session_approvals=self._session_approvals_for_row(successor.profile_id),
+        )
+
+    async def on_mcp_inspector_remove_arg_rule_requested(
+        self, event: MCPInspector.RemoveArgRuleRequested
+    ) -> None:
+        """task-32281: delete one exact-input allow rule, then resync the
+        matrix (its ``≡`` marker clears once no rule remains) and
+        re-render the inspector's own (already-open) permission block with
+        the fresh, now-shorter rule list.
+
+        Unlike `on_mcp_inspector_reallow_requested()` above, this does NOT
+        route through `_call_profile_scoped()`'s CAS-guarded call shape --
+        arg rules aren't profile-CAS-protected anywhere else in this store
+        either (`add_tool_arg_rule()`'s own writer, and `MCPToolProvider.
+        _apply_verdict()`'s call site, both pass bare `profile_id` via
+        `_profile_kwargs()`, never `expected_profile_digest`/`expected_
+        revision`); only `profile_id` travels here too.
+        """
+        event.stop()
+        context = self._validate_profile_context(event.profile_context)
+        if context is None:
+            return
+        service = self._service()
+        remove_rule = getattr(service, "remove_tool_arg_rule", None)
+        if not callable(remove_rule):
+            return
+        try:
+            remove_rule(
+                event.server_key,
+                event.tool_name,
+                event.rule_id,
+                profile_id=context.profile_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "{}",
+                _safe_diagnostic_message(
+                    f"MCP arg-rule removal failed for {event.server_key}::{event.tool_name}",
+                    exc,
+                ),
+            )
+            self.app.notify(
+                _toast("Removing the rule failed."), severity="error"
+            )
+            return
+        async with self._sync_children_lock:
+            await self._sync_permissions_mode()
+        tool = self._tool_for(event.server_key, event.tool_name)
+        if tool is None:
+            await self.query_one(MCPInspector).show_tool(None)
+            return
+        successor = self._successor_profile_context(context)
+        if successor is None:
+            await self.query_one(MCPInspector).show_tool(None)
+            return
+        await self.query_one(MCPInspector).show_permission(
+            tool,
+            self._effective_for_display(tool),
+            cascade=self._cascade_for_tool(tool),
+            profile_context=successor,
+            arg_rules=self._arg_rules_for_row(tool, successor.profile_id),
+            session_approvals=self._session_approvals_for_row(successor.profile_id),
+        )
+
+    async def on_mcp_inspector_revoke_session_approval_requested(
+        self, event: MCPInspector.RevokeSessionApprovalRequested
+    ) -> None:
+        """task-32291: drop one live session approval, then resync the
+        matrix (that tool's ` (session)` suffix clears) and re-render the
+        inspector's own (already-open) permission block with the fresh,
+        now-shorter listing -- the same no-stale-panel flow
+        `on_mcp_inspector_remove_arg_rule_requested()` above uses.
+
+        The revoked entry is usually NOT the tool this block explains (the
+        group lists every grant in the profile), so the block is re-rendered
+        in place from its own cached inputs
+        (`MCPInspector.refresh_permission_session_approvals()`) rather than
+        re-resolved against the revoked tool.
+
+        Like the arg-rule removal, this skips `_call_profile_scoped()`'s
+        CAS-guarded call shape: session approvals live in memory, never in
+        the profile payload a digest fences, and revoking only ever REMOVES
+        a permission -- a stale digest cannot make that unsafe.
+        """
+        event.stop()
+        context = self._validate_profile_context(event.profile_context)
+        if context is None:
+            return
+        service = self._service()
+        revoke = getattr(service, "revoke_session_approval", None)
+        if not callable(revoke):
+            return
+        try:
+            revoke(
+                event.server_key,
+                event.tool_name,
+                profile_id=context.profile_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "{}",
+                _safe_diagnostic_message(
+                    f"MCP session-approval revoke failed for {event.server_key}::{event.tool_name}",
+                    exc,
+                ),
+            )
+            self.app.notify(
+                _toast("Revoking the session approval failed."), severity="error"
+            )
+            return
+        async with self._sync_children_lock:
+            await self._sync_permissions_mode()
+        await self.query_one(MCPInspector).refresh_permission_session_approvals(
+            self._session_approvals_for_row(context.profile_id)
         )
 
     async def open_test_for_selected_tool(self) -> None:
@@ -5096,8 +5396,8 @@ class MCPWorkbench(Container):
         task-3240's gates span both `[tools]` (the `_GATEABLE_BUILTINS` rows
         plus `web_deep_search`) and `[console]` (the local group's master
         switch, `local_tools_enabled`). The resync's `_show_selected_detail()`
-        call rebuilds the gate checkboxes fresh from `all_tool_gates()`
-        (via `MCPServersMode._rebuild_tool_gate_checkboxes()`), so a failed
+        call rebuilds the gate buttons fresh from `all_tool_gates()`
+        (via `MCPServersMode._rebuild_tool_gate_buttons()`), so a failed
         write shows the truth rather than an optimistic local flip.
         """
         try:

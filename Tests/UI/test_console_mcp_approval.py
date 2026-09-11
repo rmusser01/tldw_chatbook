@@ -35,10 +35,14 @@ from tldw_chatbook.Agents.run_context import current_run_id, use_run_id
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_display_state import CONSOLE_INSPECTOR_NO_APPROVAL_REASON
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.chat_screen import CONSOLE_WORKBENCH_SHORTCUTS, ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
-from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+    NEEDS_DECISION_PREFIX,
+    ChatApprovalCard,
+)
 from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 
 from Tests.UI.app_factory import _build_test_app
@@ -315,6 +319,31 @@ async def test_raw_shell_row_shows_complete_command_and_danger_context():
 
 
 @pytest.mark.asyncio
+async def test_raw_shell_row_has_no_generic_scope_static_but_an_mcp_row_does():
+    """Final-review fix: `.approval-row-raw-scope` ("Session scope: ...") is the
+    raw-shell row's own, WIDER statement of what "All shell · session"
+    covers -- the generic per-decision `.approval-row-scope` line
+    (`DECISION_SCOPE_COPY`) would duplicate and undercut it, so a
+    raw-shell row must not also mount that Static. An ordinary MCP row
+    carries no `.approval-row-raw-scope` and must keep its
+    `.approval-row-scope` line exactly as before.
+    """
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(
+            [_sample_calls()[0], _raw_shell_call("printf ok")],
+            timeout_seconds=45.0,
+        )
+        await pilot.pause()
+
+        mcp_row, raw_row = list(app.query(".approval-row"))
+        assert list(mcp_row.query(".approval-row-scope"))
+        assert not list(raw_row.query(".approval-row-scope"))
+        assert list(raw_row.query(".approval-row-raw-scope"))
+
+
+@pytest.mark.asyncio
 async def test_raw_shell_row_defaults_to_deny_and_enter_does_not_submit():
     app = _CardHarnessApp()
     async with app.run_test() as pilot:
@@ -347,11 +376,13 @@ def test_raw_shell_command_view_has_bounded_scrollable_geometry():
 
 
 @pytest.mark.asyncio
-async def test_risk_floored_row_header_carries_a_why_affordance_tooltip():
+async def test_reason_badges_carry_a_visible_why_line_not_a_tooltip():
     """Fleet-UX expert review F5/F7 (task-1234, item g): "(high risk)" on a
-    plain read reads as alarmist with no explanation -- the row header
-    Static now carries a tooltip naming why. `config_changed` rows (no
-    risk badge) get no tooltip at all; this is scoped to `risk_floored`."""
+    plain read reads as alarmist with no explanation. That explanation was a
+    header TOOLTIP, which on a terminal nobody sees; task-32278 made it a
+    visible `.approval-row-reason` line and gave `config_changed` one too.
+    The header must carry no tooltip at all now -- a hover-only duplicate of
+    a line already on the card is how the unreadable version came back."""
     app = _CardHarnessApp()
     calls = [
         {
@@ -381,12 +412,15 @@ async def test_risk_floored_row_header_carries_a_why_affordance_tooltip():
         changed_header = rows[1].query_one(".approval-row-header", Static)
 
         assert "(high risk)" in _text(risk_header)
-        assert risk_header.tooltip == (
-            "Reads can exfiltrate file contents; built-in file tools "
-            "always ask before running."
+        assert not risk_header.tooltip
+        assert _text(rows[0].query_one(".approval-row-reason", Static)) == (
+            "High risk: this tool reads local data and always asks first."
         )
         assert "(definition changed)" in _text(changed_header)
         assert not changed_header.tooltip
+        assert _text(rows[1].query_one(".approval-row-reason", Static)) == (
+            "Definition changed since you last allowed it; review the arguments."
+        )
 
 
 @pytest.mark.asyncio
@@ -626,6 +660,106 @@ async def test_approve_all_and_deny_all_bulk_set_every_row():
         app.query_one("#approval-approve-all", Button).press()
         await pilot.pause()
         assert all(select.value == "approve_once" for select in card._batch_selects)
+
+
+@pytest.mark.asyncio
+async def test_approve_all_leaves_raw_shell_row_on_deny_and_flags_needs_decision():
+    """task-32282: "Approve all" must never move a raw-shell row off its
+    deliberate Deny default. The row's narrowed options legally include
+    ``approve_once`` (a real, explicit per-call choice), so the pre-fix
+    ``_set_all_batch_decisions`` -- which only checked legality, not row
+    identity -- bulk-set it right along with every ordinary MCP row. It
+    must be skipped, and the skip must be visible in TEXT (TASK-1845:
+    colour is never the only carrier of state), not just the CSS class.
+    """
+    calls = [_sample_calls()[0], _raw_shell_call("printf unsafe")]
+
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(calls, timeout_seconds=45.0)
+        await pilot.pause()
+
+        mcp_row, raw_row = list(app.query(".approval-row"))
+        raw_select = raw_row.query_one(".approval-row-decision", Select)
+        assert raw_select.value == "deny"
+        assert not raw_row.has_class("needs-decision")
+
+        app.query_one("#approval-approve-all", Button).press()
+        await pilot.pause()
+
+        mcp_select = mcp_row.query_one(".approval-row-decision", Select)
+        assert mcp_select.value == "approve_once"
+        assert raw_select.value == "deny"  # never moved off the deny default
+        assert raw_row.has_class("needs-decision")
+        header_text = _text(raw_row.query_one(".approval-row-header", Static))
+        assert header_text.startswith(NEEDS_DECISION_PREFIX), header_text
+        # An untouched row (here, the MCP row Approve all DID apply to)
+        # must never pick up the prefix.
+        mcp_header_text = _text(mcp_row.query_one(".approval-row-header", Static))
+        assert not mcp_header_text.startswith(NEEDS_DECISION_PREFIX)
+
+
+@pytest.mark.asyncio
+async def test_changing_raw_shell_select_after_approve_all_clears_needs_decision_prefix():
+    """task-32282: once the user gives the flagged raw-shell row its own
+    explicit decision, both the CSS flag and the header text prefix must
+    clear -- exactly as an ordinary narrowed row already does (see
+    ``test_changing_a_flagged_rows_select_clears_needs_decision``)."""
+    calls = [_sample_calls()[0], _raw_shell_call("printf unsafe")]
+
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(calls, timeout_seconds=45.0)
+        await pilot.pause()
+
+        raw_row = list(app.query(".approval-row"))[1]
+        raw_select = raw_row.query_one(".approval-row-decision", Select)
+        header = raw_row.query_one(".approval-row-header", Static)
+
+        app.query_one("#approval-approve-all", Button).press()
+        await pilot.pause()
+        assert raw_row.has_class("needs-decision")
+        assert _text(header).startswith(NEEDS_DECISION_PREFIX)
+
+        raw_select.post_message(Select.Changed(raw_select, "approve_once"))
+        await pilot.pause()
+
+        assert not raw_row.has_class("needs-decision")
+        assert not _text(header).startswith(NEEDS_DECISION_PREFIX)
+
+
+@pytest.mark.asyncio
+async def test_deny_all_sets_raw_shell_row_to_deny_and_clears_needs_decision_prefix():
+    """task-32282 (c): "Deny all" is legal for a raw-shell row (``deny`` is
+    always one of its options), so it must apply normally -- setting the
+    Select and clearing any stale needs-decision state left by an earlier
+    "Approve all" press."""
+    calls = [_sample_calls()[0], _raw_shell_call("printf unsafe")]
+
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(calls, timeout_seconds=45.0)
+        await pilot.pause()
+
+        mcp_row, raw_row = list(app.query(".approval-row"))
+        raw_select = raw_row.query_one(".approval-row-decision", Select)
+        header = raw_row.query_one(".approval-row-header", Static)
+
+        app.query_one("#approval-approve-all", Button).press()
+        await pilot.pause()
+        assert raw_row.has_class("needs-decision")
+
+        app.query_one("#approval-deny-all", Button).press()
+        await pilot.pause()
+
+        assert raw_select.value == "deny"
+        assert not raw_row.has_class("needs-decision")
+        assert not _text(header).startswith(NEEDS_DECISION_PREFIX)
+        mcp_select = mcp_row.query_one(".approval-row-decision", Select)
+        assert mcp_select.value == "deny"
 
 
 @pytest.mark.asyncio
@@ -1675,6 +1809,137 @@ async def test_finishing_card_is_not_counted_and_keyboard_focuses_the_card():
             assert app.focused is card
 
 
+# ---------------------------------------------------------------------------
+# task-32277: Alt+A keyboard route to the approval card.
+# ---------------------------------------------------------------------------
+
+
+def test_console_binds_alt_a_to_review_pending_approval():
+    """The binding exists, is advertised, and its action is implemented.
+
+    Mirrors the equivalent binding-registration check for the trajectory
+    launch key, `test_console_binds_single_letter_trajectory_launch`
+    (`Tests/UI/test_trajectory_live.py`).
+    """
+    bindings = {binding.key: binding for binding in ChatScreen.BINDINGS}
+    binding = bindings.get("alt+a")
+    assert binding is not None
+    assert binding.action == "review_pending_approval"
+    assert binding.show is True
+    assert hasattr(ChatScreen, "action_review_pending_approval")
+    # TASK-24604's precedent: the footer legend is the only place an
+    # accelerator with no menu/button equivalent is discoverable at all.
+    assert ("Alt+A", "approval") in CONSOLE_WORKBENCH_SHORTCUTS
+
+
+@pytest.mark.asyncio
+async def test_alt_a_focuses_the_pending_approval_decision_select():
+    """With a batch pending, Alt+A lands focus on the row's decision
+    Select -- never Submit (`ChatApprovalCard.focus_first_decision`'s own
+    contract)."""
+    app = _build_test_app()
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
+        async with app.run_test(size=(200, 40)) as pilot:
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                screen = app.screen
+                if isinstance(screen, ChatScreen) and screen.is_mounted:
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Production Console did not finish mounting")
+
+            screen.set_task_resume_state(
+                TaskResumeState(
+                    pending_approval={
+                        "calls": _single_call(),
+                        "timeout_seconds": 45.0,
+                        "round_id": "round-alt-a-focus",
+                    }
+                )
+            )
+            await pilot.pause()
+
+            await pilot.press("alt+a")
+            await pilot.pause()
+
+            assert isinstance(app.focused, Select)
+            assert "approval-row-decision" in app.focused.classes
+
+
+@pytest.mark.asyncio
+async def test_alt_a_notifies_when_nothing_is_pending():
+    """With nothing pending, Alt+A notifies rather than focusing anything --
+    same fallback message as the inspector's Review approval button
+    (`CONSOLE_INSPECTOR_NO_APPROVAL_REASON`)."""
+    app = _build_test_app()
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
+        async with app.run_test(size=(200, 40)) as pilot:
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                screen = app.screen
+                if isinstance(screen, ChatScreen) and screen.is_mounted:
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Production Console did not finish mounting")
+
+            notifications: list[tuple[str, str | None]] = []
+            app.notify = lambda message, **kwargs: notifications.append(
+                (str(message), kwargs.get("severity"))
+            )
+
+            await pilot.press("alt+a")
+            await pilot.pause()
+
+            assert (CONSOLE_INSPECTOR_NO_APPROVAL_REASON, "warning") in notifications
+
+
+@pytest.mark.asyncio
+async def test_alt_a_reaches_the_card_at_80_columns_with_inspector_closed():
+    """AC#3: the route works at 80 columns with the inspector closed."""
+    app = _build_test_app()
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
+        async with app.run_test(size=(80, 24)) as pilot:
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                screen = app.screen
+                if isinstance(screen, ChatScreen) and screen.is_mounted:
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Production Console did not finish mounting")
+
+            # TASK-24604's own docstring: the Inspect rail ships CLOSED.
+            # Same accessor `action_toggle_console_inspector_rail` itself
+            # checks -- a hidden ancestor doesn't necessarily flip a
+            # descendant's own `.display` attribute.
+            assert not screen._is_console_widget_displayed("console-right-rail")
+
+            screen.set_task_resume_state(
+                TaskResumeState(
+                    pending_approval={
+                        "calls": _single_call(),
+                        "timeout_seconds": 45.0,
+                        "round_id": "round-alt-a-80col",
+                    }
+                )
+            )
+            await pilot.pause()
+
+            await pilot.press("alt+a")
+            await pilot.pause()
+
+            assert isinstance(app.focused, Select)
+            assert "approval-row-decision" in app.focused.classes
+
+
 @pytest.mark.asyncio
 async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css():
     """Without an explicit width, `_conversations.tcss`'s bare `Select {
@@ -1723,8 +1988,12 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
                     f"decision Select width {select.size.width} claimed the "
                     f"entire row width {row.size.width} under bundled CSS"
                 )
-                assert select.size.width == 26, (
-                    f"decision Select width {select.size.width} != pinned 26"
+                # task-32278: 27 = the 19-cell longest label ("Always · these
+                # args") + 8 cells of Textual Select chrome. The closed Select
+                # does not ellipsize -- it WRAPS and grows -- so this number
+                # and `_DECISION_OPTIONS` move together.
+                assert select.size.width == 27, (
+                    f"decision Select width {select.size.width} != pinned 27"
                 )
                 # TASK-1846: the row is three stacked lines now -- header,
                 # arguments, then `.approval-row-controls` -- so neither text
@@ -1762,7 +2031,11 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
                 # arguments moved to their own, and a collapsed `xN` row may
                 # legitimately render several argument sets. A row that has
                 # lost `height: auto` balloons to 15, so this still catches it.
-                assert row.size.height <= 6, (
+                # task-32278: 6 -> 8. Every row gained the scope line under
+                # its controls, and the `config_changed` row in
+                # `_sample_calls` gained the reason line that used to be a
+                # header tooltip.
+                assert row.size.height <= 8, (
                     f"approval row ballooned to height {row.size.height} under "
                     "bundled CSS -- height: auto; min-height: 1; is not winning"
                 )
@@ -1773,13 +2046,15 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
             # #approval-batch-actions bar far down. Empirically measured before
             # this fix: container ballooning to height 19, actions pushed to y=20.
             batch_rows = card.query_one("#approval-batch-rows")
-            # TASK-1846: per-row budget 3 -> 6 (a row is two lines now and a
-            # collapsed row may carry several argument sets). Still catches a
-            # balloon: the container is capped at 15, so two ballooned rows
-            # clamp to 15 and blow this bound.
-            assert batch_rows.size.height <= len(rows) * 6 + 2, (
+            # task-32278: this was a per-row CONSTANT (3, then 6), which had
+            # to be re-bumped every time a row gained a line -- and each bump
+            # loosened it. Bounded by the rows' ACTUAL heights instead: the
+            # bug it guards is the container claiming space its rows do not
+            # need, which this states directly and needs no future bumping.
+            assert batch_rows.size.height <= sum(r.size.height for r in rows) + 2, (
                 f"approval-batch-rows container ballooned to height "
-                f"{batch_rows.size.height} (with {len(rows)} rows) under bundled CSS "
+                f"{batch_rows.size.height} over {len(rows)} rows totalling "
+                f"{sum(r.size.height for r in rows)} under bundled CSS "
                 "-- height: auto; min-height: 0; is not winning"
             )
 
@@ -1846,8 +2121,9 @@ async def test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_
 
             # Compact row (same discipline as the sibling test). TASK-1846
             # made it two lines -- headline + full-width arguments -- so the
-            # bound moves 4 -> 6; a row that lost `height: auto` is 15.
-            assert row.size.height <= 6, (
+            # bound moves 4 -> 6; task-32278's scope line makes it 7. A row
+            # that lost `height: auto` is 15.
+            assert row.size.height <= 7, (
                 f"single-row approval row ballooned to height {row.size.height} "
                 "under bundled CSS"
             )
@@ -1863,7 +2139,7 @@ def test_approval_row_decision_select_width_rule_pinned_in_bundle_source_and_bun
     Defect-1 Select-width lesson as `#mcp-tools-filter-server-slot Select`
     / `#mcp-audit-filter-decision` above, applied to the approval card."""
     _assert_rule_pinned_in_bundle_source_and_bundle(
-        ".approval-row-decision {", ("width: 26;",)
+        ".approval-row-decision {", ("width: 27;",)
     )
 
 
@@ -2306,7 +2582,12 @@ def test_request_mcp_approvals_cancellation_records_denied_decision_to_execution
     assert records, "the stop-mid-approval path left no audit record at all"
     assert records[0]["server_key"] == "local:docs"
     assert records[0]["tool_name"] == "search"
-    assert records[0]["decision"] == "denied"
+    # task-32280 fix round: the turn was stopped WHILE the card was up, so
+    # nobody answered it. The bare "denied" Audit now renders as "Denied by
+    # you" claimed a decision the user never got to make; the category the
+    # row already carried (`approval_cancelled`) is unchanged, so the
+    # precise mechanism survives the retarget.
+    assert records[0]["decision"] == "denied-unresolved"
     assert records[0]["ok"] is False
     assert records[0]["error_category"] == "approval_cancelled"
     assert "error" not in records[0]
@@ -3365,6 +3646,68 @@ async def test_armed_deadline_is_visible_on_the_mounted_card():
         card.set_batch(_sample_calls(), timeout_seconds=0)
         await pilot.pause()
         assert not app.query_one("#approval-deadline", Static).display
+
+
+@pytest.mark.asyncio
+async def test_the_deadline_countdown_ticks_and_stops_on_clear_or_timeout():
+    """TASK-32288: with a finite timeout the countdown actually TICKS.
+
+    Before this fix `set_batch` rendered `format_approval_deadline` once and
+    never again -- with `[mcp] approval_timeout_seconds` configured the card
+    showed a frozen "Auto-denies in 2:00" for the whole window, silently
+    lying to the user about how much time was left. The controller arms the
+    real auto-deny clock; this card only displays it, computed from a LOCAL
+    `time.monotonic()` deadline captured in `set_batch` (never read back
+    from the controller).
+    """
+    import re
+
+    def _remaining_seconds(text: str) -> int:
+        match = re.fullmatch(r"Auto-denies in (\d+):(\d{2})", text)
+        assert match, text
+        return int(match.group(1)) * 60 + int(match.group(2))
+
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(_sample_calls(), timeout_seconds=90.0, round_id="round-a")
+        await pilot.pause()
+
+        deadline = app.query_one("#approval-deadline", Static)
+        assert _text(deadline) == "Auto-denies in 1:30"
+        assert card._deadline_timer is not None
+
+        await pilot.pause(1.1)
+        ticked_text = _text(deadline)
+        assert ticked_text != "Auto-denies in 1:30"
+        # Ticked down, never back up, never frozen -- allow a little
+        # scheduler slack rather than pinning an exact second.
+        assert 85 <= _remaining_seconds(ticked_text) <= 89, ticked_text
+
+        # A re-sync of the SAME round/phase/calls (the unchanged-round guard
+        # near the top of `set_batch`) must not reset the deadline clock.
+        card.set_batch(_sample_calls(), timeout_seconds=90.0, round_id="round-a")
+        await pilot.pause()
+        assert _text(deadline) != "Auto-denies in 1:30"
+        assert _remaining_seconds(_text(deadline)) <= _remaining_seconds(ticked_text)
+
+        # Clearing the batch stops the timer -- no leaked interval.
+        card.set_batch([], timeout_seconds=90.0)
+        await pilot.pause()
+        assert card._deadline_timer is None
+
+        # timeout_seconds=0/None: nothing shown, no timer armed.
+        card.set_batch(_sample_calls(), timeout_seconds=0, round_id="round-b")
+        await pilot.pause()
+        assert _text(deadline) == ""
+        assert not deadline.display
+        assert card._deadline_timer is None
+
+        # A NEW batch (different round) re-arms the countdown from scratch.
+        card.set_batch(_sample_calls(), timeout_seconds=60.0, round_id="round-new")
+        await pilot.pause()
+        assert _text(deadline) == "Auto-denies in 1:00"
+        assert card._deadline_timer is not None
 
 
 @pytest.mark.unit

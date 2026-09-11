@@ -320,6 +320,7 @@ from ...Chat.console_chat_models import (
     ConsoleContextSnapshot,
     ConsoleMessageRole,
     ConsoleProviderSelection,
+    ConsoleRunMarker,
     ConsoleRunStatus,
     FEEDBACK_ACTIVE_RUN_STATUSES,
     MessageAttachment,
@@ -1154,6 +1155,10 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     # is only discoverable by reading the source. This is the footer/F1
     # vocabulary the Console teaches from.
     ("Alt+I", "inspect"),
+    # task-32277: same reasoning as Alt+I directly above -- the approval
+    # card had no key binding at all before this, so its accelerator is
+    # only discoverable if the footer teaches it.
+    ("Alt+A", "approval"),
     ("Ctrl+P", "palette"),
 )
 
@@ -1208,6 +1213,10 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
             # precisely where the rail's edge handle is hidden and Alt+I is
             # the only route in. F1 is the surface that never truncates.
             ("Alt+I", "open and focus the Inspect rail"),
+            # task-32277 review (Minor, promoted): same TASK-24704 gap class
+            # -- the footer advertises Alt+A but this never-truncating
+            # reference didn't.
+            ("Alt+A", "Review pending approval"),
             ("Escape", "return to the composer"),
         ),
     ),
@@ -1875,6 +1884,13 @@ class ChatScreen(BaseAppScreen):
         # this binding is the way back, and it is why it must not itself be
         # gated on the rail being displayed.
         Binding("alt+i", "toggle_console_inspector_rail", "Inspect", show=True),
+        # task-32277: Tab never reached the approval card from the composer
+        # (12 presses cycled the header action bar instead), and the only
+        # other entry points -- the "Approvals: N pending" status chip and
+        # the inspector's below-the-fold Review button -- both disappear at
+        # common widths. This routes through the same seam as the
+        # inspector's button (`_route_console_pending_approval_focus`).
+        Binding("alt+a", "review_pending_approval", "Approval", show=True),
         Binding("alt+v", "paste_clipboard_image", "Paste image", show=True),
         # ctrl+shift+h, not alt+h: on macOS terminals "alt" is the Option
         # key, which types a composed character (˙) unless the profile
@@ -14544,9 +14560,60 @@ class ChatScreen(BaseAppScreen):
         )
 
     def _console_provider_blocker_copy(self) -> str:
-        """Return concise Console recovery copy for provider/model setup gaps."""
+        """Return concise Console recovery copy for provider/model setup gaps.
+
+        task-32276: ``wait_for_active_run`` means "a turn is already in
+        flight", not a provider/model misconfiguration -- the same
+        distinction ``_console_setup_blocked_reason``/``_console_send_
+        blocked_reason`` already carve out below. Left in, an otherwise
+        fully-configured provider read "Setup: Provider configuration
+        required" for the entire duration of EVERY active run, including
+        one parked on a healthy pending approval -- which then made the
+        pinned authority line's ``recovery_required`` check (any "Next
+        action" row present) read "Recovery required" over "Waiting for
+        approval". Four call sites read this method; each was re-verified
+        against this narrower meaning:
+
+        - ``_build_console_inspector_state`` (~L13873): the Setup/Blocked-
+          impact/Next-action Inspector rows -- the case above. Now absent
+          during a merely-active run, present only for a real gap.
+        - ``_build_console_workbench_state`` (~L14511): feeds
+          ``provider_status`` (the Provider/Model mode chips' "blocked"/
+          "ready") and, via ``can_send = ... and not blocker``,
+          ``send_available``. ``send_available`` is UNCHANGED by this
+          narrowing: ``can_send`` is independently gated by
+          ``run_allows_send`` (``run_state.is_send_allowed``), whose
+          False-set is the EXACT complement of ``CONSOLE_ACTIVE_RUN_
+          STATUSES`` (both derived from the same 9-member ``ConsoleRun
+          Status``), so ``can_send`` -- and therefore ``send_available`` --
+          was already ``False`` for every active run independent of this
+          copy; only ``provider_status`` changes, from an inaccurate
+          "blocked" to "ready" during a healthy active run (the header's
+          own ``status`` field already special-cased ``run_active`` over
+          ``blocker`` for the identical reason, TASK-347 -- the mode chips
+          had no such override and inherited the same bug this task fixes
+          elsewhere).
+        - ``_sync_console_transcript_guidance`` (~L14692): feeds the EMPTY-
+          transcript setup card/modal only. ``build_console_setup_card_
+          state`` returns ``quiet`` (ignoring this copy entirely) whenever
+          ``has_messages`` is true, and a run cannot become active before
+          the turn's own user message is persisted -- so this consumer
+          never observes a non-empty value from this method during an
+          active run either way; unaffected in practice.
+        - ``UI/Console_Modules/prompts.py`` (~L1208, Improve-prompt
+          ``unavailable_reason``): Improve calls the provider gateway on
+          its OWN, independent of the main turn's stream, so it must stay
+          unavailable while a run is active regardless of provider health.
+          That gate no longer reads this method at all -- it checks
+          ``_console_run_active()`` directly (``console_run_active``, a
+          dedicated constructor dependency on ``ConsolePromptsController``)
+          so its behavior does not depend on this copy's definition.
+        """
         _settings, readiness = self._active_console_settings_readiness()
-        if readiness.operability == "ready_to_send":
+        if (
+            readiness.operability == "ready_to_send"
+            or readiness.recovery_action == "wait_for_active_run"
+        ):
             return ""
         return build_console_readiness_presentation(readiness).detail
 
@@ -17658,6 +17725,13 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_transcript_guidance()
 
     def _native_run_status_copy(self) -> str:
+        """Return the viewed session's run-status copy for the hidden compat mode bar.
+
+        task-32276: kept in agreement with ``_console_active_run_copy``'s
+        (the VISIBLE run chip's) pending-approval override -- two copies of
+        the same fact must never disagree, even though only one of them is
+        ever seen.
+        """
         store = self._console_chat_store
         session_id = store.active_session_id if store is not None else None
         image_edit = (
@@ -17677,6 +17751,8 @@ class ChatScreen(BaseAppScreen):
         run_state = controller.run_state
         if run_state.status is ConsoleRunStatus.IDLE:
             return ""
+        if controller.has_pending_approval_round(session_id or ""):
+            return "Waiting for your approval."
         return run_state.visible_copy or run_state.status.value
 
     def _console_active_run_copy(self) -> str:
@@ -17687,6 +17763,13 @@ class ChatScreen(BaseAppScreen):
         this is gated on ``CONSOLE_ACTIVE_RUN_STATUSES``, the run chip's
         visibility contract. Falls back to the status value when a
         transition set no visible copy.
+
+        task-32276: ``run_state.visible_copy`` is a snapshot taken once at
+        dispatch start ("Agent running.") and never updated mid-turn -- an
+        approval round parking partway through leaves it stale. Checked
+        here, on every read, instead: the controller's own round registry
+        (``has_pending_approval_round``), not the run state, is the live
+        truth for "is a card waiting on the user right now".
         """
         store = self._console_chat_store
         session_id = store.active_session_id if store is not None else None
@@ -17705,6 +17788,21 @@ class ChatScreen(BaseAppScreen):
         run_state = controller.run_state if controller is not None else None
         if run_state is None or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES:
             return ""
+        # `has_pending_approval_round` reads the controller's round
+        # registry, which `run_round` (console_interrupt_rounds.py) feeds
+        # for ALL FIVE interrupt-round kinds -- approval, skill_install,
+        # skill_script, worktree_merge, and question -- not just MCP
+        # approvals. `_console_pending_approval_count` / `ConsoleInspector
+        # State.pending_approval_count` (console_display_state.py) instead
+        # count the viewed session's mounted APPROVAL card only. So during
+        # a non-approval round (e.g. an ask_user question card) this chip
+        # says "Waiting for your approval" while the inspector correctly
+        # shows no pending approval -- imprecise copy, not a bug; a
+        # kind-aware pending registry (rider, filed as a follow-up to
+        # task program 2026-09-10-approval-card-fix-wave) would let this
+        # say "Waiting for your answer." for a question round instead.
+        if controller.has_pending_approval_round(session_id or ""):
+            return "Waiting for your approval."
         return run_state.visible_copy or run_state.status.value
 
     def _sync_console_mode_bar(self) -> None:
@@ -20322,10 +20420,16 @@ class ChatScreen(BaseAppScreen):
         if card.is_mounted:
             card.finish_undo_all(success=success)
 
-    @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}")
-    def handle_console_inspector_review_approval(self, event: Button.Pressed) -> None:
-        """Focus the pending approval card from the Console inspector seam."""
-        event.stop()
+    def _route_console_pending_approval_focus(self) -> None:
+        """Focus the pending approval card, or notify none is pending.
+
+        task-32277: the single seam every approval-review entry point
+        routes through -- the inspector's Review approval button, the
+        Alt+A binding, and a tab-strip click on a session wearing the
+        NEEDS_APPROVAL (``◆``) marker. Moved out of
+        ``handle_console_inspector_review_approval`` verbatim so a third
+        (or fourth) caller cannot drift from it.
+        """
         if self._console_pending_approval_count() <= 0:
             # PRD A4: the chip's focus action is how keyboard-only users
             # reach a question card that deliberately never steals focus.
@@ -20369,6 +20473,22 @@ class ChatScreen(BaseAppScreen):
             card.focus_first_decision()
         except Exception:
             pass
+
+    @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}")
+    def handle_console_inspector_review_approval(self, event: Button.Pressed) -> None:
+        """Focus the pending approval card from the Console inspector seam."""
+        event.stop()
+        self._route_console_pending_approval_focus()
+
+    def action_review_pending_approval(self) -> None:
+        """Alt+A: same route as the inspector's Review approval button.
+
+        task-32277: Tab never reached the approval card from the composer,
+        and the two prior entry points (the status chip, the inspector
+        button) both disappear at common widths -- see the ``alt+a``
+        `Binding`'s own comment in ``BINDINGS`` for the live-UX evidence.
+        """
+        self._route_console_pending_approval_focus()
 
     @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID}")
     def handle_console_inspector_save_chatbook(self, event: Button.Pressed) -> None:
@@ -23835,9 +23955,30 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id and button_id.startswith("console-session-tab-"):
             event.stop()
-            await self._session._handle_console_session_tab_press(
-                button_id.removeprefix("console-session-tab-")
-            )
+            session_id = button_id.removeprefix("console-session-tab-")
+            controller = self._ensure_console_chat_controller()
+            if controller.run_marker_for(session_id) is ConsoleRunMarker.NEEDS_APPROVAL:
+                # task-32277: a tab wearing the ◆ marker routes straight to
+                # the approval card instead of the normal activate/rename
+                # tab press. A non-viewed session's round is PARKED (see
+                # `run_marker_for`'s NEEDS_APPROVAL precedence and
+                # `ConsoleChatController.switch_session`'s park/re-mount
+                # behaviour), so it has to be activated first for its card
+                # to be the one that mounts.
+                #
+                # This branch is checked before `_handle_console_session_
+                # tab_press` below, whose own contract is "press the
+                # already-active tab to rename it" -- so a ◆ tab press
+                # intentionally pre-empts that rename gesture even when
+                # `session_id` IS already the active/viewed session; the
+                # user still reaches rename for a ◆ tab via the session
+                # switcher's own rename choice
+                # (`_apply_console_switcher_choice`'s "rename" kind).
+                if controller.store.active_session_id != session_id:
+                    await self._session._activate_native_console_session(session_id)
+                self._route_console_pending_approval_focus()
+                return
+            await self._session._handle_console_session_tab_press(session_id)
             return
         if button_id and button_id.startswith("console-message-action-"):
             handled = await self.handle_console_message_action(event)

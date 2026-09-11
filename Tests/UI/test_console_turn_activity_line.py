@@ -41,7 +41,9 @@ from tldw_chatbook.UI.Console_Modules.agent import (
     CONSOLE_TURN_ACTIVITY_ABANDON_ACTION,
     CONSOLE_TURN_ACTIVITY_ABANDON_AFTER_SECONDS,
     CONSOLE_TURN_ACTIVITY_SEPARATOR,
+    CONSOLE_TURN_ACTIVITY_SETUP,
     CONSOLE_TURN_ACTIVITY_THINKING,
+    CONSOLE_TURN_ACTIVITY_WAITING_APPROVAL,
     ConsoleAgentController,
     console_turn_activity_abandon_action,
     console_turn_activity_text,
@@ -229,6 +231,40 @@ async def test_between_tool_calls_the_row_says_thinking_not_a_stale_tool_name():
         assert CONSOLE_TURN_ACTIVITY_THINKING in text, text
         assert "6s" in text, text
         assert "read_file" not in text, text
+
+
+@pytest.mark.asyncio
+async def test_a_pending_approval_says_waiting_not_thinking_or_generating():
+    """task-32276: a parked approval round outranks the derived tool state.
+
+    Same shape as the "between tool calls" case above -- a completed tool
+    round with the model between steps, which today reads ``Thinking…`` --
+    but with an approval round outstanding for the session. That must read
+    as waiting on the USER, not as the model quietly thinking.
+    """
+    app = _ActivityHarness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        snapshot = _snapshot(
+            AgentLiveStep(STEP_TOOL_CALL, "read_file", AGENT_KIND_PRIMARY, 100.0),
+            AgentLiveStep(STEP_TOOL_RESULT, "read_file → ok", AGENT_KIND_PRIMARY, 104.0),
+        )
+        activity = console_turn_activity_text(snapshot, now=109.0, pending_approval=True)
+        assert activity == f"{CONSOLE_TURN_ACTIVITY_WAITING_APPROVAL} · 5s", activity
+        text = await _paint(transcript, [_user(), _in_flight_assistant()], activity)
+        await pilot.pause()
+        assert CONSOLE_TURN_ACTIVITY_WAITING_APPROVAL in text, text
+        assert "5s" in text, text
+        assert CONSOLE_TURN_ACTIVITY_THINKING not in text, text
+        assert CONSOLE_GENERATING_PLACEHOLDER not in text, text
+
+
+def test_a_pending_approval_before_any_step_has_no_elapsed_base():
+    """No step to time from yet -- honest, no invented elapsed segment."""
+    assert (
+        console_turn_activity_text(_snapshot(), now=1.0, pending_approval=True)
+        == CONSOLE_TURN_ACTIVITY_WAITING_APPROVAL
+    )
 
 
 @pytest.mark.asyncio
@@ -703,6 +739,64 @@ def test_an_active_viewed_run_yields_the_line_for_its_own_conversation():
     assert bridge.conversation_ids == ["conv-7"]
 
 
+def test_a_bare_run_state_double_without_a_round_registry_is_never_pending():
+    """`_GateController`'s bare ``SimpleNamespace`` lacks ``has_pending_
+    approval_round``/``store`` entirely -- the getattr guards must no-op,
+    not raise, and the line must fall back to the tool-derived state."""
+    bridge = _SnapshotBridge(_running_tool_snapshot())
+    controller = _GateController(
+        run_status=ConsoleRunStatus.STREAMING, bridge=bridge, conversation_id="conv-7"
+    )
+    assert CONSOLE_TURN_ACTIVITY_WAITING_APPROVAL not in controller.console_turn_activity()
+
+
+def test_an_outstanding_approval_round_overrides_the_bound_methods_own_line():
+    """task-32276: the bound ``console_turn_activity`` reads the flag off
+    ``controller.has_pending_approval_round(store.active_session_id)`` --
+    a real round registry, not a tool name."""
+
+    class _ApprovalGateController(_GateController):
+        def __init__(self, *, pending_for, **kwargs) -> None:
+            super().__init__(**kwargs)
+            self._pending_for = pending_for
+
+        @property
+        def _console_chat_controller(self):
+            base = super()._console_chat_controller
+            if base is None:
+                return None
+            pending_for = self._pending_for
+
+            class _Controller:
+                run_state = base.run_state
+                store = SimpleNamespace(active_session_id="sess-9")
+
+                @staticmethod
+                def has_pending_approval_round(session_id):
+                    return session_id == pending_for
+
+            return _Controller()
+
+    bridge = _SnapshotBridge(_running_tool_snapshot())
+    pending = _ApprovalGateController(
+        run_status=ConsoleRunStatus.STREAMING,
+        bridge=bridge,
+        conversation_id="conv-7",
+        pending_for="sess-9",
+    )
+    assert pending.console_turn_activity().startswith(
+        CONSOLE_TURN_ACTIVITY_WAITING_APPROVAL
+    )
+
+    not_pending = _ApprovalGateController(
+        run_status=ConsoleRunStatus.STREAMING,
+        bridge=bridge,
+        conversation_id="conv-7",
+        pending_for="some-other-session",
+    )
+    assert "read_file" in not_pending.console_turn_activity()
+
+
 @pytest.mark.parametrize(
     "run_status", [ConsoleRunStatus.IDLE, ConsoleRunStatus.COMPLETED, None]
 )
@@ -941,3 +1035,56 @@ async def test_the_row_offers_abandon_call_only_while_the_action_is_set():
         await pilot.pause()
         text = _rendered_row_text(transcript, row.id)
         assert "⚙ slow · 7s" in text and CONSOLE_TURN_ACTIVITY_ABANDON_COPY not in text
+
+
+# --------------------------------------------------------------------------
+# task-32344: the fifth state -- pre-provider setup, before any step exists.
+# --------------------------------------------------------------------------
+
+
+def test_pre_provider_setup_names_what_the_send_is_waiting_on():
+    """A run parked in setup must say so, with its own elapsed segment.
+
+    The blank assistant row this replaces is the whole defect: the first
+    send after a restart pays a one-off, lazy pre-provider setup cost
+    (tool catalogs plus the Personal Context profile-tool bootstrap) with
+    nothing on screen naming it.
+    """
+    snapshot = AgentLiveSnapshot(status="setup", setup_started_at=100.0)
+    assert (
+        console_turn_activity_text(snapshot, now=103.0)
+        == f"{CONSOLE_TURN_ACTIVITY_SETUP}{CONSOLE_TURN_ACTIVITY_SEPARATOR}3s"
+    )
+
+
+def test_setup_with_no_start_time_still_names_the_state():
+    """No usable base -> the state alone, never an invented duration."""
+    snapshot = AgentLiveSnapshot(status="setup")
+    text = console_turn_activity_text(snapshot, now=103.0)
+    assert text == CONSOLE_TURN_ACTIVITY_SETUP
+    assert CONSOLE_TURN_ACTIVITY_SEPARATOR not in text
+
+
+def test_setup_gives_way_to_the_running_states():
+    """Once the provider call starts, the ordinary states own the line."""
+    running = _snapshot()
+    assert console_turn_activity_text(running, now=1.0) == CONSOLE_GENERATING_PLACEHOLDER
+    assert console_turn_activity_text(AgentLiveSnapshot(), now=1.0) == ""
+
+
+@pytest.mark.asyncio
+async def test_the_setup_line_reaches_the_rendered_assistant_row():
+    """The state is not merely computable -- it paints into the row."""
+    app = _ActivityHarness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        text = await _paint(
+            transcript,
+            [_user(), _in_flight_assistant()],
+            console_turn_activity_text(
+                AgentLiveSnapshot(status="setup", setup_started_at=100.0), now=104.0
+            ),
+        )
+        await pilot.pause()
+        assert CONSOLE_TURN_ACTIVITY_SETUP in text, text
+        assert "4s" in text, text

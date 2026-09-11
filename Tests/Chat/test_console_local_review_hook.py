@@ -5,7 +5,10 @@ stamps, ONE approval round trip per batch, verdicts only ever "proceed".
 """
 
 import asyncio
+import contextlib
 import json
+import threading
+import time
 import weakref
 from types import SimpleNamespace
 
@@ -411,6 +414,93 @@ def test_combined_hook_runs_remaining_hooks_after_a_raise(tmp_path):
         hook([ToolCall(name="fs_list", args={"path": "."})], RUN)
     assert p1._stamps == {}  # cleared at entry, round trip raised
     assert p2._stamps == {(RUN, "fs_list"): "deny"}  # fresh THIS-turn decision
+
+
+def test_hook_level_card_deny_lands_in_the_execution_log_exactly_once(tmp_path):
+    """task-32280 fix round (Critical review finding).
+
+    Mirrors `test_mcp_tool_provider.py::
+    test_hook_level_card_deny_lands_in_the_execution_log_exactly_once`: a
+    hook-level deny is turned straight into the call's result by
+    `run_agent_loop`, which skips dispatch entirely, so
+    `LocalToolProvider.invoke_detailed()` -- the only thing that otherwise
+    records a local refusal -- never runs for it. Drives the REAL provider
+    through the REAL `build_local_review_hook` so a fake cannot paper over
+    the gap; the split `denied`/`denied-policy`/`denied-unresolved` tokens
+    added to `invoke_detailed()` are dead code for this path otherwise.
+    """
+    recorded: list[tuple[str, str]] = []
+    p = LocalToolProvider(
+        workspace_root=tmp_path,
+        resolve_state=lambda hub: ASK,
+        record_decision=lambda hub, decision: recorded.append((hub.name, decision)),
+    )
+    hook = build_local_review_hook(p, lambda pending: {"fs_list": "deny"})
+
+    verdicts = hook(
+        [ToolCall(name="fs_list", args={"path": "."}, call_id="c-1")], RUN
+    )
+
+    assert verdicts.get("c-1", "proceed") != "proceed", (
+        f"precondition: the denied call must not be dispatched: {verdicts}"
+    )
+    assert recorded == [("fs_list", "denied")], (
+        "the user's Deny left no row in the execution log: " f"{recorded}"
+    )
+
+
+def test_stop_mid_approval_records_only_the_unresolved_row(tmp_path):
+    """R23, local half: mirrors `test_mcp_tool_provider.py::
+    test_stop_mid_approval_records_only_the_unresolved_row`. A Stop while
+    the card is up already writes the honest `denied-unresolved` row from
+    the controller; the hook must not add a "Denied by you" one on top."""
+    from tldw_chatbook.MCP.execution_log import UNRESOLVED_DENIED_DECISION
+
+    recorded: list[tuple[str, str]] = []
+    provider = LocalToolProvider(
+        workspace_root=tmp_path,
+        resolve_state=lambda hub: ASK,
+        record_decision=lambda hub, decision: recorded.append((hub.name, decision)),
+    )
+    cancel_rows: list[tuple] = []
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=object()
+    )
+    controller.app = SimpleNamespace(
+        call_from_thread=lambda fn, *a, **kw: fn(*a, **kw),
+        unified_mcp_service=SimpleNamespace(
+            record_tool_decision=lambda server_key, tool_name, **kw: cancel_rows.append(
+                (server_key, tool_name, kw.get("decision"))
+            )
+        ),
+    )
+    controller.set_pending_approval = lambda payload: None
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    def _stop_soon() -> None:
+        time.sleep(0.05)
+        # begin_shutdown() runs its owner-thread queue teardown inline when
+        # no owner loop is bound (none is, in this synchronous test), which
+        # trips the queue's cross-thread guard -- it still denies the
+        # unresolved approval first (in begin_shutdown's `finally`), so the
+        # assertions below hold; only the thread-local exception is noise.
+        with contextlib.suppress(Exception):
+            controller.begin_shutdown()
+
+    stopper = threading.Thread(target=_stop_soon)
+    stopper.start()
+    hook = build_local_review_hook(provider, controller.request_mcp_approvals)
+    with use_run_id(RUN):
+        verdicts = hook(
+            [ToolCall(name="fs_list", args={"path": "."}, call_id="c-1")], RUN
+        )
+    stopper.join()
+
+    assert verdicts.get("c-1", "proceed") != "proceed"
+    assert recorded == [], (
+        f"a Stop mid-approval recorded a user denial it never received: {recorded}"
+    )
+    assert [row[2] for row in cancel_rows] == [UNRESOLVED_DENIED_DECISION]
 
 
 # -- _compose_local_provider -------------------------------------------------
@@ -1269,8 +1359,11 @@ def test_compose_local_provider_records_deny_via_service(monkeypatch, tmp_path):
     r = local_provider.invoke("local:fs_list", {"path": "."})
 
     assert not r.ok
+    # task-32280 fix round: a tool configured Off is not a person saying no.
+    # Through the REAL wiring (the controller's `record_decision` seam into
+    # the service), not just the provider's own unit test.
     assert service.recorded_decisions == [
-        ("local:__local__", "fs_list", "denied", "agent", None)
+        ("local:__local__", "fs_list", "denied-policy", "agent", None)
     ]
 
 

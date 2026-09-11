@@ -6,7 +6,7 @@ import asyncio
 import json
 import math
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from functools import partial
 from typing import Any
 
@@ -43,7 +43,10 @@ from tldw_chatbook.MCP.local_runtime_delegate import (
     RawToolCallRefusedError,
     capitalize_first,
 )
-from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.MCP.permission_store import (
+    HIGH_RISK_TAGS,
+    EffectiveToolState,
+)
 from tldw_chatbook.MCP.readiness import (
     REASON_LABELS,
     STATE_CSS_CLASSES,
@@ -317,6 +320,18 @@ _RISK_FLOORED_NOTICE = (
     "High-risk tool — asks even though the inherited default is Allow."
 )
 _REALLOW_TOOLTIP = "Store the new definition hash and allow again."
+# task-32281: cap on one exact-input allow rule row's displayed argument
+# summary -- long enough to be legible, short enough that a row with a big
+# argument payload doesn't dominate the permission block.
+_ARG_RULE_SUMMARY_LIMIT = 60
+_ARG_RULE_REMOVE_TOOLTIP = "Remove this exact-input allow rule."
+# task-32291: "Approve for session" grants are held in memory for the life
+# of the app; until this group existed nothing listed them and the only way
+# out was restarting Chatbook.
+_SESSION_APPROVALS_HEADING = "Session approvals"
+_SESSION_APPROVAL_REVOKE_TOOLTIP = (
+    "Revoke this session approval — the next call asks again."
+)
 
 # Task 3 (MCP Hub Phase 6): cascade provenance -- `show_permission()`'s
 # `cascade` tuple, when given, replaces the single `_ORIGIN_SENTENCES`
@@ -408,6 +423,39 @@ def _stale_result_toast_text(tool_name: str) -> str:
     return _safe_tool_test_text(
         f"{tool_name} finished running, but its result isn't shown here."
     )
+
+
+def _arg_rule_summary(args_json: str, *, limit: int = _ARG_RULE_SUMMARY_LIMIT) -> str:
+    """One exact-input allow rule's row text, capped at `limit` chars
+    (task-32281 AC#1).
+
+    Review round 1 (Important): redacted before display -- the approval
+    card that created this rule already ran `redact_mapping()` before
+    ever showing the arguments (`chat_approval_card.py`'s redaction pass;
+    `MCP/redaction.py` states the whole-subsystem invariant that secret-
+    shaped values never reach a display or log boundary unredacted), so
+    the stored row must too, or a secret argument that was hidden on the
+    approval card comes back unredacted here. `args_json` is the rule's
+    canonical argument rendering (`permission_store._canonical_args_
+    json()`'s output); re-parsed, redacted, and re-dumped rather than
+    string-matched, so nested secret-keyed values are caught too. Falls
+    back to the raw (still capped) string only when `args_json` doesn't
+    parse back to a mapping -- `rule_id`/removal never read this text,
+    only the raw canonical string, so a fallback here never affects
+    Remove.
+    """
+    try:
+        parsed = json.loads(args_json)
+        text = (
+            json.dumps(redact_mapping(parsed), sort_keys=True)
+            if isinstance(parsed, Mapping)
+            else args_json
+        )
+    except Exception:
+        text = args_json
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "…"
 
 
 def _cascade_rungs(
@@ -725,13 +773,22 @@ def audit_entry_detail_payload(entry: Mapping[str, Any]) -> dict[str, Any]:
         A metadata-only payload safe for the execution-detail display.
     """
 
+    # R24: the Audit TABLE humanises the decision token; this detail showed
+    # the raw one, so one row read two different ways. The raw token stays
+    # (it is the record), with the table's own label beside it. Local
+    # import: `mcp_audit_mode` imports from this module -- same reason
+    # `remediation_actions` is imported locally below.
+    from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import _DECISION_LABELS
+
     server_key = str(entry.get("server_key") or "")
     tool_name = str(entry.get("tool_name") or "")
+    decision = str(entry.get("decision") or "")
     return {
         "ts": entry.get("ts"),
         "tool": f"{server_key}::{tool_name}",
         "initiator": entry.get("initiator"),
         "decision": entry.get("decision"),
+        "decision_label": _DECISION_LABELS.get(decision, decision),
         "ok": entry.get("ok"),
         "status": entry.get("status"),
         "duration": format_duration_ms(int(entry.get("duration_ms") or 0)),
@@ -1120,6 +1177,52 @@ class MCPInspector(Vertical):
             self.tool_name = tool_name
             self.profile_context = profile_context
 
+    class RemoveArgRuleRequested(Message, namespace="mcp_inspector"):
+        """Posted when the user presses Remove on one exact-input allow
+        rule row (task-32281; `#mcp-inspector-arg-rule-remove-{index}`,
+        one per rule -- see `_render_permission_container()`'s own
+        `arg_rules` rendering). `rule_id` is the rule's canonical
+        ``args_json`` -- `list_tool_arg_rules()`'s own `rule_id` field, the
+        SAME string `remove_tool_arg_rule()` matches against. `MCPWorkbench`
+        deletes it, resyncs the matrix (its ``≡`` marker clears once no
+        rule remains), and re-renders this same permission block with the
+        fresh (now-shorter) rule list."""
+
+        def __init__(
+            self,
+            server_key: str,
+            tool_name: str,
+            rule_id: str,
+            profile_context: PermissionProfileContext | None = None,
+        ) -> None:
+            super().__init__()
+            self.server_key = server_key
+            self.tool_name = tool_name
+            self.rule_id = rule_id
+            self.profile_context = profile_context
+
+    class RevokeSessionApprovalRequested(Message, namespace="mcp_inspector"):
+        """Posted when the user presses Revoke on one session-approval row
+        (task-32291; `#mcp-inspector-session-approval-revoke-{index}`, one
+        per live grant -- see `_render_permission_container()`'s own
+        `session_approvals` rendering). The `(server_key, tool_name)` pair
+        is the ROW's own, which need not be the tool this permission block
+        is explaining: the group lists every grant in the profile, since
+        before it nothing listed them anywhere. `MCPWorkbench` revokes it,
+        resyncs the matrix (that tool's ` (session)` suffix clears) and
+        re-renders this same permission block with the fresh list."""
+
+        def __init__(
+            self,
+            server_key: str,
+            tool_name: str,
+            profile_context: PermissionProfileContext | None = None,
+        ) -> None:
+            super().__init__()
+            self.server_key = server_key
+            self.tool_name = tool_name
+            self.profile_context = profile_context
+
     class AuditOpenToolRequested(Message, namespace="mcp_inspector"):
         """Posted when the user presses "Open tool" (`#mcp-audit-open-tool`)
         on an execution-log entry's detail view (`show_audit_entry()`).
@@ -1242,6 +1345,27 @@ class MCPInspector(Vertical):
         # `ReallowRequested` without re-querying the workbench.
         self._current_permission_tool: HubTool | None = None
         self._current_permission_profile_context: PermissionProfileContext | None = None
+        # task-32281: the exact-input allow rules `#mcp-inspector-permission`
+        # is currently listing (index-aligned with the mounted `mcp-
+        # inspector-arg-rule-remove-{index}` buttons) -- read by that
+        # button's press handler (below) to resolve the pressed row's
+        # `rule_id` for `RemoveArgRuleRequested` without re-fetching.
+        self._current_permission_arg_rules: list[Mapping[str, Any]] = []
+        # task-32291: index-aligned with the session-approval rows this
+        # block last rendered, so a Revoke press resolves its own entry
+        # without re-fetching.
+        self._current_permission_session_approvals: list[tuple[str, str]] = []
+        # task-32291: the rest of the block's own inputs, cached so
+        # `refresh_permission_session_approvals()` can re-render EXACTLY
+        # what is on screen with a fresh listing -- the caller would
+        # otherwise have to re-derive an `EffectiveToolState`/cascade it
+        # cannot always reproduce (a built-in row's state comes from the
+        # workbench's own built-in resolution, not the MCP catalog).
+        self._current_permission_effective: EffectiveToolState | None = None
+        self._current_permission_cascade: tuple[str | None, str | None, str] | None = (
+            None
+        )
+        self._current_permission_goto = False
         # T7 (MCP Hub Phase 5): the raw execution-log entry dict
         # `#mcp-inspector-audit` currently describes, or `None` when
         # hidden -- set by `show_audit_entry()`, the single writer. Read by
@@ -1798,6 +1922,8 @@ class MCPInspector(Vertical):
         *,
         effective: EffectiveToolState | None = None,
         profile_context: PermissionProfileContext | None = None,
+        arg_rules: Sequence[Mapping[str, Any]] = (),
+        session_approvals: Sequence[tuple[str, str]] = (),
     ) -> None:
         """Rebuild `#mcp-inspector-tool` for the given tool, or hide it.
 
@@ -1927,7 +2053,11 @@ class MCPInspector(Vertical):
             # wiring is `show_permission()`-only per the brief, so this path
             # keeps rendering the plain origin sentence.
             await self._render_permission_container(
-                tool, effective, show_goto_button=True
+                tool,
+                effective,
+                show_goto_button=True,
+                arg_rules=arg_rules,
+                session_approvals=session_approvals,
             )
 
     async def _render_permission_container(
@@ -1937,6 +2067,8 @@ class MCPInspector(Vertical):
         *,
         cascade: tuple[str | None, str | None, str] | None = None,
         show_goto_button: bool = False,
+        arg_rules: Sequence[Mapping[str, Any]] = (),
+        session_approvals: Sequence[tuple[str, str]] = (),
     ) -> None:
         """Rebuild `#mcp-inspector-permission` for one tool's resolved
         permission state, or hide it.
@@ -1959,18 +2091,41 @@ class MCPInspector(Vertical):
         "Change in Permissions" jump button (`#mcp-inspector-goto-
         permission`) -- `show_tool()`'s own call site only; see its
         docstring.
+
+        `arg_rules` (task-32281): this tool's stored exact-input allow
+        rules (`MCPWorkbench._arg_rules_for_row()`'s fetch, threaded
+        through by every real caller) -- rendered as one row per rule with
+        a Remove button, below the state explanation. Empty (the default)
+        renders no rule rows at all, same as a tool with none stored.
+
+        `session_approvals` (task-32291): every live "Approve for session"
+        grant in this profile (`MCPWorkbench._session_approvals_for_row()`),
+        rendered as a labelled group with one Revoke button per entry.
+        Deliberately NOT filtered to `tool` -- the grants are in-memory and
+        were, until this group, invisible everywhere, so any open permission
+        block is a place to find and drop them.
         """
         container = self.query_one("#mcp-inspector-permission", Vertical)
         await container.remove_children()
         if tool is None or effective is None:
             container.display = False
             self._current_permission_tool = None
+            self._current_permission_arg_rules = []
+            self._current_permission_session_approvals = []
+            self._current_permission_effective = None
+            self._current_permission_cascade = None
+            self._current_permission_goto = False
             # task-2270: restore the badge -- unless another detail view
             # (tool/audit/finding) still shows content.
             self._sync_state_badge_display()
             return
         container.display = True
         self._current_permission_tool = tool
+        self._current_permission_arg_rules = list(arg_rules)
+        self._current_permission_session_approvals = list(session_approvals)
+        self._current_permission_effective = effective
+        self._current_permission_cascade = cascade
+        self._current_permission_goto = show_goto_button
         # task-2270: a Permissions-matrix row selection hides the badge
         # exactly like Tools mode does; synced before the mounts below so
         # no paint frame shows badge + populated detail together.
@@ -2057,6 +2212,70 @@ class MCPInspector(Vertical):
                     markup=False,
                 )
             )
+        # task-32281 AC#1: one row per stored exact-input allow rule --
+        # a Static summary plus its own Remove button, index-aligned with
+        # `self._current_permission_arg_rules` so the press handler below
+        # can resolve `rule_id` without re-fetching.
+        # R22: `permission_store.arg_rule_allows` refuses outright for a
+        # tool whose tags intersect `HIGH_RISK_TAGS`, so a rule stored
+        # against one is inert -- say so on the row instead of listing it
+        # as if it were quieting calls. The Remove button stays: an inert
+        # rule is exactly the kind a user wants to clear out.
+        rule_prefix = (
+            "Exact-input allow (not in effect: risk floor)"
+            if set(tool.tags) & HIGH_RISK_TAGS
+            else "Exact-input allow"
+        )
+        for index, rule in enumerate(self._current_permission_arg_rules):
+            args_json = str(rule.get("args_json", ""))
+            widgets.append(
+                Static(
+                    f"{rule_prefix} · {_arg_rule_summary(args_json)}",
+                    id=f"mcp-inspector-arg-rule-{index}",
+                    classes="ds-field-row",
+                    markup=False,
+                )
+            )
+            widgets.append(
+                Button(
+                    "Remove",
+                    id=f"mcp-inspector-arg-rule-remove-{index}",
+                    classes="console-action-secondary",
+                    compact=True,
+                    tooltip=_ARG_RULE_REMOVE_TOOLTIP,
+                )
+            )
+        # task-32291 AC#1: the live session grants, listed with a per-row
+        # Revoke -- same index-aligned shape as the arg-rule rows above.
+        if self._current_permission_session_approvals:
+            widgets.append(
+                Static(
+                    _SESSION_APPROVALS_HEADING,
+                    id="mcp-inspector-session-approvals",
+                    classes="ds-field-row",
+                    markup=False,
+                )
+            )
+        for index, (server_key, tool_name) in enumerate(
+            self._current_permission_session_approvals
+        ):
+            widgets.append(
+                Static(
+                    f"{server_key} · {tool_name}",
+                    id=f"mcp-inspector-session-approval-{index}",
+                    classes="ds-field-row",
+                    markup=False,
+                )
+            )
+            widgets.append(
+                Button(
+                    "Revoke",
+                    id=f"mcp-inspector-session-approval-revoke-{index}",
+                    classes="console-action-secondary",
+                    compact=True,
+                    tooltip=_SESSION_APPROVAL_REVOKE_TOOLTIP,
+                )
+            )
         if show_goto_button:
             widgets.append(
                 Button(
@@ -2076,6 +2295,8 @@ class MCPInspector(Vertical):
         *,
         cascade: tuple[str | None, str | None, str] | None = None,
         profile_context: PermissionProfileContext | None = None,
+        arg_rules: Sequence[Mapping[str, Any]] = (),
+        session_approvals: Sequence[tuple[str, str]] = (),
     ) -> None:
         """Render `#mcp-inspector-permission` standalone -- Permissions-mode's
         matrix tool-row selection entry point
@@ -2098,7 +2319,40 @@ class MCPInspector(Vertical):
         """
         async with self._refresh_lock:
             self._current_permission_profile_context = profile_context
-            await self._render_permission_container(tool, effective, cascade=cascade)
+            await self._render_permission_container(
+                tool,
+                effective,
+                cascade=cascade,
+                arg_rules=arg_rules,
+                session_approvals=session_approvals,
+            )
+
+    async def refresh_permission_session_approvals(
+        self, session_approvals: Sequence[tuple[str, str]]
+    ) -> None:
+        """Re-render the OPEN permission block with a fresh session-approval
+        listing (task-32291) -- `MCPWorkbench`'s revoke handler.
+
+        Everything else about the block (tool, resolved state, cascade,
+        arg rules, the goto button) is re-rendered from what it was last
+        built with, so this works for every entry point -- a Tools-mode
+        selection, a Permissions matrix row, and a built-in row (whose
+        `EffectiveToolState` the workbench resolves in a way this widget
+        cannot reproduce). Revoking never writes the permission store, so
+        none of those inputs can have gone stale underneath it.
+
+        A block that is not currently showing anything stays hidden --
+        `_render_permission_container(None, None)` is its own no-op.
+        """
+        async with self._refresh_lock:
+            await self._render_permission_container(
+                self._current_permission_tool,
+                self._current_permission_effective,
+                cascade=self._current_permission_cascade,
+                show_goto_button=self._current_permission_goto,
+                arg_rules=list(self._current_permission_arg_rules),
+                session_approvals=session_approvals,
+            )
 
     async def show_audit_entry(
         self,
@@ -3365,6 +3619,52 @@ class MCPInspector(Vertical):
                         self._current_permission_profile_context,
                     )
                 )
+            return
+        if button_id.startswith("mcp-inspector-arg-rule-remove-"):
+            # task-32281: one Remove button per exact-input allow rule row,
+            # index-aligned with `_current_permission_arg_rules` (the SAME
+            # list `_render_permission_container()` just rendered from).
+            event.stop()
+            tool = self._current_permission_tool
+            if tool is None:
+                return
+            try:
+                index = int(button_id.rsplit("-", 1)[-1])
+                rule = self._current_permission_arg_rules[index]
+            except (ValueError, IndexError):
+                return
+            rule_id = rule.get("rule_id")
+            if not isinstance(rule_id, str) or not rule_id:
+                return
+            self.post_message(
+                self.RemoveArgRuleRequested(
+                    tool.server_key,
+                    tool.name,
+                    rule_id,
+                    self._current_permission_profile_context,
+                )
+            )
+            return
+        if button_id.startswith("mcp-inspector-session-approval-revoke-"):
+            # task-32291: one Revoke per live session grant, index-aligned
+            # with `_current_permission_session_approvals`. The entry's own
+            # (server_key, tool_name) travels -- NOT the block's tool, which
+            # is usually a different one.
+            event.stop()
+            try:
+                index = int(button_id.rsplit("-", 1)[-1])
+                server_key, tool_name = self._current_permission_session_approvals[
+                    index
+                ]
+            except (ValueError, IndexError):
+                return
+            self.post_message(
+                self.RevokeSessionApprovalRequested(
+                    server_key,
+                    tool_name,
+                    self._current_permission_profile_context,
+                )
+            )
             return
         if button_id == "mcp-inspector-goto-permission":
             # Task 3: the Tools-mode permission block's own jump button --

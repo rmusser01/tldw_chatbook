@@ -3576,6 +3576,48 @@ def test_review_hook_gates_builtins_with_no_mcp_provider():
     assert verdicts == {"write_thing": "proceed"}
 
 
+def test_review_hook_gives_a_mutating_builtin_the_mutation_effect():
+    """task-32278 AC#3: the card's blast-radius sentence must be right.
+
+    The read-vs-mutation wording keys off `MCPPendingCall.effects`, and this
+    builder passed none -- so `write_file`, whose `risk_tags == ("mutates",)`
+    is exactly what floors it to "ask", rendered "this tool reads local
+    data". Driven through the REAL hook with the REAL tools: a
+    reconstruction of these kwargs would keep passing if the builder stopped
+    supplying them, which is the defect itself.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+    from tldw_chatbook.Tools.file_operation_tools import ReadFileTool, WriteFileTool
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        format_approval_reason,
+    )
+
+    def _row_for(tool) -> MCPPendingCall:
+        asked: dict[str, list[MCPPendingCall]] = {}
+
+        def request_approvals(pending: list[MCPPendingCall]) -> dict[str, str]:
+            asked["pending"] = pending
+            return {p.llm_name: "deny" for p in pending}
+
+        hook = build_tool_review_hook(
+            _FakeBuiltinGate(), _FakeBuiltinProvider(tool), None, request_approvals
+        )
+        hook([_builtin_call(tool.name)], RUN)
+        return asked["pending"][0]
+
+    mutating = _row_for(WriteFileTool())
+    assert mutating.effects == ("mutates_local",)
+    assert format_approval_reason(vars(mutating)) == (
+        "High risk: this tool changes local data and always asks first."
+    )
+
+    reading = _row_for(ReadFileTool())
+    assert reading.effects == ()
+    assert format_approval_reason(vars(reading)) == (
+        "High risk: this tool reads local data and always asks first."
+    )
+
+
 def _file_tool(name: str):
     """A `Tool`-shaped double carrying a REAL file-tool name (read_file/
     list_directory/write_file), so `path_precheck_failed` (looked up by
@@ -11142,3 +11184,221 @@ async def test_leading_reference_draft_still_gets_audit_row(monkeypatch):
     rows = store.messages_for_session(store.active_session_id)
     system_rows = [m for m in rows if m.role.value == "system" and "@-references" in m.content]
     assert system_rows, "leading-@ draft lost its audit row"
+
+
+# --------------------------------------------------------------------------
+# task-32344: pre-provider setup is bounded and visible.
+# --------------------------------------------------------------------------
+
+
+def test_personal_context_bootstrap_cannot_hold_the_send_open(monkeypatch):
+    """A wedged lazy bootstrap must give up, not stall the first send.
+
+    Reproduces the real trace: the app-owned Personal Context service is
+    built lazily on the FIRST agent send, and its constructor talks to the
+    OS credential store, which can block indefinitely (macOS Keychain
+    authorization UI). ``personalization never blocks chat`` was enforced
+    only against exceptions, so a hang sailed straight through it.
+    """
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    released = threading.Event()
+    entered = threading.Event()
+
+    def never_returns():
+        entered.set()
+        released.wait(30)
+        return object()
+
+    controller.app = SimpleNamespace(get_personal_context_service=never_returns)
+    # The shipped ceiling; the test then patches it so the wedge is quick.
+    assert controller_module.CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS == 10.0
+    monkeypatch.setattr(
+        controller_module, "CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS", 0.05
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT",
+        threading.Event(),
+    )
+    loop = asyncio.new_event_loop()
+    try:
+        started = time.monotonic()
+        resolved = loop.run_until_complete(controller._personal_context_service())
+        elapsed = time.monotonic() - started
+    finally:
+        released.set()
+        loop.close()
+    assert entered.is_set()
+    assert resolved is None
+    # Under 1s, not merely under the shipped 10s: this must fail if the
+    # patched budget is ever ignored and the real ceiling applies.
+    assert elapsed < 1.0, elapsed
+
+
+def test_expired_budget_warning_names_the_budget_value(monkeypatch):
+    """The budget-exceeded WARNING must render the actual number.
+
+    loguru only substitutes kwargs that appear as ``{placeholders}`` in the
+    message string itself; ``_forward_loguru_to_standard`` forwards only
+    ``record["message"]``, never ``record["extra"]``. A message that carries
+    ``budget_seconds=...`` as a bare kwarg (with no ``{budget_seconds}`` in
+    the template) ships with no number in it at all.
+    """
+    from loguru import logger as loguru_logger
+
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    released = threading.Event()
+
+    def never_returns():
+        released.wait(30)
+        return object()
+
+    controller.app = SimpleNamespace(get_personal_context_service=never_returns)
+    monkeypatch.setattr(
+        controller_module, "CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS", 0.05
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT",
+        threading.Event(),
+    )
+    messages = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    loop = asyncio.new_event_loop()
+    try:
+        resolved = loop.run_until_complete(controller._personal_context_service())
+    finally:
+        loguru_logger.remove(sink_id)
+        released.set()
+        loop.close()
+    assert resolved is None
+    rendered = [str(m) for m in messages if "personal context bootstrap" in str(m)]
+    assert rendered, "expected a budget-exceeded WARNING"
+    assert "0.05" in rendered[0], rendered[0]
+
+
+def test_a_wedged_bootstrap_does_not_park_a_second_worker(monkeypatch):
+    """The second send must not queue another thread behind the first.
+
+    Expiring the budget abandons the worker; it does not kill it, and
+    `get_personal_context_service` holds a process-wide lock for the whole
+    bootstrap. Without a guard, send N+1 parks another shared-executor
+    worker on that lock permanently -- and that executor also carries
+    `run_reply` and ~1100 other `to_thread` calls.
+    """
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    released = threading.Event()
+    calls = []
+
+    def never_returns():
+        calls.append(1)
+        released.wait(30)
+        return object()
+
+    controller.app = SimpleNamespace(get_personal_context_service=never_returns)
+    monkeypatch.setattr(
+        controller_module, "CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS", 0.05
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT",
+        threading.Event(),
+    )
+    loop = asyncio.new_event_loop()
+    try:
+        assert loop.run_until_complete(controller._personal_context_service()) is None
+        started = time.monotonic()
+        second = loop.run_until_complete(controller._personal_context_service())
+        second_elapsed = time.monotonic() - started
+    finally:
+        released.set()
+        loop.close()
+    assert second is None
+    # One submission, not two: the wedged worker is still holding the lock.
+    assert calls == [1], calls
+    # And the second send did not even wait out the (patched) budget.
+    assert second_elapsed < 0.01, second_elapsed
+
+
+def test_a_finished_bootstrap_clears_the_in_flight_guard(monkeypatch):
+    """The guard is not a one-way latch -- a healthy attempt reopens it."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    service = object()
+    calls = []
+
+    def getter():
+        calls.append(1)
+        return service
+
+    controller.app = SimpleNamespace(get_personal_context_service=getter)
+    monkeypatch.setattr(
+        controller_module,
+        "_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT",
+        threading.Event(),
+    )
+    assert asyncio.run(controller._personal_context_service()) is service
+    assert asyncio.run(controller._personal_context_service()) is service
+    assert calls == [1, 1]
+    assert not controller_module._PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.is_set()
+
+
+def test_a_raising_bootstrap_clears_the_in_flight_guard(monkeypatch):
+    """A bootstrap that raises must not wedge the guard shut either."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+
+    def boom():
+        raise RuntimeError("no credential store")
+
+    controller.app = SimpleNamespace(get_personal_context_service=boom)
+    monkeypatch.setattr(
+        controller_module,
+        "_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT",
+        threading.Event(),
+    )
+    assert asyncio.run(controller._personal_context_service()) is None
+    assert not controller_module._PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.is_set()
+
+
+def test_personal_context_bootstrap_returns_its_service_within_budget(monkeypatch):
+    """The bound is a ceiling, not a delay: a healthy bootstrap is unchanged."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    service = object()
+    controller.app = SimpleNamespace(get_personal_context_service=lambda: service)
+    monkeypatch.setattr(
+        controller_module,
+        "_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT",
+        threading.Event(),
+    )
+    assert asyncio.run(controller._personal_context_service()) is service
+
+
+def test_pre_provider_setup_phase_marks_and_clears_the_bridge():
+    """The bracket the send runs its setup inside marks, then always clears."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    bridge = SimpleNamespace(marked=[], cleared=[])
+    bridge.begin_setup_phase = lambda cid, **_kw: bridge.marked.append(cid)
+    bridge.end_setup_phase = lambda cid: bridge.cleared.append(cid)
+    controller._agent_bridge = bridge
+
+    async def _happy():
+        async with controller._pre_provider_setup_phase("c1"):
+            assert bridge.marked == ["c1"]
+            assert bridge.cleared == []
+
+    asyncio.run(_happy())
+    assert bridge.cleared == ["c1"]
+
+    async def _raising():
+        async with controller._pre_provider_setup_phase("c2"):
+            raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(_raising())
+    assert bridge.cleared == ["c1", "c2"]

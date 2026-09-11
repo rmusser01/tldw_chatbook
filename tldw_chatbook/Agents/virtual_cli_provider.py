@@ -7,12 +7,17 @@ import re
 import threading
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
-from typing import Callable, ContextManager, Iterator, Mapping, Sequence
+from typing import Any, Callable, ContextManager, Iterator, Mapping, Sequence
 
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic import ValidationError as PydanticValidationError
 
+from tldw_chatbook.MCP.execution_log import (
+    KILL_SWITCH_DENIED_DECISION,
+    POLICY_DENIED_DECISION,
+    UNRESOLVED_DENIED_DECISION,
+)
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools.virtual_cli_impls import (
@@ -38,7 +43,7 @@ from .local_tool_provider import (
     LOCAL_TIMEOUT_REFUSAL,
     RunAdmittedWorkspaceRoot,
 )
-from .mcp_tool_provider import MCPPendingCall
+from .mcp_tool_provider import MCPPendingCall, approval_effects_for_tool
 from .run_context import current_run_id, current_tool_call_id
 from .tool_catalog import redact_root_locator
 
@@ -126,6 +131,8 @@ class VirtualCliProvider:
         | None = None,
         is_session_approved: Callable[[HubTool], bool] | None = None,
         persist_approval: Callable[[HubTool, str], None] | None = None,
+        persist_arg_rule: Callable[[HubTool, Mapping[str, Any]], None] | None = None,
+        arg_rule_allows: Callable[[HubTool, Mapping[str, Any]], bool] | None = None,
         record_decision: Callable[[HubTool, str], None] | None = None,
         root_guard: Callable[[], bool] | None = None,
         authority_scope: Callable[[], ContextManager[Path]] | None = None,
@@ -193,6 +200,8 @@ class VirtualCliProvider:
         self._approval_callback = approval_callback
         self._is_session_approved = is_session_approved
         self._persist_approval = persist_approval
+        self._persist_arg_rule = persist_arg_rule
+        self._arg_rule_allows = arg_rule_allows
         self._record_decision = record_decision
         self._root_guard = root_guard
         self._authority_scope = authority_scope
@@ -327,6 +336,12 @@ class VirtualCliProvider:
         hub = self.hub_tool_for(command)
         if state.state != "ask" or self._session_approved(hub):
             return None
+        if self._arg_rule_allows_safe(hub, call.args):
+            # task-32281: a stored exact-input rule quiets exactly this
+            # call (mirrors `MCPToolProvider.pending_gate_for()`'s own
+            # `_arg_rule_allows_safe` short-circuit) -- non-matching
+            # arguments for the same command still ask.
+            return None
         return MCPPendingCall(
             llm_name=VIRTUAL_CLI_TOOL_NAME,
             server_key=VIRTUAL_CLI_SERVER_KEY,
@@ -341,6 +356,7 @@ class VirtualCliProvider:
                 else "ask"
             ),
             call_id=call.call_id or command,
+            effects=approval_effects_for_tool(hub),
         )
 
     def apply_batch_decisions(
@@ -394,24 +410,33 @@ class VirtualCliProvider:
         except VirtualCliArgumentError as exc:
             return ToolResult(ok=False, error=f"invalid virtual_cli request: {exc}")
         hub = self.hub_tool_for(command)
+        # task-32280 fix round: six refusers used to share one "denied"
+        # token, which Audit now renders as "Denied by you" -- true of
+        # exactly one of them (the card Deny below). Each token names WHO
+        # refused; the refusal copy the model sees is unchanged.
         if not self._authority_is_valid(authority):
-            self._record(hub, "denied")
+            self._record(hub, UNRESOLVED_DENIED_DECISION)
             return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
         if not self._local_tools_are_enabled():
-            self._record(hub, "denied")
+            self._record(hub, KILL_SWITCH_DENIED_DECISION)
             return ToolResult.blocked(LOCAL_KILL_SWITCH_REFUSAL)
         if self._kill_switch_engaged():
-            self._record(hub, "denied")
+            self._record(hub, KILL_SWITCH_DENIED_DECISION)
             return ToolResult.blocked(LOCAL_KILL_SWITCH_REFUSAL)
         try:
             state = self._resolve_state(hub)
         except Exception:
-            self._record(hub, "denied")
+            self._record(hub, UNRESOLVED_DENIED_DECISION)
             return ToolResult.blocked(LOCAL_GATE_ERROR_REFUSAL)
         if state.state == "deny":
-            self._record(hub, "denied")
+            self._record(hub, POLICY_DENIED_DECISION)
             return ToolResult.blocked(LOCAL_DENY_REFUSAL)
         if state.state == "allow":
+            verdict = "allow"
+        elif self._arg_rule_allows_safe(hub, args):
+            # task-32281: a rule persisted by an earlier "allow_matching"
+            # decision quiets exactly this call -- the identical call
+            # resolves allow without re-asking.
             verdict = "allow"
         else:
             verdict = self._ask_verdict(hub, command, args)
@@ -476,6 +501,15 @@ class VirtualCliProvider:
             if stamp != "approve_once":
                 self._persist(hub, stamp)
             return "allow"
+        # task-32281: a pre-decided "allow_matching" stamp used to match
+        # neither this branch nor the deny/timeout one below and fall
+        # through to a re-ask (or "timeout" with no callback) -- the
+        # user's own decision was silently dropped. Persist the rule for
+        # THIS call's exact arguments and allow it, mirroring
+        # `MCPToolProvider._apply_verdict()`'s `"allow_matching"` handling.
+        if stamp == "allow_matching":
+            self._persist_arg_rule_call(hub, args)
+            return "allow"
         if stamp in {"deny", "timeout"}:
             return stamp
         if self._session_approved(hub):
@@ -492,9 +526,17 @@ class VirtualCliProvider:
         decision = decisions.get(pending.call_id or pending.llm_name, "timeout")
         if decision in {"approve_session", "always_allow"}:
             self._persist(hub, decision)
+        # task-32281: the live-callback counterpart of the stamp branch
+        # above -- "allow_matching" used to fall through to the final
+        # `else decision` and come back as the literal string
+        # "allow_matching", which `invoke()`'s `verdict != "allow"` check
+        # then DENIED outright. Persisting here mirrors the stamp path.
+        elif decision == "allow_matching":
+            self._persist_arg_rule_call(hub, args)
         return (
             "allow"
-            if decision in {"approve_once", "approve_session", "always_allow"}
+            if decision
+            in {"approve_once", "approve_session", "always_allow", "allow_matching"}
             else decision
         )
 
@@ -526,6 +568,23 @@ class VirtualCliProvider:
         except Exception:
             return False
 
+    def _arg_rule_allows_safe(self, hub: HubTool, args: Mapping[str, Any]) -> bool:
+        """Whether a previously-persisted exact-input rule allows THIS
+        call's exact arguments (task-32281) -- mirrors `MCPToolProvider.
+        _arg_rule_allows_safe()`'s never-raise, fail-closed contract, so
+        the "allow_matching" decision `_ask_verdict()` persists actually
+        quiets the identical call on its NEXT run instead of re-asking."""
+        if self._arg_rule_allows is None:
+            return False
+        try:
+            return bool(self._arg_rule_allows(hub, args))
+        except Exception as exc:
+            logger.warning(
+                "Virtual CLI arg-rule check failed (exception_type={})",
+                type(exc).__name__,
+            )
+            return False
+
     def _persist(self, hub: HubTool, decision: str) -> None:
         if self._persist_approval is None:
             return
@@ -534,6 +593,22 @@ class VirtualCliProvider:
         except Exception as exc:
             logger.warning(
                 "Virtual CLI approval persistence failed (exception_type={})",
+                type(exc).__name__,
+            )
+
+    def _persist_arg_rule_call(self, hub: HubTool, args: Mapping[str, Any]) -> None:
+        """Persist an exact-input allow rule for THIS call's exact
+        arguments (task-32281 -- Virtual CLI's argument shape, a fixed
+        command enum plus a bounded `argv` array, is stable enough to
+        honor the option the approval card already offers; see
+        `_ask_verdict()`'s `"allow_matching"` handling below)."""
+        if self._persist_arg_rule is None:
+            return
+        try:
+            self._persist_arg_rule(hub, args)
+        except Exception as exc:
+            logger.warning(
+                "Virtual CLI arg-rule persistence failed (exception_type={})",
                 type(exc).__name__,
             )
 

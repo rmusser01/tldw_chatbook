@@ -279,6 +279,36 @@ async def test_prompts_modal_reads_provider_recovery_off_the_screen_at_open() ->
         assert modal._improve_unavailable_reason == "No provider configured."
 
 
+@pytest.mark.asyncio
+async def test_improve_stays_unavailable_during_an_active_run_even_with_a_healthy_provider() -> None:
+    """task-32276: Improve's active-run gate is independent of the provider
+    blocker copy -- a healthy, unblocked provider (empty blocker copy, the
+    correct state during a mere active run since task-32276's fix to
+    `_console_provider_blocker_copy`) must still disable Improve while a run
+    is in flight, because Improve dispatches to the provider gateway on its
+    own, outside the main turn.
+    """
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_native_ready_console(app)
+    app.prompt_scope_service = _PromptScopeService()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+        console._console_provider_blocker_copy = lambda: ""
+        console._console_run_active = lambda: True
+
+        console._open_console_prompts_modal()
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+
+        assert modal._improve_unavailable_reason == (
+            "Model improvement is unavailable while a run is in progress."
+        )
+
+
 # ---------------------------------------------------------------------------
 # The callback bundle the modal opener hands to `ConsolePromptsModal`
 #

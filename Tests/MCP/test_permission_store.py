@@ -1042,3 +1042,246 @@ def test_service_arg_rule_round_trip(tmp_path) -> None:
 
     assert service.arg_rule_allows_call(tool, {"query": "x"}) is True
     assert service.arg_rule_allows_call(tool, {"query": "y"}) is False
+
+
+# --- task-32281: list/remove exact-input allow rules ------------------------
+
+
+def test_list_tool_arg_rules_returns_rule_id_and_created_at(tmp_path) -> None:
+    """AC#1: the inspector needs a rule_id to remove BY and text to show."""
+    from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+
+    rules = store.list_tool_arg_rules("srv", "search")
+
+    assert len(rules) == 1
+    assert rules[0]["rule_id"] == rules[0]["args_json"]
+    assert json.loads(rules[0]["args_json"]) == {"query": "x"}
+    assert rules[0]["created_at"]
+
+
+def test_list_tool_arg_rules_omits_hand_written_field_pattern_rules(tmp_path) -> None:
+    """Only the exact-input shape the card writes is "a rule" here -- a
+    hand-written glob rule has no `args_json` and isn't this surface's
+    concern (it's still honored by `arg_rule_allows`, just not listed)."""
+    from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    payload = store.load()
+    entry = (
+        payload["profiles"]["default"]
+        .setdefault("servers", {})
+        .setdefault("srv", {})
+        .setdefault("tools", {})
+        .setdefault("search", {})
+    )
+    entry["arg_rules"] = [
+        {
+            "field": "query",
+            "pattern": "docs *",
+            "definition_hash": definition_hash(
+                tool.description, tool.input_schema
+            ),
+        }
+    ]
+    store.save(payload)
+
+    assert store.list_tool_arg_rules("srv", "search") == []
+
+
+def test_list_tool_arg_rules_empty_for_unknown_tool(tmp_path) -> None:
+    from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+
+    assert store.list_tool_arg_rules("srv", "search") == []
+
+
+def test_remove_tool_arg_rule_round_trip_makes_the_next_call_ask_again(
+    tmp_path,
+) -> None:
+    """AC#1: removing a rule makes the next identical call ask again."""
+    from tldw_chatbook.MCP.permission_store import (
+        MCPPermissionStore,
+        arg_rule_allows,
+    )
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+    rule_id = store.list_tool_arg_rules("srv", "search")[0]["rule_id"]
+    assert arg_rule_allows(store.load(), tool, {"query": "x"})
+
+    removed = store.remove_tool_arg_rule("srv", "search", rule_id)
+
+    assert removed is True
+    assert store.list_tool_arg_rules("srv", "search") == []
+    assert not arg_rule_allows(store.load(), tool, {"query": "x"})
+
+
+def test_removing_the_last_rule_of_a_state_less_tool_stays_strictly_valid(
+    tmp_path,
+) -> None:
+    """Review round 1 (Critical): a tool that only ever had `arg_rules`
+    (no whole-tool `state`) used to leave `{}` behind when its last rule
+    was removed -- `_validate_strict_profile()` rejects a tool entry with
+    neither key, invalidating the WHOLE profile for `read_snapshot_
+    strict()`/`read_profile_inventory_snapshot()` callers (the
+    Permissions-mode profile selector)."""
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+    rule_id = store.list_tool_arg_rules("srv", "search")[0]["rule_id"]
+
+    assert store.remove_tool_arg_rule("srv", "search", rule_id) is True
+
+    # The empty tool entry itself is gone -- not left behind as `{}`.
+    server_entry = store.load()["profiles"]["default"]["servers"].get("srv", {})
+    assert "search" not in server_entry.get("tools", {})
+    # Both strict-read seams still validate the store.
+    strict = store.read_snapshot_strict()
+    inventory = store.read_profile_inventory_snapshot()
+    assert inventory.payload == strict.payload
+
+
+def test_remove_tool_arg_rule_unknown_id_is_a_no_op(tmp_path) -> None:
+    from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+
+    assert store.remove_tool_arg_rule("srv", "search", "not-a-real-rule-id") is False
+    assert len(store.list_tool_arg_rules("srv", "search")) == 1
+
+
+def test_remove_tool_arg_rule_only_deletes_the_matching_rule(tmp_path) -> None:
+    from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "y"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+    rules = store.list_tool_arg_rules("srv", "search")
+    keep_id = next(r["rule_id"] for r in rules if json.loads(r["args_json"])["query"] == "y")
+    remove_id = next(r["rule_id"] for r in rules if json.loads(r["args_json"])["query"] == "x")
+
+    assert store.remove_tool_arg_rule("srv", "search", remove_id) is True
+
+    remaining = store.list_tool_arg_rules("srv", "search")
+    assert [r["rule_id"] for r in remaining] == [keep_id]
+
+
+def test_service_list_and_remove_tool_arg_rules_round_trip(tmp_path) -> None:
+    """The service mirrors the store's two new methods (task-32281)."""
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
+
+    service = UnifiedMCPControlPlaneService.__new__(UnifiedMCPControlPlaneService)
+    service._permission_store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    service.add_tool_arg_rule("srv", "search", args={"query": "x"}, tool=tool)
+
+    rules = service.list_tool_arg_rules("srv", "search")
+    assert len(rules) == 1
+
+    removed = service.remove_tool_arg_rule("srv", "search", rules[0]["rule_id"])
+
+    assert removed is True
+    assert service.list_tool_arg_rules("srv", "search") == []
+    assert service.arg_rule_allows_call(tool, {"query": "x"}) is False
+
+
+def test_strict_snapshot_accepts_an_arg_rule_only_tool_entry(tmp_path) -> None:
+    """Regression (task-32281): `add_tool_arg_rule()` (task-26012) has
+    always written a tool entry with `arg_rules` but no `state` -- before
+    this fix, `read_snapshot_strict()`/`read_profile_inventory_snapshot()`
+    (the Permissions-mode profile-selector's own authority read) rejected
+    the WHOLE profile as `invalid_shape` the moment any tool had ONLY an
+    exact-input rule and no whole-tool override, which would have silently
+    broken every such profile in production."""
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+
+    strict = store.read_snapshot_strict()
+    inventory = store.read_profile_inventory_snapshot()
+
+    tool_entry = strict.payload["profiles"]["default"]["servers"]["srv"]["tools"][
+        "search"
+    ]
+    assert "state" not in tool_entry
+    assert len(tool_entry["arg_rules"]) == 1
+    assert inventory.payload == strict.payload
+
+
+def test_strict_snapshot_still_rejects_an_empty_tool_entry(tmp_path) -> None:
+    """A tool entry with neither `state` nor `arg_rules` stays invalid --
+    the fix widens what's ACCEPTED, not a blanket "any junk key is fine"."""
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    payload = store.load()
+    (
+        payload["profiles"]["default"]
+        .setdefault("servers", {})
+        .setdefault("srv", {})
+        .setdefault("tools", {})["search"]
+    ) = {}
+    store.save(payload)
+
+    with pytest.raises(PermissionStoreSnapshotError, match="invalid_shape"):
+        store.read_snapshot_strict()
+
+
+def test_strict_snapshot_rejects_a_non_list_arg_rules_value(tmp_path) -> None:
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    payload = store.load()
+    (
+        payload["profiles"]["default"]
+        .setdefault("servers", {})
+        .setdefault("srv", {})
+        .setdefault("tools", {})["search"]
+    ) = {"arg_rules": "not-a-list"}
+    store.save(payload)
+
+    with pytest.raises(PermissionStoreSnapshotError, match="invalid_shape"):
+        store.read_snapshot_strict()

@@ -77,6 +77,52 @@ def test_always_on_names_match_the_default_catalog(tools_config):
 
 def test_build_gateable_tool_raises_rather_than_returning_none():
     """The constructor logs the reason, so failures must carry one."""
-    bogus = GateableTool("x_enabled", "no_such_module", "NoSuchTool", "x")
+    bogus = GateableTool(
+        "x_enabled", "no_such_module", "NoSuchTool", "x", "Bogus", "Not real."
+    )
     with pytest.raises(Exception):
         build_gateable_tool(bogus)
+
+
+def test_every_gateable_tool_carries_display_copy():
+    """task-32284: the table is THE copy source for every gate surface.
+
+    The first-run wizard's Tools step and the MCP hub's Tool gates pane both
+    render straight off these rows, so a row without copy ships a blank
+    switch -- the failure mode CLAUDE.md's "New Tool" checklist warns about,
+    which used to depend on remembering a second table in the wizard.
+    """
+    for entry in gateable_builtin_tools():
+        assert entry.title.strip(), f"{entry.tool_name} has no title"
+        assert entry.blurb.strip(), f"{entry.tool_name} has no blurb"
+        assert entry.title != entry.tool_name, (
+            f"{entry.tool_name}'s title is the raw id, not a human name"
+        )
+
+
+def test_read_class_blurbs_promise_a_prompt_before_every_run():
+    """task-32282: read-class tools are risk-floored to `ask`, so their copy
+    must say so -- byte-identical to the first-run wizard's sentence, since
+    both surfaces render the same row.
+
+    The three write-class rows (marked ``⚠``) do NOT carry it: they say what
+    they change on disk, and their approval story is the card itself.
+    """
+    sentence = "Asks you each time before running."
+    per_call = {
+        "read_file",
+        "list_directory",
+        "glob_files",
+        "grep_files",
+        "expand_document",
+    }
+    for entry in gateable_builtin_tools():
+        if entry.tool_name in per_call:
+            assert entry.blurb.endswith(f" {sentence}"), (
+                f"{entry.tool_name} does not promise per-call approval"
+            )
+        else:
+            assert sentence not in entry.blurb, (
+                f"{entry.tool_name} is not read-class but claims per-call approval"
+            )
+    assert per_call <= {e.tool_name for e in gateable_builtin_tools()}

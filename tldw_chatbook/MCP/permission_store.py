@@ -423,11 +423,34 @@ def _validate_strict_profile(profile: Mapping[str, Any], *, is_default: bool) ->
         for tool_name, tool_entry in tools.items():
             if not isinstance(tool_name, str) or not tool_name or not isinstance(tool_entry, Mapping):
                 return False
-            if not set(tool_entry).issubset({"state", "definition_hash", "config_changed"}):
+            # task-32281: `arg_rules` (task-26012's `add_tool_arg_rule()`
+            # writer) is a legitimate tool-entry key that carries no
+            # `state` at all -- an exact-input allow rule with no
+            # whole-tool override. Previously ANY such entry (every one
+            # `add_tool_arg_rule()` has ever written on its own) failed
+            # this check outright, since `"state"` used to be mandatory --
+            # that silently invalidated the WHOLE profile for
+            # `read_snapshot_strict()`/`read_profile_inventory_snapshot()`
+            # callers (e.g. the Permissions-mode profile selector) the
+            # moment a user ever used the "Always allow this exact input"
+            # card option without also setting a whole-tool Allow/Ask/Off.
+            if not set(tool_entry).issubset(
+                {"state", "definition_hash", "config_changed", "arg_rules"}
+            ):
                 return False
-            if tool_entry.get("state") not in STORE_STATES:
+            has_state = "state" in tool_entry
+            if has_state and tool_entry["state"] not in STORE_STATES:
+                return False
+            if "arg_rules" in tool_entry and (
+                not isinstance(tool_entry["arg_rules"], list)
+                or not tool_entry["arg_rules"]
+            ):
+                return False
+            if not has_state and "arg_rules" not in tool_entry:
                 return False
             if "definition_hash" in tool_entry:
+                if not has_state:
+                    return False
                 stored_hash = tool_entry["definition_hash"]
                 legacy_hash_free_null = (
                     server_key in HASH_FREE_SERVER_KEYS
@@ -436,10 +459,13 @@ def _validate_strict_profile(profile: Mapping[str, Any], *, is_default: bool) ->
                 )
                 if not legacy_hash_free_null and not _is_sha256(stored_hash):
                     return False
-            if "config_changed" in tool_entry and not isinstance(tool_entry["config_changed"], bool):
+            if "config_changed" in tool_entry and (
+                not has_state or not isinstance(tool_entry["config_changed"], bool)
+            ):
                 return False
             if (
-                tool_entry["state"] == "allow"
+                has_state
+                and tool_entry["state"] == "allow"
                 and server_key not in HASH_FREE_SERVER_KEYS
                 and "definition_hash" not in tool_entry
             ):
@@ -1529,6 +1555,144 @@ class MCPPermissionStore:
         }:
             rules.append(rule)
         self.save(payload)
+
+    def list_tool_arg_rules(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        profile_id: str = _DEFAULT_PROFILE_ID,
+    ) -> list[dict[str, Any]]:
+        """List one tool's stored exact-input allow rules (task-32281).
+
+        Reads ONE profile's stored entry directly -- no inheritance-chain
+        walk (mirrors ``add_tool_arg_rule``'s own single-profile write,
+        not ``arg_rule_allows``'s chain read) -- a rule only ever exists
+        where ``add_tool_arg_rule`` wrote it. Hand-written ``{"field":
+        ..., "pattern": ...}`` glob rules are never returned: this surface
+        is scoped to the exact-input rules the approval card creates
+        (``args_json`` present).
+
+        Args:
+            server_key: Owning server's stable key.
+            tool_name: Tool name within that server.
+            profile_id: Profile to read.
+
+        Returns:
+            One dict per rule, oldest first, each carrying ``rule_id``
+            (the rule's canonical ``args_json`` -- unique per tool by
+            construction, see ``add_tool_arg_rule``'s own dedup, and the
+            same string ``remove_tool_arg_rule`` matches against),
+            ``args_json``, and ``created_at``.
+        """
+        payload = self.load()
+        profile = payload.get("profiles", {}).get(profile_id)
+        tool_entry = self._tool_entry(profile, server_key, tool_name)
+        if tool_entry is None:
+            return []
+        rules = tool_entry.get("arg_rules")
+        if not isinstance(rules, list):
+            return []
+        result: list[dict[str, Any]] = []
+        for rule in rules:
+            if not isinstance(rule, Mapping):
+                continue
+            args_json = rule.get("args_json")
+            if not isinstance(args_json, str) or not args_json:
+                continue
+            result.append(
+                {
+                    "rule_id": args_json,
+                    "args_json": args_json,
+                    "created_at": rule.get("created_at"),
+                }
+            )
+        return result
+
+    def remove_tool_arg_rule(
+        self,
+        server_key: str,
+        tool_name: str,
+        rule_id: str,
+        *,
+        profile_id: str = _DEFAULT_PROFILE_ID,
+    ) -> bool:
+        """Delete one exact-input allow rule (task-32281).
+
+        Mirrors ``add_tool_arg_rule``'s direct load/mutate/save shape --
+        no CAS, matching its writer rather than ``set_tool_state``'s
+        guarded one (arg rules aren't profile-CAS-protected anywhere else
+        in this store either). ``rule_id`` is the rule's canonical
+        ``args_json``, the same string ``list_tool_arg_rules`` returns as
+        ``rule_id``.
+
+        Returns:
+            True only when a rule was actually removed -- a stale or
+            unknown ``rule_id`` is a no-op, not an error.
+        """
+        payload = self.load()
+        profile = payload.get("profiles", {}).get(profile_id)
+        if not isinstance(profile, Mapping):
+            return False
+        server_entry = _as_mapping(profile.get("servers")).get(server_key)
+        if not isinstance(server_entry, Mapping):
+            return False
+        tools = server_entry.get("tools")
+        if not isinstance(tools, Mapping):
+            return False
+        tool_entry = tools.get(tool_name)
+        if not isinstance(tool_entry, Mapping):
+            return False
+        rules = tool_entry.get("arg_rules")
+        if not isinstance(rules, list):
+            return False
+        remaining = [
+            rule
+            for rule in rules
+            if not (isinstance(rule, Mapping) and rule.get("args_json") == rule_id)
+        ]
+        if len(remaining) == len(rules):
+            return False
+        if remaining:
+            tool_entry["arg_rules"] = remaining
+        else:
+            tool_entry.pop("arg_rules", None)
+            if not tool_entry:
+                # Review round 1 (Critical): a state-less tool entry (only
+                # ever had arg_rules, e.g. an "always allow this exact
+                # input" with no whole-tool override) left an empty `{}`
+                # behind, which `_validate_strict_profile()` rejects (it
+                # requires "state" OR "arg_rules") -- that invalidated the
+                # WHOLE profile for `read_snapshot_strict()`/`read_profile_
+                # inventory_snapshot()` callers the moment the LAST rule
+                # was removed. Drop only the empty tool entry itself --
+                # never cascades to `tools`/`server_entry`, which may still
+                # carry sibling tools or a server-level default.
+                tools.pop(tool_name, None)
+        self.save(payload)
+        return True
+
+    @staticmethod
+    def _tool_entry(
+        profile: Any, server_key: str, tool_name: str
+    ) -> dict[str, Any] | None:
+        """One tool's raw stored entry within ``profile``, or None --
+        ``list_tool_arg_rules``' traversal (task-32281).
+
+        Deliberately NOT shared with ``remove_tool_arg_rule``, which walks
+        the same path inline because it also needs the parent ``tools``
+        mapping in hand to drop a tool entry its last rule emptied.
+        """
+        if not isinstance(profile, Mapping):
+            return None
+        server_entry = _as_mapping(profile.get("servers")).get(server_key)
+        if not isinstance(server_entry, Mapping):
+            return None
+        tools = server_entry.get("tools")
+        if not isinstance(tools, Mapping):
+            return None
+        tool_entry = tools.get(tool_name)
+        return tool_entry if isinstance(tool_entry, Mapping) else None
 
     def mark_config_changed(
         self,

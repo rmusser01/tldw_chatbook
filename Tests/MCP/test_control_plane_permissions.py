@@ -199,6 +199,54 @@ def test_no_argument_session_clear_remains_clear_all(tmp_path):
     )
 
 
+# -- task-32291: session approvals are reviewable and revocable --------------
+
+
+def test_session_approvals_can_be_listed(tmp_path):
+    """AC#1: the in-memory grants are enumerable -- the review surface has
+    something to render. Sorted, and scoped to the asked-for profile."""
+    service, _store = _service(tmp_path)
+    service.approve_for_session("local:docs", "search")
+    service.approve_for_session(BUILTIN_TOOL_SERVER_KEY, "calculator")
+    service.approve_for_session("local:docs", "write", profile_id="research")
+
+    assert service.list_session_approvals() == [
+        (BUILTIN_TOOL_SERVER_KEY, "calculator"),
+        ("local:docs", "search"),
+    ]
+    assert service.list_session_approvals(profile_id="research") == [
+        ("local:docs", "write")
+    ]
+
+
+def test_revoking_a_session_approval_makes_the_next_call_ask_again(tmp_path):
+    """AC#2: revoke drops exactly that grant -- `is_session_approved()` (the
+    read every provider's short-circuit uses) goes False, so the next call
+    falls through to the approval card again."""
+    service, _store = _service(tmp_path)
+    service.approve_for_session("local:docs", "search")
+    service.approve_for_session("local:docs", "write")
+
+    assert service.revoke_session_approval("local:docs", "search") is True
+
+    assert service.is_session_approved("local:docs", "search") is False
+    assert service.is_session_approved("local:docs", "write") is True
+    assert service.list_session_approvals() == [("local:docs", "write")]
+
+
+def test_revoking_an_unheld_session_approval_reports_false(tmp_path):
+    service, _store = _service(tmp_path)
+    service.approve_for_session("local:docs", "search", profile_id="research")
+
+    # Never granted at all, and granted under a DIFFERENT profile: both are
+    # "nothing to revoke here", not a silent success.
+    assert service.revoke_session_approval("local:docs", "fetch") is False
+    assert service.revoke_session_approval("local:docs", "search") is False
+    assert service.is_session_approved(
+        "local:docs", "search", profile_id="research"
+    )
+
+
 def test_session_approval_revalidates_profile_digest_under_fence(tmp_path):
     service, _store = _service(tmp_path)
     store = service.permission_store

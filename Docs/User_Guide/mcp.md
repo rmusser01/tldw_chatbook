@@ -87,12 +87,15 @@ Registration is controlled by a `[tools]`/`[console]` config switch called a
 permission to in the first place.
 
 Under the local source, Tools mode now starts with an always-visible **Local
-workspace, web, and Watchlists tools** control. This provider is enabled by
-default and includes workspace file, read-only Git, web, and Watchlists tools
+workspace, web, and Watchlists tools** control — a single toggle button whose
+label states its own on/off state in text (`…: on ▸` / `…: off ▸`), the same
+styling as the Servers-mode Tool gates rows it mirrors. This provider is
+enabled by default and includes workspace file, read-only Git, web, and
+Watchlists tools
 (`web_search`, `web_fetch`, `web_crawl`, plus Watchlists metadata and receipt
 reads). The task tools `todo_create`, `todo_update`, `todo_get`,
 and `todo_list` require Console session state and are not Hub tools. Turning
-the master switch off remains a supported opt-out. The same panel lets you set
+this control off remains a supported opt-out. The same panel lets you set
 **Workspace root**, the directory that confines every `fs_*` path. A blank
 root uses the folder from which the app was launched; a non-blank root must be
 an existing directory.
@@ -136,15 +139,15 @@ shows. The group is split into two subheadings:
   a Library search result, so it reads your library and, like every
   risk-tagged tool, is floored to **Ask**: expect one approval card per
   call until you set Allow).
-- **Local workspace, web, and Watchlists tools** — a master switch, labeled
-  **Local workspace, web, and Watchlists tools (master switch)**, mirroring the
-  direct Tools-mode control. `web_deep_search` (multi-query web research that
-  may cost real money on paid providers) has an additional individual gate
-  underneath it, as does `ask_user`. The master switch and `ask_user` are
-  on by default; every `Agent built-ins` gate and `web_deep_search` default
-  to off.
+- **Local workspace, web, and Watchlists tools** — a toggle button whose
+  label states its own on/off state in text (`…: on ▸` / `…: off ▸`),
+  mirroring the direct Tools-mode control. `web_deep_search` (multi-query
+  web research that may cost real money on paid providers) has an
+  additional individual gate underneath it, as does `ask_user`. This
+  control and `ask_user` are on by default; every `Agent built-ins` gate
+  and `web_deep_search` default to off.
 
-The master switch governs the **Console/agent path only**. It does *not*
+This control governs the **Console/agent path only**. It does *not*
 control whether an enabled tool (e.g. `web_deep_search`) is exposed to
 *external* MCP clients connecting to chatbook's own server — that is a
 separate switch, `[mcp] expose_local_tools`, unrelated to this pane.
@@ -550,8 +553,15 @@ approval card offers a fifth choice: **Always · these args**. Unlike
 *exact arguments shown on that card*: the same tool called again with
 different arguments still asks. It's scoped per tool, tied to that tool's
 current definition the same way **Always** is (a server that changes the
-tool's definition invalidates the rule, same rug-pull guard). See [the
-approval card](console/agent-runs-and-tools.md#approvals--tools-ask-before-they-run)
+tool's definition invalidates the rule, same rug-pull guard).
+
+The card does **not** offer **Always · these args** for a high-risk tool
+(one tagged `mutates` or `process`): the risk floor beats an argument rule,
+so such a rule would never quiet a call. If one is already stored —
+hand-written, or left by an earlier version — the inspector lists it as
+*Exact-input allow (not in effect: risk floor)*, with its **Remove** button
+still live. See [the approval
+card](console/agent-runs-and-tools.md#approvals--tools-ask-before-they-run)
 for all five decisions and which tools offer which.
 
 A tool that carries one or more of these rules gets a `≡` marker on its
@@ -639,7 +649,10 @@ land in the existing **Blocked (Off)** / **Denied (no decision)** buckets.
 Docs pass 2026-09-10 (task-32281, against code and tests, not a live
 screen): added "Exact-input allow rules" — the inspector now lists each
 stored rule with a Remove action, and the Permissions matrix marks a tool
-that carries one with a `≡` suffix. Docs pass 2026-09-10 (task-32284,
+that carries one with a `≡` suffix. Fix round, same day: the card no
+longer offers this choice for a `mutates`/`process` tool (the risk floor
+makes such a rule inert), and an already-stored one is labelled "not in
+effect: risk floor" instead of being listed as if it were working. Docs pass 2026-09-10 (task-32284,
 against code and tests, not a live screen): the Tool gates rows are now
 buttons that state on/off in text under the tool's plain-language name
 (one copy table shared with the first-run wizard), and the old blanket
@@ -647,9 +660,22 @@ buttons that state on/off in text under the tool's plain-language name
 to the next Console agent run, with `web_deep_search`'s external-MCP
 publication the single next-client-launch exception. Fix round, same day:
 that exception now names its own precondition — the external-MCP half
-only applies when `[mcp] expose_local_tools` is on — and the master
-switch is corrected alongside `ask_user` as on by default (it was
-previously the only one credited).*
+only applies when `[mcp] expose_local_tools` is on — and this control
+is corrected alongside `ask_user` as on by default (it was
+previously the only one credited). Docs pass 2026-09-10 (task-32291,
+against code and tests, not a live screen): added "Session approvals" —
+**This session** grants are now listed in the inspector's permission
+block with a per-row **Revoke**, and the Permissions matrix marks a tool
+holding one with a ` (session)` suffix; until this pass a session grant
+was invisible and could only be dropped by restarting the app. Docs pass
+2026-09-10 (task-32283, against code and tests, not a live screen): the
+selected server's own group now leads both Tools mode and the Permissions
+matrix, and **Open tool catalog** drills straight to that server rather
+than to the top of an unfiltered list. Docs pass 2026-09-10 (task-32286,
+against code and tests, not a live screen): the Tools-mode control
+is now a toggle button (it used to be a Checkbox plus a
+separate "Enabled"/"Disabled" label, which a bundle width escape hatch
+had clamped to a truncated seven-cell frame at wide terminal widths).*
 
 *Verified against `fix/approval-wave-c-hub` @ a999fcf6e6 and `fix/approval-wave-b-card` @ e7409210cc — 2026-09-10 (task-32290, against
 code and tests, not a live screen). Added "Permissions mode — Allow, Ask,
