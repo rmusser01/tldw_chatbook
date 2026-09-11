@@ -404,20 +404,9 @@ _BUDGETS: dict[str, int] = {
     # replaced in place).
     "tldw_chatbook/UI/Library_Modules/library_navigation_controller.py": 198,
     "tldw_chatbook/UI/Library_Modules/library_media_trash_browse_controller.py": 319,
-    # 2026-09-09, task-32129 (Obsidian mode for Import once): 587 -> 602
-    # (+15), a BEHAVIOUR ADD -- `set_obsidian_mode` (6 lines) plus the
-    # vault-detection flag and the two `obsidian_mode` arguments threaded
-    # through `_plan_selection`/`check`.
-    "tldw_chatbook/UI/Library_Modules/library_note_import_controller.py": 602,
-    # 2026-09-11, task-32243 (refused Check names its reason): 2023 -> 2024
-    # (+1), and that one line is the `check_failure_line` import. The refusal
-    # copy table and its two helpers live in
-    # `Library/library_notes_lasting_sync_state.py` with the rest of this
-    # screen's presentation state; both fallback strings moved into the helper
-    # (keyed on `root_id == ""` => setup), so each of the two Check paths
-    # spends exactly one line on it. This row was briefly pinned at 2128 with
-    # the table in the controller; that was rejected in review and reverted.
-    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2024,
+    # TASK-31932 retains the original ceiling through Obsidian integration.
+    "tldw_chatbook/UI/Library_Modules/library_note_import_controller.py": 587,
+    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2023,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
