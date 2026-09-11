@@ -196,17 +196,21 @@ def _media_row_label_rest(
     """Return the marker-free Media row label for one responsive density.
 
     task-30044 (critique 2026-09-03 P2): both densities use the SHORT state
-    prefix ("Loaded · " / "Loading · ") -- the old wide-mode prose ("Loaded
-    in Reader            ") consumed ~28 of ~35 label cells and displaced
+    word ("loaded" / "loading") -- the old wide-mode prose ("Loaded in
+    Reader            ") consumed ~28 of ~35 label cells and displaced
     titles to "Quart"/"SQLit", so the row that mattered most was the one
     you couldn't identify.
     """
     visible_title = _visible_row_title(title)
+    # task-32364 AC#1 (critique #10): the state used to prefix the TITLE
+    # ("▸ Loaded · Attention Is All You Need"), so the row's identity was
+    # displaced by its status. task-30044's constraint still holds -- the
+    # SHORT word, never the old prose -- it just belongs on the fact line.
     state = "Loading" if loading else "Loaded" if loaded else ""
-    prefix = f"{state} · " if state else ""
+    detail = f"{secondary} · {state.lower()}" if state else secondary
     if compact:
-        return f" {prefix}{visible_title} · {secondary}"
-    return f" {prefix}{visible_title}\n    {secondary}"
+        return f" {visible_title} · {detail}"
+    return f" {visible_title}\n    {detail}"
 
 
 class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):

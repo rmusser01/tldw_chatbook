@@ -956,6 +956,20 @@ class LibraryIngestController:
     ) -> tuple[tuple[str, str], ...]:
         """Return prioritized Ingest hints, including Retry only when live."""
         shortcuts = list(self.LIBRARY_INGEST_SHORTCUTS)
+        # task-32364 AC#3: the first Enter validates the path and the second
+        # runs the queue; one label for two different actions taught the
+        # wrong thing at exactly the moment the user commits. The gate this
+        # reads is the SAME one Enter itself obeys
+        # (``handle_library_ingest_path_submitted``), so the footer can
+        # never promise an import the keypress will decline.
+        state_fn = getattr(self, "_build_library_ingest_state", None)
+        start_enabled = bool(
+            getattr(state_fn(), "start_enabled", False) if callable(state_fn) else False
+        )
+        shortcuts[0] = (
+            "enter",
+            "start import" if start_enabled else "check this path",
+        )
         if getattr(self, "_library_ingest_start_consent", None) is not None:
             shortcuts[1] = ("esc", "cancel")
         registry = getattr(

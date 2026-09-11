@@ -3024,14 +3024,14 @@ async def test_media_items_paint_two_rows_each_with_no_blank_row_between():
 # ---------------------------------------------------------------------------
 
 
-_ANALYSED_SECONDARY = "document · 5m · analysed"
+_ANALYSED_SECONDARY = "document · added 5m ago · analysed"
 
 
 def _review_state_items(count: int = 4, analysed: int = 2) -> list[dict]:
     """``count`` ``document`` items, the first ``analysed`` of them analysed.
 
     The stamp is fixed 5m30s back so every row's age label is "5m" and the
-    secondary line is exactly the 24-cell ``document · 5m · analysed`` the
+    secondary line is exactly the 33-cell ``document · added 5m ago · analysed`` the
     Items pane has to hold.
     """
     stamp = (
@@ -3076,8 +3076,8 @@ async def test_media_rows_paint_analysed_only_for_analysed_items(size, items_wid
     """task-28008: the row says which items already carry an analysis, in words.
 
     What this pins about width: each parametrized size resolves the Items
-    pane to its own AUTOMATIC width, and the 24-cell
-    ``document · 5m · analysed`` paints whole in it, indented, with room to
+    pane to its own AUTOMATIC width, and the 33-cell
+    ``document · added 5m ago · analysed`` paints whole in it, indented, with room to
     spare. The narrower 36-cell FLOOR is pinned separately by
     ``test_analysed_secondary_survives_the_36_cell_items_floor`` -- a
     ``>= 36`` assertion here would have claimed a floor that never ran,
@@ -3087,7 +3087,7 @@ async def test_media_rows_paint_analysed_only_for_analysed_items(size, items_wid
     the resolver changed under them -- 9187bc0307 (task-31979) hands the
     empty Reader's unused width to the Items list at the wide size, and the
     below-64 Media stage work (c668aaec5e / db86a39b19) re-fitted the narrow
-    one. Both new widths are still far above the 24-cell secondary, so what
+    one. Both new widths are still far above the 33-cell secondary, so what
     the assertion means is unchanged; the resolver's own contract lives in
     Tests/UI/test_library_adaptive_reader_shell.py.
 
@@ -3110,8 +3110,8 @@ async def test_media_rows_paint_analysed_only_for_analysed_items(size, items_wid
             _ANALYSED_SECONDARY,
         ], secondaries
         assert [line.strip() for line in secondaries[2:]] == [
-            "document · 5m",
-            "document · 5m",
+            "document · added 5m ago",
+            "document · added 5m ago",
         ], secondaries
         assert _items_pane_width(screen) == items_width
 
@@ -3540,7 +3540,7 @@ async def test_returning_to_read_restores_the_reading_position_once():
 
 @pytest.mark.asyncio
 async def test_analysed_secondary_survives_the_36_cell_items_floor():
-    """M-1: the 24-cell secondary at the Items pane's 36-cell floor.
+    """M-1: the 33-cell secondary at the Items pane's 36-cell floor.
 
     The automatic resolver gives Items 52 cells at both tested terminal
     sizes, so the floor only runs when a custom Items width asks for it (a
@@ -3638,9 +3638,9 @@ async def test_keyword_only_rows_paint_the_keyword_that_matched(size):
         lines = _painted_item_lines(host, screen)
         secondaries = [line.strip() for line in lines if "article · " in line]
         assert secondaries == [
-            "article · 2m · keyword: notes",
-            "article · 2m",
-            "article · 2m · keyword: notesandmo…",
+            "article · added 2m ago · keyword: notes",
+            "article · added 2m ago",
+            "article · added 2m ago · keyword: notesandmo…",
         ], secondaries
 
 
@@ -3651,7 +3651,7 @@ async def test_keyword_reason_clips_at_the_36_cell_items_floor():
 
     The ten-character cap keeps the line SHORT; it does not make it fit
     here. A 36-cell Items pane spends 4 cells on its own padding, so the
-    row has ~28 cells and `article · 2m · keyword: notes` needs 29 -- at the
+    row has ~28 cells and `article · added 2m ago · keyword: notes` needs 29 -- at the
     floor a keyword row still cannot show its whole term, for the short
     keyword as well as the long one. The neighbouring
     `test_analysed_secondary_survives_the_36_cell_items_floor` shows what
@@ -3694,12 +3694,12 @@ async def test_keyword_reason_clips_at_the_36_cell_items_floor():
         ]
         assert secondaries == [
             "article · 2m · keyword: n…",
-            "article · 2m",
+            "article · added 2m ago",
             "article · 2m · keyword: n…",
         ], secondaries
         # The row without a reason still paints whole -- the shortfall is the
         # suffix's own cost, not a regression in the base secondary line.
-        assert "article · 2m" in secondaries, secondaries
+        assert "article · added 2m ago" in secondaries, secondaries
 
 
 @pytest.mark.asyncio
@@ -4078,7 +4078,7 @@ async def test_saving_an_analysis_marks_its_row_analysed_without_a_refetch():
         for _ in range(3):
             await pilot.pause()
         _titles, before = _painted_media_rows(host, screen)
-        assert [line.strip() for line in before] == ["document · 5m"] * 4, before
+        assert [line.strip() for line in before] == ["document · added 5m ago"] * 4, before
 
         screen.query_one("#library-media-row-0", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-reader-select-analysis")
@@ -4104,9 +4104,9 @@ async def test_saving_an_analysis_marks_its_row_analysed_without_a_refetch():
         _titles, after = _painted_media_rows(host, screen)
         assert [line.strip() for line in after] == [
             _ANALYSED_SECONDARY,
-            "document · 5m",
-            "document · 5m",
-            "document · 5m",
+            "document · added 5m ago",
+            "document · added 5m ago",
+            "document · added 5m ago",
         ], after
         # ...and the only read it cost was one id-scoped row, never a
         # re-page of the list.

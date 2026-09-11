@@ -1291,8 +1291,13 @@ class LibraryScreen(BaseAppScreen):
     #: landing (``action_library_ingest_back``). Shared by the footer and
     #: F1 via ``_library_footer_shortcuts_for_current_state``, the
     #: task-2858 single-source rule.
+    #:
+    #: task-32364 AC#3: the Enter row here is the OPEN-gate wording only.
+    #: ``_library_ingest_shortcuts_for_current_state`` replaces it with
+    #: "check this path" while the gate is shut, because the first Enter on
+    #: an unvalidated path validates rather than imports.
     LIBRARY_INGEST_SHORTCUTS = (
-        ("enter", "start"),
+        ("enter", "start import"),
         ("esc", "back"),
         ("/", "search"),
         ("F6", "next pane"),
