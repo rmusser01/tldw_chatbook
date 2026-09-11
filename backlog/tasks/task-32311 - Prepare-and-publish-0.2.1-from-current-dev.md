@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-11 02:12'
-updated_date: '2026-09-11 02:17'
+updated_date: '2026-09-11 02:22'
 labels:
   - release
   - packaging
@@ -23,6 +23,7 @@ Publish the newer committed dev changes requested by the release owner while pre
 - [x] #1 Release metadata and changelog describe 0.2.1 from dev ed6fd5db0a with main reconciled.
 - [ ] #2 Fresh package build, metadata and installed-distribution checks pass on the release source.
 - [ ] #3 The release is integrated to main, published to PyPI, and tagged with verified installable artifacts.
+- [x] #4 The README current-version statement matches the published release metadata.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -43,4 +44,6 @@ Reason: Release metadata and publication follow the existing installed-distribut
 
 <!-- SECTION:NOTES:BEGIN -->
 Prepared the release from dev ed6fd5db0a with main d0aa66ea97 reconciled without file changes. Updated pyproject.toml, runtime version tuple, and CHANGELOG.md to 0.2.1; existing ADR-032 applies. Fresh wheel/sdist build, twine check, manifest validation, and 24 metadata tests pass. Clean Python 3.12 dependency installation, pip check, tldw-cli --help, and tldw-serve --help pass. Installed-distribution regressions and publication remain in progress; this task is not complete.
+
+PR review identified a stale README current-version statement. Corrected it to 0.2.1, updated the release plan, and rebuilt the wheel and sdist. Fresh twine/manifest checks and all 24 metadata tests pass after the documentation correction; runtime source is unchanged.
 <!-- SECTION:NOTES:END -->
