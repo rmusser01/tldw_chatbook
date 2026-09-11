@@ -38,6 +38,7 @@ fixture=Path(os.environ['ROUNDTRIP_FIXTURE'])
 name=selector.parent.name
 """
 
+# B608 below is child-source concatenation; its SQL uses fixed statements.
 _SEED = (
     _PRIVATE
     + r"""
@@ -219,18 +220,59 @@ async def main():
   local_content={'skill':{'name':skill['name'],'root':str(skills.store_dir),'files':skill_files,'generation':trusted['generation'],'snapshot':snapshot,'manifest':str(trust.trust_store.manifest_path.relative_to(skills.store_dir)),'marker':str(trust.trust_store.marker_store.marker_path.relative_to(skills.store_dir))},'book':{'record':book,'path':str(archive),'digest':hashlib.sha256(archive.read_bytes()).hexdigest(),'manifest':book_preview['manifest']},'registry':str(books.registry_path)}
   empty=secure_chatbook_directory(get_private_chatbooks_dir()/'retained-empty')
   assert not list(empty.iterdir())
+  from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
+  from tldw_chatbook.Utils.paths import get_user_data_dir as file_notes_data_dir
+  from contextlib import closing
+  import sqlite3
+  notes_root=fixture/('notes-input-'+name);notes_root.mkdir(mode=0o700)
+  active=notes_root/'linked.md';removed=notes_root/'deleted.md'
+  previous=(name+' replica before edit\r\n').encode()
+  current=(name+' replicacurrent retained bytes\r\n').encode()
+  deleted_bytes=(name+' retained deleted bytes\x00').encode()
+  replica=FileNotesReplica(file_notes_data_dir()/'file_notes.sqlite')
+  replica_path=replica.db_path
+  try:
+   active.write_bytes(previous);active.chmod(0o600)
+   replica.upsert_file(str(notes_root),active.name,previous,content_hash=hashlib.sha256(previous).hexdigest(),decoded_text=previous.decode(),size=len(previous),mtime_ns=active.stat().st_mtime_ns)
+   assert replica.checkpoint(str(notes_root),active.name,previous,content_hash=hashlib.sha256(previous).hexdigest(),session_key=name+'-editor-session')
+   active.write_bytes(current)
+   replica.upsert_file(str(notes_root),active.name,current,content_hash=hashlib.sha256(current).hexdigest(),decoded_text=current.decode(),size=len(current),mtime_ns=active.stat().st_mtime_ns)
+   replica.protect(str(notes_root),active.name)
+   removed.write_bytes(deleted_bytes);removed.chmod(0o600)
+   replica.upsert_file(str(notes_root),removed.name,deleted_bytes,content_hash=hashlib.sha256(deleted_bytes).hexdigest(),decoded_text=None,size=len(deleted_bytes),mtime_ns=removed.stat().st_mtime_ns)
+   removed.unlink()
+   assert replica.mark_deleted(str(notes_root),removed.name)
+   assert replica.get_bytes(str(notes_root),active.name)==current
+   assert replica.get_restore_bytes(str(notes_root),removed.name)==deleted_bytes
+   assert replica.list_deleted(str(notes_root))==[removed.name]
+   assert replica.is_protected(str(notes_root),active.name)
+   active_rows=[list(row) for row in replica.list_active_files(str(notes_root))]
+  finally:replica.close()
+  version=core.get_note_by_id(note)['version']
+  assert app.notes_service.link_note_to_file(app.notes_user_id,note,active,notes_root,sync_strategy='disk_to_db')
+  linked=next(row for row in app.notes_service.get_notes_for_sync(app.notes_user_id,notes_root) if row['id']==note)
+  assert linked['version']==version+1 and linked['sync_strategy']=='disk_to_db'
+  fields=('id','version','file_path_on_disk','relative_file_path_on_disk','sync_root_folder','is_externally_synced','sync_strategy','file_extension')
+  with closing(sqlite3.connect(replica_path.as_uri()+'?mode=ro',uri=True)) as database:
+   replica_rows={
+    'files':database.execute('SELECT root,relative_path,hex(raw_bytes),content_hash,decoded_text,size,mtime_ns,deleted_at FROM files ORDER BY relative_path').fetchall(),
+    'revisions':database.execute('SELECT root,relative_path,hex(raw_bytes),content_hash,kind,session_key,created_at FROM revisions ORDER BY relative_path').fetchall(),
+    'protected':database.execute('SELECT root,relative_path,is_prefix FROM protected_paths ORDER BY relative_path').fetchall(),
+   }
+  assert len(replica_rows['files'])==2 and len(replica_rows['revisions'])==1 and len(replica_rows['protected'])==1
+  notes_files={'root':str(notes_root),'path':str(replica_path),'source_sha256':hashlib.sha256(replica_path.read_bytes()).hexdigest(),'current':current.hex(),'previous':previous.hex(),'deleted':deleted_bytes.hex(),'active_rows':active_rows,'membership':[linked[field] for field in fields],'rows':replica_rows}
   jobs=LibraryIngestJobsDB(get_library_ingest_jobs_db_path(),'fixture')
   try:
    jobs.upsert_job(LibraryIngestJob('ingest-job-1',str(fixture/(name+'-input.txt')),state=IngestJobState.QUEUED))
   finally:jobs.close()
-  (fixture/(name+'-seed.json')).write_text(json.dumps(dict(note=note,deleted=deleted,conversation=conversation,message=message,media=media,prompt=prompt,research=session['id'],deleted_research=deleted_session['id'],empty=str(empty),domains=domains,durable_files=durable_files,durable_api=durable_api,registries=registries,config_history=config_history_record,note_template=note_template,local_content=local_content)))
+  (fixture/(name+'-seed.json')).write_text(json.dumps(dict(note=note,deleted=deleted,conversation=conversation,message=message,media=media,prompt=prompt,research=session['id'],deleted_research=deleted_session['id'],empty=str(empty),domains=domains,durable_files=durable_files,durable_api=durable_api,registries=registries,config_history=config_history_record,note_template=note_template,local_content=local_content,notes_files=notes_files)))
   assert not blocked_attempts(),blocked_attempts()
   print('SEEDED',name,flush=True)
  finally:
   await app._shutdown_app_owned_lifecycles()
   await app.tts_service.close();await app.tts_service.wait_closed()
 asyncio.run(main())
-"""
+"""  # nosec B608
 )
 
 # Register only actual rooted paths after both independent seed processes exit.
@@ -350,9 +392,18 @@ async def main():
   for label in ('alpha','beta'):
    seed=json.loads((fixture/(label+'-seed.json')).read_text())
    profile=next(key.split(':')[1] for key,item in source.items() if item.owner=='config' and item.path==fixture/label/'config.toml')
-   for owner in ('skills','chatbooks.registry','chatbooks.archives'):
+   for owner in ('skills','chatbooks.registry','chatbooks.archives','notes.file_notes'):
     retained=[row for row in manifest['files'] if row['owner_id']==owner and row['logical_id'].startswith('profile:'+profile+':')]
     assert retained,(label,owner,'missing populated local content')
+   notes=seed['notes_files']
+   replica_row=next(row for row in manifest['files'] if row['owner_id']=='notes.file_notes' and source[row['logical_id']].path==Path(notes['path']))
+   with closing(sqlite3.connect((result.root/replica_row['payload']).as_uri()+'?mode=ro',uri=True)) as database:
+    assert database.execute('SELECT root,relative_path,hex(raw_bytes),content_hash,decoded_text,size,mtime_ns,deleted_at FROM files ORDER BY relative_path').fetchall()==[tuple(row) for row in notes['rows']['files']]
+    assert database.execute('SELECT root,relative_path,hex(raw_bytes),content_hash,kind,session_key,created_at FROM revisions ORDER BY relative_path').fetchall()==[tuple(row) for row in notes['rows']['revisions']]
+    assert database.execute('SELECT root,relative_path,is_prefix FROM protected_paths ORDER BY relative_path').fetchall()==[tuple(row) for row in notes['rows']['protected']]
+   core_row=next(row for row in manifest['files'] if row['owner_id']=='db.chachanotes.primary' and row['logical_id'].startswith('profile:'+profile+':'))
+   with closing(sqlite3.connect((result.root/core_row['payload']).as_uri()+'?mode=ro',uri=True)) as database:
+    assert database.execute('SELECT id,version,file_path_on_disk,relative_file_path_on_disk,sync_root_folder,is_externally_synced,sync_strategy,file_extension FROM notes WHERE id=?',(seed['note'],)).fetchone()==tuple(notes['membership'])
    local=seed['local_content'];skill=local['skill']
    for relative,hex_data in skill['files'].items():
     original=Path(skill['root'])/relative
@@ -614,7 +665,7 @@ mapping={}
 # Exact installed destinations for this finite captured cohort; new owners must
 # be reviewed explicitly instead of silently landing in a miscellaneous folder.
 custom={'db.chachanotes.primary','chat.attachments','notes.sync_bindings','quiz.local','study.local','db.media.primary','research.local'}
-ordinary={'db.evals','db.library_collections','db.library_ingest_jobs','db.scheduled_tasks','db.subscriptions','db.workspaces','kanban.local','mcp.targets','notifications.client','runtime.event_state','runtime.sync_state','writing.local','chat.prompt_history','personas','chat.dictionary_history','chat.grammars','feedback','audio.history'}
+ordinary={'db.evals','db.library_collections','db.library_ingest_jobs','db.scheduled_tasks','db.subscriptions','db.workspaces','kanban.local','mcp.targets','notifications.client','runtime.event_state','runtime.sync_state','writing.local','chat.prompt_history','personas','chat.dictionary_history','chat.grammars','feedback','audio.history','notes.file_notes'}
 trees={'chat.dictionaries':'chat_dicts','chatbooks.archives':'chatbooks','skills':'skills','runtime.chatbook_scratch':'temp','rag.definitions':'rag_profiles','chunking.templates':'chunking_templates','generation.styles':'image_generation_styles'}
 for key,row in roots.items():
  owner=producer[key].owner_id
@@ -741,6 +792,31 @@ async def main():
   assert str(app.prompts_db.db_path)==expected['prompts']
   label=expected['label'];core=app.chachanotes_db
   import hashlib,zipfile
+  from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
+  from tldw_chatbook.Utils.paths import get_user_data_dir as file_notes_data_dir
+  from contextlib import closing
+  import sqlite3
+  notes=seed['notes_files'];root_key=notes['root']
+  replica=FileNotesReplica(file_notes_data_dir()/'file_notes.sqlite')
+  assert str(replica.db_path)==expected['replica'] and str(replica.db_path)!=notes['path']
+  try:
+   assert replica.get_bytes(root_key,'linked.md')==bytes.fromhex(notes['current'])
+   assert replica.get_restore_bytes(root_key,'linked.md') is None
+   assert replica.get_bytes(root_key,'deleted.md')==replica.get_restore_bytes(root_key,'deleted.md')==bytes.fromhex(notes['deleted'])
+   assert replica.list_deleted(root_key)==['deleted.md']
+   assert [list(row) for row in replica.list_active_files(root_key)]==notes['active_rows']
+   assert replica.is_protected(root_key,'linked.md') and not replica.is_protected(root_key,'deleted.md')
+   assert replica.search(root_key,'replicacurrent')==['linked.md']
+  finally:replica.close()
+  with closing(sqlite3.connect(Path(expected['replica']).as_uri()+'?mode=ro',uri=True)) as database:
+   assert database.execute('SELECT root,relative_path,hex(raw_bytes),content_hash,decoded_text,size,mtime_ns,deleted_at FROM files ORDER BY relative_path').fetchall()==[tuple(row) for row in notes['rows']['files']]
+   assert database.execute('SELECT root,relative_path,hex(raw_bytes),content_hash,kind,session_key,created_at FROM revisions ORDER BY relative_path').fetchall()==[tuple(row) for row in notes['rows']['revisions']]
+   assert database.execute('SELECT root,relative_path,is_prefix FROM protected_paths ORDER BY relative_path').fetchall()==[tuple(row) for row in notes['rows']['protected']]
+  linked=next(row for row in app.notes_service.get_notes_for_sync(app.notes_user_id,Path(root_key)) if row['id']==seed['note'])
+  fields=('id','version','file_path_on_disk','relative_file_path_on_disk','sync_root_folder','is_externally_synced','sync_strategy','file_extension')
+  assert [linked[field] for field in fields]==notes['membership']
+  assert (Path(root_key)/'linked.md').read_bytes()==bytes.fromhex(notes['current'])
+  assert not (Path(root_key)/'deleted.md').exists()
   skills=app.local_skills_service;trust=app.local_skill_trust_service
   local=seed['local_content'];skill=local['skill']
   assert str(skills.store_dir)==expected['skills'] and str(skills.store_dir)!=skill['root']
@@ -931,6 +1007,7 @@ selected=dict(plan.restore)
 source_paths=[fixture/label/'config.toml' for label in ('alpha','beta')]
 source_paths += [fixture/label/'custom'/leaf for label in ('alpha','beta') for leaf in ('notes.db','media.db','research.db')]
 source_paths.append(fixture/'shared'/'prompts.db')
+source_paths += [Path(json.loads((fixture/(label+'-seed.json')).read_text())['notes_files']['path']) for label in ('alpha','beta')]
 source_hashes={str(path):hashlib.sha256(path.read_bytes()).hexdigest() for path in source_paths}
 control=fixture/'restore-home'/'control'
 first=restore_isolated(archive,plan,control,threading.Event())
@@ -951,6 +1028,7 @@ try:
  rows=service.profiles()
  assert len(rows)==2 and first in {row['profile_id'] for row in rows}
  assert all(row['status']=='restoration_validated' and row['needs_setup'] and row['requirements_checked'] for row in rows)
+ assert all({'notes.file_notes','notes.sync_bindings'}<=set(row['pending_owners']) for row in rows)
  assert len({row['generation'] for row in rows})==1
  installed={}
  for row in rows:
@@ -982,7 +1060,7 @@ try:
   assert hashlib.sha256((archives/Path(book['path']).name).read_bytes()).hexdigest()==book['digest']
   empty=archives/Path(seed['empty']).relative_to(Path(book['path']).parent)
   assert empty.is_dir() and not list(empty.iterdir())
-  installed[entry.profile_id]={'label':label,'installation_id':entry.installation_id,'config':entry.config,'core':str(core),'media':str(path_for('db.media.primary')),'prompts':str(path_for('db.prompts.primary')),'skills':str(skill_root),'archives':str(archives)}
+  installed[entry.profile_id]={'label':label,'installation_id':entry.installation_id,'config':entry.config,'core':str(core),'media':str(path_for('db.media.primary')),'prompts':str(path_for('db.prompts.primary')),'skills':str(skill_root),'archives':str(archives),'replica':str(path_for('notes.file_notes'))}
  assert len({row['installation_id'] for row in installed.values()})==2
  assert len({row['core'] for row in installed.values()})==2
  assert len({row['prompts'] for row in installed.values()})==1
@@ -1007,6 +1085,7 @@ try:
    assert state['result']['opened_successfully'] and state['result']['needs_setup'],dict(state)
  finally:subprocess.call=original_call
  assert all(row['needs_setup'] and row['status']=='restoration_validated' for row in service.profiles())
+ assert all({'notes.file_notes','notes.sync_bindings'}<=set(row['pending_owners']) for row in service.profiles())
 finally:service.close()
 assert source_hashes=={str(path):hashlib.sha256(path.read_bytes()).hexdigest() for path in source_paths}
 for label in ('alpha','beta'):
@@ -1017,6 +1096,10 @@ for label in ('alpha','beta'):
  assert all((Path(skill['root'])/relative).read_bytes()==bytes.fromhex(hex_data) for relative,hex_data in skill['files'].items())
  assert hashlib.sha256(Path(local['book']['path']).read_bytes()).hexdigest()==local['book']['digest']
  assert Path(local['registry']).read_bytes()==bytes.fromhex((fixture/'chatbooks-registry-before.hex').read_text())
+ notes=seed['notes_files']
+ assert hashlib.sha256(Path(notes['path']).read_bytes()).hexdigest()==notes['source_sha256']
+ assert (Path(notes['root'])/'linked.md').read_bytes()==bytes.fromhex(notes['current'])
+ assert not (Path(notes['root'])/'deleted.md').exists()
 assert not blocked_attempts(),blocked_attempts()
 print('TWO_PROFILE_RESTORED_AND_OPENED',flush=True)
 """,
