@@ -2637,6 +2637,21 @@ class ConsoleTranscriptJumpPill(Static):
                 transcript.focus()
 
 
+class ConsoleThinkingEditRequested(Message):
+    """Bubbled when the user asks to edit a thinking block's text.
+
+    TASK-32312: posted by ``ConsoleTranscript.action_invoke_selected_action``
+    for a selected thinking disclosure row (the keyboard mirror of the
+    thinking-row copy seam). Anchored by projected activity id -- the owning
+    screen resolves the displayable block from the transcript's display
+    model and owns the block-scoped edit modal.
+    """
+
+    def __init__(self, activity_id: str) -> None:
+        super().__init__()
+        self.activity_id = activity_id
+
+
 class ConsoleReviewNotesRequested(Message):
     """Bubbled when the user asks to see a message's review notes.
 
@@ -5109,6 +5124,34 @@ class ConsoleTranscript(VerticalScroll):
         ref = self._thinking_activity_refs.get(activity_id)
         return ref.assistant_message_id if ref is not None else None
 
+    def thinking_editable_block(self, activity_id: str) -> tuple[str, str, str] | None:
+        """Resolve one displayable block for the block-scoped edit seam.
+
+        Returns ``(assistant_message_id, block_id, text)``, or ``None`` for
+        unknown rows and content-free proprietary evidence (TASK-32312).
+        """
+        ref = self._thinking_activity_refs.get(activity_id)
+        if ref is None:
+            return None
+        assistant = next(
+            (
+                message
+                for message in self._messages
+                if message.id == ref.assistant_message_id
+            ),
+            None,
+        )
+        envelope = assistant.thinking if assistant is not None else None
+        if not isinstance(envelope, ThinkingEnvelope):
+            return None
+        block = next(
+            (block for block in envelope.blocks if block.block_id == ref.block_id),
+            None,
+        )
+        if not isinstance(block, DisplayableThinkingBlock):
+            return None
+        return ref.assistant_message_id, ref.block_id, block.text
+
     def _thinking_display_message(self, activity_id: str) -> ConsoleChatMessage | None:
         """Build a bounded display-only row for selection/copy/Inspector seams."""
         ref = self._thinking_activity_refs.get(activity_id)
@@ -5630,6 +5673,14 @@ class ConsoleTranscript(VerticalScroll):
                 if callable(copy_to_clipboard):
                     copy_to_clipboard(thinking_detail)
                 return
+        if action_id == "edit" and (
+            self.thinking_owner_message_id(message_id) is not None
+        ):
+            # TASK-32312: thinking disclosures carry no action buttons
+            # (``action_widgets=()``); like copy, edit is a keyboard seam
+            # here and the owning screen opens the block-scoped modal.
+            self.post_message(ConsoleThinkingEditRequested(message_id))
+            return
         if action_id == "tool-output" and self._activity_can_expand(message_id):
             self.toggle_tool_output(message_id)
             return

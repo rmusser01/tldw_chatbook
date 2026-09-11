@@ -128,7 +128,10 @@ from ...Chat.console_chat_models import (
     ConsoleVariantSet,
     MessageAttachment,
 )
-from ...Chat.console_chat_store import ConsoleChatStore
+from ...Chat.console_chat_store import (
+    ConsoleChatStore,
+    ConsoleThinkingCompatibilityError,
+)
 from ...Chat.console_chat_fork import ConsoleForkEligibility
 from ...Chat.console_conversation_hydration import (
     console_messages_from_conversation_tree,
@@ -161,11 +164,14 @@ from ...Notes.notes_scope_service import ScopeType
 from ...Widgets.Console import (
     ConsoleEditMessageModal,
     ConsoleEditResult,
+    ConsoleEditThinkingModal,
     ConsoleSaveAsModal,
+    ConsoleThinkingEditResult,
 )
 
 if TYPE_CHECKING:
     from ..Screens.chat_screen import ChatScreen
+    from ...Widgets.Console.console_transcript import ConsoleThinkingEditRequested
 
 logger = logger.bind(module="ChatScreen")
 
@@ -2541,6 +2547,97 @@ class ConsoleMessageController:
                 can_resend=can_resend,
                 clears_generation_provenance=clears_generation_provenance,
             ),
+            callback=_apply_edit,
+        )
+
+    def _console_thinking_edit_target(
+        self, activity_id: str
+    ) -> tuple[str, str, str] | None:
+        """Resolve a thinking row's editable displayable block.
+
+        Returns ``None`` when ``activity_id`` is not a projected thinking row
+        or carries no displayable block; the caller decides how to respond.
+        """
+        from ...Widgets.Console.console_transcript import ConsoleTranscript
+
+        try:
+            transcript = self._screen.query_one(
+                "#console-native-transcript", ConsoleTranscript
+            )
+        except Exception:
+            return None
+        if transcript.thinking_owner_message_id(activity_id) is None:
+            return None
+        return transcript.thinking_editable_block(activity_id)
+
+    async def handle_console_thinking_edit_requested(
+        self, event: "ConsoleThinkingEditRequested"
+    ) -> None:
+        """Open the block-scoped thinking edit modal (TASK-32312).
+
+        Called by ``ChatScreen``'s ``@on(ConsoleThinkingEditRequested)``
+        handler: the transcript posts the event from the thinking row's
+        keyboard edit seam (mirroring copy, which has no action buttons
+        either), and the screen resolves the displayable block from the
+        display model because the display-only activity id can never
+        resolve in the store.
+        """
+        editable = self._console_thinking_edit_target(event.activity_id)
+        if editable is None:
+            self.app_instance.notify(
+                "This thinking block cannot be edited.", severity="warning"
+            )
+            return
+        owner_message_id, block_id, text = editable
+        await self._open_console_thinking_edit_modal(
+            owner_message_id=owner_message_id,
+            block_id=block_id,
+            text=text,
+        )
+
+    async def _open_console_thinking_edit_modal(
+        self, *, owner_message_id: str, block_id: str, text: str
+    ) -> None:
+        """Open the block-scoped thinking edit modal for one displayable block."""
+        store = self._ensure_console_chat_store()
+
+        def _apply_edit(result: ConsoleThinkingEditResult | None) -> None:
+            if result is None:
+                return
+            try:
+                store.update_message_thinking_block(
+                    owner_message_id, block_id, result.text
+                )
+            except ValueError as exc:
+                self.app_instance.notify(str(exc), severity="warning")
+                return
+            except ConsoleThinkingCompatibilityError as exc:
+                self.app_instance.notify(str(exc), severity="warning")
+                return
+            except KeyError:
+                self.app_instance.notify(
+                    "Console message action target no longer exists.",
+                    severity="error",
+                )
+                return
+            self._last_console_action = ConsoleActionResult(
+                action_id="edit",
+                status="completed",
+                visible_copy="Edited thinking block.",
+                target_message_id=owner_message_id,
+                target_content=result.text,
+            )
+            self.run_worker(
+                self._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
+            )
+            self.app_instance.notify(
+                "Edited thinking block.", severity="information"
+            )
+
+        await self.push_screen(
+            ConsoleEditThinkingModal(text=text),
             callback=_apply_edit,
         )
 

@@ -17,6 +17,8 @@ from textual.widgets import Button, Static, TextArea
 from tldw_chatbook.Widgets.Console.console_edit_message_modal import (
     ConsoleEditMessageModal,
     ConsoleEditResult,
+    ConsoleEditThinkingModal,
+    ConsoleThinkingEditResult,
 )
 
 
@@ -666,3 +668,87 @@ async def test_context_copy_mentions_resend_only_when_can_resend():
         )
         assert "Edit & resend" not in context_plain
         assert "will not create a new prompt" in context_plain
+
+
+# --- ConsoleEditThinkingModal (TASK-32312): block-scoped thinking text edit ---
+
+
+def test_thinking_edit_result_dataclass_shape():
+    r = ConsoleThinkingEditResult(text="cleaned")
+    assert r.text == "cleaned"
+
+
+def test_thinking_edit_result_is_frozen():
+    r = ConsoleThinkingEditResult(text="cleaned")
+    with pytest.raises(Exception):
+        r.text = "changed"  # type: ignore[misc]
+
+
+@pytest.mark.asyncio
+async def test_thinking_modal_prefills_text_and_names_the_block_scope():
+    app = _ModalHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = ConsoleEditThinkingModal(text="original reasoning")
+        app.push_screen(modal)
+        await pilot.pause()
+        editor = modal.query_one("#console-edit-thinking-body", TextArea)
+        assert editor.text == "original reasoning"
+        context = _static_plain_text(
+            modal.query_one("#console-edit-thinking-context", Static)
+        )
+        assert "thinking" in context.lower()
+        assert len(modal.query("#console-edit-thinking-resend")) == 0
+
+
+@pytest.mark.asyncio
+async def test_thinking_modal_save_dismisses_result_with_text():
+    app = _ModalHost()
+    result: list[ConsoleThinkingEditResult | None] = []
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = ConsoleEditThinkingModal(text="orig")
+        await app.push_screen(modal, callback=result.append)
+        await pilot.pause()
+
+        editor = modal.query_one("#console-edit-thinking-body", TextArea)
+        editor.text = "cleaned reasoning"
+        await pilot.click("#console-edit-thinking-save")
+        await pilot.pause()
+
+    assert result == [ConsoleThinkingEditResult(text="cleaned reasoning")]
+
+
+@pytest.mark.asyncio
+async def test_thinking_modal_blank_save_blocked_inline():
+    app = _ModalHost()
+    result: list[ConsoleThinkingEditResult | None] = []
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = ConsoleEditThinkingModal(text="orig")
+        await app.push_screen(modal, callback=result.append)
+        await pilot.pause()
+
+        editor = modal.query_one("#console-edit-thinking-body", TextArea)
+        editor.text = "   "
+        await pilot.click("#console-edit-thinking-save")
+        await pilot.pause()
+
+        assert result == []
+        error = modal.query_one("#console-edit-thinking-error", Static)
+        assert "cannot be blank" in _static_plain_text(error).lower()
+
+
+@pytest.mark.asyncio
+async def test_thinking_modal_cancel_dismisses_none():
+    app = _ModalHost()
+    result: list[ConsoleThinkingEditResult | None] = []
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = ConsoleEditThinkingModal(text="orig")
+        await app.push_screen(modal, callback=result.append)
+        await pilot.pause()
+
+        await pilot.click("#console-edit-thinking-cancel")
+        await pilot.pause()
+
+    assert result == [None]

@@ -594,6 +594,7 @@ from ...Widgets.Console.console_inspector_section import (
 from ...Widgets.Console.console_command_popup import ConsoleCommandPopup
 from ...Widgets.Console.console_transcript import (
     ConsoleReviewNotesRequested,
+    ConsoleThinkingEditRequested,
     console_transcripts_on_screen,
 )
 from ...Widgets.Console.console_selection_menu import (
@@ -21984,6 +21985,19 @@ class ChatScreen(BaseAppScreen):
         self._review_selection.request_selection_feedback(
             event.action, event.quote, event.anchor_message_id
         )
+
+    @on(ConsoleThinkingEditRequested)
+    async def on_console_thinking_edit_requested(
+        self, event: ConsoleThinkingEditRequested
+    ) -> None:
+        """Open the block-scoped thinking edit modal (TASK-32312).
+
+        The transcript posts this from the thinking row's keyboard edit seam
+        (mirroring copy, which has no action buttons either);
+        ``event.stop()`` because nothing above this screen subscribes.
+        """
+        event.stop()
+        await self._message.handle_console_thinking_edit_requested(event)
 
     @on(ConsoleReviewNotesRequested)
     def on_console_review_notes_requested(

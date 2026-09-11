@@ -246,6 +246,7 @@ from tldw_chatbook.Chat.provider_continuation import (
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.rag_scope import RagScope, SessionScopeHolder, serialize_scope
 from tldw_chatbook.Chat.thinking_blocks import (
+    ProprietaryThinkingBlock,
     ThinkingEnvelope,
     ThinkingHistoryPolicy,
     ThinkingStatus,
@@ -17478,6 +17479,102 @@ class ConsoleChatStore:
         if durably_committed and committed_version is not None:
             message.provider_continuation_message_version = committed_version
             message.provider_continuation_remote = False
+        return self._snapshot(message)
+
+    def update_message_thinking_block(
+        self, message_id: str, block_id: str, text: str
+    ) -> ConsoleChatMessage:
+        """Edit one displayable thinking block's text in place.
+
+        ADR-090 amendment (TASK-32312): block identity, provenance, source
+        encoding, and the answer stay intact; only the block's text changes.
+        """
+        with self._generation_owner_scope(message_id):
+            self._reject_quarantined_generation_mutation(
+                self._message_or_raise(message_id)
+            )
+            return self._run_commit_aware_generation_mutation(
+                message_id,
+                lambda: self._update_message_thinking_block(
+                    message_id, block_id, text
+                ),
+            )
+
+    def _update_message_thinking_block(
+        self, message_id: str, block_id: str, text: str
+    ) -> ConsoleChatMessage:
+        message = self._message_or_raise(message_id)
+        if message.role is not ConsoleMessageRole.ASSISTANT:
+            raise ValueError("Only assistant messages can own thinking.")
+        if message.status in {"pending", "streaming"}:
+            raise ValueError("Wait for response to finish before editing thinking.")
+        if not message.thinking_actions_enabled:
+            raise ConsoleThinkingCompatibilityError(
+                "This conversation contains a newer thinking format; "
+                "upgrade before editing it."
+            )
+        envelope = message.thinking
+        if envelope is None:
+            raise ValueError("This message has no thinking blocks to edit.")
+        block = next(
+            (
+                candidate
+                for candidate in envelope.blocks
+                if candidate.block_id == block_id
+            ),
+            None,
+        )
+        if block is None:
+            raise ValueError(f"Unknown thinking block id: {block_id!r}.")
+        if isinstance(block, ProprietaryThinkingBlock):
+            raise ValueError("Proprietary thinking cannot be edited.")
+        if not text.strip():
+            raise ValueError("Thinking text cannot be blank.")
+        if block.source_format == "start_anchored_think":
+            lowered = text.lower()
+            if "<think" in lowered or "</think" in lowered:
+                raise ValueError(
+                    "Edited thinking cannot contain <think> or </think> tags "
+                    "for a start-anchored thinking block."
+                )
+        edited_envelope = ThinkingEnvelope(
+            tuple(
+                replace(block, text=text)
+                if candidate.block_id == block_id
+                else candidate
+                for candidate in envelope.blocks
+            )
+        )
+        # The dumper is the shared strict boundary (canonical JSON plus all
+        # envelope bounds) for every durable thinking write.
+        dump_thinking_blocks_json(edited_envelope)
+        current = self._generation_variant(message)
+        target = replace(
+            current,
+            thinking=edited_envelope,
+            opaque_thinking_json=None,
+            thinking_warning=None,
+        )
+        durably_committed, committed_version = self._persist_generation_variant(
+            message,
+            target,
+            current=current,
+        )
+        if message.variants is not None:
+            selected_index = message.variants.selected_index
+            message.variants.variants[selected_index] = replace(
+                message.variants.variants[selected_index],
+                thinking=edited_envelope,
+                opaque_thinking_json=None,
+                thinking_warning=None,
+            )
+        self._apply_generation_variant(message, target)
+        if durably_committed and committed_version is not None:
+            message.provider_continuation_message_version = committed_version
+            message.provider_continuation_remote = False
+        # Edited thinking can ride a local replay payload, so invalidate any
+        # cached prepared request without touching the conversation epoch.
+        self._bump_payload_revision(self._message_session_index[message.id])
         return self._snapshot(message)
 
     def begin_variant_stream(
