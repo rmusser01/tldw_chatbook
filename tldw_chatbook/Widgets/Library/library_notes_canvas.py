@@ -149,29 +149,47 @@ _TOOLBAR_ACTION_CHROME = 4
 _AUTHORITY_PREFIX_MIN_WIDTH = 64
 
 
-def browse_row_overflows(pane_width: int, labels: tuple[str, ...]) -> bool:
+#: Review F5: cells of slack a SPLIT browse row must regain before it
+#: rejoins. Splitting costs a line, which can bring a scrollbar into the
+#: pane and shave it -- without this the answer would flip straight back
+#: and `on_resize` would recompose for ever.
+_TOOLBAR_SPLIT_HYSTERESIS = 2
+
+
+def browse_row_width(labels: tuple[str, ...]) -> int:
+    """Cells the browse toolbar row needs to paint these labels.
+
+    Measured from the labels ABOUT to be rendered rather than from a width
+    constant, because a disabled action grows a "○ " marker (2 more cells)
+    that a constant cannot see.
+    """
+    return sum(len(label) + _TOOLBAR_ACTION_CHROME for label in labels)
+
+
+def browse_row_overflows(pane_width: int, needed: int, *, already_split: bool) -> bool:
     """Whether these actions cannot all be painted on one row of the pane.
 
     task-32360 AC#2 (critique #10, handed over from the layout branch): at
     60 columns the Notes list pane resolves to 32 cells and the three browse
     actions need 33, so the compact sheet's ``overflow-x: hidden`` cropped
     the last one to "Sel" -- a half word, which is exactly what that AC
-    forbids. The decision is made from the labels ABOUT to be rendered
-    rather than from a width constant, because a disabled action grows a
-    "○ " marker (2 more cells) that a constant cannot see.
+    forbids.
 
     Args:
         pane_width: Columns the list pane has, or 0 when unmeasured (the
             first frame of a visit, before the reader shell resolves) --
             which keeps the single-row shape it has always had.
-        labels: The rendered action labels, markers included.
+        needed: Cells the row needs (``browse_row_width``).
+        already_split: Whether the row is split right now. A split row only
+            rejoins with ``_TOOLBAR_SPLIT_HYSTERESIS`` cells to spare, so
+            the line the split itself costs cannot flip the answer back.
 
     Returns:
-        ``True`` when the row needs more cells than the pane has.
+        ``True`` when the row needs more cells than the pane can give it.
     """
     if pane_width <= 0:
         return False
-    return sum(len(label) + _TOOLBAR_ACTION_CHROME for label in labels) > pane_width
+    return needed > pane_width - (_TOOLBAR_SPLIT_HYSTERESIS if already_split else 0)
 
 
 def compose_note_row_label(
@@ -545,6 +563,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         #: was composed, so ``on_resize`` can re-decide the row split once
         #: this pane's real width is known, and that measured width.
         self._browse_row_needed = 0
+        self._browse_overflow = False
         self._measured_width = 0
         #: task-32356: create mode's template disclosure. Canvas-local on
         #: purpose -- nothing outside this widget reads or writes it, so it
@@ -833,7 +852,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
     def _toolbar_decisions(self, width: int) -> tuple[bool, bool, bool]:
         """The three width-driven shape answers for one pane width."""
         merged, stacked = _toolbar_shape(width, self.compact)
-        overflow = bool(self._browse_row_needed) and 0 < width < self._browse_row_needed
+        overflow = browse_row_overflows(
+            width, self._browse_row_needed, already_split=self._browse_overflow
+        )
         return merged, stacked, overflow
 
     def on_resize(self, event: Resize) -> None:
@@ -1295,13 +1316,15 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # the same "one group per row" shape ``stacked`` already
                 # uses for a narrow pane, which the compact sheet's
                 # height-1 toolbar pin rules out for a single row.
-                self._browse_row_needed = sum(
-                    len(label) + _TOOLBAR_ACTION_CHROME
-                    for label in (new_label, sort_label, select_label)
+                self._browse_row_needed = browse_row_width(
+                    (new_label, sort_label, select_label)
                 )
                 browse_overflow = browse_row_overflows(
-                    pane_width, (new_label, sort_label, select_label)
+                    pane_width,
+                    self._browse_row_needed,
+                    already_split=self._browse_overflow,
                 )
+                self._browse_overflow = browse_overflow
                 select_button = Button(
                     select_label,
                     id="library-notes-select-toggle",

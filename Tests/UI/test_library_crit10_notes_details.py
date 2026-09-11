@@ -374,3 +374,28 @@ async def test_the_authority_noun_survives_above_the_narrow_stage(size, keeps_pr
             size,
             authority,
         )
+
+
+def test_the_split_browse_row_cannot_oscillate():
+    """Review F5: splitting the row costs a line, which can bring a
+    scrollbar into the pane and shave it -- with a bare `needed > width`
+    test that shaving flips the answer straight back and `on_resize`
+    recomposes for ever. A split row rejoins only with cells to spare.
+    """
+    from tldw_chatbook.Widgets.Library.library_notes_canvas import (
+        browse_row_overflows,
+        browse_row_width,
+    )
+
+    needed = browse_row_width(("New", "Sort: Newest", "Select"))
+    assert needed == 33, needed
+
+    assert browse_row_overflows(32, needed, already_split=False) is True
+    # the split's own line came back to shave the pane: stay split
+    assert browse_row_overflows(33, needed, already_split=True) is True
+    # real room again: rejoin
+    assert browse_row_overflows(35, needed, already_split=True) is False
+    # and an unsplit row that fits exactly stays unsplit
+    assert browse_row_overflows(33, needed, already_split=False) is False
+    # unmeasured panes keep the shape they have always had
+    assert browse_row_overflows(0, needed, already_split=False) is False
