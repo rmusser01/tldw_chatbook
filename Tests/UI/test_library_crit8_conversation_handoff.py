@@ -95,11 +95,15 @@ async def test_workspace_refusal_is_inline_with_a_link_action(
         # is single-line and truncates (fix round 1). It is the refusal
         # SENTENCE, not a second copy of the action name (task-32101).
         assert str(blocked.renderable) == (
-            "This conversation is not in this workspace. Press 'Link to "
-            "workspace' to add it to the active workspace."
+            "This conversation is not in this workspace. Pressing this "
+            "adds it to the active workspace first, and you can undo that."
         )
         assert blocked.display is True
-        assert open_console.disabled is True
+        # task-32107 (user decision, critique #10): a block a LINK can
+        # resolve no longer disables the hand-off -- the press links and
+        # proceeds in one undoable step, and the sentence above says so.
+        # "Link to workspace" stays for membership without a hand-off.
+        assert open_console.disabled is False
         assert link.display is True
         assert link.disabled is False
         assert str(link.label) == "Link to workspace"
@@ -289,11 +293,13 @@ async def test_mounted_reader_offers_the_link_then_enables_the_handoff() -> None
         )
         link = screen.query_one("#library-conversation-link-workspace", Button)
         assert str(blocked.renderable) == (
-            "This conversation is not in this workspace. Press 'Link to "
-            "workspace' to add it to the active workspace."
+            "This conversation is not in this workspace. Pressing this "
+            "adds it to the active workspace first, and you can undo that."
         )
-        assert str(open_console.label) == "○ Use as source"
-        assert open_console.disabled is True
+        # task-32107: pressable, and unmarked -- the "○" marker means
+        # blocked, so it follows the button's real disabled state.
+        assert str(open_console.label) == "Use as source"
+        assert open_console.disabled is False
         assert link.display is True
         # Resume is independent of source workspace eligibility.
         assert screen.check_action("library_conversation_open_console", ()) is True
@@ -449,8 +455,10 @@ async def test_blocked_state_paints_the_action_name_once(widget_pilot) -> None:
         blocked = pilot.app.query_one(
             "#library-conversation-open-console-blocked", Static
         )
-        assert str(open_console.label) == "○ Use as source"
-        assert open_console.disabled is True
+        # task-32107: the action is pressable now, so it carries no "○";
+        # the one-name/one-sentence rule this test exists for is unchanged.
+        assert str(open_console.label) == "Use as source"
+        assert open_console.disabled is False
         assert blocked.display is True
         assert "Use as source" not in str(blocked.renderable)
         # ...and it is the very sentence the tooltip gives.

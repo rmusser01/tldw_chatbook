@@ -672,8 +672,10 @@ requested load.
 | "Filter conversations… (Enter)" | Type and press Enter to search conversation titles, stable IDs, and indexed message content before the 20-item result page is chosen. Clearing it restores unfiltered page 1. |
 | "Previous" / "Next" | Moves through complete 20-item pages; the final page may contain fewer rows. Disabled buttons state why they cannot move. |
 | Row press | Selects the row and loads it into the **Conversation reader** — not a preview. See below. |
-| "Open in Console" | In the reader header, beside **Read** and **Info** (keyboard: `c`). Stages the conversation as **source context** in Console — see below. |
-| "Link to workspace" | Appears in the same header row only while the open conversation is not in the active workspace. One press links it, and "Open in Console" enables in place. |
+| "Resume conversation" / "Restore and resume" | In the reader header, beside **Read** and **Info** (keyboard: `c`). Reopens the original conversation in Console — it does **not** stage it as source context, and it does not depend on workspace membership. |
+| "Use as source" | In the reader header. Stages the open conversation as **source context** in Console. If the conversation is not in the active workspace, the press **links it first**, then continues — see below. |
+| "Link to workspace" | Appears in the same header row only while the open conversation is not in the active workspace. Press it to take on the membership **without** handing anything to Console. |
+| "Undo link" | Appears under the **"✓ linked · \<workspace\>"** receipt after a link, and removes exactly the membership that press added. |
 | "Export…" / "Select" | The shared grammar; export packages conversations into a bundle. |
 
 **The detail pane is a transcript reader.** Pressing a row loads the whole
@@ -864,20 +866,33 @@ Escape's return to the list live at 100x30).*
   collection scopes apply before paging; selections retain captured versions
   across pages, and a failed refresh keeps the last applied rows read-only with
   an exact Retry action. See [Library prompts](prompts.md).
-- **A conversation outside the active workspace says so on the button.**
-  The handoff requires the conversation to be eligible for the active
-  workspace. When it is not, the button dims to "○ Open in Console" and one
-  sentence beneath it states the reason and the remedy — "This conversation
-  is not in this workspace. Press 'Link to workspace' to add it to the
-  active workspace." — with the **"Link to workspace"** button right there
-  to perform it. (The action name is painted once, on the button; the line
-  under it is the explanation, not a second control.) Pressing `c` while it
-  is blocked says that same sentence as a message rather than doing
-  nothing. A block that linking cannot resolve states its own remedy
-  instead and offers no link (with no active workspace: "Select an active
-  workspace before using this item in Console."), never naming a button
-  that is not on screen. The same gate guards the other "Use in Console"
-  actions.
+- **A conversation outside the active workspace links itself on use.**
+  Workspace membership decides which items a Console turn may read, so a
+  conversation that is not in the active workspace cannot simply be handed
+  over in silence — but it is not refused either. **"Use as source" stays
+  pressable**, and one sentence beneath it says what the press will do:
+  "This conversation is not in this workspace. Pressing this adds it to the
+  active workspace first, and you can undo that." The press links it,
+  continues to Console, and leaves a receipt — **"✓ linked ·
+  \<workspace\> · this conversation can now be used in Console"** — with
+  **"Undo link"** beside it, which removes exactly that membership. The
+  separate **"Link to workspace"** button is still there for taking on the
+  membership without a hand-off. (The action name is painted once, on the
+  button; the line under it is the explanation, not a second control.)
+  A block that a link cannot resolve still refuses: the button dims to
+  "○ Use as source", states its own remedy (with no active workspace:
+  "Select an active workspace before using this item in Console.") and
+  offers no link, never naming a button that is not on screen. Pressing `c`
+  while the load fence blocks Resume says that same sentence as a message
+  rather than doing nothing. The rail's "Use in Console" keeps its own
+  pressable-with-reason grammar: it acts on a SET whose members can be
+  blocked for different reasons, so no single link would unblock it.
+- **The reader takes the width once a conversation is open.** With nothing
+  loaded the list absorbs the empty reader's columns (the density rule); as
+  soon as a row is open, the split is restored and the reader gets the
+  majority of a wide terminal — measured at 235x52: reader 132 columns,
+  list 49. At 100x30 the rail steps aside and the two panes share the stage
+  (reader 44, list 45); at 60x24 the reader is the single stage.
 - **Staging now actually reaches the model.** "Use in Console" (media)
   and "Open in Console" (conversations) used to stage content that
   displayed as attached but never made it into what the model was sent
@@ -1189,3 +1204,16 @@ the blocked Generate action's own inline reason one pane over.)*
 single-page Trash draws no "Page 1 of 1" and no Previous/Next, and its pager
 block is one row instead of two. Live at 235x52 on a seeded profile with one
 trashed item and with the list filtered to none.)*
+
+*Verified against fix/library-crit10-layout — 2026-09-11, fix round 1
+(task-32107: the refusal/promise sentence renders directly under the action it
+describes, and Undo removes the membership from the workspace its receipt
+names rather than whichever workspace is active when it is pressed; the
+Resume row above no longer claims to stage source context).*
+
+*Verified against fix/library-crit10-layout — 2026-09-11 (task-32107, user
+decision: "Use as source" links a conversation into the active workspace in
+one undoable step, with a receipt and an "Undo link" beside it, and the
+blocks a link cannot resolve keep refusing; task-32361: the reader wins the
+width once a conversation is open — measured live and in tests at 235x52,
+100x30 and 60x24).*

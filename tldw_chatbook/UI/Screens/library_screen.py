@@ -451,6 +451,7 @@ from ...Widgets.Library import (
     LibraryStudyHandoffCanvas,
     LibraryStudyHandoffCanvasState,
     library_conversation_block_sentence,
+    library_conversation_link_would_unblock,
     library_dim_label_text,
     library_rag_scope_shows_recovery,
     skill_editor_warning_lines,
@@ -4459,6 +4460,23 @@ class LibraryScreen(BaseAppScreen):
             # painted (live capture at 60x24 showed "/ focus search | F6 next
             # pane" and no return). Recovery outranks navigation here anyway,
             # which is the order that ladder assumes.
+            #
+            # Cross-branch (task-32360 with task-32346), fix round 1: the
+            # return stays at the head EVEN WHILE A TEXT FIELD HOLDS FOCUS,
+            # and this is the one surface where that is not a style choice.
+            # Measured against the real ``AppFooterStatus`` at width 60: it
+            # paints exactly ONE context chip, and only ~24 rendered
+            # characters of it -- "esc back to Library" (19) survives;
+            # "esc typing · back to Library" (28) collapses the WHOLE context
+            # to "…". So one chip is all there is, and it has to be the one
+            # that names what Escape actually does here. It does not leave
+            # the field: this binding is declared ABOVE
+            # ``library_blur_text_field``, whose ``check_action`` is
+            # measurably False while this one owns the key, so a chip reading
+            # "leaves field" would be the dead-key lie task-32051 and
+            # task-32225 both exist to prevent. Nothing is advertised that
+            # the caret would swallow either -- the block above has already
+            # dropped every printable-key chip.
             shortcuts = (("esc", "back to Library"),) + tuple(
                 pair for pair in shortcuts if pair[0] != "esc"
             )
@@ -12898,6 +12916,25 @@ class LibraryScreen(BaseAppScreen):
         ).strip()
         if not conversation_id:
             return "", False, ""
+        if self._conversations_state.freshness != "fresh":
+            # (Qodo bot round #3) The hand-off returns without staging while
+            # the page is not fresh, so a pressable "Use as source" -- and
+            # the sentence promising it will link and continue -- was an
+            # actionable control that did nothing. Reported here as the block
+            # it is: NOT link-resolvable, so the action disables with its "○"
+            # marker and no link is offered. Reported through this one seam
+            # rather than a second metadata key so the reader, the tooltip
+            # and the `c` accelerator cannot disagree about it. Resume is
+            # unaffected -- reopening the original never needed a fresh list.
+            return (
+                # Inline, like the canvas's own "List may be out of date"
+                # (library_conversations_state.py): one writer, one reader
+                # echoing it, so a constant would be ceremony.
+                "from a list that may be out of date",
+                False,
+                "This list may be out of date. Refresh Conversations before "
+                "using this one in Console.",
+            )
         state = self._library_workspace_depth_state()
         eligible, reason_copy = library_item_context_handoff(
             state, item_type="conversation", item_id=conversation_id
@@ -12917,19 +12954,122 @@ class LibraryScreen(BaseAppScreen):
         """Use the same retained-identity load fence as the Resume button."""
         return self._conversations_state.reader_state.loaded_actions_eligible
 
-    def _link_selected_conversation_to_workspace(self) -> None:
+    def _library_conversation_link_would_unblock(self) -> bool:
+        """Return whether a workspace link is what blocks the hand-off.
+
+        (task-32107) Asks the reader's OWN predicate, over the same three
+        inputs, so the enabled state of "Use as source" and this handler's
+        decision to link before staging cannot disagree.
+
+        Returns:
+            True when linking into the active workspace resolves the only
+            block.
+        """
+        blocked, linkable, _detail = self._library_conversation_workspace_block()
+        return library_conversation_link_would_unblock(
+            self._conversations_state.reader_state,
+            {
+                "_workspace_block": blocked,
+                "_workspace_block_linkable": linkable,
+            },
+        )
+
+    def _set_library_conversation_link_receipt(
+        self, workspace_name: str, workspace_id: str = ""
+    ) -> None:
+        """Record (or clear) the workspace the last press linked into.
+
+        A fresh mapping rather than a mutation: ``reader_loaded_metadata`` is
+        typed as a ``Mapping`` and is replaced wholesale by each load, which
+        is what clears the receipt when a different conversation opens.
+
+        The ID is stored beside the NAME (review fix round 1) because Undo
+        has to remove the membership this press added, not whatever is active
+        by the time it is pressed -- creating a workspace from the rail
+        activates it and recomposes the reader from this same mapping, so the
+        active workspace can change underneath a standing receipt.
+
+        Args:
+            workspace_name: The linked workspace's display name, or ``""``.
+            workspace_id: That workspace's id, or ``""`` to clear.
+        """
+        self._conversations_state.reader_loaded_metadata = {
+            **self._conversations_state.reader_loaded_metadata,
+            "_workspace_link_receipt": workspace_name,
+            "_workspace_link_receipt_id": workspace_id,
+        }
+
+    def _undo_selected_conversation_workspace_link(self) -> None:
+        """Remove the membership the last "Use as source" press added.
+
+        The exact inverse of ``_link_selected_conversation_to_workspace``:
+        same load fence, same registry, same refresh -- ``unlink_membership``
+        instead of ``link_membership``, and the receipt cleared.
+
+        It unlinks the workspace the RECEIPT names, read back by id, not
+        whatever is active now (review fix round 1): activating a different
+        workspace while the receipt stands would otherwise make Undo remove a
+        membership this press never added.
+        """
+        if not self._conversations_state.reader_state.loaded_actions_eligible:
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        notify = getattr(self.app_instance, "notify", None)
+        conversation_id = str(
+            self._conversations_state.reader_state.loaded_id or ""
+        ).strip()
+        workspace_id = str(
+            self._conversations_state.reader_loaded_metadata.get(
+                "_workspace_link_receipt_id"
+            )
+            or ""
+        ).strip()
+        if registry is None or not conversation_id or not workspace_id:
+            if callable(notify):
+                notify(
+                    "Workspaces are unavailable, so this link cannot be "
+                    "undone.",
+                    severity="warning",
+                )
+            return
+        try:
+            registry.unlink_membership(
+                workspace_id,
+                item_type="conversation",
+                item_id=conversation_id,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Library conversation workspace link could not be undone."
+            )
+            if callable(notify):
+                notify(
+                    "This link could not be undone. Try again.",
+                    severity="warning",
+                )
+            return
+        self._set_library_conversation_link_receipt("")
+        self._invalidate_library_workspace_depth_state()
+        self._sync_library_conversation_reader()
+
+    def _link_selected_conversation_to_workspace(self) -> str:
         """Link the open conversation into the active workspace (task-32056).
 
         The remedy the refusal used to name without offering. A no-op when
         the registry, the active workspace, or the loaded conversation is
         missing -- each of those already blocks the action's own affordance.
+
+        Returns:
+            The linked workspace's display name, or ``""`` when nothing was
+            linked (task-32107: "Use as source" links first and only
+            proceeds on a real name, so a failed link stages nothing).
         """
         # (review round 2) This writes membership for the RETAINED
         # ``loaded_id``. The same fence that hides the button re-checks here,
         # so no sync window can persist the conversation the user already
         # navigated away from.
         if not self._conversations_state.reader_state.loaded_actions_eligible:
-            return
+            return ""
         registry = getattr(self.app_instance, "workspace_registry_service", None)
         notify = getattr(self.app_instance, "notify", None)
         conversation_id = str(
@@ -12942,11 +13082,27 @@ class LibraryScreen(BaseAppScreen):
                     "be linked.",
                     severity="warning",
                 )
-            return
+            return ""
         try:
             active = registry.get_active_workspace()
             if active is None:
                 raise ValueError("no active workspace")
+            # (Qodo bot round #2) ``link_membership`` is INSERT OR IGNORE and
+            # returns the EXISTING row when the membership is already there.
+            # A press that reaches it through stale cached eligibility would
+            # otherwise get a receipt for a link it did not make, and Undo
+            # would delete someone else's membership. Read first, receipt
+            # only what this press inserted.
+            # ponytail: read-then-write, not an atomic "did it insert?" from
+            # the registry -- one UI thread makes the window unreachable
+            # here; push the answer into `link_membership` if a second writer
+            # ever shares it.
+            already_linked = any(
+                membership.workspace_id == active.workspace_id
+                for membership in registry.get_item_memberships(
+                    item_type="conversation", item_id=conversation_id
+                )
+            )
             registry.link_membership(
                 active.workspace_id,
                 item_type="conversation",
@@ -12966,9 +13122,19 @@ class LibraryScreen(BaseAppScreen):
                     "workspace. Try again.",
                     severity="warning",
                 )
-            return
+            return ""
+        workspace_name = str(getattr(active, "name", "") or active.workspace_id)
+        if not already_linked:
+            # Nothing was added when it was already linked, so there is
+            # nothing to undo -- but the refresh below still has to run, or
+            # the cached eligibility that sent us here stays stale and the
+            # hand-off refuses the conversation it just accepted.
+            self._set_library_conversation_link_receipt(
+                workspace_name, active.workspace_id
+            )
         self._invalidate_library_workspace_depth_state()
         self._sync_library_conversation_reader()
+        return workspace_name
 
     def _selected_media_handoff_payload(self) -> ChatHandoffPayload | None:
         return self._media_controller._selected_media_handoff_payload()
@@ -33921,12 +34087,34 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-conversation-use-source")
     def use_selected_conversation_as_source(self, event: Button.Pressed) -> None:
-        """Stage the loaded transcript under the existing workspace source rules.
+        """Stage the loaded transcript, linking it first when that is the block.
 
         Args:
             event: Source action press forwarded to the browse controller.
         """
+        if self._library_conversation_link_would_unblock():
+            # task-32107: one gesture, not two. A failed link leaves the
+            # refusal exactly as it was and does not stage anything.
+            #
+            # (Qodo bot round #1) The freshness check that stood here is
+            # gone, not moved: a page that is not fresh is now reported as a
+            # non-linkable workspace block, so this predicate is already
+            # False for it and the literal had nowhere left to disagree with
+            # `_open_selected_conversation_handoff`'s own.
+            if not self._link_selected_conversation_to_workspace():
+                event.stop()
+                return
         return self._conversations_controller.use_selected_conversation_as_source(event)
+
+    @on(Button.Pressed, "#library-conversation-link-undo")
+    def undo_selected_conversation_workspace_link(self, event: Button.Pressed) -> None:
+        """Remove the membership the last "Use as source" press added.
+
+        Args:
+            event: The Undo press, stopped here like its sibling handlers.
+        """
+        event.stop()
+        self._undo_selected_conversation_workspace_link()
 
     @on(Button.Pressed, "#library-conversation-link-workspace")
     def link_selected_conversation_to_workspace(self, event: Button.Pressed) -> None:
