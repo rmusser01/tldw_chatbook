@@ -53,9 +53,14 @@ _TOOL_ROW_INDENT = "  "
 # through `update_matrix()`.
 _LEGEND_TEXT = (
     "• override · ⚠ definition changed · ⚑ high-risk floor · "
+<<<<<<< HEAD
     "≡ exact-input allows · "
     "(session) approved until Chatbook exits · "
     "Space cycles Inherit → Ask → Allow → Off"
+=======
+    "Space cycles Inherit → Ask → Allow → Off · shift+space bulk set · "
+    "C clears overrides (visible rows only)"
+>>>>>>> b116e1a401 (feat(mcp): bulk bindings + messages + hint flash on the Permissions canvas (ADR-149 Wave F))
 )
 
 # T8: exact copy pinned by the server-source governance section below --
@@ -485,6 +490,8 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
 
     BINDINGS = [
         Binding("space", "cycle_state", "Cycle permission", show=False),
+        Binding("shift+space", "bulk_set", "Bulk set", show=False),
+        Binding("C", "bulk_clear", "Clear overrides", show=False),
     ]
 
     class StateCycleRequested(Message, namespace="mcp_permissions_mode"):
@@ -520,6 +527,43 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         def __init__(self, profile_id: str) -> None:
             super().__init__()
             self.profile_id = profile_id
+
+    class BulkStateRequested(Message, namespace="mcp_permissions_mode"):
+        """ADR-149 Wave F: `shift+space` on the matrix -- apply the cursor
+        row's next cycled state to the server's VISIBLE tool rows. The
+        canvas (which alone knows visibility) computed the scope and the
+        state; the workbench remains the single writer and executes this
+        as N ordinary profile-scoped `set_tool_state` calls."""
+
+        def __init__(
+            self,
+            server_key: str,
+            tool_names: tuple[str, ...],
+            new_state: str,
+            profile_context: PermissionProfileContext | None = None,
+        ) -> None:
+            super().__init__()
+            self.server_key = server_key
+            self.tool_names = tool_names
+            self.new_state = new_state
+            self.profile_context = profile_context
+
+    class BulkClearRequested(Message, namespace="mcp_permissions_mode"):
+        """ADR-149 Wave F: `C` on the matrix -- clear the server's VISIBLE
+        tool overrides (back to Inherit). Only rows that currently hold an
+        override are sent; the full-clear recipe is to clear the filter
+        first (the filter is the bulk's scope selector)."""
+
+        def __init__(
+            self,
+            server_key: str,
+            tool_names: tuple[str, ...],
+            profile_context: PermissionProfileContext | None = None,
+        ) -> None:
+            super().__init__()
+            self.server_key = server_key
+            self.tool_names = tool_names
+            self.profile_context = profile_context
 
     class KillSwitchToggled(Message, namespace="mcp_permissions_mode"):
         """Posted once per press of `#mcp-perm-kill-switch` (a Library-style
@@ -597,6 +641,11 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         self._kill_switch: bool = False
         self._profile_context: PermissionProfileContext | None = None
         self._profile_select_sync = False
+        # ADR-149 Wave F: the extra hint lines currently rendered under the
+        # fixed legend (gate breadcrumb / discovery hint from the last
+        # update_matrix) -- flash_hint() appends to these until the next
+        # update_matrix rebuilds them.
+        self._legend_extras: list[str] = []
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -774,11 +823,10 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         self._apply_filter()
 
         self.query_one("#mcp-perm-preview", Static).update(f"{echo}{preview}" if echo else preview)
-        legend_text = _LEGEND_TEXT
-        for extra_line in (gate_breadcrumb, discovery_hint):
-            if extra_line:
-                legend_text = f"{legend_text}\n{extra_line}"
-        self.query_one("#mcp-perm-legend", Static).update(legend_text)
+        self._legend_extras = [
+            line for line in (gate_breadcrumb, discovery_hint) if line
+        ]
+        self._render_legend()
 
     def set_profile_hint(self, text: str | None) -> None:
         """Wave C (F8): render (or clear) the non-default-profile hint line
@@ -1080,6 +1128,95 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
                 table.move_cursor(row=index)
                 return True
         return False
+
+    def _render_legend(self) -> None:
+        """Render the fixed legend plus whatever extra hint lines are
+        current (`_legend_extras`, Wave F)."""
+        text = _LEGEND_TEXT
+        for line in self._legend_extras:
+            text = f"{text}\n{line}"
+        self.query_one("#mcp-perm-legend", Static).update(text)
+
+    def flash_hint(self, text: str) -> None:
+        """ADR-149 Wave F: one transient hint line under the legend (the
+        spec's 'existing hint Static' -- not a toast). Lives until the
+        next `update_matrix` rebuilds `_legend_extras`, the same
+        next-ordinary-render-clears contract the mutation echo uses."""
+        self._legend_extras = [line for line in self._legend_extras if line] + [text]
+        self._render_legend()
+
+    def _visible_tool_rows_for(self, server_key: str) -> list[PermRow]:
+        """The server's VISIBLE (post-filter) tool rows, matrix order."""
+        return [
+            row
+            for row in self._visible_rows
+            if row.kind == "tool" and row.server_key == server_key
+        ]
+
+    def _bulk_scope(
+        self, *, overrides_only: bool
+    ) -> tuple[PermRow, tuple[str, ...]] | None:
+        """Resolve the bulk gesture's cursor row and visible scope.
+
+        Returns None (after flashing the hint) for the two no-op cases the
+        spec names: the pinned global row (owns no server) and a server
+        with zero matching visible tool rows.
+        """
+        table = self.query_one("#mcp-perm-table", DataTable)
+        if table.row_count == 0 or table.cursor_row < 0:
+            return None
+        try:
+            row_key, _ = table.coordinate_to_cell_key((table.cursor_row, 0))
+        except Exception:
+            return None
+        if row_key is None or row_key.value is None:
+            return None
+        row = self._rows_by_key.get(str(row_key.value))
+        if row is None:
+            return None
+        hint = "Bulk actions need a server's tool rows — move to one of its rows."
+        if row.kind == "global":
+            self.flash_hint(hint)
+            return None
+        tool_rows = self._visible_tool_rows_for(row.server_key)
+        if overrides_only:
+            tool_rows = [r for r in tool_rows if r.cycle_current is not None]
+        if not tool_rows:
+            self.flash_hint(hint)
+            return None
+        return row, tuple(r.tool_name or "" for r in tool_rows)
+
+    def action_bulk_set(self) -> None:
+        """ADR-149 Wave F: `shift+space` -- the cursor row's next cycled
+        state (the SAME cycle_ui_state a plain press computes, so Wave B's
+        safety ordering carries over: the first press from Inherit applies
+        Ask, never Allow) for the server's visible tool rows."""
+        scope = self._bulk_scope(overrides_only=False)
+        if scope is None:
+            return
+        row, tool_names = scope
+        new_state = cycle_ui_state(row.cycle_current)
+        if new_state is None:
+            # Server/tool rungs cycle None -> a state; the global row (the
+            # only rung whose cycle never yields None) is excluded above.
+            new_state = cycle_ui_state(None)
+        self.post_message(
+            self.BulkStateRequested(
+                row.server_key, tool_names, new_state, self._profile_context
+            )
+        )
+
+    def action_bulk_clear(self) -> None:
+        """ADR-149 Wave F: `C` -- clear the server's VISIBLE overrides."""
+        scope = self._bulk_scope(overrides_only=True)
+        if scope is None:
+            return
+        row, tool_names = scope
+        self.post_message(
+            self.BulkClearRequested(
+                row.server_key, tool_names, self._profile_context
+            )
+        )
 
     def action_cycle_state(self) -> None:
         """Cycle the matrix's CURSOR row one Space-press (T2's cycle rules).

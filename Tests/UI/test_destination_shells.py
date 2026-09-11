@@ -3366,7 +3366,10 @@ async def test_mcp_destination_footer_shortcuts_follow_mode():
 
         screen.action_mcp_mode("permissions")
         await pilot.pause()
-        assert footer.shortcut_text == f"{common} | space cycle permission{globals_suffix}"
+        assert footer.shortcut_text == (
+            f"{common} | space cycle permission | shift+space bulk set"
+            f" | C clear overrides{globals_suffix}"
+        )
 
         screen.action_mcp_mode("audit")
         await pilot.pause()

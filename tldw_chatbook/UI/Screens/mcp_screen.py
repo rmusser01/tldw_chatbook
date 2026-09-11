@@ -41,7 +41,12 @@ _COMMON_SHORTCUTS: tuple[tuple[str, str], ...] = (
 MCP_MODE_SHORTCUTS: dict[str, tuple[tuple[str, str], ...]] = {
     "servers": _COMMON_SHORTCUTS,
     "tools": _COMMON_SHORTCUTS + (("t", "test tool"),),
-    "permissions": _COMMON_SHORTCUTS + (("space", "cycle permission"),),
+    "permissions": _COMMON_SHORTCUTS
+    + (
+        ("space", "cycle permission"),
+        ("shift+space", "bulk set"),
+        ("C", "clear overrides"),
+    ),
     "audit": _COMMON_SHORTCUTS,
 }
 
