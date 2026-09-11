@@ -1206,15 +1206,41 @@ def test_compose_appends_discovery_hint_only_when_find_load_offered():
 
 
 def test_canvas_discovery_hint_requires_the_actual_complete_run_allow_list():
+    from tldw_chatbook.Canvas import guide
+
     base = "system"
+    artifacts = CANVAS_TOOL_NAMES - {"canvas_guide"}
 
     assert _append_canvas_discovery_hint(base, ()) == base
-    assert (
-        _append_canvas_discovery_hint(base, CANVAS_TOOL_NAMES - {"canvas_read"}) == base
-    )
+    assert _append_canvas_discovery_hint(base, artifacts - {"canvas_read"}) == base
     complete = _append_canvas_discovery_hint(base, CANVAS_TOOL_NAMES)
     assert complete.startswith(base)
-    assert complete.endswith(CANVAS_DISCOVERY_HINT)
+    assert CANVAS_DISCOVERY_HINT in complete
+    assert guide.CANVAS_OFFER_POLICY in complete
+    assert "If context does not establish consent, clarify." in complete
+    assert "canvas_guide" in complete
+    without_guide = _append_canvas_discovery_hint(base, artifacts)
+    assert CANVAS_DISCOVERY_HINT in without_guide
+    assert guide.CANVAS_OFFER_POLICY in without_guide
+    assert "canvas_guide" not in without_guide
+    for allowed in ({"canvas_guide"}, CANVAS_TOOL_NAMES - {"canvas_read"}):
+        docs = _append_canvas_discovery_hint(base, allowed)
+        assert "canvas_guide" in docs
+        assert guide.CANVAS_OFFER_POLICY in docs
+        assert CANVAS_DISCOVERY_HINT not in docs
+        assert "canvas_create" not in docs and "canvas_update" not in docs
+
+
+def test_canvas_discovery_does_not_read_packaged_guides(monkeypatch):
+    from tldw_chatbook.Canvas import guide
+
+    def no_read(*_args, **_kwargs):
+        pytest.fail("discovery must not read packaged guide bodies")
+
+    monkeypatch.setattr(guide, "files", no_read)
+    assert guide.CANVAS_OFFER_POLICY in _append_canvas_discovery_hint(
+        "system", CANVAS_TOOL_NAMES
+    )
 
 
 def test_no_tool_message_streams_final_answer_like_today(tmp_path):
