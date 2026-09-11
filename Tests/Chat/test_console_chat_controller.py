@@ -11451,6 +11451,62 @@ def test_personal_context_bootstrap_returns_its_service_within_budget(monkeypatc
     assert asyncio.run(controller._personal_context_service()) is service
 
 
+@pytest.mark.asyncio
+async def test_setup_state_covers_the_mcp_catalog_composition(monkeypatch):
+    """The row must say "setup" WHILE tools are being composed, not after.
+
+    Qodo #6 on PR #2586: `_compose_agent_request_providers` awaits
+    `compose_catalog()`'s discovery I/O, and the setup phase used to open
+    only once that returned -- so a slow or unreachable MCP server left the
+    assistant row blank for exactly as long as the discovery took, which is
+    the failure the setup state exists to end.
+    """
+    from unittest.mock import MagicMock
+
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=StreamingGateway(),
+        agent_runtime_enabled=True,
+    )
+    bridge_store = MagicMock()
+    bridge_store.messages_for_session.return_value = []
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=MagicMock(),
+        store=bridge_store,
+        provider_gateway=MagicMock(),
+    )
+    bridge.run_reply = lambda **_kwargs: (
+        "run-test",
+        RunOutcome(status=RUN_DONE, steps=[], final_text="ok"),
+    )
+    controller._agent_bridge = bridge
+    session = _arm_session(store)
+    conversation_id = controller._agent_conversation_id(session.id)
+    assert bridge.live_snapshot(conversation_id).status == "idle"
+
+    observed = []
+    compose = controller._compose_agent_request_providers
+
+    async def observed_compose(**kwargs):
+        observed.append(bridge.live_snapshot(conversation_id).status)
+        # Stand in for the discovery I/O: the mark must survive the await,
+        # not just the call.
+        await asyncio.sleep(0)
+        observed.append(bridge.live_snapshot(conversation_id).status)
+        return await compose(**kwargs)
+
+    monkeypatch.setattr(
+        controller, "_compose_agent_request_providers", observed_compose
+    )
+
+    await controller.submit_draft("hello")
+
+    assert observed == ["setup", "setup"], observed
+    # And the mark does not outlive the dispatch it was covering.
+    assert bridge._setup_started_at == {}
+
+
 def test_pre_provider_setup_phase_marks_and_clears_the_bridge():
     """The bracket the send runs its setup inside marks, then always clears."""
     store = ConsoleChatStore()
