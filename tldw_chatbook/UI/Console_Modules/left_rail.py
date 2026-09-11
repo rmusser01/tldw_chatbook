@@ -1071,6 +1071,36 @@ class ConsoleLeftRail(Vertical):
             return
         collapse.styles.text_style = "underline" if outer_active else "none"
 
+    def on_focus(self) -> None:
+        """TASK-32322: announce the rail's exit keys when focus arrives.
+
+        Tab is region-locked on purpose (TASK-2154.11 AC-02), so F6 and Esc
+        are the exits -- and nothing else surfaces them at the point of
+        need. Focusing the rail asks the screen to refresh its footer
+        hints, which then carry the escape line while focus stays here.
+        """
+        refresh_footer = getattr(
+            self.screen, "_register_console_footer_shortcuts", None
+        )
+        if callable(refresh_footer):
+            refresh_footer()
+
+    def on_blur(self) -> None:
+        """Defer exit-hint removal until replacement focus is committed."""
+        self.call_after_refresh(self._refresh_footer_if_rail_not_focused)
+
+    def _refresh_footer_if_rail_not_focused(self) -> None:
+        focused = self.app.focused
+        if focused is self or (
+            isinstance(focused, Widget) and self in focused.ancestors
+        ):
+            return
+        refresh_footer = getattr(
+            self.screen, "_register_console_footer_shortcuts", None
+        )
+        if callable(refresh_footer):
+            refresh_footer()
+
     def on_descendant_focus(self, event: DescendantFocus) -> None:
         """Activate owned keyboard targets and paint the current scroll owner."""
 

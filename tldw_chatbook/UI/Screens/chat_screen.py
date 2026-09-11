@@ -5080,7 +5080,29 @@ class ChatScreen(BaseAppScreen):
         shortcuts = (("Ctrl+Shift+F", focus_label), *shortcuts)
         if self._console_inspector_active():
             shortcuts = (("n/p", "Sections"), *shortcuts)
+        # TASK-32322: with focus inside a rail, Tab is region-locked -- the
+        # exits are F6 and Esc, taught at the point of need. Preceded by
+        # nothing (prepended like the others: footer degradation drops
+        # hints from the END).
+        if self._console_rail_focus_active():
+            shortcuts = (("Esc", "composer · F6 panes"), *shortcuts)
         self.register_footer_shortcuts(source="console", shortcuts=shortcuts)
+
+    def _console_rail_focus_active(self) -> bool:
+        """Return whether live focus is inside either mounted rail (TASK-32322)."""
+        from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+
+        focused = self.app.focused
+        if not isinstance(focused, Widget):
+            return False
+        for rail_id in ("console-left-rail", "console-right-rail"):
+            try:
+                rail = self.query_one(f"#{rail_id}")
+            except (NoMatches, QueryError):
+                continue
+            if focused is rail or rail in focused.ancestors:
+                return True
+        return False
 
     def _console_inspector_active(self) -> bool:
         """Return whether live focus is the Inspector rail or a descendant."""
