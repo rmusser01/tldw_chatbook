@@ -200,9 +200,11 @@ async def test_the_shortcut_does_not_land_focus_on_the_close_control():
     """TASK-24703: opening a pane must not put the caret on its own closer.
 
     TASK-24604's action correctly moved focus INTO the rail, but the pane's
-    default target list starts with `console-inspector-rail-collapse`, so the
-    caret arrived on the button that closes the pane the user just opened --
-    one stray Enter and they are back where they started.
+    default target list used to start with `console-inspector-rail-collapse`,
+    so the caret arrived on the button that closes the pane the user just
+    opened -- one stray Enter and they were back where they started.
+    (TASK-32321 has since fixed the map itself; this test pins the alt+i
+    shortcut's own behaviour.)
     """
     app = _build_test_app()
     _configure_native_ready_console(app)

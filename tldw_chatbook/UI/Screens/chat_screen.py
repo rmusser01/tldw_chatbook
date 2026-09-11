@@ -886,13 +886,27 @@ CONSOLE_FOCUS_REGISTRY = WorkbenchFocusRegistry(
 CONSOLE_PANE_COLLAPSED_STAND_IN = {
     "console-right-rail": "console-inspector-rail-handle",
 }
+#: TASK-32321: each rail's FIRST target is a content control, not the
+#: collapse button -- F6 used to land on the one control whose Enter hides
+#: the pane the user just entered (verified live: one F6 + one reflexive
+#: Enter collapsed the whole rail). The collapse buttons stay as fallbacks
+#: one stop later. Right rail follows TASK-24703's alt+i reasoning
+#: (authority summary first); left rail targets the pinned Terminal action.
 CONSOLE_FOCUS_TARGETS_BY_PANE = {
-    "console-left-rail": ("console-context-rail-collapse", "console-left-rail"),
+    "console-left-rail": (
+        "console-terminal-open",
+        "console-context-rail-collapse",
+        "console-left-rail",
+    ),
     "console-transcript-surface": (
         "console-native-transcript",
         "console-transcript-surface",
     ),
-    "console-right-rail": ("console-inspector-rail-collapse", "console-right-rail"),
+    "console-right-rail": (
+        "console-send-authority-summary",
+        "console-inspector-rail-collapse",
+        "console-right-rail",
+    ),
     "console-native-composer": ("console-native-composer",),
 }
 #: TASK-2154.11 (AC-02): Tab/Shift+Tab cycle WITHIN the focused widget's

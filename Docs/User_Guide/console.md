@@ -535,7 +535,7 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 | Key | Action |
 |---|---|
 | F1 | Open the Console help panel (actions, agent notes, full shortcut list) |
-| F6 / Shift+F6 | Focus the next / previous pane (context rail → transcript → Inspector → composer) |
+| F6 / Shift+F6 | Focus the next / previous pane (context rail → transcript → Inspector → composer); F6 lands on each rail's first content control, never its collapse button |
 | Tab / Shift+Tab | Move through rail controls and any overflowing section in normal order; sections that fit do not add an extra stop |
 | Arrow keys / Page Up / Page Down / Home / End | Scroll within a focused overflowing section |
 | n / p (Inspector focused) | Move to the next / previous named Inspector section, without wrapping or taking over editable input |
