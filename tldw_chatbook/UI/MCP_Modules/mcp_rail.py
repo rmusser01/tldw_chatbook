@@ -56,8 +56,30 @@ _ROW_CHROME = 8
 # row.
 _ALL_SERVERS_GUTTER = "  "
 
+# Wave A (F15): abbreviated state words for the in-rail legend at narrow
+# widths -- keyed by STATE_LABELS' values lowercased, and completeness-
+# pinned by test (a new ReadinessState must add a short form or the
+# abbreviated legend silently drops it). "no tools" collapses to the bare
+# glyph (∅) because that glyph IS the word.
+# `_LEGEND_SHORT_BUDGET` (F15): the row-label budget below which the
+# legend switches to the short words -- chosen so the two-entry fresh-
+# install legend ("◦ off · ⌂ built-in") fits a ~24-col compact rail on
+# one line; wide rails keep the full words.
+_LEGEND_SHORT_BUDGET = 32
+_SHORT_STATE_LABELS: dict[str, str] = {
+    "ready": "ready",
+    "checking": "checking",
+    "needs setup": "setup",
+    "needs attention": "attention",
+    "no tools": "∅",
+    "stale": "stale",
+    "off (opt-in)": "off",
+}
 
-def _present_states_legend(snapshots: list[ReadinessSnapshot]) -> str:
+
+def _present_states_legend(
+    snapshots: list[ReadinessSnapshot], *, short: bool = False
+) -> str:
     """Compact glyph legend for the states currently present in the rail.
 
     task-2243: rail rows show glyph+name only, and decoding them required
@@ -74,13 +96,20 @@ def _present_states_legend(snapshots: list[ReadinessSnapshot]) -> str:
     STATE_GLYPHS order) so the line can never drift from the rows it
     decodes; the ⌂ built-in marker is explained whenever a built-in row
     is present (same copy the Servers-mode legend uses).
+
+    Wave A (F15): `short=True` swaps in `_SHORT_STATE_LABELS` -- at narrow
+    rail budgets the long forms wrapped the legend onto 2-3 rows, which
+    is worse than an abbreviated word the glyph disambiguates anyway.
     """
     present = {snap.state for snap in snapshots}
-    parts = [
-        f"{glyph} {STATE_LABELS[state].lower()}"
-        for state, glyph in STATE_GLYPHS.items()
-        if state in present
-    ]
+    parts = []
+    for state, glyph in STATE_GLYPHS.items():
+        if state not in present:
+            continue
+        word = STATE_LABELS[state].lower()
+        if short:
+            word = _SHORT_STATE_LABELS.get(word, word)
+        parts.append(f"{glyph} {word}")
     if any(snap.source == "builtin" for snap in snapshots):
         parts.append("⌂ built-in")
     return " · ".join(parts)
@@ -340,10 +369,19 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
         # canvas Servers-mode legend -- present states only, so the line
         # stays short (a fresh install reads "◦ off (opt-in) · ⌂ built-in").
         # Nothing to decode at zero servers: the F-060 empty state below
-        # stands alone.
+        # stands alone. Wave A (F15): at narrow width budgets the legend
+        # abbreviates (`short=True`) so it stays one line instead of
+        # wrapping to 2-3 rows. The budget is computed HERE (before the
+        # rows below reuse it) -- the same F-057 formula the rows use.
+        layout_width = self.region.width
+        budget = (
+            _MAX_ROW_LABEL
+            if layout_width <= 0
+            else max(8, min(_MAX_ROW_LABEL, layout_width - _ROW_CHROME))
+        )
         if self.snapshots:
             yield Static(
-                _present_states_legend(self.snapshots),
+                _present_states_legend(self.snapshots, short=budget < _LEGEND_SHORT_BUDGET),
                 id="mcp-rail-state-legend",
                 markup=False,
             )
@@ -380,13 +418,9 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
         # width minus `_ROW_CHROME`, so rows truncate with an ellipsis that
         # FITS the row instead of being cropped mid-word. Width 0 (first
         # compose, pre-layout) falls back to `_MAX_ROW_LABEL`; `on_resize`
-        # recomposes once the real width is known.
-        layout_width = self.region.width
-        budget = (
-            _MAX_ROW_LABEL
-            if layout_width <= 0
-            else max(8, min(_MAX_ROW_LABEL, layout_width - _ROW_CHROME))
-        )
+        # recomposes once the real width is known. The budget itself was
+        # already computed above the legend yield (F15) -- reused, not
+        # recomputed.
         self._row_budget = budget
         pad_width = max(
             (

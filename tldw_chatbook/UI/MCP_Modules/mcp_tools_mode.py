@@ -98,6 +98,22 @@ def _local_tools_toggle_label(enabled: bool) -> str:
     return f"{_LOCAL_TOOLS_TITLE}: {'on' if enabled else 'off'} ▸"
 
 
+# Wave A (F9): rendered-width cap for the Server column. DataTable clips
+# overflowing cell text silently -- a group label like "Local workspace,
+# web, and Watchlists" rendered as "Local workspace, web, and" with no
+# marker, which reads as a DIFFERENT label rather than a truncated one.
+# A fixed budget with an explicit ellipsis keeps the truncation honest;
+# the full label remains visible in the server-filter Select's options.
+_SERVER_CELL_BUDGET = 24
+
+
+def _ellipsize(text: str, budget: int) -> str:
+    """Truncate `text` to `budget` rendered columns with an explicit "…"."""
+    if len(text) <= budget:
+        return text
+    return f"{text[: budget - 1].rstrip()}…"
+
+
 class MCPToolsMode(DataTableClickSelectMixin, Vertical):
     """Canvas for the Tools mode: cross-server catalog, filters, empty state."""
 
@@ -571,8 +587,11 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
                 )
             else:
                 state_cell = state_text("—", "muted")
-            server_cell = (
-                f"{tool.server_label} (stale)" if tool.stale else tool.server_label
+            server_cell = _ellipsize(
+                f"{tool.server_label} (stale)"
+                if tool.stale
+                else tool.server_label,
+                _SERVER_CELL_BUDGET,
             )
             schema_cell = (
                 "form" if parse_schema(tool.input_schema) is not None else "raw"
