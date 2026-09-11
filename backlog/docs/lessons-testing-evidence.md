@@ -3479,7 +3479,7 @@ or Textual will reject the duplicate even when the route signature matches.
 
 ## Adding a resource of a GUARDED KIND obliges you to run that kind's inventory suite, not just your feature's tests
 
-**Follow-up incident (TASK-31758 / PR #2437, 2026-09-05).** Forty-five
+**Follow-up incident (TASK-31978 / PR #2437, 2026-09-05).** Forty-five
 pixel-migu seed, resource, and installed-distribution checks passed after a
 rebase, but the required generated-artifact job still failed: two new startup
 diagnostics in `app.py` and `config.py` were absent from the production
@@ -13280,6 +13280,28 @@ lost output, and it is not on by default in the shells these commands run in.
 The same trap sits behind `./scripts/preflight.sh | tail` — a known previous
 incident in this repo, and the reason preflight is always run bare.
 
+## Plan-embedded code rots against the installed library; only implementer-run RED catches it (TASK-31758, 2026-09-05)
+## Plan-embedded code rots against the installed library; only implementer-run RED catches it (TASK-31978, 2026-09-05)
+
+The artifact-share SDD plan embedded near-verbatim implementation and test
+code authored against pinned-at-plan-time versions, and both sides rotted
+before implementation. Task 3: the plan's aiohttp middleware block appended
+bare `(request, handler)` methods to `app.middlewares`; under the installed
+aiohttp 3.14.3 every route 500'd because 3.14 discriminates middleware by
+the `__middleware_version__ == 1` marker the plan omitted — caught only when
+the implementer's RED run failed with 500s across the suite. Task 5: the
+plan's test snippet called `SelectionList.select(0)` as if it took an index;
+Textual 8.2.8's `select()` takes a *value* and does not validate existence,
+so with string option values the selection stayed empty and two tests could
+never pass — again caught only at implementer-run RED, and the failure first
+looked like a dialog bug rather than a wrong test call.
+
+**What to do.** Treat code embedded in plan docs as a sketch, never as
+verified: pin the library-version assumptions at the top of the plan, and
+never skip the implementer-run RED step — it is the only checkpoint that
+reveals whether the plan's code or its tests encode the wrong API. When a
+RED failure contradicts the plan, check the *test-side* API usage for
+version rot before hunting a bug in code that follows the plan.
 
 ## A refusal path needs its own test, or it will lose both its name and its cleanup (task-32243, 2026-09-11)
 

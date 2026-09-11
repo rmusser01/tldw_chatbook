@@ -36,12 +36,14 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ProviderThinkingDelta,
     ProviderThinkingCaptureError,
     ProviderToolCalls,
+    adapter_wire_kwargs,
     build_llamacpp_chat_payload,
     normalize_llamacpp_base_url,
     safe_provider_error_copy,
 )
 from tldw_chatbook.Chat.console_prepared_request import (
     CONTINUATION_OWNER_KEY,
+    freeze_json,
     PreparedProviderRequest,
     build_console_request,
 )
@@ -9103,6 +9105,99 @@ async def test_auxiliary_adapter_transport_failure_keeps_bounded_category(
 
 
 @pytest.mark.asyncio
+async def test_auxiliary_status_less_local_failure_is_a_bad_request_not_an_outage() -> (
+    None
+):
+    """task-32342 (Qodo #2): an unserializable local payload never reaches the
+    provider, so the Console provider test must classify it ``bad_request``.
+
+    The gateway used to substitute HTTP 502 for the missing status and rewrap
+    the failure as ``ChatProviderError``, which the provider-test path reads as
+    a provider outage.
+    """
+
+    from types import MappingProxyType
+
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        ConsoleGenerationTestRequest,
+        ProviderDraftIdentity,
+    )
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    frozen_tool_call = MappingProxyType(
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": MappingProxyType(
+                {"name": "find_tools", "arguments": '{"query": "x"}'}
+            ),
+        }
+    )
+
+    def unserializable_local_call(**_kwargs):
+        # The real local handler, failing where it really fails: building the
+        # request body, before a single byte goes out.
+        return LLM_API_Calls_Local._chat_with_openai_compatible_local_server(
+            api_base_url="http://127.0.0.1:9",
+            model_name="fake-model",
+            input_data=[
+                {"role": "assistant", "content": "", "tool_calls": [frozen_tool_call]}
+            ],
+            api_key=None,
+            streaming=False,
+        )
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=unserializable_local_call)
+
+    with pytest.raises(ChatConfigurationError) as caught:
+        await gateway.complete_auxiliary(_auxiliary_request())
+
+    assert caught.value.status_code is None
+    assert not isinstance(caught.value, ChatProviderError)
+
+    class _ProviderTestGateway:
+        """Only the two seams `_test_console_generation` touches."""
+
+        @staticmethod
+        async def resolve_for_send(_selection):
+            return _auxiliary_resolution()
+
+        @staticmethod
+        async def complete_auxiliary(request, **kwargs):
+            return await gateway.complete_auxiliary(request, **kwargs)
+
+    class _Screen:
+        @staticmethod
+        def _build_console_provider_selection_for_settings(_session_id, _settings):
+            return object()
+
+        @staticmethod
+        def _ensure_console_provider_gateway():
+            return _ProviderTestGateway()
+
+    request = ConsoleGenerationTestRequest(
+        settings=ConsoleSessionSettings(
+            provider="custom",
+            model="fake-model",
+            base_url="http://127.0.0.1:9/v1",
+        ),
+        identity=ProviderDraftIdentity(
+            provider_key="custom",
+            connection_identity=("custom", "http://127.0.0.1:9/v1/chat/completions"),
+            credential_source="stored",
+            credential_revision=1,
+            draft_generation=1,
+        ),
+    )
+
+    result = await ChatScreen._test_console_generation(_Screen(), "session-1", request)
+
+    assert (result.generation, result.category) == ("failed", "bad_request")
+
+
+@pytest.mark.asyncio
 async def test_auxiliary_completion_ignores_injected_raw_error_formatter() -> None:
     def fail(**_kwargs):
         raise RuntimeError("EXCEPTION-CANARY")
@@ -11562,3 +11657,40 @@ def test_bounded_accumulator_drops_non_envelope_tool_metadata() -> None:
     assert isinstance(retained, ProviderToolCalls)
     assert retained.metadata is None
     assert canary not in repr(retained)
+
+
+def test_adapter_wire_kwargs_hands_providers_serializable_messages() -> None:
+    """task-32342: the trace surface reissues frozen rows; a provider adapter
+    must still receive plain JSON containers. A tool-call continuation row
+    otherwise reaches ``requests`` as a mappingproxy and dies in request
+    preparation."""
+
+    messages = [
+        {"role": "user", "content": "hi"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "find_tools", "arguments": '{"query": "x"}'},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "ok"},
+    ]
+    # Exactly what ConsoleTraceService issues, and what the surface verifier
+    # requires the dispatched kwargs to hold by identity.
+    verified_kwargs = {
+        "messages_payload": tuple(freeze_json(row) for row in messages),
+        "provider_continuations": (),
+        "model": "fake-model",
+    }
+
+    kwargs = adapter_wire_kwargs(verified_kwargs)
+
+    assert kwargs["model"] == "fake-model"
+    payload = kwargs["messages_payload"]
+    assert json.loads(json.dumps(payload)) == messages
+    assert payload[1]["tool_calls"][0]["function"]["arguments"] == '{"query": "x"}'

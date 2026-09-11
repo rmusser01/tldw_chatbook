@@ -594,6 +594,7 @@ from ...Widgets.Console.console_inspector_section import (
 from ...Widgets.Console.console_command_popup import ConsoleCommandPopup
 from ...Widgets.Console.console_transcript import (
     ConsoleReviewNotesRequested,
+    ConsoleThinkingEditRequested,
     console_transcripts_on_screen,
 )
 from ...Widgets.Console.console_selection_menu import (
@@ -17513,6 +17514,24 @@ class ChatScreen(BaseAppScreen):
             presentation_context.transcript_style.value,
             presentation_context.revision,
         )
+
+        def _thinking_signature(envelope: Any) -> Any:
+            # A block-text edit changes nothing else in this fingerprint, so
+            # the disclosure's projected text must join the signature or a
+            # thinking-only edit is skipped as a no-op refresh (TASK-32312).
+            return (
+                None
+                if envelope is None
+                else tuple(
+                    (
+                        block.block_id,
+                        block.status,
+                        getattr(block, "text", None),
+                    )
+                    for block in getattr(envelope, "blocks", ())
+                )
+            )
+
         message_signatures = []
         for message in messages:
             variants = getattr(message, "variants", None)
@@ -17524,6 +17543,9 @@ class ChatScreen(BaseAppScreen):
                         (
                             getattr(variant, "id", None),
                             getattr(variant, "content", ""),
+                            _thinking_signature(
+                                getattr(variant, "thinking", None)
+                            ),
                         )
                         for variant in (getattr(variants, "variants", None) or ())
                     ),
@@ -17541,6 +17563,7 @@ class ChatScreen(BaseAppScreen):
                     getattr(message, "turn_id", None),
                     getattr(message, "persisted_message_id", None),
                     terminal_receipt_id_for_message(message),
+                    _thinking_signature(getattr(message, "thinking", None)),
                     variant_signature,
                     getattr(message, "citation_presentation", None),
                 )
@@ -21984,6 +22007,23 @@ class ChatScreen(BaseAppScreen):
         self._review_selection.request_selection_feedback(
             event.action, event.quote, event.anchor_message_id
         )
+
+    @on(ConsoleThinkingEditRequested)
+    async def on_console_thinking_edit_requested(
+        self, event: ConsoleThinkingEditRequested
+    ) -> None:
+        """Open the block-scoped thinking edit modal (TASK-32312).
+
+        The transcript posts this from the thinking row's keyboard edit seam
+        (mirroring copy, which has no action buttons either);
+        ``event.stop()`` because nothing above this screen subscribes.
+
+        Args:
+            event: Thinking-row edit request carrying the projected
+                activity id of the selected disclosure row.
+        """
+        event.stop()
+        await self._message.handle_console_thinking_edit_requested(event)
 
     @on(ConsoleReviewNotesRequested)
     def on_console_review_notes_requested(
