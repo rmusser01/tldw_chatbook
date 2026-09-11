@@ -25,7 +25,7 @@ dependencies:
 - task-32006
 - task-32007
 - task-32008
-updated_date: 2026-09-11 20:49
+updated_date: 2026-09-11 20:52
 ---
 
 ## Description
@@ -135,4 +135,5 @@ Root reviewed actual shared-HOME pet admission failures and /private/tmp/shared-
 Root packaged F9 frozen3 passed both actual native installed-package flows2/69.54s, clean4bf66cc2d+exact3. Native helper built from existing qualified packaging path, installed privately/offline, no manifest/resource override. Actual UI plain/encrypted create/inspect/isolated/open plus source preservation; both22-record journal chains independently verified. Minimal missing existing v40→v41 SQL resource packaging correction verified in wheel and separately built sdist. Source3 and82 artifacts hashed; report /private/tmp/backup-f9-packaged-final-report.md, independent review /private/tmp/backup-f9-packaged-independent-review.md. Ruff0/format/child compile/diff clean, Bandit assertion-only. Initial missing migration failure retained. Ready commit; full owner/options/native/release gates remain ongoing.
 Root now updating original release evidence ledger backlog/docs/backup-recovery-release-evidence.md for committed APFS4bf66cc2d, briefing335b82a05, packagedF9763183fd5, and previously committed Notes2892e1c61; historical failing/refusal receipts remain historical. No qualification promotion beyond approved publication row.
 Two-device Stage1 new test independently source-reviewed by root. Exact clean335b82a05+test earned first1pass12.91s and final affected1pass10.15s after literal child assembly/static correction; final comment-only noqa is AST-identical to tested source. Root verified source/test hashes and23 frozen receipts. Real coherent public capture, current native edits, closed target discovery, actual plan/stage:59 artifacts/19 publication units,18host1image;49 included live files unchanged. No replacement executed. File Tests/Backup_Recovery/test_native_multivolume_replacement.py ready Stage1 commit, followed by previously reviewed four-case real Finish/Rollback matrix in same file, actual packaged helper fixture only.
+Root independently reviewed P/C native custom character visual identity test-only unit, exact e63f2085 source and23 frozen hashes. Actual supported manual copy-on-write fork of builtin character asset, Complete capture/ZIP/isolated/fresh native graph/resolver/typed-reader passed1/22.82s first run;32 custom files and IDs/bytes/source config preserved. No model, execution approval, mountedUI or source-absent claim. Ruff0/format/child compile/diffclean; Bandit2B101. Report /private/tmp/chatbook-visual-identity-roundtrip-report.md. Single new Tests/Backup_Recovery/test_visual_identity_restore.py readycommit; broader persona scenario still separate.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
