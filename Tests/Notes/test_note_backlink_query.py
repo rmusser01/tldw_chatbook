@@ -257,6 +257,30 @@ async def test_the_lookup_does_not_scan_the_note_corpus(notes_scope_service):
     assert not any(step.startswith("SCAN notes") for step in plan), plan
 
 
+@pytest.mark.asyncio
+async def test_a_title_only_save_leaves_the_backlinks_alone(notes_scope_service):
+    """An update that carries no body must not touch the relation.
+
+    Pins the ``if "content" in update_data`` around the link rewrite in
+    ``_update_note_with_cursor``: a rename (or any metadata-only update)
+    neither clears the linker's edges nor fails for want of a body.
+    """
+    target = await _add(notes_scope_service, "Target", "hub")
+    linker = await _add(notes_scope_service, "Linker", f"[t](note://{target})")
+
+    db = notes_scope_service.local_notes_service._get_db(USER_ID)
+    detail = await notes_scope_service.get_note_detail(
+        scope="local_note", note_id=linker, user_id=USER_ID
+    )
+    assert db.update_note(
+        linker, {"title": "Linker, renamed"}, expected_version=detail["version"]
+    ) is True
+
+    assert [row["id"] for row in await _backlinks(notes_scope_service, target)] == [
+        linker
+    ]
+
+
 async def _backlinks(service, note_id):
     return await service.list_note_backlinks(
         scope="local_note", note_id=note_id, user_id=USER_ID

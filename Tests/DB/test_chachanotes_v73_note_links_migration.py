@@ -128,3 +128,37 @@ def test_backfill_skips_a_self_link_and_keeps_an_unresolved_target(
         assert rows == {(looper, "ghost-id")}
     finally:
         upgraded.close_connection()
+
+
+def test_backfill_streams_a_vault_larger_than_one_batch(tmp_path: Path) -> None:
+    """The backfill reads in ``fetchmany(500)`` batches on a second cursor and
+    writes each with ``executemany`` on the migration cursor. 502 notes puts
+    edges in both the full first batch and the short second one, so a loop
+    that stops after one batch, or a read cursor the writes disturb, loses
+    rows here.
+    """
+    path = tmp_path / "big-v72.sqlite"
+    with chachanotes_db_at_version(path, 72, client_id="v72-big") as historical:
+        target = historical.add_note("Hub", "hub")
+        linkers = {
+            historical.add_note(f"Linker {index:03d}", f"[h](note://{target})")
+            for index in range(501)
+        }
+        _drop_the_bootstrap_scaffold(historical)
+
+    upgraded = CharactersRAGDB(str(path), client_id="upgraded-big")
+    try:
+        connection = upgraded.get_connection()
+        assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        assert connection.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 502
+        sources = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT source_note_id FROM note_links WHERE target_note_id = ?",
+                (target,),
+            )
+        }
+        assert sources == linkers
+        assert len(sources) == 501
+    finally:
+        upgraded.close_connection()
