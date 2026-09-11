@@ -2954,3 +2954,9 @@ hints without claiming durable dependency or recovery qualification.
 | tldw_chatbook/Backup_Recovery/recovered_media.py | prepare_temporary_capture | connect_private_sqlite | 1 | qualified | recovered.media |
 | tldw_chatbook/DB/recovery_core.py | _CoreAdapter.temporary_video_references | connect_private_sqlite | 1 | qualified | recovered.media |
 | tldw_chatbook/Backup_Recovery/replacement.py | _abort_prepublication | os.unlink | 1 | generic_boundary | backup_control |
+
+| tldw_chatbook/Backup_Recovery/inert_extraction.py | _write | create_private_file | 1 | generic_boundary | private inert extraction report and publication intent |
+| tldw_chatbook/Backup_Recovery/inert_extraction.py | _write | write | 1 | generic_boundary | private inert extraction report and publication intent |
+| tldw_chatbook/Backup_Recovery/inert_extraction.py | extract_inert | ZipFile | 1 | external_input | verified acquired archive read only |
+| tldw_chatbook/Backup_Recovery/inert_extraction.py | extract_inert | create_private_file | 1 | generic_boundary | private opaque manual extraction payload |
+| tldw_chatbook/Backup_Recovery/inert_extraction.py | extract_inert | write | 1 | generic_boundary | private opaque manual extraction payload |
