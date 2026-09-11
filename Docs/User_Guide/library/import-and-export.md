@@ -315,9 +315,13 @@ destination, or leaving the Import canvas cancels pending consent.
 Library screen (not just the landing — though never while you're typing in
 a text field, where `i` stays a letter), and entering the form always
 parks the caret in the path field, so you can type or paste a path
-immediately. **Enter** in the path field starts the import once the gate
-line clears — with "⚠" warnings outstanding, Enter,Enter carries the same
-two-press consent as the Start button. **r** re-stages your last import
+immediately. **Enter** in the path field takes two different actions
+depending on where you are, and the footer names the one it will take: on a
+path that has not been checked yet it runs the pre-check and the footer
+reads **`enter check this path`**; once the gate line clears the footer
+reads **`enter start import`** and Enter starts the import. With "⚠"
+warnings outstanding, Enter,Enter carries the same two-press consent as the
+Start button. **r** re-stages your last import
 of the session ("Retry this batch") when the queue has settled — inside a
 text field it stays a letter. **Escape** first backs out of a pending
 "Press Start again" confirm (staying on the form), otherwise returns you
@@ -325,7 +329,8 @@ to the Library landing (a half-filled form is kept, same as switching
 rail rows). At narrow widths the navigation rail collapses to its reachable
 **Nav** handle so the form keeps working width. The footer preserves primary
 and recovery actions first, and F1 lists the same state-derived set:
-`enter start`, `esc back`, and, when available, `r retry`.
+`enter check this path` / `enter start import`, `esc back`, and, when
+available, `r retry`.
 
 The Export form has no screen-specific shortcuts. **Escape** also closes
 the Parakeet install dialog. Global keys live in the
@@ -924,3 +929,9 @@ and the file dialogs' "File name" box takes a typed or pasted absolute/"~"
 path, jumping the listing to it, with Ctrl+A selecting the field.)*
 
 *Verified against fix/library-crit9-import — 2026-09-10 (task-32216: "Show details" leaves focus on the row action it toggled instead of the Keywords field 25 rows up; task-32231: a run of identical settled outcomes collapses into one "✗ failed · N files · reason" row with "Show the N files", "Retry all" and "Dismiss all"; a group whose members need a different transcription model offers no bare "Retry all", matching those rows' own actions; a group never spans two imports.)*
+
+*Verified against fix/library-crit10-media-rows — 2026-09-11 (task-32364
+AC#3: the Import footer no longer says "enter start" for both steps — on an
+unchecked path it reads "enter check this path" and only once the Start gate
+clears does it read "enter start import", derived from the same gate Enter
+itself obeys.)*

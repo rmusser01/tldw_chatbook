@@ -115,10 +115,14 @@ the task-32043 session pins, bulk-delete, and filter-restore pins stay green.
 Live-verified in tmux at 235x52: filter to a hit, then narrow to zero — the
 Reader falls back to "Select a media item to read it here.".)*
 
-**Row markers.** An item's second row says what it is and how old it is, and
+**Row markers.** An item's second row says what it is and when it arrived, and
 adds **· analysed** when that item already carries an analysis — so you can
-see what is worth generating without opening anything (`document · 5m ·
-analysed`). The row re-reads its state from the database the moment an
+see what is worth generating without opening anything (`document · added 5m
+ago · analysed`). The age is labelled, because a bare "10m" on an `audio` or
+`video` row reads as the item's *length*; under a minute it reads **added
+just now**. The row that is open in the Reader ends **· loaded** (**·
+loading** while it is fetching) — the state is a fact about the row, so it
+sits with the other facts rather than in front of the title. The row re-reads its state from the database the moment an
 analysis is saved — from the Reader's Generate, or from a bulk Analyze run —
 without re-paging the list; until task-31942 lands (the save does not yet
 commit durably), the mark can lag the Reader on a real profile. Its title row
@@ -135,7 +139,7 @@ reuses that same cell for its **☑/☐**, so a row never carries two markers.
 While a filter is active, a row it found only through one of its **keywords**
 adds **· keyword: \<term\>** — the filter searches titles, item text and
 keywords, so without it a hit whose title and body hold nothing you typed
-reads as a mistake (`article · 2m · keyword: notes`). A row whose title or
+reads as a mistake (`article · added 2m ago · keyword: notes`). A row whose title or
 text carries the term already shows you why it is there and says nothing
 extra. Long tags are cut to ten columns (`keyword: quokkasand…`; five
 wide CJK characters, or five flag emoji) to keep the line short — the cut
@@ -344,6 +348,8 @@ left-margin gap).*
 
 | Control | What it does |
 |---|---|
+| Scope line | The quiet line under the "Media (N)" header states the scope the rows in front of you actually came from: the count as **N of M**, the applied filter in quotes, the type ("all types" until you pick one), and the sort — for example `Media · 1 of 11 · filter “notes” · all types · sort: Newest`. The filter box keeps a *draft* until you press Enter, so the box and the list can legitimately disagree; this line always describes the applied scope and never echoes an unsubmitted draft. |
+| "Clear" (on the scope line) | Appears only while a filter or a type is applied. It drops the whole scope this line states — filter *and* type — and empties the filter box with it, so no draft is left behind. The toolbar's "Clear filter" still clears only the filter it names. |
 | "Title/keyword…" / "Clear filter" | Searches the complete local Media source before paging — titles, item text, and the keywords an item is tagged with, so a tag you filed items under finds them even when it appears in no title. It is separate from Find in item, and "Review these" pins exactly what it returned. Clearing restores the unfiltered selection when it is still available. |
 | "type: All types" | Opens one bounded keyboard list containing the complete type set. The row your arrow keys are on carries a leading `█` bar (the same cue the list rows use); ✓ marks the value currently in force, so the row you are on and the row that is active are told apart — on opening, both marks sit on the active row (`█ ✓ All types`). "All types" means no filter; a stored type literally named "All" remains a separate selectable value. Press Escape (or pick the current choice) to cancel. |
 | "sort: Newest" | Opens the same kind of bounded keyboard list with all four orders (Newest, Oldest, Title A-Z, Title Z-A) fully visible, the same leading `█` on the row you are on and ✓ on the active one. Escape cancels. |
@@ -1176,3 +1182,14 @@ loaded the conversation list takes the columns the empty Reader was holding).*
 (task-32228: the Conversations list takes entry focus on arrival like every
 other browse list, so Up/Down walks its rows and the Escape hop -- "focus
 Items", then "focus Library" -- is live and named from the first frame).*
+
+*Verified against fix/library-crit10-media-rows — 2026-09-11 (task-32347:
+a media row's age is labelled — "audio · added 10m ago", "added just now"
+under a minute — because a bare "10m" on an audio or video row read as the
+item's length. task-32350: a quiet scope line under the "Media (N)" header
+states the APPLIED scope ("Media · 1 of 11 · filter “notes” · all types ·
+sort: Newest") with a "Clear" that drops filter and type and empties the
+filter box, so an unsubmitted draft in the box can no longer be mistaken for
+what the rows came from. task-32364: the Reader's row ends "· loaded"
+instead of prefixing its title with "Loaded ·", and a conversation row reads
+"5 messages · 16m" with the same separator every other Library list uses.)*

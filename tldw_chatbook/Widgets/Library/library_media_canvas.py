@@ -1021,14 +1021,15 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         scope_row = Horizontal(id="library-media-scope-row")
         scope_row.styles.height = "auto"
         with scope_row:
-            scope_static = Static(
+            # Width comes from `.library-media-scope-line` (1fr + ellipsis),
+            # not an inline style: an auto-width Static pushed its own Clear
+            # off the pane edge once the Reader narrowed Items.
+            yield Static(
                 self.canvas.scope_line,
                 id="library-media-scope-line",
                 classes="library-media-scope-line",
                 markup=False,
             )
-            scope_static.styles.width = "auto"
-            yield scope_static
             if self.canvas.scope_clearable:
                 yield Button(
                     "Clear",
