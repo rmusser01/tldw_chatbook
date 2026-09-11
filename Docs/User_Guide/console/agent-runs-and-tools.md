@@ -332,9 +332,10 @@ one generic word:
 - `· denied by you` — you pressed **Deny** on the card.
 - `· blocked (Off)` — the tool's permission is **Off**; no card was shown.
 - `· blocked (kill switch)` — the global kill switch refused it.
-- `· blocked` — a **Deny** you pressed on a **local workspace tool** (it
-  can't name its own authority), an approval timeout, or a round that ended
-  undecided.
+- `· blocked` — a **Deny** you pressed on a **local workspace tool**, or a
+  local workspace tool whose permission is **Off** (that provider's refusal
+  can't name its own authority, so it never reads `denied by you` or
+  `blocked (Off)`), an approval timeout, or a round that ended undecided.
 
 Expanding a refused row is labelled **Sent to the model** rather than "Full
 output": what it holds is the refusal text the model was given ("Do not retry
