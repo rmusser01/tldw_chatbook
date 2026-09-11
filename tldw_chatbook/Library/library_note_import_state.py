@@ -80,6 +80,15 @@ class NoteImportPage:
     page_count: int = 1
     has_previous: bool = False
     has_next: bool = False
+    run_totals: tuple[tuple[tuple[str, ...], int], ...] = ()
+    """How many sources each interchangeable run holds across the whole review.
+
+    A run larger than the mount ceiling is the one case a page break can fall
+    inside one (`MAX_IMPORT_REVIEW_PAGE_ITEMS`), and its summary row then read
+    "200 files" on one page and "50 files" on the next -- the same shape
+    task-32250 was filed about. The canvas says which number it means by
+    carrying both.
+    """
     group_totals: tuple[tuple[str, int], ...] = ()
     """How many rows each classification has across the whole review.
 
@@ -266,6 +275,7 @@ class LibraryNoteImportSnapshot:
     import_disabled_reason: str
     destination_error: str = ""
     group_totals: tuple[tuple[str, int], ...] = ()
+    run_totals: tuple[tuple[tuple[str, ...], int], ...] = ()
     collision_kind: str = ""
     collision_name: str = field(default="", repr=False)
     collision_choice: str = ""
@@ -363,6 +373,9 @@ def _page(
     number = min(max(int(page_number), 1), page_count)
     items = pages[number - 1]
     totals = Counter(item.classification.value for item in ordered)
+    run_sizes: Counter[tuple[str, ...]] = Counter()
+    for key, grouped in groupby(ordered, key=review_run_key):
+        run_sizes[key] += sum(1 for _ in grouped)
     return NoteImportPage(
         items=items,
         page_number=number,
@@ -376,6 +389,7 @@ def _page(
             for classification in REVIEW_CLASSIFICATION_ORDER
             if totals[classification.value]
         ),
+        run_totals=tuple(run_sizes.items()),
     )
 
 
@@ -943,6 +957,7 @@ def project_library_note_import_snapshot(
         page=state.page.page_number,
         page_count=state.page.page_count,
         group_totals=state.page.group_totals,
+        run_totals=state.page.run_totals,
         can_check=state.can_check,
         check_disabled_reason=(
             "Choose a source first."

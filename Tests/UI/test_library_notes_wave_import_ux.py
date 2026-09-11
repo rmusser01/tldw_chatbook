@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from textual.app import ComposeResult
 from textual.containers import Horizontal
+from textual.geometry import Region
 from textual.widgets import Button, Collapsible, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
@@ -1227,6 +1228,20 @@ def _relationship_copy(app) -> list[Static]:
     ]
 
 
+def _rendered_text(widget: Static) -> str:
+    """Return what the widget actually PAINTS, wrapped lines joined.
+
+    Asserting on ``renderable.plain`` is vacuous for a truncation bug: the
+    source text is what truncation never touches (task-32256 review, finding
+    6). Textual wraps on spaces and the strip keeps no trailing blanks, so
+    joining the strips with one space reconstructs the sentence exactly when
+    -- and only when -- every word of it reached the screen.
+    """
+    size = widget.size
+    strips = widget.render_lines(Region(0, 0, size.width, size.height))
+    return " ".join(strip.text.rstrip() for strip in strips)
+
+
 @pytest.mark.parametrize("width", (235, 113, 60))
 async def test_both_relationship_descriptions_render_complete(width: int) -> None:
     """The screen whose whole job is to explain the two relationships.
@@ -1241,14 +1256,15 @@ async def test_both_relationship_descriptions_render_complete(width: int) -> Non
     async with app.run_test(size=(width, 40)) as pilot:
         await pilot.pause()
         descriptions = _relationship_copy(app)
-        rendered = [(_plain(child), child.size.width, child.size.height) for child in descriptions]
+        painted = [_rendered_text(child) for child in descriptions]
+        sizes = [(child.size.width, child.size.height) for child in descriptions]
 
-    texts = [text for text, _, _ in rendered]
-    assert _IMPORT_ONCE_COPY in texts
-    assert _KEEP_SYNCED_COPY in texts
-    for text, cells, lines in rendered:
-        # Either the line fits, or it wraps onto as many lines as it needs.
-        # What it must never do is stop mid-sentence.
+    assert _IMPORT_ONCE_COPY in painted
+    assert _KEEP_SYNCED_COPY in painted
+    # Nothing is ever painted as half a word, at any of the three widths.
+    assert not any("…" in text for text in painted)
+    # Below the width where a sentence fits it wraps rather than clipping.
+    for text, (cells, lines) in zip(painted, sizes):
         assert cells * lines >= len(text), (text, cells, lines)
 
 
@@ -1348,3 +1364,77 @@ def test_the_pager_and_the_canvas_find_the_same_runs() -> None:
     canvas_runs = [len(run) for run in canvas._uniform_runs(projected.preview_items)]
 
     assert pager_runs == canvas_runs == [12, 3, 2]
+    # …and they agree on the ORDER of the groups those runs sit in, which is
+    # what the pager budgeted the page against (review finding 8).
+    from tldw_chatbook.Notes.note_import_plan_models import (
+        REVIEW_CLASSIFICATION_ORDER,
+    )
+
+    assert canvas._REVIEW_ORDER == tuple(
+        classification.value for classification in REVIEW_CLASSIFICATION_ORDER
+    )
+    assert tuple(canvas._CLASSIFICATION_LABELS) == canvas._REVIEW_ORDER
+
+
+async def test_a_bracketed_folder_name_is_not_parsed_as_markup() -> None:
+    """The run summary is user-derived text (task-32262 review, finding 3).
+
+    Every other Static on this canvas sets ``markup=False``; the collapsed-run
+    summary reaches ``Collapsible(title=…)``, whose ``Content.from_text``
+    defaults to markup ON — so a vault folder named ``[@click=app.quit]``
+    became a live action link and the folder name vanished from the row.
+    ``normalize_folder_name`` accepts that name, so it is reachable.
+    """
+    hostile = "[@click=app.quit]Archive"
+    items = tuple(
+        replace(_item(index), name=f"vault/{hostile}/note {index}.md")
+        for index in range(1, 12)
+    )
+    app = _ImportHost(
+        _import_snapshot(
+            phase="review",
+            status_line="Review 11 sources before import.",
+            preview_items=items,
+        )
+    )
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        title = app.query_one(".note-import-run", Collapsible).query_one(
+            "CollapsibleTitle"
+        )
+        rendered = title.label
+
+    assert hostile in rendered.plain
+    assert rendered.spans == []
+
+
+async def test_a_run_too_big_for_one_page_says_so_on_both_halves() -> None:
+    """250 identical rows read "250 files" on page 1 and "50 files" on page 2.
+
+    That is the shape task-32250 was filed about, one level down. The run is
+    bounded at the mount ceiling by design; the summary has to say which of
+    the two numbers it means, the way the group heading already does.
+    """
+    items = tuple(
+        replace(_item(index), name=f"vault/Archive/note {index:03d}.md")
+        for index in range(1, 51)
+    )
+    app = _ImportHost(
+        _import_snapshot(
+            phase="review",
+            status_line="Review 250 sources before import.",
+            preview_items=items,
+            group_totals=(("new", 250),),
+            run_totals=((("vault/Archive", "new", "create_new", "", items[0].membership_summary), 250),),
+            page=2,
+            page_count=2,
+        )
+    )
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        title = str(app.query_one(".note-import-run", Collapsible).title)
+
+    assert "50 of 250 files" in title
+    assert "vault/Archive" in title

@@ -240,6 +240,31 @@ def rewrite_wikilinks(
     return payload if content == payload.content else replace(payload, content=content)
 
 
+def wikilink_only(text: str) -> str:
+    """Return `text` with every link reduced to the bare `[[target]]` spelling.
+
+    The importer stores a resolved link as `[[target|title]](note://<id>)`
+    while the file on disk still says `[[target]]`, so comparing a stored note
+    to its own source reports every line carrying a link as changed. Reducing
+    BOTH sides to one spelling first is what gives that comparison a single
+    basis (task-32262 AC#2). Code spans are left exactly as written, the same
+    way the rewrite leaves them.
+
+    Args:
+        text: A stored note body or a raw source body.
+
+    Returns:
+        The same text with `[[t|a]](note://id)`, `[[t|a]]` and `[[t]]` alike
+        written as `[[t]]`.
+    """
+
+    def _bare(match: re.Match[str]) -> str:
+        target = wikilink_target(match)
+        return match.group(0) if target is None else f"[[{target}]]"
+
+    return WIKILINK_SCAN.sub(_bare, text)
+
+
 def render_note_links(text: str) -> str:
     """Return `text` with stored note links shown as their display text.
 

@@ -370,7 +370,7 @@ own. Nothing is ever painted as half a word.
 | **Edit** | Shows the editable title and body. This is the default view when you open a note. |
 | **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. |
 | **Info** | Shows Properties (including comma-separated keywords, note dates/version, and **Linked from**), Reuse & Export, and Danger sections. |
-| **Linked from (N)** (Info → Properties) | Lists the notes whose bodies link to this one, newest import or not — the `[[target|title]](note://…)` links Import once writes for an Obsidian vault's `[[wikilinks]]` (see "Obsidian vaults"). Click an entry to open that note. While the lookup runs the line reads "Linked from — checking…", and "Linked from — couldn't check" if it failed, so a count is only claimed once the answer is in. When nothing points here the line reads "Linked from (0) — no notes link here yet". The list is capped at 50 entries; past that the count reads "50+". Links you type by hand in the body count too, as long as they use the same `note://` form. |
+| **Linked from (N)** (Info → Properties) | Lists the notes whose bodies link to this one, newest import or not — the `[[target\|title]](note://…)` links Import once writes for an Obsidian vault's `[[wikilinks]]` (see "Obsidian vaults"). Click an entry to open that note. While the lookup runs the line reads "Linked from — checking…", and "Linked from — couldn't check" if it failed, so a count is only claimed once the answer is in. When nothing points here the line reads "Linked from (0) — no notes link here yet". The list is capped at 50 entries; past that the count reads "50+". Links you type by hand in the body count too, as long as they use the same `note://` form. |
 | Status line | Shows the autosave state: "Saved", "Saving…", "Unsaved changes", "Conflict — …", "Save failed — …", or "Unavailable — …". It does not carry a word count. Created/Modified/version details are under Info → Properties, each with an absolute local timestamp beside its relative age and the word count (e.g. "Created 2026-09-08 21:14 · 3m ago · Modified … · v1 · 6 words"). "Saved" appears once per view, not repeated in Info. |
 | **Save** | Saves immediately, without waiting for autosave. It remains visible beside the mode controls. |
 | **Use in Console** | Hands the note to the Console as staged context, with the suggested prompt "Use this note as context and help me work with it." It remains visible beside **Save**. |
@@ -593,6 +593,12 @@ rows they *show*, so a collapsed run costs a page one line and never has a
 page break through the middle of it. When there is more than one page,
 **Previous page** and **Next page** say which end you are at rather than
 merely greying out.
+A `.git` folder is never walked, whatever the source and whatever the Obsidian
+toggle says: it is listed once under **Skipped** as "Git repository data —
+skipped. Nothing in it becomes a note." A git-backed vault would otherwise
+review its own repository internals — several hundred sources that can never
+be notes.
+
 A file type that cannot become a note is named rather than dismissed: an
 Obsidian canvas reads "Obsidian canvas — not a note.", and an image, document
 or media file points at where it does belong ("Image — not a note. Add it in
@@ -1157,6 +1163,14 @@ critique-10 claims reconciled; surface fixes in task-32346, 32348, 32349,
 32354, 32355). This page needed no correction — the note editor's autosave
 story and its guarded return were already stated here; the Library overview is
 what had drifted.*
+
+*Verified against fix/library-notes-w3-import-review — 2026-09-11 (fix round 1):
+`.git` is skipped at the walker for every source and both platform adapters;
+the update diff reduces both sides to one link spelling before comparing, so
+an unchanged source shows no diff; a collapsed run's summary names the whole
+run's size when a page shows only part of it; and a collapsed run's title is
+no longer parsed as Textual markup, so a vault folder named `[bold]Archive`
+renders as itself.*
 
 *Verified against fix/library-notes-w3-import-review — 2026-09-11 (task-32250,
 task-32256, task-32257, task-32258, task-32262, task-32263): the Import once

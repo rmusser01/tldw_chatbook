@@ -982,3 +982,105 @@ async def test_a_detected_collision_opens_with_the_safe_default_selected(
     assert projected.collision_rename_error == ""
     assert "Inbox (2)" in projected.collision_reason
     assert projected.can_import is True
+
+
+# --- task-32262 AC#2, second clause: one comparison basis ------------------
+
+
+def _linked_update_plan(source: Path) -> NoteImportPlan:
+    """One UPDATE_EXISTING + replace_content row whose source carries links."""
+    base = _plan(source)
+    item = replace(
+        base.items[0],
+        payloads=(
+            ParsedNotePayload(
+                title="Index",
+                content=(
+                    "See [[Meeting notes]] and [[Meeting notes|the minutes]] "
+                    "and `[[Meeting notes]]`.\n"
+                ),
+                wikilinks=("Meeting notes",),
+            ),
+        ),
+        match=ImportMatch(
+            kind=ImportMatchKind.EXACT, note_id="note-1", note_version=7
+        ),
+        classification=ImportClassification.CHANGED_REPEAT,
+        allowed_actions=(
+            ImportAction.SKIP,
+            ImportAction.CREATE_NEW,
+            ImportAction.UPDATE_EXISTING,
+        ),
+        selected_action=ImportAction.UPDATE_EXISTING,
+        replace_content=True,
+    )
+    return replace(base, items=(item,))
+
+
+def _stored_body(extra: str = "") -> str:
+    """The same note as this importer stores it: links already rewritten."""
+    return (
+        "See [[Meeting notes|2026 Q3 Meeting notes]](note://1111) and "
+        "[[Meeting notes|the minutes]](note://1111) and `[[Meeting notes]]`.\n"
+        f"{extra}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_unchanged_source_shows_no_diff_against_its_stored_note(
+    tmp_path: Path,
+) -> None:
+    """The two sides of the diff must speak one spelling (task-32262 AC#2).
+
+    `before` is the stored note, whose links this importer rewrote; `after` is
+    the raw file, which still says `[[target]]`. Every line carrying a link
+    therefore read as changed when nothing had changed at all.
+    """
+    source = tmp_path / "one.md"
+    source.write_text("# One\nBody", encoding="utf-8")
+    controller = _controller(
+        plan=_linked_update_plan(source),
+        calls=[],
+        repository=_FolderRepository(),
+        review_note_reader=lambda note_id: SimpleNamespace(
+            title="Index", content=_stored_body(), version=7
+        ),
+    )
+    controller.begin_selection()
+    controller.accept_selected_path(source, is_folder=False)
+    controller.set_destination("Inbox")
+
+    await controller.check()
+
+    assert controller.presentation_snapshot.preview_items[0].content_diff == ""
+
+
+@pytest.mark.asyncio
+async def test_a_changed_source_still_shows_only_its_real_change(
+    tmp_path: Path,
+) -> None:
+    """Normalising the link spelling must not hide a genuine edit."""
+    source = tmp_path / "one.md"
+    source.write_text("# One\nBody", encoding="utf-8")
+    controller = _controller(
+        plan=_linked_update_plan(source),
+        calls=[],
+        repository=_FolderRepository(),
+        review_note_reader=lambda note_id: SimpleNamespace(
+            title="Index",
+            content=_stored_body("A line only the stored note has.\n"),
+            version=7,
+        ),
+    )
+    controller.begin_selection()
+    controller.accept_selected_path(source, is_folder=False)
+    controller.set_destination("Inbox")
+
+    await controller.check()
+
+    diff = controller.presentation_snapshot.preview_items[0].content_diff
+    assert "-A line only the stored note has." in diff
+    # The rewritten links are the same note on both sides, so no line that
+    # merely carries one is reported.
+    assert "[[Meeting notes|the minutes]]" not in diff
+    assert "note://" not in diff

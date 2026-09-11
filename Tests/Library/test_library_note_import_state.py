@@ -701,14 +701,31 @@ def test_review_projection_exposes_relative_source_membership_and_bounded_effect
 
 
 @pytest.mark.parametrize(
-    ("receipt_state", "completed", "failed", "expected_status", "detail_fragment"),
     (
-        (ImportSessionState.COMPLETED, 4, 0, "Import completed.", "4 notes created"),
+        "receipt_state",
+        "completed",
+        "failed",
+        "expected_status",
+        "surface",
+        "fragment",
+    ),
+    (
+        # task-32258 put each of the three statements on its own surface, so
+        # the pin names WHICH one carries the fragment (review finding 10).
+        (
+            ImportSessionState.COMPLETED,
+            4,
+            0,
+            "Import completed.",
+            "receipt_line",
+            "4 notes created",
+        ),
         (
             ImportSessionState.CANCELLED,
             2,
             0,
             "Import cancelled after the current item.",
+            "receipt_detail",
             "not rolled back",
         ),
         (
@@ -716,7 +733,11 @@ def test_review_projection_exposes_relative_source_membership_and_bounded_effect
             4,
             1,
             "Import needs attention.",
-            "failed",
+            "receipt_detail",
+            # The caveat, not the bare word: "1 file failed" is a COUNT and
+            # belongs on the receipt line, which is exactly the split this
+            # pins.
+            "some items failed",
         ),
     ),
 )
@@ -725,7 +746,8 @@ def test_receipt_projection_distinguishes_durable_session_state(
     completed: int,
     failed: int,
     expected_status: str,
-    detail_fragment: str,
+    surface: str,
+    fragment: str,
 ) -> None:
     state = _file_review()
     approved = approve_note_import_plan(state.plan, approval_id=_APPROVAL_ID)
@@ -750,10 +772,10 @@ def test_receipt_projection_distinguishes_durable_session_state(
     projected = project_library_note_import_snapshot(settled)
 
     assert projected.status_line == expected_status
-    # task-32258: the counted outcome is stated once, on the receipt line;
-    # the quiet detail carries the caveat and the denominator reconciliation.
-    combined = f"{projected.receipt_line} {projected.receipt_detail}".casefold()
-    assert detail_fragment in combined
+    assert fragment in getattr(projected, surface).casefold()
+    # …and it is on that surface ALONE: the outcome is stated once.
+    other = "receipt_detail" if surface == "receipt_line" else "receipt_line"
+    assert fragment not in getattr(projected, other).casefold()
 
 
 # --- task-32130 / task-32134: honest receipt copy and selection changes ----
@@ -1104,3 +1126,18 @@ def test_a_resolved_collision_states_where_the_notes_will_go() -> None:
     assert "Imported 2" in projected.collision_reason
     assert projected.collision_rename_error == ""
     assert state.can_approve is True
+
+
+def test_a_run_past_the_mount_ceiling_reports_its_whole_size_on_both_pages() -> None:
+    """The one case a page break can fall inside a run (review finding 9)."""
+    plan = _plan(*(_item(number) for number in range(1, 251)))
+    first = _file_review(plan)
+    second = set_review_page(first, 2)
+
+    assert first.page.page_count == 2
+    assert (len(first.page.items), len(second.page.items)) == (200, 50)
+    # Both halves carry the run's whole size, so the summary row can say
+    # "200 of 250 files" and then "50 of 250 files" instead of reading as two
+    # different runs with two different counts.
+    assert [total for _, total in first.page.run_totals] == [250]
+    assert dict(first.page.run_totals) == dict(second.page.run_totals)

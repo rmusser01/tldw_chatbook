@@ -570,3 +570,48 @@ def test_an_obsidian_canvas_is_named_rather_than_called_unsupported(
     assert messages["vault/Canvas/Overview.canvas"] == "Obsidian canvas — not a note."
     assert messages["vault/attachments/diagram.png"].startswith("Image — not a note.")
     assert messages["vault/attachments/paper.pdf"].startswith("Document — not a note.")
+
+
+# --- task-32262 review, finding 4: .git is the tool's own folder -----------
+
+
+def test_git_repository_data_is_skipped_once_whatever_the_mode(
+    tmp_path: Path,
+) -> None:
+    """A git-backed vault used to review 174 sources, 111 of them `.git`.
+
+    `.git` is as much "the tool's own folder" as `.obsidian` is, and it is not
+    a note at any depth or in any mode -- so unlike the Obsidian folders it is
+    not gated on vault detection.
+    """
+    root = _build_vault(tmp_path / "vault")
+    _write(root, ".git/HEAD", "ref: refs/heads/main\n")
+    _write(root, ".git/objects/ab/cdef0123456789", "binary-ish")
+    _write(root, ".git/hooks/pre-commit.sample", "#!/bin/sh\n")
+    _write(root, ".git/logs/HEAD", "0000 1111 vault <v@x> 0 +0000 commit\n")
+    expected = sum(
+        1
+        for path in root.rglob("*")
+        if path.is_file() and ".git" not in path.relative_to(root).parts
+    )
+
+    for obsidian_mode in (True, False):
+        discovery = discover_import_sources(
+            [root], _bounds(), obsidian_mode=obsidian_mode
+        )
+        git_skips = [
+            skip for skip in discovery.skips if skip.reason_code == "git_metadata"
+        ]
+
+        assert len(git_skips) == 1, obsidian_mode
+        assert git_skips[0].display_path == "vault/.git"
+        assert git_skips[0].user_message.startswith("Git repository data")
+        assert not any(
+            "/.git/" in candidate.source.display_path
+            for candidate in discovery.candidates
+        ), obsidian_mode
+
+    # With the vault toggle off, `.git` is the only thing skipped, so the
+    # source count is exactly the vault's non-`.git` file count.
+    plain = discover_import_sources([root], _bounds(), obsidian_mode=False)
+    assert len(plain.candidates) == expected

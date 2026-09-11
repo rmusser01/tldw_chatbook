@@ -214,6 +214,9 @@ _MESSAGES = {
     "obsidian_template": (
         "Obsidian template — skipped. Turn off Obsidian vault to import templates."
     ),
+    "git_metadata": (
+        "Git repository data — skipped. Nothing in it becomes a note."
+    ),
 }
 
 OBSIDIAN_MARKER_DIRECTORY = ".obsidian"
@@ -229,6 +232,15 @@ _OBSIDIAN_SKIPPED_ROOT_FOLDERS = {
     "templates": "obsidian_template",
 }
 """Vault-root folders Obsidian owns, keyed by casefolded name."""
+
+_ALWAYS_SKIPPED_FOLDERS = {".git": "git_metadata"}
+"""Folders that never hold a note, whatever the mode or the depth.
+
+Unlike the Obsidian set above these are not gated on vault detection or on the
+root: a git-backed vault reviewed 174 sources where 111 of them were
+`.git/objects/*`, and a submodule's nested `.git` is no more importable than
+the root one (task-32262 review, finding 4).
+"""
 
 
 def _platform_uses_windows_adapter() -> bool:
@@ -1148,7 +1160,21 @@ def _obsidian_skip_reason(
     relative_parts: tuple[str, ...],
     state: _DiscoveryState,
 ) -> str | None:
-    """Return the skip reason for one vault-root folder Obsidian owns."""
+    """Return the skip reason for one folder the walk should not descend into.
+
+    Args:
+        name: The directory entry's own name.
+        relative_parts: Its parent path below the selected root; empty at the
+            root, which is where the Obsidian-owned folders live.
+        state: The walk's discovery state, carrying the mode and whether a
+            vault was detected.
+
+    Returns:
+        A reason code, or None to walk into the folder.
+    """
+    always = _ALWAYS_SKIPPED_FOLDERS.get(name.casefold())
+    if always is not None:
+        return always
     if not state.obsidian_mode or not state.vault_detected or relative_parts:
         return None
     return _OBSIDIAN_SKIPPED_ROOT_FOLDERS.get(name.casefold())

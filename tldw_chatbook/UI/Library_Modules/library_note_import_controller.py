@@ -43,6 +43,7 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     ImportBounds,
     ImportClassification,
     RootCollisionChoice,
+    wikilink_only,
 )
 
 
@@ -365,6 +366,11 @@ class LibraryNoteImportController:
         marker = "\n… Diff preview truncated."
 
         def bounded_document(title: str, content: str) -> tuple[str, bool]:
+            # task-32262 AC#2: one comparison basis. The stored note carries
+            # links this importer rewrote; the file on disk does not. Reduce
+            # both to the bare `[[target]]` spelling before diffing, or every
+            # line with a link reads as changed and drowns the real change.
+            content = wikilink_only(content)
             prefix = "Title: "
             total = len(prefix) + len(title) + 2 + len(content)
             bounded = f"{prefix}{title[: max_input_chars - len(prefix)]}"

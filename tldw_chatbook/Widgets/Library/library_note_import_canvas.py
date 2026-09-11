@@ -8,6 +8,7 @@ from typing import Any
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.content import Content
 from textual.message import Message
 from textual.widgets import Button, Collapsible, Input, Static
 
@@ -22,6 +23,7 @@ from tldw_chatbook.Library.library_shell_state import (
 )
 from tldw_chatbook.Notes.note_import_plan_models import (
     NON_IMPORTABLE_CLASSIFICATIONS,
+    REVIEW_CLASSIFICATION_ORDER,
 )
 from tldw_chatbook.Utils.Utils import elide_path_middle
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
@@ -48,6 +50,11 @@ _CLASSIFICATION_LABELS = {
 _NON_IMPORTABLE = frozenset(
     classification.value for classification in NON_IMPORTABLE_CLASSIFICATIONS
 )
+
+_REVIEW_ORDER = tuple(
+    classification.value for classification in REVIEW_CLASSIFICATION_ORDER
+)
+"""The pager's group order, which this canvas renders in (task-32250)."""
 
 
 def _choice_label(*, selected: bool, text: str) -> str:
@@ -135,7 +142,13 @@ def _run_disclosure(title: str, *, dom_token: str) -> Collapsible:
     Inline styles are the one tier above it (task-32250).
     """
     disclosure = Collapsible(
-        title=title,
+        # A vault folder name is untrusted text: `CollapsibleTitle` runs it
+        # through `Content.from_text`, whose markup parameter defaults to ON,
+        # so a folder called "[@click=app.quit]" turned the whole summary into
+        # an action link and dropped its own name from the row. A `Content`
+        # instance comes back from `from_text` unmodified -- this is the
+        # markup=False every other Static on this canvas already sets.
+        title=Content(title),
         id=f"note-import-run-{dom_token}",
         classes="note-import-run",
         collapsed=True,
@@ -147,16 +160,36 @@ def _run_disclosure(title: str, *, dom_token: str) -> Collapsible:
     return disclosure
 
 
-def _run_summary(run: tuple[LibraryNoteImportItemSnapshot, ...]) -> str:
-    """Return the one row that stands for a collapsed run of identical rows."""
+def _run_summary(
+    run: tuple[LibraryNoteImportItemSnapshot, ...],
+    total: int | None = None,
+) -> str:
+    """Return the one row that stands for a collapsed run of identical rows.
+
+    Args:
+        run: The rows of this run that are on the rendered page.
+        total: How many the whole run holds, when the page only shows part of
+            it. A run bigger than the mount ceiling is the one case a page
+            break falls inside one, and its summary then has to say which of
+            the two numbers it means -- "200 files" on one page and "50 files"
+            on the next is the shape task-32250 was filed about.
+
+    Returns:
+        The summary line for the collapsed disclosure's title.
+    """
     first = run[0]
     folder, _, _ = first.name.rpartition("/")
     where = _bounded_row_name(folder) if folder else "the selection"
+    count = (
+        f"{len(run)} files"
+        if total is None or total <= len(run)
+        else f"{len(run)} of {total} files"
+    )
     if first.classification in _NON_IMPORTABLE:
-        return f"{where} · {len(run)} files · {first.reason.rstrip(' .')}"
+        return f"{where} · {count} · {first.reason.rstrip(' .')}"
     verb = "Skip" if first.action == "skip" else "Create"
     destination = first.membership_summary.rstrip(" .")
-    return f"{where} · {len(run)} files · {verb} all · {destination}"
+    return f"{where} · {count} · {verb} all · {destination}"
 
 
 _SOURCE_NAME_BUDGET = 48
@@ -735,7 +768,10 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                     markup=False,
                 )
 
-        order = tuple(_CLASSIFICATION_LABELS)
+        # The pager fills a page assuming THIS order (task-32250); a second
+        # hand-kept order here would put groups on a page in an order it did
+        # not plan for. One sequence, both readers.
+        order = _REVIEW_ORDER
         sorted_items = sorted(
             state.preview_items,
             key=lambda item: order.index(item.classification),
@@ -745,6 +781,7 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
             for index, item in enumerate(sorted_items, start=1)
         }
         group_totals = dict(state.group_totals)
+        run_totals = dict(state.run_totals)
         for classification, grouped in groupby(
             sorted_items,
             key=lambda item: item.classification,
@@ -795,7 +832,7 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                 # summary row states the shared outcome; the disclosure keeps
                 # every individual decision one press away.
                 with _run_disclosure(
-                    _run_summary(run),
+                    _run_summary(run, run_totals.get(_run_key(run[0]))),
                     dom_token=dom_tokens[run[0].item_id],
                 ):
                     for item in run:
