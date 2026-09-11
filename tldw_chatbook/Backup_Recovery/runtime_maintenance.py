@@ -327,6 +327,20 @@ class RuntimeMaintenance:
             self.closed,
             deadline,
         )
+        generated = sys.modules.get(
+            "tldw_chatbook.Backup_Recovery.generated_media_lifetime"
+        )
+        await _settle_stage(
+            [
+                _bind(
+                    None if generated is None else generated.participant,
+                    "Backup_Recovery.generated_media_lifetime",
+                    "GeneratedMediaLifetime",
+                )
+            ],
+            self.closed,
+            deadline,
+        )
         # Accepted sync calls may still publish cursors/error state. Drain the
         # actual caller layers while SyncStateRepository admission remains open.
         for declarations in (

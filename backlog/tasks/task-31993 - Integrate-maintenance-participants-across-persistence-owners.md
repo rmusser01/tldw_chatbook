@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@codex'
 created_date: 2026-09-07 23:53
-updated_date: 2026-09-11 04:49
+updated_date: 2026-09-11 04:52
 labels:
 - backup-recovery
 dependencies:
@@ -1246,6 +1246,9 @@ Skills/Chatbooks independent review REQUEST CHANGES oneP1 /private/tmp/chatbook-
 Skills/Chatbooks finite lifetime unit round1 independently APPROVED by cross-author review (/private/tmp/chatbook-skills-chatbooks-lifetime-correction-independent-review.md), superseding root-before-mkdir P1. All ten frozen hashes verified. Root final exact module: 22 passed in 27.71s (/private/tmp/local-content-root-final.log); preexisting pytest garbage cleanup warning only. Report preserves compatibility cleanHEAD failure evidence; no old assertions disabled. Ruff359→359/Bandit18→18 zero added. Scope remains complete public bundle/trust/registry/archive/script/Library lifetimes, no capture marker removal. Staging only these ten files and this task; exact-index owner census follows.
 Exact-index census exposed only expected round1 mkdir move: _script_scratch_root no longer has mkdir; _script_output_root count rises1→2. Root correcting these existing owner census rows without changing classification or coverage, cross-author review before census rerun. Initial exact-index result10pass1fail /private/tmp/local-content-index-census.log.
 Root census row move independently approved by C; exact-index census final11passed6.60s /private/tmp/local-content-index-census-corrected.log. One command ran git from nongit snapshot and did not stage; corrected explicit repo workdir, no source adjustment. Final bounded Skills/Chatbooks commit includes ten frozen files, only two census row edits, task31993. Generated-media source fourfile review preliminarily clean; runtimehook/native2 still pending and excluded from this commit.
+Skills/Chatbooks unit committed a16c53e4d. Root now integrates exactly the already-loaded GeneratedMediaLifetime participant into RuntimeMaintenance after upstream/local-content settlement before lower owners/core pause, closing demonstrated generated producer gap. Existing fourfile source review preliminarily clean; final review/tests include this runtime-only addition.
+Generated-media fivefile lifetime unit frozen atop a16c53e4d. Report /private/tmp/chatbook-generated-media-lifetime-report.md; patch SHA81296780fb8e5d80a6baef957e1bffae94d248c999c086084f33663e200ed488. Final actual app module4passed13.04s, including both accepted native-worker drain cases now green. Affected compatibility9passed8.75s; old hotfixture rawselector2 failures reproduced cleanHEAD, no guard/test weakening. Ruff48→48/Bandit0→0 noadded; five parse/diffcheck. Cross-author C final hook review pending; staging only fivefiles+task for exact-index census, no commit until approval.
+Generated fivefile final independently APPROVED /private/tmp/chatbook-generated-media-lifetime-independent-review.md. All hashes/finalpatch verified; exact-index census11passed6.62s /private/tmp/generated-lifetime-index-census.log, no censusdelta. Final focused module4pass13.04s and affected compatibility9pass8.75s; noaddedstaticfindings. Commit bounded finite lifetime now; generated capture/temporary reference markers intentionally remain until original Task11/15 composition proof.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Design references
 
