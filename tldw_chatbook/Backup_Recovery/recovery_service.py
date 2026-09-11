@@ -707,23 +707,29 @@ class RecoveryService:
 
         return self._start("open_profile", launch)
 
-    def preview_backup(self, config_paths, *, options):
+    def preview_backup(self, config_paths, *, options, include_known_profiles=False):
         from .capture import _capture_options
         from .capture_service import preview_capture
 
         settings, _, _, _ = _capture_options(options)
         if settings["credential_mode"] == "rollback":
             raise ValueError("invalid_backup_credential_mode")
-        return preview_capture(config_paths, options=settings)
+        return preview_capture(
+            config_paths, options=settings, include_known_profiles=include_known_profiles
+        )
 
-    def preview_backup_details(self, config_paths, *, options, destination):
+    def preview_backup_details(
+        self, config_paths, *, options, destination, include_known_profiles=False
+    ):
         """Show current per-volume capture estimates; execution rechecks actual space."""
         from .capture import _capture_options
         from .profile_paths import lexical_path
         from .space import _MARGIN, _volume
 
         settings, _, _, _ = _capture_options(options)
-        inventory = self.preview_backup(config_paths, options=settings)
+        inventory = self.preview_backup(
+            config_paths, options=settings, include_known_profiles=include_known_profiles
+        )
         estimate = sum(
             item.path.stat().st_size
             for item in inventory.items
@@ -763,7 +769,8 @@ class RecoveryService:
         )
 
     def start_backup(
-        self, config_paths, approved_scope, destination, *, options, password
+        self, config_paths, approved_scope, destination, *, options, password,
+        include_known_profiles=False,
     ):
         """Capture coherently, resume writers, then verify and publish an archive."""
         from .capture import _capture_options
@@ -786,6 +793,7 @@ class RecoveryService:
                 destination,
                 options=settings,
                 cancel=cancel,
+                include_known_profiles=include_known_profiles,
             )
             info = captured.root.stat(follow_symlinks=False)
             identity = info.st_dev, info.st_ino

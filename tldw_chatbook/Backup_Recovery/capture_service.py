@@ -16,15 +16,28 @@ from .capture import (
 from .control_records import UNBOUND_NAMESPACE, admission_authority
 from .inventory import discover
 from .owner_registry import install_adapters
-from .profile_paths import effective_config_path, lexical_path
+from .profile_paths import default_config_path, effective_config_path, lexical_path
 from .storage_admission import _preview_reads
 
 
-def _selectors(config_paths):
-    if type(config_paths) is not tuple:
+def _selectors(config_paths, *, include_known_profiles=False):
+    """Use checked local selectors as source locators, never saved root authority."""
+    if type(config_paths) is not tuple or type(include_known_profiles) is not bool:
         raise TypeError("invalid_capture_selection")
+    if config_paths and not include_known_profiles:
+        return tuple(lexical_path(path) for path in config_paths)
+    _, profiles = bootstrap._records(bootstrap.default_bootstrap_root())
+    selected = [effective_config_path()]
+    selected.extend(sorted(row["selector"] for row in profiles))
+    canonical = default_config_path()
+    try:
+        canonical.lstat()
+    except FileNotFoundError:
+        pass
+    else:
+        selected.append(canonical)
     return tuple(
-        lexical_path(path) for path in config_paths or (effective_config_path(),)
+        dict.fromkeys(lexical_path(path) for path in (*selected, *config_paths))
     )
 
 
@@ -47,10 +60,16 @@ def _review_digest(inventory, settings, selections, limits, budget):
     ).hexdigest()
 
 
-def preview_capture(config_paths: tuple[Path, ...], *, options):
-    """Discover installed local sources without starting or pausing services."""
+def preview_capture(
+    config_paths: tuple[Path, ...], *, options, include_known_profiles=False
+):
+    """Discover sources; empty selection includes all known local profiles.
+
+    Nonempty selection is exact unless include_known_profiles adds the defaults.
+    No services are started or paused during this read-only review.
+    """
     settings, selections, limits, budget = _capture_options(options)
-    selectors = _selectors(config_paths)
+    selectors = _selectors(config_paths, include_known_profiles=include_known_profiles)
     install_adapters()
     with _preview_reads(limits=limits, byte_budget=budget):
         inventory = discover(selectors, selections=selections)
@@ -92,9 +111,19 @@ def _capture_names(authority, inventory):
     return tuple(sorted(names))
 
 
-def capture(config_paths, approved_scope, destination, *, options, cancel):
+def capture(
+    config_paths,
+    approved_scope,
+    destination,
+    *,
+    options,
+    cancel,
+    include_known_profiles=False,
+):
     """Capture on the caller's worker thread, releasing admission before packaging.
 
+    Default profile locators are rediscovered just as in preview_capture; adding
+    a known selector after review therefore requires a new review.
     Live clients respond through their retained app monitor. Clients that cannot
     settle keep their native leases and cause a bounded refusal, never a forced
     close or a partial claim of complete capture.
@@ -104,7 +133,7 @@ def capture(config_paths, approved_scope, destination, *, options, cancel):
     from .space import require_capacity
 
     settings, selections, limits, budget = _capture_options(options)
-    selectors = _selectors(config_paths)
+    selectors = _selectors(config_paths, include_known_profiles=include_known_profiles)
     destination = lexical_path(destination)
     suffix = ".tldw-backup.zip.age" if settings["encrypted"] else ".tldw-backup.zip"
     if not destination.name.endswith(suffix):

@@ -39,10 +39,11 @@ class BackupRestoreScreen(Screen):
     BackupRestoreScreen #backup-footer-actions Button { min-width: 10; width: 1fr; }
     """
 
-    def __init__(self, service, *, config_paths=()):
+    def __init__(self, service, *, config_paths=(), include_known_profiles=False):
         super().__init__()
         self.service = service
         self.config_paths = tuple(Path(path) for path in config_paths)
+        self.include_known_profiles = include_known_profiles
         self.external_roots = ()
         self._mode = "home"
         self._revision = 0
@@ -260,6 +261,10 @@ class BackupRestoreScreen(Screen):
         yield Footer()
 
     def _profile_text(self):
+        if self.include_known_profiles:
+            return "All known local profiles, plus selected configurations:\n" + "\n".join(
+                str(path) for path in self.config_paths
+            )
         return (
             "\n".join(str(path) for path in self.config_paths)
             or "Add a profile configuration."
@@ -715,7 +720,9 @@ class BackupRestoreScreen(Screen):
         try:
             self._validate_password(options)
             destination = Path(self._input("backup-destination")).expanduser()
-            if not destination.is_absolute() or not self.config_paths:
+            if not destination.is_absolute() or (
+                not self.config_paths and not self.include_known_profiles
+            ):
                 raise ValueError(
                     "Choose a full output path and at least one profile configuration."
                 )
@@ -734,7 +741,8 @@ class BackupRestoreScreen(Screen):
     def _preview_sources(self, app, revision, profiles, destination, options):
         try:
             preview = self.service.preview_backup_details(
-                profiles, options=options, destination=destination
+                profiles, options=options, destination=destination,
+                include_known_profiles=self.include_known_profiles,
             )
         except (OSError, ValueError, RuntimeError) as error:
             self._deliver(
@@ -760,6 +768,14 @@ class BackupRestoreScreen(Screen):
         details = preview
         preview = details["inventory"]
         self._preview, self._reviewed = preview, reviewed
+        self.query_one("#backup-profiles", Static).update(
+            "Reviewed profile configurations:\n" + "\n".join(
+                dict.fromkeys(
+                    str(item.path) for item in preview.items
+                    if item.owner == "config" and item.path is not None
+                )
+            )
+        )
         rows = [
             "Complete coverage" if preview.complete else "Partial coverage",
             details["maintenance"],
@@ -803,6 +819,7 @@ class BackupRestoreScreen(Screen):
                 destination,
                 options=options,
                 password=password,
+                include_known_profiles=self.include_known_profiles,
             )
         except (OSError, ValueError, RuntimeError):
             self.query_one("#backup-message", Static).update(

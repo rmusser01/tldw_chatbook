@@ -47,6 +47,7 @@ async def main():
         assert isinstance(service, RecoveryService)
         assert app.screen.service is service
         assert app.screen.config_paths == (selector,)
+        assert app.screen.include_known_profiles
         assert service.control_root == default_control_root()
         await pilot.press('escape')
         assert isinstance(app.screen, SettingsScreen)

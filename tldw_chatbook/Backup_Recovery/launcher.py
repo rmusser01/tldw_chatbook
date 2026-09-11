@@ -114,7 +114,9 @@ def recovery_app(reason: str):
 
         @on(Button.Pressed, "#minimal-recovery-open")
         def action_backup_restore(self):
-            self.push_screen(BackupRestoreScreen(self.recovery_service))
+            self.push_screen(
+                BackupRestoreScreen(self.recovery_service, include_known_profiles=True)
+            )
 
         @on(Button.Pressed, "#minimal-recovery-exit")
         def leave(self):

@@ -11670,11 +11670,14 @@ class TldwCli(
         return service
 
     def action_backup_restore(self) -> None:
-        """Open the canonical recovery view with the currently selected profile."""
+        """Open recovery with all known local profiles selected for backup."""
         from .UI.Screens.backup_restore_screen import BackupRestoreScreen
 
         self.push_screen(
-            BackupRestoreScreen(self.recovery_service, config_paths=(get_cli_config_path(),))
+            BackupRestoreScreen(
+                self.recovery_service, config_paths=(get_cli_config_path(),),
+                include_known_profiles=True,
+            )
         )
 
     async def _shutdown_recovery_service(self) -> asyncio.CancelledError | None:

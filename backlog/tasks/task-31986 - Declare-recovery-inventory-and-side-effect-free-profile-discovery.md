@@ -3,13 +3,13 @@ id: TASK-31986
 title: Declare recovery inventory and side-effect-free profile discovery
 status: Done
 assignee:
-  - '@codex'
-created_date: '2026-09-07 23:48'
-updated_date: '2026-09-08 03:34'
+- '@codex'
+created_date: 2026-09-07 23:48
+updated_date: 2026-09-11 09:50
 labels:
-  - backup-recovery
+- backup-recovery
 dependencies:
-  - task-31978
+- task-31978
 ---
 
 ## Description
@@ -43,7 +43,7 @@ Reason: direct implementation of ADR-126; preserve ADR-029/030/036/059/060 bound
 
 ## Implementation Notes
 
-<!-- SECTION:NOTES:BEGIN -->
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Implemented ADR-126 recovery inventory with frozen shared models, installed-owner registry, locally constructed profile context, strict selected TOML discovery, and canonical pure path selectors delegated to by normal config. Discovery identifies custom app-owned databases, shared paths and durable unknowns without config bootstrap, service/database construction, keyring access or filesystem mutation. Unsupported owners, invalid dependencies/sharing, required absence and unvalidated deletion block completeness.
 
 StorageItem adds explicit shared_group and local deletion_validated evidence metadata. DiscoveryContext and storage_logical_id give adapters one profile-scoped owner/dependency convention; TOML cannot inject context or deletion authority. Service-heavy owner resolvers and capture/validation/relocation remain explicitly unqualified. No Complete backup or replacement capability is advertised by this foundation.
@@ -55,8 +55,9 @@ Evidence used Python 3.12.11 from the shared read-only interpreter and only isol
 Real filesystem/SQLite and fresh-process tests cover custom/multiple profiles, inactive features, historical profiles, aliases/nested roots, malformed configs, immutable collections, context injection, dependencies, FIFO/link refusal and scope identity changes. Discovery scope is preview evidence; operation options/budgets and fenced capture belong to subsequent service phases.
 
 Files: Backup_Recovery/{models,inventory,profile_paths,owner_registry}.py; config.py; exact canonical path-inventory rules; focused inventory/architecture tests; backlog/docs/backup-recovery-owner-inventory.md. Implementation commits: f804ed5b3, 2017832d8, f4d3cee70. Existing ADR: backlog/decisions/126-complete-local-backup-and-recovery.md. Independent spec/quality review and both scoped fix rounds completed; no new ADR or unrelated changes.
-<!-- SECTION:NOTES:END -->
-
+Original all-identified-owned-profile default qualification: read-only audit /private/tmp/chatbook-default-profile-coverage-audit.md found current-only default omits known custom-root selectors held in existing fixed bootstrap records. Released bounded capture_service default selector collector and focused regression to C: preserve explicit tuple scope for restore targets, use existing finite validated selector records for empty defaults, retain missing known selectors and review-digest invalidation. No new catalog, filesystem scan or saved-root authority. Root will separately integrate canonical UI defaults after current inert-extraction unit.
+Default known-profile collector independently approved /private/tmp/chatbook-known-profiles-root-review.md. Empty/default selection uses effective, checked bootstrap-record selectors and existing exact canonical config; keeps missing known selectors and exact explicit nonempty target selection. include_known_profiles opt-in adds defaults to manual additions. Cold fixture corrected actual startup lease ownership; all9cold cases and requested minimal-host10 passed5.75s. Root cold node + actual explicit capture/budget3passed4.47s; owner census11passed9.83s. Source Ruff/Bandit0. Prior combined25pass1setup failure retained honestly in report; no production guard relaxed. This closes the audited default selector omission; minimal fixture retains missing-required core stores, not claimed Complete.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Design references
 
 - [Approved specification](../../Docs/superpowers/specs/2026-09-07-complete-local-backup-restore-design.md)
