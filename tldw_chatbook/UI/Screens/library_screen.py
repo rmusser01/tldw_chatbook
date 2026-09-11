@@ -972,7 +972,7 @@ class LibraryScreen(BaseAppScreen):
         # mode owning the Notes canvas (``_file_notes_active()``), the same
         # gate the sibling skill-editor binding uses, so it never fires on
         # any other Library surface.
-        ("escape", "library_notes_files_back", "Back to Database notes"),
+        ("escape", "library_notes_files_back", "Back to Library notes"),
         # task-2856: four more "escape" bindings, tried in order after the
         # two above and gated the same way -- each ``check_action`` returns
         # False everywhere outside its own state, so Textual falls through
@@ -1180,7 +1180,7 @@ class LibraryScreen(BaseAppScreen):
     LIBRARY_NOTES_FILES_SHORTCUTS = (
         ("/", "focus search"),
         ("F6", "next pane"),
-        ("esc", "back to Database"),
+        ("esc", "back to Library notes"),
     )
 
     LIBRARY_NOTES_FILES_RELOAD_CONFIRM_SHORTCUTS = (

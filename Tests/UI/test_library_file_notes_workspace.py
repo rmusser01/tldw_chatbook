@@ -3021,7 +3021,7 @@ async def test_file_notes_authority_copy_is_complete_and_bounded(
         replica=replica,
         poll_interval=10,
     )
-    expected_authority = "Folder Files · Folder: notes"
+    expected_authority = "Folder files · Folder: notes"
 
     async with _WorkspaceHarness(workspace).run_test(size=size) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
