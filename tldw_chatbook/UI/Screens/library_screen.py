@@ -8,7 +8,6 @@ import inspect
 import json
 import math
 import operator
-import re
 import threading
 import time
 import tomllib
@@ -780,7 +779,7 @@ from ..Library_Modules.screen_constants import (
     LIBRARY_SKILL_TRUST_MISMATCH_COPY,
     LIBRARY_SKILL_SAVE_STATUS_COPY,
     LIBRARY_COLLECTION_SYNC_CONFLICT_LIMIT,
-    LIBRARY_HANDOFF_LABEL_PREFIX,
+    LIBRARY_HANDOFF_LABEL_PREFIX as LIBRARY_HANDOFF_LABEL_PREFIX,
     LIBRARY_WORKSPACE_SOURCE_COLUMN_WIDTH,
     LIBRARY_WORKSPACE_SCOPE_COLUMN_WIDTH,
     LIBRARY_WORKSPACE_VISIBLE_COLUMN_WIDTH,
@@ -834,6 +833,7 @@ from ..Library_Modules.canvas_sync import (
     _sync_library_canvas,
 )
 from ..Library_Modules.screen_helpers import (
+    _workspace_handoff_summary_label,
     _library_screen_is_current,
     library_note_persisted_title,
     _ingestible_file_filters,
@@ -13314,81 +13314,7 @@ class LibraryScreen(BaseAppScreen):
     def _workspace_handoff_summary_label(
         self, state: LibraryWorkspaceDepthState
     ) -> str:
-        """Shorten ``state.handoff_label`` for the Workspace group's Handoff row.
-
-        Drops the redundant "Console/RAG handoff: " prefix (the "Handoff"
-        row label already says as much). task-32230 AC#2 (critique #9 row
-        29): a nonzero blocked count used to be flagged with a "●" glyph
-        and nothing else -- a colour dot beside a number, naming neither
-        what was blocked nor how to unblock it. The count now carries the
-        rule's own reason and its next step in the house
-        ``reason · next step`` grammar, read off the eligibility decision
-        the state already holds (``LibraryWorkspaceSourceRow.reason_code``).
-        The unblocked case is unchanged and grows no dot.
-
-        task-32357 AC#1 refines only the SENTENCE that carries them: the
-        eligible/blocked pair read as a status report about a concept
-        ("handoff") a first-time reader has never met. The derivation below
-        -- which rows are blocked, their shared reason, the remedy that
-        matches -- is task-32230's, untouched.
-        """
-        label = state.handoff_label
-        if label.startswith(LIBRARY_HANDOFF_LABEL_PREFIX):
-            label = label[len(LIBRARY_HANDOFF_LABEL_PREFIX) :]
-        match = re.search(r"(\d+) blocked", label)
-        if not match or int(match.group(1)) == 0:
-            return label
-        blocked = tuple(
-            row for row in state.source_rows if not row.active_context_eligible
-        )
-        if not blocked:
-            return label
-        # The reason and the remedy answer different questions, so they are
-        # decided separately (PR #2581 review): one shared reason code does
-        # not imply one shared item type, and neither implies that the
-        # control the remedy names exists.
-        labels = {
-            linkable_ineligibility_label(row.reason_code) for row in blocked
-        }
-        every_block_is_linkable = "" not in labels
-        # A set whose rows disagree cannot borrow one row's label for all of
-        # them -- `not_in_active_workspace` and `cross_workspace` are both
-        # link-resolvable but say different things -- so it falls back to
-        # the aggregate rather than mis-describing the others.
-        reason = (
-            labels.pop() if len(labels) == 1 else ""
-        ) or LIBRARY_GENERIC_WORKSPACE_BLOCK
-        item_types = {row.item_type for row in blocked}
-        pronoun = "it" if len(blocked) == 1 else "them"
-        if not every_block_is_linkable:
-            # Linking cannot resolve at least one of these; the rule wrote
-            # its own recovery sentence, which is already a next step.
-            remedy = blocked[0].recovery_copy.strip().rstrip(".") or (
-                "Open the item to see why"
-            )
-        elif item_types == {"conversation"}:
-            # "Link to workspace" is a real button, and task-32056 put it on
-            # the conversation reader's header -- the ONLY reader in the repo
-            # that builds one. Naming a header for a blocked note or media
-            # item sent the reader to press something that is not there.
-            remedy = f"Link {pronoun} from the conversation's header"
-        else:
-            # Linkable, but no single control to name: the house wording for
-            # this state, the same one `#library-use-in-console`'s tooltip
-            # carries ("Copy or link blocked Library sources into the active
-            # workspace"), minus the workspace id the per-row recovery
-            # sentence would drag into a 34-cell rail row.
-            remedy = f"Copy or link {pronoun} into this workspace"
-        # task-32357 AC#1 (critique #10, A cap 20): the line was a correct
-        # engineering summary of a concept the reader had never met. The
-        # counts and the reason are unchanged; the sentence is now the task
-        # the reader can act on.
-        blocked_count = int(match.group(1))
-        noun = "item" if blocked_count == 1 else "items"
-        return (
-            f"{blocked_count} {noun} can't be used in Console yet · "
-            f"{reason} · {remedy}"
-        )
+        return _workspace_handoff_summary_label(state)
 
     def _workspaces_detail_rows(
         self,
