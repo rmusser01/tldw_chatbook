@@ -11694,3 +11694,149 @@ def test_adapter_wire_kwargs_hands_providers_serializable_messages() -> None:
     payload = kwargs["messages_payload"]
     assert json.loads(json.dumps(payload)) == messages
     assert payload[1]["tool_calls"][0]["function"]["arguments"] == '{"query": "x"}'
+
+
+    assert resolved.ready is True
+    assert resolved.readiness_key == "custom"
+    assert resolved.execution_key == "custom-openai-api"
+    # The custom family materializes the chat-completions URL from the
+    # entry's base_url (provider endpoint contract), so assert the entry
+    # URL flowed rather than exact equality.
+    assert "api.example.com/v1" in resolved.base_url
+    assert "not saved" not in resolved.visible_copy
+
+
+# ADR-146 credential wiring: an entry that declares a credential
+# (api_key_env / api_key) must see it flow into ``resolution.api_key`` on
+# BOTH family execution paths -- the custom/llama families are keyless, so
+# the family readiness alone would resolve ``api_key=None`` and send
+# unauthenticated (server 401) while the UI gate says Ready. A declared
+# credential that does NOT resolve blocks with the same missing-API-key
+# copy Task 3's session-settings gate uses. Keyless entries and all
+# non-custom-ep providers are unchanged.
+
+
+@pytest.mark.asyncio
+async def test_custom_endpoint_declared_env_key_flows_to_resolution(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("PAID_KEY", "paid-secret")
+    # No `environ` injection: the gateway must read os.environ (the
+    # monkeypatched PAID_KEY) for the entry's env reference to resolve.
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "custom_endpoints": {
+                "paid": {
+                    "display_name": "Paid",
+                    "family": "openai_compatible",
+                    "base_url": "https://api.example.com/v1",
+                    "api_key_env": "PAID_KEY",
+                }
+            }
+        },
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="custom-ep:paid",
+            explicit_model="m",
+            base_url="https://api.example.com/v1",
+        )
+    )
+
+    assert resolved.ready is True
+    assert resolved.api_key == "paid-secret"
+    assert resolved.execution_key == "custom-openai-api"
+
+
+@pytest.mark.asyncio
+async def test_custom_endpoint_stored_key_flows_to_resolution() -> None:
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "custom_endpoints": {
+                "paid": {
+                    "display_name": "Paid",
+                    "family": "openai_compatible",
+                    "base_url": "https://api.example.com/v1",
+                    "api_key": "stored-secret",
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="custom-ep:paid",
+            explicit_model="m",
+            base_url="https://api.example.com/v1",
+        )
+    )
+
+    assert resolved.ready is True
+    assert resolved.api_key == "stored-secret"
+    assert resolved.execution_key == "custom-openai-api"
+
+
+@pytest.mark.asyncio
+async def test_custom_endpoint_unresolved_declared_key_blocks_with_missing_key_copy() -> None:
+    # `environ={}` guarantees PAID_KEY_UNSET is absent even when the host
+    # environment happens to define it.
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "custom_endpoints": {
+                "paid": {
+                    "display_name": "Paid",
+                    "family": "openai_compatible",
+                    "base_url": "https://api.example.com/v1",
+                    "api_key_env": "PAID_KEY_UNSET",
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="custom-ep:paid",
+            explicit_model="m",
+            base_url="https://api.example.com/v1",
+        )
+    )
+
+    assert resolved.ready is False
+    assert "API key" in resolved.visible_copy
+    assert resolved.api_key is None
+
+
+@pytest.mark.asyncio
+async def test_custom_endpoint_llama_family_declared_key_flows_to_resolution() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"id": "server-model"}]})
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        config_provider=lambda: {
+            "custom_endpoints": {
+                "gpu": {
+                    "display_name": "GPU llama",
+                    "family": "llama_cpp",
+                    "base_url": "http://192.168.1.5:8080",
+                    "api_key": "llama-secret",
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="custom-ep:gpu",
+            explicit_model="m",
+            base_url="http://192.168.1.5:8080",
+        )
+    )
+
+    assert resolved.ready is True
+    assert resolved.execution_key == "llama_cpp"
+    assert resolved.api_key == "llama-secret"
