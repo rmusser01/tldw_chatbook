@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from itertools import groupby
 from dataclasses import dataclass, field, replace
+import difflib
 from enum import Enum
 from pathlib import Path
 import re
@@ -30,6 +31,7 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     RootCollisionState,
     planned_plan_change_count,
     resolved_wikilink_count,
+    wikilink_only,
 )
 from tldw_chatbook.Notes.note_import_planner import apply_item_override
 
@@ -255,6 +257,66 @@ class NoteImportReviewEffect:
     target_title: str = field(default="", repr=False)
     target_version: int | None = None
     content_diff: str = field(default="", repr=False)
+
+
+def bounded_note_diff(
+    existing_title: str,
+    existing_content: str,
+    imported_title: str,
+    imported_content: str,
+) -> str:
+    """Format a bounded comparison for the private import review preview.
+
+    Args:
+        existing_title: Current note title.
+        existing_content: Current note body.
+        imported_title: First imported payload's title.
+        imported_content: First imported payload's body.
+
+    Returns:
+        A diff of at most 1,600 characters, including any truncation marker.
+    """
+    max_input_chars = 16_000
+    max_output_chars = 1_600
+    marker = "\n… Diff preview truncated."
+
+    def bounded_document(title: str, content: str) -> tuple[str, bool]:
+        # task-32262 AC#2: compare stored/re-written and disk links on the
+        # same bare [[target]] basis before measuring or truncating either.
+        content = wikilink_only(content)
+        prefix = "Title: "
+        total = len(prefix) + len(title) + 2 + len(content)
+        bounded = f"{prefix}{title[: max_input_chars - len(prefix)]}"
+        if len(bounded) < max_input_chars:
+            separator = "\n\n"[: max_input_chars - len(bounded)]
+            bounded += separator
+            bounded += content[: max_input_chars - len(bounded)]
+        return bounded, total > max_input_chars
+
+    before_text, before_truncated = bounded_document(existing_title, existing_content)
+    after_text, after_truncated = bounded_document(imported_title, imported_content)
+    truncated = before_truncated or after_truncated
+    before = before_text.splitlines()
+    after = after_text.splitlines()
+    chunks: list[str] = []
+    size = 0
+    budget = max_output_chars - len(marker)
+    for line in difflib.unified_diff(
+        before,
+        after,
+        fromfile="Existing note",
+        tofile="Imported source",
+        n=2,
+        lineterm="",
+    ):
+        chunk = line if not chunks else f"\n{line}"
+        if size + len(chunk) > budget:
+            truncated = True
+            break
+        chunks.append(chunk)
+        size += len(chunk)
+    preview = "".join(chunks)
+    return f"{preview}{marker}" if truncated else preview
 
 
 @dataclass(frozen=True, slots=True)

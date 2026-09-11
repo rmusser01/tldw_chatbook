@@ -1,7 +1,8 @@
 # PR 2427: bounded import-review formatting
 
-Status: Design direction approved; independent spec review approved; awaiting
-user review of this written spec before implementation planning.
+Status: Design direction and independent spec review approved; user authorized
+continuation on 2026-09-10. Revalidate against integrated dev before writing the
+implementation plan.
 Task: [TASK-31932](../../../backlog/tasks/task-31932%20-%20Reconcile-PR-2427-with-latest-dev-and-complete-review-gates.md).
 
 ## Purpose and scope

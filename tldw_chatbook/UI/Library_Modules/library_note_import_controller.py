@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import difflib
 import inspect
 import threading
 from collections.abc import Callable
@@ -20,6 +19,7 @@ from tldw_chatbook.Library.library_note_import_state import (
     begin_checking,
     begin_importing,
     begin_retry,
+    bounded_note_diff,
     clear_selection,
     initial_note_import_snapshot,
     project_library_note_import_snapshot,
@@ -43,7 +43,6 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     ImportBounds,
     ImportClassification,
     RootCollisionChoice,
-    wikilink_only,
 )
 
 
@@ -346,64 +345,21 @@ class LibraryNoteImportController:
             note = reader(item.match.note_id)
             if note is None:
                 continue
+            content_diff = ""
+            if item.payloads:
+                payload = item.payloads[0]
+                content_diff = bounded_note_diff(
+                    note.title, note.content, payload.title, payload.content
+                )
             effects.append(
                 NoteImportReviewEffect(
                     item_id=item.item_id,
                     target_title=note.title,
                     target_version=note.version,
-                    content_diff=self._bounded_note_diff(note, item),
+                    content_diff=content_diff,
                 )
             )
         return tuple(effects)
-
-    @staticmethod
-    def _bounded_note_diff(note: Any, item: Any) -> str:
-        if not item.payloads:
-            return ""
-        payload = item.payloads[0]
-        max_input_chars = 16_000
-        max_output_chars = 1_600
-        marker = "\n… Diff preview truncated."
-
-        def bounded_document(title: str, content: str) -> tuple[str, bool]:
-            # task-32262 AC#2: one comparison basis. The stored note carries
-            # links this importer rewrote; the file on disk does not. Reduce
-            # both to the bare `[[target]]` spelling before diffing, or every
-            # line with a link reads as changed and drowns the real change.
-            content = wikilink_only(content)
-            prefix = "Title: "
-            total = len(prefix) + len(title) + 2 + len(content)
-            bounded = f"{prefix}{title[: max_input_chars - len(prefix)]}"
-            if len(bounded) < max_input_chars:
-                separator = "\n\n"[: max_input_chars - len(bounded)]
-                bounded += separator
-                bounded += content[: max_input_chars - len(bounded)]
-            return bounded, total > max_input_chars
-
-        before_text, before_truncated = bounded_document(note.title, note.content)
-        after_text, after_truncated = bounded_document(payload.title, payload.content)
-        truncated = before_truncated or after_truncated
-        before = before_text.splitlines()
-        after = after_text.splitlines()
-        chunks: list[str] = []
-        size = 0
-        budget = max_output_chars - len(marker)
-        for line in difflib.unified_diff(
-            before,
-            after,
-            fromfile="Existing note",
-            tofile="Imported source",
-            n=2,
-            lineterm="",
-        ):
-            chunk = line if not chunks else f"\n{line}"
-            if size + len(chunk) > budget:
-                truncated = True
-                break
-            chunks.append(chunk)
-            size += len(chunk)
-        preview = "".join(chunks)
-        return f"{preview}{marker}" if truncated else preview
 
     def _top_level_folder_names(self) -> tuple[str, ...]:
         repository = self._folder_repository()
