@@ -428,6 +428,15 @@ def _reacquire_paused_startup(pause):
     lease = None
     try:
         attempt = _StartupReacquisition(pause)
+        key, _, names, identity = pause._startup_source
+        authority = Admission.open_existing(Path(key[1]) / "admission")
+        if authority._identity != identity:
+            raise bootstrap.RecoveryRequired("startup_scope_changed")
+        # A publishing isolated restore still has pending evidence while holding
+        # the unbound gate. Wait behind its actual native finalization before
+        # evaluating ordinary startup permission; surviving pending still refuses.
+        with authority.normal(names):
+            pass
         lease = _acquire_storage(None, attempt)
         with _changed:
             attempt.check()
