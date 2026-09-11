@@ -7,7 +7,7 @@ import hashlib
 import sqlite3
 import time
 import weakref
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -156,6 +156,24 @@ def _validate_projection(status: str, next_action: str) -> None:
         raise ValueError("unknown runtime status")
     if next_action not in _NEXT_ACTIONS:
         raise ValueError("unknown runtime next action")
+
+
+class NotesSyncRootRefused(RuntimeError):
+    """A named lasting-root refusal that carries its own machine-readable cause.
+
+    TASK-32243: the refusal a Check reaches (``root_lease_unavailable``,
+    ``root_discovery_incomplete``) says only which gate closed. ``reason_code``
+    names *why* -- the coordinator's admission reason, or the dominant per-file
+    refusal -- so the UI can answer with a next action instead of "try again".
+    Both fields are bounded machine codes: no path, note or user content.
+    """
+
+    def __init__(
+        self, code: str, *, reason_code: str | None = None, detail: str = ""
+    ) -> None:
+        self.reason_code = reason_code or code
+        self.detail = detail
+        super().__init__(code)
 
 
 @dataclass(frozen=True, slots=True)
@@ -545,19 +563,28 @@ class _ProductionRuntimeAdapter:
             self._discovery_bounds,
         )
         if discovery.failures:
-            raise RuntimeError("root_discovery_incomplete")
+            raise NotesSyncRootRefused(
+                "root_discovery_incomplete",
+                detail=f"{len(discovery.failures)} paths could not be listed",
+            )
         # TASK-23027: reuse is validated per item against state read fresh
         # this pass; see _ObservationReuse. A miss (edit, add, rename, touch,
         # or a cold cache) takes exactly the pre-existing read path.
         reuse = self._observation_reuse.get(root.root_id)
         discovered: dict[str, NotesSyncFileSnapshot] = {}
         reused_files = 0
+        # TASK-32244: refusals are counted across the whole walk instead of
+        # raising on the first one, so "discovery did not finish" can say how
+        # many files were refused and for what.
+        refusals: Counter[str] = Counter()
+        syncable_files = 0
         for candidate in discovery.candidates:
             relative_path = candidate.source.source_path.relative_to(
                 Path(root.canonical_path)
             ).as_posix()
             if Path(relative_path).suffix.casefold() not in _SYNC_FILE_EXTENSIONS:
                 continue
+            syncable_files += 1
             cached_file = reuse.files.get(relative_path) if reuse else None
             if cached_file is not None and _file_snapshot_current(
                 cached_file, candidate.identity
@@ -576,7 +603,16 @@ class _ProductionRuntimeAdapter:
                 )
             except NotesSyncFilesystemError as error:
                 if error.reason_code != "missing_target":
-                    raise RuntimeError("root_discovery_incomplete") from None
+                    refusals[error.reason_code] += 1
+        if refusals:
+            dominant, count = refusals.most_common(1)[0]
+            raise NotesSyncRootRefused(
+                "root_discovery_incomplete",
+                detail=(
+                    f"{sum(refusals.values())} of {syncable_files} files refused; "
+                    f"{count} for {dominant}"
+                ),
+            )
 
         # TASK-21532: this read-all stays. It looks like the projection shape
         # below it -- one field, `binding.state` -- but the same tuple is the
@@ -1072,6 +1108,7 @@ class NotesSyncRuntimeOwner:
         self._active_tasks: dict[str, set[asyncio.Task[object]]] = {}
         self._leases: dict[str, object] = {}
         self._admissions: dict[str, object] = {}
+        self._admission_reasons: dict[str, str] = {}
         self._blocked_roots: set[str] = set()
         self._durably_blocked_roots: set[str] = set()
         self._closed_roots: set[str] = set()
@@ -1569,9 +1606,20 @@ class NotesSyncRuntimeOwner:
             )
         return roots
 
-    async def _ensure_lease(self, root: NotesSyncRootRecord) -> bool:
+    async def _ensure_lease(
+        self, root: NotesSyncRootRecord, *, persist: bool = True
+    ) -> bool:
+        """Admit one root, recording the refusal reason when it is refused.
+
+        ``persist`` is False for a root the store has never seen (a setup
+        review, or the activation of one): publishing a status for it would
+        raise ``NotesDeviceStateError`` from the store and destroy the named
+        refusal this returns (TASK-32243).
+        """
+
         existing = self._leases.get(root.root_id)
         if existing is not None and getattr(existing, "authoritative", False):
+            self._admission_reasons.pop(root.root_id, None)
             return True
         assert self._coordinator is not None
         admission = await asyncio.to_thread(
@@ -1587,6 +1635,7 @@ class NotesSyncRuntimeOwner:
         if admission.state is RootAdmissionState.OWNER:
             self._leases[root.root_id] = admission.require_authority("plan")
             self._admissions[root.root_id] = admission
+            self._admission_reasons.pop(root.root_id, None)
             if root.root_id not in self._durably_blocked_roots:
                 self._blocked_roots.discard(root.root_id)
             return True
@@ -1595,8 +1644,18 @@ class NotesSyncRuntimeOwner:
             RootAdmissionState.OFFLINE: ("offline", "reconnect_folder"),
             RootAdmissionState.REJECTED: ("unsupported", "review_settings"),
         }[admission.state]
-        await self._publish(root.root_id, status, action)
+        if admission.reason_code:
+            self._admission_reasons[root.root_id] = admission.reason_code
+        await self._publish(root.root_id, status, action, persist=persist)
         return False
+
+    def _refuse_lease(self, root_id: str) -> NotesSyncRootRefused:
+        """Name the refusal the last :meth:`_ensure_lease` recorded."""
+
+        return NotesSyncRootRefused(
+            "root_lease_unavailable",
+            reason_code=self._admission_reasons.pop(root_id, None),
+        )
 
     async def _fresh_authority(self, root: NotesSyncRootRecord) -> _FreshAuthority:
         self._require_authority(root.root_id, "plan")
@@ -1766,10 +1825,14 @@ class NotesSyncRuntimeOwner:
                 state=NotesSyncRootState.PENDING,
             )
             self._root_paths[root_id] = setup.canonical_path
-            if matching_root_id is None and not await self._ensure_lease(root):
-                self._root_paths.pop(root_id, None)
-                raise RuntimeError("root_lease_unavailable")
+            # TASK-32243: one release for every failure. The lease refusal used
+            # to skip this, leaking `_root_paths` and rejecting the same folder
+            # as `lasting_root_overlap` for the rest of the session.
             try:
+                if matching_root_id is None and not await self._ensure_lease(
+                    root, persist=False
+                ):
+                    raise self._refuse_lease(root_id)
                 plan = await self._review_candidate(root)
             except Exception:
                 await self._release_setup_authority(root_id)
@@ -1797,6 +1860,7 @@ class NotesSyncRuntimeOwner:
             )
         self._leases.pop(root_id, None)
         self._admissions.pop(root_id, None)
+        self._admission_reasons.pop(root_id, None)
         self._setup_reviews.pop(root_id, None)
         self._root_paths.pop(root_id, None)
         self._root_status.pop(root_id, None)
@@ -1827,7 +1891,7 @@ class NotesSyncRuntimeOwner:
                 await self._publish(root_id, "paused", "resume_sync")
                 raise RuntimeError("sync_root_not_active")
             if not await self._ensure_lease(root):
-                raise RuntimeError("root_lease_unavailable")
+                raise self._refuse_lease(root_id)
             incomplete = await asyncio.to_thread(self._store.list_incomplete_operations)
             root_operations = tuple(
                 operation for operation in incomplete if operation.root_id == root_id
@@ -2540,7 +2604,7 @@ class NotesSyncRuntimeOwner:
             if root.state is not NotesSyncRootState.ACTIVE:
                 raise RuntimeError("sync_root_not_active")
             if not await self._ensure_lease(root):
-                raise RuntimeError("root_lease_unavailable")
+                raise self._refuse_lease(root_id)
             self._require_authority(root_id, "write")
             executor = self._adapter.executor_for(
                 root,
@@ -2647,7 +2711,7 @@ class NotesSyncRuntimeOwner:
                 raise ValueError("activation_review_required")
         if reviewed is None or reviewed.observation_token != token:
             raise ValueError("stale_review")
-        if not await self._ensure_lease(root):
+        if not await self._ensure_lease(root, persist=setup_review is None):
             return NotesSyncControlResult(False, "passive", "open_active_process")
         fresh = await self._review_candidate(root)
         if fresh != reviewed:

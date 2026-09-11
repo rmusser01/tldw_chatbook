@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import stat
 import sys
 import uuid
 from dataclasses import dataclass
@@ -188,9 +189,18 @@ class PosixNotesSyncFilesystem:
     def _metadata_issue(snapshot: SafeSyncBytes) -> str | None:
         if snapshot.flags or snapshot.has_extended_acl:
             return "unsupported_metadata"
-        if snapshot.owner_user != os.geteuid() or snapshot.owner_group != os.getegid():
-            return "unsupported_metadata"
-        return None
+        # TASK-32244: this gate stands in for "sync can replace this file".
+        # It used to demand `owner_group == os.getegid()`, which refuses every
+        # file carrying any other group the caller belongs to -- and every file
+        # under a directory with a foreign setgid group -- even though the
+        # caller owns it and can write it. Ask the permission bits instead.
+        if snapshot.owner_user == os.geteuid():
+            writable = bool(snapshot.mode & stat.S_IWUSR)
+        elif snapshot.owner_group in os.getgroups():
+            writable = bool(snapshot.mode & stat.S_IWGRP)
+        else:
+            writable = bool(snapshot.mode & stat.S_IWOTH)
+        return None if writable else "unsupported_metadata"
 
     def observe(
         self,

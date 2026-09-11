@@ -6,6 +6,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from typing import Never, Protocol
 
+from loguru import logger
+
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LASTING_SYNC_HISTORY_PAGE_SIZE,
     LastingSyncApplyBlocker,
@@ -47,6 +49,102 @@ from tldw_chatbook.Notes.notes_sync_models import (
     NotesSyncDirection,
     NotesSyncOperationState,
 )
+
+
+# TASK-32243: a refused Check used to render one fixed string for every cause,
+# with nothing logged anywhere. Each bounded reason the runtime and coordinator
+# can name gets its own sentence and its own next action here; anything else
+# keeps the generic line but still leaves a typed warning behind.
+_CHECK_REFUSAL_COPY: dict[str, str] = {
+    "private_path_overlap": (
+        "That folder is inside Chatbook's own data directory. "
+        "Pick a folder outside it, then Check again."
+    ),
+    "private_path_check_failed": (
+        "Chatbook could not confirm that folder sits outside its own data. "
+        "Pick a folder in your home directory, then Check again."
+    ),
+    "file_notes_overlap": (
+        "That folder is already in use by Folder files. "
+        "Pick a different folder, then Check again."
+    ),
+    "lasting_root_overlap": (
+        "That folder is already connected. Manage it under Sync folders "
+        "instead of adding it again."
+    ),
+    "passive_process": (
+        "Another Chatbook window is using that folder. "
+        "Close it, then Check again."
+    ),
+    "lock_unavailable": (
+        "Chatbook could not claim that folder. "
+        "Restart Chatbook, then Check again."
+    ),
+    "root_lease_unavailable": (
+        "That folder could not be claimed for sync. "
+        "Close any other Chatbook window using it, then Check again."
+    ),
+    "unsupported_metadata": (
+        "Some files there use a permission model this sync can't track. "
+        "Make every file in the folder writable, then Check again."
+    ),
+    "root_discovery_incomplete": (
+        "Some files there use a permission model this sync can't track. "
+        "Make every file in the folder writable, then Check again."
+    ),
+    "notes_sync_cutover_not_admitted": (
+        "Sync isn't available while another Chatbook instance owns this "
+        "profile. Close the other instance, then Check again."
+    ),
+    "root_offline": (
+        "That folder isn't available right now. Reconnect it, then Check again."
+    ),
+    "root_unavailable": (
+        "That folder can't be read right now. Check that it still exists and "
+        "that you can open it, then Check again."
+    ),
+    "root_not_directory": "That path isn't a folder. Pick a folder, then Check again.",
+    "root_link_or_reparse": (
+        "That path is a link. Pick the folder it points at, then Check again."
+    ),
+    "writable_filesystem_unsupported": (
+        "Chatbook can't write safely on that filesystem. "
+        "Pick a folder on a local disk, then Check again."
+    ),
+    "sync_root_not_active": (
+        "That folder is paused. Resume it, then Check again."
+    ),
+}
+
+
+def _refusal_reason(error: BaseException) -> str:
+    """Return the bounded reason code this failure names, or an empty string.
+
+    Only codes this module already knows are ever returned, so nothing an
+    exception message happens to carry -- a path, a note title -- can reach a
+    status line or a log record through here.
+    """
+
+    code = getattr(error, "reason_code", None)
+    if type(code) is str and code in _CHECK_REFUSAL_COPY:
+        return code
+    text = str(error)
+    return text if text in _CHECK_REFUSAL_COPY else ""
+
+
+def _check_failure_line(
+    error: BaseException, fallback: str, *, root_id: str = ""
+) -> str:
+    """Name one refused Check for the user and for the log."""
+
+    reason = _refusal_reason(error)
+    logger.warning(
+        "notes sync check refused; reason={} error_type={} root_id={}",
+        reason or "unclassified",
+        type(error).__name__,
+        root_id or "pending-setup",
+    )
+    return _CHECK_REFUSAL_COPY.get(reason, fallback)
 
 
 class LastingSyncRuntimePort(Protocol):
@@ -729,7 +827,7 @@ class LibraryNotesSyncController:
         self._publish()
         try:
             plan = await self._runtime.check_root(root_id)
-        except Exception:
+        except Exception as error:
             if not self._lifecycle_is_current(root_id, epoch):
                 return
             self._state = replace(
@@ -741,7 +839,11 @@ class LibraryNotesSyncController:
                     activation=activation,
                     epoch=epoch,
                 ),
-                status_line="Check failed. Review root status, then Check again.",
+                status_line=_check_failure_line(
+                    error,
+                    "Check failed. Review root status, then Check again.",
+                    root_id=root_id,
+                ),
             )
             self._publish()
             return
@@ -803,13 +905,16 @@ class LibraryNotesSyncController:
                     direction=direction,
                 )
             )
-        except Exception:
+        except Exception as error:
             if not self._lifecycle_is_current(None, epoch):
                 return
             self._state = replace(
                 self._state,
                 phase="configure",
-                status_line="Check failed. Review the folder and settings, then try again.",
+                status_line=_check_failure_line(
+                    error,
+                    "Check failed. Review the folder and settings, then try again.",
+                ),
             )
             self._publish()
             return
