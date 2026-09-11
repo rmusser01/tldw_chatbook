@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Collection, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from tldw_chatbook.Chat.console_session_settings import normalize_llamacpp_base_url
@@ -48,7 +48,9 @@ class CustomEndpointEntry:
         family: One of :data:`ENDPOINT_FAMILIES`; selects the execution path.
         base_url: Validated, family-normalized endpoint URL.
         api_key_env: Optional environment-variable credential reference.
-        api_key: Optional stored key; display/log paths never read this.
+        api_key: Optional stored key; display/log paths never read this,
+            and it is excluded from the dataclass repr so secrets never
+            reach logs or debug output.
         models: Cached model list discovered for this endpoint.
         created_from: Template provider id this entry was created from
             (informational only).
@@ -59,7 +61,7 @@ class CustomEndpointEntry:
     family: str
     base_url: str
     api_key_env: str | None = None
-    api_key: str | None = None
+    api_key: str | None = field(default=None, repr=False)
     models: tuple[str, ...] = ()
     created_from: str | None = None
 

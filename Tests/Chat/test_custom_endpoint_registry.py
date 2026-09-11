@@ -55,3 +55,17 @@ def test_mutation_round_trips_and_omits_none():
     assert mutation == {"custom_endpoints.s": {
         "display_name": "D", "family": "ollama",
         "base_url": "http://127.0.0.1:11434", "models": []}}
+
+def test_entry_repr_hides_api_key():
+    entry = CustomEndpointEntry(slug="s", display_name="D", family="ollama",
+                                base_url="http://127.0.0.1:11434",
+                                api_key="sekrit")
+    # "api_key=" (not the substring "api_key"): api_key_env legitimately
+    # renders and contains "api_key" as a prefix.
+    assert "api_key=" not in repr(entry)
+    assert "sekrit" not in repr(entry)
+    assert "slug='s'" in repr(entry)
+    assert "display_name='D'" in repr(entry)
+    assert "family='ollama'" in repr(entry)
+    assert "base_url='http://127.0.0.1:11434'" in repr(entry)
+    assert "api_key_env=None" in repr(entry)
