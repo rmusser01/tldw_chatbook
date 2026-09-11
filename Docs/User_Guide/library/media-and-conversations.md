@@ -345,8 +345,8 @@ left-margin gap).*
 | Control | What it does |
 |---|---|
 | "Title/keyword…" / "Clear filter" | Searches the complete local Media source before paging — titles, item text, and the keywords an item is tagged with, so a tag you filed items under finds them even when it appears in no title. It is separate from Find in item, and "Review these" pins exactly what it returned. Clearing restores the unfiltered selection when it is still available. |
-| "type: All types" | Opens one bounded keyboard list containing the complete type set, with ✓ on the active choice. "All types" means no filter; a stored type literally named "All" remains a separate selectable value. Press Escape (or pick the current choice) to cancel. |
-| "sort: Newest" | Opens the same kind of bounded keyboard list with all four orders (Newest, Oldest, Title A-Z, Title Z-A) fully visible and ✓ on the active one. Escape cancels. |
+| "type: All types" | Opens one bounded keyboard list containing the complete type set. The row your arrow keys are on carries a leading `█` bar (the same cue the list rows use); ✓ marks the value currently in force, so the row you are on and the row that is active are told apart — on opening, both marks sit on the active row (`█ ✓ All types`). "All types" means no filter; a stored type literally named "All" remains a separate selectable value. Press Escape (or pick the current choice) to cancel. |
+| "sort: Newest" | Opens the same kind of bounded keyboard list with all four orders (Newest, Oldest, Title A-Z, Title Z-A) fully visible, the same leading `█` on the row you are on and ✓ on the active one. Escape cancels. |
 | "Previous" / "Next" | Moves through exact 20-item pages after the active query, type, and sort are applied. The final page may contain fewer rows; disabled buttons explain why they cannot move. With only one page, the controls do not render at all — just the item range. |
 | "Retry" | Repeats the failed load. When a load fails, the reason and this Retry sit together in one bordered callout above the rows ("Couldn't load page 1 · database is locked"; red for a hard failure, amber for a timeout) — that is the only Retry on screen, and it also reloads the type list when that is what failed. The reason is the failure's own words only for an operating-system or database error; anything else is named by the kind of failure it is ("the connection failed", "the database could not be read", or "an unexpected error" when it is none of those), so a private path — and the exception's own text — never reaches the screen. If retained rows may be out of date, rows stay open (a row press is a read, never disabled by staleness) but Select, Export, Delete, sort, and Select all stay disabled with a reason until recovery succeeds. A Retry that fails again shows "Couldn't retry · \<reason\>" so a second failed attempt reads differently from the first, instead of repeating the unchanged staleness copy. When the fault callout itself fails the same way on a consecutive Retry, the message stops repeating one sentence and names the recovery step — "Couldn't load page 1 · database is locked · reopen Chatbook to reconnect to the media database" — so a persistent fault points somewhere rather than looping. |
 | "Export…" / "Select" | The shared grammar above; Export… is scoped to the active type filter. |
@@ -364,7 +364,20 @@ nothing is auto-loaded and the line does not appear.
 Empty states: with nothing imported, "No media in your Library yet. Import
 something to see it here."; with a type that matches nothing, "No media
 of type 'pdf'."; with a filter query that matches nothing, "No media matched
-“day2” in titles, content or keywords." beside a live "Clear filter".
+“day2” in titles, content or keywords." beside a live "Clear filter"; with
+both — a query that misses inside a type — the sentence names both facets:
+"No media of type 'pdf' matched “day2” in titles, content or keywords."
+
+An empty page keeps the toolbar it was filtered with. `type:`, `sort:`,
+"Export…", "Trash", "Select" and "Review these" all stay where they were, so
+the facet that produced the empty page can be read and reset without leaving
+the canvas. "Select" and "Review these" carry the `○` marker and a reason
+there — with no rows, neither has anything to act on; "Export…" stays live,
+because it exports the type, not the query. One recovery action rides with
+the sentence: "Show all types" whenever a type is in force, and "Import
+media" only when the source itself is empty — a filter miss never suggests
+importing, because clearing the filter is the honest way back. Keyboard focus
+lands back in the filter box, which is where you retype.
 
 *Verified against fix/media-wave4-c — 2026-09-04 (task-31274: three seeded
 articles tagged `day2` — a keyword in no title and no body — filtered live in
@@ -691,7 +704,8 @@ setting**; it supplies one bundle of **staged context** for the next send.
 
 ### Filter media by type
 1. In **Media**, click "type: All types" — a bounded list of every stored
-   type appears in place of the toolbar, with ✓ on the active one.
+   type appears in place of the toolbar, with a leading `█` on the row your
+   arrow keys are on and ✓ on the active one.
 2. Click the type you want. The list narrows and the status line reads
    e.g. "2 of 5 · type: pdf". Pick "All types" to clear the filter, or
    press Escape to close the list without changing anything. A stored type
@@ -1124,6 +1138,21 @@ box there. Live at 235x52, 100x30 and 60x24 a 5-line analysis puts "Edit
 analysis" / "○ Regenerate" on the next line. A longer analysis keeps its own
 text scroll and the tab scrolls the last few rows on top of it, so reading to
 the end of the text and carrying on brings the actions on screen.)*
+
+*Verified against fix/library-crit9-media-list — 2026-09-10 (task-32210: the
+type and sort choosers now mark the row your arrow keys are on with the house
+`█` bar instead of a 1.09:1 background tint — live at 235x52 and 100x30, the
+bar moving with each Down and never on two rows at once. task-32213: a
+0-result filter keeps `type:`/`sort:`/Export…/Trash/Select/Review these, and
+a query that misses inside a type names both in the sentence. task-32227: one
+cell now separates the select-strip count from the first action, which used
+to paint "2 selected┃ Select all".)*
+
+*Verified against fix/library-crit9-media-list — 2026-09-10, fix round 1
+(task-32213 review: with the toolbar now surviving a 0-result page, "Review
+these" takes the same `○` marker and reason as "Select" rather than raising a
+toast when pressed, and keyboard focus on a filter miss lands back in the
+filter box instead of on the `type:` chooser.)*
 
 *Verified against fix/library-crit9-grammar — 2026-09-10, fix round 1
 (task-32235: the disabled marker's description no longer points at the

@@ -5838,7 +5838,8 @@ async def test_library_production_width_matrix_custom_preferences(
 
         await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
-        screen.query_one("#library-notes-row-0", Button).press()
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+        row.press()
         await _wait_for_selector(screen, pilot, "#library-note-body")
         adaptive = screen.query_one(".library-notes-route")
         screen._notes_state.reader_layout = (
@@ -11764,7 +11765,10 @@ def _painted_rows(screen) -> list[str]:
             LIBRARY_ROW_BROWSE_MEDIA,
             "#library-media-empty-import",
             "Import media",
-            ("#library-media-pager", "#library-media-select-toggle"),
+            # task-32213: the browse toolbar (Select included, disabled)
+            # now survives a 0-row page; the LIST furniture below it is
+            # what stays away.
+            ("#library-media-pager", "#library-media-detail-empty"),
             "#library-ingest-path",
         ),
         (
@@ -18877,11 +18881,17 @@ async def test_library_shell_notes_row_opens_notes_list_canvas():
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        await _wait_for_selector(screen, pilot, ".library-notes-row")
         header = str(screen.query_one("#library-notes-header").renderable)
         assert header == "Notes (2)"
         assert screen.query_one("#library-notes-filter")
-        assert screen.query_one("#library-notes-sort")
+        # task-32172 put Sort back on the folder tree (task-32128 had taken
+        # it away): the tree's order is a pager parameter now, not a
+        # hard-coded repository contract, so the control really re-pages.
+        # Unfiltered, it is offered enabled.
+        sort_button = screen.query_one("#library-notes-sort", Button)
+        assert sort_button.disabled is False
+        assert screen.query_one("#library-notes-new")
 
 
 @pytest.mark.asyncio
@@ -18889,14 +18899,11 @@ async def test_library_shell_notes_list_actions_use_two_named_horizontal_rows():
     """Navigator actions stay grouped without overlapping the note list.
 
     task-32127 kept this contract rather than overriding it: the two groups
-    share one row ONLY from `_TOOLBAR_MERGE_MIN_WIDTH` (100 columns) up,
+    share one row ONLY from `_TOOLBAR_MERGE_MIN_WIDTH` (109 columns) up,
     and this harness's list pane is ~78, so both keep their own row here.
     Above the threshold they are still two named `ds-toolbar` Horizontals,
     nested in `#library-notes-action-rows`; the merged geometry is pinned
     in Tests/UI/test_library_notes_wave_list.py.
-
-    NOTE: failing on dev before this branch as well -- it waits for
-    `#library-notes-row-0`, and Database Notes composes a folder tree.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
@@ -18906,13 +18913,15 @@ async def test_library_shell_notes_list_actions_use_two_named_horizontal_rows():
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
 
         browse_toolbar = screen.query_one("#library-notes-browse-actions")
         transfer_toolbar = screen.query_one("#library-notes-transfer-actions")
         assert browse_toolbar.has_class("ds-toolbar")
         assert transfer_toolbar.has_class("ds-toolbar")
 
+        # Sort is part of this group again since task-32172 put it back on
+        # the folder tree, so it is checked here with its siblings.
         browse_selectors = (
             "#library-notes-new",
             "#library-notes-sort",
@@ -18938,8 +18947,7 @@ async def test_library_shell_notes_list_actions_use_two_named_horizontal_rows():
         browse_y = browse_rows.pop()
         transfer_y = transfer_rows.pop()
         assert transfer_y > browse_y
-        first_row_y = screen.query_one("#library-notes-row-0").region.y
-        assert first_row_y > transfer_y
+        assert row.region.y > transfer_y
 
 
 @pytest.mark.asyncio
@@ -18972,7 +18980,11 @@ async def test_library_shell_notes_list_renders_bracketed_titles_verbatim():
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-1")
+        await _wait_for_condition(
+            pilot,
+            lambda: len(screen.query(".library-notes-row")) >= 2,
+            message="Both note rows never mounted.",
+        )
 
         # Button parses its label as markup at construction: with the
         # escape in place, the resulting Text's plain form (str(label)) is
@@ -18983,13 +18995,19 @@ async def test_library_shell_notes_list_renders_bracketed_titles_verbatim():
         # title is now the label's first " · " segment rather than its
         # first line; `splitlines()[0]` is kept because it still isolates
         # the title on a one-line label, and the split below is what the
-        # assertion now leans on. (This test also fails on dev before this
-        # branch: it waits for `#library-notes-row-1`, and Database Notes
-        # composes a folder tree.)
-        first = str(screen.query_one("#library-notes-row-0", Button).label)
-        second = str(screen.query_one("#library-notes-row-1", Button).label)
-        assert first.splitlines()[0].split(" · ")[0] == "[draft] Q3 plan [wip]"
-        assert second.splitlines()[0].split(" · ")[0] == "[/wip] closing tag title"
+        # assertion now leans on.
+        #
+        # task-32175: rows come from ``.library-notes-row`` (not a
+        # `#library-notes-row-N` id) -- this screen's seeded Agent_Lessons
+        # folder means it always composes the folder tree, whose note rows
+        # carry ``#library-notes-tree-note-N`` ids and are ordered by title
+        # (task-32128), not the flat list's insertion order -- so this
+        # checks both titles render verbatim regardless of row position.
+        titles = {
+            str(row.label).splitlines()[0].split(" · ")[0].strip()
+            for row in screen.query(".library-notes-row").results(Button)
+        }
+        assert titles == {"[draft] Q3 plan [wip]", "[/wip] closing tag title"}
 
 
 @pytest.mark.asyncio
@@ -19098,7 +19116,7 @@ async def test_library_shell_notes_filtered_empty_keeps_clear_and_source_truth()
         )
         assert "No notes yet" not in _visible_text(screen)
         screen.query_one("#library-notes-filter-clear", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        await _wait_for_selector(screen, pilot, ".library-notes-row")
         assert screen._notes_state.filter == ""
 
 
@@ -19251,8 +19269,8 @@ async def test_library_shell_notes_row_opens_editor_with_detail():
         await _wait_for_library_shell(screen, pilot)
 
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
-        screen.query_one("#library-notes-row-0").press()
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+        row.press()
         await _wait_for_selector(screen, pilot, "#library-note-title")
 
         title = screen.query_one("#library-note-title", Input)
@@ -19516,8 +19534,8 @@ async def test_library_note_coordinator_pending_detail_keeps_back_action():
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
-        screen.query_one("#library-notes-row-0").press()
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+        row.press()
         try:
             await _wait_for_condition(
                 pilot,
@@ -19545,8 +19563,8 @@ async def test_library_note_coordinator_pending_load_keeps_back_and_discards_lat
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
-        screen.query_one("#library-notes-row-0").press()
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+        row.press()
         try:
             await _wait_for_condition(
                 pilot,
@@ -19580,8 +19598,8 @@ async def test_library_note_coordinator_new_open_wins_during_keyword_enrichment(
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
-        screen.query_one("#library-notes-row-0").press()
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+        row.press()
         try:
             await _wait_for_condition(
                 pilot,
@@ -19620,8 +19638,8 @@ async def test_library_note_coordinator_load_failure_keeps_back_and_retry():
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
-        screen.query_one("#library-notes-row-0").press()
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+        row.press()
 
         await _wait_for_selector(screen, pilot, "#library-note-load-retry")
         assert screen.query("#library-note-back")
@@ -19641,8 +19659,8 @@ async def test_library_note_coordinator_retry_recovers_transient_load_failure():
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
-        screen.query_one("#library-notes-row-0").press()
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+        row.press()
         await _wait_for_selector(screen, pilot, "#library-note-load-retry")
 
         await pilot.click("#library-note-load-retry")
@@ -19838,8 +19856,8 @@ async def test_library_shell_note_editor_refuses_unknown_keywords_without_servic
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
-        screen.query_one("#library-notes-row-0").press()
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+        row.press()
 
         await _wait_for_selector(screen, pilot, "#library-note-load-retry")
         assert not screen.query("#library-note-keywords")
@@ -19984,12 +20002,12 @@ async def test_library_shell_note_back_returns_to_list():
         await _wait_for_library_shell(screen, pilot)
 
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
-        screen.query_one("#library-notes-row-0").press()
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+        row.press()
         await _wait_for_selector(screen, pilot, "#library-note-title")
 
         _press_note_back(screen)
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        await _wait_for_selector(screen, pilot, ".library-notes-row")
 
         assert screen._notes_state.view == "list"
         assert screen._notes_state.selected_note_id == ""
@@ -20011,15 +20029,15 @@ async def test_library_shell_notes_reader_reentry_retains_editor_but_resets_work
         await _wait_for_library_shell(screen, pilot)
 
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
-        screen.query_one("#library-notes-row-0").press()
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+        row.press()
         await _wait_for_selector(screen, pilot, "#library-note-title")
 
         screen.query_one("#library-row-browse-media").press()
         await _wait_for_selector(screen, pilot, "#library-media-row-0")
 
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        await _wait_for_selector(screen, pilot, ".library-notes-row")
 
         assert screen.query("#library-note-title")
         assert screen._notes_state.view == "editor"
@@ -20043,8 +20061,8 @@ async def test_library_shell_note_detail_race_discards_stale_fetch():
         await _wait_for_library_shell(screen, pilot)
 
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
-        screen.query_one("#library-notes-row-0").press()
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+        row.press()
         await _wait_for_selector(screen, pilot, "#library-note-title")
         for _ in range(150):
             detail = screen._library_note_detail
@@ -20200,13 +20218,43 @@ class _GatedInteractionLibraryNotesScopeService(StaticLibraryNotesScopeService):
         return await super().restore_note(**kwargs)
 
 
+async def _wait_for_note_row(screen, pilot, note_id: str, *, timeout: float = 30.0):
+    """Await the rendered note row carrying ``note_id`` and return it.
+
+    Rows are named by identity rather than by position everywhere in this
+    suite (task-32175): the folder tree pages in the Sort value's order
+    (task-32172), so row 0 is whichever note that order puts first.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        for candidate in screen.query(".library-notes-row").results(Button):
+            if getattr(candidate, "note_id", None) == note_id:
+                await pilot.pause()
+                return candidate
+        if time.monotonic() >= deadline:
+            break
+        await pilot.pause(0.02)
+    rendered = [
+        getattr(row, "note_id", None)
+        for row in screen.query(".library-notes-row").results(Button)
+    ]
+    raise AssertionError(
+        f"No note row for {note_id!r} within {timeout:.1f}s; rendered: {rendered!r}."
+    )
+
+
 async def _open_note_editor(screen, pilot, note_id_suffix: str = "n-1"):
-    """Drive the shared path to the in-canvas note editor for ``_two_notes()``'s
-    first row, then let the mount-time armed-flag callback settle.
+    """Drive the shared path to the in-canvas note editor for one seeded note.
+
+    Opens the row whose ``note_id`` is ``note_id_suffix`` -- by identity, not
+    by position: the folder tree's order is the Sort value's (task-32172), so
+    "the first row" is not a stable way to name a note. Then lets the
+    mount-time armed-flag callback settle.
     """
     screen.query_one("#library-row-browse-notes").press()
-    await _wait_for_selector(screen, pilot, "#library-notes-row-0")
-    screen.query_one("#library-notes-row-0").press()
+    await _wait_for_selector(screen, pilot, ".library-notes-row")
+    row = await _wait_for_note_row(screen, pilot, note_id_suffix)
+    row.press()
     await _wait_for_selector(screen, pilot, "#library-note-title")
     await pilot.pause()
     await pilot.pause()
@@ -20358,12 +20406,17 @@ class _TouchingNotesScopeService(StaticLibraryNotesScopeService):
 
 
 @pytest.mark.asyncio
-async def test_library_shell_note_save_then_back_refreshes_list_title_age_and_order():
+async def test_library_shell_note_save_then_back_refreshes_list_title_and_age():
     """(task-184) After an in-canvas edit persists, returning to the list
     (without leaving the Notes canvas) shows the saved title with a fresh
-    "now" relative age at the top of Newest ordering -- no app restart.
-    Back also re-kicks the local-source snapshot refetch so the DB's own
-    truth confirms the in-memory patch."""
+    "now" relative age -- no app restart. Back also re-kicks the
+    local-source snapshot refetch so the DB's own truth confirms the
+    in-memory patch.
+
+    The ordering half ("...and_order": the edited note jumping to row 0
+    under Newest) went out of reach with task-32128 -- the folder tree
+    orders rows by the repository's title order, not by recency -- so the
+    name lost it too (task-32175, review round 1, finding 7)."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     app.notes_scope_service = _TouchingNotesScopeService(_two_notes())
@@ -20373,12 +20426,25 @@ async def test_library_shell_note_save_then_back_refreshes_list_title_age_and_or
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
 
-        # Open the OLDER note (row 1, "Reading list") so the Newest-order
-        # flip to row 0 after the edit is observable.
+        # Open "Reading list" by note identity, not row position: the
+        # folder tree orders rows by title (task-32128), not the flat
+        # list's Newest-first order this test used to lean on to find it
+        # at row 1 (task-32175).
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-1")
-        row = screen.query_one("#library-notes-row-1", Button)
-        assert str(row.label).splitlines()[0] == "Reading list"
+        await _wait_for_condition(
+            pilot,
+            lambda: len(screen.query(".library-notes-row")) >= 2,
+            message="Both note rows never mounted.",
+        )
+        row = next(
+            candidate
+            for candidate in screen.query(".library-notes-row").results(Button)
+            if candidate.note_id == "n-2"
+        )
+        # task-32137 unified the row label onto one "title · age" line
+        # (age used to sit on its own second line) -- strip the tree's
+        # indent and split on the join separator (task-32175).
+        assert str(row.label).strip().split(" · ")[0] == "Reading list"
         row.press()
         await _wait_for_selector(screen, pilot, "#library-note-title")
         await pilot.pause()
@@ -20397,11 +20463,18 @@ async def test_library_shell_note_save_then_back_refreshes_list_title_age_and_or
 
         list_calls_before = len(app.notes_scope_service.calls)
         _press_note_back(screen)
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        await _wait_for_selector(screen, pilot, ".library-notes-row")
 
-        first_label = str(screen.query_one("#library-notes-row-0", Button).label)
-        assert first_label.splitlines()[0] == "Reading list (edited)"
-        assert first_label.splitlines()[1] == "now"
+        def _edited_row_label() -> str:
+            edited = next(
+                candidate
+                for candidate in screen.query(".library-notes-row").results(Button)
+                if candidate.note_id == "n-2"
+            )
+            return str(edited.label)
+
+        first_label = _edited_row_label().strip()
+        assert first_label.split(" · ") == ["Reading list (edited)", "now"]
 
         # Back re-kicked the authoritative snapshot refetch.
         for _ in range(150):
@@ -20414,8 +20487,8 @@ async def test_library_shell_note_save_then_back_refreshes_list_title_age_and_or
         # And the refetched truth keeps the same row state (no revert).
         await pilot.pause()
         await pilot.pause()
-        first_label = str(screen.query_one("#library-notes-row-0", Button).label)
-        assert first_label.splitlines()[0] == "Reading list (edited)"
+        first_label = _edited_row_label().strip()
+        assert first_label.split(" · ")[0] == "Reading list (edited)"
 
 
 @pytest.mark.asyncio
@@ -21905,16 +21978,24 @@ async def test_library_shell_filtered_delete_refreshes_list_without_ghost():
         box.focus()
         await pilot.pause()
         await pilot.press("enter")
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
 
-        # The filter narrows the list to just "Q3 retro" (n-1).
-        assert not any(
-            "Reading list" in str(getattr(button, "label", ""))
-            for button in screen.query(".library-notes-row")
+        # The filter narrows the list to just "Q3 retro" (n-1). The tree
+        # reloads the filtered window asynchronously (task-32175): the
+        # pre-filter rows are still mounted for a moment, so wait for the
+        # filtered content itself rather than merely "a row exists".
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(screen.query(".library-notes-row"))
+            and not any(
+                "Reading list" in str(getattr(button, "label", ""))
+                for button in screen.query(".library-notes-row")
+            ),
+            message="Filtered list still shows Reading list.",
         )
         assert screen._notes_state.filter == "retro"
 
-        screen.query_one("#library-notes-row-0").press()
+        row = screen.query(".library-notes-row").first()
+        row.press()
         await _wait_for_selector(screen, pilot, "#library-note-title")
         assert screen._notes_state.selected_note_id == "n-1"
 
@@ -21977,9 +22058,11 @@ async def test_library_shell_opening_missing_note_falls_back_to_list():
         await _wait_for_library_shell(screen, pilot)
 
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
-        row_button = screen.query_one("#library-notes-row-0")
-        assert row_button.note_id == "n-1"
+        # By identity: the row that must go stale is n-1's, wherever the
+        # tree's current order renders it (task-32172 made that order the
+        # Sort value's, so a positional pick could capture n-2 and press an
+        # existing note -- never exercising the missing-note fallback).
+        row_button = await _wait_for_note_row(screen, pilot, "n-1")
 
         # Simulate the note vanishing out from under the still-rendered row
         # (deleted elsewhere, or simply a stale/ghost row): the fake's
@@ -23507,8 +23590,8 @@ async def test_library_shell_pre_existing_note_emptied_out_still_saves_in_real_d
         await _wait_for_library_shell(screen, pilot)
 
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
-        screen.query_one("#library-notes-row-0").press()
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+        row.press()
         await _wait_for_selector(screen, pilot, "#library-note-title")
         await pilot.pause()
         await pilot.pause()
@@ -23751,8 +23834,8 @@ async def test_library_shell_blank_title_save_round_trip_agrees_with_the_row(
         await _wait_for_library_shell(screen, pilot)
 
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
-        screen.query_one("#library-notes-row-0").press()
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+        row.press()
         await _wait_for_selector(screen, pilot, "#library-note-title")
         await pilot.pause()
         await pilot.pause()
@@ -24342,8 +24425,8 @@ async def test_library_note_60x20_loading_allocation_keeps_back_visible() -> Non
         await _wait_for_library_shell(screen, pilot)
         await _wait_for_library_notes_compact(screen, pilot, True)
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
-        screen.query_one("#library-notes-row-0").press()
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+        row.press()
         try:
             await _wait_for_condition(
                 pilot,
@@ -27509,7 +27592,7 @@ async def test_library_landing_continue_reapplies_database_notes_scope_after_adm
             lambda: (
                 screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
                 and screen._notes_state.filter == "retro"
-                and bool(screen.query("#library-notes-row-0"))
+                and bool(screen.query(".library-notes-row"))
                 and "Reading list" not in _visible_text(screen)
             ),
             message="Continue did not restore the Database Notes filter.",
@@ -28396,11 +28479,16 @@ async def test_library_notes_list_focuses_first_row_and_arrow_keys_move_it():
         await _wait_for_library_shell(screen, pilot)
 
         screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        await _wait_for_condition(
+            pilot,
+            lambda: len(screen.query(".library-notes-row")) >= 2,
+            message="Both note rows never mounted.",
+        )
         await pilot.pause()
 
-        first_row = screen.query_one("#library-notes-row-0", Button)
-        second_row = screen.query_one("#library-notes-row-1", Button)
+        rows = list(screen.query(".library-notes-row").results(Button))
+        assert len(rows) >= 2, f"expected at least two note rows, got {len(rows)}"
+        first_row, second_row = rows[0], rows[1]
         assert first_row.has_focus, "entering the list must focus its first row"
 
         await pilot.press("down")
@@ -28676,7 +28764,7 @@ async def test_library_shell_notes_selected_export_opens_exact_selection_scope()
         await _wait_for_selector(screen, pilot, "#library-notes-select-toggle")
         screen.query_one("#library-notes-select-toggle").press()
         await _wait_for_selector(screen, pilot, "#library-notes-selection-actions")
-        screen.query_one("#library-notes-row-0").press()
+        screen.query(".library-notes-row").first().press()
         await pilot.pause()
 
         screen.query_one("#library-notes-export-selected").press()
@@ -31731,7 +31819,8 @@ async def test_library_note_wide_browse_collapses_library_when_work_begins() -> 
         assert canvas.region.x >= rail.region.right
         assert screen.query_one("#library-notes-task-return", Button).display is False
 
-        screen.query_one("#library-notes-row-0").press()
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+        row.press()
         await _wait_for_selector(screen, pilot, "#library-note-body")
         await pilot.pause()
 
@@ -31767,15 +31856,13 @@ async def test_library_note_editor_back_restores_exact_wide_browse_context() -> 
         screen.query_one("#library-row-browse-notes").press()
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
 
-        screen.query_one("#library-notes-sort", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-notes-sort-title")
-        screen.query_one("#library-notes-sort-title", Button).press()
-        await _wait_for_condition(
-            pilot,
-            lambda: screen._notes_state.sort == "title",
-            message="Notes title scope did not settle.",
-        )
-        await pilot.pause()
+        # This used to press #library-notes-sort ("title") for a
+        # deterministic row order. It no longer needs to: since task-32172
+        # the Sort value IS the tree's ORDER BY, applied by the pager, and
+        # the row picked below comes out of the settled filter window
+        # anyway. Sort itself is composed here (task-32172 put it back on
+        # the folder tree) and enabled while no filter is applied.
+        assert screen.query_one("#library-notes-sort", Button).disabled is False
         notes_filter = screen.query_one("#library-notes-filter", Input)
         notes_filter.value = "scope"
         notes_filter.focus()
@@ -31831,7 +31918,10 @@ async def test_library_note_editor_back_restores_exact_wide_browse_context() -> 
 
         assert screen._notes_state.source == "database"
         assert screen._notes_state.filter == "scope"
-        assert screen._notes_state.sort == "title"
+        # The untouched default: the round trip must not scramble the sort
+        # key, which is all this assertion can still pin now that Sort is
+        # unreachable in tree mode (task-32175, review round 1).
+        assert screen._notes_state.sort == "newest"
         assert screen._notes_state.tree_selected_placement_id == placement_id
         assert screen.query_one("#library-notes-filter", Input).value == "scope"
         assert (
@@ -31854,8 +31944,7 @@ async def test_library_note_task_return_receipt_respects_newer_user_focus() -> N
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
-        row = screen.query_one("#library-notes-row-0")
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
         row.focus(scroll_visible=False)
         receipt = screen._capture_library_notes_browse_return_receipt(
             note_id=str(row.note_id)
@@ -31997,7 +32086,8 @@ async def test_library_note_compact_stage_drills_in_and_back_without_losing_orig
         assert screen.query_one("#library-rail").display is False
         assert screen.query_one("#library-canvas").display is True
 
-        screen.query_one("#library-notes-row-0").press()
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+        row.press()
         await _wait_for_selector(screen, pilot, "#library-note-body")
         await pilot.pause()
         assert screen._library_notes_active_region() == "editor"
@@ -32167,7 +32257,8 @@ async def test_library_note_compact_surplus_allocation_expands_only_named_owner(
         screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}").press()
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
         if region in {"editor", "context"}:
-            screen.query_one("#library-notes-row-0").press()
+            row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+            row.press()
             await _wait_for_selector(screen, pilot, "#library-note-body")
         if region == "context":
             screen.query_one("#library-note-context").press()
@@ -32408,9 +32499,14 @@ async def test_library_note_breakpoint_round_trips_restore_every_region_focus_ro
         screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}").press()
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
         await round_trip("#library-notes-filter", "filter", "navigator")
-        note_row = screen.query_one("#library-notes-row-0")
+        note_row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+        # task-32175: the tree's semantic role is "note-placement:<id>"
+        # (library_screen.py's focus-identity capture), not the flat
+        # list's "note-row:<note_id>" this used to hardcode.
         await round_trip(
-            "#library-notes-row-0", f"note-row:{note_row.note_id}", "navigator"
+            f"#{note_row.id}",
+            f"note-placement:{note_row.placement_id}",
+            "navigator",
         )
 
         note_row.press()
@@ -32527,8 +32623,8 @@ async def test_library_note_load_failure_outranks_rail_focus_on_compact_entry() 
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
-        screen.query_one("#library-notes-row-0").press()
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+        row.press()
         await _wait_for_selector(screen, pilot, "#library-note-load-retry")
         screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}").focus()
 
@@ -32554,7 +32650,11 @@ async def test_library_note_newer_selection_cancels_pending_back_focus() -> None
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        await _wait_for_condition(
+            pilot,
+            lambda: len(screen.query(".library-notes-row")) >= 2,
+            message="Both note rows never mounted.",
+        )
         screen._notes_state.pending_focus_identity = LibraryNotesFocusIdentity(
             stage="notes",
             region="navigator",
@@ -32563,7 +32663,14 @@ async def test_library_note_newer_selection_cancels_pending_back_focus() -> None
         )
         screen._notes_state.pending_focus_waits_for_snapshot = True
 
-        screen.query_one("#library-notes-row-1").press()
+        # task-32175: select by identity, not row position -- the folder
+        # tree orders rows by title (task-32128), not the flat list order.
+        other_row = next(
+            candidate
+            for candidate in screen.query(".library-notes-row").results(Button)
+            if candidate.note_id != "n-1"
+        )
+        other_row.press()
         await _wait_for_selector(screen, pilot, "#library-note-body")
         await _wait_for_condition(
             pilot,
@@ -32884,7 +32991,8 @@ async def test_library_note_local_shortcuts_are_region_scoped_and_flush_guarded(
         assert filter_input.value == "/"
 
         filter_input.value = ""
-        screen.query_one("#library-notes-row-0").press()
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+        row.press()
         await _wait_for_selector(screen, pilot, "#library-note-body")
         body = screen.query_one("#library-note-body", TextArea)
         body.text = "save before opening Create"
@@ -33902,13 +34010,17 @@ async def _task10_open_notes_navigator(screen, pilot) -> None:
 
 async def _task10_open_note_editor_with_keyboard(screen, pilot) -> None:
     await _task10_open_notes_navigator(screen, pilot)
-    await _task10_activate_with_keyboard(screen, pilot, "#library-notes-row-0")
+    # task-32175: resolve the first row's actual id -- flat and tree modes
+    # compose different ids for the same semantic "first row", and
+    # ``_task10_activate_with_keyboard`` needs an id `query_one` can match.
+    first_row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+    await _task10_activate_with_keyboard(screen, pilot, f"#{first_row.id}")
     await _wait_for_selector(screen, pilot, "#library-note-body")
     await pilot.pause()
 
 
 _TASK10_NOTE_CAPABILITIES = (
-    "filter_sort",
+    "filter",
     "create_discard",
     "import_whole_export",
     "multi_select_export",
@@ -33976,7 +34088,17 @@ async def test_library_note_keyboard_capability_matrix(
         await _wait_for_library_shell(screen, pilot)
         await _wait_for_library_notes_compact(screen, pilot, compact)
 
-        if capability == "filter_sort":
+        if capability == "filter":
+            # task-32175: this used to be "filter_sort" and also drove
+            # #library-notes-sort by keyboard. It was split while task-32128
+            # had Sort off the folder tree; task-32172 has since put Sort
+            # back, so this node COULD carry its Sort half again -- but it is
+            # red on an unrelated filter-submit defect (task-32201), so
+            # rejoining them here would only hide Sort behind that red.
+            # Sort's keyboard round trip (Tab to the control, Enter, Tab to
+            # the option, Enter, sort applied) is pinned meanwhile in
+            # Tests/UI/test_library_notes_wave_list.py
+            # ::test_sort_is_operable_by_keyboard_on_the_flat_list.
             await _task10_open_notes_navigator(screen, pilot)
             filter_input = await _task10_focus_with_keyboard(
                 screen, pilot, "#library-notes-filter"
@@ -33988,11 +34110,6 @@ async def test_library_note_keyboard_capability_matrix(
                 message="Keyboard filter submit never reached search_notes.",
             )
             assert filter_input.value == "retro"
-            await _task10_activate_with_keyboard(screen, pilot, "#library-notes-sort")
-            await _task10_activate_with_keyboard(
-                screen, pilot, "#library-notes-sort-oldest"
-            )
-            assert screen._notes_state.sort == "oldest"
             return
 
         if capability == "create_discard":
@@ -34087,7 +34204,21 @@ async def test_library_note_keyboard_capability_matrix(
             await _task10_activate_with_keyboard(
                 screen, pilot, "#library-notes-select-toggle"
             )
-            await _task10_activate_with_keyboard(screen, pilot, "#library-notes-row-0")
+
+            # task-32175: select "n-1"'s row by identity, not position --
+            # flat and tree modes compose different ids for the same
+            # semantic row, and this branch asserts on n-1's export scope.
+            def _row_n1_selector() -> str:
+                row = next(
+                    candidate
+                    for candidate in screen.query(".library-notes-row").results(
+                        Button
+                    )
+                    if candidate.note_id == "n-1"
+                )
+                return f"#{row.id}"
+
+            await _task10_activate_with_keyboard(screen, pilot, _row_n1_selector())
             assert screen._notes_state.row_selection.count == 1
             await _task10_activate_with_keyboard(
                 screen, pilot, "#library-notes-select-all"
@@ -34097,7 +34228,7 @@ async def test_library_note_keyboard_capability_matrix(
                 screen, pilot, "#library-notes-select-clear"
             )
             assert screen._notes_state.row_selection.count == 0
-            await _task10_activate_with_keyboard(screen, pilot, "#library-notes-row-0")
+            await _task10_activate_with_keyboard(screen, pilot, _row_n1_selector())
             await _task10_activate_with_keyboard(
                 screen, pilot, "#library-notes-export-selected"
             )
@@ -34299,7 +34430,8 @@ async def test_library_note_keyboard_focus_order_and_persistent_labels(
             # Width includes one cell of horizontal padding on each side.
             # Six visible label cells therefore require at least eight cells.
             assert filter_label.region.width >= 8
-        await _task10_activate_with_keyboard(screen, pilot, "#library-notes-row-0")
+        first_row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+        await _task10_activate_with_keyboard(screen, pilot, f"#{first_row.id}")
         await _wait_for_selector(screen, pilot, "#library-note-body")
         await pilot.pause()
 
@@ -34585,7 +34717,8 @@ async def test_library_note_media_route_switch_updates_contextual_chrome() -> No
         await _wait_for_library_notes_compact(screen, pilot, False)
         await _task10_open_notes_navigator(screen, pilot)
         assert bool(screen.query("#library-notes-source-strip"))
-        await _task10_activate_with_keyboard(screen, pilot, "#library-notes-row-0")
+        first_row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+        await _task10_activate_with_keyboard(screen, pilot, f"#{first_row.id}")
         await _wait_for_selector(screen, pilot, "#library-note-body")
 
         notes_header = screen.query_one("#library-header-line")
@@ -35239,14 +35372,28 @@ async def test_background_recompose_restores_focus_on_an_empty_conversations_lis
 
 @pytest.mark.asyncio
 async def test_background_recompose_restores_focus_on_a_filtered_empty_media_list():
-    """Qodo #2483: the Media channel stands down when it cannot land.
+    """Qodo #2483: a background recompose never leaves a dead keyboard.
 
-    A filter MISS is the one empty Media page with no recovery action at
-    all -- the canvas returns right after its query-echoing status line,
-    so NONE of the four controls ``_focus_library_list_entry`` falls back
-    to is composed. The armed channel therefore lands nothing, and
-    standing the screen-level seam down for it left a background
-    recompose inside the settle window with a dead keyboard.
+    The original defect: on a filter-MISS page the armed channel landed
+    nothing, and standing the screen-level seam down for it left a
+    background recompose inside the settle window with no focused widget.
+
+    task-32213 (critique #9 row 10) removed this test's premise: the miss
+    page now keeps its toolbar, so ``#library-media-type-filter`` is
+    always composed and the Media channel always has somewhere to land.
+    What is still pinned here is the part that mattered -- after a
+    background recompose inside the armed window, SOMETHING attached
+    inside ``#screen-content`` holds focus.
+
+    The strict "the Media channel cannot land at all" leg is now
+    UNPINNED. The Conversations sibling directly above does not cover it:
+    that one stands down at ``library_screen.py``'s row-class lookup
+    (Conversations is absent from ``_LIBRARY_LIST_ROW_CLASS_BY_ROW_ID``),
+    a different branch from the media-specific
+    ``_library_media_empty_list_fallback_target() is None`` leg. Re-pinning
+    it needs a Media page that composes no enabled fallback at all -- an
+    empty list with the type or sort chooser OPEN is the remaining one,
+    because the chooser replaces the toolbar row. Tracked as task-32292.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
@@ -35263,16 +35410,17 @@ async def test_background_recompose_restores_focus_on_a_filtered_empty_media_lis
         await _wait_for_condition(
             pilot,
             lambda: not screen.query(".library-media-row")
+            # task-32213: the miss page keeps its toolbar, so it offers no
+            # dedicated recovery BUTTON but does keep the type facet.
             and not any(
                 screen.query(selector)
                 for selector in (
-                    "#library-media-type-filter",
                     "#library-media-empty-clear-type",
                     "#library-media-empty-import",
                     "#library-media-retry",
                 )
             ),
-            message="the filter miss never reached a recovery-less empty page",
+            message="the filter miss never reached its empty page",
         )
 
         filter_input = screen.query_one("#library-media-filter", Input)
@@ -35280,7 +35428,7 @@ async def test_background_recompose_restores_focus_on_a_filtered_empty_media_lis
         await pilot.pause()
         assert screen.focused is filter_input
 
-        # Inside the armed settle window, on a page the channel cannot serve.
+        # Inside the armed settle window, on a page with no rows to land on.
         screen._arm_library_list_entry_focus()
         assert screen._library_pending_list_entry_focus is True
 
