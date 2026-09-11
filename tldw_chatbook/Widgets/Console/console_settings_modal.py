@@ -39,6 +39,9 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
 from tldw_chatbook.Chat.console_provider_support import (
     resolve_console_provider_identity,
 )
+from tldw_chatbook.Chat.custom_endpoint_registry import (
+    CUSTOM_ENDPOINT_ID_PREFIX,
+)
 from tldw_chatbook.Chat.local_server_discovery import (
     normalize_probe_base_url,
     LocalModelProbeResult,
@@ -2223,10 +2226,17 @@ class ConsoleSettingsModal(
 
         Option values stay raw provider config keys (task-191); only the
         rendered labels change, and the ``(WIP)`` marker from the underlying
-        option builder is preserved.
+        option builder is preserved. Registry entries (``custom-ep:<slug>``
+        values, ADR-146) already carry their ``display_name`` label from the
+        option builder, so they bypass the shared-catalog relabel unchanged.
         """
         options: list[tuple[str, str]] = []
-        for option in build_console_provider_options(self._providers_models):
+        for option in build_console_provider_options(
+            self._providers_models, app_config=self._app_config
+        ):
+            if option.value.startswith(CUSTOM_ENDPOINT_ID_PREFIX):
+                options.append((option.label, option.value))
+                continue
             label = provider_display_name(option.value)
             if option.label.endswith(" (WIP)"):
                 label = f"{label} (WIP)"

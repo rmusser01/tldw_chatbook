@@ -27,8 +27,10 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_default_console_session_settings,
     build_console_model_options,
     build_console_provider_options,
+    console_session_endpoint_survives_restart,
     console_settings_warnings,
     reasoning_effort_hint_for_model,
+    resolve_effective_chat_configuration,
     validate_console_session_settings,
 )
 from tldw_chatbook.Chat.custom_endpoint_registry import (
@@ -2420,3 +2422,22 @@ def test_unresolvable_custom_endpoint_falls_back_to_generic_family():
     identity = resolve_console_provider_identity("custom-ep:ghost")
     assert identity.is_supported is True
     assert identity.execution_key == "custom"
+
+def test_provider_options_append_registry_entries_after_builtins():
+    options = build_console_provider_options({"openai": ["m"]}, app_config=_registry_config())
+    values = [o.value for o in options]
+    assert values.index("custom") < values.index("custom-ep:gpu")
+    labels = {o.value: o.label for o in options}
+    assert labels["custom-ep:gpu"] == "GPU llama"
+
+def test_effective_configuration_resolves_custom_endpoint():
+    effective = resolve_effective_chat_configuration(
+        _registry_config(), provider="custom-ep:paid", model=None)
+    assert effective.provider == "custom-ep:paid"
+    assert effective.base_url == "https://api.example.com/v1"
+
+def test_custom_endpoint_sessions_survive_restart():
+    settings = ConsoleSessionSettings(provider="custom-ep:gpu", model="m",
+                                      base_url="http://192.168.1.5:8080")
+    assert console_session_endpoint_survives_restart(
+        settings, app_config=_registry_config(), environ={}) is True
