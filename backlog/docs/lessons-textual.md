@@ -608,6 +608,52 @@ paths skip it. The pinned test is
 `test_click_outside_closes_the_menu_without_dispatching`, which asserts focus is NOT
 the opener after the click.
 
+**The `DescendantFocus` MESSAGE lands the other way round (task-32100, 2026-09-10).**
+`set_focus` runs before the press, but the event it posts is a queued message, so a
+`DescendantFocus` handler runs AFTER the `Button.Pressed` handler for the same click.
+A handler that reads a focus change as "the user took control" therefore revokes work
+the press handler started ~20 ms earlier. Library Notes: clicking a note row started a
+folder-tree locator, and the click's own focus event then superseded it — abandoned on
+every open, traced as `supersede -> 3 / locator start gen=3 / supersede -> 4 / locator
+end -> False`. Fence background work on the focus intent only when that work will
+actually take focus; work that just repaints has no stake in it. Only the real gesture
+reproduces this — calling the same coroutine directly from a test posts no focus event
+and passes.
+
+## `Screen`'s Tab binding is not `priority`, so a burst types past it — and `pilot.press` can never show you
+
+**task-32106 / PR #2571 review round 1, 2026-09-10.** A live report said typing
+title–Tab–body in one burst appended the body to the title. I could not reproduce it
+and closed the criterion, having disproved a mechanism nobody proposed (Textual's
+parser has no burst-to-`Paste` heuristic — true, and irrelevant). The real mechanism
+is message dispatch: `Screen.BINDINGS`' `Binding("tab", "app.focus_next")` is **not**
+`priority=True`, so `Key(tab)` is *posted* to the focused `Input` and bubbles one
+message-queue hop per ancestor, while the App keeps dequeuing the following keys and
+forwarding each to `self.focused` — still the field the user meant to leave. Stock
+Textual 8, nothing from this repo:
+
+```
+pilot  elapsed=1268.9ms  title='My first note'      body='hello'
+burst  elapsed=   0.2ms  title='My first notehello' body=''
+```
+
+**Two lessons, and the second is the expensive one.** (i) A field that must hand focus
+over mid-sentence needs its own `priority=True` Tab binding — namespaced (`screen.` /
+`app.`), because a bare action resolves against the `Input`, which has no
+`action_focus_next`, and the binding then silently never fires. It belongs on every
+field of the form, `TextArea` included (a peer hit the same symptom on the note body),
+and on a `TextArea` it is correct only while `tab_behavior == "focus"` — assert that
+rather than trusting the default. Put it on the FIELDS, not on the screen: a
+priority Tab at screen level preempts every `on_key` Tab trap the screen owns (here,
+the note delete prompt's). (ii) `pilot.press` is
+the OPPOSITE of a burst: `App._press_keys` awaits `wait_for_idle(0)` twice plus the
+animator between every key, so the loop fully drains between keystrokes (~200 ms each
+here). Any defect whose trigger is "faster than the event loop" is invisible to it, and
+a test written with it is green by construction. Post the keys yourself with no awaits
+— `ev = events.Key(k, char); ev.set_sender(app); app._driver.send_message(ev)` — then
+one `pause()`. A task that says "1 s gaps behave" is telling you the drained-loop
+harness cannot see it.
+
 ## `run_worker(exclusive=True)` CANCELS the group — it never queues behind it
 
 **schedules-redesign PR-3 Qodo round, 2026-09-03.** The Automations pane's in-place
