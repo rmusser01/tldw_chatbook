@@ -88,9 +88,43 @@ _CHECK_REFUSAL_COPY: dict[str, str] = {
         "Some files there use a permission model this sync can't track. "
         "Make every file in the folder writable, then Check again."
     ),
+    # The bare gate name, which is what a *listing* failure reports. Every
+    # per-file refusal replaces it with the dominant gate below.
     "root_discovery_incomplete": (
-        "Some files there use a permission model this sync can't track. "
-        "Make every file in the folder writable, then Check again."
+        "Some files in that folder couldn't be read. "
+        "Check that you can open everything in it, then Check again."
+    ),
+    "mixed_newlines": (
+        "Some files there use a mix of line endings. "
+        "Save them with one style, then Check again."
+    ),
+    "unsupported_newline": (
+        "Some files there use older Mac line endings. "
+        "Save them with Unix or Windows line endings, then Check again."
+    ),
+    "unsupported_encoding": (
+        "Some files there are not UTF-8 text. "
+        "Convert or move them out of the folder, then Check again."
+    ),
+    "max_file_bytes_exceeded": (
+        "Some files there are larger than 10 MB. "
+        "Move them out of the folder, then Check again."
+    ),
+    "non_regular": (
+        "Some entries there aren't ordinary files. "
+        "Move them out of the folder, then Check again."
+    ),
+    "multiple_links": (
+        "Some files there have more than one name on disk. "
+        "Leave a single copy in the folder, then Check again."
+    ),
+    "link_or_reparse": (
+        "Some entries there are links rather than files. "
+        "Move them out of the folder, then Check again."
+    ),
+    "target_changed_during_read": (
+        "Something changed those files while they were being read. "
+        "Check again once the folder is settled."
     ),
     "notes_sync_cutover_not_admitted": (
         "Sync isn't available while another Chatbook instance owns this "

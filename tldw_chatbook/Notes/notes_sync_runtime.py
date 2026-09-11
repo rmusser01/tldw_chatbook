@@ -606,8 +606,14 @@ class _ProductionRuntimeAdapter:
                     refusals[error.reason_code] += 1
         if refusals:
             dominant, count = refusals.most_common(1)[0]
+            # `reason_code`, not only `detail`: every per-file gate lands on
+            # this one exception -- `mixed_newlines`, `unsupported_encoding`,
+            # `max_file_bytes_exceeded`, `non_regular`, … -- so a caller that
+            # reads the gate name alone can only give permission advice, which
+            # is wrong for all but one of them.
             raise NotesSyncRootRefused(
                 "root_discovery_incomplete",
+                reason_code=dominant,
                 detail=(
                     f"{sum(refusals.values())} of {syncable_files} files refused; "
                     f"{count} for {dominant}"

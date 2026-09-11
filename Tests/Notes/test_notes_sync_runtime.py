@@ -3212,7 +3212,45 @@ async def test_root_discovery_refusal_names_its_count_and_dominant_reason(
     assert str(raised.value) == "root_discovery_incomplete"
     assert "2 of 3" in raised.value.detail
     assert "unsupported_metadata" in raised.value.detail
+    # The dominant gate must reach the caller, not only the detail string:
+    # every per-file gate lands on `root_discovery_incomplete`, and the UI
+    # cannot tell a permission refusal from a newline one without this.
+    assert raised.value.reason_code == "unsupported_metadata"
     assert owner._root_paths == {}
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_root_discovery_refusal_carries_a_non_permission_dominant_reason(
+    tmp_path: Path,
+) -> None:
+    """TASK-32244: a newline refusal must not be reported as a permission one."""
+
+    from tldw_chatbook.Notes.notes_sync_runtime import (
+        NotesSyncRootRefused,
+        NotesSyncRootSetup,
+    )
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "ok.md").write_text("body", encoding="utf-8")
+    (vault / "mixed.md").write_bytes(b"alpha\r\nbeta\ngamma\n")
+    owner = _refusing_owner(tmp_path)
+    await owner.start()
+
+    with pytest.raises(NotesSyncRootRefused) as raised:
+        await owner.review_setup(
+            NotesSyncRootSetup(
+                display_name="Vault",
+                canonical_path=str(vault),
+                note_scope_id="local_note",
+                direction=NotesSyncDirection.BIDIRECTIONAL,
+            )
+        )
+
+    assert str(raised.value) == "root_discovery_incomplete"
+    assert raised.value.reason_code == "mixed_newlines"
+    assert "1 of 2" in raised.value.detail
     await owner.shutdown()
 
 

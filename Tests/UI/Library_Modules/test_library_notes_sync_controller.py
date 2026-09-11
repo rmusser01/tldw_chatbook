@@ -3052,7 +3052,16 @@ async def test_activation_rejects_malformed_control_results(malformed: object) -
         ("passive_process", "Another Chatbook window is using that folder"),
         ("lasting_root_overlap", "already connected"),
         ("unsupported_metadata", "permission model this sync can't track"),
-        ("root_discovery_incomplete", "permission model this sync can't track"),
+        # TASK-32244: every per-file gate arrives as `root_discovery_incomplete`
+        # carrying the dominant gate as its reason. Permission advice is right
+        # for exactly one of them, so each must reach its own sentence.
+        ("root_discovery_incomplete", "couldn't be read"),
+        ("mixed_newlines", "mix of line endings"),
+        ("unsupported_newline", "older Mac line endings"),
+        ("unsupported_encoding", "not UTF-8 text"),
+        ("max_file_bytes_exceeded", "larger than 10 MB"),
+        ("non_regular", "aren't ordinary files"),
+        ("multiple_links", "more than one name on disk"),
         (
             "notes_sync_cutover_not_admitted",
             "another Chatbook instance owns this profile",
