@@ -49,4 +49,26 @@ Three painted-row pins in Tests/UI/test_library_media_render_fixes.py were re-me
 Live-verified at 235x52 and 100x30 on the seeded profile: rows read 'audio · added 1h ago', 'pdf · added 1h ago', 'video · added 1h ago'.
 
 Files: tldw_chatbook/Library/library_media_state.py; Tests/Library/test_library_media_state.py; Tests/UI/test_library_media_render_fixes.py; Tests/UI/test_library_crit10_media_rows.py (new); Docs/User_Guide/library/media-and-conversations.md.
+## Fix round 1 + re-review round 1
+
+Two copy rulings landed after the notes above were written, so read those as
+the original round only:
+
+1. **`added 3m ago` -> `added 3m`** (review round 1): the LABEL removes the
+   duration reading, and the Trash list's own grammar (`trashed 3m`) is the
+   house style. The four cells went straight to the narrow Items pane -- a
+   keyword row paints its term again, and the 36-cell floor reaches into the
+   `keyword:` label instead of ending before it. So the "product call left
+   open" in the notes above was TAKEN.
+2. **`added 3m` -> `updated 3m`** (re-review finding A): the value is the
+   record's `last_modified`, not its ingest time -- the browse contract maps
+   `updated_at` to `last_modified` and never projects `ingestion_date`, and
+   saving an analysis writes it. "added" would have swapped one ambiguity for
+   another, so the row now uses the same word the preview pane already uses
+   for the same field ("Updated:"). The helper is `media_updated_age_copy`.
+
+Current pins: `pdf · updated 3m`, `video · updated 2h`, `video · updated 3m`,
+`pdf · updated 2h`; the helper returns `updated 10m` / `updated just now` /
+`""`. Every painted pin in `test_library_media_render_fixes.py` was
+re-measured at each step rather than hand-edited.
 <!-- SECTION:NOTES:END -->

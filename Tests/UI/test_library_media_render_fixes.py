@@ -3024,14 +3024,14 @@ async def test_media_items_paint_two_rows_each_with_no_blank_row_between():
 # ---------------------------------------------------------------------------
 
 
-_ANALYSED_SECONDARY = "document · added 5m · analysed"
+_ANALYSED_SECONDARY = "document · updated 5m · analysed"
 
 
 def _review_state_items(count: int = 4, analysed: int = 2) -> list[dict]:
     """``count`` ``document`` items, the first ``analysed`` of them analysed.
 
     The stamp is fixed 5m30s back so every row's age label is "5m" and the
-    secondary line is exactly the 30-cell ``document · added 5m · analysed`` the
+    secondary line is exactly the 30-cell ``document · updated 5m · analysed`` the
     Items pane has to hold.
     """
     stamp = (
@@ -3077,7 +3077,7 @@ async def test_media_rows_paint_analysed_only_for_analysed_items(size, items_wid
 
     What this pins about width: each parametrized size resolves the Items
     pane to its own AUTOMATIC width, and the 30-cell
-    ``document · added 5m · analysed`` paints whole in it, indented, with room to
+    ``document · updated 5m · analysed`` paints whole in it, indented, with room to
     spare. The narrower 36-cell FLOOR is pinned separately by
     ``test_analysed_secondary_survives_the_36_cell_items_floor`` -- a
     ``>= 36`` assertion here would have claimed a floor that never ran,
@@ -3110,8 +3110,8 @@ async def test_media_rows_paint_analysed_only_for_analysed_items(size, items_wid
             _ANALYSED_SECONDARY,
         ], secondaries
         assert [line.strip() for line in secondaries[2:]] == [
-            "document · added 5m",
-            "document · added 5m",
+            "document · updated 5m",
+            "document · updated 5m",
         ], secondaries
         assert _items_pane_width(screen) == items_width
 
@@ -3622,17 +3622,17 @@ def _match_reason_items() -> list[dict]:
         (
             (235, 52),
             [
-                "article · added 2m · keyword: notes · loaded",
-                "article · added 2m",
-                "article · added 2m · keyword: notesandmo…",
+                "article · updated 2m · keyword: notes · loaded",
+                "article · updated 2m",
+                "article · updated 2m · keyword: notesandmo…",
             ],
         ),
         (
             (100, 30),
             [
-                "article · added 2m · keyword: notes ·…",
-                "article · added 2m",
-                "article · added 2m · keyword: notesan…",
+                "article · updated 2m · keyword: notes ·…",
+                "article · updated 2m",
+                "article · updated 2m · keyword: notesan…",
             ],
         ),
     ],
@@ -3648,7 +3648,7 @@ async def test_keyword_only_rows_paint_the_keyword_that_matched(size, expected):
     36 cells -- ``notesandmorestuff`` would push the line past it whole.
 
     task-32347 made both sizes tighter and the expectations are now
-    per-size rather than shared: labelling the age ("added 2m") costs 6
+    per-size rather than shared: labelling the age ("updated 2m") costs 6
     cells on every row, so the narrow pane no longer has room for the
     trailing "· loaded" on the row the Reader holds. The term itself still
     paints -- dropping the review round's " ago" is what bought that back.
@@ -3665,7 +3665,7 @@ async def test_keyword_only_rows_paint_the_keyword_that_matched(size, expected):
         lines = _painted_item_lines(host, screen)
         secondaries = [line.strip() for line in lines if "article · " in line]
         # task-32347 cost, pinned rather than hidden: labelling the age
-        # ("added 2m", 8 cells where "2m" was 2) made every secondary 6
+        # ("updated 2m", 8 cells where "2m" was 2) made every secondary 6
         # cells longer, and task-32364 AC#1 adds "· loaded" to whichever
         # row the Reader holds. At the wide size both still fit; at the
         # narrow one the "· loaded" suffix is what runs out of room.
@@ -3679,7 +3679,7 @@ async def test_keyword_reason_clips_at_the_36_cell_items_floor():
 
     The ten-character cap keeps the line SHORT; it does not make it fit
     here. A 36-cell Items pane spends 4 cells on its own padding, so the
-    row has ~28 cells and `article · added 2m · keyword: notes` needs 35 --
+    row has ~28 cells and `article · updated 2m · keyword: notes` needs 35 --
     at the floor a keyword row still cannot show its whole term, for the
     short keyword as well as the long one. The neighbouring
     `test_analysed_secondary_survives_the_36_cell_items_floor` shows what
@@ -3723,18 +3723,18 @@ async def test_keyword_reason_clips_at_the_36_cell_items_floor():
         # task-32347 costs the floor 6 cells, and the pin says exactly how
         # far that reaches rather than softening: the row still gets INTO
         # its "keyword:" label and no further. (The review round's rejected
-        # "added 2m ago" spent 4 more and cut the label off entirely --
+        # "updated 2m ago" spent 4 more and cut the label off entirely --
         # that is what the shorter grammar bought back.) Recorded here so
         # nobody re-derives "the cap makes it fit" from a pin that never
         # said so.
         assert secondaries == [
-            "article · added 2m · keyw…",
-            "article · added 2m",
-            "article · added 2m · keyw…",
+            "article · updated 2m · keyw…",
+            "article · updated 2m",
+            "article · updated 2m · keyw…",
         ], secondaries
         # The row without a reason still paints whole -- the shortfall is the
         # suffix's own cost, not a regression in the base secondary line.
-        assert "article · added 2m" in secondaries, secondaries
+        assert "article · updated 2m" in secondaries, secondaries
 
 
 @pytest.mark.asyncio
@@ -4113,7 +4113,7 @@ async def test_saving_an_analysis_marks_its_row_analysed_without_a_refetch():
         for _ in range(3):
             await pilot.pause()
         _titles, before = _painted_media_rows(host, screen)
-        assert [line.strip() for line in before] == ["document · added 5m"] * 4, before
+        assert [line.strip() for line in before] == ["document · updated 5m"] * 4, before
 
         screen.query_one("#library-media-row-0", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-reader-select-analysis")
@@ -4141,9 +4141,9 @@ async def test_saving_an_analysis_marks_its_row_analysed_without_a_refetch():
             # task-32364 AC#1: this row is the one open in the Reader, so
             # it carries the state word on its fact line.
             f"{_ANALYSED_SECONDARY} · loaded",
-            "document · added 5m",
-            "document · added 5m",
-            "document · added 5m",
+            "document · updated 5m",
+            "document · updated 5m",
+            "document · updated 5m",
         ], after
         # ...and the only read it cost was one id-scoped row, never a
         # re-page of the list.

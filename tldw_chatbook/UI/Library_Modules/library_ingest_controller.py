@@ -942,9 +942,30 @@ class LibraryIngestController:
     def _run_library_ingest_preflight(self) -> Any:
         return self._run_library_ingest_preflight_fn
 
-    @property
-    def _update_library_ingest_dynamic_regions(self) -> Any:
-        return self._update_library_ingest_dynamic_regions_fn
+    def _update_library_ingest_dynamic_regions(self, *args: Any, **kwargs: Any) -> Any:
+        """Repaint the in-place Ingest regions, then resync the footer.
+
+        Qodo review: the Enter hint is derived from the Start gate, so every
+        in-place gate update has to re-register it -- not just the
+        pre-flight seam. Clearing the path, editing an option, switching
+        backend and the rest all funnel through here, so one wrapper covers
+        them where twelve call-site edits would have covered the same
+        ground. (The three SCREEN-side callers of the underlying method are
+        outside this branch's ownership and stay uncovered; the resume pass
+        at ``library_screen.py:8703`` is one of them and re-registers on its
+        own.)
+
+        Args:
+            *args: Forwarded to the screen's repaint (``allow_screen_fallback``
+                / ``allow_structural_recompose``).
+            **kwargs: Forwarded unchanged.
+
+        Returns:
+            Whatever the screen's repaint returns.
+        """
+        result = self._update_library_ingest_dynamic_regions_fn(*args, **kwargs)
+        self._resync_library_ingest_footer()
+        return result
 
     @property
     def _update_library_ingest_gate(self) -> Any:
@@ -993,20 +1014,30 @@ class LibraryIngestController:
         a REGISTRY event, and the Enter label is the first one driven by FORM
         state. Two things re-registered before this existed -- the registry
         listener, which fires once the import is already running, and, by
-        side effect, ``_update_library_ingest_dynamic_regions``'s STRUCTURAL
-        branch, which recomposes when the type-group set (or the unavailable
-        / backend lines) changes. The common blank-to-valid-path transition
-        happens to take that branch; every gate transition that does not left
-        the footer advertising "check this path" while Enter had started
-        starting the import -- the same wrong-label defect this task exists
-        to remove, moved onto the more expensive press.
+        side effect, the STRUCTURAL branch of the screen's in-place repaint,
+        which recomposes when the type-group set (or the unavailable /
+        backend lines) changes. The common blank-to-valid-path transition
+        happens to take that branch; every gate transition that did not left
+        the footer advertising "check this path" while Enter had already
+        started starting the import -- the same wrong-label defect this task
+        exists to remove, moved onto the more expensive press.
+
+        Called from ``_update_library_ingest_dynamic_regions`` above, the one
+        funnel every in-place gate update takes (Qodo review), so no caller
+        has to remember it.
 
         Deduped on the registration tuple, so an unchanged set costs nothing.
         """
-        if (
-            self._library_selected_row_id != LIBRARY_ROW_INGEST_MEDIA
-            or self._library_screen_suspended
-        ):
+        if self._library_selected_row_id != LIBRARY_ROW_INGEST_MEDIA:
+            return
+        if self._library_screen_suspended:
+            # Re-review finding B: the registry listener LATCHES before it
+            # skips, and the resume pass re-registers only when that latch
+            # is set -- nothing else re-registers for a reused, resumed
+            # screen. A bare return here dropped a gate transition that
+            # happened on another tab, so the footer came back naming the
+            # previous step's action.
+            self._library_ingest_suspended_activity = True
             return
         shortcuts = self._library_ingest_shortcuts_for_current_state()
         registration = ("library", tuple(shortcuts))
@@ -1179,7 +1210,6 @@ class LibraryIngestController:
                 self._library_ingest_suspended_activity = True
             else:
                 self._update_library_ingest_dynamic_regions()
-                self._resync_library_ingest_footer()
         registry = self._library_ingest_registry()
         counts_fn = getattr(registry, "counts", None)
         counts = counts_fn() if callable(counts_fn) else {}
@@ -2091,12 +2121,6 @@ class LibraryIngestController:
         # (task-2042) In-place for the same reason as the trigger: the
         # result can land while the user is typing or mid-click.
         self._update_library_ingest_dynamic_regions()
-        # task-32364 AC#3 (fix round 1): the seam every Start-gate transition
-        # passes through, and the gate now drives a FOOTER label. The line
-        # above re-registers only as a side effect of its STRUCTURAL branch,
-        # so a gate that opens without one left the footer naming the
-        # previous step's action.
-        self._resync_library_ingest_footer()
 
     @on(Button.Pressed, "#library-ingest-start")
     def handle_library_ingest_start(self, event: Button.Pressed) -> None:

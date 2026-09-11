@@ -468,6 +468,10 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         A separate row from "Clear filter" on purpose: the two clear
         different things, and the region-ownership census maps one handler
         to exactly one selector.
+
+        Args:
+            event: Press of the scope line's "Clear", forwarded unchanged to
+                the media controller, which owns the behaviour.
         """
         actions = self._media_actions_for_press(event)
         if actions is not None:

@@ -8,12 +8,13 @@ Enter does at each step).
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import datetime, timezone
 
 import pytest
 from textual.widgets import Button, Input, Static
 
-from tldw_chatbook.Library.library_media_state import media_added_age_copy
+from tldw_chatbook.Library.library_media_state import media_updated_age_copy
 from tldw_chatbook.UI.Screens.library_screen import _sync_library_canvas
 from tldw_chatbook.Widgets.Library.library_media_canvas import LibraryMediaCanvas
 from Tests.UI.test_library_media_render_fixes import _apply_media_filter, _host
@@ -26,11 +27,15 @@ from Tests.UI.test_library_shell import _wait_for_condition
 _ONE_HIT_QUERY = "interview"
 
 
-def test_the_age_label_says_what_the_age_is():
+def test_the_age_label_names_the_field_the_age_comes_from():
+    """re-review finding A: the value is `last_modified`, so the word is
+    "updated" -- the same word the preview pane uses for it. An "added"
+    label would swap one ambiguity for another, since pressing Generate
+    writes `last_modified` and would move a row's "added" age."""
     now = datetime(2026, 9, 11, 12, 0, tzinfo=timezone.utc)
-    assert media_added_age_copy("2026-09-11T11:50:00+00:00", now=now) == "added 10m"
-    assert media_added_age_copy("2026-09-11T11:59:40+00:00", now=now) == "added just now"
-    assert media_added_age_copy("", now=now) == ""
+    assert media_updated_age_copy("2026-09-11T11:50:00+00:00", now=now) == "updated 10m"
+    assert media_updated_age_copy("2026-09-11T11:59:40+00:00", now=now) == "updated just now"
+    assert media_updated_age_copy("", now=now) == ""
 
 
 @pytest.mark.asyncio
@@ -165,6 +170,45 @@ async def test_the_import_footer_flips_when_the_gate_opens_without_a_recompose(
 
 
 @pytest.mark.asyncio
+async def test_a_gate_change_on_a_suspended_screen_is_latched_for_resume():
+    """Re-review finding B: skipping is fine, dropping is not.
+
+    The resume pass re-registers the footer only when
+    `_library_ingest_suspended_activity` is set, and nothing else
+    re-registers for a reused, resumed screen. A bare return here left a
+    gate that opened on another tab advertising the previous step's action
+    once the user came back.
+    """
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_library_ingest_keyboard import _enter_ingest_mode
+    from Tests.UI.test_library_shell import (
+        LIBRARY_TEST_SIZE,
+        LibraryHarness,
+        _active_library_screen,
+        _seed_conversations,
+        _two_conversations,
+        _wait_for_library_shell,
+    )
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _enter_ingest_mode(screen, pilot)
+
+        controller = screen._ingest_controller
+        screen._library_ingest_suspended_activity = False
+        screen._library_screen_suspended = True
+        try:
+            controller._resync_library_ingest_footer()
+        finally:
+            screen._library_screen_suspended = False
+        assert screen._library_ingest_suspended_activity is True
+
+
+@pytest.mark.asyncio
 async def test_a_prompt_row_does_not_repeat_the_canvas_it_is_already_on():
     """task-32364: "Prompt · " led every row on a canvas titled Prompts."""
     from tldw_chatbook.Library.library_prompts_state import (
@@ -243,6 +287,37 @@ async def test_the_scope_lines_clear_is_painted_inside_the_items_pane():
                 clear.region.x + clear.region.width
                 <= canvas.region.x + canvas.region.width
             ), (size, clear.region, canvas.region)
+
+
+@pytest.mark.asyncio
+async def test_a_clear_whose_request_failed_can_be_pressed_again():
+    """Qodo review: the visible Clear must be able to retry.
+
+    The scope line and its Clear are derived from the APPLIED result, so a
+    browse that fails leaves the filtered page — and the Clear — on screen
+    while `requested_scope` already holds the cleared target. Suppressing on
+    the requested scope alone made every later press a no-op, with nothing
+    the user could do to get back.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _apply_media_filter(screen, pilot, _ONE_HIT_QUERY)
+
+        # The state a failed clear leaves behind: requested is the target,
+        # applied still carries the filter the rows and the Clear came from.
+        controller = screen._library_media_browse_controller
+        controller.requested_scope = dataclasses.replace(
+            controller.requested_scope, query="", media_type=None, page=1
+        )
+        assert controller.applied_scope.query == _ONE_HIT_QUERY
+
+        screen.query_one("#library-media-scope-clear", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen._library_media_browse_controller.applied_scope.query,
+            message="A second Clear press after a failed request did nothing.",
+        )
 
 
 @pytest.mark.asyncio

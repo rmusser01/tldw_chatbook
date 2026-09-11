@@ -958,20 +958,28 @@ def media_trash_age_copy(trash_date: str | None, *, now: datetime | None = None)
     return f"trashed {age}" if age else ""
 
 
-def media_added_age_copy(value: str, *, now: datetime) -> str:
-    """Return the Media row's age, labelled for what it is.
+def media_updated_age_copy(value: str, *, now: datetime) -> str:
+    """Return the Media row's age, labelled for the field it actually is.
 
     task-32347 (critique #10 P1): the bare compact age ("10m") sat where a
     reader of an `audio` or `video` row reads a DURATION -- the same row
     read 11m and 14m later (A caps 36/39/47). The Trash list solved this
     long ago by labelling its own age ("trashed 3m"); this is the browse
-    list's half of the same rule, in the same grammar -- "added 3m", not
-    "added 3m ago" (review round 1). The LABEL is what removes the duration
-    reading; you cannot "add" a file FOR ten minutes. The four cells the
-    " ago" cost landed exactly where this pane is tightest: at the Items
-    pane's narrow widths they pushed a keyword row's own term off the line.
+    list's half of the same rule, in the same grammar -- "updated 3m", not
+    "updated 3m ago" (review round 1). The LABEL is what removes the
+    duration reading. The four cells the " ago" cost landed exactly where
+    this pane is tightest: at the Items pane's narrow widths they pushed a
+    keyword row's own term off the line.
+
+    The word is "updated", not "added" (re-review round 1, finding A): the
+    value is the record's ``last_modified``, which is what the browse
+    contract projects into ``updated_at`` and what the preview pane two
+    functions down already labels "Updated:". An "added" label would be a
+    second ambiguity in place of the first -- pressing Generate writes
+    ``last_modified``, so an "added" age would move when nothing was added.
+
     ``format_console_relative_age`` returns the word "now" under a minute,
-    which no "added N" phrasing survives, so that case gets its own
+    which no "updated N" phrasing survives, so that case gets its own
     sentence.
 
     Args:
@@ -979,12 +987,12 @@ def media_added_age_copy(value: str, *, now: datetime) -> str:
         now: Reference time.
 
     Returns:
-        "added 10m", "added just now", or "" when unparseable.
+        "updated 10m", "updated just now", or "" when unparseable.
     """
     age = format_console_relative_age(value, now=now)
     if not age:
         return ""
-    return "added just now" if age == "now" else f"added {age}"
+    return "updated just now" if age == "now" else f"updated {age}"
 
 
 def build_library_media_trash_state(
@@ -1163,7 +1171,7 @@ def build_library_media_browse_state(
             media_type=_first_present_text(item, ("media_type",)),
             secondary=_secondary_text(
                 _first_present_text(item, ("media_type",)),
-                media_added_age_copy(
+                media_updated_age_copy(
                     _first_present_text(item, ("updated_at",)), now=reference_now
                 ),
                 analysed=bool(item["has_analysis"]),
@@ -1342,8 +1350,8 @@ def _secondary_text(
 ) -> str:
     """Return secondary display text: '{type} · {age}' or fallback.
 
-    ``age`` arrives already labelled from ``media_added_age_copy``
-    ("added 5m") or ``media_trash_age_copy`` ("trashed 5m") -- task-32347;
+    ``age`` arrives already labelled from ``media_updated_age_copy``
+    ("updated 5m") or ``media_trash_age_copy`` ("trashed 5m") -- task-32347;
     the cell counts below are that longer form's.
 
     Rules:
@@ -1353,14 +1361,14 @@ def _secondary_text(
     - task-28008: an item whose newest version carries analysis text gets a
       trailing ' · analysed'. A WORD, not a colour or a glyph: the row has
       to say what it means at the Items pane's 36-cell floor -- which
-      'document · added 5m · analysed' (30 cells) no longer does with room
+      'document · updated 5m · analysed' (30 cells) no longer does with room
       to spare the way the unlabelled 'document · 5m · analysed' (24) did.
     - task-28008 (critique #5 P2): a row the browse filter found through a
       keyword alone gets a trailing ' · keyword: <term>', the term capped
       at ten CELLS (task-31955 -- a code-point cap let ten CJK characters
       take twenty) so an arbitrarily long tag cannot run away with the
       line. The cap does NOT buy a fit: at the Items pane's 36-cell floor
-      'article · added 2m · keyword: notes' (35 cells) clips at the pane
+      'article · updated 2m · keyword: notes' (35 cells) clips at the pane
       edge, and 'type · age · analysed · keyword: term' clips at the default width
       too -- the cap bounds the damage, it does not remove it. The cap is
       the term's OWN width, not the pane's, so the line does not change
@@ -1525,7 +1533,7 @@ def build_library_media_state(
             media_type=entry.media_type,
             secondary=_secondary_text(
                 entry.media_type,
-                media_added_age_copy(entry.updated_raw, now=reference_now),
+                media_updated_age_copy(entry.updated_raw, now=reference_now),
             ),
             selected=entry.media_id == resolved_selected_id,
             checked=entry.media_id in selected_ids,

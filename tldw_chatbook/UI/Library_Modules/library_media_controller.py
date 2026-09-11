@@ -946,7 +946,7 @@ class LibraryMediaController:
         screen = self._screen
         if not screen._library_loaded or screen._library_lookup_error:
             return None
-        # Review finding 1 (fix round 1): the count is sometimes a LOWER
+        # Review finding 2 (fix round 1): the count is sometimes a LOWER
         # BOUND -- a bounded preview page with no `total` -- which is why
         # the screen keeps this flag and why every other consumer renders
         # "5+" rather than "5". A scope line stating a flat "of 5" beside a
@@ -2251,9 +2251,18 @@ class LibraryMediaController:
         query = self._safe_text(query, max_length=200).strip()
         controller = self._library_media_browse_controller
         applied = controller.applied_scope or controller.mutation_refresh_scope
-        if query == controller.requested_scope.query and not (
-            clear_type and controller.requested_scope.media_type is not None
-        ):
+        # Qodo review: the scope line and its Clear are derived from the
+        # APPLIED result, so a failed browse leaves a visible Clear whose
+        # REQUESTED scope is already the target. Testing the requested scope
+        # alone made every later press of that still-visible button a no-op,
+        # with no way to retry. Suppress only when the page the user is
+        # actually looking at is already there too.
+        def _is_target(scope: Any) -> bool:
+            return query == scope.query and not (
+                clear_type and scope.media_type is not None
+            )
+
+        if _is_target(controller.requested_scope) and _is_target(applied):
             return
         self._clear_library_media_selection_for_scope_change()
         if query:
@@ -2313,7 +2322,14 @@ class LibraryMediaController:
 
     @on(Button.Pressed, "#library-media-scope-clear")
     def handle_library_media_scope_clear(self, event: Button.Pressed) -> None:
-        """Clear the whole scope the scope line states (task-32350)."""
+        """Clear the whole scope the scope line states (task-32350).
+
+        Args:
+            event: Press of the scope line's "Clear", routed here by the
+                canvas. Stopped so the shared list-row handlers never see
+                it; the toolbar's "Clear filter" has its own handler
+                because the two clear different things.
+        """
         event.stop()
         self._clear_library_media_filter(clear_type=True)
 

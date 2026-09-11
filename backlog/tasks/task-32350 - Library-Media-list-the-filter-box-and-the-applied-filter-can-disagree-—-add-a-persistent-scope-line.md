@@ -55,4 +55,24 @@ LIVE-FOUND DEFECT, fixed: with the plan's 'width: auto' the scope Static pushed 
 Live-verified 235x52: 'Media · 11 of 11 · all types · sort: Newest' with no Clear, then 'Media · 2 of 11 · filter “notes” …   Clear' with the list showing 2 rows, then Clear -> box empty, list back to 11, Clear gone. Also checked at 100x30.
 
 Files: tldw_chatbook/Library/library_media_state.py; tldw_chatbook/UI/Library_Modules/library_media_controller.py; tldw_chatbook/Widgets/Library/library_media_canvas.py; tldw_chatbook/css/components/_agentic_terminal.tcss (+ regenerated bundle); Tests/UI/test_library_crit10_media_rows.py; Docs/User_Guide/library/media-and-conversations.md.
+## Fix round 1
+
+Two review findings against the scope line:
+
+- **`N of M` now respects `_local_source_total_known`** (finding 2). The
+  screen keeps that flag because the snapshot's count is sometimes a lower
+  bound, and every other consumer renders `5+`. The line drops its "of M"
+  half rather than state a flat total the rail itself refuses to state.
+  Pinned by `test_the_scope_line_says_nothing_it_cannot_stand_behind`.
+- **The live-found off-screen Clear is pinned** (finding 3) by its painted
+  region at 235x52 and 100x30 -- `press()` succeeds just as happily on a
+  Button painted past the pane edge, which is the exact state the `1fr` +
+  ellipsis CSS fix was made for. Verified the pin fails against the reverted
+  `width: auto`.
+
+Qodo then found a third: the no-op guard in `_request_library_media_filter`
+compared only `requested_scope`, so after a FAILED browse the still-visible
+Clear (derived from the applied result) could never retry. It now suppresses
+only when the applied scope is at the target too, pinned by
+`test_a_clear_whose_request_failed_can_be_pressed_again`.
 <!-- SECTION:NOTES:END -->

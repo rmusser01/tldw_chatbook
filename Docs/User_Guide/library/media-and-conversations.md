@@ -115,16 +115,21 @@ the task-32043 session pins, bulk-delete, and filter-restore pins stay green.
 Live-verified in tmux at 235x52: filter to a hit, then narrow to zero — the
 Reader falls back to "Select a media item to read it here.".)*
 
-**Row markers.** An item's second row says what it is and when it arrived, and
-adds **· analysed** when that item already carries an analysis — so you can
-see what is worth generating without opening anything (`document · added 5m ·
-analysed`). The age is labelled, because a bare "10m" on an `audio` or
-`video` row reads as the item's *length*; under a minute it reads **added
-just now**. It shares the Trash list's grammar (`pdf · trashed 3m`), which is
-also why it is "added 5m" and not "added 5m ago" — on this pane four cells
-are the difference between a keyword row showing its term and hiding it. The row that is open in the Reader ends **· loaded** (**·
-loading** while it is fetching) — the state is a fact about the row, so it
-sits with the other facts rather than in front of the title.
+**Row markers.** An item's second row says what it is and when it last
+changed, and adds **· analysed** when that item already carries an analysis —
+so you can see what is worth generating without opening anything
+(`document · updated 5m · analysed`). The age is labelled, because a bare
+"10m" on an `audio` or `video` row reads as the item's *length*; under a
+minute it reads **updated just now**. The word is **updated**, not "added":
+the value is the item's last-modified time — the same one the Reader's
+preview line calls "Updated:" — so saving an analysis moves it. It shares the
+Trash list's grammar (`pdf · trashed 3m`), which is also why it is
+"updated 5m" and not "updated 5m ago": on this pane four cells are the
+difference between a keyword row showing its term and hiding it.
+
+The row that is open in the Reader ends **· loaded** (**· loading** while it
+is fetching) — the state is a fact about the row, so it sits with the other
+facts rather than in front of the title.
 
 The row re-reads its state from the database the moment an
 analysis is saved — from the Reader's Generate, or from a bulk Analyze run —
@@ -143,7 +148,7 @@ reuses that same cell for its **☑/☐**, so a row never carries two markers.
 While a filter is active, a row it found only through one of its **keywords**
 adds **· keyword: \<term\>** — the filter searches titles, item text and
 keywords, so without it a hit whose title and body hold nothing you typed
-reads as a mistake (`article · added 2m · keyword: notes`). A row whose
+reads as a mistake (`article · updated 2m · keyword: notes`). A row whose
 title or text carries the term already shows you why it is there and says nothing
 extra. Long tags are cut to ten columns (`keyword: quokkasand…`; five
 wide CJK characters, or five flag emoji) to keep the line short — the cut
@@ -154,8 +159,9 @@ ends in an ellipsis a few characters into `keyword:` itself, before the term
 starts. A row that is both analysed and a keyword hit can run out of room at
 the default width too, and the row open in the Reader spends a further nine
 columns on its `· loaded`, so at the automatic narrow width (100 columns) that
-row is the first to clip. The
-Reader's **Info** tab "Keywords:" line applies the same guard: it shows the
+row is the first to clip.
+
+The Reader's **Info** tab "Keywords:" line applies the same guard: it shows the
 full stored keyword but drops a dangling half-flag so that surface's frame
 does not drift either (the edit form still prefills the stored keyword
 verbatim).
@@ -1192,7 +1198,7 @@ other browse list, so Up/Down walks its rows and the Escape hop -- "focus
 Items", then "focus Library" -- is live and named from the first frame).*
 
 *Verified against fix/library-crit10-media-rows — 2026-09-11 (task-32347:
-a media row's age is labelled — "audio · added 10m ago", "added just now"
+a media row's age is labelled — "audio · updated 10m ago", "updated just now"
 under a minute — because a bare "10m" on an audio or video row read as the
 item's length. task-32350: a quiet scope line under the "Media (N)" header
 states the APPLIED scope ("Media · 1 of 11 · filter “notes” · all types ·
@@ -1208,3 +1214,9 @@ instead of prefixing its title with "Loaded ·", and a conversation row reads
 Items pane paint a keyword row's term again. task-32350 review: the scope
 line drops its "of M" half when the screen's Media total is a lower bound,
 rather than stating a flat total the rail itself renders as "5+".)*
+
+*Verified against fix/library-crit10-media-rows — 2026-09-11, re-review round 1
+(task-32347: the row age reads `audio · updated 10m`, not "added" — the value
+is the item's last-modified time, the same field the Reader's preview line
+labels "Updated:", so saving an analysis moves it and an "added" label would
+have been false.)*
