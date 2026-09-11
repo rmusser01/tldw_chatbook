@@ -14,6 +14,7 @@ from textual.widget import Widget
 from textual.widgets import Static
 
 from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_ACTIVITY_STATUSES,
     ConsoleActivityStatus,
     RawCliPresentation,
     console_activity_status_word,
@@ -175,18 +176,7 @@ class ConsoleActivityHeader(Horizontal):
         self.set_class(self.selected, "console-activity-header-selected")
         self.set_class(self.expanded, "console-activity-header-expanded")
         self.set_class(self.expandable, "console-activity-header-expandable")
-        for status in (
-            "success",
-            "blocked",
-            "denied",
-            "blocked_off",
-            "blocked_kill_switch",
-            "failed",
-            "done",
-            "live",
-            "stopped",
-            "unavailable",
-        ):
+        for status in CONSOLE_ACTIVITY_STATUSES:
             self.status_widget.set_class(
                 self.status == status,
                 f"console-activity-status-{status}",

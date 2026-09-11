@@ -261,7 +261,7 @@ def test_direct_controller_review_results_name_who_refused(
         ("tool is set to Off: calculator", "blocked_off"),
         (user_denial_refusal("calculator"), "denied"),
         ("tool requires approval and none was granted: calculator", "blocked"),
-        (LOCAL_DENY_REFUSAL, "blocked_off"),
+        (LOCAL_DENY_REFUSAL, "blocked"),
         (LOCAL_TIMEOUT_REFUSAL, "blocked"),
         (LOCAL_KILL_SWITCH_REFUSAL, "blocked_kill_switch"),
         (LOCAL_GATE_ERROR_REFUSAL, "blocked"),
@@ -372,8 +372,33 @@ def test_structured_success_outcome_overrides_payload_collision(collision: str) 
     )
 
 
+def test_local_deny_refusal_never_claims_an_authority_it_cannot_know() -> None:
+    """`local_tool_provider` returns this one string for a card Deny AND for a
+    configured Off, so narrowing it either way would be a false claim."""
+    assert (
+        classify_activity_status(STEP_TOOL_RESULT, f"ERROR: {LOCAL_DENY_REFUSAL}")
+        == "blocked"
+    )
+    assert (
+        classify_activity_status(
+            STEP_TOOL_RESULT, LOCAL_DENY_REFUSAL, tool_outcome="blocked"
+        )
+        == "blocked"
+    )
+
+
+def test_error_wrapped_controller_kill_switch_is_named_as_one() -> None:
+    """The controller refusal reaches the bridge wrapped as well as raw."""
+    assert (
+        classify_activity_status(
+            STEP_TOOL_RESULT, f"ERROR: {CONTROLLER_KILL_SWITCH_REFUSAL}"
+        )
+        == "blocked_kill_switch"
+    )
+
+
 def test_legacy_step_without_structured_outcome_keeps_safe_fallback() -> None:
-    refusal = f"ERROR: {LOCAL_DENY_REFUSAL}"
+    refusal = f"ERROR: {MCP_DENY_REFUSAL}"
 
     assert classify_activity_status(STEP_TOOL_RESULT, refusal) == "blocked_off"
     assert (
@@ -385,7 +410,7 @@ def test_malformed_persisted_outcome_falls_back_without_raising() -> None:
     assert (
         classify_activity_status(
             STEP_TOOL_RESULT,
-            f"ERROR: {LOCAL_DENY_REFUSAL}",
+            f"ERROR: {MCP_DENY_REFUSAL}",
             tool_outcome="unknown",  # type: ignore[arg-type]
         )
         == "blocked_off"

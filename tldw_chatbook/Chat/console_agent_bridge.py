@@ -1423,9 +1423,17 @@ def _refusal_statuses() -> Mapping[str, ConsoleActivityStatus]:
     return MappingProxyType({
         MCP_USER_DENY_REFUSAL: "denied",
         _BUILTIN_KILL_SWITCH_REFUSAL: "blocked_kill_switch",
+        # Also reachable ERROR:-wrapped, not just as a direct pre-dispatch
+        # verdict -- `_direct_controller_block_status` only sees the raw form.
+        CONTROLLER_KILL_SWITCH_REFUSAL: "blocked_kill_switch",
         LOCAL_KILL_SWITCH_REFUSAL: "blocked_kill_switch",
         MCP_KILL_SWITCH_REFUSAL: "blocked_kill_switch",
-        LOCAL_DENY_REFUSAL: "blocked_off",
+        # LOCAL_DENY_REFUSAL is returned for BOTH a configured Off and an
+        # explicit card Deny (`local_tool_provider._invoke`'s else-branch),
+        # so it cannot claim either authority. Follow-up: give the local
+        # provider its own user-deny refusal string and this row can split
+        # into `denied` + `blocked_off` like the MCP one below.
+        LOCAL_DENY_REFUSAL: "blocked",
         MCP_DENY_REFUSAL: "blocked_off",
         LOCAL_TIMEOUT_REFUSAL: "blocked",
         LOCAL_GATE_ERROR_REFUSAL: "blocked",

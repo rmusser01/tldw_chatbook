@@ -6659,7 +6659,9 @@ def test_run_reply_forwards_review_tool_calls_hook_to_agent_service(tmp_path):
     ]
     assert live[0].content == "I will request approval for this calculation."
     assert any("denied" in row.content.lower() for row in live)
-    assert live[1].activity_presentation.status == "blocked"
+    # task-32279: the hook returned the Console review hook's USER-denial
+    # copy, so the marker names the user, not a policy.
+    assert live[1].activity_presentation.status == "denied"
     assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
 
 

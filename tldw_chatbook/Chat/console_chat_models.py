@@ -304,7 +304,7 @@ _CONSOLE_ACTIVITY_KINDS = frozenset(
         "activity",
     }
 )
-_CONSOLE_ACTIVITY_STATUSES = frozenset(
+CONSOLE_ACTIVITY_STATUSES = frozenset(
     {
         "success",
         "blocked",
@@ -629,7 +629,7 @@ class ConsoleActivityPresentation:
             raise ValueError(
                 "activity label must be a non-empty single line <= 200 chars"
             )
-        if self.status not in _CONSOLE_ACTIVITY_STATUSES:
+        if self.status not in CONSOLE_ACTIVITY_STATUSES:
             raise ValueError("activity status is invalid")
 
 
