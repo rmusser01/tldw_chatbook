@@ -3935,3 +3935,13 @@ explicit acquisition precondition while preserving the selected-ID, owner,
 SUPERSEDED and exact-focus oracles. That test-only correction is not yet made.
 Do not report the full136 as green. Protected merge remains blocked by this
 fixture repair,13 size ceilings, and final-head review/checks.
+
+The approved follow-up rebase is complete: all257 review commits replayed onto
+dev0fcb79e596b3e527778c56867cf7ee0c62c17894 without conflict. Rebased repair
+f5ee9cd703212300887e9842bd53b2fab0266aae and callable-docs b814fb007f preserve
+the prior verified contents. A whole-tree comparison to saved e8cc9e2803 shows
+only the ten incoming Backlog files; production, tests, scripts, workflows and
+project configuration are byte-identical. Post-rebase all seven preflight
+checks pass (`/private/tmp/pr2427-handoff-rebased-preflight.log`). All local
+verification processes are terminal. Publication follows this documentation
+checkpoint; the unrelated untracked September8 plan remains untouched.
