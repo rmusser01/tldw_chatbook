@@ -16,14 +16,38 @@ from tldw_chatbook.Backup_Recovery.recovery_files import _RawDeclaration
 
 
 class _ConfiguredPets(_RawDeclaration):
-    def discover(self, config):
+    def _parent(self) -> Path:
         # ConfigFileStorage's actual platform/default app_name path. No override
         # is invented for dormant arbitrary-path JSONStorage/SQLiteStorage APIs.
-        parent = (
+        return (
             Path(os.environ.get("APPDATA", "~"))
             if os.name == "nt"
             else Path("~/.config")
         ).expanduser() / "tldw_chatbook"
+
+    def _restore_path(self, profile, payload, root) -> Path:
+        """Recognize only native pet files in their existing default container."""
+        key = f"profile:{profile}:tamagotchi.config"
+        leaf = payload.relative_path
+        canonical = leaf == "tamagotchi_pets.json" and payload.logical_id == key
+        backup = (
+            re.fullmatch(r"tamagotchi_pets\.backup_\d{8}_\d{6}\.json", leaf)
+            and payload.logical_id == key + ":" + leaf
+        )
+        if not (
+            self.owner_id == payload.owner_id == "tamagotchi.config"
+            and (canonical or backup)
+            and root.synthetic
+            and root.parent_id is None
+            and root.relative_path == ""
+            and root.logical_id == root.root_id == payload.root_id
+            and payload.parent_id == payload.root_id
+        ):
+            raise ValueError("owner_relocation_unverified:tamagotchi.config")
+        return self._parent() / leaf
+
+    def discover(self, config):
+        parent = self._parent()
         path = parent / "tamagotchi_pets.json"
         from tldw_chatbook.Backup_Recovery.file_inventory import _inventory_root
 
