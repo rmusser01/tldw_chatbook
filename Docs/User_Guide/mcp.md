@@ -57,9 +57,12 @@ your shell before connecting.
    **Ask**, meaning each call shows an approval card in Console. Select a
    row and press **Space** to cycle Inherit → Ask → Allow → Off. The
    `Server default` row sets the fallback for that whole server — one
-   change instead of one per tool. (Tools you haven't connected yet don't
-   appear here at all; if a server you added is missing, the line under
-   the legend says so and points you back to Servers mode.)
+   change instead of one per tool. For many rows at once: `shift+space`
+   applies the row's next state to the server's visible tools, and `C`
+   clears its visible overrides — the filter is the scope (clear it to
+   act on all rows). (Tools you haven't connected yet don't appear here
+   at all; if a server you added is missing, the line under the legend
+   says so and points you back to Servers mode.)
 5. **Try a tool.** Press `2` (Tools), arrow onto the tool, and press `t`
    to open the Test Tool panel — a form built from the tool's schema (or
    a raw-JSON box when the schema is too complex). An Ask-gated tool asks
