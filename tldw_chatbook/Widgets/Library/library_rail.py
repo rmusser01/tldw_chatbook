@@ -974,7 +974,10 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         # is closed by seven tests across four files (e.g.
         # ``#library-use-in-console`` disabled-state in
         # test_destination_shells). Deferring it is a contract change, left
-        # to its own task.
+        # to its own task. task-32357 AC#2 nested a second closed body inside
+        # this one (Diagnostics, holding the DB sizes) under the same
+        # contract: its children stay mounted and queryable by id while both
+        # disclosures are shut.
         with details_body:
             yield from self._compose_details_body_children()
         if self.lifecycle is LibraryLifecycle.EXPANDED and self.onboarding_all_empty:
