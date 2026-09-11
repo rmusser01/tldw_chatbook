@@ -111,6 +111,21 @@ def guarded(function):
         with execution(self):
             return await function(self, *args, **kwargs)
 
+    call._mcp_activation_guarded = True
+    return call
+
+
+def server_branch_guard(function):
+    """Gate only the server branch of a local/server control-plane method."""
+
+    @wraps(function)
+    async def call(self, *args, **kwargs):
+        if getattr(self, "selected_source", None) == "server":
+            with execution(self):
+                return await function(self, *args, **kwargs)
+        return await function(self, *args, **kwargs)
+
+    call._mcp_activation_guarded = True
     return call
 
 
@@ -174,6 +189,9 @@ def batch_guard(function):
 def action_guard(function):
     @wraps(function)
     async def call(self, action_name, payload=None):
+        if getattr(self, "selected_source", None) == "server":
+            with execution(self):
+                return await function(self, action_name, payload)
         inspection = isinstance(payload, Mapping) and (
             action_name == "runtime.request"
             and str(payload.get("method") or "").strip() in _INSPECTION
@@ -194,6 +212,7 @@ def action_guard(function):
                 return await function(self, action_name, payload)
         return await function(self, action_name, payload)
 
+    call._mcp_activation_guarded = True
     return call
 
 

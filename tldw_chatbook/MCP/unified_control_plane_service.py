@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from .activation import action_guard, guarded
-
 import asyncio
 import inspect
 import time
@@ -15,6 +13,7 @@ from loguru import logger
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
+from .activation import action_guard, guarded, server_branch_guard
 from .execution_log import MCPExecutionLog, build_record
 from .hub_tool_catalog import HubTool
 from .local_control_service import MCPGovernanceDenied
@@ -231,6 +230,7 @@ class UnifiedMCPControlPlaneService:
         self._persist_context()
         return self.context
 
+    @guarded
     async def select_server_target(self, server_id: str | None) -> UnifiedMCPContext:
         target = self._resolve_target(server_id)
         if target is None:
@@ -255,6 +255,7 @@ class UnifiedMCPControlPlaneService:
         self._apply_server_access_context(target.server_id, access_context)
         return self.context
 
+    @server_branch_guard
     async def select_scope(
         self, scope: str | None, scope_ref: str | None = None
     ) -> UnifiedMCPContext:
@@ -279,6 +280,7 @@ class UnifiedMCPControlPlaneService:
         self._apply_server_access_context(target.server_id, access_context)
         return self.context
 
+    @server_branch_guard
     async def select_section(self, section: str | None) -> UnifiedMCPContext:
         if self.context.selected_source != "server":
             self.context = replace(self.context, selected_section=section)
@@ -297,6 +299,7 @@ class UnifiedMCPControlPlaneService:
         self._apply_server_access_context(target.server_id, access_context)
         return self.context
 
+    @server_branch_guard
     async def load_section(self, section: str | None = None) -> dict[str, Any]:
         effective_section = section or self.context.selected_section or "overview"
         if self.context.selected_source == "server":
