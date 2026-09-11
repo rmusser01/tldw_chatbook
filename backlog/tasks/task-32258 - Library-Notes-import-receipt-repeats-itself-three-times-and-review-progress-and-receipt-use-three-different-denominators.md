@@ -55,4 +55,13 @@ AC#2: the outcome is stated once. It used to appear three times -- "Import compl
 Verified live in the shell, end to end on the real vault (capture `31-live-receipt-235x52.txt`): "Import completed." / "59 notes created · 8 files skipped · 54 links resolved" / "67 planned changes from 66 reviewed sources."
 
 Files: `tldw_chatbook/Library/library_note_import_state.py`, `tldw_chatbook/Notes/note_import_plan_models.py`, `tldw_chatbook/Notes/note_import_receipts.py`, `tldw_chatbook/Widgets/Library/library_note_import_canvas.py`, `Tests/UI/test_library_notes_wave_import_ux.py`, `Tests/Library/test_library_note_import_state.py`, `Docs/User_Guide/library/notes.md`.
+**Fix round 1 (review findings 1, 10).** `Tests/UI/test_library_note_import_
+flow.py:574` still pinned the pre-change copy and went red on the branch while
+green on dev -- the file was not in the twelve I ran, despite being the import
+flow's own test. It now pins both surfaces (`receipt_line == "1 note created ·
+2 files skipped"`, `receipt_detail == "3 planned changes from 3 reviewed
+sources."`), which is a second live check on the shared planned-change unit.
+The state test's parametrized fragment check was genuinely loosened by
+searching both surfaces concatenated; it names the surface per parameter again,
+and asserts the fragment is NOT on the other one.
 <!-- SECTION:NOTES:END -->

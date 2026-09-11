@@ -64,4 +64,17 @@ Four fidelity gaps, each traced before it was fixed.
 Verified on the 71-file vault through the real discovery/parser/planner/executor chain rendered at 235x52 and 100x30 (`wave3-caps/import-review/10-review-page1-*.txt`): the Daily notes read "not imported: created" / "not imported: mood", the canvas/PNG/PDF rows are named, and no row carries a diff.
 
 Files: `tldw_chatbook/Notes/note_import_parsers.py`, `tldw_chatbook/Notes/note_import_plan_models.py`, `tldw_chatbook/Library/library_note_import_state.py`, `tldw_chatbook/UI/Library_Modules/library_note_import_controller.py`, `tldw_chatbook/Widgets/Library/library_note_import_canvas.py`, tests in `Tests/Notes/test_note_import_obsidian.py`, `Tests/Library/test_library_note_import_state.py`, `Tests/UI/Library_Modules/test_library_note_import_controller.py`, `Docs/User_Guide/library/notes.md`.
+**Fix round 1 (review findings 2, 3, 4).** AC#2's second clause was ticked but
+not implemented: suppressing the diff hid the by-construction defect without
+removing it, and on the one row that does show a diff every line carrying a
+link still read as changed. Both sides now reduce to the bare `[[target]]`
+spelling first (`note_import_plan_models.wikilink_only`), so an unchanged
+source produces an empty diff and a real change shows alone. Separately, the
+collapsed-run summary reached `CollapsibleTitle`, whose `Content.from_text`
+defaults to markup ON -- a vault folder named `[@click=app.quit]` became a live
+action link and lost its own name; `Content()` turns that off, matching every
+other Static on this canvas. And `.git` is now skipped at the walker for every
+source, ungated by Obsidian mode or depth, so both platform adapters inherit
+it: the git-backed 71-file vault reviews as 67 sources on one page instead of
+174 across five.
 <!-- SECTION:NOTES:END -->

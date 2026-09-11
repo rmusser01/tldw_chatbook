@@ -71,4 +71,13 @@ One deliberate simplification, marked in code: the collapsed disclosures chrome 
 Verified at 235x52 and 100x30 through the production canvas on the real vault (`wave3-caps/import-review/10-review-page1-235x52.txt`, `10-review-page1-100x30.txt`).
 
 Files: `tldw_chatbook/Library/library_note_import_state.py`, `tldw_chatbook/Notes/note_import_plan_models.py`, `tldw_chatbook/Widgets/Library/library_note_import_canvas.py`, `tldw_chatbook/UI/Library_Modules/library_notes_controller.py`, `Tests/UI/test_library_notes_wave_import_ux.py`, `Tests/Library/test_library_note_import_state.py`, `Tests/UI/Library_Modules/test_library_note_import_controller.py`, `Tests/Widgets/Library/test_library_note_import_canvas.py`, `Docs/User_Guide/library/notes.md`.
+**Fix round 1 (review findings 8, 9).** The canvas sorted its groups by
+`tuple(_CLASSIFICATION_LABELS)` while the pager used
+`REVIEW_CLASSIFICATION_ORDER` -- two hand-kept orders that agreed by luck, and a
+divergence would have put groups on a page in an order the pager did not budget
+for. The canvas now derives its order from the shared sequence, pinned in
+`test_the_pager_and_the_canvas_find_the_same_runs`. And a run past the
+200-source mount ceiling read "200 files" then "50 files" on the next page --
+the defect's own shape, one level down. `NoteImportPage.run_totals` carries each
+run's whole size, so both halves read "200 of 250 files".
 <!-- SECTION:NOTES:END -->

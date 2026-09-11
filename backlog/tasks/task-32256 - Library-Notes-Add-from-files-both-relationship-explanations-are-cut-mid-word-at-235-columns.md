@@ -51,4 +51,9 @@ The mechanism rules it out too. Neither Static carries a nowrap/ellipsis rule, a
 So AC#1 and AC#2 were already true and are now pinned by AC#3 -- a parametrized render test at 235 (the wide terminal), 113 (the share the reader pane actually gets there) and 60 (the narrow floor) asserting the exact sentences and that `width x lines` covers the text at every one. The likeliest origin of the report is a capture read through a column cut rather than the app.
 
 Files: `Tests/UI/test_library_notes_wave_import_ux.py`.
+**Fix round 1 (review finding 6).** The pin asserted on `renderable.plain`, the
+SOURCE text, which truncation never touches -- mutation-tested, a clipped
+description passed at 235 and 113 and failed only at 60. It now joins the
+widget's own rendered strips and refuses an ellipsis, and under the same
+mutation (nowrap + ellipsis + a 40-cell width) it fails at all three widths.
 <!-- SECTION:NOTES:END -->
