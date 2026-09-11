@@ -24,8 +24,10 @@ CANVAS_OFFER_POLICY = (
     "If context does not establish consent, clarify. After "
     "consent, load only needed guide topics and reuse guidance already in context. "
     "Read before edits; preserve exact runtime profiles. Distinguish staged or "
-    "saved source from a ready preview. After one failed repair, report the "
-    "limitation and let the user decide whether to continue."
+    "saved source from a ready preview. After one failed repair, stop: explain "
+    "that the problem remains and ask whether to attempt another repair. A report "
+    "that the repair still fails is not permission for a second attempt. Do not "
+    "claim to create, update, or repair without a successful matching tool result."
 )
 
 

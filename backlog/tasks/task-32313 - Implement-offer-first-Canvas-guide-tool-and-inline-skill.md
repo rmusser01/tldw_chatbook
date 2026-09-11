@@ -1,11 +1,11 @@
 ---
 id: TASK-32313
 title: Implement offer-first Canvas guide tool and inline skill
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-11 04:53'
-updated_date: '2026-09-11 05:31'
+updated_date: '2026-09-11 06:32'
 labels:
   - canvas
   - skills
@@ -28,7 +28,7 @@ Offer Canvas before proactive authoring and provide focused compatible authoring
 - [x] #2 The scoped canvas_guide tool exposes only four fixed documentation topics, caps serialized results at 12 KiB, preserves tool authority and metadata-only records, and refuses stale or disabled calls.
 - [x] #3 The optional canvas skill imports through existing trust controls and runs inline without a child run or expanded tool authority.
 - [x] #4 Packaged guides load from an installed wheel and all exact complete examples compile and execute their intended browser interactions with existing runtime profiles.
-- [ ] #5 Targeted automated checks, static checks, documentation, independent reviews, and a recorded model-behavior sample support the delivered feature; unavailable evidence is explicitly retained as outstanding.
+- [x] #5 Targeted automated checks, static checks, documentation, independent reviews, and a recorded model-behavior sample support the delivered feature; unavailable evidence is explicitly retained as outstanding.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -59,5 +59,7 @@ Browser evidence exposed CSS shorthand expansion outside the renderer allowlist;
 
 ADR required: yes; implemented accepted backlog/decisions/149-offer-first-canvas-guide-and-inline-skill.md, preserving ADR-121, ADR-124, and ADR-009. Evidence: Docs/superpowers/qa/2026-09-10-canvas-guidance-skill.md.
 
-Outstanding: all ten real-model scenarios remain unrun. The authorized llama.cpp endpoint at http://192.168.5.196:9191 is unreachable from this Mac (OSError 65: No route to host, also outside the sandbox). No generation request was sent. Keep AC #5 unchecked and task In Progress until live qualification is recorded; guidance tests do not prove model obedience or measured token savings.
+Live verification: the user authorized enabling ChatGPT/Codex Local Network permission after macOS logs identified the app-specific denial. The server was working; the earlier host-unreachable conclusion was incorrect. No further Firefox use occurred. Ten scenario classes ran through the real Console bridge/provider/Canvas path against Qwen3.8-27B and llama.cpp b10430. The model offered before creation, respected refusal/topic changes, created directly after explicit requests, read the expected parent before updating, and used the trusted skill inline with no children. Creation/edit/skill mutations returned no compatibility issues; final non-streaming runs confirmed temporary settlement. A false claim of an additional repair led to explicit stop-and-ask and successful-tool-result wording in the shared policy, skill, and repair guide; the same live case then stopped correctly.
+
+Limits: this is a bounded headless model sample, not a live Console UI/durable-persistence qualification. Editing used seeded reachable source from the accepted creation sample. Repair history was a synthetic failure report. Default streaming encountered the existing 90-second watchdog and text encoding issues; final mutation/skill checks used the normal non-streaming path with explicit temporary timeout/retry settings. Returned usage and the failed repair baseline remain in the QA evidence; no general model-obedience guarantee or measured comparative token savings is claimed. After the wording fix, 210 affected checks plus 40 packaging/skill-substitution checks passed; Ruff lint/format and evidence assertions passed.
 <!-- SECTION:NOTES:END -->

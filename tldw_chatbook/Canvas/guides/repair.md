@@ -48,6 +48,10 @@ Do not generate speculative versions in a loop. Ordinary bounded corrections
 are covered by the accepted request; unrelated artifacts and substantial
 unrequested redesigns need a new offer.
 
+A report that the repair still fails is not permission for a second attempt.
+Explain that the problem remains and ask whether to attempt another repair.
+Do not claim to create, update, or repair without a successful matching tool result.
+
 Guides are documentation, not profile-admission authority. Unknown, retired,
 revoked, missing, or integrity-failed profiles stay source-only without
 substitution. Follow current exact-profile guidance and runtime checks. Adapting

@@ -426,7 +426,7 @@ existing setup route; a skipped browser test is not evidence that examples work.
 **Create:** `Docs/superpowers/qa/2026-09-10-canvas-guidance-skill.md`.
 **Update:** the implementation Backlog task created at execution start.
 
-- [ ] **1. Use synthetic conversations with an available authorized test model.**
+- [x] **1. Use synthetic conversations with an available authorized test model.**
   Exercise the actual Console request/tool path, using existing capture facilities
   if available. Do not replace this with a scripted provider and call it model
   evidence. Do not open personal conversations or print credentials. Record the
@@ -493,8 +493,10 @@ provider and guidance changes remained sequential. The parent completed guidance
 wiring while the worker finished the separate skill/trust portion.
 
 Stages 1–4 are implemented, locally verified, and independently reviewed. Final
-quality review approved the code. Stage 5's actual model sample remains unrun
-because the user-specified
-llama.cpp endpoint is unreachable from this Mac. Keep TASK-32313 In Progress and
-its model-evidence criterion open until that sample is recorded. See the
+quality review approved the code. Stage 5 recorded all ten model scenario classes
+against the authorized Qwen3.8 llama.cpp endpoint after the user approved enabling
+this app's macOS Local Network permission. A failed repair-response sample led
+to a narrow clarification of the shared policy, skill, and repair guide; its
+recheck stopped correctly. Streaming timeouts, reconstructed edit state, and
+synthetic repair reports remain explicit evidence limitations. See the
 [QA record](../qa/2026-09-10-canvas-guidance-skill.md) for exact results and limits.

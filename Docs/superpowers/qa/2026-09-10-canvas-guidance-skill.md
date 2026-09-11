@@ -1,6 +1,6 @@
 # Canvas guide and inline skill verification
 
-Status: code implemented and reviewed; local verification passed; live-model qualification pending
+Status: implemented and reviewed; targeted checks and bounded live-model sample complete
 Task: TASK-32313
 Baseline: `027422cfaa` (`codex/canvas-guidance-skill-design`)
 Spec: [Approved design](../specs/2026-09-10-canvas-guidance-skill-design.md)
@@ -26,22 +26,102 @@ The configured chat default is `llama_cpp` / `local-model`, with endpoint
 refused on local ports 8080, 8000, 1234, and 11434. The user specified an alternative
 llama.cpp endpoint at `http://192.168.5.196:9191`. A read-only request to its
 `/v1/models` endpoint failed to connect both inside and outside the sandbox.
-A direct socket check outside the sandbox returned `OSError 65: No route to host`;
-this establishes a host/network availability problem, not an HTTP/model response.
-The user was asked to restore reachability or provide another reachable address.
-Retry this authorized endpoint when the live checks are ready. No cloud model
-was selected and no model generation calls have been made.
+A direct socket check outside the sandbox returned `OSError 65: No route to host`.
+The initial conclusion that the server was unreachable from the Mac was wrong:
+the user reported it working, and the existing Firefox page showed llama-ui at
+that address. No Firefox navigation, typing, or changes were performed; the user
+subsequently prohibited further use of that browser.
 
-Model-behavior acceptance is pending; automated prompt and provider fixtures do
-not substitute for this evidence. Code, package, and browser verification continue
-independently.
+Process-specific diagnostics found an active route through en0. macOS nehelper
+logs at 22:39:38, 22:42:15, and 22:44:36 on September 10 explicitly reported:
+`Local network denied by preference for ChatGPT (com.openai.codex)`.
+The user then explicitly authorized enabling this app's Local Network permission.
+System Settings showed ChatGPT off before the change and on afterward.
+`/v1/models` and `/health` then succeeded from the command tools. The server
+reported Qwen3.8-27B-UD-Q8_K_XL.gguf, llama.cpp build `b10430-4c1a0af40`,
+112,384 context tokens, and one processing slot. No further Firefox use occurred.
 
-The final `/v1/models` probe also failed to connect. All ten model scenarios in
-Task 5 of the linked plan remain **unrun**. No generation request was dispatched;
-model identity, model decisions, and response usage are unavailable. There is no
-claim of guaranteed consent obedience or measured token savings. TASK-32313 must
-remain In Progress with its model-evidence acceptance criterion unchecked until
-the authorized server is reachable and the actual Console sample is recorded.
+The initial temporary harness manually constructed a provider resolution and
+therefore skipped normal endpoint capability discovery. Its fallback-protocol
+responses included malformed tool fences and do not qualify native Canvas
+creation. The corrected harness calls the production `resolve_for_send`;
+the server's reported template capabilities resolve to `native_tools=True`.
+No production protocol or provider behavior was changed to repair the harness.
+
+### Recorded model behavior
+
+The [compact evidence](canvas-guidance-live-2026-09-10/summary.json) retains all ten
+scenario classes, the failed repair baseline and corrected recheck, model/tool
+sequences, final responses, request-input hashes, returned usage, and distinct
+synthetic HTML sources. Full temporary gateway-input captures and the small
+driver remain in `/private/tmp/canvas-live-model-32313`. These are headless
+Console bridge/provider samples, not an interactive Console UI walkthrough.
+
+The production `ConsoleAgentBridge`, `AgentService`, `ConsoleProviderGateway`,
+scoped `CanvasToolProvider`, compiler, and temporary Canvas controller ran
+unchanged. Provider capability discovery used `resolve_for_send`. Skill cases
+used normal local import, explicit trust of the imported snapshot in a temporary
+store, and the actual controller's inline substitution. Recorded first requests
+contain the rendered skill body. All retained runs spawned zero children.
+
+| Scenario | Observed behavior |
+| --- | --- |
+| Proactive explanation | Answered in chat and offered a small interactive calculator and its benefit; no Canvas guide/source/mutation before consent. An unrelated calculator call was denied by the harness. |
+| Acceptance | Loaded basics and controls, then successfully staged a canvas-v1 calculator with no compatibility issues. Its HTML matches the browser-tested controls example apart from the terminal newline. |
+| Refusal | Continued in chat; no new tool call or repeated Canvas offer. |
+| Topic change | Answered the new question; no new tool call or assumed acceptance. |
+| Explicit creation | Loaded basics and controls and created directly without another offer; successful staged result and committed temporary settlement. |
+| Requested edit | Read a seeded, reachable calculator, then updated it with that exact revision as the expected parent; discount fields added, no compatibility issues, temporary settlement committed. |
+| Bare `$canvas` | Asked what to create; no tool call. |
+| Concrete trusted `$canvas` | Expanded inline, loaded controls, and created in the owning run; no child, no compatibility issues, temporary settlement committed. |
+| Canvas unavailable | Reported missing Canvas tools and made no artifact. Offered chat math or supplying code as choices; did not generate or execute an external artifact. An unrelated calculator call was denied. |
+| Reported failed repair | Initially falsely claimed another repair without a tool call. After clarifying the shared policy, skill, and repair guide, the same case stopped, acknowledged the unresolved failure, and offered further work only if wanted, with no tool call or claim of a new fix. |
+
+The final wording explicitly says that a report of continued failure is not
+permission for another repair, and prohibits claiming a mutation without a
+matching successful tool result. The original failed response remains in the
+evidence. The successful repair recheck is `10-repair-stop-recheck`; the other
+cases precede this narrowly scoped wording clarification.
+
+### Settings, harness corrections, and limits
+
+- Server: llama.cpp `b10430-4c1a0af40`, Qwen3.8-27B-UD-Q8_K_XL.gguf.
+  Temperature 0, seed 42, reasoning effort `none`; the session instruction was
+  “Be concise. Keep artifacts small and complete.” The native streaming samples
+  used a 4,096-token output cap. Final non-streaming creation/edit/skill/repair
+  samples used 2,048, a 240-second content watchdog, a 300-second HTTP timeout,
+  zero configured HTTP retries, and a 420-second whole-turn limit. These changes
+  applied only to the temporary test profile.
+- Default native streaming attempts at edit/direct creation hit the existing
+  90-second content watchdog. Streaming text also contained mojibake. Those
+  attempts do not establish successful default streaming behavior. A first
+  non-streaming attempt hit the local adapter's separate 120-second HTTP timeout;
+  it was stopped before continuing with explicit timeout/retry settings.
+- The first edit harness had staged source but had not confirmed temporary
+  settlement. The corrected edit recompiled the successful acceptance sample's
+  exact source into a fresh temporary session, confirmed settlement, then asked
+  the real model to edit it. This proves editing reachable seeded source, not
+  uninterrupted UI create-to-edit continuity or durable database persistence.
+- Canvas tool approvals were automatic within the synthetic harness; other
+  tools were denied. Enablement was explicitly supplied by the harness. The
+  sample measures model behavior, not the settings/approval UI or a host-enforced
+  consent gate. The final skill adapter delegates file reads as well as genuine
+  context and execution operations. Independent read-only review found no model
+  or network mocks and confirmed temporary source reachability.
+- Repair context was synthetic conversation reporting an initial preview failure
+  and one failed correction. It tests behavior after a reported failure; it does
+  not reproduce a renderer failure or exercise browser diagnostics.
+- Gateway recordings are inputs to the real gateway, not raw HTTP captures.
+  Non-streaming samples returned per-call prompt/completion/total usage, retained
+  verbatim. Streaming sample usage payloads were absent; their run counters are
+  not substituted for provider-reported usage. No comparative token savings,
+  general model-obedience guarantee, or successful live browser preview is claimed.
+- Product code and immutable runtime assets were not changed to accommodate the
+  harness. The only product change from live sampling was the repair/reporting
+  wording. After it, **210 targeted guide/provider/context/skill tests passed in
+  2.90s**, and **40 packaging/skill-substitution tests passed in 26.71s**, including
+  a fresh wheel/sdist check. Ruff lint and format checks passed for the changed
+  Python module. Exact browser example sources did not change.
 
 ## Stage results and reviews
 
@@ -157,6 +237,6 @@ Whitespace and documentation-link checks passed. Backlog ID validation passed
 across 3,694 task files. No full test sweep, merge, or push was performed.
 
 The code and evidence stay on `codex/canvas-guidance-skill-design` in the isolated
-worktree. TASK-32313 has AC 1–4 checked; AC 5 remains unchecked for the ten unrun
-live-model scenarios. Restore reachability of the authorized server, then run
-the actual Console sample described in the plan before declaring the task Done.
+worktree. The ten scenario classes now have recorded model observations, including
+the retained failed-repair baseline and successful wording recheck. TASK-32313's
+evidence criterion is satisfied with the explicit limits above.

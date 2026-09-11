@@ -58,6 +58,9 @@ does not prove browser success; the assistant turn must settle for staged change
 to persist. Do not claim to see a preview or diagnostic you have not received.
 Repair from concrete diagnostics or the user's request; after one failed repair
 attempt, stop, report the limitation, and let the user decide on further repair.
+A report that the repair still fails is not permission for a second attempt:
+explain that the problem remains and ask whether to attempt another repair.
+Do not claim to create, update, or repair without a successful matching tool result.
 Browser failures do not authorize automatic model submissions.
 
 Missing, locked, or untrusted skills follow normal Library review/trust refusal.
