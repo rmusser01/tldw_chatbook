@@ -4452,7 +4452,17 @@ class LibraryScreen(BaseAppScreen):
         # swallowed keys, keep the ones that still work (esc / enter /
         # F-keys) and the informational chips, and announce the swap.
         focused = self.focused
-        if isinstance(focused, (Input, TextArea)):
+        # task-32346, coordinator ruling: BELOW 64 COLUMNS this transform
+        # stands down entirely. Task 6 measured that the narrow stage paints
+        # exactly one ~24-character context chip, and that on that stage
+        # Escape genuinely RETURNS TO LIBRARY (``library_narrow_stage_return``
+        # passes, ``library_blur_text_field`` does not) -- so its single chip
+        # is the whole truth there, and adding "typing in field · after esc:
+        # …" only makes AppFooterStatus elide the context to "…". The wide
+        # form below is unchanged at >= 64 columns.
+        if isinstance(focused, (Input, TextArea)) and not (
+            self._library_narrow_stage_return_active()
+        ):
             swallowed = tuple(
                 pair
                 for pair in shortcuts

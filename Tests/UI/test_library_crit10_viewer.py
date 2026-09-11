@@ -281,3 +281,39 @@ async def test_an_active_find_query_drops_the_rendered_analysis_to_the_view_that
             ).active_mode == "rendered",
             message="Clearing the query never restored the Rendered view.",
         )
+
+
+@pytest.mark.asyncio
+async def test_below_64_columns_a_focused_input_leaves_the_single_chip_alone():
+    """Coordinator ruling (Task 6 measurement): below 64 columns the footer
+    paints exactly ONE ~24-char context chip, and there Escape returns to
+    Library rather than leaving the field. Emitting the wide
+    ``typing in field · after esc: …`` form as well makes AppFooterStatus
+    elide the whole context to "…", so the Input-focus transform stands down
+    on that stage and the narrow block's chip is the entire context.
+
+    The expected set is READ from the blurred state rather than written out,
+    so this pins "focusing an Input changes nothing here" without duplicating
+    the literal Task 6 owns.
+    """
+    host = _media_host()
+    async with host.run_test(size=(60, 24)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_narrow_stage_return_active(),
+            message="The Library pane never closed at 60 columns.",
+        )
+        blurred = screen._library_footer_shortcuts_for_current_state()
+        # AppFooterStatus paints a PREFIX of the registered set, and Task 6's
+        # block puts its Escape chip first so that prefix is that chip.
+        assert blurred[0][0] == "esc", blurred
+
+        box = await _wait_for_selector(screen, pilot, "#library-media-filter")
+        box.focus()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.focused is screen.query_one("#library-media-filter"),
+            message="The media filter box never took focus.",
+        )
+        assert screen._library_footer_shortcuts_for_current_state() == blurred
