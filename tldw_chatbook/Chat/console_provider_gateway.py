@@ -1251,7 +1251,7 @@ def adapter_wire_kwargs(kwargs: Mapping[str, Any]) -> dict[str, Any]:
     the verifier can prove that what was recorded is identically what is
     dispatched -- and those exact objects must survive verification. Provider
     adapters then serialize with ``json``/``requests``, neither of which can
-    encode a ``mappingproxy``: task-32273 died in request preparation on the
+    encode a ``mappingproxy``: task-32342 died in request preparation on the
     first native tool-call continuation row (the nested ``tool_calls``
     mappings) and was reported to the user as a provider HTTP 400. Thawing
     happens here, after verification and immediately before adapter entry.

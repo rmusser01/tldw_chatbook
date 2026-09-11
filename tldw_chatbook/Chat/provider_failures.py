@@ -95,7 +95,7 @@ def describe_stream_failure(exc: BaseException) -> str:
     elif isinstance(exc, ConnectionError) or "connect" in lowered_name:
         summary = "could not connect to the provider"
     elif isinstance(exc, ChatConfigurationError) and status_code is None:
-        # task-32273: a status-less configuration error never reached the
+        # task-32342: a status-less configuration error never reached the
         # provider -- either the request could not be built or its reply
         # could not be read. Calling either a "provider error" blames the
         # wrong party for a client-side bug.

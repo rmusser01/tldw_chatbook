@@ -11660,7 +11660,7 @@ def test_bounded_accumulator_drops_non_envelope_tool_metadata() -> None:
 
 
 def test_adapter_wire_kwargs_hands_providers_serializable_messages() -> None:
-    """task-32273: the trace surface reissues frozen rows; a provider adapter
+    """task-32342: the trace surface reissues frozen rows; a provider adapter
     must still receive plain JSON containers. A tool-call continuation row
     otherwise reaches ``requests`` as a mappingproxy and dies in request
     preparation."""
