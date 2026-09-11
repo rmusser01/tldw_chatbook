@@ -451,8 +451,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             self.actions.handle_library_media_filter_submitted(event)
 
     @on(Button.Pressed, "#library-media-filter-clear")
+    @on(Button.Pressed, "#library-media-scope-clear")
     def handle_library_media_filter_clear(self, event: Button.Pressed) -> None:
-        """Route "Clear filter" to the media controller."""
+        """Route "Clear filter" and the scope line's Clear to the controller."""
         actions = self._media_actions_for_press(event)
         if actions is not None:
             actions.handle_library_media_filter_clear(event)
@@ -1009,6 +1010,29 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             )
             sets_btn.display = not select_mode
             yield sets_btn
+        # task-32350: the applied scope, stated. The filter Input below is a
+        # draft until submitted, so it cannot be trusted to describe the
+        # rows; this line is projected from the applied scope in
+        # build_library_media_browse_state and can only ever agree with them.
+        scope_row = Horizontal(id="library-media-scope-row")
+        scope_row.styles.height = "auto"
+        with scope_row:
+            scope_static = Static(
+                self.canvas.scope_line,
+                id="library-media-scope-line",
+                classes="library-media-scope-line",
+                markup=False,
+            )
+            scope_static.styles.width = "auto"
+            yield scope_static
+            if self.canvas.scope_clearable:
+                yield Button(
+                    "Clear",
+                    id="library-media-scope-clear",
+                    classes="library-canvas-action",
+                    compact=True,
+                    tooltip="Clear the filter and type this line states.",
+                )
         filter_row = Horizontal(classes="ds-toolbar")
         filter_row.styles.height = "auto"
         with filter_row:

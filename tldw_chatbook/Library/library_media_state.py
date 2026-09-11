@@ -14,6 +14,7 @@ from rich.cells import cell_len, chop_cells
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     format_console_relative_age,
 )
+from tldw_chatbook.Library.library_shell_state import library_choice_label
 from tldw_chatbook.Library.library_pager_state import PageFreshness
 
 LIBRARY_MEDIA_EMPTY_COPY = (
@@ -879,6 +880,12 @@ class LibraryMediaCanvasState:
     analyze_receipt_failed: int = 0
     analyze_receipt_running: bool = False
     analyze_choice_count: int = 0
+    # task-32350: the applied-scope line under the Media header ("Media · 1
+    # of 11 · filter “notes” · all types · sort: Newest") and whether it
+    # carries a Clear. Built from the APPLIED scope only, never from the
+    # filter Input's draft. "" / False is a browse state built without it.
+    scope_line: str = ""
+    scope_clearable: bool = False
 
 
 @dataclass(frozen=True)
@@ -1105,10 +1112,14 @@ def build_library_media_browse_state(
     analyze_receipt_failed: int = 0,
     analyze_receipt_running: bool = False,
     analyze_choice_count: int = 0,
+    unfiltered_total: int | None = None,
 ) -> LibraryMediaCanvasState:
     """Project one exact Media page without filtering, sorting, or slicing it.
 
     Args:
+        unfiltered_total: The Library's whole Media count, for the scope
+            line's "N of M" (task-32350). ``None`` (the default) means the
+            screen has no trustworthy total yet, and the line says "N".
         review_dismiss_receipt_name: Name of the most recently dismissed
             review set, rendered as a "✓ dismissed · <name>" undo receipt
             until acted on or replaced (task-31236). "" (the default)
@@ -1217,6 +1228,34 @@ def build_library_media_browse_state(
             empty_copy = f"No media of type '{result.scope.media_type}'."
         else:
             empty_copy = LIBRARY_MEDIA_EMPTY_COPY
+    # task-32350 (critique #10 P1): the filter box holds a DRAFT until it is
+    # submitted (deliberate -- the debounce at
+    # library_media_controller.py:2235 is what makes typing usable), so the
+    # box and the list can legitimately disagree. Nothing said which one the
+    # rows came from. This line is built from the APPLIED scope only, so it
+    # cannot echo an unsubmitted draft.
+    scope_parts = [
+        f"Media · {result.total} of {unfiltered_total}"
+        if unfiltered_total is not None and unfiltered_total >= result.total
+        else f"Media · {result.total}"
+    ]
+    if result.scope.query:
+        scope_parts.append(f"filter “{result.scope.query}”")
+    scope_parts.append(
+        f"type {result.scope.media_type}"
+        if result.scope.media_type is not None
+        else "all types"
+    )
+    # The same call the sort chooser's own Button label makes
+    # (library_media_canvas.py), so the line and the control can never name
+    # the same sort two ways.
+    scope_parts.append(
+        library_choice_label(
+            "sort", dict(MEDIA_SORT_CHOICES).get(result.scope.sort_by, "Newest")
+        )
+    )
+    scope_line = " · ".join(scope_parts)
+    scope_clearable = bool(result.scope.query) or result.scope.media_type is not None
     return LibraryMediaCanvasState(
         rows=rows,
         type_options=(None, *normalized_types),
@@ -1241,6 +1280,8 @@ def build_library_media_browse_state(
         analyze_receipt_failed=max(0, analyze_receipt_failed),
         analyze_receipt_running=bool(analyze_receipt_running),
         analyze_choice_count=max(0, analyze_choice_count),
+        scope_line=scope_line,
+        scope_clearable=scope_clearable,
     )
 
 

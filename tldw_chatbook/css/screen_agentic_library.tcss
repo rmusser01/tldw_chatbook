@@ -2873,6 +2873,15 @@ Input.library-media-speaker-input:focus {
     text-style: bold;
 }
 
+/* task-32350 (critique #10 P1): the applied-scope line under the Media
+   header. Quiet by design -- it is a statement of fact, not an action. */
+.library-media-scope-line {
+    color: $ds-text-muted;
+    width: auto;
+    height: 1;
+    padding: 0 1 0 0;
+}
+
 /* TASK-716: pressable-but-blocked Library source actions render dim; the
    press handler explains the block instead of a dead disabled button. */
 .library-source-action-blocked {
