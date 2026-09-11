@@ -457,6 +457,7 @@ from ...Widgets.Library import (
     skill_editor_warning_lines,
 )
 from ...Widgets.Library.library_rail import (
+    LibraryDetailsRow,
     library_db_size_rows,
     library_diagnostics_disclosure,
 )
@@ -14061,12 +14062,12 @@ class LibraryScreen(BaseAppScreen):
                 id="library-details-group-workspace",
                 classes="library-details-group",
             ),
-            Static(
+            LibraryDetailsRow(
                 library_dim_label_text("Active", state.workspace_name),
                 id="library-workspaces-active-workspace",
                 classes="library-details-row",
             ),
-            Static(
+            LibraryDetailsRow(
                 library_dim_label_text(
                     "Handoff", self._workspace_handoff_summary_label(state)
                 ),
@@ -14183,7 +14184,7 @@ class LibraryScreen(BaseAppScreen):
         # it joins the other Details actions and says what it does.
         widgets.extend(
             (
-                Static(
+                LibraryDetailsRow(
                     "Chunking Lab — compare how text is split for search",
                     id="library-details-chunking-gloss",
                     classes="library-details-row",
@@ -15386,7 +15387,9 @@ class LibraryScreen(BaseAppScreen):
                 existing[0].update(rendered)
                 previous = existing[0]
                 continue
-            row = Static(rendered, id=row_id, classes="library-details-row")
+            row = LibraryDetailsRow(
+                rendered, id=row_id, classes="library-details-row"
+            )
             try:
                 await parent.mount(row, after=previous)
             except Exception:

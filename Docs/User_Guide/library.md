@@ -453,7 +453,7 @@ out of the way when you do not.
 |---|---|
 | **Status** | A "Source · Local" (or "Source · Server: \<label\>") line and a counts row ("Notes N · Media N · Conversations N"). |
 | **Diagnostics** | A closed disclosure holding — once a reading exists — a "DB sizes" label with one line per database ("Prompts 180.0KB", "Chats/Notes 1.1MB", "Media 508.0KB"), a line each so no size is split across two rail lines. |
-| **Workspace** | "Active · \<workspace name\>" and a "Handoff" line. With nothing blocked it is a bare count ("0 eligible"). When something is blocked it says what you cannot do yet, why, and the next step: "1 item can't be used in Console yet · not in this workspace · Link it from the conversation's header". |
+| **Workspace** | "Active · \<workspace name\>" and a "Handoff" line. With nothing blocked it is a bare count ("0 eligible"). When something is blocked it says what you cannot do yet, why, and the next step: "1 item can't be used in Console yet · not in this workspace · Link it from the conversation's header". That sentence is longer than the rail's 34-cell column, so it wraps — and its continuation lines are indented two cells under the first, which is how you can tell they belong to the row above rather than being rows of their own. Every Details row wraps that way, including the Status counts line. |
 | **Actions** | The buttons below, plus the note "Everything here is stored on this machine · syncing to a server isn't available yet." |
 
 | Action | What it does |
@@ -977,3 +977,10 @@ critique-10 claims reconciled; surface fixes in task-32346, 32348, 32349,
 (task-32393: a dirty Prompts editor now refuses Back and Escape out loud —
 "Unsaved Prompt changes — Save or Discard changes first." — and its footer
 chip reads "esc save or discard first" while the edit is unsaved.)*
+
+*Verified against fix/library-decisions-32302-32393-32306 — 2026-09-11
+(task-32306, user decision: a Details row that outruns the rail's 34-cell
+column keeps its full copy and hangs its continuation lines two cells in, so
+the blocked Handoff row's reason and next step read as one row — live at
+235x52 on a seeded profile, and pinned on the painted lines at 235x52 and
+60x24.)*
