@@ -3,15 +3,15 @@ id: TASK-31990
 title: Add recovery adapters for local research writing study and evaluation data
 status: Done
 assignee:
-  - Codex
-created_date: '2026-09-07 23:51'
-updated_date: '2026-09-08 07:44'
+- Codex
+created_date: 2026-09-07 23:51
+updated_date: 2026-09-11 08:13
 labels:
-  - backup-recovery
+- backup-recovery
 dependencies:
-  - task-31978
-  - task-31986
-  - task-31987
+- task-31978
+- task-31986
+- task-31987
 ---
 
 ## Description
@@ -46,7 +46,7 @@ Reason: direct implementation of the approved recovery ownership contract; reuse
 
 ## Implementation Notes
 
-<!-- SECTION:NOTES:BEGIN -->
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Implemented the installed research, writing, shared study/quiz, EvalsDB and evaluation-definition recovery cohort under [ADR-126](../decisions/126-complete-local-backup-and-recovery.md). Whole SQLite snapshots preserve records, history, relationships, soft deletions and managed BLOB bytes. Exact current schema catalogs include a genuine pre-lease research v0 fixture from commit 4f535bd3c4afd07565eb17b1ffa335c2c274c17a and its installed transition to v1; writing remains its actual unversioned layout, and EvalsDB is v5.
 
 Controller-approved prerequisites add stable shared-group composition for the exact core/study/quiz cohort, operation-private bounded native file copy/read for the managed evaluation YAML, and lazy package exports with unchanged public identities. Fixed authority, selected namespaces plus bootstrap.unbound, local binding proof, default-only SQLite capture factories and native resource retirement remain required. Research/writing file-operation contexts now close after commit/rollback, fixing an observed deferred-checkpoint source-header change; memory connections retain their lifetime. The evaluation config source and recovery declaration share one import-light canonical resolver.
@@ -66,8 +66,10 @@ Under the existing ADR-126 and controller-approved narrow scope, reproduce the r
 Corrected raw-file parent retirement by passing an optional private close callback through bootstrap pinning and the existing private-path walker/symlink transition. Actual close uncertainty now latches quarantine before cleanup can retry a descriptor number; normal missing/refused reads release admission. Six child-local simulated failures use real directory FDs and independent maintenance observers, including source/destination parents and ordinary reads. Consolidated the three SQLite owners' identical schema and capture guards into `DB/recovery_sqlite.py`, retaining all literal private authority sites and census rows.
 
 Final covering evidence: 180 domain/path/bootstrap tests passed, 53 admission/ordinary-owner tests passed, and 38 exact census tests passed. Scoped lint/format and diff checks pass. Three existing path-test failures were reproduced at the fix base and resolved by isolating their fault injections to the private-path module while retaining real ordinary admission; the incident is documented in the testing lessons. Full RED/GREEN commands and simulated-failure limitations are appended to the Task 7 report. No actual OS/hardware fault qualification is claimed. Status and ACs remain pending independent review.
-<!-- SECTION:NOTES:END -->
-
+Release C bounded retained eval ownership correction from /private/tmp/chatbook-eval-retained-owner-api-proposal.md: Evals/recovery.py owner-local current-selector paired-generation/journal→receipt-bound plan/manifest lookup +new test_eval_retained_definitions.py. Preserve actual active package defaults AND inactive restored eval files; use explicit local plan.restore mappings and manifest config dependencies, neverbasename/archiveabsolute locators. Existing reader/native admission remains; missingknownfiles and corrupt/mismatched authority refuse. No loader rebind/autoapproval/model execution/newregistry. Actual source-deleted Complete rebackup, candidatecleanup, multiple retainedfiles and negativeauthorityproof required. Rolledback/currentlocal-snapshot mapping remains concrete original completion dependency, not incoming-manifest authority.
+2026-09-11: Frozen retained eval committed-generation correction independently qualified against committed production snapshot plus exactly the three author files; root exact test import path overrides feature helper to keep child production isolated. Tests/Backup_Recovery/test_eval_retained_definitions.py, affected temporary-media Complete rebackup, and owner census: 23 passed (3 existing syntax warnings), 68.09s; /private/tmp/eval-retention-root-index.log. No census delta. Author report /private/tmp/chatbook-eval-retained-definitions-report.md and frozen patch SHA263e2d9cc1ca1d9879f05b49fa3805344af33ed6f769835cf616750ede556e1c. Independent reviewer pending. Rolled-back/local-snapshot retention follow-up is explicit, not claimed supported by this unit.
+Independent publication reviewer approved frozen three-file retained eval unit without actionable findings: /private/tmp/chatbook-eval-retained-definitions-independent-review.md. Root23-case exact snapshot + census qualification passed; production Ruff3→3 and Bandit0→0, no new production findings. Ready for scoped commit; overall original owner/recovery task remains in progress pending explicitly recorded rollback retention path.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Design references
 
 - [Approved specification](../../Docs/superpowers/specs/2026-09-07-complete-local-backup-restore-design.md)

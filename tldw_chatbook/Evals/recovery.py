@@ -219,6 +219,148 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
     return (_Adapter(), _DefinitionsAdapter())
 
 
+def _retained_definition_paths(context) -> tuple[tuple[str, Path], ...]:
+    """Resolve inactive eval files from this selector's committed local receipt.
+
+    The private plan supplies destinations; the verified manifest supplies owner
+    and config dependencies. Candidate trees and eval execution approvals are not
+    needed. Incoming receipts cannot describe originals reinstated by rollback.
+    """
+    import hashlib
+    import os
+    import stat
+
+    from tldw_chatbook.Backup_Recovery import archive_reader, bootstrap
+    from tldw_chatbook.Backup_Recovery.activation import ActivationStore, _private
+    from tldw_chatbook.Backup_Recovery.journal import _CandidateReceipt, _Prepared
+    from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
+    from tldw_chatbook.Backup_Recovery.plan_records import load_plan
+    from tldw_chatbook.Backup_Recovery.recovery_copies import _journal
+    from tldw_chatbook.Backup_Recovery.restore_plan import _ancestor
+
+    selector = bootstrap.lexical_path(context.config_path)
+    root = bootstrap.default_bootstrap_root()
+    before = bootstrap._control_records(root)
+    _, profiles, associations = before
+    profile = next((r for r in profiles if r["selector"] == str(selector)), None)
+    association = next(
+        (r for r in associations if r["selector"] == str(selector)), None
+    )
+    witness = profile.get("activation") if profile else None
+    if witness is None and association is None:
+        return ()
+    if witness is None or association is None or association["activation"] != witness:
+        raise ValueError("eval_retained_generation_unverified")
+    allowed, reason = bootstrap.startup_permission(selector, root)
+    if not allowed:
+        raise ValueError(reason)
+    binding = bootstrap._binding(selector, profiles, bootstrap._registry(root))
+    if binding is None:
+        raise ValueError("eval_retained_binding_changed")
+    control = Path(witness["store_root"]).parent
+    if Path(witness["store_root"]) != control / "activation":
+        raise ValueError("eval_retained_generation_unverified")
+    journal = _journal(control, witness["operation_id"])
+    with journal._locked(exclusive=False) as parent:
+        rows = journal._records(parent)
+    if not rows or rows[-1].event != "committed":
+        raise ValueError("eval_retained_commit_required")
+    prepared = _Prepared.model_validate(
+        next(row.evidence for row in rows if row.event == "prepared")
+    )
+    activation = next(
+        row.evidence for row in rows if row.event == "activation_recorded"
+    )
+    publication = prepared.publication
+    if (
+        publication is None
+        or publication.bootstrap_root != str(root)
+        or prepared.generation != witness["generation"]
+        or witness["namespaces"] != binding["namespaces"]
+        or not set(witness["namespaces"]) <= set(publication.namespaces)
+        or str(selector) not in activation["selectors"]
+        or activation["owners"] != witness["owners"]
+    ):
+        raise ValueError("eval_retained_generation_unverified")
+    store = ActivationStore(Path(witness["store_root"]))
+    with (
+        _private(store.root),
+        _private(store._generation(prepared.generation)) as parent,
+    ):
+        if store._required(parent, prepared.generation).owners != witness["owners"]:
+            raise ValueError("eval_retained_generation_unverified")
+    if prepared.isolated_profiles:
+        from tldw_chatbook.Backup_Recovery.isolated_restore import _launch_descriptor
+
+        entry = next(
+            (r for r in prepared.isolated_profiles if r.config == str(selector)), None
+        )
+        if entry is None or _launch_descriptor(entry.profile_id, control) != entry:
+            raise ValueError("eval_retained_profile_unverified")
+    elif not any(r.config == str(selector) for r in prepared.replacement_profiles):
+        raise ValueError("eval_retained_profile_unverified")
+
+    plan = load_plan(journal)
+    receipt = _CandidateReceipt.model_validate(rows[0].evidence)
+    if (
+        plan.local_snapshot is not None
+        or plan.archive_digest != receipt.archive_digest
+        or publication.plan_digest != receipt.plan_digest
+    ):
+        raise ValueError("eval_retained_plan_unverified")
+    limits = ArchiveLimits()
+    with archive_reader._regular(journal.root / "verified-manifest.json") as stream:
+        info = os.fstat(stream.fileno())
+        if (
+            info.st_uid != os.geteuid()
+            or info.st_nlink != 1
+            or stat.S_IMODE(info.st_mode) != 0o600
+        ):
+            raise ValueError("verified_manifest_changed")
+        raw = stream.read(limits.manifest_bytes + 1)
+        if archive_reader._identity(info) != archive_reader._identity(
+            os.fstat(stream.fileno())
+        ):
+            raise ValueError("verified_manifest_changed")
+    if (
+        len(raw) > limits.manifest_bytes
+        or hashlib.sha256(raw).hexdigest() != receipt.manifest_digest
+    ):
+        raise ValueError("verified_manifest_changed")
+    doc = archive_reader._manifest(raw, limits, encrypted=True)
+    destinations = dict(plan.restore)
+    configs = {
+        row.logical_id
+        for row in doc.files
+        if row.owner_id == "config" and destinations.get(row.logical_id) == selector
+    }
+    if len(configs) != 1:
+        raise ValueError("eval_retained_config_unverified")
+    producers = {row.logical_id: row for row in doc.producer_inventory}
+    retained = []
+    for row in doc.files:
+        if row.owner_id != "eval.definitions" or row.logical_id not in destinations:
+            continue
+        item = producers.get(row.logical_id)
+        if item is None or item.status != "included":
+            raise ValueError("eval_retained_owner_unverified")
+        if not configs.intersection(item.dependencies):
+            continue
+        path = destinations[row.logical_id]
+        if not any(
+            path == Path(p) or Path(p) in path.parents for p in binding["roots"]
+        ):
+            raise ValueError("eval_retained_destination_unverified")
+        _ancestor(path)
+        retained.append((row.logical_id, path))
+    with journal._locked(exclusive=False) as parent:
+        if journal._records(parent) != rows:
+            raise ValueError("eval_retained_generation_changed")
+    if bootstrap._control_records(root) != before:
+        raise ValueError("eval_retained_generation_changed")
+    return tuple(retained)
+
+
 @dataclass(frozen=True)
 class _DefinitionsAdapter:
     owner_id: str = "eval.definitions"
@@ -228,17 +370,26 @@ class _DefinitionsAdapter:
         context = discovery_context(config)
         # Exact EvalConfigLoader default; never inspect arbitrary parents/home or
         # import its YAML/runtime bootstrap during declaration discovery.
+        import hashlib
+
         from . import _default_config_path
 
         path = _default_config_path()
-        return (
+        paths = [("", path)]
+        for logical_id, retained in _retained_definition_paths(context):
+            if retained not in {value for _, value in paths}:
+                paths.append(
+                    (hashlib.sha256(logical_id.encode()).hexdigest(), retained)
+                )
+        return tuple(
             StorageItem(
                 self.owner_id,
-                storage_logical_id(context, self.owner_id),
-                path,
-                "included" if path.is_file() else "missing_required",
+                storage_logical_id(context, self.owner_id, local_id),
+                selected,
+                "included" if selected.is_file() else "missing_required",
                 (storage_logical_id(context, "config"),),
-            ),
+            )
+            for local_id, selected in paths
         )
 
     def schema_policy(self) -> SchemaPolicy:

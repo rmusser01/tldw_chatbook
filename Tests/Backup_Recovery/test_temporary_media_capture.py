@@ -497,12 +497,19 @@ async def main():
     assert {recovered.resolve(asset)[1].read_bytes() for (asset,) in unreferenced} == {b'available temporary gallery',b'orphan video bytes'}
     assert not list(videos.root.glob('*/*.mp4'))
     selector = Path(os.environ['TLDW_CONFIG_PATH'])
-    options = {'staging_parent':home, 'temporary_media':False, 'allow_partial':True}
+    options = {'staging_parent':home, 'temporary_media':False}
     preview = preview_capture((selector,), options=options)
-    assert not preview.complete
-    omitted = [(i.owner,i.status,i.path) for i in preview.items if i.status not in ('included','included_directory','unused','intentionally_excluded','intentionally_deleted')]
-    assert omitted == [('unknown','unsupported',data/'eval_config.yaml')], omitted
-    assert preview.issues == ('unsupported','unsupported_owner'), preview.issues
+    assert preview.complete, (preview.issues, [(i.owner,i.status,i.path) for i in preview.items if i.status == 'unsupported'])
+    from tldw_chatbook.Evals import _default_config_path
+    definitions = [i for i in preview.items if i.owner == 'eval.definitions' and i.status == 'included']
+    assert {i.path for i in definitions} == {_default_config_path(), data/'eval_config.yaml'}
+    assert _default_config_path() != data/'eval_config.yaml'
+    from tldw_chatbook.Backup_Recovery.activation import ActivationStore
+    from tldw_chatbook.Backup_Recovery import bootstrap
+    _, profiles = bootstrap._records(bootstrap.default_bootstrap_root())
+    witness = next(row['activation'] for row in profiles if row['selector'] == str(selector))
+    activation = ActivationStore(Path(witness['store_root']))
+    assert not activation.allowed(witness['generation'], 'eval.definitions')
     monitoring = asyncio.create_task(monitor_app(app))
     cancel = threading.Event()
     watchdog = asyncio.get_running_loop().call_later(30,cancel.set)
@@ -514,7 +521,21 @@ async def main():
         catalog = next(f for f in members if f['relative_path']=='catalog.sqlite3')
         with sqlite3.connect(captured.root/catalog['payload']) as connection:
             assert connection.execute('SELECT asset_id FROM assets ORDER BY asset_id').fetchall()==assets
-        assert not captured.inventory.complete and manifest['consistency']=='partial'
+        assert captured.inventory.complete and manifest['consistency']=='coherent'
+        retained = [f for f in manifest['files'] if f['owner_id']=='eval.definitions']
+        assert len(retained) == 2
+        for f in retained:
+            assert (captured.root/f['payload']).read_bytes() == (data/'eval_config.yaml').read_bytes()
+        from tldw_chatbook.Backup_Recovery.archive_writer import write_archive
+        for _ in range(500):
+            if storage._pause is None and app._backup_runtime_maintenance is None:
+                break
+            await asyncio.sleep(.01)
+        assert storage._pause is None and app._backup_runtime_maintenance is None
+        videos.save('after-rebackup','clip',b'ordinary resumed video',extension='mp4')
+        await asyncio.to_thread(write_archive,captured,home/'second.tldw-backup.zip',password=None,cancel=threading.Event())
+        assert (home/'second.tldw-backup.zip').is_file()
+        assert not activation.allowed(witness['generation'], 'eval.definitions')
     finally:
         watchdog.cancel(); cancel.set(); monitoring.cancel()
         try:
