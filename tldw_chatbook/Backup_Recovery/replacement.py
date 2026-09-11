@@ -19,7 +19,12 @@ from uuid import uuid4
 
 from . import archive_reader as reader
 from .archive_writer import write_archive
-from .capture import CaptureResult, _item_validator, _manifest_for
+from .capture import (
+    CaptureResult,
+    CaptureReviewRequired,
+    _item_validator,
+    _manifest_for,
+)
 from .credentials import _material, process_credentials
 from .journal import _CandidateReceipt, _matches, _Prepared, observe_artifact
 from .limits import ArchiveLimits
@@ -37,6 +42,14 @@ from .publication import (
 )
 from .restore_plan import RestorePlan, recheck_targets
 from .sqlite_validation import validated_schema_version
+
+
+class RollbackCredentialReviewRequired(CaptureReviewRequired):
+    """Actual private capture omissions need renewed review before retry."""
+
+    def __init__(self, issues):
+        super().__init__(tuple(sorted(set(issues))))
+        self.args = ("rollback_credential_coverage_changed",)
 
 
 def _checked_originals(plan, journal, session):
@@ -345,7 +358,7 @@ def capture_verify_rollback(
         )
         issues = process_credentials(stage, rebound, mode="rollback", encrypted=True)
         if set(issues) != set(acknowledged_credential_issues):
-            raise ValueError("rollback_credential_coverage_changed")
+            raise RollbackCredentialReviewRequired(issues)
         material = stage / "credential-recovery.json"
         if not material.is_file():
             raise ValueError("rollback_credential_material_missing")
@@ -973,6 +986,188 @@ def _unlock_recovery(journal, prepared, password, session, cancel):
         shutil.rmtree(work)
 
 
+def _abort_context(journal, plan, records):
+    """Bind only an untouched local receipt to its exact registered pending scope."""
+    from . import bootstrap
+    from .control_records import _Pending
+    from .journal import _PublicationContext
+    from .native_files import pinned_directory
+
+    events = [row.event for row in records]
+    if events and events[-1] == "prepublication_aborted":
+        events = events[:-1]
+    if events not in (["candidate_staged"], ["candidate_staged", "prepared"]):
+        raise ValueError("prepublication_abort_unavailable")
+    if plan.mode != "replace" or plan.target is None:
+        raise ValueError("replacement_recovery_required")
+    root = bootstrap.default_bootstrap_root()
+    with pinned_directory(root) as parent:
+        pending = _Pending.model_validate(
+            bootstrap._read(
+                parent, "pending-" + bootstrap._key(journal.operation_id) + ".json"
+            )
+        )
+    _, profiles = bootstrap._records(root)
+    registry = bootstrap._registry(root)
+    selectors = sorted(
+        {
+            str(item.path)
+            for item in plan.target.items
+            if item.owner == "config" and (item.logical_id, item.path) in plan.restore
+        }
+    )
+    selected = [row for row in profiles if row["selector"] in selectors]
+    affected = [path for _, path in (*plan.restore, *plan.retire)]
+    affected += [
+        item.path for item in plan.target.items if item.logical_id in plan.safety_scope
+    ]
+    if not selectors or len(selected) != len(selectors) or registry is None:
+        raise ValueError("replacement_local_binding_required")
+    names = sorted(
+        {name for row in selected for name in row["namespaces"]}
+        | {
+            name
+            for name, entry in registry.items()
+            if any(
+                bootstrap._overlap(Path(bound), path)
+                for bound in entry["roots"]
+                for path in affected
+            )
+        }
+    )
+    receipt = _CandidateReceipt.model_validate(records[0].evidence)
+    context = _PublicationContext(
+        bootstrap_root=str(root),
+        namespaces=names,
+        selectors=selectors,
+        archive_digest=receipt.archive_digest,
+        plan_digest=receipt.plan_digest,
+        descriptor=receipt.descriptor,
+    )
+    if pending != _Pending(
+        operation_id=journal.operation_id,
+        namespaces=names,
+        selectors=selectors,
+        control_root=str(journal.root.parent),
+    ):
+        raise ValueError("publication_pending_mismatch")
+    if (
+        len(events) == 2
+        and _Prepared.model_validate(records[1].evidence).publication != context
+    ):
+        raise ValueError("publication_pending_mismatch")
+    return context
+
+
+def _abort_prepublication(journal, plan, cancel, *, execute):
+    """Prove unchanged native targets before recording abort and removing own fence."""
+    from . import bootstrap
+    from .control_records import UNBOUND_NAMESPACE, _existing_admission_authority
+    from .journal import _evidence_digest, _states
+    from .native_files import flush_directory, pinned_directory
+    from .publication import _check_directory_states
+    from .storage_admission import _contains_owned_path
+
+    root = bootstrap.default_bootstrap_root()
+    name = "pending-" + bootstrap._key(journal.operation_id) + ".json"
+    affected = [path for _, path in (*plan.restore, *plan.retire, *plan.containers)]
+    affected += [
+        item.path for item in plan.target.items if item.logical_id in plan.safety_scope
+    ]
+    with journal._locked(exclusive=False) as parent:
+        context = _abort_context(journal, plan, journal._records(parent))
+    with (
+        _existing_admission_authority(root).maintenance(
+            (*context.namespaces, UNBOUND_NAMESPACE), 30
+        ) as session,
+        journal._locked(exclusive=True) as parent,
+    ):
+        records = journal._records(parent)
+        if _abort_context(journal, plan, records) != context:
+            raise ValueError("publication_pending_mismatch")
+        session._check()
+        if session._control != root / "admission" or any(
+            not any(_contains_owned_path(bound, path) for bound in session._roots)
+            for path in (*affected, *map(Path, context.selectors))
+        ):
+            raise ValueError("finalization_scope_uncovered")
+        receipt = _CandidateReceipt.model_validate(records[0].evidence)
+        prepared_row = next((row for row in records if row.event == "prepared"), None)
+
+        def prove():
+            reader._check(cancel)
+            session._check()
+            recheck_targets(plan)
+            with pinned_directory(Path(receipt.stage.path)) as stage:
+                info = os.fstat(stage)
+                if (info.st_dev, info.st_ino) != (
+                    receipt.stage.device,
+                    receipt.stage.inode,
+                ):
+                    raise ValueError("candidate_receipt_changed")
+            # Preparation adds exact empty retained directories under private roots;
+            # its artifact receipts supersede the original whole-stage tree hash.
+            if (
+                prepared_row is None and not _matches(receipt.stage, receipt.stage.path)
+            ) or not _matches(receipt.descriptor, receipt.descriptor.path):
+                raise ValueError("candidate_receipt_changed")
+            if prepared_row is not None:
+                prepared = _Prepared.model_validate(prepared_row.evidence)
+                _finalization_session(session, context, prepared)
+                _check_directory_states(prepared, records)
+                if any(value != "staged" for value in _states(prepared).values()):
+                    raise ValueError("prepublication_originals_changed")
+            _pending(journal, context, targets=affected, durable=execute)
+
+        prove()
+        evidence = {
+            "candidate_digest": _evidence_digest(records[0].evidence),
+            "prepared_digest": _evidence_digest(prepared_row.evidence)
+            if prepared_row
+            else None,
+            "target_fingerprint": plan.target_fingerprint,
+            "publication": context.model_dump(),
+        }
+        if (
+            records[-1].event == "prepublication_aborted"
+            and records[-1].evidence != evidence
+        ):
+            raise ValueError("prepublication_abort_unverified")
+        if not execute:
+            return
+        with pinned_directory(root) as pointer:
+            info = os.fstat(pointer)
+            identity = info.st_dev, info.st_ino
+            pending_before = observe_artifact(root / name)
+        if records[-1].event != "prepublication_aborted":
+            journal._append(parent, "prepublication_aborted", evidence)
+        journal._flush_records(parent)
+        prove()
+        with pinned_directory(root) as pointer:
+            info = os.fstat(pointer)
+            if (info.st_dev, info.st_ino) != identity or observe_artifact(
+                root / name
+            ) != pending_before:
+                raise ValueError("finalization_pending_changed")
+            os.unlink(name, dir_fd=pointer)
+            flush_directory(pointer)
+
+
+def validate_replacement_abort(operation_id, *, control_root, cancel):
+    """Check the actual pending operation under maintenance without clearing it."""
+    from . import bootstrap
+    from .journal import Journal
+    from .plan_records import load_plan
+
+    if (
+        type(operation_id) is not str
+        or not (control_root / ("operation-" + bootstrap._key(operation_id))).is_dir()
+    ):
+        raise ValueError("recovery_pending_missing")
+    journal = Journal(control_root, operation_id)
+    _abort_prepublication(journal, load_plan(journal), cancel, execute=False)
+
+
 def recover_replacement(
     operation_id: str,
     *,
@@ -993,7 +1188,7 @@ def recover_replacement(
     from .plan_records import load_plan
     from .publication import finalize_candidate, publish_candidate
 
-    if action not in {"finish", "rollback"}:
+    if action not in {"finish", "rollback", "abort"}:
         raise ValueError("recovery_action_invalid")
     root = bootstrap.default_bootstrap_root()
     if (
@@ -1003,8 +1198,13 @@ def recover_replacement(
         raise ValueError("recovery_pending_missing")
     journal = Journal(control_root, operation_id)
     plan = load_plan(journal)
+    if action == "abort":
+        _abort_prepublication(journal, plan, cancel, execute=True)
+        return "aborted"
     with journal._locked(exclusive=False) as parent:
         records = journal._records(parent)
+    if not any(row.event == "rollback_verified" for row in records):
+        raise ValueError("prepublication_abort_required")
     prepared = _Prepared.model_validate(
         next(row.evidence for row in records if row.event == "prepared")
     )

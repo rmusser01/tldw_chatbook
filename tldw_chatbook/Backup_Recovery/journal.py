@@ -116,6 +116,13 @@ class _CandidateReceipt(_Evidence):
     plan_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+class _PrepublicationAbort(_Evidence):
+    candidate_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    prepared_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    target_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    publication: _PublicationContext
+
+
 class _RollbackSource(_Evidence):
     logical_id: str = Field(min_length=1, max_length=1024)
     owner_id: str = Field(min_length=1, max_length=256)
@@ -590,6 +597,7 @@ class _Event(_Evidence):
     previous: str
     event: Literal[
         "candidate_staged",
+        "prepublication_aborted",
         "prepared",
         "rollback_verified",
         "publication_started",
@@ -721,6 +729,10 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
         allowed.add("rollback_credentials_planned")
         if "rollback_credentials_planned" in events:
             allowed.add("rollback_credential_applied")
+    if events in (["candidate_staged"], ["candidate_staged", "prepared"]):
+        allowed.add("prepublication_aborted")
+    if events and events[-1] == "prepublication_aborted":
+        allowed = set()
     if event not in allowed:
         raise ValueError("journal_transition_invalid")
     if (
@@ -741,6 +753,7 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
         "rollback_metadata_started": _DirectoryIntent,
         "rollback_metadata_applied": _DirectoryProgress,
         "candidate_staged": _CandidateReceipt,
+        "prepublication_aborted": _PrepublicationAbort,
         "prepared": _Prepared,
         "rollback_verified": _Rollback,
         "artifact_retired": _Progress,
@@ -770,6 +783,31 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
             "rollback_credential_applied",
         }:
             _validate_reverse_evidence(event, validated, prior, prepared_record)
+        elif isinstance(validated, _PrepublicationAbort):
+            receipt = _CandidateReceipt.model_validate(prior[0].evidence)
+            if (
+                validated.candidate_digest != _evidence_digest(prior[0].evidence)
+                or validated.publication.plan_digest != receipt.plan_digest
+                or validated.publication.archive_digest != receipt.archive_digest
+                or validated.publication.descriptor != receipt.descriptor
+                or validated.prepared_digest
+                != (
+                    _evidence_digest(prepared_record.evidence)
+                    if prepared_record
+                    else None
+                )
+                or (
+                    prepared_record is not None
+                    and (
+                        prepared_record.evidence["mode"] != "replace"
+                        or validated.publication
+                        != _Prepared.model_validate(
+                            prepared_record.evidence
+                        ).publication
+                    )
+                )
+            ):
+                raise ValueError("prepublication_abort_unverified")
         elif isinstance(validated, _Rollback):
             prepared = _Prepared.model_validate(prepared_record.evidence)
             if validated.safety_sources != prepared.safety_sources:
@@ -1485,6 +1523,7 @@ class Journal:
     def record(self, event: str, evidence: Mapping[str, object]) -> None:
         """Flush one strictly typed exclusive record; failed writes remain evidence."""
         if event in {
+            "prepublication_aborted",
             "move_intended",
             "move_observed",
             "rollback_started",

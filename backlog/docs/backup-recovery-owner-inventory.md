@@ -2953,3 +2953,4 @@ hints without claiming durable dependency or recovery qualification.
 | tldw_chatbook/Backup_Recovery/recovered_media.py | prepare_temporary_capture | write | 1 | qualified | recovered.media |
 | tldw_chatbook/Backup_Recovery/recovered_media.py | prepare_temporary_capture | connect_private_sqlite | 1 | qualified | recovered.media |
 | tldw_chatbook/DB/recovery_core.py | _CoreAdapter.temporary_video_references | connect_private_sqlite | 1 | qualified | recovered.media |
+| tldw_chatbook/Backup_Recovery/replacement.py | _abort_prepublication | os.unlink | 1 | generic_boundary | backup_control |
