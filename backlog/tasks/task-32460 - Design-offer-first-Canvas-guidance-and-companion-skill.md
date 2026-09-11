@@ -1,5 +1,5 @@
 ---
-id: TASK-32312
+id: TASK-32460
 title: Design offer-first Canvas guidance and companion skill
 status: Done
 assignee:
@@ -57,3 +57,9 @@ Independent spec review and independent plan review each approved round 1 with n
 Verification: 30 local links across five documents resolve; four Python plan excerpts parse (syntax only); primary integration/test paths exist; the repository task-ID/Windows-path guard passed across 3693 task files; whitespace checks passed. No product code changed, so application tests, runtime/browser qualification, and model behavior trials were not run or claimed by this documentation task. Those are explicit implementation acceptance work.
 All documentation-plan steps are complete and the reviewed plan is ready for execution handoff. A separate implementation Backlog task will be created when execution starts. No new generalized lesson was needed. Only these design/planning artifacts are included in this delivery.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+PR #2613 rebased onto dev at 8dd282bad9. This Canvas task originally used TASK-32312; the older upstream task retains that ID. The Canvas records were created at 04:29/04:53 UTC on September 11, after upstream add commits 4df384ae6d (03:47 UTC) and 1744d805eb (04:07 UTC). The local/remote ref and worktree sweep found maximum ID 32457; this record is now TASK-32460. Canvas document references move with it; historical live evidence and temporary paths retain their original names.
+
+A concurrent merge (PR #2608, be380a1a6f) used the initially selected replacement TASK-32458 before Canvas was published. A fresh sweep found maximum 32459; the Canvas design moved to TASK-32460 before push.

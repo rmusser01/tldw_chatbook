@@ -2,7 +2,7 @@
 
 ## A process's No route to host can be an app privacy denial
 
-**TASK-32313, 2026-09-10.** curl and Python sockets to the user-authorized
+**TASK-32459, 2026-09-10.** curl and Python sockets to the user-authorized
 llama.cpp endpoint failed immediately, including outside the execution sandbox.
 The initial report incorrectly called the server unreachable from the Mac.
 The user could load its UI in Firefox. A route lookup found the target on en0;

@@ -2,7 +2,7 @@
 
 Status: Accepted — written spec approved by the user on 2026-09-10
 Date: 2026-09-10
-Related Task: [TASK-32312](../tasks/task-32312%20-%20Design-offer-first-Canvas-guidance-and-companion-skill.md)
+Related Task: [TASK-32460](../tasks/task-32460%20-%20Design-offer-first-Canvas-guidance-and-companion-skill.md)
 Extends: [ADR-121](121-local-versioned-canvas-artifacts-and-browser-sandbox.md),
 [ADR-124](124-canvas-mermaid-subset-and-immutable-runtime-profiles.md)
 Preserves: [ADR-009](009-local-skill-trust-boundary.md)

@@ -1,7 +1,7 @@
 # Canvas guide and inline skill verification
 
 Status: implemented and reviewed; targeted checks and bounded live-model sample complete
-Task: TASK-32313
+Task: TASK-32459
 Baseline: `027422cfaa` (`codex/canvas-guidance-skill-design`)
 Spec: [Approved design](../specs/2026-09-10-canvas-guidance-skill-design.md)
 Plan: [Implementation steps](../plans/2026-09-10-canvas-guidance-skill-implementation.md)
@@ -238,5 +238,47 @@ across 3,694 task files. No full test sweep, merge, or push was performed.
 
 The code and evidence stay on `codex/canvas-guidance-skill-design` in the isolated
 worktree. The ten scenario classes now have recorded model observations, including
-the retained failed-repair baseline and successful wording recheck. TASK-32313's
+the retained failed-repair baseline and successful wording recheck. TASK-32459's
 evidence criterion is satisfied with the explicit limits above.
+
+
+## PR #2613 rebase and Qodo review (2026-09-11)
+
+Rebased onto `8dd282bad9`; both independent testing lessons were preserved.
+The Canvas task IDs collided with older tasks on dev. The delivery task is now
+TASK-32459 and the design task TASK-32460, with provenance in both records.
+A further update to `be380a1a6f` changes navigation key labels; its controller
+and configuration changes are copy-only and do not change these execution paths.
+
+Addressed all three Qodo findings:
+
+- Runtime guidance omits the exact offer policy when it already exists in the
+  original system prompt. The first-request budget projection, bounded request
+  builder, and executing model loop all use this same decision. Tool and profile
+  instructions remain present. Regression tests cover discovery followed by
+  loading Canvas schemas in both native and fallback protocols, direct disclosure,
+  and the budget projection. The initial policy regression produced eight failures;
+  the corrected focused group passed 27 checks including shared validation.
+- `validate_canvas_guide_arguments` in shared input validation uses a strict,
+  frozen Pydantic model with four literal topics and forbidden extra fields.
+  The tool consumes only validated output and retains its fixed `invalid_arguments`
+  error. Thirteen new boundary checks first failed for the absent validator, then
+  passed; existing provider cases verify rejection before resource access.
+- Provider documentation now describes all constructor parameters, live enablement,
+  fail-closed callback behavior, and the disable latch.
+
+The broader run exposed six stale fixture failures. All six reproduced using dev's
+original tests (plus its previously documented accepted-hook ordering failure).
+Production frozen-context behavior was preserved: test skills now expose the
+app-owned catalog for capture; the selected-project test supplies a typed binding
+and the shared ready-provider resolution. All 53 skill/context tests then passed.
+
+Final combined targeted run: **413 passed in 48.63s**, including fresh wheel/sdist
+packaging. Separate checks: **3 Canvas bridge tests passed**, and **4 exact-example
+Chromium tests passed in 5.07s**. Ruff lint passes affected files. Full formatting
+passes the provider, shared validator, new tests and affected Chat tests; the two
+large AgentService files retain only verified pre-existing formatting hunks.
+Whitespace and task-ID checks pass. An independent read-only review approved the
+three Qodo fixes with no actionable correctness, privacy, or authority findings.
+No full test sweep or new live-model sampling was performed; the earlier live
+qualification limitations above still apply.

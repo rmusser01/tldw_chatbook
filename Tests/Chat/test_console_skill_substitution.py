@@ -48,6 +48,19 @@ class _Skills:
 
     async def get_context(self, *, mode="local"):
         self.get_context_calls += 1
+        return self._context()
+
+    def _load_index(self):
+        context = self._context()
+        return {
+            item["name"]: item
+            for item in (*context["available_skills"], *context["blocked_skills"])
+        }
+
+    def _summary_for_record(self, record):
+        return dict(record)
+
+    def _context(self):
         return {
             "available_skills": [
                 {
@@ -209,6 +222,8 @@ async def test_submit_sends_rendered_payload_but_stores_raw_command():
         model="m",
         skills_service=skills,
     )
+    # Runtime snapshots capture the app-owned skill catalog before dispatch.
+    controller.app = SimpleNamespace(local_skills_service=skills)
 
     result = await controller.submit_draft("$code-review fix it")
 
@@ -233,6 +248,8 @@ async def test_fork_survives_retry_by_re_rendering_fresh():
         model="m",
         skills_service=skills,
     )
+    # Runtime snapshots capture the app-owned skill catalog before dispatch.
+    controller.app = SimpleNamespace(local_skills_service=skills)
     await controller.submit_draft("$code-review go")
     messages = store.messages_for_session(store.active_session_id)
     failed = next(
@@ -265,6 +282,8 @@ async def test_submit_refusal_appends_system_row_and_aborts_without_provider_cal
         model="m",
         skills_service=skills,
     )
+    # Runtime snapshots capture the app-owned skill catalog before dispatch.
+    controller.app = SimpleNamespace(local_skills_service=skills)
 
     result = await controller.submit_draft("$code-review go")
 
@@ -307,6 +326,8 @@ async def test_submit_refusal_never_invokes_accepted_hook():
         model="m",
         skills_service=skills,
     )
+    # Runtime snapshots capture the app-owned skill catalog before dispatch.
+    controller.app = SimpleNamespace(local_skills_service=skills)
     accepted_calls = []
     controller.on_submission_accepted = lambda: accepted_calls.append(True)
 
@@ -329,6 +350,8 @@ async def test_submit_success_invokes_accepted_hook_after_placeholder_before_pro
         model="m",
         skills_service=skills,
     )
+    # Runtime snapshots capture the app-owned skill catalog before dispatch.
+    controller.app = SimpleNamespace(local_skills_service=skills)
     assistant_rows_seen_at_hook_time = []
     provider_calls_seen_at_hook_time = []
 
@@ -365,6 +388,8 @@ async def test_regenerate_refusal_after_skill_edit_keeps_prior_answer():
         model="m",
         skills_service=skills,
     )
+    # Runtime snapshots capture the app-owned skill catalog before dispatch.
+    controller.app = SimpleNamespace(local_skills_service=skills)
     await controller.submit_draft("$code-review go")
     messages = store.messages_for_session(store.active_session_id)
     assistant = next(

@@ -2,7 +2,7 @@
 
 Date: 2026-09-10
 Spec: [Offer-first Canvas guidance and companion skill](../specs/2026-09-10-canvas-guidance-skill-design.md)
-Task: [TASK-32312](../../../backlog/tasks/task-32312%20-%20Design-offer-first-Canvas-guidance-and-companion-skill.md)
+Task: [TASK-32460](../../../backlog/tasks/task-32460%20-%20Design-offer-first-Canvas-guidance-and-companion-skill.md)
 Decision: [ADR-149](../../../backlog/decisions/149-offer-first-canvas-guide-and-inline-skill.md)
 
 ## Independent review

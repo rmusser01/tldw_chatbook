@@ -4,7 +4,7 @@ Date: 2026-09-10 (America/Los_Angeles)
 Status: Written spec approved by the user on 2026-09-10
 Baseline: locally available `origin/dev`, `3afa68f1b9`
 Scope: design only; implementation planning follows written-spec approval.
-Task: [TASK-32312](../../../backlog/tasks/task-32312%20-%20Design-offer-first-Canvas-guidance-and-companion-skill.md)
+Task: [TASK-32460](../../../backlog/tasks/task-32460%20-%20Design-offer-first-Canvas-guidance-and-companion-skill.md)
 Decision: [ADR-149](../../../backlog/decisions/149-offer-first-canvas-guide-and-inline-skill.md)
 Implementation plan: [Canvas guidance and skill](../plans/2026-09-10-canvas-guidance-skill-implementation.md)
 

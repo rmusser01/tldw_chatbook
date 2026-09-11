@@ -13344,7 +13344,7 @@ Two corollaries worth keeping:
 
 ### Canvas CSS must survive browser parsing as well as compilation (2026-09-10)
 
-During TASK-32313, both new HTML guide examples passed the Canvas compiler but
+During TASK-32459, both new HTML guide examples passed the Canvas compiler but
 Chromium refused their plans with `invalid-plan`. Inspecting CSSOM declarations
 showed that `background` expanded into unallowlisted `background-position-x/y`,
 and `border` expanded into unallowlisted `border-image-*` properties. Replacing

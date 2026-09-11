@@ -38,6 +38,7 @@ from tldw_chatbook.Canvas.models import (
     CanvasRevisionInfo,
     CanvasScope,
 )
+from tldw_chatbook.Utils.input_validation import validate_canvas_guide_arguments
 
 from .agent_models import (
     ToolCall,
@@ -339,8 +340,19 @@ def build_canvas_runtime_guidance(
     schemas: Iterable[ToolSchema],
     *,
     messages: Iterable[dict] = (),
+    system_prompt: str = "",
 ) -> str:
-    """Describe only disclosed Canvas tools, adding V1 APIs for mutations."""
+    """Describe disclosed Canvas tools without repeating the shared policy.
+
+    Args:
+        schemas: Tool schemas disclosed on this request.
+        messages: Conversation messages used to identify current Canvas profiles.
+        system_prompt: Existing system instructions, possibly containing policy
+            from discovery. Only an exact policy match suppresses reinjection.
+
+    Returns:
+        Additional guidance for disclosed tools, or empty text without Canvas.
+    """
 
     try:
         schemas = tuple(schemas)
@@ -351,7 +363,7 @@ def build_canvas_runtime_guidance(
     if not disclosed:
         return ""
     sections = [
-        _CANVAS_USE_GUIDANCE,
+        *([] if CANVAS_OFFER_POLICY in system_prompt else [_CANVAS_USE_GUIDANCE]),
         *(
             _CANVAS_TOOL_GUIDANCE[name]
             for name in _CANVAS_TOOL_ORDER
@@ -383,7 +395,19 @@ def build_canvas_runtime_guidance(
 
 
 class CanvasToolProvider:
-    """Expose Canvas artifact and guide tools bound to one server-owned scope."""
+    """Expose Canvas artifact and guide tools bound to one server-owned scope.
+
+    Args:
+        coordinator: Host coordinator for scope checks and artifact operations.
+        scope: Owning session, conversation, and run authority.
+        enabled: Initial provider enablement; false keeps this provider disabled.
+        enabled_reader: Optional live enablement callback. Defaults to the Canvas
+            configuration reader. Only literal True enables execution; exceptions
+            and other values fail closed. An observed disable latches until restart.
+
+    Raises:
+        TypeError: If the coordinator, scope, flag, or callback has an invalid type.
+    """
 
     SOURCE = CANVAS_SOURCE
 
@@ -637,10 +661,14 @@ def _name_from_id(tool_id: str) -> str:
 
 
 def _validate_arguments(name: str, args: object) -> dict[str, str]:
+    if name == "canvas_guide":
+        try:
+            return validate_canvas_guide_arguments(args)
+        except ValueError:
+            raise _ArgumentError("invalid_arguments") from None
     if type(args) is not dict:
         raise _ArgumentError("invalid_arguments")
     expected = {
-        "canvas_guide": frozenset({"topic"}),
         "canvas_list": frozenset(),
         "canvas_read": frozenset({"canvas_id"}),
         "canvas_create": frozenset({"title", "html"}),
@@ -651,11 +679,6 @@ def _validate_arguments(name: str, args: object) -> dict[str, str]:
     if frozenset(args) != expected:
         raise _ArgumentError("invalid_arguments")
     checked = dict(args)
-    if name == "canvas_guide":
-        topic = checked["topic"]
-        if type(topic) is not str or topic not in CANVAS_GUIDE_PATHS:
-            raise _ArgumentError("invalid_arguments")
-        return checked
     if "canvas_id" in checked:
         checked["canvas_id"] = _uuid(checked["canvas_id"], "invalid_canvas_id")
     if "expected_parent_revision_id" in checked:

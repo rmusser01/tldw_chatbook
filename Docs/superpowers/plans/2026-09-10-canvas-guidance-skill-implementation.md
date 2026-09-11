@@ -15,7 +15,7 @@
 - [Approved spec](../specs/2026-09-10-canvas-guidance-skill-design.md), approved by the user on 2026-09-10.
 - [ADR-149](../../../backlog/decisions/149-offer-first-canvas-guide-and-inline-skill.md).
 - Existing [ADR-121](../../../backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md), [ADR-124](../../../backlog/decisions/124-canvas-mermaid-subset-and-immutable-runtime-profiles.md), and [ADR-009](../../../backlog/decisions/009-local-skill-trust-boundary.md).
-- [TASK-32312](../../../backlog/tasks/task-32312%20-%20Design-offer-first-Canvas-guidance-and-companion-skill.md) tracks the design and plan, not product delivery.
+- [TASK-32460](../../../backlog/tasks/task-32460%20-%20Design-offer-first-Canvas-guidance-and-companion-skill.md) tracks the design and plan, not product delivery.
 - Baseline: `323ae22c5a` on `codex/canvas-guidance-skill-design`, based on `origin/dev` at `3afa68f1b9`.
 
 ADR required: yes (already recorded)
@@ -486,7 +486,7 @@ existing setup route; a skipped browser test is not evidence that examples work.
 
 ## Execution status
 
-The user approved both design and implementation. TASK-32313 tracks delivery on
+The user approved both design and implementation. TASK-32459 tracks delivery on
 `codex/canvas-guidance-skill-design`. Independent browser/package and skill/trust
 work proceeded alongside provider wiring with disjoint write scopes; shared
 provider and guidance changes remained sequential. The parent completed guidance
