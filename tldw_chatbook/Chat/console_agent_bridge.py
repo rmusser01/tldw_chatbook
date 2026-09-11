@@ -7719,7 +7719,16 @@ class ConsoleAgentBridge:
         )
 
     def end_setup_phase(self, conversation_id: str) -> None:
-        """Clear the setup mark; a no-op when it was never set."""
+        """Clear the pre-provider setup mark (task-32344).
+
+        A no-op when it was never set, so callers can end unconditionally
+        from a ``finally``. Once cleared, ``live_snapshot`` resolves this
+        conversation from its published steps again.
+
+        Args:
+            conversation_id: The conversation whose setup marker is
+                removed; other conversations' marks are untouched.
+        """
         self._setup_started_at.pop(conversation_id, None)
 
     def live_run_snapshot(
