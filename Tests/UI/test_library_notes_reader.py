@@ -115,9 +115,12 @@ async def test_database_notes_capability_inventory_and_modes(
             assert isinstance(screen, LibraryScreen)
             await _wait_for_library_shell(screen, pilot)
             screen.query_one("#library-row-browse-notes", Button).press()
-            await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+            await _wait_for_selector(screen, pilot, ".library-notes-row")
 
-            # The navigator capability inventory remains on the incumbent controls.
+            # The navigator capability inventory remains on the incumbent
+            # controls, Sort among them: task-32128 took it off the folder
+            # tree and task-32172 put it back, because the tree's order is
+            # a pager parameter now rather than a fixed repository contract.
             for selector in (
                 "#library-notes-filter",
                 "#library-notes-sort",
@@ -134,15 +137,15 @@ async def test_database_notes_capability_inventory_and_modes(
             await pilot.press("enter")
             await _wait_for_selector(screen, pilot, "#library-notes-filter-clear")
             screen.query_one("#library-notes-filter-clear", Button).press()
-            await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+            await _wait_for_selector(screen, pilot, ".library-notes-row")
             screen.query_one("#library-notes-select-toggle", Button).press()
             await _wait_for_selector(screen, pilot, "#library-notes-export-selected")
             export_selected = screen.query_one("#library-notes-export-selected", Button)
             assert export_selected.disabled and export_selected.tooltip
             screen.query_one("#library-notes-select-toggle", Button).press()
-            await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+            row = await _wait_for_selector(screen, pilot, ".library-notes-row")
 
-            screen.query_one("#library-notes-row-0", Button).press()
+            row.press()
             await _wait_for_selector(screen, pilot, "#library-note-body")
             body = screen.query_one("#library-note-body", TextArea)
             body.text = "retained mode draft"
@@ -487,8 +490,10 @@ async def test_database_note_status_header_paints_actionable_detail() -> None:
     async with host.run_test(size=(240, 48)) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-notes", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        # task-32175: _open_note_editor already presses browse-notes and
+        # waits for the row itself -- a redundant press here re-kicks the
+        # tree's async reload (task-32126) and can race the row it presses
+        # next, so it is dropped rather than merely reselectored.
         await _open_note_editor(screen, pilot)
         snapshot = screen._library_note_session.snapshot
         assert snapshot is not None
@@ -819,7 +824,7 @@ async def test_database_notes_work_session_activates_once_and_resets_exactly(
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
         shell = screen.query_one(
             ".library-notes-route", LibraryAdaptiveReaderShell
         )
@@ -830,7 +835,7 @@ async def test_database_notes_work_session_activates_once_and_resets_exactly(
         assert shell.effective_layout.library_open is True
         assert writes == []
 
-        screen.query_one("#library-notes-row-0", Button).press()
+        row.press()
         await _wait_for_selector(screen, pilot, "#library-note-body")
         await _wait_for_condition(
             pilot,
@@ -893,7 +898,15 @@ async def test_database_notes_work_session_activates_once_and_resets_exactly(
         assert screen._notes_state.reader_preferences.library_open is False
 
         writes.clear()
-        screen.query_one("#library-notes-row-1", Button).press()
+        # task-32175: select "n-2" by identity, not row position -- the
+        # folder tree orders rows by title (task-32128), not the flat
+        # list's row-1 this test used to lean on to find it.
+        other_row = next(
+            candidate
+            for candidate in screen.query(".library-notes-row").results(Button)
+            if candidate.note_id != row.note_id
+        )
+        other_row.press()
         await _wait_for_condition(
             pilot,
             lambda: (
@@ -930,8 +943,10 @@ async def test_notes_global_f6_cycles_only_visible_regions_when_library_collapse
     async with host.run_test(size=(120, 35)) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-notes", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        # task-32175: _open_note_editor already presses browse-notes and
+        # waits for the row itself -- a redundant press here re-kicks the
+        # tree's async reload (task-32126) and can race the row it presses
+        # next.
         await _open_note_editor(screen, pilot)
         shell = screen.query_one(
             ".library-notes-route", LibraryAdaptiveReaderShell
@@ -995,11 +1010,11 @@ async def test_list_and_work_identity_survive_open_preview_info_and_edit() -> No
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
         notes_list = screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
         work = screen.query_one("#library-note-work-pane", LibraryNoteWorkPane)
 
-        screen.query_one("#library-notes-row-0", Button).press()
+        row.press()
         await _wait_for_selector(screen, pilot, "#library-note-title")
         body = screen.query_one("#library-note-body", TextArea)
         body.text = "current unsaved preview body"
@@ -1036,8 +1051,20 @@ async def test_reader_route_parks_dirty_note_selection_and_preview_without_savin
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-1")
-        screen.query_one("#library-notes-row-1", Button).press()
+        # task-32175: open "n-2" by identity -- the folder tree orders rows
+        # by title (task-32128), not the flat list's row-1 this test used
+        # to lean on to find it.
+        await _wait_for_condition(
+            pilot,
+            lambda: len(screen.query(".library-notes-row")) >= 2,
+            message="Both note rows never mounted.",
+        )
+        n2_row = next(
+            candidate
+            for candidate in screen.query(".library-notes-row").results(Button)
+            if candidate.note_id == "n-2"
+        )
+        n2_row.press()
         body = await _wait_for_selector(screen, pilot, "#library-note-body")
         body.text = "parked reader-route draft"
         await pilot.pause()
@@ -1108,8 +1135,9 @@ async def test_reader_route_invalidates_autosave_queued_before_park(
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-notes", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        # task-32175: dropped a redundant browse-notes press+wait here --
+        # _open_note_editor already does both, and repeating it re-kicks
+        # the tree's async reload (task-32126), racing the row it presses.
         await _open_note_editor(screen, pilot)
         body = screen.query_one("#library-note-body", TextArea)
         body.text = "queued autosave draft"
@@ -1187,8 +1215,9 @@ async def test_work_pane_focus_is_classified_as_notes_stage() -> None:
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-notes", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        # task-32175: dropped a redundant browse-notes press+wait here --
+        # _open_note_editor already does both, and repeating it re-kicks
+        # the tree's async reload (task-32126), racing the row it presses.
         await _open_note_editor(screen, pilot)
         body = screen.query_one("#library-note-body", TextArea)
         screen._notes_state.stage = "rail"
@@ -1231,12 +1260,20 @@ async def test_editor_back_preserves_shell_list_and_work_owners() -> None:
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
+        # task-32175: a second press of browse-notes (as calling
+        # _open_note_editor here would add) re-kicks the tree's async
+        # reload (task-32126) and strands the row press that follows --
+        # confirmed by reproduction, not merely a selector swap. Inlined
+        # below instead of reusing the helper, one press only.
         screen.query_one("#library-row-browse-notes", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
         shell = screen.query_one(".library-notes-route")
         notes_list = screen.query_one("#library-notes-canvas")
         work = screen.query_one("#library-note-work-pane")
-        await _open_note_editor(screen, pilot)
+        row.press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+        await pilot.pause()
+        await pilot.pause()
         assert screen.query_one("#library-notes-canvas") is notes_list
 
         screen.query_one("#library-note-back", Button).press()
@@ -1307,11 +1344,11 @@ async def test_delete_and_receipt_preserve_shell_list_and_work_owners() -> None:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        row = await _wait_for_selector(screen, pilot, ".library-notes-row")
         shell = screen.query_one(".library-notes-route")
         notes_list = screen.query_one("#library-notes-canvas")
         work = screen.query_one("#library-note-work-pane")
-        screen.query_one("#library-notes-row-0", Button).press()
+        row.press()
         await _wait_for_selector(screen, pilot, "#library-note-delete")
 
         screen.query_one("#library-note-delete", Button).press()
@@ -1333,8 +1370,10 @@ async def test_eighty_columns_protect_editor_and_keep_both_restore_grips() -> No
     async with host.run_test(size=(80, 24)) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-notes", Button).press()
-        await _wait_for_selector(screen, pilot, ".library-notes-route")
+        # task-32175: one press only -- a second press of browse-notes
+        # (as this redundant press+wait would add before the helper's
+        # own) re-kicks the tree's async reload and strands the row press
+        # that follows (task-32126, confirmed by reproduction).
         await _open_note_editor(screen, pilot)
         shell = screen.query_one(
             ".library-notes-route", LibraryAdaptiveReaderShell
@@ -1490,8 +1529,10 @@ async def test_bulk_mode_keeps_last_note_as_labelled_read_only_preview() -> None
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-notes", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        # task-32175: one press only -- _open_note_editor presses
+        # browse-notes itself, and a second press here re-kicks the
+        # tree's async reload (task-32126), racing the row it then
+        # presses (confirmed by reproduction).
         await _open_note_editor(screen, pilot)
 
         screen.query_one("#library-notes-select-toggle", Button).press()
