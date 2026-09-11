@@ -617,6 +617,31 @@ def _normalize_payload_shape(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _profile_chain_ids(payload: dict[str, Any], profile_id: str) -> list[str]:
+    """The profile IDS ``_profile_chain`` resolves, most specific first.
+
+    The chain's own membership rule, factored out (task-32281, Qodo #2597
+    #1) so a reader that must REPORT which profile a resolved entry came
+    from -- ``MCPPermissionStore.list_tool_arg_rules`` -- walks exactly
+    the same profiles authorization does instead of a second, drifting
+    copy of the rule.
+
+    Args:
+        payload: A permission-store payload dict (raw is fine).
+        profile_id: The profile being resolved.
+
+    Returns:
+        Non-empty list of profile ids, most specific first; the default
+        profile is always last.
+    """
+    profiles = _as_mapping(payload.get("profiles"))
+    ids: list[str] = []
+    if profile_id != _DEFAULT_PROFILE_ID and _as_mapping(profiles.get(profile_id)):
+        ids.append(profile_id)
+    ids.append(_DEFAULT_PROFILE_ID)
+    return ids
+
+
 def _profile_chain(payload: dict[str, Any], profile_id: str) -> list[dict[str, Any]]:
     """Return the profile-resolution chain for ``profile_id``.
 
@@ -637,13 +662,10 @@ def _profile_chain(payload: dict[str, Any], profile_id: str) -> list[dict[str, A
         Non-empty list of profile dicts, most specific first.
     """
     profiles = _as_mapping(payload.get("profiles"))
-    chain: list[dict[str, Any]] = []
-    if profile_id != _DEFAULT_PROFILE_ID:
-        named = _as_mapping(profiles.get(profile_id))
-        if named:
-            chain.append(named)
-    chain.append(_as_mapping(profiles.get(_DEFAULT_PROFILE_ID)))
-    return chain
+    return [
+        _as_mapping(profiles.get(chain_id))
+        for chain_id in _profile_chain_ids(payload, profile_id)
+    ]
 
 
 def _lifecycle_resolution_block(
@@ -1563,51 +1585,64 @@ class MCPPermissionStore:
         *,
         profile_id: str = _DEFAULT_PROFILE_ID,
     ) -> list[dict[str, Any]]:
-        """List one tool's stored exact-input allow rules (task-32281).
+        """List the exact-input allow rules in force for one tool (task-32281).
 
-        Reads ONE profile's stored entry directly -- no inheritance-chain
-        walk (mirrors ``add_tool_arg_rule``'s own single-profile write,
-        not ``arg_rule_allows``'s chain read) -- a rule only ever exists
-        where ``add_tool_arg_rule`` wrote it. Hand-written ``{"field":
-        ..., "pattern": ...}`` glob rules are never returned: this surface
-        is scoped to the exact-input rules the approval card creates
-        (``args_json`` present).
+        Walks the SAME ``_profile_chain`` ``arg_rule_allows`` authorizes
+        against, and stops at the first profile carrying rules for this
+        tool -- exactly that resolver's shadowing rule. Qodo #2597 #1: this
+        used to read the selected profile ONLY, so a child profile
+        inheriting a rule from ``default`` showed no rule and no Remove
+        control while the rule kept quieting real calls. Every returned
+        rule therefore names its OWNING profile, which is the profile
+        ``remove_tool_arg_rule`` must be pointed at to actually delete it.
+
+        Hand-written ``{"field": ..., "pattern": ...}`` glob rules are
+        never returned: this surface is scoped to the exact-input rules
+        the approval card creates (``args_json`` present).
 
         Args:
             server_key: Owning server's stable key.
             tool_name: Tool name within that server.
-            profile_id: Profile to read.
+            profile_id: Profile being reviewed; its inheritance chain is
+                walked, not just the profile itself.
 
         Returns:
             One dict per rule, oldest first, each carrying ``rule_id``
             (the rule's canonical ``args_json`` -- unique per tool by
             construction, see ``add_tool_arg_rule``'s own dedup, and the
             same string ``remove_tool_arg_rule`` matches against),
-            ``args_json``, and ``created_at``.
+            ``args_json``, ``created_at``, and ``profile_id`` (the OWNING
+            profile, which is ``profile_id`` for a rule stored here and an
+            ancestor's id for an inherited one).
         """
         payload = self.load()
-        profile = payload.get("profiles", {}).get(profile_id)
-        tool_entry = self._tool_entry(profile, server_key, tool_name)
-        if tool_entry is None:
-            return []
-        rules = tool_entry.get("arg_rules")
-        if not isinstance(rules, list):
-            return []
-        result: list[dict[str, Any]] = []
-        for rule in rules:
-            if not isinstance(rule, Mapping):
-                continue
-            args_json = rule.get("args_json")
-            if not isinstance(args_json, str) or not args_json:
-                continue
-            result.append(
-                {
-                    "rule_id": args_json,
-                    "args_json": args_json,
-                    "created_at": rule.get("created_at"),
-                }
+        profiles = payload.get("profiles", {})
+        for owner_id in _profile_chain_ids(payload, profile_id):
+            tool_entry = self._tool_entry(
+                profiles.get(owner_id), server_key, tool_name
             )
-        return result
+            if tool_entry is None:
+                continue
+            rules = tool_entry.get("arg_rules")
+            if not isinstance(rules, list) or not rules:
+                continue
+            # A profile carrying ANY rules for this tool ends the walk,
+            # shadowing its ancestors -- `arg_rule_allows`'s own `return
+            # False` after the first such profile. Listing an ancestor's
+            # inert rules below it would advertise a rule that cannot fire.
+            return [
+                {
+                    "rule_id": rule["args_json"],
+                    "args_json": rule["args_json"],
+                    "created_at": rule.get("created_at"),
+                    "profile_id": owner_id,
+                }
+                for rule in rules
+                if isinstance(rule, Mapping)
+                and isinstance(rule.get("args_json"), str)
+                and rule.get("args_json")
+            ]
+        return []
 
     def remove_tool_arg_rule(
         self,

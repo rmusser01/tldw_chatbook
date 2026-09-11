@@ -2323,7 +2323,11 @@ class MCPWorkbench(Container):
             return []
 
     def _builtin_permission_matrix_rows(
-        self, payload: dict[str, Any], servers_payload: Mapping[str, Any]
+        self,
+        payload: dict[str, Any],
+        servers_payload: Mapping[str, Any],
+        *,
+        ancestor_servers: Sequence[Mapping[str, Any]] = (),
     ) -> list[PermRow]:
         """Render this pass's built-in tool rows as matrix `PermRow`s.
 
@@ -2413,7 +2417,10 @@ class MCPWorkbench(Container):
             builtin_state_label = format_tool_state_label(row.effective)
             # task-32281 AC#2: same ≡ marker as the MCP matrix rows above.
             if self._tool_has_arg_rules(
-                servers_payload, BUILTIN_TOOL_SERVER_KEY, row.name
+                servers_payload,
+                BUILTIN_TOOL_SERVER_KEY,
+                row.name,
+                ancestor_servers=ancestor_servers,
             ):
                 builtin_state_label = f"{builtin_state_label} ≡"
             # task-32291 AC#1: same ` (session)` suffix as the MCP rows.
@@ -2589,6 +2596,22 @@ class MCPWorkbench(Container):
         servers_payload = profile.get("servers") or {}
         if not isinstance(servers_payload, Mapping):
             servers_payload = {}
+        # Qodo #2597 #1: the rest of the selected profile's inheritance
+        # chain -- only the `default` profile can be an ancestor (see
+        # `permission_store._profile_chain`). The matrix's `≡` marker reads
+        # these alongside `servers_payload` so an INHERITED exact-input
+        # rule is marked, the same way `arg_rule_allows()` honors it and
+        # `list_tool_arg_rules()` now lists it.
+        ancestor_servers: tuple[Mapping[str, Any], ...] = ()
+        if self._tool_policy_profile_id != "default":
+            default_profile = profiles.get("default")
+            default_servers = (
+                default_profile.get("servers")
+                if isinstance(default_profile, Mapping)
+                else None
+            )
+            if isinstance(default_servers, Mapping):
+                ancestor_servers = (default_servers,)
 
         # TASK-627 Task 3: the agent-runtime built-in section, appended
         # AFTER the MCP sections and never merged into `_build_permission_
@@ -2597,13 +2620,16 @@ class MCPWorkbench(Container):
         # built-in tool registry, not the MCP catalog `tools` came from.
         # Fix 2: computed FIRST now, so it can also feed the preview's
         # override count below (see this method's own docstring).
-        builtin_rows = self._builtin_permission_matrix_rows(payload, servers_payload)
+        builtin_rows = self._builtin_permission_matrix_rows(
+            payload, servers_payload, ancestor_servers=ancestor_servers
+        )
         rows, preview, cascade_map = self._build_permission_rows(
             tools,
             effective=effective,
             servers_payload=servers_payload,
             global_state=global_state,
             extra_override_rows=builtin_rows,
+            ancestor_servers=ancestor_servers,
         )
         # Task 3: cache this pass's per-tool cascade map for
         # `_cascade_for_tool()` -- same "computed once, reused" precedent as
@@ -2755,7 +2781,11 @@ class MCPWorkbench(Container):
 
     @staticmethod
     def _tool_has_arg_rules(
-        servers_payload: Mapping[str, Any], server_key: str, tool_name: str
+        servers_payload: Mapping[str, Any],
+        server_key: str,
+        tool_name: str,
+        *,
+        ancestor_servers: Sequence[Mapping[str, Any]] = (),
     ) -> bool:
         """Whether the STORE payload carries any EXACT-INPUT allow rule for
         one tool (task-32281) -- same raw-payload read shape as
@@ -2772,26 +2802,44 @@ class MCPWorkbench(Container):
         adding a second rendering path for a rule shape this UI has never
         offered a way to CREATE (only `add_tool_arg_rule()`'s exact-input
         writer feeds this surface; glob rules are hand-edited-file-only).
+
+        Qodo #2597 #1: `ancestor_servers` carries the rest of the selected
+        profile's inheritance chain (the `default` profile's own `servers`
+        slice, when a named profile is selected), because an INHERITED rule
+        is just as live as a locally stored one -- `arg_rule_allows()`
+        honors it and `list_tool_arg_rules()` now lists it, so the matrix
+        must mark it too. Answering "does ANY chain profile carry a rule"
+        needs no shadowing logic: the resolver stops at the first profile
+        carrying rules, which is a profile carrying rules either way.
         """
-        server_entry = servers_payload.get(server_key)
-        if not isinstance(server_entry, Mapping):
-            return False
-        tools_entry = server_entry.get("tools")
-        if not isinstance(tools_entry, Mapping):
-            return False
-        tool_entry = tools_entry.get(tool_name)
-        if not isinstance(tool_entry, Mapping):
-            return False
-        rules = tool_entry.get("arg_rules")
-        # `servers_payload` here may be a FROZEN snapshot (`_tool_policy_
-        # inventory()`'s `read_profile_inventory_snapshot()`/`read_
-        # snapshot_strict()` path, via `permission_store._freeze_snapshot()`,
-        # which turns every list into a tuple) -- accept both.
-        if not isinstance(rules, (list, tuple)):
-            return False
+
+        def _entry_has_rules(servers: Mapping[str, Any]) -> bool:
+            server_entry = servers.get(server_key)
+            if not isinstance(server_entry, Mapping):
+                return False
+            tools_entry = server_entry.get("tools")
+            if not isinstance(tools_entry, Mapping):
+                return False
+            tool_entry = tools_entry.get(tool_name)
+            if not isinstance(tool_entry, Mapping):
+                return False
+            rules = tool_entry.get("arg_rules")
+            # `servers_payload` here may be a FROZEN snapshot (`_tool_policy_
+            # inventory()`'s `read_profile_inventory_snapshot()`/`read_
+            # snapshot_strict()` path, via `permission_store._freeze_
+            # snapshot()`, which turns every list into a tuple) -- accept both.
+            if not isinstance(rules, (list, tuple)):
+                return False
+            return any(
+                isinstance(rule, Mapping)
+                and isinstance(rule.get("args_json"), str)
+                and rule.get("args_json")
+                for rule in rules
+            )
+
         return any(
-            isinstance(rule, Mapping) and isinstance(rule.get("args_json"), str) and rule.get("args_json")
-            for rule in rules
+            _entry_has_rules(servers)
+            for servers in (servers_payload, *ancestor_servers)
         )
 
     def _build_permission_rows(
@@ -2802,6 +2850,7 @@ class MCPWorkbench(Container):
         servers_payload: Mapping[str, Any],
         global_state: str,
         extra_override_rows: Sequence[PermRow] = (),
+        ancestor_servers: Sequence[Mapping[str, Any]] = (),
     ) -> tuple[
         list[PermRow], str, dict[tuple[str, str], tuple[str | None, str | None, str]]
     ]:
@@ -2898,7 +2947,10 @@ class MCPWorkbench(Container):
                 # inside that shared helper, which `test_tool_state_label_
                 # marker_precedence` pins to one `EffectiveToolState` arg.
                 if self._tool_has_arg_rules(
-                    servers_payload, tool.server_key, tool.name
+                    servers_payload,
+                    tool.server_key,
+                    tool.name,
+                    ancestor_servers=ancestor_servers,
                 ):
                     tool_state_label = f"{tool_state_label} ≡"
                 # task-32291 AC#1: a live session grant is a WORD, not a
@@ -4520,6 +4572,13 @@ class MCPWorkbench(Container):
         _apply_verdict()`'s call site, both pass bare `profile_id` via
         `_profile_kwargs()`, never `expected_profile_digest`/`expected_
         revision`); only `profile_id` travels here too.
+
+        Qodo #2597 #1: the `profile_id` sent is the rule's OWNING profile
+        (`event.owner_profile_id` -- `list_tool_arg_rules()`'s own
+        `profile_id` field), which for an INHERITED rule is an ancestor of
+        the profile under review. Deleting against the reviewed child was a
+        silent no-op that left the rule quieting calls. The reviewed
+        profile's context still gates the action and drives the re-render.
         """
         event.stop()
         context = self._validate_profile_context(event.profile_context)
@@ -4534,7 +4593,7 @@ class MCPWorkbench(Container):
                 event.server_key,
                 event.tool_name,
                 event.rule_id,
-                profile_id=context.profile_id,
+                profile_id=event.owner_profile_id or context.profile_id,
             )
         except Exception as exc:
             logger.warning(

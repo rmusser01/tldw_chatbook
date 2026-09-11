@@ -11363,3 +11363,48 @@ async def test_matrix_marks_and_inspector_revokes_session_approvals(tmp_path):
             str(app.query_one("#mcp-inspector-permission-tool", Static).renderable)
             == "search — docs"
         )
+
+
+def test_tool_has_arg_rules_marks_an_inherited_rule(tmp_path):
+    """Qodo #2597 #1: the matrix's ``≡`` marker read the SELECTED profile's
+    `servers` slice only, so a rule inherited from `default` -- live, because
+    `arg_rule_allows()` walks the chain -- left the row unmarked while
+    quieting real calls. The rest of the chain travels as `ancestor_servers`.
+    """
+    store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
+    tool = HubTool(
+        server_key="srv",
+        server_label="Server",
+        source="mcp",
+        name="search",
+        description="A tool.",
+        input_schema={"type": "object"},
+        tags=(),
+        stale=False,
+        executable=True,
+    )
+    store.ensure_profile("child")
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+    payload = store.load()["profiles"]
+    child_servers = payload["child"]["servers"]
+    default_servers = payload["default"]["servers"]
+    has_rules = MCPWorkbench._tool_has_arg_rules
+
+    # The child stores nothing of its own.
+    assert has_rules(child_servers, "srv", "search") is False
+    assert (
+        has_rules(
+            child_servers, "srv", "search", ancestor_servers=(default_servers,)
+        )
+        is True
+    )
+    # An ancestor that carries nothing for this tool changes nothing.
+    assert (
+        has_rules(child_servers, "srv", "other", ancestor_servers=(default_servers,))
+        is False
+    )

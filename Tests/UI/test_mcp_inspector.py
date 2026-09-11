@@ -6451,3 +6451,89 @@ async def test_revoke_button_press_posts_that_rows_own_entry():
         assert len(events) == 1
         assert events[0].server_key == "agent:builtin"
         assert events[0].tool_name == "calculator"
+
+
+@pytest.mark.asyncio
+async def test_an_inherited_arg_rule_names_its_owning_profile_and_removes_there():
+    """Qodo #2597 #1: `list_tool_arg_rules()` now walks the profile chain,
+    so this block can be showing a rule stored on an ANCESTOR profile. Two
+    things follow: the row has to say so (Remove's blast radius is every
+    profile inheriting that rule, not just the one on screen), and Remove
+    has to target the owner -- aimed at the reviewed child it is a silent
+    no-op and the rule keeps quieting calls.
+    """
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        context = PermissionProfileContext("research", 7, "b" * 64, 3)
+        await inspector.show_permission(
+            _tool(server_key="local:docs", name="search"),
+            EffectiveToolState(state="ask", origin="server_default"),
+            profile_context=context,
+            arg_rules=[
+                {
+                    "rule_id": "r1",
+                    "args_json": '{"query": "x"}',
+                    "profile_id": "default",
+                },
+                {
+                    "rule_id": "r2",
+                    "args_json": '{"query": "y"}',
+                    "profile_id": "research",
+                },
+            ],
+        )
+        await pilot.pause()
+
+        rows = [
+            str(s.renderable)
+            for s in app.query(Static)
+            if (s.id or "").startswith("mcp-inspector-arg-rule-")
+        ]
+        assert rows == [
+            'Exact-input allow · {"query": "x"} · from default',
+            # Stored in the profile being reviewed -- no provenance suffix.
+            'Exact-input allow · {"query": "y"}',
+        ]
+
+        await pilot.click("#mcp-inspector-arg-rule-remove-0")
+        await pilot.click("#mcp-inspector-arg-rule-remove-1")
+        await pilot.pause()
+
+        events = [
+            e for e in app.events if isinstance(e, MCPInspector.RemoveArgRuleRequested)
+        ]
+        assert [(e.rule_id, e.owner_profile_id) for e in events] == [
+            ("r1", "default"),
+            ("r2", "research"),
+        ]
+
+
+@pytest.mark.asyncio
+async def test_an_arg_rule_without_an_owner_falls_back_to_the_reviewed_profile():
+    """A caller that supplies no `profile_id` per rule (an older service
+    mirror, or a test fake) must keep the pre-fix behaviour: no provenance
+    suffix, and Remove aimed at the profile under review."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(server_key="local:docs", name="search"),
+            EffectiveToolState(state="ask", origin="server_default"),
+            profile_context=PermissionProfileContext("research", 7, "b" * 64, 3),
+            arg_rules=[{"rule_id": "r1", "args_json": '{"query": "x"}'}],
+        )
+        await pilot.pause()
+
+        assert (
+            str(app.query_one("#mcp-inspector-arg-rule-0", Static).renderable)
+            == 'Exact-input allow · {"query": "x"}'
+        )
+
+        await pilot.click("#mcp-inspector-arg-rule-remove-0")
+        await pilot.pause()
+
+        events = [
+            e for e in app.events if isinstance(e, MCPInspector.RemoveArgRuleRequested)
+        ]
+        assert events[-1].owner_profile_id is None
