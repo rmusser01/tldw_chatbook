@@ -4436,10 +4436,47 @@ class LibraryScreen(BaseAppScreen):
         # F-keys) and the informational chips, and announce the swap.
         focused = self.focused
         if isinstance(focused, (Input, TextArea)):
-            shortcuts = (("", "typing in field"),) + tuple(
+            swallowed = tuple(
+                pair
+                for pair in shortcuts
+                if len(pair[0]) == 1 and pair[0].isprintable()
+            )
+            kept = tuple(
                 pair
                 for pair in shortcuts
                 if not (len(pair[0]) == 1 and pair[0].isprintable())
+            )
+            # task-32346 (critique #10 P1): the keys really are swallowed --
+            # every one of them is a non-priority Binding and the Input eats
+            # the keypress first (see the binding comments at 1099/1114/1123),
+            # so re-advertising them as live would be the dead-key lie
+            # task-31272 removed. What was missing is the way back: the field
+            # state now names the gesture that re-arms the canvas, and the
+            # verbs stay on screen behind it instead of vanishing.
+            if self.is_mounted and not self._library_slash_would_land():
+                swallowed = tuple(pair for pair in swallowed if pair[0] != "/")
+            esc_pairs = tuple(pair for pair in kept if pair[0] == "esc")
+            if not esc_pairs and self.check_action("library_blur_text_field", ()):
+                esc_pairs = (("esc", "leave field"),)
+            verbs = (
+                (
+                    (
+                        "",
+                        "after esc: "
+                        + " · ".join(f"{key} {label}" for key, label in swallowed),
+                    ),
+                )
+                if swallowed
+                else ()
+            )
+            # AC#2: "F6 next pane" goes LAST so AppFooterStatus's
+            # retain-the-prefix degradation drops it before any canvas verb.
+            f6_pairs = tuple(pair for pair in kept if pair[0] == "F6")
+            rest = tuple(
+                pair for pair in kept if pair[0] not in ("F6", "esc")
+            )
+            shortcuts = (
+                (("", "typing in field"),) + esc_pairs + verbs + rest + f6_pairs
             )
         emergency = self._library_emergency_return_eligibility()
         if emergency.enabled:
