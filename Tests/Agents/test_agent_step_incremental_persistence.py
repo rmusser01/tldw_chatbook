@@ -51,7 +51,15 @@ def _run(service: AgentService):
 
 
 @pytest.fixture()
-def db(tmp_path) -> Iterator[AgentRunsDB]:
+def db(tmp_path: Path) -> Iterator[AgentRunsDB]:
+    """Own a temporary agent database and close it after the test.
+
+    Args:
+        tmp_path: Test-owned temporary directory for the database file.
+
+    Yields:
+        The database managed by this fixture's finally-close boundary.
+    """
     database = AgentRunsDB(tmp_path / "agent-runs.db", client_id="test")
     try:
         yield database

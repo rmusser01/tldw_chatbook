@@ -1193,7 +1193,12 @@ def _has_command_callback_binding(
     "broken",
     [None, "dispatch", "constructor", "assignment", "owner", "args", "kwargs", "await"],
 )
-def test_command_callback_binding_rejects_disconnected_routes(broken):
+def test_command_callback_binding_rejects_disconnected_routes(broken: str | None) -> None:
+    """Accept only a connected, late-bound command callback route.
+
+    Args:
+        broken: Route component to disconnect, or None for the intact control.
+    """
     source = """class Commands:
     def __init__(self, *, delegate):
         self.delegate = delegate
