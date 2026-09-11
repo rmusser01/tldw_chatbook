@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from tldw_chatbook.Backup_Recovery import chat_source_participants as _chat_sources
+from tldw_chatbook.Backup_Recovery import recovered_media_messages as _media_messages
 from ..Chat.chat_conversation_service import ChatConversationService
 from .world_book_manager import WorldBookManager
 
@@ -46,6 +47,9 @@ class LocalCharacterPersonaService:
         self._chat_presets: list[dict[str, Any]] = []
         self._character_memories: list[dict[str, Any]] = []
         self._load_personas()
+        # _load_personas has retired its installed chat/raw source guards here.
+        self._recovered_messages = _media_messages.bind_message_references(db)
+        self.recovered_media_cleanup_pending = False
 
     @_chat_sources.guarded
     def _require_db(self) -> Any:
@@ -1497,13 +1501,34 @@ class LocalCharacterPersonaService:
     ) -> dict[str, Any]:
         return self.update_character_chat_message(message_id, request_data, **kwargs)
 
-    @_chat_sources.guarded
     def delete_character_chat_message(
         self,
         message_id: str,
         *,
         expected_version: int | None = None,
         **_: Any,
+    ) -> dict[str, Any]:
+        result = self._delete_character_chat_message(
+            message_id, expected_version=expected_version
+        )
+        if not _media_messages.release_after_message_delete(
+            self._recovered_messages, self.db, (message_id,)
+        ):
+            self.recovered_media_cleanup_pending = True
+        return result
+
+    @property
+    def recovered_media_cleanup_warning(self) -> str | None:
+        """Expose ancillary failure without changing the successful chat result."""
+        return (
+            _media_messages.CLEANUP_PENDING
+            if self.recovered_media_cleanup_pending
+            else None
+        )
+
+    @_chat_sources.guarded
+    def _delete_character_chat_message(
+        self, message_id: str, *, expected_version: int | None = None
     ) -> dict[str, Any]:
         current = self.get_character_chat_message(message_id)
         self._require_db().soft_delete_message(
@@ -1516,7 +1541,6 @@ class LocalCharacterPersonaService:
         )
         return {"status": "deleted", "message_id": message_id}
 
-    @_chat_sources.guarded
     def delete_character_message(
         self, message_id: str, **kwargs: Any
     ) -> dict[str, Any]:

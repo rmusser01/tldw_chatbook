@@ -8,6 +8,8 @@ from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from loguru import logger
+
 from . import bootstrap, recovered_media
 from .generation_witnesses import _witnesses
 from .profile_paths import database_path, lexical_path, user_data_dir
@@ -137,3 +139,28 @@ class RecoveredMessageReferences:
                     expected_identity=self.source.catalog_identity,
                 )
                 after = ids[-1]
+
+
+def bind_message_references(db) -> RecoveredMessageReferences | None:
+    """Capture the actual source without making ancillary availability mandatory."""
+    if db is None:
+        return None
+    try:
+        return RecoveredMessageReferences(db)
+    except Exception:  # noqa: BLE001 - ancillary binding must not disable ordinary chat
+        logger.debug("Recovered-media message source is unavailable")
+        return None
+
+
+def release_after_message_delete(
+    binding: RecoveredMessageReferences | None, db, message_ids: tuple[str, ...]
+) -> bool:
+    """Release positive tombstones after the caller's native chat guard retires."""
+    try:
+        if type(binding) is not RecoveredMessageReferences or binding.db is not db:
+            raise ValueError("recovered_message_source_changed")
+        binding.release(message_ids)
+        return True
+    except Exception:  # noqa: BLE001 - preserve the already committed chat result
+        logger.warning(CLEANUP_PENDING)
+        return False
