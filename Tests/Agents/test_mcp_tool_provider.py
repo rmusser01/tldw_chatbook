@@ -983,6 +983,77 @@ def test_hook_level_card_deny_lands_in_the_execution_log_exactly_once(running_lo
     assert service.execute_calls == []
 
 
+def test_stop_mid_approval_records_only_the_unresolved_row(running_loop):
+    """R23 regression: a Stop while the card is up is not a user denial.
+
+    `request_mcp_approvals` fails the unanswered round closed to "deny" AND
+    writes the honest `denied-unresolved` audit row itself. The review hook,
+    seeing only "deny", then wrote a SECOND row that Audit renders as
+    "Denied by you" -- a decision the user never got to make. Drives the
+    REAL controller through the REAL hook (a direct `request_mcp_approvals`
+    call cannot see the duplicate, since the duplicate is the hook's).
+    """
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Chat.console_chat_controller import (
+        ConsoleChatController,
+        build_tool_review_hook,
+    )
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    class _NoBuiltinGate:
+        def begin_turn(self, run_id):
+            pass
+
+    class _NoBuiltinProvider:
+        def tool_for(self, name):
+            return None
+
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=object()
+    )
+    controller.app = SimpleNamespace(
+        call_from_thread=lambda fn, *a, **kw: fn(*a, **kw),
+        unified_mcp_service=service,
+    )
+    mounted: list[dict | None] = []
+    controller.set_pending_approval = mounted.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    def _stop_soon() -> None:
+        time.sleep(0.05)
+        controller.begin_shutdown()
+
+    stopper = threading.Thread(target=_stop_soon)
+    stopper.start()
+    hook = build_tool_review_hook(
+        _NoBuiltinGate(),
+        _NoBuiltinProvider(),
+        provider,
+        controller.request_mcp_approvals,
+        workspace_id=None,
+    )
+    verdicts = hook([ToolCall(name=tool_id, args={"x": 1}, call_id="c-1")], RUN)
+    stopper.join()
+
+    assert verdicts.get("c-1", "proceed") != "proceed", (
+        f"the stopped call was cleared for dispatch: {verdicts}"
+    )
+    assert service.record_tool_decision_calls == [
+        ("local:srv", "run", "denied-unresolved", "agent", "run stopped while approval pending")
+    ], (
+        "a Stop mid-approval recorded a user denial it never received: "
+        f"{service.record_tool_decision_calls}"
+    )
+    assert service.execute_calls == []
+
+
 def test_hook_level_approval_and_deny_of_one_tool_record_one_row_each(running_loop):
     """Two calls of one tool, one approved and one denied: the approval is
     recorded by `invoke()`/`execute_hub_tool` and the denial by the hook --

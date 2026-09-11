@@ -1291,6 +1291,56 @@ _APPROVAL_SCOPE_RANK: dict[str, int] = {
 }
 
 
+class ApprovalDecisions(dict):
+    """One approval round's verdict map, plus the keys nobody actually answered.
+
+    task-32280 fix round (R23). A round the user never answered -- Stop
+    mid-card, or a revoked round -- fails CLOSED: every undecided key
+    defaults to ``"deny"`` and the runtime must keep seeing exactly that,
+    so the tool does not run. But an unanswered card is not a refusal, and
+    ``request_mcp_approvals`` already writes the honest
+    ``denied-unresolved`` audit row for it. The review hooks, seeing only
+    ``"deny"``, then recorded a SECOND row that Audit renders as "Denied by
+    you" -- a decision nobody made.
+
+    This is a plain ``dict`` (every consumer keeps treating it as the
+    verdict map it always was) carrying one extra attribute so the two
+    hooks can tell the two cases apart at the one place it matters:
+    ``record_user_denial``. Deliberately NOT a distinct verdict string --
+    that would have to be taught to `_apply_verdict`, `apply_batch_
+    decisions`, `apply_promotion_decisions`, `builtin_gate.stamp` and the
+    refusal loop, and any one of them missing it would let a denied tool
+    run.
+
+    Attributes:
+        unresolved_keys: The verdict keys (``call_id`` where the runtime
+            can address the call, else ``llm_name`` -- the same keying
+            ``request_mcp_approvals`` uses) that were defaulted to deny by
+            cancellation or revocation rather than chosen by the user.
+    """
+
+    unresolved_keys: frozenset[str] = frozenset()
+
+
+def approval_was_unanswered(row: "MCPPendingCall", decisions: Mapping[str, str]) -> bool:
+    """True when ``row``'s deny came from a Stop/revoke, not from the user.
+
+    Args:
+        row: The pending call whose verdict is being recorded.
+        decisions: The map ``request_mcp_approvals`` returned -- an
+            `ApprovalDecisions` in production, a bare dict in tests and in
+            any other `request_approvals` shape (which then reports
+            "answered", the pre-fix behaviour).
+
+    Returns:
+        Whether the verdict for ``row`` was defaulted by an unresolved round.
+    """
+    unresolved = getattr(decisions, "unresolved_keys", ())
+    if not unresolved:
+        return False
+    return (str(getattr(row, "call_id", "") or "") or row.llm_name) in unresolved
+
+
 CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
 #: The generic copy for a turn ended by the session closing. One name for
 #: it so the six sites that reported a close cannot drift apart (TASK-22690).
@@ -2064,9 +2114,15 @@ def build_tool_review_hook(
         # point the denial becomes final, through the provider's own audit
         # seam. Built-in rows are left alone: nothing records their
         # approvals either, so a denial-only trail would be worse than none.
+        # R23: skip rows whose "deny" was DEFAULTED by a Stop/revoke --
+        # `request_mcp_approvals` already logged those as
+        # `denied-unresolved`, and recording them again here claimed the
+        # user pressed Deny on a card they never saw resolved.
         if mcp_provider is not None:
             for row in mcp_pending:
-                if _decision_for(row) == "deny":
+                if _decision_for(row) == "deny" and not approval_was_unanswered(
+                    row, decisions
+                ):
                     mcp_provider.record_user_denial(row.llm_name)
 
         # The refusal half, enforced HERE rather than through the stamps.
@@ -2214,7 +2270,11 @@ def build_local_review_hook(
         for row in pending:
             if _decision_for(row) != "deny":
                 continue
-            provider.record_user_denial(row.llm_name)
+            # R23: as in the MCP hook -- a deny the user never chose (Stop
+            # mid-card) is already logged as `denied-unresolved`; only the
+            # REFUSAL below applies to it, not a second audit row.
+            if not approval_was_unanswered(row, decisions):
+                provider.record_user_denial(row.llm_name)
             key = str(getattr(row, "call_id", "") or "") or row.llm_name
             verdicts[key] = USER_DENIED_REFUSAL.format(name=row.llm_name)
         return verdicts
@@ -11741,9 +11801,13 @@ class ConsoleChatController:
                 session is active at ROUND-key time; no parking).
 
         Returns:
-            A decision string (``approve_once``/``approve_session``/
-            ``always_allow``/``deny``/``timeout``) for every addressable
-            call-id-or-name verdict key in ``pending``.
+            An `ApprovalDecisions` (a plain verdict `dict` carrying
+            ``unresolved_keys``) holding a decision string
+            (``approve_once``/``approve_session``/``always_allow``/
+            ``deny``/``timeout``) for every addressable call-id-or-name
+            verdict key in ``pending``. Keys listed in ``unresolved_keys``
+            hold the fail-closed ``"deny"`` default of a round nobody
+            answered, not a user refusal -- see that class.
         """
         unique_keys: list[str] = []
         seen: set[str] = set()
@@ -11801,11 +11865,19 @@ class ConsoleChatController:
             self.store.active_session_id or ""
         )
         approved_values = {"approve_once", "approve_session", "always_allow"}
+        # task-32280 fix round (R23): the keys whose "deny" below is a
+        # fail-closed DEFAULT, not a user decision. `_record_cancelled_
+        # approval_decisions` already wrote the honest `denied-unresolved`
+        # audit row for exactly these; carried out on the returned map so
+        # the review hooks can skip recording a second, dishonest "Denied
+        # by you" row for the same call. See `ApprovalDecisions`.
+        unresolved_keys: set[str] = set()
 
         def _on_cancelled() -> None:
             cancelled_keys = [key for key in unique_keys if key not in decisions]
             for key in unique_keys:
                 decisions.setdefault(key, "deny")
+            unresolved_keys.update(cancelled_keys)
             self._record_cancelled_approval_decisions(cancelled_keys, call_by_key)
 
         def _on_timeout() -> None:
@@ -11823,6 +11895,9 @@ class ConsoleChatController:
                 self._record_cancelled_approval_decisions(
                     list(unique_keys), call_by_key
                 )
+                # Same as cancellation: the card was pulled, so NO key here
+                # carries a user decision.
+                unresolved_keys.update(unique_keys)
                 result["map"] = {key: "deny" for key in unique_keys}
                 return
             for key in unique_keys:
@@ -11894,7 +11969,11 @@ class ConsoleChatController:
             on_teardown=_on_teardown,
             on_outcome=_on_outcome,
         )
-        return result.get("map") or {key: "deny" for key in unique_keys}
+        verdicts_out = ApprovalDecisions(
+            result.get("map") or {key: "deny" for key in unique_keys}
+        )
+        verdicts_out.unresolved_keys = frozenset(unresolved_keys)
+        return verdicts_out
 
     def _record_cancelled_approval_decisions(
         self,

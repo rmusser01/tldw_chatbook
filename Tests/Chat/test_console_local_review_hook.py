@@ -6,6 +6,8 @@ stamps, ONE approval round trip per batch, verdicts only ever "proceed".
 
 import asyncio
 import json
+import threading
+import time
 import weakref
 from types import SimpleNamespace
 
@@ -444,6 +446,51 @@ def test_hook_level_card_deny_lands_in_the_execution_log_exactly_once(tmp_path):
     assert recorded == [("fs_list", "denied")], (
         "the user's Deny left no row in the execution log: " f"{recorded}"
     )
+
+
+def test_stop_mid_approval_records_only_the_unresolved_row(tmp_path):
+    """R23, local half: mirrors `test_mcp_tool_provider.py::
+    test_stop_mid_approval_records_only_the_unresolved_row`. A Stop while
+    the card is up already writes the honest `denied-unresolved` row from
+    the controller; the hook must not add a "Denied by you" one on top."""
+    from tldw_chatbook.MCP.execution_log import UNRESOLVED_DENIED_DECISION
+
+    recorded: list[tuple[str, str]] = []
+    provider = LocalToolProvider(
+        workspace_root=tmp_path,
+        resolve_state=lambda hub: ASK,
+        record_decision=lambda hub, decision: recorded.append((hub.name, decision)),
+    )
+    cancel_rows: list[tuple] = []
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=object()
+    )
+    controller.app = SimpleNamespace(
+        call_from_thread=lambda fn, *a, **kw: fn(*a, **kw),
+        unified_mcp_service=SimpleNamespace(
+            record_tool_decision=lambda server_key, tool_name, **kw: cancel_rows.append(
+                (server_key, tool_name, kw.get("decision"))
+            )
+        ),
+    )
+    controller.set_pending_approval = lambda payload: None
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+    stopper = threading.Thread(
+        target=lambda: (time.sleep(0.05), controller.begin_shutdown())
+    )
+    stopper.start()
+    hook = build_local_review_hook(provider, controller.request_mcp_approvals)
+    with use_run_id(RUN):
+        verdicts = hook(
+            [ToolCall(name="fs_list", args={"path": "."}, call_id="c-1")], RUN
+        )
+    stopper.join()
+
+    assert verdicts.get("c-1", "proceed") != "proceed"
+    assert recorded == [], (
+        f"a Stop mid-approval recorded a user denial it never received: {recorded}"
+    )
+    assert [row[2] for row in cancel_rows] == [UNRESOLVED_DENIED_DECISION]
 
 
 # -- _compose_local_provider -------------------------------------------------
