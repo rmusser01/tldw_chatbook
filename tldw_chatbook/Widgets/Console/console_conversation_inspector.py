@@ -626,7 +626,12 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 with TabPane("Next Send", id=TAB_NEXT_SEND):
                     with VerticalScroll(id="console-inspector-next-send-pane"):
                         yield Static(
-                            "Chat Context",
+                            # TASK-32326: "Current Context" -- "Chat Context"
+                            # was one word off the LEFT RAIL's brand
+                            # ("Console context") while describing neither;
+                            # every other surface calls this the
+                            # Conversation Inspector's Current tab.
+                            "Current Context",
                             id="console-inspector-next-send-header",
                             markup=False,
                         )
@@ -1787,7 +1792,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             warning.update("")
 
         header = self.query_one("#console-inspector-next-send-header", Static)
-        header_text = "Chat Context"
+        header_text = "Current Context"
         if self._token_estimate is not None:
             header_text += f" (~{self._token_estimate} tokens)"
         header.update(header_text)

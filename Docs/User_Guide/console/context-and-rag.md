@@ -29,7 +29,7 @@ Where this page's controls live:
   tabs (**Costs**, **Exchange**, **Next Send**), opened from the token/cost
   chip, **Ctrl+Shift+P**, or the command palette. The screenshot above
   shows its **Next Send** tab, carried over from the former standalone
-  "Chat Context" viewer this modal replaced.
+  "Chat Context" viewer this modal replaced (the viewer is now the Conversation Inspector's Current tab).
 - **The Inspector rail** (right edge), top to bottom — the Project
   Instructions status row, then the pinned "What happens if I send now?"
   summary (these two never scroll; on a short terminal the summary shrinks
@@ -340,7 +340,7 @@ them with a distorted image.
 Click the status row's cost chip, press **Ctrl+Shift+P**, or run
 **Console: View chat context** from the command palette to open the
 **Conversation Inspector** — one modal, three tabs, replacing the older
-separate cost breakdown and "Chat Context" viewer. The chip opens on
+separate cost breakdown and Current Context viewer. The chip opens on
 **Costs**; Ctrl+Shift+P and the palette entry open on **Next Send**; once
 open you can switch tabs freely. `Escape` closes it from any tab.
 
@@ -388,7 +388,8 @@ before capture existed, capture disabled, or capture failed)."
 
 #### Next Send
 
-The former Ctrl+Shift+P "Chat Context" viewer, carried over intact: a
+The former Ctrl+Shift+P viewer (now the Conversation Inspector's
+**Current** tab, titled "Current Context"): a
 read-only snapshot of what the model has seen and is about to see. Two
 sub-tabs:
 
@@ -600,7 +601,7 @@ forcing a format ("Here is the JSON:") or an opening tone.
 Prefill text is capped at 4,000 characters. While armed it shows in the
 Inspector rows **Prefill (next send only)** / **Prefill (pinned)** — each
 row's value ends with "— tools skipped this send" as a standing reminder of
-that side effect — and in the Chat Context viewer's **Response Prefill**
+that side effect — and in the Current Context viewer's **Response Prefill**
 fold.
 
 ### RAG scope
@@ -938,7 +939,7 @@ the composer and the staged-evidence strip above the status chips).*
 Inspector programme): the token/cost chip, Ctrl+Shift+P, and the palette's
 "Console: View chat context" entry now all open one Conversation Inspector
 modal (Costs / Exchange / Next Send tabs) in place of the former separate
-cost breakdown and "Chat Context" viewer; the retired viewer's content
+cost breakdown and Current Context viewer; the retired viewer's content
 lives on unchanged as the Next Send tab. Docs pass against shipped
 code/tests (`console_conversation_inspector.py`, `console_exchange_
 capture.py`, the design spec's UI and Risks sections); live verification of

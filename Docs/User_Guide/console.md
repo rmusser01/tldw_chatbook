@@ -18,7 +18,7 @@ This page is the orientation tour; the details live on the child pages below:
 - [Video generation, playback & streaming](console/video.md) — `/generate-video`, ephemeral videos & tombstones, in-app playback, `/stream-video`.
 - [Agent runs & tools](console/agent-runs-and-tools.md) — per-tab runs, fleet markers, approvals, skills, MCP tools.
 - [Canvas](console/canvas.md) — create, revise, inspect, recover, and safely export interactive artifacts.
-- [Context & RAG](console/context-and-rag.md) — "Chat Context" viewer, prompts, retrieval scope, staged sources, Library RAG.
+- [Context & RAG](console/context-and-rag.md) — "Current Context" viewer, prompts, retrieval scope, staged sources, Library RAG.
 - [Semantic trace capture](console/semantic-trace-capture.md) — what Capture On saves, Safe/Full views, masking, forks, legacy traces, export, and purge.
 
 ## Getting there
@@ -127,6 +127,30 @@ rest, so you can tell whether scrolling reaches what you want. The
 Inspector's **▼ more sections — scroll** keeps the generic wording.
 See [Reading long Context and Inspector sections](console/context-and-rag.md#reading-long-context-and-inspector-sections)
 for pointer and keyboard navigation.
+
+### Terminology
+
+The Console docs use these words consistently:
+
+- **Context rail** — the LEFT rail (workspaces, conversations, model,
+  agent, details). Its full name is the "Console context" rail; Alt+C
+  toggles it.
+- **Inspector** — the RIGHT rail (sources, scope, environment, the run
+  inspector, session settings). Alt+I toggles it.
+- **Handle** — a collapsed rail's edge tab (**Context ▸** / **◂ Inspect**);
+  click it (or use the Alt chord) to reopen the rail.
+- **Staged sources** — Library items staged for the next send, listed in
+  the Inspector's Sources tray. Staging happens from Library surfaces;
+  the "Context rail" control-bar button opens the rail, it does not
+  attach anything.
+- **Retrieval scope** ("Scope") — the Library items retrieval is narrowed
+  to (the Scope row in the Inspector). "Sources" (the kinds searched)
+  and "Scope" (the items searched) are different settings.
+- **Conversation Inspector** (Ctrl+Shift+P) — the read-only viewer of
+  what the model has seen (**Current Context** tab) and is about to see
+  (**Next Send** tab). Not the same surface as the Inspector rail.
+- **Run inspector** — the run-status groups (Run recipe, Tools,
+  Approvals, …) inside the Inspector rail.
 
 ### Small terminals
 
@@ -550,7 +574,7 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 | Alt+I | Open or close the Inspector (right) rail |
 | Alt+W | "Change Workspace" switcher |
 | Alt+V | Paste an image from the clipboard |
-| Ctrl+Shift+P | "Chat Context" viewer (what the model will see) |
+| Ctrl+Shift+P | Conversation Inspector (the Current Context / Next Send viewer — what the model will see) |
 | Ctrl+Shift+F | Toggle focus mode — the chrome-free Console surface (see above) |
 | Ctrl+Shift+H | Optional Hands-free binding when delivered by the terminal; use the visible **Hands-free** switch on macOS. |
 | Esc | Return focus to the composer (expanding it first if collapsed) |
