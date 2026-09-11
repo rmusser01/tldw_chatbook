@@ -3,10 +3,11 @@ id: TASK-32242
 title: >-
   Library ingest browser reuses a remembered directory without validation or
   write ordering
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-09-10 10:15'
-updated_date: '2026-09-10 10:15'
+updated_date: '2026-09-11 12:00'
 labels:
   - library
   - ingest
@@ -45,11 +46,42 @@ a two-line reuse of an existing shared module rather than new code.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A relative, traversing or vanished `[library.ingest] last_directory`
+- [x] #1 A relative, traversing or vanished `[library.ingest] last_directory`
   never reaches the ingest `FileOpen`; the browser opens at the user's home
   directory instead
-- [ ] #2 Of two ingest selections made before the first config write finishes,
+- [x] #2 Of two ingest selections made before the first config write finishes,
   the later one is the directory the browser reopens at
-- [ ] #3 Both are pinned by tests that fail without the fix, and the ingest
+- [x] #3 Both are pinned by tests that fail without the fix, and the ingest
   browser's typed-path-fragment behaviour is unchanged
 <!-- AC:END -->
+
+
+## Implementation Plan
+<!-- SECTION:PLAN:BEGIN -->
+1. Read `library_browse_location` (the shared module PR #2554 landed) and the ingest browser's two divergent spots.
+2. RED tests: a relative/traversing/vanished `[library.ingest] last_directory` must not reach `FileOpen`; of two picks in flight the later wins.
+3. Replace the bare `is_dir()` probe with `validated_browse_directory` (via the shared start-directory chain) and the unconditional worker write with claim-on-loop + `remember_browse_directory`.
+4. Keep `_remember_library_ingest_location`'s name and its direct unit-test callers; keep typed-path-fragment behaviour untouched.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+<!-- SECTION:NOTES:BEGIN -->
+A two-line reuse, as the rider said it would be. The read goes through
+`browse_start_directory` (which runs `validated_browse_directory` on the
+remembered value, then on `[notes] sync_directory`, then falls back to home),
+and the write claims its generation on the event loop before dispatching the
+worker, so the newest selection is the one that survives.
+
+`_remember_library_ingest_location` keeps its name and its no-app,
+direct-call unit tests; `generation` is optional there and claimed on the
+spot when absent. The `@work(thread=True)` wrapper and its broad guard are
+gone -- `remember_browse_directory` already owns both.
+
+One existing test had to move its monkeypatch from
+`library_screen.save_setting_to_cli_config` to the shared module's, which is
+where the write now happens.
+
+Files: `UI/Screens/library_screen.py`, `Library/library_browse_location.py`,
+`Tests/UI/{test_library_screen,test_library_notes_wave_import_ux}.py`,
+`Docs/User_Guide/library/import-and-export.md`.
+<!-- SECTION:NOTES:END -->

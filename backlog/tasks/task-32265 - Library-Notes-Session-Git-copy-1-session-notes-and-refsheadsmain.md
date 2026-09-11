@@ -2,9 +2,11 @@
 id: TASK-32265
 title: >-
   Library Notes Session Git copy: 1 session notes, and refs/heads/main
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-09-10 18:05'
+updated_date: '2026-09-11 12:00'
 labels:
   - library
   - notes
@@ -27,7 +29,39 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The session-note count pluralises correctly, including the one-note case
-- [ ] #2 The branch renders as its short name
-- [ ] #3 Covered by a test on the one-note case
+- [x] #1 The session-note count pluralises correctly, including the one-note case
+- [x] #2 The branch renders as its short name
+- [x] #3 Covered by a test on the one-note case
 <!-- AC:END -->
+
+
+## Implementation Plan
+<!-- SECTION:PLAN:BEGIN -->
+1. Find every place the session-note count and the branch are rendered (panel, commit form, commit review, push review, progress, commit receipt).
+2. RED tests on the one-note case and on `refs/heads/...`.
+3. Two named helpers, `_session_note_count` and `_branch_for_display`, and the receipt's own sentence fixed at its source in `file_notes_git_service`.
+4. Live GREEN on the real commit flow.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+<!-- SECTION:NOTES:BEGIN -->
+Two named helpers instead of six ad-hoc expressions: `_branch_for_display`
+(the `refs/heads/` strip the push panel already did inline, named) and
+`_session_note_count`. Applied to the commit form meta, the commit review
+branch and promise, the push review lead/counts/local-branch, the execution
+progress line, and the repository `HEAD` label.
+
+The receipt -- "Committed 1 session notes as bd746be6…" -- is built in
+`file_notes_git_service._publish_*`, not in the panel, so it is fixed at its
+source; the workspace's own progress line got the same treatment.
+
+Live GREEN: `Branch: main · 1 session note staged` on the commit form,
+"1 session note will be committed" on the review, "Committed 1 session note"
+on the receipt.
+
+Files: `Widgets/Library/library_file_notes_git_panel.py`,
+`Notes/file_notes_git_service.py`,
+`Widgets/Library/library_file_notes_workspace.py`,
+`Tests/UI/test_library_file_notes_git.py`,
+`Docs/User_Guide/library/file-notes.md`.
+<!-- SECTION:NOTES:END -->

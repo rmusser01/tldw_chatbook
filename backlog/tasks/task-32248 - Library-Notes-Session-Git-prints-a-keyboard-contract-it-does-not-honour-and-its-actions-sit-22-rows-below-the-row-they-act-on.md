@@ -3,9 +3,11 @@ id: TASK-32248
 title: >-
   Library Notes Session Git prints a keyboard contract it does not honour and
   its actions sit 22 rows below the row they act on
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-09-10 18:05'
+updated_date: '2026-09-11 12:00'
 labels:
   - library
   - notes
@@ -37,8 +39,51 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Opening Session Git after 'Trust and check status' focuses the status list
-- [ ] #2 Up/Down, Tab and Enter do what the panel's own line says they do, starting from the state the panel opens in
-- [ ] #3 Stage and Commit are reachable by keyboard and render adjacent to the row they act on rather than at the floor of the pane
-- [ ] #4 Covered by a test pinning the panel's entry focus after Trust, and a keyboard-only stage
+- [x] #1 Opening Session Git after 'Trust and check status' focuses the status list
+- [x] #2 Up/Down, Tab and Enter do what the panel's own line says they do, starting from the state the panel opens in
+- [x] #3 Stage and Commit are reachable by keyboard and render adjacent to the row they act on rather than at the floor of the pane
+- [x] #4 Covered by a test pinning the panel's entry focus after Trust, and a keyboard-only stage
 <!-- AC:END -->
+
+
+## Implementation Plan
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce live at 235x52 against a real git vault: Trust, then Down/Tab/Enter, and check `git status`.
+2. Trace the focus chain: which control holds focus after Trust, and why.
+3. RED tests: the first ready status focuses the row list; Tab from the list reaches Stage; Stage renders within a few rows of the row it acts on; a later refresh does not steal focus.
+4. Fix: request the panel's existing settle-focus on the first ready status; bound `#file-notes-git-rows` so the actions stop rendering at the pane floor.
+5. Live GREEN: keyboard-only stage and a real commit, verified with `git log`.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+<!-- SECTION:NOTES:BEGIN -->
+The re-test split the assessors and the cause turned out to be both halves
+of the same thing.
+
+**Focus (AC#1/AC#2).** The trust button hides when trust lands, so
+`_update_actions`'s `_repair_hidden_focus` rescued focus onto **Refresh** --
+where Down does nothing, Tab reaches the list, and Enter runs nothing. That
+is exactly what C measured. `render_status` now requests the panel's OWN
+existing settle-focus (`_commit_list_focus_pending`, the machinery
+`return_to_commit_list` already used) on the FIRST ready status, guarded by
+`_focus_is_inside` so a status landing while the user is elsewhere never
+pulls focus, and by `was_ready` so a Refresh or a post-stage re-render never
+yanks it back.
+
+**Distance (AC#3).** `#file-notes-git-rows` was `height: 1fr`, so the list
+swallowed every spare row of the surface and the actions for the SELECTED
+row rendered at the pane floor -- live capture: row 20 vs row 44 at 235x52.
+Bounded to 12 cells (six two-cell rows) the list scrolls its own overflow
+and Stage lands 3 rows under the row it acts on. Trade-off: a vault with
+many session changes now scrolls inside the list instead of down the pane;
+that is the price of keeping the actions adjacent, and the bulk actions
+exist for the many-file case.
+
+Live GREEN: Trust -> Down -> Tab -> Enter staged README.md (`git status`:
+`M  README.md`), and the keyboard journey reached a real commit --
+`git log`: `5da59ec w3 keyboard commit`, clean tree.
+
+Files: `Widgets/Library/library_file_notes_git_panel.py`,
+`Tests/UI/test_library_file_notes_git.py`,
+`Docs/User_Guide/library/file-notes.md`.
+<!-- SECTION:NOTES:END -->
