@@ -143,7 +143,10 @@ handles hide and the transcript takes the full width, so it stays usable
 even at 80x24 or 60x18. An explicitly opened rail yields to this rule once
 the terminal cannot fit the rail plus a usable transcript (~70 columns for
 the Context rail, ~74 for the Inspector); the preference itself survives and
-the rail returns when the terminal widens again.
+the rail returns when the terminal widens again. When one of these width
+rules closes a rail you had open, a one-time notice (once per rail per
+session) says which rail collapsed and how to bring it back — the
+Context handle for the left rail, **Alt+I** for the Inspector.
 
 The full-width layout on larger terminals remains primary, while short
 terminals keep every Context header and complete open section reachable by

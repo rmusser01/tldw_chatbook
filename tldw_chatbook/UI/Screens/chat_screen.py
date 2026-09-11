@@ -7341,6 +7341,9 @@ class ChatScreen(BaseAppScreen):
         # the (expensive) effective rail state only happens when the band
         # actually changes, not on every pixel of a resize drag.
         self._last_console_workspace_width_band: str | None = None
+        #: TASK-32327: rails whose responsive-collapse notice has
+        #: fired this session (once per rail, never per resize tick).
+        self._console_rail_collapse_notified: set[str] = set()
         self._console_guidance_dismissed = False
         self._console_first_send_completed_cached: bool | None = None
         # Fleet-UX expert review F2 (task-1232): one-time coach-mark shown
@@ -21808,7 +21811,18 @@ class ChatScreen(BaseAppScreen):
         rail_state = self._current_console_rail_state(
             available_columns=event.size.width
         )
+        # TASK-32327: capture which rails the user could SEE before this
+        # band crossing, so a responsive force-close (not a user toggle --
+        # preferences are never rewritten here) can be named out loud
+        # instead of the rail silently vanishing.
+        left_was_open = bool(left_rail.display)
+        right_was_open = bool(right_rail.display)
         self._sync_console_rail_visibility_if_changed(rail_state)
+        self._notify_console_responsive_rail_collapse(
+            rail_state=rail_state,
+            left_was_open=left_was_open,
+            right_was_open=right_was_open,
+        )
         for focused_in_rail, focused_in_handle, rail_open, rail, handle, buttons in (
             (
                 focused_in_left_rail,
@@ -21839,6 +21853,58 @@ class ChatScreen(BaseAppScreen):
             button = self.query_one(button_selector, Button)
             if target.display and button.display:
                 button.focus()
+
+    def _notify_console_responsive_rail_collapse(
+        self,
+        *,
+        rail_state: "ConsoleRailState",
+        left_was_open: bool,
+        right_was_open: bool,
+    ) -> None:
+        """Name a responsive force-collapse once per session per rail (TASK-32327).
+
+        The width rules (force-collapse below 150/100 cols, single-pane
+        below 84, Inspector-priority in the 100-150 band) hide rails the
+        user had open WITHOUT rewriting their stored preference -- silent
+        disappearance from the user's point of view. This posts one
+        transient notice per rail per session naming what happened and how
+        to reopen, and deliberately skips rails whose stored preference
+        already says closed (the rule and the user then agree).
+        """
+        notices: list[tuple[str, str]] = []
+        if (
+            left_was_open
+            and not rail_state.left_open
+            and "left" not in self._console_rail_collapse_notified
+        ):
+            self._console_rail_collapse_notified.add("left")
+            notices.append(
+                (
+                    "Context rail collapsed — the terminal is too narrow "
+                    "for it. Reopen it from the Context handle "
+                    "(or widen the terminal).",
+                    "warning",
+                )
+            )
+        if (
+            right_was_open
+            and not rail_state.right_open
+            and "right" not in self._console_rail_collapse_notified
+        ):
+            self._console_rail_collapse_notified.add("right")
+            notices.append(
+                (
+                    "Inspector rail collapsed — the terminal is too narrow "
+                    "for it. Reopen it with Alt+I "
+                    "(or widen the terminal).",
+                    "warning",
+                )
+            )
+        for message, severity in notices:
+            try:
+                self.app_instance.notify(message, severity=severity, timeout=6)
+            except Exception:  # noqa: BLE001 -- a notice must never break layout
+                logger.debug("console rail collapse notice failed", exc_info=True)
 
     @on(DescendantBlur)
     @on(DescendantFocus)
