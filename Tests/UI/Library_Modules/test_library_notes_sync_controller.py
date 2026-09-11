@@ -3088,7 +3088,7 @@ async def test_refused_check_setup_names_its_reason_and_logs_it(
 
     runtime.review_setup = refuse
     controller.set_setup("display_name", "Notes")
-    controller.set_setup("folder", "/private/root")
+    controller.set_setup("folder", "/zqleakcanary/root")
     messages: list[str] = []
     sink_id = logger.add(
         lambda message: messages.append(message.record["message"]), level="WARNING"
@@ -3104,7 +3104,7 @@ async def test_refused_check_setup_names_its_reason_and_logs_it(
     assert controller.snapshot.phase == "configure"
     joined = "\n".join(messages)
     assert reason in joined
-    assert "/private/root" not in joined
+    assert "/zqleakcanary/root" not in joined
 
 
 async def test_refused_check_root_names_its_reason_and_logs_it() -> None:
@@ -3155,7 +3155,7 @@ async def test_unclassified_check_failure_keeps_the_generic_line_and_logs_a_type
     )
 
     async def fail(*args: object, **kwargs: object) -> object:
-        raise ZeroDivisionError("/private/secret/path")
+        raise ZeroDivisionError("/zqleakcanary/secret/path")
 
     runtime.check_root = fail
     messages: list[str] = []
@@ -3169,5 +3169,5 @@ async def test_unclassified_check_failure_keeps_the_generic_line_and_logs_a_type
 
     joined = "\n".join(messages)
     assert "ZeroDivisionError" in joined
-    assert "/private/secret/path" not in joined
+    assert "/zqleakcanary/secret/path" not in joined
     assert "Check failed" in controller.snapshot.status_line
