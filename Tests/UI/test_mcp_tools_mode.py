@@ -931,7 +931,7 @@ async def test_server_column_truncates_long_labels_with_ellipsis():
         long_label_tool = _tool(
             server_key="local:__local__",
             name="fs_edit",
-            server_label="Local workspace, web, and Watchlists",
+            server_label="Local workspace, web, and Watchlists (Console agents)",
         )
         short_label_tool = _tool(
             server_key="local:docs", name="fs_read", server_label="docs"

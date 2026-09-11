@@ -92,7 +92,12 @@ from .tool_catalog import ToolExecutionPolicy, ToolPathTarget, redact_root_locat
 
 SOURCE = "local"
 LOCAL_SERVER_KEY = "local:__local__"
-LOCAL_SERVER_LABEL = "Local workspace, web, and Watchlists"
+# ADR-148 (Wave D spec): the Console-side group label carries the surface
+# suffix -- the same tool names legitimately exist under BOTH this group
+# and the external-MCP inventory group ("tldw_chatbook (external MCP)",
+# hub_tool_catalog) as two separate permission domains, and the pairing
+# must read as deliberate, not accidental duplication.
+LOCAL_SERVER_LABEL = "Local workspace, web, and Watchlists (Console agents)"
 
 #: task-3240: relocated here from UI/Tools_Settings_Window.py -- this module
 #: is web_deep_search's actual runtime consumer (the [tools] gate read just

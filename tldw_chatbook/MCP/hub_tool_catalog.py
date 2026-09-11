@@ -181,7 +181,11 @@ def builtin_tools_from_inventory(inventory: dict) -> list[HubTool]:
         tools.append(
             HubTool(
                 server_key="builtin:tldw_chatbook",
-                server_label="tldw_chatbook",
+                # ADR-148 (Wave D spec): the external-MCP inventory group's label names
+                # its surface -- the standalone stdio server's published
+                # catalog, a SEPARATE permission domain from the Console
+                # agent group that shares many tool names.
+                server_label="tldw_chatbook (external MCP)",
                 source="builtin",
                 name=name,
                 description=_text(raw_tool.get("description")),
