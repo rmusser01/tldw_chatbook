@@ -14,9 +14,6 @@ It does not publish source or collection mutation, checking, briefing generation
 
 Use Console when an agent needs to read or summarize a complete briefing on your behalf. Use external MCP for discovery, receipts, and status automation without exporting private briefing bodies.
 
-> 🚧 **This page is a stub.** The full write-up is planned; the sections
-> below cover orientation only, except where a section says otherwise. See
-> the [guide index](index.md).
 
 ## What this screen is for
 
