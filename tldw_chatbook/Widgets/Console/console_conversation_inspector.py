@@ -185,6 +185,18 @@ _EXCHANGE_ADAPTER_BOUNDARY_CAVEAT = (
 # ``_COST_ROW_ID_PREFIX`` filtering, just one handler per level instead of
 # one flat namespace).
 _EXCHANGE_TURN_ID_PREFIX = "console-inspector-exchange-turn-"
+
+def _display_role_name(role: object) -> str:
+    """Return the human role name for a message-role value.
+
+    TASK-32336: ``ConsoleMessageRole`` is a str-mixin Enum whose f-string
+    form on the supported runtime (>=3.11) is the qualified
+    "ConsoleMessageRole.USER" -- an internal repr this viewer used to leak
+    into every Current Context title. Plain strings (provider payloads,
+    projections) pass through unchanged; both are title-cased.
+    """
+    return str(getattr(role, "value", role)).title()
+
 _EXCHANGE_CALL_ID_PREFIX = "console-inspector-exchange-call-"
 _EXCHANGE_SECTION_ID_PREFIX = "console-inspector-exchange-section-"
 _EXCHANGE_MESSAGE_ID_PREFIX = "console-inspector-exchange-message-"
@@ -1815,7 +1827,9 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 # -- msg.role/msg.status are enum-derived today, but a
                 # Collapsible title IS markup-parsed by default and this
                 # file does not leave that to chance anywhere else.
-                title=Content.from_text(f"[{msg.role}] {msg.status}", markup=False),
+                title=Content.from_text(
+                    f"[{_display_role_name(msg.role)}] {msg.status}", markup=False
+                ),
                 collapsed=True,
             )
             for msg in self.snapshot.current_messages
