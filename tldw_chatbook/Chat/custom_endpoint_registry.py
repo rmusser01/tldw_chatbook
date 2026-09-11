@@ -255,6 +255,36 @@ def family_execution_key(family: str) -> str:
     return "custom" if family == "openai_compatible" else family
 
 
+def custom_endpoint_provider_settings(
+    app_config: Mapping[str, object], provider: str | None
+) -> Mapping[str, object] | None:
+    """Provider-settings view for a custom-ep id: the entry flattened to
+    the provider-settings key aliases.
+
+    Args:
+        app_config: The full CLI config mapping.
+        provider: Candidate provider id.
+
+    Returns:
+        ``{'api_base_url': entry.base_url, 'api_url': entry.base_url,
+        'api_key': entry.api_key or '', 'api_key_env': entry.api_key_env,
+        'model': entry.models[0] if any}``, or None when ``provider`` is
+        not a resolvable custom-ep id.
+    """
+    entry = entry_for(app_config, provider)
+    if entry is None:
+        return None
+    view: dict[str, object] = {
+        "api_base_url": entry.base_url,
+        "api_url": entry.base_url,
+        "api_key": entry.api_key or "",
+        "api_key_env": entry.api_key_env,
+    }
+    if entry.models:
+        view["model"] = entry.models[0]
+    return view
+
+
 def family_normalizes_like_llama(family: str) -> bool:
     """Return whether ``family`` uses llama.cpp base-URL normalization.
 

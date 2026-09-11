@@ -217,6 +217,22 @@ def resolve_console_provider_identity(
     display_key = provider_config_key(raw_provider)
     exact_key = raw_provider.lower()
 
+    # ADR-146: a custom-ep id addresses a registry entry that only
+    # app_config-holding seams can resolve (``entry_for`` in
+    # ``custom_endpoint_registry``). Importing that module here would cycle
+    # (registry -> console_session_settings -> this module), so this is a
+    # deliberately minimal inline prefix check: an unresolvable custom-ep id
+    # degrades to the generic OpenAI-compatible family instead of an unknown
+    # provider, and registry-aware seams override it with the entry's family.
+    if raw_provider.startswith("custom-ep:") and len(raw_provider) > len("custom-ep:"):
+        return ConsoleProviderIdentity(
+            display_key=raw_provider,
+            readiness_key="custom",
+            execution_key="custom",
+            is_supported=True,
+            uses_direct_llama_path=False,
+        )
+
     if (
         exact_key in DIRECT_CONSOLE_PROVIDER_KEYS
         or display_key in DIRECT_CONSOLE_PROVIDER_KEYS
