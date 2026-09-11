@@ -33,6 +33,7 @@ from tldw_chatbook.Library.library_shell_state import (
 )
 from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
 from tldw_chatbook.Widgets.destination_rail import (
+    RAIL_SECTION_TOGGLE_PREFIX,
     DestinationRailHandle,
     DestinationRailSectionHeader,
 )
@@ -126,6 +127,44 @@ def library_db_size_rows(
             )
         )
     return tuple(rows)
+
+
+def library_diagnostics_disclosure(
+    open_state: bool,
+) -> tuple[DestinationRailSectionHeader, Vertical]:
+    """Build the Details ▸ Diagnostics header and its display-toggled body.
+
+    task-32357 AC#2 (critique #10, A cap 21). Single source of the pair's
+    shape for its two consumers, the same way ``library_db_size_rows`` is
+    for the rows that go inside it: ``LibraryRail`` composes it when the
+    shell already carries a reading, and
+    ``LibraryScreen._refresh_library_details_db_sizes`` mounts it when the
+    first reading lands on a rail that composed without one.
+
+    It is rendered ONLY when there are sizes to put in it -- an empty
+    disclosure is a row of rail height spent on nothing, and it measurably
+    pushed the Details ▸ Actions group out of an 18-row rail
+    (``test_folder_files_low_height_rail_scrolls_to_last_action``).
+
+    Args:
+        open_state: Whether the body starts visible.
+
+    Returns:
+        The ``(header, body)`` pair, unmounted and unparented.
+    """
+    header = DestinationRailSectionHeader(
+        "Diagnostics",
+        section_id="library-details-diagnostics",
+        open=open_state,
+        id="library-rail-section-header-diagnostics",
+    )
+    body = Vertical(
+        id="library-rail-section-body-details-diagnostics",
+        classes="library-rail-section-body",
+    )
+    body.styles.height = "auto"
+    body.display = open_state
+    return header, body
 
 
 def _truncate_row_title(title: str, budget: int = _MAX_LIBRARY_ROW_TITLE) -> str:
@@ -440,6 +479,12 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         self.row_context_factory = row_context_factory
         self.lifecycle = lifecycle
         self.onboarding_all_empty = onboarding_all_empty
+        #: task-32357 AC#2: the Details ▸ Diagnostics disclosure. Rail-local
+        #: and unpersisted, unlike the five ``LibraryRailPreferences``
+        #: sections: diagnostics are something you go and look at once, so
+        #: every visit starts closed. It survives the rail's own recomposes
+        #: (same widget instance), which is all it has to survive.
+        self.diagnostics_open = False
         self._last_ordinary_width_contract: OrdinaryRailStyleContract | None = None
         self.apply_ordinary_width_contract(
             OrdinaryRailStyleContract(
@@ -677,6 +722,39 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
 
     def on_show(self) -> None:
         """Re-decide the fold cue when the rail becomes visible again."""
+        self._schedule_fold_cue_sync()
+
+    #: task-32357 AC#2: the one toggle this rail answers itself.
+    _DIAGNOSTICS_TOGGLE_ID = f"{RAIL_SECTION_TOGGLE_PREFIX}library-details-diagnostics"
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Open or close Details ▸ Diagnostics without leaving the rail.
+
+        The screen's section-toggle handler persists the five
+        ``LibraryRailPreferences`` sections by name, and this disclosure is
+        deliberately not one of them (see ``diagnostics_open``), so the
+        press is answered here and stopped before it reaches a handler that
+        would look up a preference field that does not exist.
+
+        Args:
+            event: The bubbling toggle press.
+        """
+        if event.button.id != self._DIAGNOSTICS_TOGGLE_ID:
+            return
+        event.stop()
+        self.diagnostics_open = not self.diagnostics_open
+        try:
+            body = self.query_one("#library-rail-section-body-details-diagnostics")
+            header = self.query_one(
+                "#library-rail-section-header-diagnostics",
+                DestinationRailSectionHeader,
+            )
+        except NoMatches:
+            return
+        body.display = self.diagnostics_open
+        header.sync_open(self.diagnostics_open)
+        # Opening it changes the rail's content height, which is what the
+        # fold cue measures.
         self._schedule_fold_cue_sync()
 
     def apply_selection(
@@ -963,14 +1041,27 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         # lives here -- the Status rows after the counts, only when the
         # shell actually carries them (never an "N/A" triplet). task-32230:
         # one row per source, so no value wraps at the rail's width.
-        for row_id, renderable in library_db_size_rows(
+        #
+        # task-32357 AC#2 (critique #10, A cap 21): "Chats/Notes 8.2MB" on a
+        # profile with one note is a number a first-timer cannot use and
+        # cannot act on, standing in the same column as their own counts.
+        # It keeps its place -- and its ids, which several tests query while
+        # the Details body is closed -- behind its own closed disclosure.
+        size_rows = library_db_size_rows(
             line for line in details_lines[2:] if line
-        ):
-            yield Static(
-                renderable,
-                id=row_id,
-                classes="library-details-row",
+        )
+        if size_rows:
+            diagnostics_header, diagnostics_body = library_diagnostics_disclosure(
+                self.diagnostics_open
             )
+            yield diagnostics_header
+            with diagnostics_body:
+                for row_id, renderable in size_rows:
+                    yield Static(
+                        renderable,
+                        id=row_id,
+                        classes="library-details-row",
+                    )
         if self.workspaces_body_factory is not None:
             yield from self.workspaces_body_factory()
 
