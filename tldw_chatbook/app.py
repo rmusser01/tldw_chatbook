@@ -11203,6 +11203,9 @@ class TldwCli(
             log_resource_usage()
 
         self._schedule_deferred_startup_work()
+        from .Backup_Recovery.profile_open import acknowledge_mounted
+
+        self.call_after_refresh(acknowledge_mounted, self)
 
     async def update_db_sizes(self) -> None:
         """Updates the database size information in the shell status line."""

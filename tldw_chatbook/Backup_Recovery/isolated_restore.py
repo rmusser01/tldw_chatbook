@@ -327,12 +327,18 @@ def _launch_environment() -> dict[str, str]:
     return env
 
 
-def select_profile(profile_id: str, control_root: Path) -> None:
+def select_profile(
+    profile_id: str, control_root: Path, *, launch_attempt: str | None = None
+) -> None:
     """Select once at process startup, before config/services or admission imports."""
     global _selected_installation
     if _selected_installation is not None or "tldw_chatbook.config" in sys.modules:
         raise ValueError("profile_requires_fresh_process")
     entry = _launch_descriptor(profile_id, control_root)
+    if launch_attempt is not None:
+        from .profile_open import _select
+
+        _select(profile_id, control_root, launch_attempt)
     env = _launch_environment()
     env["TLDW_CONFIG_PATH"] = entry.config
     os.environ.clear()
@@ -345,9 +351,17 @@ def select_profile(profile_id: str, control_root: Path) -> None:
     _selected_installation = entry.installation_id
 
 
-def launch_profile(profile_id: str, control_root: Path) -> int:
+def launch_profile(
+    profile_id: str, control_root: Path, *, launch_attempt: str | None = None
+) -> int:
     """Launch a fresh supported CLI; child independently rechecks all authority."""
     entry = _launch_descriptor(profile_id, control_root)
+    extra = []
+    if launch_attempt is not None:
+        from .profile_open import _expected
+
+        _expected(profile_id, control_root, launch_attempt)
+        extra = ["--recovery-launch-attempt", launch_attempt]
     # The executable/module are local constants; verified selectors are separate
     # argv entries and the child repeats admission with a filtered environment.
     return subprocess.call(  # nosec B603
@@ -360,6 +374,7 @@ def launch_profile(profile_id: str, control_root: Path) -> int:
             profile_id,
             "--recovery-control-root",
             str(control_root),
+            *extra,
         ],
         cwd=Path(entry.config).parent,
         env=_launch_environment(),

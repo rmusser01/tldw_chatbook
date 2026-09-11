@@ -699,18 +699,28 @@ class RecoveryService:
         """The view suspends its terminal while this fresh app owns it."""
 
         def launch(operation, cancel):
-            from .isolated_restore import launch_profile
+            from .isolated_restore import launch_profile, profile_requirements
+            from .profile_open import _expected, opened_receipt
 
             archive_reader._check(cancel)
             self._update(operation, phase="opening_profile")
-            code = launch_profile(profile_id, self.control_root)
+            attempt = uuid4().hex
+            expected = _expected(profile_id, self.control_root, attempt)
+            code = launch_profile(profile_id, self.control_root, launch_attempt=attempt)
             if code:
                 raise ValueError("profile_process_failed")
-            # Process exit alone is not a mounted/opened validation receipt.
+            receipt = opened_receipt(profile_id, self.control_root, attempt)
+            if receipt is not None and receipt != expected:
+                raise ValueError("profile_open_generation_changed")
             self._update(
                 operation,
-                phase="profile_process_exited",
-                result={"profile_id": profile_id, "exit_code": code},
+                phase="opened_successfully" if receipt else "profile_process_exited",
+                result={
+                    "profile_id": profile_id,
+                    "exit_code": code,
+                    "opened_successfully": receipt is not None,
+                    **profile_requirements(profile_id, self.control_root),
+                },
             )
 
         return self._start("open_profile", launch)
