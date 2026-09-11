@@ -28,7 +28,10 @@ from tldw_chatbook.Library.library_media_state import (
     MediaTrashMutationTarget,
     media_trash_age_copy,
 )
-from tldw_chatbook.Library.library_pager_state import LibraryPagerDisplay
+from tldw_chatbook.Library.library_pager_state import (
+    LibraryPagerDisplay,
+    library_pager_layout,
+)
 from tldw_chatbook.Library.library_shell_state import (
     library_disabled_action_label,
 )
@@ -450,9 +453,17 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                 yield button
 
         if bounded and self.pager is not None:
+            # task-32354 (critique #10): Trash rendered range + "Page 1 of 1"
+            # + two dead controls for a one-item page. The single-page rule
+            # (task-28016/31237/32104) is ``library_pager_layout``'s; when it
+            # hides the controls this block is one row, not two.
+            layout = library_pager_layout(
+                self.pager, retry_visible=self.retry_visible
+            )
+            pager_rows = 1 if layout.controls_hidden else 2
             pager = Vertical(id="library-media-trash-pager")
-            pager.styles.height = 2
-            pager.styles.min_height = 2
+            pager.styles.height = pager_rows
+            pager.styles.min_height = pager_rows
             pager.styles.overflow = ("hidden", "hidden")
             with pager:
                 copy = Horizontal(id="library-media-trash-pager-copy")
@@ -465,68 +476,74 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                         id="library-media-trash-range",
                         markup=False,
                     )
-                    yield Static(
-                        self.pager.page_copy,
-                        id="library-media-trash-page",
-                        markup=False,
+                    # Kept whenever the controls are, even empty: the
+                    # initial-error posture pins an empty page Static
+                    # (``test_media_trash_geometry_four_sizes...``), and
+                    # only the single-page case is this task's subject.
+                    if not layout.controls_hidden:
+                        yield Static(
+                            self.pager.page_copy,
+                            id="library-media-trash-page",
+                            markup=False,
+                        )
+                if not layout.controls_hidden:
+                    controls = Horizontal(
+                        classes="ds-toolbar", id="library-media-trash-pager-controls"
                     )
-                controls = Horizontal(
-                    classes="ds-toolbar", id="library-media-trash-pager-controls"
-                )
-                controls.styles.height = 1
-                controls.styles.min_height = 1
-                controls.styles.overflow = ("hidden", "hidden")
-                with controls:
-                    controls_disabled = bool(self.controls_disabled_reason)
-                    previous_disabled = (
-                        self.pager.previous_disabled or controls_disabled
-                    )
-                    previous = Button(
-                        library_disabled_action_label("Previous", previous_disabled),
-                        id="library-media-trash-previous",
-                        classes="library-canvas-action",
-                        compact=True,
-                        disabled=previous_disabled,
-                        tooltip=(
-                            self.controls_disabled_reason
-                            or self.pager.previous_reason
-                            or None
-                        ),
-                    )
-                    previous.styles.min_width = 0
-                    previous.styles.padding = 0
-                    yield previous
-                    if self.retry_visible:
-                        retry = Button(
-                            library_disabled_action_label("Retry", controls_disabled),
-                            id="library-media-trash-retry",
+                    controls.styles.height = 1
+                    controls.styles.min_height = 1
+                    controls.styles.overflow = ("hidden", "hidden")
+                    with controls:
+                        controls_disabled = bool(self.controls_disabled_reason)
+                        previous_disabled = (
+                            self.pager.previous_disabled or controls_disabled
+                        )
+                        previous = Button(
+                            library_disabled_action_label("Previous", previous_disabled),
+                            id="library-media-trash-previous",
                             classes="library-canvas-action",
                             compact=True,
-                            disabled=controls_disabled,
+                            disabled=previous_disabled,
                             tooltip=(
                                 self.controls_disabled_reason
-                                or "Retry the failed Trash request."
+                                or self.pager.previous_reason
+                                or None
                             ),
                         )
-                        retry.styles.min_width = 0
-                        retry.styles.padding = 0
-                        yield retry
-                    next_disabled = self.pager.next_disabled or controls_disabled
-                    next_button = Button(
-                        library_disabled_action_label("Next", next_disabled),
-                        id="library-media-trash-next",
-                        classes="library-canvas-action",
-                        compact=True,
-                        disabled=next_disabled,
-                        tooltip=(
-                            self.controls_disabled_reason
-                            or self.pager.next_reason
-                            or None
-                        ),
-                    )
-                    next_button.styles.min_width = 0
-                    next_button.styles.padding = 0
-                    yield next_button
+                        previous.styles.min_width = 0
+                        previous.styles.padding = 0
+                        yield previous
+                        if self.retry_visible:
+                            retry = Button(
+                                library_disabled_action_label("Retry", controls_disabled),
+                                id="library-media-trash-retry",
+                                classes="library-canvas-action",
+                                compact=True,
+                                disabled=controls_disabled,
+                                tooltip=(
+                                    self.controls_disabled_reason
+                                    or "Retry the failed Trash request."
+                                ),
+                            )
+                            retry.styles.min_width = 0
+                            retry.styles.padding = 0
+                            yield retry
+                        next_disabled = self.pager.next_disabled or controls_disabled
+                        next_button = Button(
+                            library_disabled_action_label("Next", next_disabled),
+                            id="library-media-trash-next",
+                            classes="library-canvas-action",
+                            compact=True,
+                            disabled=next_disabled,
+                            tooltip=(
+                                self.controls_disabled_reason
+                                or self.pager.next_reason
+                                or None
+                            ),
+                        )
+                        next_button.styles.min_width = 0
+                        next_button.styles.padding = 0
+                        yield next_button
 
         if self.confirmation_target is not None:
             confirmation = Vertical(id="library-media-trash-delete-confirmation")

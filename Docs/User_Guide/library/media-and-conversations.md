@@ -314,7 +314,11 @@ Escape returns to the list.
 Notes on the edges: with nothing deleted the view says "Trash is empty.
 Items you delete from Media land here." and "Restore" reads "○ Restore"
 with a reason tooltip; if the trash holds more items than one fetch page,
-a status line says "showing X of N" honestly. Entering Trash clears any
+a status line says "showing X of N" honestly. The pager under the list is
+drawn **only when a second page exists**: a trash that fits on one page keeps
+the item range ("1-1 of 1") and drops "Page 1 of 1" along with both
+**Previous** / **Next**, the same rule the rest of the Library follows (see
+[Library](../library.md)), so Restore sits directly under the last row. Entering Trash clears any
 "✓ deleted…" receipt still showing on the list — the Trash view is the
 durable path that receipt pointed at. Trashed items are **excluded from
 search** (Library search and RAG keyword retrieval both skip them) until
@@ -1197,26 +1201,20 @@ loaded the conversation list takes the columns the empty Reader was holding).*
 other browse list, so Up/Down walks its rows and the Escape hop -- "focus
 Items", then "focus Library" -- is live and named from the first frame).*
 
-*Verified against fix/library-crit10-media-rows — 2026-09-11 (task-32347:
-a media row's age is labelled — "audio · updated 10m ago", "updated just now"
-under a minute — because a bare "10m" on an audio or video row read as the
-item's length. task-32350: a quiet scope line under the "Media (N)" header
-states the APPLIED scope ("Media · 1 of 11 · filter “notes” · all types ·
-sort: Newest") with a "Clear" that drops filter and type and empties the
-filter box, so an unsubmitted draft in the box can no longer be mistaken for
-what the rows came from. task-32364: the Reader's row ends "· loaded"
-instead of prefixing its title with "Loaded ·", and a conversation row reads
-"5 messages · 16m" with the same separator every other Library list uses.)*
+*Verified against fix/library-crit10-pagers — 2026-09-11 (task-32354: a
+single-page Trash draws no "Page 1 of 1" and no Previous/Next, and its pager
+block is one row instead of two. Live at 235x52 on a seeded profile with one
+trashed item and with the list filtered to none.)*
 
-*Verified against fix/library-crit10-media-rows — 2026-09-11, fix round 1
-(task-32347 review: the row age drops its " ago" and reads `audio · added
-10m`, the Trash list's own grammar — the four cells are what let a narrow
-Items pane paint a keyword row's term again. task-32350 review: the scope
-line drops its "of M" half when the screen's Media total is a lower bound,
-rather than stating a flat total the rail itself renders as "5+".)*
-
-*Verified against fix/library-crit10-media-rows — 2026-09-11, re-review round 1
-(task-32347: the row age reads `audio · updated 10m`, not "added" — the value
-is the item's last-modified time, the same field the Reader's preview line
-labels "Updated:", so saving an analysis moves it and an "added" label would
-have been false.)*
+*Verified against fix/library-crit10-media-rows — 2026-09-11 (task-32347: a
+media row's age is labelled with the field it comes from — "audio · updated
+10m", "updated just now" under a minute — because a bare "10m" on an audio or
+video row read as the item's length, and the value is the item's last-modified
+time, not its ingest time. task-32350: a quiet scope line under the "Media (N)"
+header states the APPLIED scope ("Media · 1 of 11 · filter “notes” · all types ·
+sort: Newest"), drops its "of M" half when the screen's Media total is only a
+lower bound, and carries a "Clear" that drops filter and type and empties the
+filter box — so an unsubmitted draft can no longer be mistaken for what the rows
+came from. task-32364: the Reader's row ends "· loaded" instead of prefixing its
+title with "Loaded ·", and a conversation row reads "5 messages · 16m" with the
+same separator every other Library list uses.)*

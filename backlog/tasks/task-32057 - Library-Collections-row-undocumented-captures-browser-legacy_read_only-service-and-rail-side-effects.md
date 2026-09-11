@@ -25,16 +25,33 @@ The 'Collections' row opens a 'Quick Capture' captures browser ('Sort: saved des
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A recorded decision states what the Collections row is today and the user guide matches it
+- [x] #1 A recorded decision states what the Collections row is today and the user guide matches it
 - [x] #2 The row shows a count before it is visited
 - [x] #3 Selecting the row never changes another rail section's disclosure state
 - [x] #4 If writes are refused, the canvas says so with the recovery path the service names
 <!-- AC:END -->
 
+## Decision
+
+Decided by the user, 2026-09-11 (critique-10 fix wave, branch `fix/library-crit10-pagers`).
+
+Neither Option A nor Option B. **The rail row stays, and the feature has one
+name everywhere: "Collections".** The canvas heading "Quick Capture" is
+retired in favour of "Collections"; "Quick Capture" survives only as the
+label of the button that saves a URL, because that is a verb and not a
+place. The canvas gets a true empty state that does not mention filters
+unless one is set and does not point at an action that is not on screen.
+The local service stays read-only — no schema migration, no membership
+model, no "Add to collection" affordance this wave — and the guide says so.
+
+Implemented on the crit10 `pagers` branch alongside task-32352.
+
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
 Three of the four ACs are done in code and docs; AC#1 (what the Collections row IS) is a product decision and is deliberately left unticked -- both options are costed below.
+
+**AC#1 was decided on 2026-09-11 -- see the `## Decision` section above.** The two options costed at the bottom of these notes are kept for the record; neither was taken. Implemented on `fix/library-crit10-pagers` alongside task-32352.
 
 ## What shipped
 
