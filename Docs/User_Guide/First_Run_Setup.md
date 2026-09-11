@@ -39,11 +39,21 @@ navigation buttons — fix it and press Next again, or go Back.
 | Model | Default chat model | Settings ▸ Providers & Models |
 | RAG | Embedding model (needs the `embeddings_rag` extras) | Settings ▸ RAG |
 | Speech (full track) | Voice-input transcription language and precision | `[transcription]` in config.toml — no Settings category owns it yet |
-| Tools | Built-in tool gates (all off by default) | `[tools]` in config.toml (Settings ▸ Advanced Config) — there is no Tools category |
+| Tools | Built-in tool gates (all off by default) | MCP ▸ Servers ▸ the built-in row ▸ **Tool gates**, or `[tools]` in config.toml — no Settings category owns them |
 | Notes sync | Folder + on/off toggle | [Library ▸ Notes](library/notes.md), the toolbar's Sync panel — not in Settings |
 | Appearance | Theme and splash screen card | Settings ▸ Appearance |
 | Voice | Spoken replies (sample + "Test and Hear"; endpoint/model under Advanced) | Settings ▸ Speech & TTS |
 | Protect keys | Config encryption (password at startup) | Settings ▸ Privacy & Security is a read-out; encryption changes are password-gated and not editable there |
+
+The Tools step is the only place in setup that turns a tool on, and it says
+so up front: "Everything is off by default. Tools that read or change your
+files still show an approval card every time they run." Each row carries the
+tool's plain-language name and one line about what it does — the read-class
+ones (Read file, List directory, Find files, Search in files, Expand
+document) add that they ask you each time before running, and the ones that
+write are marked with ⚠. Leaving every switch off is a supported outcome: the
+summary then reads "all off; turn them on under MCP ▸ Servers ▸ Tool gates",
+which is where the same switches live after setup.
 
 The Voice step leads with a sample text and **Test and Hear**; the endpoint,
 model, and output settings sit under its "Advanced" section. On terminals
@@ -86,3 +96,10 @@ canvas. Added "Write your first note", which finishes setup on Library's
 New note view directly. The Console's post-setup "Get started" card gained
 the matching "Write a note in Library" action, which needs no provider and
 stays available for the whole time the card blocks the composer.)*
+
+*Tools step verified against `fix/approval-wave-b-card` @ e7409210cc and
+`fix/approval-wave-c-hub` @ a999fcf6e6 — 2026-09-10 (task-32290, against code
+and tests, not a live screen): the step's own copy, the read-class "Asks you
+each time before running." descriptions, and the summary's "all off; turn them
+on under MCP ▸ Servers ▸ Tool gates" destination, which replaces this page's
+older "there is no Tools category" pointer.*
