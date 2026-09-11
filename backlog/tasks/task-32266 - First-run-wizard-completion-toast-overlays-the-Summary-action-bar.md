@@ -1,10 +1,10 @@
 ---
 id: TASK-32266
-title: >-
-  First-run wizard completion toast overlays the Summary action bar
-status: To Do
+title: First-run wizard completion toast overlays the Summary action bar
+status: In Progress
 assignee: []
 created_date: '2026-09-10 18:05'
+updated_date: '2026-09-11 15:51'
 labels:
   - library
   - notes
@@ -28,3 +28,14 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 - [ ] #1 The completion toast does not cover the Summary action bar
 - [ ] #2 Covered by a test or a capture at 235x52
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce live on a fresh scratch profile at 235x52 and 100x30 (walk Quick track to Summary).
+2. Trace the toast to its emitter.
+3. RED test on the real route.
+4. Fix at the emitter.
+5. GREEN test + live captures at both sizes.
+6. Guide stamp, task hygiene.
+<!-- SECTION:PLAN:END -->
