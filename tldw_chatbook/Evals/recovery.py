@@ -220,11 +220,12 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
 
 
 def _retained_definition_paths(context) -> tuple[tuple[str, Path], ...]:
-    """Resolve inactive eval files from this selector's committed local receipt.
+    """Resolve inactive eval files from this selector's completed local receipt.
 
     The private plan supplies destinations; the verified manifest supplies owner
     and config dependencies. Candidate trees and eval execution approvals are not
-    needed. Incoming receipts cannot describe originals reinstated by rollback.
+    needed. Rolled-back generations use the original target and rollback proof;
+    incoming receipts cannot describe reinstated originals.
     """
     import hashlib
     import os
@@ -263,11 +264,21 @@ def _retained_definition_paths(context) -> tuple[tuple[str, Path], ...]:
     journal = _journal(control, witness["operation_id"])
     with journal._locked(exclusive=False) as parent:
         rows = journal._records(parent)
-    if not rows or rows[-1].event != "committed":
+    if not rows or rows[-1].event not in {"committed", "rolled_back"}:
         raise ValueError("eval_retained_commit_required")
     prepared = _Prepared.model_validate(
         next(row.evidence for row in rows if row.event == "prepared")
     )
+    if rows[-1].event == "rolled_back":
+        retained = _rolled_back_definition_paths(
+            selector, root, witness, profiles, binding, rows, prepared, journal
+        )
+        with journal._locked(exclusive=False) as parent:
+            if journal._records(parent) != rows:
+                raise ValueError("eval_retained_generation_changed")
+        if bootstrap._control_records(root) != before:
+            raise ValueError("eval_retained_generation_changed")
+        return retained
     activation = next(
         row.evidence for row in rows if row.event == "activation_recorded"
     )
@@ -358,6 +369,80 @@ def _retained_definition_paths(context) -> tuple[tuple[str, Path], ...]:
             raise ValueError("eval_retained_generation_changed")
     if bootstrap._control_records(root) != before:
         raise ValueError("eval_retained_generation_changed")
+    return tuple(retained)
+
+
+def _rolled_back_definition_paths(
+    selector, root, witness, profiles, binding, rows, prepared, journal
+):
+    """Use the original target and actual rollback coverage, never incoming YAML."""
+    from tldw_chatbook.Backup_Recovery.activation import _rollback_installation_id
+    from tldw_chatbook.Backup_Recovery.journal import _Rollback
+    from tldw_chatbook.Backup_Recovery.plan_records import load_plan
+    from tldw_chatbook.Backup_Recovery.restore_plan import _ancestor
+
+    if prepared.publication is None:
+        raise ValueError("eval_retained_generation_unverified")
+    _rollback_installation_id(selector, root, witness, profiles, rows, prepared)
+    plan = load_plan(journal)
+    target = plan.target
+    if target is None or not target.complete:
+        raise ValueError("eval_retained_originals_unverified")
+    configs = {
+        item.logical_id
+        for item in target.items
+        if item.owner == "config"
+        and item.path == selector
+        and item.status == "included"
+    }
+    if len(configs) != 1:
+        raise ValueError("eval_retained_config_unverified")
+    proof = _Rollback.model_validate(
+        next(row.evidence for row in rows if row.event == "rollback_verified")
+    )
+    items = {item.logical_id: item for item in target.items}
+    previous = []
+    for artifact in prepared.artifacts:
+        if artifact.previous is None:
+            continue
+        item = items.get(proof.coverage.get(artifact.logical_id))
+        # SQLite sidecars map to their main DB's semantic snapshot and do not
+        # authorize a raw eval path. Only exact original targets cover YAML.
+        if item is not None and item.path == Path(artifact.target):
+            previous.append(artifact.previous)
+    if proof.safety_sources != prepared.safety_sources:
+        raise ValueError("eval_retained_originals_unverified")
+    safety = {item.logical_id: item for item in proof.safety_sources}
+    retained = []
+    for item in target.items:
+        if item.owner != "eval.definitions" or not configs.intersection(
+            item.dependencies
+        ):
+            continue
+        path = item.path
+        if path is None or item.status != "included":
+            raise ValueError("eval_retained_owner_unverified")
+        saved = safety.get(item.logical_id)
+        covered = any(
+            path == Path(record.path)
+            or (record.kind == "directory" and Path(record.path) in path.parents)
+            for record in previous
+        ) or (
+            item.logical_id in plan.safety_scope
+            and saved is not None
+            and saved.owner_id == item.owner
+            and Path(saved.source.path) == path
+        )
+        if not covered:
+            raise ValueError("eval_retained_originals_unverified")
+        if not any(
+            path == Path(p) or Path(p) in path.parents for p in binding["roots"]
+        ):
+            raise ValueError("eval_retained_destination_unverified")
+        _ancestor(path)
+        if path in {value for _, value in retained}:
+            raise ValueError("eval_retained_owner_unverified")
+        retained.append((item.logical_id, path))
     return tuple(retained)
 
 
