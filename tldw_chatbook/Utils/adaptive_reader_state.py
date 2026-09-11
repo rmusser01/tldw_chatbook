@@ -290,6 +290,23 @@ def resolve_adaptive_reader_layout(
         ):
             priority = inherited
 
+    if (
+        priority == "items"
+        and not reader_has_item
+        and profile.list_first_when_empty
+        and width < LIBRARY_EMERGENCY_WIDTH
+    ):
+        # task-32389: an "items" priority takes the width-starved branch
+        # below, which keeps the list at its floor and hands the rest to
+        # the work pane -- 32 cells of list beside 18 cells of EMPTY stage
+        # at 60 columns. That is the exact shape task-32065's rule exists
+        # to prevent, and the rule never saw the width because the starved
+        # branch returns first. Dropping the priority here lets that one
+        # rule own the case for every caller that asks for the list first
+        # (Notes' list view asks unconditionally); with something open,
+        # ``reader_has_item`` is True and nothing changes.
+        priority = None
+
     grip_width = 2 * profile.grip_width
     work_min_width = max(profile.work_min_width, 0)
     # The added default space is preferred, not a new collapse threshold.
