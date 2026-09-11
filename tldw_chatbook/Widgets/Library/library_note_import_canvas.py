@@ -15,6 +15,10 @@ from tldw_chatbook.Library.library_note_import_state import (
     LibraryNoteImportItemSnapshot,
     LibraryNoteImportSnapshot,
 )
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_GLYPH_SELECTED,
+    LIBRARY_GLYPH_UNSELECTED,
+)
 from tldw_chatbook.Notes.note_import_plan_models import (
     NON_IMPORTABLE_CLASSIFICATIONS,
 )
@@ -46,8 +50,15 @@ _NON_IMPORTABLE = frozenset(
 
 
 def _choice_label(*, selected: bool, text: str) -> str:
-    """Return a monochrome-readable selected/unselected action label."""
-    return f"{'✓' if selected else '○'} {text}"
+    """Return a monochrome-readable selected/unselected action label.
+
+    task-32235 AC#2: these are checkboxes, so they take the legend's
+    checkbox pair. They used to render "✓"/"○", which collided with the
+    settled-outcome "✓" one row above them in the same receipt and with the
+    blocked-action "○" on the buttons beside them.
+    """
+    glyph = LIBRARY_GLYPH_SELECTED if selected else LIBRARY_GLYPH_UNSELECTED
+    return f"{glyph} {text}"
 
 
 def _disabled_action_label(text: str, *, disabled: bool) -> str:

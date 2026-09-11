@@ -3,10 +3,10 @@ id: TASK-32215
 title: >-
   Library Notes: the Sort chooser exists only on the empty list; folder verbs
   are ungated
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-10 14:53'
-updated_date: '2026-09-11 01:30'
+updated_date: '2026-09-11 02:00'
 labels:
   - library
   - notes
@@ -24,8 +24,8 @@ The empty Notes toolbar reads `New · Sort: Newest · ○ Select`; with seven no
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Sort is available on a populated Notes list in the same slot as its siblings
-- [ ] #2 Selection-scoped folder verbs appear only with a checked row or are gated with the inline-reason grammar
+- [x] #1 Sort is available on a populated Notes list in the same slot as its siblings
+- [x] #2 Selection-scoped folder verbs appear only with a checked row or are gated with the inline-reason grammar
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -36,3 +36,15 @@ The empty Notes toolbar reads `New · Sort: Newest · ○ Select`; with seven no
 3. Pin + fix whatever half still stands
 4. Docs stamp + notes
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Both halves were already delivered by the Notes wave; this task contributes the missing pins and NO new controls.
+
+AC#1 -- verified live at dev 1077ac2dad on the seeded 7-note profile: the populated toolbar reads `New · Sort: Newest · Select`, in the same slot as its siblings. PR #2558 (task-32172) composed Sort unconditionally with a Newest default and #2565 re-pins its presence; no second Sort control was written, and nothing here re-pins Sort in either direction.
+
+AC#2 -- the snapshot measured 02374bf66a, before the folder-tree mode landed. At the current tip `_compose_tree_actions` composes `Add to folder`, `Move note` and `Remove placement` ONLY when the selected tree row is a note placement (folder verbs likewise only for a folder row); with nothing selected the toolbar carries just `New folder`, which is not selection-scoped. Verified live in all three states (captures in crit9/wave/notes/caps) and now pinned: Tests/UI/test_library_crit9_notes.py::test_selection_scoped_folder_verbs_need_a_selected_row, parametrized over selected/not, which passes on dev and is the evidence the claim is real rather than incidental.
+
+Files: Tests/UI/test_library_crit9_notes.py (new).
+<!-- SECTION:NOTES:END -->
