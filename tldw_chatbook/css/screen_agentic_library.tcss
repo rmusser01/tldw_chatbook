@@ -91,6 +91,10 @@ $ds-library-source-browser-width: 31;
    siblings in that row. */
 .library-toolbar-count {
     width: auto;
+    /* task-32227 (critique #9 row 26): the count sat flush against the next
+       action's focus border ("2 selected┃ Select all"). One cell, in the one
+       declaration every canvas's counter already shares. */
+    margin: 0 1 0 0;
 }
 
 /* Canvas actions gain .console-action-primary (mirrors the project's live
