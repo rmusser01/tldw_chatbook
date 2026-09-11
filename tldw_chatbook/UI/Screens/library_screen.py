@@ -4460,23 +4460,24 @@ class LibraryScreen(BaseAppScreen):
             # pane" and no return). Recovery outranks navigation here anyway,
             # which is the order that ladder assumes.
             #
-            # Cross-branch (task-32360 with task-32346): while a text field
-            # holds focus the footer says SO FIRST on every other surface --
-            # every printable key is being inserted as text, which outranks
-            # any navigation the footer could advertise. Prepending the
-            # return chip ahead of that marker made this one width the
-            # exception. The field state keeps the head; the return follows
-            # it, still ahead of the navigation chips.
-            rest = tuple(pair for pair in shortcuts if pair[0] != "esc")
-            field_state = (
-                rest[:1]
-                if isinstance(focused, (Input, TextArea)) and rest and rest[0][0] == ""
-                else ()
-            )
-            shortcuts = (
-                field_state
-                + (("esc", "back to Library"),)
-                + rest[len(field_state) :]
+            # Cross-branch (task-32360 with task-32346), fix round 1: the
+            # return stays at the head EVEN WHILE A TEXT FIELD HOLDS FOCUS,
+            # and this is the one surface where that is not a style choice.
+            # Measured against the real ``AppFooterStatus`` at width 60: it
+            # paints exactly ONE context chip, and only ~24 rendered
+            # characters of it -- "esc back to Library" (19) survives;
+            # "esc typing · back to Library" (28) collapses the WHOLE context
+            # to "…". So one chip is all there is, and it has to be the one
+            # that names what Escape actually does here. It does not leave
+            # the field: this binding is declared ABOVE
+            # ``library_blur_text_field``, whose ``check_action`` is
+            # measurably False while this one owns the key, so a chip reading
+            # "leaves field" would be the dead-key lie task-32051 and
+            # task-32225 both exist to prevent. Nothing is advertised that
+            # the caret would swallow either -- the block above has already
+            # dropped every printable-key chip.
+            shortcuts = (("esc", "back to Library"),) + tuple(
+                pair for pair in shortcuts if pair[0] != "esc"
             )
         # re-review N4: below 64 columns the box "/" jumps to can be inside a
         # CLOSED pane -- mounted, so the handler finds it, but unfocusable, so
@@ -12953,19 +12954,29 @@ class LibraryScreen(BaseAppScreen):
             },
         )
 
-    def _set_library_conversation_link_receipt(self, workspace_name: str) -> None:
+    def _set_library_conversation_link_receipt(
+        self, workspace_name: str, workspace_id: str = ""
+    ) -> None:
         """Record (or clear) the workspace the last press linked into.
 
         A fresh mapping rather than a mutation: ``reader_loaded_metadata`` is
         typed as a ``Mapping`` and is replaced wholesale by each load, which
         is what clears the receipt when a different conversation opens.
 
+        The ID is stored beside the NAME (review fix round 1) because Undo
+        has to remove the membership this press added, not whatever is active
+        by the time it is pressed -- creating a workspace from the rail
+        activates it and recomposes the reader from this same mapping, so the
+        active workspace can change underneath a standing receipt.
+
         Args:
             workspace_name: The linked workspace's display name, or ``""``.
+            workspace_id: That workspace's id, or ``""`` to clear.
         """
         self._conversations_state.reader_loaded_metadata = {
             **self._conversations_state.reader_loaded_metadata,
             "_workspace_link_receipt": workspace_name,
+            "_workspace_link_receipt_id": workspace_id,
         }
 
     def _undo_selected_conversation_workspace_link(self) -> None:
@@ -12974,6 +12985,11 @@ class LibraryScreen(BaseAppScreen):
         The exact inverse of ``_link_selected_conversation_to_workspace``:
         same load fence, same registry, same refresh -- ``unlink_membership``
         instead of ``link_membership``, and the receipt cleared.
+
+        It unlinks the workspace the RECEIPT names, read back by id, not
+        whatever is active now (review fix round 1): activating a different
+        workspace while the receipt stands would otherwise make Undo remove a
+        membership this press never added.
         """
         if not self._conversations_state.reader_state.loaded_actions_eligible:
             return
@@ -12982,7 +12998,13 @@ class LibraryScreen(BaseAppScreen):
         conversation_id = str(
             self._conversations_state.reader_state.loaded_id or ""
         ).strip()
-        if registry is None or not conversation_id:
+        workspace_id = str(
+            self._conversations_state.reader_loaded_metadata.get(
+                "_workspace_link_receipt_id"
+            )
+            or ""
+        ).strip()
+        if registry is None or not conversation_id or not workspace_id:
             if callable(notify):
                 notify(
                     "Workspaces are unavailable, so this link cannot be "
@@ -12991,11 +13013,8 @@ class LibraryScreen(BaseAppScreen):
                 )
             return
         try:
-            active = registry.get_active_workspace()
-            if active is None:
-                raise ValueError("no active workspace")
             registry.unlink_membership(
-                active.workspace_id,
+                workspace_id,
                 item_type="conversation",
                 item_id=conversation_id,
             )
@@ -13069,7 +13088,9 @@ class LibraryScreen(BaseAppScreen):
                 )
             return ""
         workspace_name = str(getattr(active, "name", "") or active.workspace_id)
-        self._set_library_conversation_link_receipt(workspace_name)
+        self._set_library_conversation_link_receipt(
+            workspace_name, active.workspace_id
+        )
         self._invalidate_library_workspace_depth_state()
         self._sync_library_conversation_reader()
         return workspace_name
@@ -33918,6 +33939,15 @@ class LibraryScreen(BaseAppScreen):
         if self._library_conversation_link_would_unblock():
             # task-32107: one gesture, not two. A failed link leaves the
             # refusal exactly as it was and does not stage anything.
+            #
+            # (review fix round 1) Gated on the SAME freshness answer the
+            # hand-off itself checks first (`_open_selected_conversation_handoff`
+            # returns silently unless it is "fresh"). Without this the press
+            # would widen the workspace and then stage nothing, which is a
+            # data effect with no visible result but the receipt.
+            if self._conversations_state.freshness != "fresh":
+                event.stop()
+                return
             if not self._link_selected_conversation_to_workspace():
                 event.stop()
                 return

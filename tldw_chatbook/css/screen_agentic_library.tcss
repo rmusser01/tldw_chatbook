@@ -1247,7 +1247,8 @@ $ds-library-source-browser-width: 31;
     padding: 0 1;
     background: $ds-surface-raised;
     color: $ds-text-primary;
-    border: none;}
+    border: none;
+}
 
 /* task-4023 AC#1 (RC-07): Legible Disabled (TASK-1801/DESIGN.md) for the
    Library's action buttons. Measured live before this rule: select-mode
@@ -1414,7 +1415,8 @@ with stray left-edge border fragments), and padding 0 1 so the full
     height: auto;
     min-height: 1;
     margin: 0 0 1 0;
-    color: $ds-text-muted;}
+    color: $ds-text-muted;
+}
 
 #library-notes-empty {
     width: 100%;

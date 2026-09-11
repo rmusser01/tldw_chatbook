@@ -29,7 +29,8 @@ The list takes ~140 columns and is mostly empty; the reader wraps at ~48 (B D11 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Measure the conversations split at 235/100/60 with a conversation open.\n2. Give the reader the majority from the measurement, not a guessed ratio.
+1. Measure the conversations split at 235/100/60 with a conversation open.
+2. Give the reader the majority from the measurement, not a guessed ratio.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -42,4 +43,11 @@ Fix: `LibraryConversationReader.sync_state` -- the one place every selection cha
 Measured after, live and in tests: 235x52 reader 132 / list 49; 100x30 reader 44 / list 45 (the rail steps aside; AC#1 is bounded at 200 columns); 60x24 reader 50, no list (single stage). Pinned both ways -- the majority with a conversation open, and task-32217's empty-pane widening still intact.
 
 Files: tldw_chatbook/Widgets/Library/library_conversation_reader.py, Tests/UI/test_library_crit10_layout.py, Docs/User_Guide/library/media-and-conversations.md.
+
+### Fix round 1 (review nit 7)
+
+The AC states "200 columns and wider" but the pin ran only at 235. It is now
+parametrized over (200, 52) and (235, 52) with the measured floor for each --
+reader 97 / list 49 at 200, reader 132 / list 49 at 235 -- so the boundary the
+AC names is the boundary that is pinned.
 <!-- SECTION:NOTES:END -->

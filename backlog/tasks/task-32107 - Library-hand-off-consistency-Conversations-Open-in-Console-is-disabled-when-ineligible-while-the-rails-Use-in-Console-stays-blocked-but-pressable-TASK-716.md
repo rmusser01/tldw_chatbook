@@ -33,7 +33,10 @@ task-32056 (PR #2523) disables the conversation reader's 'Open in Console' for a
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Failing tests for link-on-use, Undo, and a non-linkable refusal.\n2. Reader: a link-resolvable block no longer disables Use as source; receipt + Undo ride the metadata seam.\n3. Screen: link first then proceed; Undo mirrors the link.\n4. Record the user decision under ## Decision; update the 32101 pins to the new grammar.
+1. Failing tests for link-on-use, Undo, and a non-linkable refusal.
+2. Reader: a link-resolvable block no longer disables Use as source; receipt + Undo ride the metadata seam.
+3. Screen: link first then proceed; Undo mirrors the link.
+4. Record the user decision under ## Decision; update the 32101 pins to the new grammar.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -50,6 +53,31 @@ AC#2 second half: the rail's `#library-use-in-console` keeps TASK-716's pressabl
 Live-verified at 235x52 on the seeded profile: press links + stages (Console opens), returning to Library shows the receipt and Undo, Undo removes the membership and the refusal sentence returns.
 
 Files: tldw_chatbook/Widgets/Library/library_conversation_reader.py, tldw_chatbook/Widgets/Library/__init__.py, tldw_chatbook/UI/Screens/library_screen.py, Tests/UI/test_library_crit10_layout.py, Tests/UI/test_library_crit8_conversation_handoff.py, Docs/User_Guide/library/media-and-conversations.md.
+
+### Fix round 1 (review P2s)
+
+- The refusal/promise sentence is yielded directly under "Use as source"
+  instead of after the Archive/Restore pair. The copy says "Pressing this",
+  so its position is load-bearing and it had been pointing at "Archive
+  conversation". Pinned by child order.
+- Undo now unlinks the workspace the RECEIPT names, by id
+  (`_workspace_link_receipt_id`), not `get_active_workspace()`. Creating a
+  workspace from the rail activates it and recomposes the reader from the
+  same metadata mapping, so a standing receipt can outlive its workspace;
+  the old code would then have removed a membership the press never added.
+  Pinned with a workspace switch between the link and the Undo -- verified
+  the pin fails against the old one-line shape (it removed workspace-b's
+  membership and left workspace-a's).
+- The link is now gated on the same `freshness == "fresh"` answer the
+  hand-off itself checks, so a press can no longer widen the workspace and
+  then stage nothing (review nit 10).
+- The "receipt does not survive a different conversation" pin drives a real
+  second selection through the load path instead of hand-assigning the
+  metadata mapping (review nit 6).
+- `Docs/User_Guide/library/media-and-conversations.md`: the stale "Open in
+  Console" control row (it is `Resume conversation`/`Restore and resume`, and
+  it does not stage source context) is corrected while the page is open
+  (review nit 9).
 <!-- SECTION:NOTES:END -->
 
 ## Decision

@@ -31,7 +31,9 @@ With a note open at 235 columns the rail is replaced by '--->' with no label (A 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Decide rule-vs-preference for the rail beside a note editor from the config evidence.\n2. Label the grips Nav/Items above 5 cells, guillemet below.\n3. Docs + pinned painted assertions at 235/100/60.
+1. Decide rule-vs-preference for the rail beside a note editor from the config evidence.
+2. Label the grips Nav/Items above 5 cells, guillemet below.
+3. Docs + pinned painted assertions at 235/100/60.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -44,4 +46,5 @@ AC#2: the handle carried its name only in `_name`/`tooltip`, neither of which a 
 Live at 235x52, 100x30 and 60x24 on the seeded profile: both handles paint their name, including on the rail a note editor collapsed.
 
 Files: tldw_chatbook/Widgets/Library/library_adaptive_reader_shell.py, Tests/UI/test_library_crit10_layout.py, Docs/User_Guide/library.md.
+
 <!-- SECTION:NOTES:END -->

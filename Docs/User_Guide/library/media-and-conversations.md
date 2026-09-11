@@ -668,7 +668,7 @@ requested load.
 | "Filter conversations… (Enter)" | Type and press Enter to search conversation titles, stable IDs, and indexed message content before the 20-item result page is chosen. Clearing it restores unfiltered page 1. |
 | "Previous" / "Next" | Moves through complete 20-item pages; the final page may contain fewer rows. Disabled buttons state why they cannot move. |
 | Row press | Selects the row and loads it into the **Conversation reader** — not a preview. See below. |
-| "Open in Console" | In the reader header, beside **Read** and **Info** (keyboard: `c`). Stages the conversation as **source context** in Console — see below. |
+| "Resume conversation" / "Restore and resume" | In the reader header, beside **Read** and **Info** (keyboard: `c`). Reopens the original conversation in Console — it does **not** stage it as source context, and it does not depend on workspace membership. |
 | "Use as source" | In the reader header. Stages the open conversation as **source context** in Console. If the conversation is not in the active workspace, the press **links it first**, then continues — see below. |
 | "Link to workspace" | Appears in the same header row only while the open conversation is not in the active workspace. Press it to take on the membership **without** handing anything to Console. |
 | "Undo link" | Appears under the **"✓ linked · \<workspace\>"** receipt after a link, and removes exactly the membership that press added. |
@@ -1191,6 +1191,12 @@ loaded the conversation list takes the columns the empty Reader was holding).*
 (task-32228: the Conversations list takes entry focus on arrival like every
 other browse list, so Up/Down walks its rows and the Escape hop -- "focus
 Items", then "focus Library" -- is live and named from the first frame).*
+
+*Verified against fix/library-crit10-layout — 2026-09-11, fix round 1
+(task-32107: the refusal/promise sentence renders directly under the action it
+describes, and Undo removes the membership from the workspace its receipt
+names rather than whichever workspace is active when it is pressed; the
+Resume row above no longer claims to stage source context).*
 
 *Verified against fix/library-crit10-layout — 2026-09-11 (task-32107, user
 decision: "Use as source" links a conversation into the active workspace in

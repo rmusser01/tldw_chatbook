@@ -31,7 +31,9 @@ At 60x24 on the rail-only stage Escape is the only return and the footer never s
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Footer: return a SHORT context on the narrow stage so the return chip survives the tier.\n2. text-overflow: ellipsis on the canvas classes that clip.\n3. Measure grip regions at 235/100/60 before touching geometry.
+1. Footer: return a SHORT context on the narrow stage so the return chip survives the tier.
+2. text-overflow: ellipsis on the canvas classes that clip.
+3. Measure grip regions at 235/100/60 before touching geometry.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -46,4 +48,48 @@ AC#3 (grips never overpaint) was ALSO already true, by two independent measureme
 AC#2 (clipped copy ends in an ellipsis) NOT DONE, reproduced and narrowed. Live at 60x24 on Notes: the status line paints 'Library notes · Ready · Next: / Create a note or add from' and loses 'files.' (a HEIGHT clip -- the Static resolved two lines for three lines of content), and the toolbar paints 'New  Sort: Newest  Sel' (a WIDTH crop of the Button by its container). `text-overflow: ellipsis` on `.library-canvas-action` and `#library-notes-status` was tried and measured live: NO EFFECT on either, because neither loss is the horizontal text-overflow the property governs. The existing `#library-shell-grid.library-notes-compact` rules already carry the right fix for both (`width: auto` on the actions, `height: 1` + `text-wrap: nowrap` + `text-overflow: ellipsis` on the status) -- they are simply not in effect at 60x24 on the Notes route, so the real defect is the compact gate in `library_notes_controller.py` (`legacy_compact`), a file this branch does not own. Needs its own task against the Notes canvas.
 
 Files: Tests/UI/test_library_crit10_layout.py.
+
+### Fix round 1 (review P1)
+
+AC#1's tick was WRONG after the round-0 cross-branch commit and is now earned
+again by a PAINTED pin in both focus states.
+
+What the review measured and I confirmed: at width 60 the real
+`AppFooterStatus` paints exactly ONE context chip, about 24 rendered
+characters of it. `esc back to Library` (19) survives; `esc typing · back to
+Library` (28), `esc typing · leaves field` (25) and Task 1's wide-footer form
+all collapse the WHOLE context to `…`. So the field-state marker and the
+return cannot both paint, and round 0's ordering commit silently dropped the
+return whenever a field had focus.
+
+The coordinator's ruling was to paint `esc leaves field` in that state. That
+chip would be a DEAD KEY here, which the same ruling forbids: the
+`library_narrow_stage_return` binding is declared ABOVE
+`library_blur_text_field`, and on this stage with an Input focused
+`check_action("library_blur_text_field")` is measurably **False** while
+`check_action("library_narrow_stage_return")` is **True** -- Escape performs
+the return, not a blur. Both answers are now asserted inside the pin, so the
+chip can never drift away from the key. The single chip therefore stays
+`esc back to Library` in both states (the review's own option (a)), and the
+"typing" signal yields at this one width; nothing the caret would swallow is
+advertised either, because the typing block above has already dropped every
+printable-key chip.
+
+The 32346 grammar item (field state first) holds at every width where more
+than one chip paints; the eliding is `AppFooterStatus`'s, so that is where
+the wide/narrow grammar belongs -- flagged to the coordinator, not worked
+around here.
+
+Pins added: `test_the_narrow_stage_return_is_painted_in_both_focus_states`
+(painted, parametrized over field-focused true/false, asserts no `…`) and
+`test_only_one_context_chip_paints_at_sixty_columns` (the budget itself).
+The round-0 registered-tuple pin is gone -- it was blind to this.
+### Fix round 1 (review nit 5)
+
+The AC#3 geometry half measured only the two grips against the reader. The
+list pane and the rail -- the neighbours B actually reported overpainted --
+are now in the same sorted-span assertion, with a floor on how many spans were
+measured so the check cannot silently degrade to two. The whole-frame scan for
+`<---`/`--->` runs outside grip columns is unchanged; it is what carries the
+claim.
 <!-- SECTION:NOTES:END -->

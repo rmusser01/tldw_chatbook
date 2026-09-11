@@ -24,10 +24,15 @@ CONVERSATION_TITLE = "Alpha planning"
 ACTIVE_WORKSPACE_NAME = "Local Default"
 
 
+SECOND_CONVERSATION_ID = "conv-2"
+SECOND_CONVERSATION_TITLE = "Beta planning"
+
+
 def _conversations_host(
     *,
     linked: bool = False,
     reason_code: str = "not_in_active_workspace",
+    second: bool = False,
 ):
     """Build a Library harness sitting on Conversations with one saved chat.
 
@@ -42,6 +47,8 @@ def _conversations_host(
         reason_code: ``"not_in_active_workspace"`` for the link-resolvable
             block; ``"no_active_workspace"`` leaves the profile without an
             active workspace, the block a link cannot resolve.
+        second: Seed a second conversation too, so a test can drive a real
+            second selection through the load path.
 
     Returns:
         The mounted-ready ``LibraryHarness``, with ``registry`` attached.
@@ -57,18 +64,26 @@ def _conversations_host(
     )
 
     app = _build_test_app()
-    _seed_conversations(
-        app,
-        [
+    rows = [
+        {
+            "id": CONVERSATION_ID,
+            "title": CONVERSATION_TITLE,
+            "version": 4,
+            "message_count": 1,
+            "last_modified": "2026-09-01T12:00:00Z",
+        }
+    ]
+    if second:
+        rows.append(
             {
-                "id": CONVERSATION_ID,
-                "title": CONVERSATION_TITLE,
-                "version": 4,
+                "id": SECOND_CONVERSATION_ID,
+                "title": SECOND_CONVERSATION_TITLE,
+                "version": 2,
                 "message_count": 1,
-                "last_modified": "2026-09-01T12:00:00Z",
+                "last_modified": "2026-09-01T11:00:00Z",
             }
-        ],
-    )
+        )
+    _seed_conversations(app, rows)
     registry = app.workspace_registry_service
     registry.clear_active_workspace()
     if reason_code != "no_active_workspace":
@@ -115,22 +130,30 @@ async def _open_first_conversation(host, pilot):
 # --------------------------------------------------------------------------
 
 
+# The AC says "200 columns and wider", so the boundary is pinned, not just
+# the comfortable case. Floors are the measured widths, one per size.
+_MAJORITY_SIZES = {(200, 52): 90, (235, 52): 100}
+
+
+@pytest.mark.parametrize("size, reader_floor", sorted(_MAJORITY_SIZES.items()))
 @pytest.mark.asyncio
-async def test_the_conversation_reader_takes_the_majority_of_a_wide_terminal() -> None:
+async def test_the_conversation_reader_takes_the_majority_of_a_wide_terminal(
+    size, reader_floor
+) -> None:
     """task-32361 AC#1: the reader wins the width once something is open.
 
     Measured before the fix at 235x52: reader 44, list 137 -- the layout
     resolved while the Reader was still empty (``reader_has_item=False``
     hands its columns to the list) and nothing re-resolved it once the
-    selection settled.
+    selection settled. After: 132/49 at 235 and 97/49 at the AC's own 200.
     """
     host = _conversations_host(linked=True)
-    async with host.run_test(size=(235, 52)) as pilot:
+    async with host.run_test(size=size) as pilot:
         screen = await _open_first_conversation(host, pilot)
         reader = screen.query_one("#library-conversation-reader")
         items = screen.query_one("#library-conversations-list")
         assert reader.region.width > items.region.width, (reader.region, items.region)
-        assert reader.region.width >= 100, reader.region
+        assert reader.region.width >= reader_floor, reader.region
 
 
 @pytest.mark.asyncio
@@ -200,14 +223,24 @@ async def test_the_grips_never_overlap_the_panes_beside_them(size) -> None:
             pane: grip.region
             for pane, grip in grips.items()
         }
+        # (review fix round 1) The list pane and the rail are the neighbours
+        # B reported overpainted, so they have to be IN the measurement --
+        # round 0 measured only the grips against the reader.
+        neighbours = [
+            widget
+            for selector in (
+                "#library-rail",
+                "#library-canvas",
+                "#library-conversation-reader",
+            )
+            for widget in screen.query(selector)
+        ]
         occupied = sorted(
             (widget.region.x, widget.region.right, widget.id)
-            for widget in (
-                *grips.values(),
-                screen.query_one("#library-conversation-reader"),
-            )
-            if widget.region.width
+            for widget in (*grips.values(), *neighbours)
+            if widget.region.width and widget.display
         )
+        assert len(occupied) >= 3, occupied
         for (_, left_right, left_id), (right_x, _, right_id) in zip(
             occupied, occupied[1:]
         ):
@@ -375,7 +408,7 @@ async def test_a_block_a_link_cannot_resolve_still_refuses(widget_pilot) -> None
 @pytest.mark.asyncio
 async def test_the_receipt_does_not_survive_a_different_conversation() -> None:
     """The receipt belongs to the conversation it was written for."""
-    host = _conversations_host(linked=False)
+    host = _conversations_host(linked=False, second=True)
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_first_conversation(host, pilot)
         screen.query_one("#library-conversation-use-source", Button).press()
@@ -383,13 +416,22 @@ async def test_the_receipt_does_not_survive_a_different_conversation() -> None:
         await pilot.pause()
         assert screen.query_one("#library-conversation-link-receipt", Static).display
 
-        # Each load replaces the whole loaded-metadata mapping, so the
-        # receipt key cannot ride along to the next conversation.
-        screen._conversations_state.reader_loaded_metadata = {
-            "title": "Another conversation"
-        }
-        screen._sync_library_conversation_reader()
+        # (review fix round 1) Drive a REAL second selection through the load
+        # path, not a hand-assigned mapping: the claim is that the load
+        # replaces the whole mapping, so the load is what has to be exercised.
+        screen.query_one("#library-conversation-row-1", Button).press()
+        for _ in range(60):
+            if (
+                screen._conversations_state.reader_state.loaded_id
+                == SECOND_CONVERSATION_ID
+            ):
+                break
+            await pilot.pause(0.01)
         await pilot.pause()
+        assert (
+            screen._conversations_state.reader_state.loaded_id
+            == SECOND_CONVERSATION_ID
+        ), screen._conversations_state.reader_state.loaded_id
         assert not screen.query_one(
             "#library-conversation-link-receipt", Static
         ).display
@@ -400,18 +442,54 @@ async def test_the_receipt_does_not_survive_a_different_conversation() -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_the_narrow_stage_return_is_painted_not_just_registered() -> None:
-    """task-32360 AC#1: the return survives the real footer at 60 columns.
+def _painted_footer(chips, size) -> str:
+    """Return what the REAL footer widget paints for ``chips`` at ``size``.
 
-    Measured, not assumed. The wave plan expected the chip to be lost to the
-    footer's width ladder and prescribed trimming the context to two chips;
-    driving ``AppFooterStatus`` at width 60 with one, two, three and five
-    chips renders "esc back to Library | F1 · F6 · Ctrl+P · Ctrl+Q" in every
-    case -- task-32225's "FIRST, not appended" already carries it. So this
-    is a REGRESSION pin on the existing behaviour, not a new fix: whatever
-    B saw at 60x24 was a route where this context is not active at all.
+    The Library harness mounts no app chrome, so the widget that actually
+    elides -- ``AppFooterStatus`` -- is driven with the very set the screen
+    registered. This is the rendered text, not the registered tuple: the
+    registered tuple is exactly what hid the AC#1 regression in round 1.
     """
+    from Tests.UI.test_chrome_ux_fixes import _FooterHarness, _shown_text
+
+    async def _run() -> str:
+        app = _FooterHarness()
+        async with app.run_test(size=size) as pilot:
+            await pilot.pause()
+            app.footer.set_workbench_shortcuts(source="library", shortcuts=chips)
+            await pilot.pause()
+            return _shown_text(app.footer)
+
+    return _run()
+
+
+@pytest.mark.parametrize("field_focused", [False, True])
+@pytest.mark.asyncio
+async def test_the_narrow_stage_return_is_painted_in_both_focus_states(
+    field_focused: bool,
+) -> None:
+    """task-32360 AC#1: the return is PAINTED at 60x24, typing or not.
+
+    Fix round 1 (review P1). The round-0 pin read the registered tuple, which
+    is blind to the thing that actually decides: at width 60 the real footer
+    paints exactly ONE context chip and only about 24 rendered characters of
+    it. Measured there: "esc back to Library" (19) survives; "esc typing ·
+    back to Library" (28) and Task 1's wide-footer form collapse the WHOLE
+    context to "…". So the field-state marker and the return cannot both
+    paint, and the chip that survives has to name what Escape actually does.
+
+    It does not leave the field here. ``library_narrow_stage_return`` is
+    declared above ``library_blur_text_field``, and with an Input focused on
+    this stage ``check_action("library_blur_text_field")`` is measurably
+    False while ``check_action("library_narrow_stage_return")`` is True --
+    so "esc leaves field" would be a dead key. Nothing the caret would
+    swallow is advertised either: the typing block above has already dropped
+    every printable-key chip.
+    """
+    from unittest.mock import patch
+
+    from textual.widgets import Input
+
     from Tests.UI.test_library_crit9_shell import (
         NARROW_TEST_SIZE,
         _active_library_screen,
@@ -431,21 +509,23 @@ async def test_the_narrow_stage_return_is_painted_not_just_registered() -> None:
             in tuple((screen._footer_shortcut_registration or ("", ()))[1]),
             message="The registered footer never named the return.",
         )
-        chips = screen._library_footer_shortcuts_for_current_state()
+        if field_focused:
+            # This harness's own entry-focus arm takes the key back from any
+            # field a test focuses, and the branch under test reads
+            # ``self.focused`` and nothing else -- state it directly rather
+            # than racing that arm.
+            with patch.object(type(screen), "focused", property(lambda _s: Input())):
+                chips = screen._library_footer_shortcuts_for_current_state()
+                # The key the chip names must be the one Escape performs.
+                assert screen.check_action("library_narrow_stage_return", ()) is True
+                assert screen.check_action("library_blur_text_field", ()) is False
+        else:
+            chips = screen._library_footer_shortcuts_for_current_state()
         assert chips[0] == ("esc", "back to Library"), chips
 
-        # ...and that short context SURVIVES the real footer at this width.
-        # The Library harness mounts no app chrome, so the widget that does
-        # the eliding is driven directly with the very set registered above.
-        from Tests.UI.test_chrome_ux_fixes import _FooterHarness, _shown_text
-
-        footer_app = _FooterHarness()
-        async with footer_app.run_test(size=NARROW_TEST_SIZE) as footer_pilot:
-            await footer_pilot.pause()
-            footer_app.footer.set_workbench_shortcuts(source="library", shortcuts=chips)
-            await footer_pilot.pause()
-            shown = _shown_text(footer_app.footer)
-            assert "back to Library" in shown, shown
+    shown = await _painted_footer(chips, NARROW_TEST_SIZE)
+    assert "esc back to Library" in shown, shown
+    assert "…" not in shown, shown
 
 
 # --------------------------------------------------------------------------
@@ -531,48 +611,96 @@ async def test_the_focused_rail_row_is_a_shape_not_a_second_blue(size) -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_field_state_stays_first_when_the_return_chip_joins_it() -> None:
-    """task-32360 / task-32346 (cross-branch): one footer grammar at 60x24.
+async def test_only_one_context_chip_paints_at_sixty_columns() -> None:
+    """task-32360 AC#1, fix round 1: the budget the chip choice turns on.
 
-    While a text field holds focus the footer says so FIRST, on every
-    surface -- every printable key is being inserted as text, which outranks
-    any navigation the footer could advertise. The narrow-stage return chip
-    prepended itself ahead of that marker, making this the one width where
-    the field state was not first. It now follows it.
+    Round 1 of this branch put the field-state marker at the head so it would
+    be first, as every wider surface has it. Measured here, that silently
+    dropped the return: the footer keeps ONE chip at this width, so "first"
+    and "only" are the same thing. Pinned so a future re-ordering has to see
+    the cost, and so the ~24-character budget is a measurement in the suite
+    rather than a number in a report.
     """
-    from unittest.mock import patch
+    cases = {
+        (("esc", "back to Library"),): True,
+        (("esc", "back to Library"), ("", "typing in field")): True,
+        (("", "typing in field"), ("esc", "back to Library")): False,
+        (("esc", "typing · back to Library"),): False,
+        (("", "typing in field · after esc: back to Library"),): False,
+    }
+    for chips, return_survives in cases.items():
+        shown = await _painted_footer(chips, (60, 24))
+        assert ("esc back to Library" in shown) is return_survives, (chips, shown)
 
-    from textual.widgets import Input
 
-    from Tests.UI.test_library_crit9_shell import (
-        NARROW_TEST_SIZE,
-        _active_library_screen,
-        _library_host,
-        _wait_for_condition,
-        _wait_for_library_shell,
-    )
+@pytest.mark.asyncio
+async def test_undo_unlinks_the_workspace_the_receipt_names() -> None:
+    """task-32107 (review fix round 1): Undo reverses THIS press, not the moment.
 
-    host = _library_host()
-    async with host.run_test(size=NARROW_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-media").press()
-        await _wait_for_condition(
-            pilot,
-            lambda: ("esc", "back to Library")
-            in tuple((screen._footer_shortcut_registration or ("", ()))[1]),
-            message="The registered footer never named the return.",
+    Creating a workspace from the rail activates it and recomposes the
+    reader from the same metadata mapping, so a standing receipt can outlive
+    the active workspace it was written for. Undo read
+    ``get_active_workspace()`` and would have removed a membership the press
+    never added -- a data effect in the opposite direction of the one the
+    user asked to reverse.
+    """
+    host = _conversations_host(linked=False)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_first_conversation(host, pilot)
+        screen.query_one("#library-conversation-use-source", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        assert _memberships(host)
+
+        # The active workspace moves on while the receipt stands.
+        host.registry.create_workspace(workspace_id="workspace-b", name="Other")
+        host.registry.set_active_workspace("workspace-b")
+        host.registry.link_membership(
+            "workspace-b",
+            item_type="conversation",
+            item_id=CONVERSATION_ID,
+            title=CONVERSATION_TITLE,
         )
-        # The rail's own search box lives INSIDE the pane this stage closed,
-        # so focusing it bounces (task-32225); the filter is the field that
-        # is actually on screen here.
-        # The branch under test reads ``self.focused`` and nothing else, and
-        # this harness's own entry-focus arm keeps taking the key back from
-        # any field a test focuses; state the input the footer is deciding
-        # about directly rather than racing that arm.
-        with patch.object(type(screen), "focused", property(lambda _self: Input())):
-            chips = screen._library_footer_shortcuts_for_current_state()
-        assert chips[0][0] == "", chips
-        assert "typing in field" in chips[0][1], chips
-        assert ("esc", "back to Library") in chips, chips
-        assert chips.index(("esc", "back to Library")) == 1, chips
+        screen._invalidate_library_workspace_depth_state()
+        await pilot.pause()
+
+        screen.query_one("#library-conversation-link-undo", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        remaining = {
+            membership.workspace_id for membership in _memberships(host)
+        }
+        assert remaining == {"workspace-b"}, remaining
+
+
+@pytest.mark.asyncio
+async def test_the_reason_line_sits_directly_under_the_action_it_describes(
+    widget_pilot,
+) -> None:
+    """task-32107 (review fix round 1): "Pressing this" needs the right "this".
+
+    The sentence used to be yielded after the Archive/Restore pair, so the
+    control directly above it was "Archive conversation" and the deixis
+    pointed at the wrong button.
+    """
+    from tldw_chatbook.Widgets.Library import LibraryConversationReader
+
+    async with await widget_pilot(
+        LibraryConversationReader,
+        state=_loaded_reader_state(),
+        loaded_metadata={
+            "title": CONVERSATION_TITLE,
+            "_workspace_block": "not in this workspace",
+            "_workspace_block_linkable": True,
+        },
+        id="library-conversation-reader",
+    ) as pilot:
+        reader = pilot.app.query_one(
+            "#library-conversation-reader", LibraryConversationReader
+        )
+        order = [child.id for child in reader.walk_children() if child.id]
+        assert (
+            order.index("library-conversation-open-console-blocked")
+            == order.index("library-conversation-use-source") + 1
+        ), order

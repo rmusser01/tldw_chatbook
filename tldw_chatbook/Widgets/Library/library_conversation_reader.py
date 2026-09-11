@@ -292,6 +292,25 @@ class LibraryConversationReader(Vertical):
             source.disabled = not self._source_press_enabled()
             source.tooltip = self._open_console_tooltip()
             yield source
+            # (task-32107 review, fix round 1) Directly under the control it
+            # describes. The sentence says "Pressing this", so its position is
+            # load-bearing: yielded after the Archive/Restore pair it sat
+            # under "Archive conversation" and the deixis pointed at the
+            # wrong button. ``sync_state`` patches by id, so only this order
+            # matters.
+            blocked_reason = Static(
+                self._blocked_reason_line(),
+                id="library-conversation-open-console-blocked",
+                classes="library-conversation-reader-block-reason",
+                markup=False,
+            )
+            # (fix round 1) Visibility and content come from ONE predicate:
+            # the line answers the load fence first, so gating display on
+            # the workspace block alone showed "Wait for the selected
+            # conversation to finish loading." under a button that was on
+            # screen for a different reason.
+            blocked_reason.display = bool(self._blocked_reason_line())
+            yield blocked_reason
             for action, label in (
                 ("archive", "Archive conversation"),
                 ("restore", "Restore only"),
@@ -307,19 +326,6 @@ class LibraryConversationReader(Vertical):
                 )
                 button.disabled = not self.state.loaded_actions_eligible
                 yield button
-            blocked_reason = Static(
-                self._blocked_reason_line(),
-                id="library-conversation-open-console-blocked",
-                classes="library-conversation-reader-block-reason",
-                markup=False,
-            )
-            # (fix round 1) Visibility and content come from ONE predicate:
-            # the line answers the load fence first, so gating display on
-            # the workspace block alone showed "Wait for the selected
-            # conversation to finish loading." under a button that was on
-            # screen for a different reason.
-            blocked_reason.display = bool(self._blocked_reason_line())
-            yield blocked_reason
             link = Button(
                 "Link to workspace",
                 id="library-conversation-link-workspace",

@@ -28,7 +28,9 @@ Both the active destination and the focused row render bold + underline with bac
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Painted-frame failing test: focused rail row vs active rail row.\n2. CSS-only: focus gets the house thick left bar; active keeps the background.\n3. Rebuild the bundle.
+1. Painted-frame failing test: focused rail row vs active rail row.
+2. CSS-only: focus gets the house thick left bar; active keeps the background.
+3. Rebuild the bundle.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
