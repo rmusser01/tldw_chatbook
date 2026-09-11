@@ -14,7 +14,7 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-`Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_single_app_route_cycle` fails on `origin/dev` itself, not on any wave branch -- it was A/B'd against a clean `git archive` of the base during the critique-10 wave (Tasks 6 and 7 both reported the identical failing name on base). The assertion looks for `library-browse-reader-shell` where the screen now mounts `.library-media-route`. A permanently red test on the default branch trains everyone to read a red file as noise, which is how a real regression gets waved through.
+`Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_single_app_route_cycle` fails on `origin/dev` itself, not on any wave branch -- it was A/B'd against a clean `git archive` of the base during the critique-10 wave (Tasks 6 and 7 both reported the identical failing name on base). The contract entry the test asserts is `.library-media-route` (`Tests/UI/test_library_adaptive_reader_closeout.py:59`) while the screen reports `library-browse-reader-shell` -- `assert 'library-browse-reader-shell' == '.library-media-route'`. See also task-31422, which is open against the same test node id (its flake-rate disparity), so the two should be settled together. A permanently red test on the default branch trains everyone to read a red file as noise, which is how a real regression gets waved through.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

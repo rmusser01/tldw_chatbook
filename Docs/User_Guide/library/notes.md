@@ -1077,5 +1077,5 @@ editor's Body box takes the height its pane has spare.)*
 *Verified against fix/library-crit10-docs — 2026-09-11 (task-32366: 14
 critique-10 claims reconciled; surface fixes in task-32346, 32348, 32349,
 32354, 32355). This page needed no correction — the note editor's autosave
-story and its `esc back to notes` chip were already stated here; the Library
-overview is what had drifted.*
+story and its guarded return were already stated here; the Library overview is
+what had drifted.*

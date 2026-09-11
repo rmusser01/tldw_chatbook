@@ -235,10 +235,14 @@ readable measure rather than stretched across the whole canvas.
     add-ons", Search / RAG — "find all"). A gloss renders whole or not at
     all, and never flickers on or off just because a count arrived. Two
     rows stay bare on purpose: **Conversations** and **Notes** are
-    already plain words and carry no gloss. **Collections** has one in
-    the model, but the rail holds a fixed width whatever the terminal
-    size, and "Collections (N) — saved captures" overruns it, so that row
-    shows no gloss in practice. Narrower still, a handful of rows
+    already plain words and carry no gloss. **Collections** does have one
+    — "saved captures" — but it is the longest, and it needs 34 cells of
+    row width where the rail's default gives it 33, so on an ordinary
+    wide terminal that row reads bare. Widen the rail past the default
+    (Settings offers up to 48 cells) and the gloss appears; so does the
+    single-pane narrow stage below 64 columns, where the rail takes the
+    whole terminal rather than a fraction of it. When a row's title and
+    count together would otherwise be cut mid-word, a handful of rows
     (Conversations, Flashcards, Collections) fall back to a short label
     ("Chats", "Cards", "Captures") instead of an ellipsis, so no row
     label ever cuts off mid-word and the count always stays visible.
@@ -554,13 +558,19 @@ you're on:
   the failed one(s) checked and focuses the first of them, rather than
   leaving nothing focused or landing on an item you never selected.
 - **In an item's viewer or editor** (the media viewer; the Notes,
-  Prompts, or Skills editor) — Escape returns to that list, re-focusing
-  its first row, exactly like pressing **‹ Back to list**. A note edit is
-  already saved when you leave it — Escape returns to the list and the
-  chip says so: the editor's only footer chip is "esc back to notes", and
-  its status line reads "Next: Keep editing; changes save automatically."
-  A *blocked* save is the one thing that holds a note open, and it says
-  what to fix — see [Notes](library/notes.md).
+  Prompts, or Skills editor) — Escape does exactly what **‹ Back to
+  list** does on that surface, which is not the same on every editor.
+  Notes autosave, so a note edit is already saved when you leave it:
+  Escape returns to the list at once, re-focusing its first row, the
+  editor's only footer chip is "esc back to notes", and its status line
+  reads "Next: Keep editing; changes save automatically." Only a
+  *blocked* save holds a note open, and it says what to fix — see
+  [Notes](library/notes.md). Nothing autosaves in the Prompts or Skills
+  editor: while you have unsaved edits, leaving the editor (Back,
+  Escape, another row, another screen) is blocked until you save or
+  resolve the edit. Skills says so when it refuses; Prompts refuses
+  without a message today, so Escape looks like it did nothing — see
+  [Prompts](library/prompts.md).
 - **Editing, deleting, or re-analyzing inside the media viewer** — the
   media viewer's Edit / Delete / Edit analysis forms have no dirty-edit
   guard, so a first Escape only discards that one form and returns to the

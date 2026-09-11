@@ -1674,19 +1674,26 @@ Landing order for the controller: Task 1 before Task 5 (Task 5's Find-reason tes
 
 ## Landing record
 
-Eight branches, cut from `origin/dev` and landed in the order below. Ids are the
-backlog tasks each PR closed.
+Eight branches, each cut from `origin/dev`. All seven implementation PRs are on
+dev; the row order below is dev's real merge order, by the merge commit's own
+timestamp. Ids are the backlog tasks each PR closed.
 
-| Task | Group | PR | Backlog ids |
-|---|---|---|---|
-| Task 3 | `onboarding-import` | #2598 | 32349, 32351 |
-| Task 4 | `pagers` | #2599 | 32352, 32354, 32363, 32057 |
-| Task 1 | `viewer` | #2602 | 32346, 32348, 32365 |
-| Task 6 | `layout` | #2603 | 32355, 32359, 32360, 32361, 32107 |
-| Task 5 | `export` | #2601 | 32353, 32362 |
-| Task 2 | `media-rows` | #2604 | 32347, 32350, 32364 |
-| Task 7 | `notes-details` | #2605 | 32356, 32357, 32358 |
-| Task 8 | `docs` | this branch | 32366 |
+| Task | Group | PR | Merged (UTC) | Merge commit | Backlog ids |
+|---|---|---|---|---|---|
+| Task 3 | `onboarding-import` | #2598 | 08:43:53 | `03d8c56a80` | 32349, 32351 |
+| Task 4 | `pagers` | #2599 | 09:04:41 | `7515befd21` | 32352, 32354, 32363, 32057 |
+| Task 6 | `layout` | #2603 | 09:25:37 | `fe2724f6a8` | 32355, 32359, 32360, 32361, 32107 |
+| Task 1 | `viewer` | #2602 | 09:51:32 | `910bff9293` | 32346, 32348, 32365 |
+| Task 2 | `media-rows` | #2604 | 10:06:46 | `1663e4af2f` | 32347, 32350, 32364 |
+| Task 5 | `export` | #2601 | 10:21:31 | `f605711a5c` | 32353, 32362 |
+| Task 7 | `notes-details` | #2605 | 10:43:59 | `d3cdfff10d` | 32356, 32357, 32358 |
+| Task 8 | `docs` | this branch | — | — | 32366 |
+
+The plan's own dispatch section prescribed a *landing order for the controller*
+(Task 1 before Task 5, Task 2 before Task 6, Task 8 last). Dev took #2603 before
+#2602 and #2604 before #2601, which inverted two of those pairs without
+consequence — both constraints were about tests reading a string the other branch
+defines, and both passed either way.
 
 Close-out bookkeeping on the `docs` branch: **task-32360** set Done (AC#2 landed
 with #2605); **task-32217** AC#2 ticked and the task set Done, both of its halves

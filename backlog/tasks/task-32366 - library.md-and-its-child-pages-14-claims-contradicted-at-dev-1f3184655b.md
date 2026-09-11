@@ -59,12 +59,14 @@ Seven rows were corrected in `Docs/User_Guide/library.md`:
 - #9 the bulk-delete banner is quoted from the live string ("Delete 2 selected
   items? You can undo right away, or restore later from Trash.").
 - #10 the armed-delete footer chip is `esc cancel delete`.
-- #11 a note edit is already saved when you leave it; Escape returns immediately
-  (DB-proven live: the row's age went to "now"). The **Prompts** half of the old
-  "dirty edit vetoes the exit" sentence was deleted rather than kept, because it
-  could not be verified: on a dirty Prompts editor Escape does nothing at all —
-  no veto notice, no exit — while the footer still advertises `esc back to list`.
-  Filed separately.
+- #11 the bullet now distinguishes the three editors instead of generalising.
+  Notes autosave, so Escape leaves at once (DB-proven live: the row's age went to
+  "now"); only a blocked save holds a note. Prompts and Skills do NOT autosave and
+  DO veto Escape while dirty (`library_prompts_controller.py:3456-3459`,
+  `library_screen.py:24802-24810`) — Skills notifies, Prompts refuses silently,
+  which is what "Escape does nothing" looks like from the outside and is filed as
+  task-32393. `library/prompts.md` and this bullet now state the veto in the same
+  words.
 - #13 softened rather than "fixed at the source". The brief's alternative (add
   glosses for Conversations and Notes, rename Collections' to "saved pages") is
   the exact reverse of a standing pin: `Tests/Library/test_library_shell_state.py`
@@ -73,8 +75,13 @@ Seven rows were corrected in `Docs/User_Guide/library.md`:
   unglossed so the rail doesn't stutter", F-013) and pins Collections to
   "saved captures". `library_shell_state.py` is therefore unchanged. The page now
   names which rows carry a gloss, says Conversations and Notes are bare by design,
-  and explains that Collections' gloss overruns the rail's fixed width at every
-  terminal size. The same sentence's short-label list was corrected from "Sets" to
+  and states the measured reason Collections reads bare: its gloss needs 34 cells
+  of row width (`LibraryRail._row_label` renders it from 34 up, drops it at 33) and
+  the rail's default gives 33 — `project_default_library_width` is a bounded
+  fraction (29 cells at 64-120 columns, 35 at 160, 39 from ~181), not a fixed
+  width, and a user-set width reaches 48. It does render on the single-pane stage
+  below 64 columns, where the rail takes the whole terminal (assessor B's caps
+  56/57). The same sentence's short-label list was corrected from "Sets" to
   "Captures" (`short_title="Captures"`).
 
 One row was **refuted, not fixed**: #3 claimed no `mode: ✓ Search ⇄ RAG Answer`
