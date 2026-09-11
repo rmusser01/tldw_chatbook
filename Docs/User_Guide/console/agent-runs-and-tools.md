@@ -231,8 +231,11 @@ appears above the transcript:
 
 ![The "Approval required" card with a pending tool call](../images/console/approval-card.svg)
 
-*(The card above shows a countdown because `[mcp] approval_timeout_seconds`
-is set in that screenshot; by default there is none — see below.)*
+*(The card above shows a countdown because the screenshot generator
+(`scripts/regen_approval_card_svg.py`) hardcodes a 120-second deadline
+directly on the card, the same way a positive `[mcp] approval_timeout_seconds`
+would; the setting itself defaults to `0`, which waits indefinitely and shows
+no countdown — see below.)*
 
 Each pending tool call gets its own row, one full-width line at a time: the
 `server · tool` header, the arguments the call wants to run with, the decision
