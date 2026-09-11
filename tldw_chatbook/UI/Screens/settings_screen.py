@@ -2496,6 +2496,9 @@ class SettingsScreen(BaseAppScreen):
         self._provider_test_result = self._PROVIDER_TEST_NOT_RUN_COPY
         self._provider_test_evidence_store = ProviderTestEvidenceStore()
         self._provider_draft_generation = 0
+        self._openai_reconnect_token = None
+        self._openai_reconnect_busy = False
+        self._openai_reconnect_prompt_open = False
         self._provider_credential_revision = 0
         self._provider_save_result = (
             "Provider settings have not been saved this session."
@@ -3233,6 +3236,7 @@ class SettingsScreen(BaseAppScreen):
     def on_unmount(self) -> None:
         """Fence any late Model Library review before this screen is replaced."""
 
+        self._discard_openai_reconnect_review()
         self._audio_cpp_result_cancellation.set()
         try:
             self._retry_audio_cpp_staged_request_cleanup()
@@ -9329,6 +9333,7 @@ class SettingsScreen(BaseAppScreen):
         }
 
     def _stage_provider_value(self, key: str, value: object) -> None:
+        self._discard_openai_reconnect_review()
         category = SettingsCategoryId.PROVIDERS_MODELS
         draft = self._settings_drafts.setdefault(
             category, SettingsDraft(category=category)
@@ -11349,6 +11354,12 @@ class SettingsScreen(BaseAppScreen):
             guidance.set_class(not hosted_guidance, "settings-gated-profile-hidden")
         except QueryError:
             pass
+        try:
+            reconnect = self.query_one("#settings-openai-reconnect-review", Button)
+            reconnect.display = provider_config_key(provider) == "openai"
+            reconnect.disabled = self._openai_reconnect_busy
+        except QueryError:
+            pass
         self._refresh_generation_support_summary(provider)
         self._sync_provider_api_mode_widget(provider)
         self._refresh_provider_field_guidance()
@@ -12480,6 +12491,13 @@ class SettingsScreen(BaseAppScreen):
                     else "settings-status-row settings-gated-profile-hidden"
                 ),
             )
+            reconnect = Button(
+                "Review restored OpenAI connection",
+                id="settings-openai-reconnect-review",
+            )
+            reconnect.display = provider_config_key(provider) == "openai"
+            reconnect.disabled = self._openai_reconnect_busy
+            yield reconnect
             # task-189: the Test affordance closes the first-run Connect job
             # (provider -> model -> endpoint -> credentials -> test) before
             # the informational readiness and discovery sections.
@@ -17668,6 +17686,7 @@ class SettingsScreen(BaseAppScreen):
                         exit_on_error=False,
                     )
                 return
+        self._discard_openai_reconnect_review()
         if category_value != SettingsCategoryId.PROVIDERS_MODELS.value:
             self._active_settings_field_id = None
             self._clear_provider_suppression_queues()
@@ -19895,6 +19914,100 @@ class SettingsScreen(BaseAppScreen):
             if (database := getattr(self.app_instance, name, None)) is not None
             and not getattr(database, "is_memory_db", False)
         )
+
+    def _discard_openai_reconnect_review(self) -> None:
+        self._openai_reconnect_token = None
+
+    def on_screen_suspend(self) -> None:
+        if not self._openai_reconnect_prompt_open:
+            self._discard_openai_reconnect_review()
+
+    def _openai_reconnect_review_current(self, token) -> bool:
+        if (
+            not self.is_mounted or token is not self._openai_reconnect_token
+            or self._active_category_id() != SettingsCategoryId.PROVIDERS_MODELS
+            or self._category_has_unsaved_changes(SettingsCategoryId.PROVIDERS_MODELS)
+        ):
+            return False
+        return provider_config_key(self._provider_widget_value()) == "openai"
+
+    @on(Button.Pressed, "#settings-openai-reconnect-review")
+    def handle_openai_reconnect_review(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._openai_reconnect_busy:
+            return
+        if self._category_has_unsaved_changes(SettingsCategoryId.PROVIDERS_MODELS):
+            self.app.notify("Save or discard provider changes before reviewing reconnect.", severity="warning")
+            return
+        token = self._openai_reconnect_token = object()
+        if not self._openai_reconnect_review_current(token):
+            self._discard_openai_reconnect_review()
+            return
+        self.run_worker(
+            self._prepare_openai_reconnect_review(token),
+            group="settings-openai-reconnect-preview", exit_on_error=False,
+        )
+
+    async def _prepare_openai_reconnect_review(self, token) -> None:
+        from ...LLM_Calls.recovery_review import prepare_openai_reconnect
+        from ...TTS._async_lifecycle import join_retained_task
+
+        try:
+            task = asyncio.create_task(asyncio.to_thread(prepare_openai_reconnect))
+            await join_retained_task(task)
+            review = task.result()
+        except (OSError, ValueError, RuntimeError):
+            if self._openai_reconnect_review_current(token):
+                self._discard_openai_reconnect_review()
+                self.app.notify("OpenAI recovery review is unavailable or changed. Check connection setup and request a fresh review.", severity="warning")
+            return
+        if not self._openai_reconnect_review_current(token) or self.app.screen is not self:
+            return
+        message = (
+            f"Endpoint: {review.endpoint}\nCredential source: {review.auth_source}\n"
+            f"Configuration: {review.config_selector}\nGenerations: {', '.join(review.generations)}\n\n"
+            "Allow explicit requests through this OpenAI connection? No connection test will run. "
+            "Automatic catalog refresh and other capabilities remain unchanged."
+        )
+        self._openai_reconnect_prompt_open = True
+        self.app.push_screen(
+            ConfirmationDialog(
+                title="Review restored OpenAI connection",
+                message=escape_markup(message), confirm_label="Allow OpenAI requests",
+            ),
+            lambda accepted: self._confirm_openai_reconnect_review(token, review, accepted),
+        )
+
+    def _confirm_openai_reconnect_review(self, token, review, accepted: bool) -> None:
+        self._openai_reconnect_prompt_open = False
+        current = self._openai_reconnect_review_current(token) and self.app.screen is self
+        self._discard_openai_reconnect_review()
+        if not accepted or not current or self._openai_reconnect_busy:
+            return
+        self._openai_reconnect_busy = True
+        self._update_provider_dynamic_widgets()
+        # The app owns accepted durable work across view navigation. No second
+        # request cancels it; the owner rechecks actual sources in its worker.
+        self.app.run_worker(
+            self._record_openai_reconnect_review(review),
+            group="settings-openai-reconnect-confirm", exit_on_error=False,
+        )
+
+    async def _record_openai_reconnect_review(self, review) -> None:
+        from ...LLM_Calls.recovery_review import confirm_openai_reconnect
+        from ...TTS._async_lifecycle import join_retained_task
+
+        message = "OpenAI reconnect review recorded. No connection test was run."
+        try:
+            task = asyncio.create_task(asyncio.to_thread(confirm_openai_reconnect, review))
+            await join_retained_task(task)
+        except (OSError, ValueError, RuntimeError):
+            message = "OpenAI connection changed or is unavailable. Request a fresh review."
+        finally:
+            self._openai_reconnect_busy = False
+        if self.is_mounted and self.app.is_running:
+            self._update_provider_dynamic_widgets()
+            self.app.notify(message)
 
     @work(exclusive=True, thread=True, group="settings-rag-recovery-review")
     def _rag_recovery_review_worker(self, fingerprint: str | None = None) -> None:
