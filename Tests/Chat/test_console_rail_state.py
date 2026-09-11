@@ -1152,3 +1152,125 @@ def test_disclosure_ids_accept_environment_and_tasks():
 def test_coerce_garbage_falls_back_to_defaults():
     coerced = coerce_console_rail_preferences({"environment_open": "banana"})
     assert coerced.environment_open is True
+
+
+# --- TASK-32328: the 118-128 auto-open band dies only on EXPLICIT toggles ------
+
+
+def test_explicit_right_toggle_writes_marker_and_kills_auto_open_distinguishability():
+    """TASK-32328: an explicit Inspector toggle writes right_open_explicit;
+    implicit writes leave the marker absent so the auto-open heuristic can
+    still tell "the user chose" from "some writer stored a preference"."""
+    from tldw_chatbook.Chat.console_rail_state import (
+        CONSOLE_RAIL_RIGHT_OPEN_EXPLICIT_KEY,
+        coerce_console_rail_preferences,
+        console_rail_right_open_explicit,
+        serialize_console_rail_updated_preferences,
+    )
+
+    from dataclasses import replace
+
+    base = coerce_console_rail_preferences(None)
+    # A real explicit toggle: the caller replaces the value AND passes the
+    # gesture flag, exactly as _set_console_rail_preference does.
+    toggled = replace(base, right_open=True)
+    explicit = serialize_console_rail_updated_preferences(
+        toggled, None, left_open=None, right_open=True, character_toggled=False
+    )
+    assert explicit["right_open"] is True
+    assert console_rail_right_open_explicit(explicit) is True
+
+    # An implicit write (e.g. a first-ever section toggle) does NOT add
+    # the marker. It may still carry the right_open KEY (the base
+    # serializer always writes it) -- that is exactly the payload shape
+    # that used to kill the auto-open band by key presence; the heuristic
+    # now reads the marker, not the key.
+    implicit = serialize_console_rail_updated_preferences(
+        base, None, left_open=None, right_open=None, character_toggled=False
+    )
+    assert CONSOLE_RAIL_RIGHT_OPEN_EXPLICIT_KEY not in implicit
+    assert console_rail_right_open_explicit(implicit) is False
+
+    # Against a seeded Mapping without right_open, the key is omitted
+    # outright (existing rule) and the marker stays absent.
+    seeded = serialize_console_rail_updated_preferences(
+        base, {}, left_open=None, right_open=None, character_toggled=False
+    )
+    assert "right_open" not in seeded
+    assert console_rail_right_open_explicit(seeded) is False
+
+    # And the marker survives a later write that did not touch the rail.
+    later = serialize_console_rail_updated_preferences(
+        coerce_console_rail_preferences(explicit),
+        explicit,
+        left_open=None,
+        right_open=None,
+        character_toggled=False,
+    )
+    assert console_rail_right_open_explicit(later) is True
+    # ...and the right_open key itself survives (it was explicitly chosen).
+    assert later["right_open"] is True
+
+
+# --- Qodo 2614 #2/#5: the explicit marker's write and persistence paths --------
+
+
+def test_stored_serializer_preserves_right_open_explicit():
+    """Qodo 2614 #5: the stored-preferences serializer (the config-file
+    persistence boundary) must retain the right_open_explicit marker the
+    updated-preferences serializer writes, or the explicit gesture is
+    dropped on save and auto-open resurrects a rail the user closed."""
+    from tldw_chatbook.Chat.console_rail_state import (
+        console_rail_right_open_explicit,
+        serialize_console_rail_stored_preferences,
+        serialize_console_rail_updated_preferences,
+        coerce_console_rail_preferences,
+    )
+
+    explicit = serialize_console_rail_updated_preferences(
+        coerce_console_rail_preferences(None),
+        None,
+        left_open=None,
+        right_open=False,
+        character_toggled=False,
+        explicit_right_toggle=True,
+    )
+    assert console_rail_right_open_explicit(explicit)
+    round_tripped = serialize_console_rail_stored_preferences(explicit)
+    assert console_rail_right_open_explicit(round_tripped), (
+        "persistence dropped the explicit right-rail marker"
+    )
+
+
+def test_reveal_derived_right_close_does_not_mark_explicit():
+    """Qodo 2614 #2: the Context reveal path derives right_open=False only
+    to resolve the compact-width conflict; persisting that derivation must
+    NOT record an explicit Inspector gesture (which would permanently kill
+    the 118-128 auto-open band for a user who only opened Context)."""
+    from tldw_chatbook.Chat.console_rail_state import (
+        coerce_console_rail_preferences,
+        console_rail_right_open_explicit,
+        serialize_console_rail_updated_preferences,
+    )
+
+    derived = serialize_console_rail_updated_preferences(
+        coerce_console_rail_preferences(None),
+        None,
+        left_open=True,
+        right_open=False,
+        character_toggled=False,
+        explicit_right_toggle=False,
+    )
+    assert derived["right_open"] is False  # the conflict IS resolved...
+    assert not console_rail_right_open_explicit(derived)  # ...but not explicit
+
+    # A direct Inspector toggle still marks.
+    direct = serialize_console_rail_updated_preferences(
+        coerce_console_rail_preferences(None),
+        None,
+        left_open=None,
+        right_open=False,
+        character_toggled=False,
+        explicit_right_toggle=True,
+    )
+    assert console_rail_right_open_explicit(direct)

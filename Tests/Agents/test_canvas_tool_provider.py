@@ -80,7 +80,8 @@ def _revision(
 
 
 class _Coordinator:
-    def __init__(self) -> None:
+    def __init__(self, scope=SCOPE) -> None:
+        self.scope = scope
         self.current = True
         self.calls: list[tuple] = []
         self.update_result = CanvasMutationResult(
@@ -100,7 +101,7 @@ class _Coordinator:
         self.failure: Exception | None = None
 
     def is_scope_current(self, scope: CanvasScope) -> bool:
-        return self.current and scope is SCOPE
+        return self.current and scope is self.scope
 
     def list_canvases(self, scope: CanvasScope):
         self.calls.append(("list", scope))
@@ -167,9 +168,9 @@ class _Coordinator:
         return self.update_result
 
 
-def _provider():
-    coordinator = _Coordinator()
-    provider = CanvasToolProvider(coordinator, scope=SCOPE)
+def _provider(*, scope=SCOPE):
+    coordinator = _Coordinator(scope)
+    provider = CanvasToolProvider(coordinator, scope=scope)
     return provider, coordinator, provider.issue_registration_authority()
 
 
@@ -232,6 +233,7 @@ def test_canvas_schemas_are_closed_and_carry_shared_byte_limits() -> None:
         "canvas_read",
         "canvas_create",
         "canvas_update",
+        "canvas_guide",
     }
     assert all(
         schema.parameters["additionalProperties"] is False
@@ -506,6 +508,7 @@ def test_every_non_model_projection_omits_canvas_source(audience, name) -> None:
             "expected_parent_revision_id": REVISION_ID,
             "html": SOURCE_SENTINEL,
         },
+        "canvas_guide": {"topic": "controls"},
     }[name]
     result = _invoke(provider, name, args)
     assert result.ok is True
@@ -519,6 +522,9 @@ def test_every_non_model_projection_omits_canvas_source(audience, name) -> None:
         assert dict(projected.arguments)["content_sha256"]
         assert "html" not in projected.arguments
     projected_payload = json.loads(projected.content)
+    if name == "canvas_guide":
+        assert set(projected_payload) == {"status", "topic", "guide_bytes"}
+        return
     projected_canvas = (
         projected_payload["canvases"][0]
         if name == "canvas_list"
@@ -1336,6 +1342,10 @@ def _run_review_integration(
     registry: ToolCatalogRegistry,
     calls: list[ToolCall],
     allowed_tools: tuple[str, ...],
+    *,
+    requests=None,
+    run_log_writer=None,
+    steps=None,
 ) -> tuple[list[tuple[str, ...]], dict[str, object]]:
     replies = [_native_response(calls), {"choices": [{"message": {"content": "done"}}]}]
     reviewed: list[tuple[str, ...]] = []
@@ -1344,12 +1354,19 @@ def _run_review_integration(
         reviewed.append(tuple(call.name for call in batch))
         return {call.call_id: "proceed" for call in batch}
 
+    def chat_call(**kwargs):
+        if requests is not None:
+            requests.append(deepcopy(kwargs))
+        return replies.pop(0)
+
     db = AgentRunsDB(db_path, client_id="canvas-tool-review")
     service = AgentService(
         db,
         registry,
-        chat_call=lambda **_kwargs: replies.pop(0),
+        chat_call=chat_call,
         review_tool_calls=review,
+        run_log_writer=run_log_writer,
+        on_step=(lambda step, *_: steps.append(step)) if steps is not None else None,
     )
     try:
         run_id, outcome = service.run_turn(
@@ -1518,3 +1535,337 @@ def test_real_review_batch_fails_closed_when_canvas_classification_raises(
         if step["kind"] == STEP_APPROVAL_REQUESTED
     ] == ["canvas_create"]
     assert SOURCE_SENTINEL not in json.dumps(durable)
+
+
+GUIDE_SENTINEL = "CANVAS-GUIDE-8a372b"
+GUIDE_BODY = GUIDE_SENTINEL + " — controls\ngetElementById"
+
+
+@pytest.fixture
+def guide_resource(tmp_path, monkeypatch):
+    """Exercise the real bounded resource reader against controlled shipped bytes."""
+    from tldw_chatbook.Canvas import guide
+
+    resource = tmp_path / "guides" / "controls.md"
+    resource.parent.mkdir()
+    resource.write_text(GUIDE_BODY, encoding="utf-8")
+    monkeypatch.setattr(guide, "files", lambda _package: tmp_path)
+    return resource
+
+
+def test_canvas_guide_returns_docs_without_artifact_operations():
+    provider, coordinator, _authority = _provider()
+    result = _invoke(provider, "canvas_guide", {"topic": "controls"})
+    assert result.ok, result.error
+    payload = json.loads(result.content)
+    assert set(payload) == {"status", "topic", "guide"}
+    assert payload["status"] == "ok" and payload["topic"] == "controls"
+    assert "getElementById" in payload["guide"]
+    assert len(result.content.encode("utf-8")) <= 12 * 1024
+    assert coordinator.calls == []
+
+
+def test_canvas_guide_catalog_schema_and_no_selection():
+    scope = replace(SCOPE, selected_canvas_id=None, selected_revision_id=None)
+    provider, coordinator, authority = _provider(scope=scope)
+    registry = ToolCatalogRegistry()
+    assert registry.register_canvas_provider(provider, authority)
+    assert [entry.name for entry in provider.list_catalog()] == [
+        "canvas_list",
+        "canvas_read",
+        "canvas_create",
+        "canvas_update",
+        "canvas_guide",
+    ]
+    schema = registry.load_schema("canvas:canvas_guide")
+    assert schema.parameters == {
+        "type": "object",
+        "properties": {
+            "topic": {
+                "type": "string",
+                "enum": ["basics", "controls", "mermaid", "repair"],
+            }
+        },
+        "required": ["topic"],
+        "additionalProperties": False,
+    }
+    assert "requests or accepts Canvas" in schema.description
+    for topic in schema.parameters["properties"]["topic"]["enum"]:
+        with use_run_id(scope.run_id), use_tool_call_id("guide-call"):
+            result = registry.invoke_by_name("canvas_guide", {"topic": topic})
+        assert result.ok, result.error
+        assert json.loads(result.content)["topic"] == topic
+    assert coordinator.calls == []
+    assert provider.approval_classification_for(schema.id) is None
+    assert not registry.is_canvas_reversible_conversation_local_mutation("canvas_guide")
+    assert {
+        name
+        for name in CANVAS_TOOL_NAMES
+        if registry.is_canvas_reversible_conversation_local_mutation(name)
+    } == {"canvas_create", "canvas_update"}
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        {},
+        {"topic": "controls", "path": GUIDE_SENTINEL},
+        {"topic": "unknown"},
+        {"topic": "../controls"},
+        {"topic": 1},
+        {"topic": None},
+        {"topic": []},
+    ],
+)
+def test_canvas_guide_rejects_arguments_before_resource_access(args, monkeypatch):
+    from tldw_chatbook.Canvas import guide
+
+    accessed = []
+    monkeypatch.setattr(guide, "files", lambda package: accessed.append(package))
+    provider, coordinator, _ = _provider()
+    result = _invoke(provider, "canvas_guide", args)
+    assert not result.ok
+    assert json.loads(result.error)["code"] == "invalid_arguments"
+    assert accessed == [] and coordinator.calls == []
+
+
+@pytest.mark.parametrize(
+    ("run_id", "call_id", "current"),
+    [
+        ("", "call-1", True),
+        ("stale", "call-1", True),
+        ("run-1", "", True),
+        ("run-1", "call-1", False),
+    ],
+)
+def test_canvas_guide_fences_stale_run_call_and_scope(run_id, call_id, current):
+    provider, coordinator, _ = _provider()
+    coordinator.current = current
+    with use_run_id(run_id), use_tool_call_id(call_id):
+        result = provider.invoke("canvas:canvas_guide", {"topic": "controls"})
+    assert not result.ok
+    assert json.loads(result.error)["code"] == "canvas_scope_unavailable"
+    assert coordinator.calls == []
+
+
+@pytest.mark.parametrize("source", ["canvas", "builtin", "mcp", "skill"])
+@pytest.mark.parametrize("owner_first", [False, True])
+def test_canvas_guide_reserves_name_against_forged_provider_and_collision(
+    source, owner_first
+):
+    class Impostor(_LookalikeProvider):
+        def list_catalog(self):
+            return [
+                ToolCatalogEntry(
+                    f"{source}:canvas_guide", "canvas_guide", "spoof", source
+                )
+            ]
+
+    provider, coordinator, authority = _provider()
+    registry = ToolCatalogRegistry()
+    assert not registry.register_canvas_provider(Impostor(), authority)
+    assert not registry.register_canvas_provider(provider, replace(authority))
+    if owner_first:
+        assert registry.register_canvas_provider(provider, authority)
+    registry.register_provider(Impostor())
+    if not owner_first:
+        assert registry.resolve_name("canvas_guide") is None
+        assert registry.register_canvas_provider(provider, authority)
+    with use_run_id(SCOPE.run_id), use_tool_call_id("guide-call"):
+        result = registry.invoke_by_name("canvas_guide", {"topic": "controls"})
+    assert result.ok, result.error
+    assert "getElementById" in json.loads(result.content)["guide"]
+    assert coordinator.calls == []
+
+
+def test_canvas_guide_only_schema_loading_does_not_read_any_manual(monkeypatch):
+    from tldw_chatbook.Canvas import authoring, guide
+    from tldw_chatbook.Canvas.profiles import ProfileSnapshot
+
+    provider, coordinator, _ = _provider()
+    coordinator.profile_snapshot = ProfileSnapshot("a" * 64, "b" * 64, (), None)
+    accessed = []
+    monkeypatch.setattr(
+        authoring, "canvas_authoring_guide", lambda *args: accessed.append(args)
+    )
+    monkeypatch.setattr(guide, "files", lambda package: accessed.append(package))
+    schema = provider.load_schema("canvas:canvas_guide")
+    assert type(schema) is ToolSchema
+    guidance = build_canvas_runtime_guidance([schema])
+    assert "canvas_guide" in guidance
+    assert all(
+        name not in guidance
+        for name in ("canvas_create", "canvas_update", "canvas_read")
+    )
+    assert accessed == []
+
+
+def test_canvas_guide_history_cannot_admit_artifact_profiles():
+    from tldw_chatbook.Agents.canvas_tool_provider import _context_canvas_profiles
+
+    messages = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "guide-call",
+                    "type": "function",
+                    "function": {
+                        "name": "canvas_guide",
+                        "arguments": '{"topic":"controls"}',
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "guide-call",
+            "content": json.dumps(
+                {"status": "ok", "canvas": {"runtime_profile": "future-profile"}}
+            ),
+        },
+    ]
+    assert _context_canvas_profiles(messages) == set()
+    messages[0]["tool_calls"][0]["function"]["name"] = "canvas_read"
+    assert _context_canvas_profiles(messages) == {"future-profile"}
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [None, b"\xff", b"  ", b"x" * (12 * 1024 + 1), b'"' * 7000, b"\x00" * 3000],
+    ids=["missing", "undecodable", "empty", "oversized", "quotes", "controls"],
+)
+def test_canvas_guide_unavailable_resources_and_serialization_overflow(
+    guide_resource, raw
+):
+    if raw is None:
+        guide_resource.unlink()
+    else:
+        guide_resource.write_bytes(raw)
+    provider, coordinator, _ = _provider()
+    result = _invoke(provider, "canvas_guide", {"topic": "controls"})
+    assert not result.ok
+    assert json.loads(result.error) == {
+        "code": "guide_unavailable",
+        "message": "Canvas authoring guide is unavailable.",
+    }
+    assert not result.content
+    assert str(guide_resource) not in result.error
+    assert coordinator.calls == []
+
+
+@pytest.mark.parametrize("audience", ["display", "log", "cycle", "continuation"])
+def test_canvas_guide_body_is_model_only_with_closed_metadata(guide_resource, audience):
+    provider, _, authority = _provider()
+    registry = ToolCatalogRegistry()
+    assert registry.register_canvas_provider(provider, authority)
+    args = {"topic": "controls"}
+    result = _invoke(provider, "canvas_guide", args)
+    assert result.ok, result.error
+    assert json.loads(result.content)["guide"] == GUIDE_BODY
+    projected = registry.project_tool_record(
+        audience, ToolCall("canvas_guide", args), result
+    )
+    assert dict(projected.arguments) == args
+    assert json.loads(projected.content) == {
+        "status": "ok",
+        "topic": "controls",
+        "guide_bytes": len(GUIDE_BODY.encode("utf-8")),
+    }
+    assert GUIDE_SENTINEL not in str(projected)
+    assert "canvas" not in json.loads(projected.content)
+
+
+@pytest.mark.parametrize("audience", ["display", "log", "cycle", "continuation"])
+def test_canvas_guide_malformed_projections_fail_closed(audience):
+    provider, _, authority = _provider()
+    registry = ToolCatalogRegistry()
+    assert registry.register_canvas_provider(provider, authority)
+    base = {"status": "ok", "topic": "controls", "guide": GUIDE_SENTINEL}
+    payloads = [
+        {**base, "extra": GUIDE_SENTINEL},
+        {key: value for key, value in base.items() if key != "guide"},
+        {**base, "status": "staged"},
+        {**base, "topic": GUIDE_SENTINEL},
+        {**base, "topic": []},
+        {**base, "guide": [GUIDE_SENTINEL]},
+        {**base, "guide": '"' * 7000},
+        {**base, "guide": "\x00" * 3000},
+        {**base, "guide": "é" * 7000},
+        {**base, "guide": "\ud800"},
+        {**base, "code": "guide_unavailable", "message": GUIDE_SENTINEL},
+    ]
+    for payload in payloads:
+        for ok in (True, False):
+            raw = json.dumps(payload)
+            result = ToolResult(
+                ok=ok, content=raw if ok else "", error="" if ok else raw
+            )
+            projected = registry.project_tool_record(
+                audience, ToolCall("canvas_guide", {"topic": "controls"}), result
+            )
+            assert json.loads(projected.content or projected.error) == {
+                "code": "canvas_projection_unavailable"
+            }
+            assert GUIDE_SENTINEL not in str(projected)
+
+
+@pytest.mark.parametrize("audience", ["display", "log", "cycle", "continuation"])
+def test_canvas_guide_argument_projections_never_retain_unvalidated_fields(audience):
+    provider, _, authority = _provider()
+    registry = ToolCatalogRegistry()
+    assert registry.register_canvas_provider(provider, authority)
+    for args in (
+        {"topic": "controls", "html": GUIDE_SENTINEL},
+        {"topic": GUIDE_SENTINEL},
+        {"topic": []},
+        {},
+    ):
+        projected = registry.project_tool_record(
+            audience,
+            ToolCall("canvas_guide", args),
+            ToolResult(ok=False, error=GUIDE_SENTINEL),
+        )
+        assert GUIDE_SENTINEL not in str(projected)
+        assert (
+            "topic" not in projected.arguments
+            or projected.arguments["topic"] == "controls"
+        )
+
+
+def test_canvas_guide_agent_service_round_trip_keeps_body_out_of_stored_records(
+    tmp_path, guide_resource
+):
+    from tldw_chatbook.Agents.run_log import RunLogWriter
+
+    provider, coordinator, authority = _provider()
+    registry = ToolCatalogRegistry()
+    assert registry.register_canvas_provider(provider, authority)
+    requests, steps = [], []
+    writer = RunLogWriter(root=tmp_path)
+    reviewed, durable = _run_review_integration(
+        tmp_path / "guide.db",
+        registry,
+        [ToolCall("canvas_guide", {"topic": "controls"}, call_id="guide-call")],
+        ("canvas_guide",),
+        requests=requests,
+        run_log_writer=writer,
+        steps=steps,
+    )
+    assert len(requests) == 2
+    assert GUIDE_SENTINEL not in str(requests[0])
+    model_results = [
+        json.loads(message["content"])
+        for message in requests[1]["messages_payload"]
+        if message.get("role") == "tool" and message.get("tool_call_id") == "guide-call"
+    ]
+    assert model_results == [{"status": "ok", "topic": "controls", "guide": GUIDE_BODY}]
+    assert GUIDE_SENTINEL not in json.dumps(durable, ensure_ascii=False)
+    assert GUIDE_SENTINEL not in str(steps)
+    assert "guide_bytes" in json.dumps(durable)
+    assert reviewed == [("canvas_guide",)]
+    assert coordinator.calls == []
+    assert writer.log_dir is not None
+    logs = [path.read_text() for path in writer.log_dir.iterdir() if path.is_file()]
+    assert logs and "guide_bytes" in str(logs)
+    assert GUIDE_SENTINEL not in str(logs)

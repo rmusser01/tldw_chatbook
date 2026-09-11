@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
 from tldw_chatbook.Agents.builtin_tool_gate import DENIAL_POLICY
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import TOOL_DESCRIPTION_CAPTURE_CAP
+from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 from tldw_chatbook.MCP.execution_log import (
     APPROVED_SESSION_DECISION,
     KILL_SWITCH_DENIED_DECISION,
@@ -78,6 +79,7 @@ from tldw_chatbook.MCP.tool_naming import dedupe_names, llm_tool_name
 from .agent_models import ToolCatalogEntry, ToolResult, ToolSchema
 from .run_context import current_run_id
 from .tool_catalog import ToolExecutionPolicy
+from .tool_refusals import TOOL_KILL_SWITCH_REFUSAL
 
 SOURCE = "mcp"
 
@@ -100,9 +102,10 @@ USER_DENY_REFUSAL = f"tool call denied by the user. {DENIAL_POLICY}"
 #: decided, and the permissions were not Off.
 UNRESOLVED_REFUSAL = "tool call not approved (no decision recorded)"
 TIMEOUT_REFUSAL = "user did not approve within the time limit; do not retry"
-#: task-32285: wording unified with `console_chat_controller.
-#: KILL_SWITCH_REFUSAL` -- see that constant's docstring.
-KILL_SWITCH_REFUSAL = "tool call blocked: the chat tool kill switch is on"
+#: task-32285: ONE definition of the sentence, in `Agents.tool_refusals`
+#: -- see `TOOL_KILL_SWITCH_REFUSAL`. The NAME stays (importers depend on
+#: it); only the value's source moved.
+KILL_SWITCH_REFUSAL = TOOL_KILL_SWITCH_REFUSAL
 NON_TEXT_PLACEHOLDER = "[image result — not yet supported]"
 
 # `.result(timeout=...)` slack added on top of the configured per-call tool
@@ -118,6 +121,31 @@ _NON_TEXT_CONTENT_TYPES = frozenset({"image", "blob"})
 _FAIL_CLOSED_STATE = EffectiveToolState(state="ask", origin="global_default")
 
 
+#: Qodo #1 (task-32278): names of ``builtin:tldw_chatbook`` tools that WRITE.
+#:
+#: Every built-in ``HubTool`` carries ``tags=()`` unconditionally
+#: (``hub_tool_catalog.builtin_tools_from_inventory`` hard-codes it) and the
+#: local MCP manifest it is built from carries no risk metadata at all --
+#: ``MCP/server.py`` synthesizes each entry from the tool function's AST
+#: signature. That empty tag tuple is load-bearing, not an oversight:
+#: ``permission_store.BY_KEY_HASH_FREE_SERVER_KEYS`` exempts this server key
+#: from ``resolve_effective_state_by_key()``'s "any allow collapses to ask"
+#: rule, which is safe ONLY while there is no tag for a floor to catch (see
+#: that constant's comment and the tripwire test
+#: ``test_builtin_tools_never_carry_risk_tags_even_when_offered_them``).
+#:
+#: So the card's read-vs-write wording is recovered HERE, from the one place
+#: the write fact is actually declared -- the Library descriptor table's
+#: ``mutates`` flag, plus the one hand-written note tool the local MCP server
+#: registers directly. This feeds ``effects`` only; nothing here reaches the
+#: permission layer, so no built-in's risk floor, argument rules, or
+#: Permissions-matrix row changes.
+_MUTATING_BUILTIN_TOOL_NAMES: frozenset[str] = frozenset(
+    {name for name, d in LIBRARY_TOOL_DESCRIPTORS.items() if d.mutates}
+    | {"create_note"}
+)
+
+
 def approval_effects_for_tool(tool: Any) -> tuple[str, ...]:
     """Return the card-facing effects implied by a tool's risk tags.
 
@@ -129,6 +157,13 @@ def approval_effects_for_tool(tool: Any) -> tuple[str, ...]:
     (``permission_store.HIGH_RISK_TAGS``) keeps the card's sentence and the
     reason the row is asking from disagreeing, without adding a second
     signal.
+
+    Qodo #1: a ``source == "builtin"`` ``HubTool`` has no tags to read (see
+    ``_MUTATING_BUILTIN_TOOL_NAMES``), so a mutating built-in reaching this
+    provider's path -- ``create_note``, ``library_save_note`` -- fell
+    through to ``()`` and its row rendered no "Effects:" line at all. Those
+    are recovered by name, and only for the built-in source: a local or
+    server tool that happens to share a name is unaffected.
 
     Args:
         tool: A built-in ``Tool`` (``risk_tags``) or a ``HubTool`` (``tags``).
@@ -142,11 +177,14 @@ def approval_effects_for_tool(tool: Any) -> tuple[str, ...]:
     tags = getattr(tool, "risk_tags", None)
     if tags is None:
         tags = getattr(tool, "tags", ())
-    return (
-        ("mutates_local",)
-        if any(str(tag).lower() == "mutates" for tag in tags or ())
-        else ()
-    )
+    if any(str(tag).lower() == "mutates" for tag in tags or ()):
+        return ("mutates_local",)
+    if (
+        getattr(tool, "source", "") == "builtin"
+        and str(getattr(tool, "name", "")) in _MUTATING_BUILTIN_TOOL_NAMES
+    ):
+        return ("mutates_local",)
+    return ()
 
 
 @dataclass(frozen=True)

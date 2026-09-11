@@ -27,6 +27,17 @@ _STATUS_CLASS_MAP = {
     "blocked": {"blocked", "missing", "unavailable"},
 }
 
+#: User-facing copy for each legacy-row status class (TASK-32332). The CSS
+#: class stays the styling seam; the TEXT the user reads is sentence-case
+#: copy, and the unclassifiable catch-all says "Off" instead of exposing the
+#: developer token "muted".
+_STATUS_CLASS_COPY = {
+    "ready": "Ready",
+    "running": "Retrieving",
+    "blocked": "Blocked",
+    "muted": "Off",
+}
+
 
 class ConsoleStagedSourceOpenRequested(Message):
     """Request navigation to one staged source's canonical Library row."""
@@ -108,6 +119,18 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
                         row.snippet or "No snippet available.",
                         markup=False,
                     ),
+                    *(
+                        # TASK-32330: listed-only rows state what happens.
+                        [
+                            Static(
+                                "This handoff kind is listed for the run; "
+                                "its content is not sent to the model.",
+                                markup=False,
+                            )
+                        ]
+                        if row.status == "listed"
+                        else []
+                    ),
                     Static(
                         f"Authority: {row.authority}",
                         markup=False,
@@ -158,7 +181,7 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
                             markup=False,
                         ),
                         Static(
-                            status_class,
+                            _STATUS_CLASS_COPY.get(status_class, status_class),
                             id=f"console-staged-source-status-{index}",
                             classes=f"console-staged-source-status {status_class}",
                             markup=False,
@@ -199,7 +222,11 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
                 classes="console-rail-section-title",
             )
             yield Static(
-                str(self.state.source_count),
+                (
+                    "none"
+                    if not self.state.source_count
+                    else str(self.state.source_count)
+                ),
                 id="console-staged-context-count",
                 classes="console-staged-context-count",
             )
@@ -245,8 +272,11 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
         """Refresh the mounted tray from a new staged-context snapshot.
 
         Equality-guarded like the other Console tray widgets; a real change
-        recomposes only this widget (row count, Attach button, and recovery
-        line presence all vary with the state), never the owning screen.
+        recomposes only this widget (source-row count, summary, empty
+        state, and recovery line presence all vary with the state), never
+        the owning screen. There is no in-tray Attach button (TASK-32337
+        docstring fix: the empty state directs to Library, whose search
+        controls sit directly beneath this tray in the Inspector).
 
         Args:
             state: Staged-context display-state snapshot to render.

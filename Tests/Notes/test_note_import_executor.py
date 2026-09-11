@@ -1114,9 +1114,12 @@ def test_executor_links_wikilink_targets_created_in_the_same_batch(
     )
     note = target.read_note(note_id=_expected_note_id("link-source", 0))
     assert note is not None
+    # task-32263: the stored link keeps the readable wikilink, shows the
+    # linked note's own title, and carries the identifier behind it.
     assert note.content == (
-        f"See [link-target](note://{_expected_note_id('link-target', 0)}) "
-        f"and [see it](note://{_expected_note_id('link-deep', 0)}) "
+        f"See [[link-target|B]](note://{_expected_note_id('link-target', 0)}) "
+        f"and [[Reading/link-deep|see it]]"
+        f"(note://{_expected_note_id('link-deep', 0)}) "
         "and [[Missing]]."
     )
 

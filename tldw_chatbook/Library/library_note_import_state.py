@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import Counter
+from itertools import groupby
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
@@ -21,15 +23,36 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     ImportAction,
     ImportMatchKind,
     ImportPreviewItem,
+    NON_IMPORTABLE_CLASSIFICATIONS,
     NoteImportPlan,
+    REVIEW_CLASSIFICATION_ORDER,
     RootCollisionChoice,
     RootCollisionState,
+    planned_plan_change_count,
     resolved_wikilink_count,
 )
 from tldw_chatbook.Notes.note_import_planner import apply_item_override
 
 
 MAX_IMPORT_REVIEW_PAGE_SIZE = 25
+"""Rendered rows one review page may hold.
+
+task-32250: this used to count sources, so a page cut wherever the 25th
+source fell -- through the middle of a group, and through the middle of a run
+of interchangeable rows, which then appeared twice with two different counts.
+A page is filled by what it RENDERS instead, and a collapsed run renders as
+one row, so the whole of a 45-note Archive folder costs a page one line.
+"""
+
+MAX_IMPORT_REVIEW_PAGE_ITEMS = 200
+"""Hard ceiling on the sources one page may mount, whatever they render as."""
+
+UNIFORM_RUN_MIN = 8
+"""Interchangeable rows that collapse to one summary row with a disclosure.
+
+Shared with the canvas on purpose: the pager budgets by rendered rows, so a
+different threshold there would mis-count every page.
+"""
 
 MAX_RECEIPT_SKIPPED_ROWS = 50
 """Rows the receipt lists by name before it falls back to the count alone."""
@@ -57,6 +80,23 @@ class NoteImportPage:
     page_count: int = 1
     has_previous: bool = False
     has_next: bool = False
+    run_totals: tuple[tuple[tuple[str, ...], int], ...] = ()
+    """How many sources each interchangeable run holds across the whole review.
+
+    A run larger than the mount ceiling is the one case a page break can fall
+    inside one (`MAX_IMPORT_REVIEW_PAGE_ITEMS`), and its summary row then read
+    "200 files" on one page and "50 files" on the next -- the same shape
+    task-32250 was filed about. The canvas says which number it means by
+    carrying both.
+    """
+    group_totals: tuple[tuple[str, int], ...] = ()
+    """How many rows each classification has across the whole review.
+
+    task-32250: a page heading read "New (23)" while the group actually held
+    58, and the next page's heading read "New (22)" -- the same words for a
+    different number, with the real total nowhere on screen. The heading says
+    which of the two it means by carrying both.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +133,10 @@ class NoteImportWorkflowSnapshot:
     # Same reason for the links the batch resolved (task-32178): the count is
     # a fact about the approved plan, which the next selection replaces.
     latest_resolved_links: int = 0
+    # task-32258: the receipt's own total counts planned changes (one per
+    # note a source creates), while the review counted sources. Keeping the
+    # source count is what lets the receipt reconcile the two out loud.
+    latest_source_count: int = 0
     cancel_requested: bool = False
     decision_item_ids: frozenset[str] = frozenset()
     collision_rename_input: str = field(default="", repr=False)
@@ -230,6 +274,8 @@ class LibraryNoteImportSnapshot:
     can_import: bool
     import_disabled_reason: str
     destination_error: str = ""
+    group_totals: tuple[tuple[str, int], ...] = ()
+    run_totals: tuple[tuple[tuple[str, ...], int], ...] = ()
     collision_kind: str = ""
     collision_name: str = field(default="", repr=False)
     collision_choice: str = ""
@@ -254,15 +300,82 @@ class LibraryNoteImportSnapshot:
     resolved_links: int = 0
 
 
+def _review_order(plan: NoteImportPlan | None) -> tuple[ImportPreviewItem, ...]:
+    """Return the plan's rows in the order the review groups them.
+
+    Paging slices this, not the plan's own path order, so every group's rows
+    are contiguous: a page then shows whole groups plus at most one group's
+    boundary, instead of three groups' worth of unrelated slices (task-32250).
+    """
+    if plan is None:
+        return ()
+    position = {
+        classification: index
+        for index, classification in enumerate(REVIEW_CLASSIFICATION_ORDER)
+    }
+    return tuple(
+        sorted(plan.items, key=lambda item: position.get(item.classification, 99))
+    )
+
+
+def review_run_key(item: ImportPreviewItem) -> tuple[str, ...]:
+    """Return what makes two review rows interchangeable at a glance.
+
+    The canvas collapses a run of these into one summary row, and the pager
+    budgets by rendered rows, so both have to agree on where a run starts and
+    ends -- hence one definition (task-32250).
+    """
+    folder, _, _ = item.source.display_path.rpartition("/")
+    non_importable = item.classification in NON_IMPORTABLE_CLASSIFICATIONS
+    return (
+        folder,
+        item.classification.value,
+        item.selected_action.value,
+        item.reason if non_importable else "",
+        _membership_summary(item),
+    )
+
+
+def _paginate(
+    ordered: tuple[ImportPreviewItem, ...], rows_per_page: int
+) -> tuple[tuple[ImportPreviewItem, ...], ...]:
+    """Fill pages by rendered rows, never cutting through a run."""
+    pages: list[tuple[ImportPreviewItem, ...]] = []
+    current: list[ImportPreviewItem] = []
+    rendered = 0
+    for _, grouped in groupby(ordered, key=review_run_key):
+        run = tuple(grouped)
+        for start in range(0, len(run), MAX_IMPORT_REVIEW_PAGE_ITEMS):
+            chunk = run[start : start + MAX_IMPORT_REVIEW_PAGE_ITEMS]
+            cost = 1 if len(chunk) >= UNIFORM_RUN_MIN else len(chunk)
+            overflows = rendered + cost > rows_per_page or (
+                len(current) + len(chunk) > MAX_IMPORT_REVIEW_PAGE_ITEMS
+            )
+            if current and overflows:
+                pages.append(tuple(current))
+                current = []
+                rendered = 0
+            current.extend(chunk)
+            rendered += cost
+    if current:
+        pages.append(tuple(current))
+    return tuple(pages) or ((),)
+
+
 def _page(
     plan: NoteImportPlan | None, page_number: int, page_size: int
 ) -> NoteImportPage:
     size = min(max(int(page_size), 1), MAX_IMPORT_REVIEW_PAGE_SIZE)
-    total = len(plan.items) if plan is not None else 0
-    page_count = max(1, (total + size - 1) // size)
+    ordered = _review_order(plan)
+    total = len(ordered)
+    pages = _paginate(ordered, size)
+    page_count = len(pages)
     number = min(max(int(page_number), 1), page_count)
-    start = (number - 1) * size
-    items = plan.items[start : start + size] if plan is not None else ()
+    items = pages[number - 1]
+    totals = Counter(item.classification.value for item in ordered)
+    run_sizes: Counter[tuple[str, ...]] = Counter()
+    for key, grouped in groupby(ordered, key=review_run_key):
+        run_sizes[key] += sum(1 for _ in grouped)
     return NoteImportPage(
         items=items,
         page_number=number,
@@ -271,6 +384,12 @@ def _page(
         page_count=page_count,
         has_previous=number > 1,
         has_next=number < page_count,
+        group_totals=tuple(
+            (classification.value, totals[classification.value])
+            for classification in REVIEW_CLASSIFICATION_ORDER
+            if totals[classification.value]
+        ),
+        run_totals=tuple(run_sizes.items()),
     )
 
 
@@ -490,9 +609,6 @@ def show_review(
     if type(plan) is not NoteImportPlan:
         raise TypeError("plan must be a NoteImportPlan.")
     collision = plan.root_collision
-    unresolved_collision = bool(
-        collision is not None and collision.collides and collision.choice is None
-    )
     renamed_root = bool(
         collision is not None
         and collision.choice is RootCollisionChoice.RENAMED_ROOT
@@ -507,18 +623,14 @@ def show_review(
         approved_plan=None,
         cancel_requested=False,
         decision_item_ids=frozenset(),
-        collision_rename_input=(
-            collision.resolved_label
-            if renamed_root
-            else collision.proposed_label
-            if unresolved_collision
-            else ""
-        ),
-        collision_rename_error=(
-            "That folder name already exists. Enter a different name."
-            if unresolved_collision
-            else ""
-        ),
+        # An unresolved collision leaves this empty on purpose (task-32262):
+        # pre-filling the name that already collides arms "Use another name"
+        # against a value that cannot resolve anything.
+        collision_rename_input=collision.resolved_label if renamed_root else "",
+        # task-32262: the rename field opened already painted red against a
+        # name the user had not touched. A validation error belongs to typed
+        # input; `set_collision_rename` raises it the moment there is any.
+        collision_rename_error="",
         revision=state.revision + 1,
     )
 
@@ -651,7 +763,10 @@ def begin_importing(state: NoteImportWorkflowSnapshot) -> NoteImportWorkflowSnap
         raise ValueError("An exact approved plan is required before importing.")
     progress = ImportExecutionProgress(
         state=ImportSessionState.PENDING,
-        total=len(state.plan.items),
+        # task-32258: this used to seed the bar with the review's SOURCE
+        # count, so the first real progress message moved the denominator
+        # under the reader. The ledger counts planned changes; so does this.
+        total=planned_plan_change_count(state.plan),
         completed=0,
         imported=0,
         updated=0,
@@ -721,6 +836,7 @@ def settle_import(
             state, min(receipt.skipped, MAX_RECEIPT_SKIPPED_ROWS)
         ),
         latest_resolved_links=resolved_wikilink_count(state.approved_plan.plan),
+        latest_source_count=len(state.approved_plan.plan.items),
         cancel_requested=False,
     )
 
@@ -732,7 +848,7 @@ def begin_retry(state: NoteImportWorkflowSnapshot) -> NoteImportWorkflowSnapshot
         state=ImportSessionState.PENDING,
         total=state.receipt.total
         if state.receipt is not None
-        else len(state.plan.items),
+        else planned_plan_change_count(state.plan),
         completed=0,
         imported=0,
         updated=0,
@@ -791,9 +907,7 @@ def project_library_note_import_snapshot(
             target_label=_target_label(effects.get(item.item_id)),
             effect_summary=_effect_summary(item),
             membership_summary=_membership_summary(item),
-            content_diff=(
-                effects[item.item_id].content_diff if item.item_id in effects else ""
-            ),
+            content_diff=_review_diff(item, effects.get(item.item_id)),
         )
         for item in state.page.items
     )
@@ -803,7 +917,10 @@ def project_library_note_import_snapshot(
     if state.phase is NoteImportPhase.CHECKING:
         status = f"◌ Checking {state.selected_count} selected source{'s' if state.selected_count != 1 else ''}…"
     elif state.phase is NoteImportPhase.REVIEW:
-        status = f"Review {state.page.total_items} item{'s' if state.page.total_items != 1 else ''} before import."
+        # task-32258: "66 items" above a progress bar reading "67 of 67" and
+        # a receipt reading "59 + 8" gave one import three bare numbers. Each
+        # surface now names its own unit; these are the sources being reviewed.
+        status = f"Review {state.page.total_items} source{'s' if state.page.total_items != 1 else ''} before import."
     elif state.phase is NoteImportPhase.IMPORTING:
         status = (
             "Stopping after the current item…"
@@ -839,6 +956,8 @@ def project_library_note_import_snapshot(
         preview_items=items,
         page=state.page.page_number,
         page_count=state.page.page_count,
+        group_totals=state.page.group_totals,
+        run_totals=state.page.run_totals,
         can_check=state.can_check,
         check_disabled_reason=(
             "Choose a source first."
@@ -858,11 +977,7 @@ def project_library_note_import_snapshot(
         collision_choice=collision.choice.value
         if collision and collision.choice
         else "",
-        collision_reason=(
-            "Choose how to handle the existing folder."
-            if collision and collision.collides and collision.choice is None
-            else ""
-        ),
+        collision_reason=_collision_reason(collision),
         collision_rename_input=state.collision_rename_input,
         collision_rename_error=state.collision_rename_error,
         collision_rename_available=bool(
@@ -876,12 +991,12 @@ def project_library_note_import_snapshot(
             if progress
             else ""
         ),
-        receipt_line=(
-            f"{receipt.imported} imported · {receipt.updated} updated · {receipt.skipped} skipped · {receipt.failed} failed"
-            if receipt
-            else ""
-        ),
-        receipt_detail=_receipt_detail(receipt, state.latest_resolved_links),
+        # task-32258: the receipt used to state one outcome three times --
+        # "Import completed." in the header, a counted line, then the same
+        # counts again in other words. The outcome is stated once, here; the
+        # quiet line below it reconciles the two denominators instead.
+        receipt_line=_receipt_outcome(receipt, state.latest_resolved_links),
+        receipt_detail=_receipt_detail(receipt, state.latest_source_count),
         skipped_count=receipt.skipped if receipt else 0,
         skipped_items=state.latest_skipped_items if receipt else (),
         resolved_links=state.latest_resolved_links if receipt else 0,
@@ -902,6 +1017,21 @@ def project_library_note_import_snapshot(
     )
 
 
+def _collision_reason(collision: RootCollisionState | None) -> str:
+    """Say what the chosen (or unchosen) collision resolution will do."""
+    if collision is None or not collision.collides:
+        return ""
+    if collision.choice is None:
+        return "Choose how to handle the existing folder."
+    if collision.choice is RootCollisionChoice.USE_EXISTING:
+        return "These notes will go into the folder that already exists."
+    label = collision.resolved_label or collision.proposed_label
+    return (
+        f"A folder with this name already exists. These notes will go into "
+        f"{label} instead — choose another option to change that."
+    )
+
+
 def _target_label(effect: NoteImportReviewEffect | None) -> str:
     if effect is None or not effect.target_title:
         return ""
@@ -916,6 +1046,27 @@ def _target_label(effect: NoteImportReviewEffect | None) -> str:
         else ""
     )
     return f"Existing note: {title}{version}."
+
+
+def _review_diff(
+    item: ImportPreviewItem,
+    effect: NoteImportReviewEffect | None,
+) -> str:
+    """Return the existing-note diff only where it governs this row's outcome.
+
+    task-32262: the diff compares the stored note to the raw source, while the
+    classification compares this source to the last import of it. On an
+    "Unchanged repeat" row those are different questions, and the answers
+    disagreed on screen -- "Content: no change." printed directly above a diff
+    showing a changed line, because the stored note carries rewritten links the
+    source file does not. The diff is shown on the one row it describes: the
+    one about to replace an existing note's content.
+    """
+    if effect is None or not effect.content_diff:
+        return ""
+    if item.selected_action is not ImportAction.UPDATE_EXISTING:
+        return ""
+    return effect.content_diff if item.replace_content else ""
 
 
 def _membership_summary(item: ImportPreviewItem) -> str:
@@ -960,6 +1111,20 @@ def _effect_summary(item: ImportPreviewItem) -> str:
             parts.append(f"keywords {shown}")
         if links:
             parts.append(f"{links} link{'' if links == 1 else 's'}")
+        # task-32262: `mood: ok` used to vanish with no row and no receipt
+        # line. Name the properties that do not survive the import.
+        dropped = tuple(
+            dict.fromkeys(
+                key
+                for payload in item.payloads
+                for key in payload.unimported_frontmatter_keys
+            )
+        )
+        if dropped:
+            shown = ", ".join(dropped[:4])
+            if len(dropped) > 4:
+                shown = f"{shown}, and {len(dropped) - 4} more"
+            parts.append(f"not imported: {shown}")
         return f"{' · '.join(parts)}."
     return (
         "Content: replace existing content."
@@ -1036,16 +1201,21 @@ def _skipped_items(
     )[:limit]
 
 
-def _receipt_detail(
+def _receipt_outcome(
     receipt: ImportExecutionReceipt | None,
     resolved_links: int = 0,
 ) -> str:
+    """State what this import did, once, in counted plain words.
+
+    Args:
+        receipt: The settled receipt, or None before one exists.
+        resolved_links: Obsidian links that found a note in the same batch.
+
+    Returns:
+        One sentence naming every non-zero outcome and its unit.
+    """
     if receipt is None:
         return ""
-    if receipt.state is ImportSessionState.CANCELLED:
-        return "Cancelled. Finished items were not rolled back."
-    if receipt.state is ImportSessionState.NEEDS_ATTENTION:
-        return "Some items failed. Completed changes were kept."
     # task-32130: "All planned items settled." named no outcome at all.
     counts = (
         (receipt.imported, "note", "created"),
@@ -1060,4 +1230,37 @@ def _receipt_detail(
         for count, noun, verb in counts
         if count
     ]
-    return " · ".join(["Import finished", *(parts or ["nothing changed"])])
+    return " · ".join(parts or ["Nothing changed"])
+
+
+def _receipt_detail(
+    receipt: ImportExecutionReceipt | None,
+    reviewed_sources: int = 0,
+) -> str:
+    """Reconcile the receipt's denominator with the one the review showed.
+
+    Args:
+        receipt: The settled receipt, or None before one exists.
+        reviewed_sources: How many sources the approved review listed.
+
+    Returns:
+        The caveat for an unfinished run, followed by the two denominators
+        stated together so they cannot read as a contradiction (task-32258).
+    """
+    if receipt is None:
+        return ""
+    caveat = (
+        "Cancelled. Finished items were not rolled back."
+        if receipt.state is ImportSessionState.CANCELLED
+        else "Some items failed. Completed changes were kept."
+        if receipt.state is ImportSessionState.NEEDS_ATTENTION
+        else ""
+    )
+    if not reviewed_sources:
+        return caveat
+    changes = (
+        f"{receipt.total} planned change"
+        f"{'' if receipt.total == 1 else 's'} from {reviewed_sources} reviewed "
+        f"source{'' if reviewed_sources == 1 else 's'}."
+    )
+    return f"{caveat} {changes}".strip()

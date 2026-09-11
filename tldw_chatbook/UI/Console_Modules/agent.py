@@ -151,7 +151,11 @@ from ...Agents.agent_models import (
     TERMINAL_RUN_STATUSES,
 )
 from ...Chat.cost_display import format_token_count
-from ...Chat.console_chat_models import ConsoleMessageRole
+from ...Chat.console_chat_models import (
+    ConsoleMessageRole,
+    console_pending_round_copy_for,
+)
+from ...Chat.console_glyphs import STATUS_GLYPHS
 from ...Widgets.Console.console_agent_steering_bar import (
     STEERING_STATE_HIDDEN,
     ConsoleAgentSteeringState,
@@ -175,13 +179,11 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: below -- one vocabulary, one place (agent.py:354/:457-463 in the PR2b
 #: seam map). Unknown/future statuses fall back to "●" wherever this is
 #: consulted via `.get(status, "●")`.
-_AGENT_STATUS_GLYPHS: Dict[str, str] = {
-    "done": "✓",
-    "running": "●",
-    "stuck": "⚠",
-    "error": "✗",
-    "cancelled": "✗",
-}
+#: TASK-32334: the fleet's status glyphs moved to the shared Console
+#: vocabulary (``Chat/console_glyphs.STATUS_GLYPHS``) so every rail section
+#: renders statuses with one glyph language. Same keys, same marks; the
+#: shared map additionally covers "blocked" (Environment/Tasks rows).
+_AGENT_STATUS_GLYPHS: Dict[str, str] = dict(STATUS_GLYPHS)
 
 #: TASK-31429: the rail's Agent status line ("Agent: running · step 3",
 #: "Sub-agent · done") carries its run status as the first word after the
@@ -395,6 +397,7 @@ def console_turn_activity_text(
     now: float,
     children: Sequence[Any] = (),
     pending_approval: bool = False,
+    pending_copy: str = "",
 ) -> str:
     """Return the live activity line for one in-flight Console turn.
 
@@ -413,7 +416,8 @@ def console_turn_activity_text(
     situation                    line
     ===========================  ==========================================
     pre-provider setup           ``Connecting tools… · <elapsed>``
-    approval round pending       ``Waiting for your approval · <elapsed>``
+    interrupt round pending      ``Waiting for your <approval|answer|
+                                 confirmation> · <elapsed>`` (by kind)
     a tool is running            ``⚙ <tool> · <elapsed>``
     between tools / after one    ``Thinking… · <elapsed>``
     running, no primary step     ``Generating…`` (today's copy, unchanged)
@@ -464,6 +468,13 @@ def console_turn_activity_text(
         pending_approval: Whether an approval-like round is outstanding for
             this session (``ConsoleChatController.has_pending_approval_
             round``) -- never inferred from a tool name.
+        pending_copy: Qodo #4 -- the waiting label for the KIND of round
+            actually outstanding (``console_chat_models.console_pending_
+            round_copy_for``): "Waiting for your answer" for an ask_user
+            question, "Waiting for your confirmation" for a skill-install/
+            skill-script/worktree-merge confirm. Empty (the default, and
+            every pre-existing caller) keeps the approval wording, which is
+            what this line said for all five kinds before.
 
     Returns:
         The line to render, or ``""`` when nothing is live.
@@ -500,10 +511,9 @@ def console_turn_activity_text(
             if started_at is not None
             else ""
         )
+        label = pending_copy or CONSOLE_TURN_ACTIVITY_WAITING_APPROVAL
         return (
-            f"{CONSOLE_TURN_ACTIVITY_WAITING_APPROVAL}{CONSOLE_TURN_ACTIVITY_SEPARATOR}{elapsed}"
-            if elapsed
-            else CONSOLE_TURN_ACTIVITY_WAITING_APPROVAL
+            f"{label}{CONSOLE_TURN_ACTIVITY_SEPARATOR}{elapsed}" if elapsed else label
         )
     if step is None or step.kind != STEP_TOOL_CALL:
         fleet = _fleet_turn_activity(children, now=now)
@@ -935,15 +945,24 @@ class ConsoleAgentController:
         # bare `SimpleNamespace(run_state=...)`, not the real controller.
         has_pending = getattr(controller, "has_pending_approval_round", None)
         pending_approval = False
+        pending_copy = ""
         if has_pending is not None:
             store = getattr(controller, "store", None)
             session_id = getattr(store, "active_session_id", None) if store else None
             pending_approval = bool(has_pending(session_id or ""))
+            if pending_approval:
+                # Qodo #4: which kind is waiting decides the wording -- a
+                # question card asked for an answer, not an approval. Same
+                # late-bound, double-tolerant lookup as the flag above.
+                pending_copy = console_pending_round_copy_for(
+                    controller, session_id or ""
+                )
         return console_turn_activity_text(
             snapshot,
             now=time.monotonic(),
             children=children,
             pending_approval=pending_approval,
+            pending_copy=pending_copy,
         )
 
     def console_turn_activity_abandon_action(self) -> str:

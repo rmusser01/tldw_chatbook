@@ -795,6 +795,61 @@ def test_an_outstanding_approval_round_overrides_the_bound_methods_own_line():
         pending_for="some-other-session",
     )
     assert "read_file" in not_pending.console_turn_activity()
+    # Qodo #4: the double above has no `pending_round_kinds` at all, which
+    # is the degrade path every partial controller takes -- it must keep
+    # saying what it said before kinds existed, not go blank.
+    assert pending.console_turn_activity().startswith(
+        CONSOLE_TURN_ACTIVITY_WAITING_APPROVAL
+    )
+
+
+def test_the_waiting_line_names_the_kind_of_decision_that_is_waiting():
+    """Qodo #4: the ◆-registry holds questions and confirms too.
+
+    The line said "Waiting for your approval" for all five interrupt kinds,
+    including an ask_user question the user is meant to ANSWER.
+    """
+
+    class _KindGateController(_GateController):
+        def __init__(self, *, kinds, **kwargs) -> None:
+            super().__init__(**kwargs)
+            self._kinds = kinds
+
+        @property
+        def _console_chat_controller(self):
+            base = super()._console_chat_controller
+            if base is None:
+                return None
+            kinds = self._kinds
+
+            class _Controller:
+                run_state = base.run_state
+                store = SimpleNamespace(active_session_id="sess-9")
+
+                @staticmethod
+                def has_pending_approval_round(session_id):
+                    return session_id == "sess-9"
+
+                @staticmethod
+                def pending_round_kinds(session_id):
+                    return frozenset(kinds) if session_id == "sess-9" else frozenset()
+
+            return _Controller()
+
+    bridge = _SnapshotBridge(_running_tool_snapshot())
+    for kinds, expected in (
+        (("question",), "Waiting for your answer"),
+        (("skill_install",), "Waiting for your confirmation"),
+        (("question", "approval"), CONSOLE_TURN_ACTIVITY_WAITING_APPROVAL),
+    ):
+        controller = _KindGateController(
+            run_status=ConsoleRunStatus.STREAMING,
+            bridge=bridge,
+            conversation_id="conv-7",
+            kinds=kinds,
+        )
+        line = controller.console_turn_activity()
+        assert line.startswith(expected), (kinds, line)
 
 
 @pytest.mark.parametrize(

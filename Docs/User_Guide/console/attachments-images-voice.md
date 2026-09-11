@@ -46,7 +46,8 @@ button appears for clearing what's staged. While dictating, a status chip
 No slash command attaches files. The **Attach context** action in the top
 control bar is different — it opens the "Console context" rail (source
 staging is done from Library — see [Context & RAG](context-and-rag.md)),
-not the file picker.
+not the file picker. (That control is labeled **Context rail** as of
+2026-09; older documentation called it "Attach context".)
 
 ### What "attach" actually does — images vs. everything else
 

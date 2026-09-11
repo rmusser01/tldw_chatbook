@@ -4673,3 +4673,171 @@ def test_human_prompt_defaults_pin_no_deadline():
     assert cc_module._DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS == 0.0
     assert cc_module._DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS == 0.0
     assert cc_module._DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS == 0.0
+
+
+# --- task-32280 (Qodo #2597 #8): a no-UI round is not a user's decision ----
+
+
+def test_a_no_app_round_reports_every_key_as_unanswered():
+    """`request_mcp_approvals` fails CLOSED with no app wired -- no card can
+    be shown, so nothing runs. But it returned a BARE dict, which
+    `approval_was_unanswered()` reads as "the user answered": both review
+    hooks then wrote `record_user_denial()`, so MCP and local audit rows
+    claimed a person pressed Deny on a card that was never displayed.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import (
+        ApprovalDecisions,
+        approval_was_unanswered,
+    )
+
+    controller, _ = _build_controller()
+    assert controller.app is None  # the branch under test
+
+    rows = [_pending(call_id="call-1"), _pending(llm_name="mcp__srv__other")]
+    decisions = controller.request_mcp_approvals(rows)
+
+    # Still fails closed -- the verdicts themselves are unchanged.
+    assert decisions == {"call-1": "deny", "mcp__srv__other": "deny"}
+    assert isinstance(decisions, ApprovalDecisions)
+    assert decisions.unresolved_keys == frozenset({"call-1", "mcp__srv__other"})
+    assert all(approval_was_unanswered(row, decisions) for row in rows)
+
+
+def test_a_no_app_round_does_not_record_a_user_denial_on_the_mcp_hook():
+    """The MCP review hook's end of the same bug: an unanswered round must
+    not reach `MCPToolProvider.record_user_denial`."""
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Chat.console_chat_controller import (
+        USER_DENIED_REFUSAL,
+        build_tool_review_hook,
+    )
+
+    controller, _ = _build_controller()
+    assert controller.app is None  # the branch under test
+
+    denials: list[str] = []
+
+    class _McpProvider:
+        def apply_batch_decisions(self, run_id, stamps):
+            pass
+
+        def pending_gate_for(self, name, args, call_id="", *, rationale=""):
+            return _pending(llm_name=name, call_id=call_id)
+
+        def record_user_denial(self, llm_name):
+            denials.append(llm_name)
+
+    class _BuiltinGate:
+        def begin_turn(self, run_id):
+            pass
+
+        def stamp(self, run_id, name, decision):
+            pass
+
+    class _BuiltinProvider:
+        def tool_for(self, name):
+            return None
+
+    hook = build_tool_review_hook(
+        _BuiltinGate(),
+        _BuiltinProvider(),
+        _McpProvider(),
+        controller.request_mcp_approvals,
+        workspace_id=None,
+    )
+    verdicts = hook(
+        [ToolCall(name="mcp__srv__tool", args={"a": 1}, call_id="call-1")], RUN
+    )
+
+    assert verdicts["call-1"] == USER_DENIED_REFUSAL.format(name="mcp__srv__tool")
+    assert denials == [], "a headless fail-closed deny was audited as the user's"
+@pytest.mark.asyncio
+async def test_the_approval_route_reaches_a_pending_skill_install_card():
+    """Qodo #5: the ◆ marker and the Alt+A / Review-approval route cover ALL
+    FIVE interrupt kinds, not just approvals and questions.
+
+    A pending skill-install (or skill-script) confirm registers in the same
+    round registry and marks the tab, but the route knew only approval and
+    question cards -- so clicking that tab, or pressing Alt+A, reached the
+    "No approval is pending." warning while its decision card sat mounted on
+    screen. What this pins is the routing decision: the route finds that card
+    and declines to warn. Where focus lands inside a card is the card's own
+    contract (`test_alt_a_focuses_the_pending_approval_decision_select`).
+
+    Synced WITHOUT an intervening pause on purpose: with no real round armed,
+    the controller's next projection tick clears the pending payload again.
+    """
+    app = _build_test_app()
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
+        async with app.run_test(size=(200, 40)) as pilot:
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                screen = app.screen
+                if isinstance(screen, ChatScreen) and screen.is_mounted:
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Production Console did not finish mounting")
+
+            notifications: list[tuple[str, str | None]] = []
+            app.notify = lambda message, **kwargs: notifications.append(
+                (str(message), kwargs.get("severity"))
+            )
+
+            screen.set_task_resume_state(
+                TaskResumeState(
+                    pending_skill_install={
+                        "url": "https://example.invalid/skill.zip",
+                        "request_id": "req-skill-focus",
+                    }
+                )
+            )
+            assert (
+                screen._first_displayed_console_decision_card(
+                    "#chat-skill-install-card"
+                )
+                is not None
+            )
+            # No approval batch exists, so this is exactly the state that used
+            # to fall through to the warning.
+            assert screen._console_pending_approval_count() == 0
+
+            assert screen._route_console_pending_approval_focus() is True
+            assert (CONSOLE_INSPECTOR_NO_APPROVAL_REASON, "warning") not in notifications
+
+
+@pytest.mark.asyncio
+async def test_a_route_with_nothing_pending_can_decline_to_warn():
+    """Qodo #5: a ◆ tab whose card is already gone must fall back to the
+    ordinary tab press, not warn -- so the shared route takes
+    `notify_missing=False` and reports whether it focused anything."""
+    app = _build_test_app()
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
+        async with app.run_test(size=(200, 40)) as pilot:
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                screen = app.screen
+                if isinstance(screen, ChatScreen) and screen.is_mounted:
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Production Console did not finish mounting")
+
+            notifications: list[tuple[str, str | None]] = []
+            app.notify = lambda message, **kwargs: notifications.append(
+                (str(message), kwargs.get("severity"))
+            )
+
+            assert screen._route_console_pending_approval_focus(
+                notify_missing=False
+            ) is False
+            assert notifications == []
+
+            # The default still warns -- the inspector button and Alt+A rely
+            # on it.
+            assert screen._route_console_pending_approval_focus() is False
+            assert (CONSOLE_INSPECTOR_NO_APPROVAL_REASON, "warning") in notifications

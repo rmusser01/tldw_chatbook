@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 from rich.markup import escape as escape_markup
@@ -208,6 +209,17 @@ _BUILTIN_CHECKBOX_KEYS: dict[str, str] = {
 # that method) rather than a second static table, so it cannot drift from
 # the enumerator that built the rows.
 _TOOL_GATE_ID_PREFIX = "mcp-gate-"
+
+
+def _tool_gate_label(title: str, enabled: bool) -> str:
+    """Render one gate Button's state-carrying label.
+
+    Qodo #2600 #15: factored out of `_gate_button()` because the press
+    handler repaints the SAME label optimistically -- two renderings of
+    "on"/"off" would be two chances to drift.
+    """
+    return f"{escape_markup(title)}: {'on' if enabled else 'off'} ▸"
+
 
 # task-3240 (spec §5) / task-32284: the adapted apply note -- NOT
 # `_builtin_toggle_widgets()`'s "next client launch" wording. These gates
@@ -1251,7 +1263,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         through the same `escape_markup` import).
         """
         return Button(
-            f"{escape_markup(gate.title)}: {'on' if gate.enabled else 'off'} ▸",
+            _tool_gate_label(gate.title, gate.enabled),
             id=f"{_TOOL_GATE_ID_PREFIX}{gate.key}",
             classes="console-action-secondary",
             compact=True,
@@ -1516,9 +1528,21 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             # from the same batch that built the label, never from the
             # widget (a Button has no value) or a fresh config read (which
             # could race the workbench's save/resync).
+            #
+            # Qodo #2600 #15: the cached `ToolGate` and the label are
+            # updated OPTIMISTICALLY, before the save is posted. Without
+            # that, a second press landing before the save/resync round
+            # trip re-read the stale `gate.enabled` and posted the SAME
+            # request again -- an accidental toggle could not be reversed
+            # until the first one finished. `MCPWorkbench._save_tool_gate()`
+            # resyncs on failure too, rebuilding these rows from
+            # `all_tool_gates()`, so a rejected write repaints the truth.
             event.stop()
+            requested = not gate.enabled
+            self._tool_gates_by_id[button_id] = replace(gate, enabled=requested)
+            event.button.label = _tool_gate_label(gate.title, requested)
             self.post_message(
-                self.ToolGateChanged(gate.section, gate.key, not gate.enabled)
+                self.ToolGateChanged(gate.section, gate.key, requested)
             )
             return
         if button_id == "mcp-add-server":

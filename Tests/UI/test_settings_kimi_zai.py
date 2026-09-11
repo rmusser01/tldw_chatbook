@@ -1,4 +1,4 @@
-"""Focused F9 Settings contracts for hosted Kimi and GLM providers."""
+"""Focused F4 Settings contracts for hosted Kimi and GLM providers."""
 
 from __future__ import annotations
 

@@ -520,6 +520,67 @@ def test_pending_gate_for_plain_ask_reason():
     assert pending.reason == "ask"
 
 
+def test_pending_gate_for_builtin_writer_carries_the_mutation_effect():
+    """Qodo #1 (task-32278): a mutating BUILT-IN reaching this provider path
+    rendered no blast radius at all.
+
+    `hub_tool_catalog.builtin_tools_from_inventory` hard-codes `tags=()` --
+    a load-bearing invariant for `permission_store.
+    BY_KEY_HASH_FREE_SERVER_KEYS`, not an oversight -- and the local MCP
+    manifest carries no risk metadata, so `approval_effects_for_tool` saw
+    nothing to derive from and `create_note`/`library_save_note` rows shipped
+    without the "Effects: may modify local data" line their write deserves.
+    Reads must stay unaffected.
+    """
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        format_approval_effects,
+    )
+
+    service = FakeMCPService(
+        inventory={
+            "tools": [
+                _tool_dict("library_save_note"),
+                _tool_dict("create_note"),
+                _tool_dict("library_list_notes"),
+            ]
+        }
+    )
+    provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
+    _compose(provider)
+    pending = {
+        entry.name.rsplit("__", 1)[-1]: provider.pending_gate_for(entry.id, {})
+        for entry in provider.list_catalog()
+    }
+
+    assert pending["library_save_note"].effects == ("mutates_local",)
+    assert pending["create_note"].effects == ("mutates_local",)
+    assert pending["library_list_notes"].effects == ()
+    # The card's own rendering, not just the tuple: this is the sentence the
+    # user reads before deciding.
+    assert format_approval_effects(
+        {"effects": pending["create_note"].effects}
+    ) == "Effects: may modify local data"
+    assert format_approval_effects({"effects": pending["library_list_notes"].effects}) == ""
+
+
+def test_builtin_writer_effect_never_changes_the_permission_layer():
+    """The effect recovery above is card copy ONLY.
+
+    Carrying real risk tags on a built-in `HubTool` instead would newly floor
+    it to `ask` on one resolver while `resolve_effective_state_by_key()`'s
+    `BY_KEY_HASH_FREE_SERVER_KEYS` exemption kept returning an un-floored
+    `allow` -- the divergence `Tests/MCP/test_hub_tool_catalog.py`'s tripwire
+    exists to catch. Pin that the shipped fix leaves `tags` empty.
+    """
+    service = FakeMCPService(inventory={"tools": [_tool_dict("library_save_note")]})
+    provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
+    _compose(provider)
+
+    tool, _state = provider._entry_by_llm_name[provider.list_catalog()[0].name]
+    assert tool.server_key == "builtin:tldw_chatbook"
+    assert tool.tags == ()
+
+
 def test_pending_gate_for_unknown_name_returns_none():
     provider = MCPToolProvider(
         service=FakeMCPService(), main_loop=asyncio.new_event_loop()

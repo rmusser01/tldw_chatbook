@@ -447,6 +447,7 @@ async def test_agent_next_send_reserves_the_live_library_schemas(
 @pytest.mark.asyncio
 async def test_agent_next_send_uses_selected_project_root_for_local_schemas(
     monkeypatch,
+    tmp_path,
 ) -> None:
     store = ConsoleChatStore()
     state = ProjectInstructionControlState(
@@ -459,7 +460,18 @@ async def test_agent_next_send_uses_selected_project_root_for_local_schemas(
         ephemeral=True,
         project_instruction_state=state,
     )
-    selected = object()
+    from tldw_chatbook.Chat.console_chat_controller import (
+        ProjectInstructionBindingSelection,
+    )
+    from Tests.console_provider_doubles import provider_resolution
+
+    selected = ProjectInstructionBindingSelection(
+        binding=SimpleNamespace(binding_id="binding-1"),
+        root=tmp_path,
+        locator_fingerprint="f" * 64,
+        allow_write=True,
+        root_identity=(),
+    )
     captured = []
     bridge = SimpleNamespace(
         native_tool_schemas=list,
@@ -467,7 +479,7 @@ async def test_agent_next_send_uses_selected_project_root_for_local_schemas(
             ProfileContextSnapshot.empty()
         ),
     )
-    resolution = SimpleNamespace(
+    resolution = provider_resolution(
         ready=True,
         provider="openai",
         execution_key="openai",

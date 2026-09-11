@@ -345,7 +345,7 @@ def test_dispatcher_forwards_explicit_credential_decision_without_value(
 
 
 def test_unserializable_payload_is_an_app_error_not_a_provider_rejection() -> None:
-    """task-32273: a client-side serialisation failure in request preparation
+    """task-32342: a client-side serialisation failure in request preparation
     must not be reported as an HTTP 400 the provider sent back."""
 
     from types import MappingProxyType

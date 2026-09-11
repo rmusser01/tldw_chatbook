@@ -3115,3 +3115,202 @@ def test_builder_defaults_keep_the_watcher_base_and_cap(tmp_path: Path) -> None:
 
     assert watcher._interval == 1.0
     assert watcher._max_interval == 10.0
+
+
+def _refusing_owner(tmp_path: Path):
+    from tldw_chatbook.Notes.notes_sync_runtime import build_notes_sync_runtime_owner
+
+    return build_notes_sync_runtime_owner(
+        notes_scope_service=NotesScopeService(
+            _CreatingLocalNotes("old"), None, folder_repository=_Folders()
+        ),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        database_path=tmp_path / "sync.sqlite3",
+        migrate_legacy=lambda: None,
+        local_user_id="user-1",
+        recovery_capacity_bytes=1024 * 1024,
+    )
+
+
+@pytest.mark.asyncio
+async def test_setup_refusal_names_its_reason_and_leaves_no_root_path_residue(
+    tmp_path: Path,
+) -> None:
+    """TASK-32243: a refused Check must not crash over its own named refusal."""
+
+    from tldw_chatbook.Notes.notes_sync_runtime import (
+        NotesSyncRootRefused,
+        NotesSyncRootSetup,
+    )
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "note.md").write_text("body", encoding="utf-8")
+    linked = tmp_path / "linked-vault"
+    linked.symlink_to(vault, target_is_directory=True)
+    owner = _refusing_owner(tmp_path)
+    await owner.start()
+    setup = NotesSyncRootSetup(
+        display_name="Linked",
+        canonical_path=str(linked),
+        note_scope_id="local_note",
+        direction=NotesSyncDirection.BIDIRECTIONAL,
+    )
+
+    with pytest.raises(NotesSyncRootRefused) as first:
+        await owner.review_setup(setup)
+
+    assert str(first.value) == "root_lease_unavailable"
+    assert first.value.reason_code == "root_link_or_reparse"
+    assert owner._root_paths == {}
+
+    # The same folder must reach the same decision a fresh session would reach,
+    # not `lasting_root_overlap` against the residue of the first attempt.
+    with pytest.raises(NotesSyncRootRefused) as second:
+        await owner.review_setup(setup)
+
+    assert second.value.reason_code == "root_link_or_reparse"
+    assert owner._root_paths == {}
+
+    review = await owner.review_setup(replace(setup, canonical_path=str(vault)))
+    assert review.root_id
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_root_discovery_refusal_names_its_count_and_dominant_reason(
+    tmp_path: Path,
+) -> None:
+    """TASK-32244: `root_discovery_incomplete` must not hide a per-file reason."""
+
+    from tldw_chatbook.Notes.notes_sync_runtime import (
+        NotesSyncRootRefused,
+        NotesSyncRootSetup,
+    )
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "ok.md").write_text("body", encoding="utf-8")
+    for name in ("locked-one.md", "locked-two.md"):
+        blocked = vault / name
+        blocked.write_text("body", encoding="utf-8")
+        blocked.chmod(0o444)
+    owner = _refusing_owner(tmp_path)
+    await owner.start()
+
+    with pytest.raises(NotesSyncRootRefused) as raised:
+        await owner.review_setup(
+            NotesSyncRootSetup(
+                display_name="Vault",
+                canonical_path=str(vault),
+                note_scope_id="local_note",
+                direction=NotesSyncDirection.BIDIRECTIONAL,
+            )
+        )
+
+    assert str(raised.value) == "root_discovery_incomplete"
+    assert "2 of 3" in raised.value.detail
+    assert "unsupported_metadata" in raised.value.detail
+    # The dominant gate must reach the caller, not only the detail string:
+    # every per-file gate lands on `root_discovery_incomplete`, and the UI
+    # cannot tell a permission refusal from a newline one without this.
+    assert raised.value.reason_code == "unsupported_metadata"
+    assert owner._root_paths == {}
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_root_discovery_refusal_carries_a_non_permission_dominant_reason(
+    tmp_path: Path,
+) -> None:
+    """TASK-32244: a newline refusal must not be reported as a permission one."""
+
+    from tldw_chatbook.Notes.notes_sync_runtime import (
+        NotesSyncRootRefused,
+        NotesSyncRootSetup,
+    )
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "ok.md").write_text("body", encoding="utf-8")
+    (vault / "mixed.md").write_bytes(b"alpha\r\nbeta\ngamma\n")
+    owner = _refusing_owner(tmp_path)
+    await owner.start()
+
+    with pytest.raises(NotesSyncRootRefused) as raised:
+        await owner.review_setup(
+            NotesSyncRootSetup(
+                display_name="Vault",
+                canonical_path=str(vault),
+                note_scope_id="local_note",
+                direction=NotesSyncDirection.BIDIRECTIONAL,
+            )
+        )
+
+    assert str(raised.value) == "root_discovery_incomplete"
+    assert raised.value.reason_code == "mixed_newlines"
+    assert "1 of 2" in raised.value.detail
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_setup_review_releases_the_lease_and_the_root_path(
+    tmp_path: Path,
+) -> None:
+    """TASK-32243: a cancelled Check must leave no residue either.
+
+    `except Exception` does not catch `CancelledError`, so a cancelled setup
+    review used to leak both `_root_paths` and the coordinator lease -- the
+    lock file stays held and the folder is then refused `passive_process` for
+    the rest of the session, which is worse than the bug this task fixed.
+    """
+
+    from tldw_chatbook.Notes.notes_sync_runtime import (
+        NotesSyncRootSetup,
+        NotesSyncRuntimeOwner,
+    )
+
+    store = NotesDeviceStateStore(tmp_path / "sync.sqlite3")
+    store.initialize()
+    store.set_setting(NotesSyncStoreSetting("cutover_marker", "notes-sync-cutover-v1"))
+    root_path = tmp_path / "setup-root"
+    root_path.mkdir()
+    coordinator = _Coordinator()
+    adapter = _MultiRootAdapter([_input(file_digest=_A, note_digest=_A)])
+    observing = asyncio.Event()
+
+    async def block_forever(_root: NotesSyncRootRecord) -> ReconciliationInput:
+        observing.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    adapter.observe_root = block_forever
+    owner = NotesSyncRuntimeOwner(
+        store=store,
+        migrate_legacy=lambda: None,
+        coordinator=coordinator,
+        adapter=adapter,
+        watcher_factory=lambda _schedule: _Watcher(),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+    )
+    await owner.start()
+    setup = NotesSyncRootSetup(
+        display_name="Research",
+        canonical_path=str(root_path),
+        note_scope_id="local_note",
+        direction=NotesSyncDirection.BIDIRECTIONAL,
+    )
+
+    review = asyncio.create_task(owner.review_setup(setup))
+    await observing.wait()
+    assert owner._root_paths != {}
+    review.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await review
+
+    assert owner._root_paths == {}
+    assert owner._leases == {}
+    assert coordinator.events[-1:] == ["lease-released"]
+    await owner.shutdown()

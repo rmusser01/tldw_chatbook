@@ -678,7 +678,16 @@ class InterruptRoundHost:
         if session_id is not None:
             add = getattr(self._seams, "add_pending_round", None)
             if add is not None:
-                add(session_id, round_id)
+                # Qodo #4: the badge does not care which kind is waiting, but
+                # the run chip and activity line do -- passing it here is
+                # what lets them say "Waiting for your answer" for a question
+                # instead of claiming an approval is pending. Optional by
+                # keyword so the many two-argument controller doubles keep
+                # working; `TypeError` means an older seam, not a bug.
+                try:
+                    add(session_id, round_id, kind=kind)
+                except TypeError:
+                    add(session_id, round_id)
             if not retained_decision:
                 is_head = self.park_round_payload(kind, round_id, payload)
         try:

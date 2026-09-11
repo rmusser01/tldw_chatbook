@@ -996,3 +996,68 @@ async def test_selected_server_group_sorts_first_in_the_catalog():
         assert [
             _row_texts(table, i)[0] for i in range(table.row_count)
         ] == ["list_characters", "fs_read", "fs_write"]
+
+
+@pytest.mark.asyncio
+async def test_two_presses_before_a_resync_request_opposite_values():
+    """Qodo #2600 #15: the master switch computed its next value from the
+    last `update_local_config()` value and did NOT update it before posting,
+    so a second press landing before the workbench's save/resync round trip
+    re-read the stale value and asked for the SAME state again -- an
+    accidental toggle could not be reversed until the save finished.
+
+    The cached value AND the Button label are now updated optimistically.
+    """
+    app = ToolsModeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        canvas.update_local_config(enabled=True, workspace_root="", visible=True)
+        await pilot.pause()
+        toggle = app.query_one("#mcp-tools-local-enabled", Button)
+
+        # No `update_local_config()` in between: the workbench's save is
+        # still in flight for both presses.
+        toggle.press()
+        await pilot.pause()
+        assert str(toggle.label) == "Local workspace, web, and Watchlists tools: off ▸"
+        toggle.press()
+        await pilot.pause()
+
+        requested = [
+            event.enabled
+            for event in app.events
+            if isinstance(event, MCPToolsMode.LocalToolsEnabledChanged)
+        ]
+        assert requested == [False, True]
+        assert str(toggle.label) == "Local workspace, web, and Watchlists tools: on ▸"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_save_repaints_the_master_switch_from_persisted_truth():
+    """The optimistic flip is only safe because the workbench calls
+    `update_local_config()` back with the PERSISTED value when a save fails
+    (`MCPWorkbench._refresh_local_tools_controls()`)."""
+    app = ToolsModeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        canvas.update_local_config(enabled=True, workspace_root="", visible=True)
+        await pilot.pause()
+        toggle = app.query_one("#mcp-tools-local-enabled", Button)
+
+        toggle.press()
+        await pilot.pause()
+        assert str(toggle.label) == "Local workspace, web, and Watchlists tools: off ▸"
+
+        # What the failure path does: hand back what is actually on disk.
+        canvas.update_local_config(enabled=True, workspace_root="", visible=True)
+        await pilot.pause()
+
+        assert str(toggle.label) == "Local workspace, web, and Watchlists tools: on ▸"
+        toggle.press()
+        await pilot.pause()
+        requested = [
+            event.enabled
+            for event in app.events
+            if isinstance(event, MCPToolsMode.LocalToolsEnabledChanged)
+        ]
+        assert requested[-1] is False

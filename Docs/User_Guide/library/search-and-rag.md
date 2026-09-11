@@ -850,3 +850,9 @@ Providers & Models." — plus an "Open Settings ▸ Providers" button, instead o
 six lines naming an env var, a TOML table and an "Owner"; the structured
 record moved to the log. The Sources toggles read "☐/☑", not "○/✓".
 Live-verified at 235x52 and 100x30 on a profile with no provider.)*
+
+*Verified against fix/library-crit10-docs — 2026-09-11 (task-32366: 14
+critique-10 claims reconciled; surface fixes in task-32346, 32348, 32349,
+32354, 32355). The "mode: ✓ Search ⇄ RAG Answer" toggle this page documents
+was re-checked live at 235x52 and is the first control on the canvas — the
+critique row claiming it does not exist was wrong, and nothing here changed.*

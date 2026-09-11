@@ -10144,13 +10144,21 @@ async def test_summary_primary_first_run_exit_buttons_set_expected_routes():
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        # task-32072 added "Add your first document" and task-32140 added
+        # "Write your first note"; the Summary has offered five exits across
+        # two docked rows since. The ordered label list below is the real
+        # contract (it pins the reading order too) -- keep it exhaustive.
         assert {b.id for b in step.query(Button)} == {
             "setup-exit-chat",
+            "setup-exit-library",
+            "setup-exit-library-notes",
             "setup-exit-home",
             "setup-exit-settings",
         }
         assert [str(button.label) for button in step.query(Button)] == [
             "Review provider setup",
+            "Add your first document",
+            "Write your first note",
             "Explore Home",
             "Review settings",
         ]
@@ -10199,13 +10207,19 @@ async def test_summary_primary_rerun_complete_actions_start_chatting():
             ):
                 break
             await pilot.pause(0.05)
+        # Same five exits as the first-run case (task-32072, task-32140);
+        # only the primary's label differs on a complete rerun.
         assert {b.id for b in step.query(Button)} == {
             "setup-exit-chat",
+            "setup-exit-library",
+            "setup-exit-library-notes",
             "setup-exit-home",
             "setup-exit-settings",
         }
         assert [str(button.label) for button in step.query(Button)] == [
             "Start chatting",
+            "Add your first document",
+            "Write your first note",
             "Explore Home",
             "Review settings",
         ]
@@ -11341,9 +11355,15 @@ def test_read_class_tool_copy_mentions_per_call_approval():
     task-32284 moved the wizard's private `_TOOL_COPY` table onto
     `_GATEABLE_BUILTINS` (see `test_tools_step_copy_comes_from_the_shared_
     gate_table` below), so this reads the catalog blurbs instead.
+
+    task-32284 (Qodo #2594 #6): "Asks you each time before running" was a
+    promise the approval card breaks on purpose -- "Approve for session"
+    and "Always allow" are right there on it. The sentence now names that
+    longer scope instead of denying it exists.
     """
     from tldw_chatbook.Agents.tool_catalog import gateable_builtin_tools
 
+    sentence = "Asks before running unless you approve a longer scope."
     blurbs = {t.tool_name: t.blurb for t in gateable_builtin_tools()}
 
     for tool_name in (
@@ -11354,10 +11374,11 @@ def test_read_class_tool_copy_mentions_per_call_approval():
         "expand_document",
     ):
         desc = blurbs[tool_name]
-        assert "asks you each time" in desc.lower(), (tool_name, desc)
+        assert desc.endswith(f" {sentence}"), (tool_name, desc)
 
     for tool_name in ("write_file", "create_note", "update_note"):
         desc = blurbs[tool_name]
+        assert sentence not in desc, (tool_name, desc)
         assert "asks you each time" not in desc.lower(), (tool_name, desc)
 
 

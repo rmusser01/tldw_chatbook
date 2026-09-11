@@ -223,8 +223,8 @@ async def test_non_reusable_route_still_gets_fresh_instances(
         await _boot_settled(app)
         await _settle(pilot, passes=20)
 
-        await _press_until_screen(pilot, "f9", "SettingsScreen")
+        await _press_until_screen(pilot, "f4", "SettingsScreen")
         first_settings = app.screen
         await _press_until_screen(pilot, "ctrl+1", "HomeScreen")
-        await _press_until_screen(pilot, "f9", "SettingsScreen")
+        await _press_until_screen(pilot, "f4", "SettingsScreen")
         assert app.screen is not first_settings

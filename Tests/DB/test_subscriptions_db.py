@@ -866,7 +866,7 @@ def test_get_url_snapshots_returns_empty_when_none_exist(db):
     assert rows == []
 
 
-# --- task-32274: schema_version tolerates the current row beside stale ones ---
+# --- task-32343: schema_version tolerates the current row beside stale ones ---
 #
 # Live evidence: a scratch profile's schema_version table ended up holding
 # rows [1, 2] after an abnormal app exit (the fresh-create path's
@@ -959,21 +959,31 @@ def test_schema_version_zero_raises_actionable_error(tmp_path):
     assert "[0]" in str(exc_info.value)
 
 
-def test_schema_version_current_plus_newer_unknown_row_normalizes_to_current(tmp_path):
-    """[2, 3]: the current version is present beside a *newer* unknown row
-    (not just older/stale ones) -- the "current version wins" normalization
-    must not care which direction the extra row skews.
+def test_schema_version_current_plus_newer_unknown_row_is_refused_untouched(tmp_path):
+    """[2, 3]: a *newer* marker beside the current one must be refused, not
+    normalized away (Qodo #4 on PR #2586).
+
+    Deleting the 3 would relabel a future database as version 2 and then run
+    this build's assumptions over schema and data it has never seen. The
+    direction of the extra row is exactly what matters: [1, 2] (older, above)
+    still normalizes.
     """
     path = tmp_path / "current-plus-newer.db"
     _seed_schema_version(path, [_CURRENT_SCHEMA_VERSION, 3])
 
-    db = SubscriptionsDB(path)
-    try:
-        assert [row[0] for row in db.conn.execute("SELECT version FROM schema_version")] == [
-            _CURRENT_SCHEMA_VERSION
+    with pytest.raises(SubscriptionError) as exc_info:
+        SubscriptionsDB(path)
+
+    message = str(exc_info.value)
+    assert str(path) in message
+    assert f"[{_CURRENT_SCHEMA_VERSION}, 3]" in message
+
+    # The refusal touched nothing: both rows are still on disk.
+    with closing(sqlite3.connect(path)) as conn:
+        assert [row[0] for row in conn.execute("SELECT version FROM schema_version")] == [
+            _CURRENT_SCHEMA_VERSION,
+            3,
         ]
-    finally:
-        db.close()
 
 
 def test_reopening_a_freshly_migrated_v1_db_does_not_produce_two_rows(tmp_path):

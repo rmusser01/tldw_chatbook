@@ -1415,8 +1415,14 @@ class LibraryNotesController:
         # task-32133 AC#2: a blank note this fresh reads "Saved" before a
         # single character is typed -- true of the empty seed record, but
         # not of anything the user has asked to keep.
+        #
+        # task-32358 (critique #10): the row is already committed here --
+        # that is what ``_library_note_pending_blank_gc_id`` exists to clean
+        # up (LIB-14) -- so "Draft — not saved yet" contradicted the list and
+        # the rail count on screen beside it. What is true is that an empty
+        # note will not survive being abandoned.
         if self._library_note_is_pending_blank():
-            return "Draft — not saved yet"
+            return "Empty note — type to keep it"
         if self._library_note_autosave_state == "saving" or snapshot.saving:
             return "Saving…"
         if snapshot.in_conflict:
@@ -2381,9 +2387,24 @@ class LibraryNotesController:
         preferences: AdaptiveReaderLayoutPreferences,
     ) -> AdaptiveReaderLayoutPreferences:
         """Derive the Library-only work-first override."""
+        if self._import_review_owns_the_pane():
+            # task-32250 AC#6: approving 59 database writes is the task in
+            # hand. The review used to get about 120 of 235 columns -- and
+            # spend the loss on the row's own outcome clause -- while the
+            # Notes list it is not about kept its share.
+            return dataclasses.replace(
+                preferences, library_open=False, items_open=False
+            )
         if self._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE:
             return dataclasses.replace(preferences, library_open=False)
         return preferences
+
+    def _import_review_owns_the_pane(self) -> bool:
+        """Return whether Import once is mid-decision in the work pane."""
+        if self._library_notes_view != "import":
+            return False
+        snapshot = getattr(self, "_library_note_import_snapshot", None)
+        return getattr(snapshot, "phase", "") in {"review", "importing"}
     def _set_library_notes_source(
         self,
         source: Literal["database", "files"],
@@ -2869,8 +2890,32 @@ class LibraryNotesController:
         if explicit_stage_intent:
             self._library_notes_explicit_stage_intent = False
     async def action_library_notes_new(self) -> None:
-        """Open Create only after the active canonical draft flushes."""
+        """Create a blank note and open it, once the active draft flushes.
+
+        task-32356 (critique #10, A cap 10): both keys bound to this action
+        (`n` and `ctrl+n`, task-32138) used to land on the Create canvas --
+        a nine-option chooser whose answer is Blank note nearly every time.
+        They now create that note directly and land in its editor.
+
+        The Create ROUTE is still selected first, exactly as before, and
+        only the press it was waiting for is supplied here. That route owns
+        guards this action must not re-implement: the File Notes flush and
+        transition admission, the database-source normalization Create
+        needs, and the Notes session's own exit flush -- each of which can
+        REFUSE. A refusal leaves the selected row where it was, which is
+        the condition checked below: a failed flush must keep the reader in
+        the editor with their unsaved text, never silently swap it for a
+        new empty note (``test_library_note_shortcut_navigation_cannot_
+        bypass_failed_flush``).
+
+        The Create canvas keeps the templates and stays one press away on
+        the rail's ``Create > New note`` row, the Notes list's ``New``
+        button and the landing hub's ``New note`` action.
+        """
         await self._select_library_rail_row(LIBRARY_ROW_CREATE_NOTE)
+        if self._library_selected_row_id != LIBRARY_ROW_CREATE_NOTE:
+            return
+        self._start_library_blank_note()
     def action_library_notes_focus_filter(self) -> None:
         """Focus Navigator Filter without claiming literal input keystrokes."""
         self._focus_library_notes_filter_input()
@@ -4562,6 +4607,7 @@ class LibraryNotesController:
         self, snapshot: LibraryNoteImportSnapshot
     ) -> None:
         """Retain completion while patching the DOM only on its visible route."""
+        owned_before = self._import_review_owns_the_pane()
         self._library_note_import_snapshot = snapshot
         if (
             self.is_mounted
@@ -4569,6 +4615,10 @@ class LibraryNotesController:
             and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
             and self._library_notes_view == "import"
         ):
+            # Entering or leaving the review changes who owns the pane
+            # (task-32250 AC#6), and only this seam sees that transition.
+            if self._import_review_owns_the_pane() != owned_before:
+                self._sync_library_notes_reader_layout_from_shell()
             _sync_library_canvas(self, "notes")
     def _refresh_after_library_note_import(self) -> None:
         """Refresh local list/count and folder tree after execution settles."""
@@ -5595,6 +5645,16 @@ class LibraryNotesController:
             event: Button press event emitted by the "Blank note" action.
         """
         event.stop()
+        self._start_library_blank_note()
+
+    def _start_library_blank_note(self) -> None:
+        """Commit and open one blank note, from the button or from the key.
+
+        task-32356: the Blank note button and ``action_library_notes_new``
+        (`n`/`ctrl+n`) are the same create, so they share one body rather
+        than growing a second copy that can drift from the create token and
+        the mutation interlock.
+        """
         create_token = self._begin_library_note_create()
         if create_token is None:
             return

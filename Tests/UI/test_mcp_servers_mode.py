@@ -1845,3 +1845,91 @@ def test_named_items_text_truncates_at_named_items_cap():
     text = _named_items_text(items, key="name")
     assert text.startswith("10: tool0, tool1, tool2, tool3, tool4, tool5, tool6, tool7")
     assert text.endswith("… +2 more")
+
+
+@pytest.mark.asyncio
+async def test_two_gate_presses_before_a_resync_request_opposite_values(monkeypatch):
+    """Qodo #2600 #15: a gate row computed its next value from the cached
+    `ToolGate` that built its label, but did NOT update that cache before
+    posting -- so a second press landing before the workbench's save/resync
+    round trip re-read the stale `gate.enabled` and asked for the SAME state
+    again. An accidental toggle could not be reversed until the save
+    finished.
+
+    The cached gate AND the Button label are now updated optimistically;
+    `MCPWorkbench._save_tool_gate()` resyncs on failure too, so a rejected
+    write still repaints the persisted truth.
+    """
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
+
+    entry = next(e for e in _GATEABLE_BUILTINS if e.tool_name == "read_file")
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: False,
+    )
+
+    app = CanvasApp()
+    async with app.run_test(size=(100, 30)) as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.show_detail(builtin_readiness(enabled=True))
+        await pilot.pause()
+
+        row = app.query_one(f"#mcp-gate-{entry.gate_key}", Button)
+        assert str(row.label) == f"{entry.title}: off ▸"
+
+        # No `show_detail()` rebuild in between: the save is still in flight.
+        row.press()
+        await pilot.pause()
+        assert str(row.label) == f"{entry.title}: on ▸"
+        row.press()
+        await pilot.pause()
+
+        assert [(e.key, e.value) for e in app.events] == [
+            (entry.gate_key, True),
+            (entry.gate_key, False),
+        ]
+        assert str(row.label) == f"{entry.title}: off ▸"
+
+
+@pytest.mark.asyncio
+async def test_a_gate_rebuild_repaints_an_optimistic_flip_the_save_rejected(
+    monkeypatch,
+):
+    """The optimistic flip above is only safe because the rebuild
+    (`show_detail()` -> `_rebuild_tool_gate_buttons()` -> `all_tool_gates()`)
+    reads persisted config -- which is what `MCPWorkbench._save_tool_gate()`
+    now runs on its FAILURE paths too, not just on success."""
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
+
+    entry = next(e for e in _GATEABLE_BUILTINS if e.tool_name == "read_file")
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: False,
+    )
+
+    app = CanvasApp()
+    async with app.run_test(size=(100, 30)) as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.show_detail(builtin_readiness(enabled=True))
+        await pilot.pause()
+
+        app.query_one(f"#mcp-gate-{entry.gate_key}", Button).press()
+        await pilot.pause()
+        assert (
+            str(app.query_one(f"#mcp-gate-{entry.gate_key}", Button).label)
+            == f"{entry.title}: on ▸"
+        )
+
+        # The save failed -- nothing was persisted, so the resync rebuild
+        # must put the row back to "off".
+        await canvas.show_detail(builtin_readiness(enabled=True))
+        await pilot.pause()
+
+        assert (
+            str(app.query_one(f"#mcp-gate-{entry.gate_key}", Button).label)
+            == f"{entry.title}: off ▸"
+        )

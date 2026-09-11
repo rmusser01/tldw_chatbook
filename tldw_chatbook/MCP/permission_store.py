@@ -617,6 +617,31 @@ def _normalize_payload_shape(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _profile_chain_ids(payload: dict[str, Any], profile_id: str) -> list[str]:
+    """The profile IDS ``_profile_chain`` resolves, most specific first.
+
+    The chain's own membership rule, factored out (task-32281, Qodo #2597
+    #1) so a reader that must REPORT which profile a resolved entry came
+    from -- ``MCPPermissionStore.list_tool_arg_rules`` -- walks exactly
+    the same profiles authorization does instead of a second, drifting
+    copy of the rule.
+
+    Args:
+        payload: A permission-store payload dict (raw is fine).
+        profile_id: The profile being resolved.
+
+    Returns:
+        Non-empty list of profile ids, most specific first; the default
+        profile is always last.
+    """
+    profiles = _as_mapping(payload.get("profiles"))
+    ids: list[str] = []
+    if profile_id != _DEFAULT_PROFILE_ID and _as_mapping(profiles.get(profile_id)):
+        ids.append(profile_id)
+    ids.append(_DEFAULT_PROFILE_ID)
+    return ids
+
+
 def _profile_chain(payload: dict[str, Any], profile_id: str) -> list[dict[str, Any]]:
     """Return the profile-resolution chain for ``profile_id``.
 
@@ -637,13 +662,10 @@ def _profile_chain(payload: dict[str, Any], profile_id: str) -> list[dict[str, A
         Non-empty list of profile dicts, most specific first.
     """
     profiles = _as_mapping(payload.get("profiles"))
-    chain: list[dict[str, Any]] = []
-    if profile_id != _DEFAULT_PROFILE_ID:
-        named = _as_mapping(profiles.get(profile_id))
-        if named:
-            chain.append(named)
-    chain.append(_as_mapping(profiles.get(_DEFAULT_PROFILE_ID)))
-    return chain
+    return [
+        _as_mapping(profiles.get(chain_id))
+        for chain_id in _profile_chain_ids(payload, profile_id)
+    ]
 
 
 def _lifecycle_resolution_block(
@@ -1535,26 +1557,40 @@ class MCPPermissionStore:
         """
         if definition_hash is None and server_key not in HASH_FREE_SERVER_KEYS:
             raise ValueError("definition_hash is required for an arg rule")
-        self.ensure_profile(profile_id)
-        payload = self.load()
-        profile = payload.setdefault("profiles", {}).setdefault(profile_id, {})
-        entry = (
-            profile.setdefault("servers", {})
-            .setdefault(server_key, {})
-            .setdefault("tools", {})
-            .setdefault(tool_name, {})
-        )
-        rules = entry.setdefault("arg_rules", [])
-        rule = {
-            "args_json": _canonical_args_json(args),
-            "definition_hash": definition_hash,
-            "created_at": _iso_utc_now(),
-        }
-        if rule["args_json"] not in {
-            existing.get("args_json") for existing in rules if isinstance(existing, Mapping)
-        }:
+
+        def change(profile: dict[str, Any]) -> bool:
+            entry = (
+                profile.setdefault("servers", {})
+                .setdefault(server_key, {})
+                .setdefault("tools", {})
+                .setdefault(tool_name, {})
+            )
+            rules = entry.setdefault("arg_rules", [])
+            rule = {
+                "args_json": _canonical_args_json(args),
+                "definition_hash": definition_hash,
+                "created_at": _iso_utc_now(),
+            }
+            if rule["args_json"] in {
+                existing.get("args_json")
+                for existing in rules
+                if isinstance(existing, Mapping)
+            }:
+                return False
             rules.append(rule)
-        self.save(payload)
+            return True
+
+        # Qodo #2600 #13: fenced like `set_tool_state`, not a bare
+        # load/mutate/save -- the old shape let a concurrent permission
+        # write land between this method's own load and save and be
+        # discarded by it. `_mutate_profile_locked` also seeds the profile
+        # (what the removed `ensure_profile()` call did) INSIDE the fence.
+        self._mutate_profile_locked(
+            profile_id,
+            change,
+            expected_profile_digest=None,
+            expected_revision=None,
+        )
 
     def list_tool_arg_rules(
         self,
@@ -1563,51 +1599,64 @@ class MCPPermissionStore:
         *,
         profile_id: str = _DEFAULT_PROFILE_ID,
     ) -> list[dict[str, Any]]:
-        """List one tool's stored exact-input allow rules (task-32281).
+        """List the exact-input allow rules in force for one tool (task-32281).
 
-        Reads ONE profile's stored entry directly -- no inheritance-chain
-        walk (mirrors ``add_tool_arg_rule``'s own single-profile write,
-        not ``arg_rule_allows``'s chain read) -- a rule only ever exists
-        where ``add_tool_arg_rule`` wrote it. Hand-written ``{"field":
-        ..., "pattern": ...}`` glob rules are never returned: this surface
-        is scoped to the exact-input rules the approval card creates
-        (``args_json`` present).
+        Walks the SAME ``_profile_chain`` ``arg_rule_allows`` authorizes
+        against, and stops at the first profile carrying rules for this
+        tool -- exactly that resolver's shadowing rule. Qodo #2597 #1: this
+        used to read the selected profile ONLY, so a child profile
+        inheriting a rule from ``default`` showed no rule and no Remove
+        control while the rule kept quieting real calls. Every returned
+        rule therefore names its OWNING profile, which is the profile
+        ``remove_tool_arg_rule`` must be pointed at to actually delete it.
+
+        Hand-written ``{"field": ..., "pattern": ...}`` glob rules are
+        never returned: this surface is scoped to the exact-input rules
+        the approval card creates (``args_json`` present).
 
         Args:
             server_key: Owning server's stable key.
             tool_name: Tool name within that server.
-            profile_id: Profile to read.
+            profile_id: Profile being reviewed; its inheritance chain is
+                walked, not just the profile itself.
 
         Returns:
             One dict per rule, oldest first, each carrying ``rule_id``
             (the rule's canonical ``args_json`` -- unique per tool by
             construction, see ``add_tool_arg_rule``'s own dedup, and the
             same string ``remove_tool_arg_rule`` matches against),
-            ``args_json``, and ``created_at``.
+            ``args_json``, ``created_at``, and ``profile_id`` (the OWNING
+            profile, which is ``profile_id`` for a rule stored here and an
+            ancestor's id for an inherited one).
         """
         payload = self.load()
-        profile = payload.get("profiles", {}).get(profile_id)
-        tool_entry = self._tool_entry(profile, server_key, tool_name)
-        if tool_entry is None:
-            return []
-        rules = tool_entry.get("arg_rules")
-        if not isinstance(rules, list):
-            return []
-        result: list[dict[str, Any]] = []
-        for rule in rules:
-            if not isinstance(rule, Mapping):
-                continue
-            args_json = rule.get("args_json")
-            if not isinstance(args_json, str) or not args_json:
-                continue
-            result.append(
-                {
-                    "rule_id": args_json,
-                    "args_json": args_json,
-                    "created_at": rule.get("created_at"),
-                }
+        profiles = payload.get("profiles", {})
+        for owner_id in _profile_chain_ids(payload, profile_id):
+            tool_entry = self._tool_entry(
+                profiles.get(owner_id), server_key, tool_name
             )
-        return result
+            if tool_entry is None:
+                continue
+            rules = tool_entry.get("arg_rules")
+            if not isinstance(rules, list) or not rules:
+                continue
+            # A profile carrying ANY rules for this tool ends the walk,
+            # shadowing its ancestors -- `arg_rule_allows`'s own `return
+            # False` after the first such profile. Listing an ancestor's
+            # inert rules below it would advertise a rule that cannot fire.
+            return [
+                {
+                    "rule_id": rule["args_json"],
+                    "args_json": rule["args_json"],
+                    "created_at": rule.get("created_at"),
+                    "profile_id": owner_id,
+                }
+                for rule in rules
+                if isinstance(rule, Mapping)
+                and isinstance(rule.get("args_json"), str)
+                and rule.get("args_json")
+            ]
+        return []
 
     def remove_tool_arg_rule(
         self,
@@ -1619,58 +1668,68 @@ class MCPPermissionStore:
     ) -> bool:
         """Delete one exact-input allow rule (task-32281).
 
-        Mirrors ``add_tool_arg_rule``'s direct load/mutate/save shape --
-        no CAS, matching its writer rather than ``set_tool_state``'s
-        guarded one (arg rules aren't profile-CAS-protected anywhere else
-        in this store either). ``rule_id`` is the rule's canonical
-        ``args_json``, the same string ``list_tool_arg_rules`` returns as
-        ``rule_id``.
+        Qodo #2600 #13: runs load -> remove -> validate -> save under
+        ``_mutate_profile_locked``, the same guarded mutation fence
+        ``set_tool_state`` uses (``add_tool_arg_rule`` now does too). The
+        previous bare load/mutate/save could save a stale payload over a
+        permission write that landed in between and silently discard it.
+
+        ``rule_id`` is the rule's canonical ``args_json``, the same string
+        ``list_tool_arg_rules`` returns as ``rule_id``. ``profile_id`` must
+        be the rule's OWNING profile -- the ``profile_id`` that listing
+        reports, which for an inherited rule is an ANCESTOR of the profile
+        being reviewed, not the reviewed profile itself.
 
         Returns:
             True only when a rule was actually removed -- a stale or
             unknown ``rule_id`` is a no-op, not an error.
         """
-        payload = self.load()
-        profile = payload.get("profiles", {}).get(profile_id)
-        if not isinstance(profile, Mapping):
-            return False
-        server_entry = _as_mapping(profile.get("servers")).get(server_key)
-        if not isinstance(server_entry, Mapping):
-            return False
-        tools = server_entry.get("tools")
-        if not isinstance(tools, Mapping):
-            return False
-        tool_entry = tools.get(tool_name)
-        if not isinstance(tool_entry, Mapping):
-            return False
-        rules = tool_entry.get("arg_rules")
-        if not isinstance(rules, list):
-            return False
-        remaining = [
-            rule
-            for rule in rules
-            if not (isinstance(rule, Mapping) and rule.get("args_json") == rule_id)
-        ]
-        if len(remaining) == len(rules):
-            return False
-        if remaining:
-            tool_entry["arg_rules"] = remaining
-        else:
-            tool_entry.pop("arg_rules", None)
-            if not tool_entry:
-                # Review round 1 (Critical): a state-less tool entry (only
-                # ever had arg_rules, e.g. an "always allow this exact
-                # input" with no whole-tool override) left an empty `{}`
-                # behind, which `_validate_strict_profile()` rejects (it
-                # requires "state" OR "arg_rules") -- that invalidated the
-                # WHOLE profile for `read_snapshot_strict()`/`read_profile_
-                # inventory_snapshot()` callers the moment the LAST rule
-                # was removed. Drop only the empty tool entry itself --
-                # never cascades to `tools`/`server_entry`, which may still
-                # carry sibling tools or a server-level default.
-                tools.pop(tool_name, None)
-        self.save(payload)
-        return True
+
+        def change(profile: dict[str, Any]) -> bool:
+            server_entry = _as_mapping(profile.get("servers")).get(server_key)
+            if not isinstance(server_entry, Mapping):
+                return False
+            tools = server_entry.get("tools")
+            if not isinstance(tools, Mapping):
+                return False
+            tool_entry = tools.get(tool_name)
+            if not isinstance(tool_entry, Mapping):
+                return False
+            rules = tool_entry.get("arg_rules")
+            if not isinstance(rules, list):
+                return False
+            remaining = [
+                rule
+                for rule in rules
+                if not (isinstance(rule, Mapping) and rule.get("args_json") == rule_id)
+            ]
+            if len(remaining) == len(rules):
+                return False
+            if remaining:
+                tool_entry["arg_rules"] = remaining
+            else:
+                tool_entry.pop("arg_rules", None)
+                if not tool_entry:
+                    # Review round 1 (Critical): a state-less tool entry
+                    # (only ever had arg_rules, e.g. an "always allow this
+                    # exact input" with no whole-tool override) left an
+                    # empty `{}` behind, which `_validate_strict_profile()`
+                    # rejects (it requires "state" OR "arg_rules") -- that
+                    # invalidated the WHOLE profile for `read_snapshot_
+                    # strict()`/`read_profile_inventory_snapshot()` callers
+                    # the moment the LAST rule was removed. Drop only the
+                    # empty tool entry itself -- never cascades to
+                    # `tools`/`server_entry`, which may still carry sibling
+                    # tools or a server-level default.
+                    tools.pop(tool_name, None)
+            return True
+
+        return self._mutate_profile_locked(
+            profile_id,
+            change,
+            expected_profile_digest=None,
+            expected_revision=None,
+        )
 
     @staticmethod
     def _tool_entry(

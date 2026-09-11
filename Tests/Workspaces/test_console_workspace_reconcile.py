@@ -225,6 +225,16 @@ class _RealActivateStub(_Stub):
     def _default_console_session_settings(self):
         return None
 
+    def _blank_console_session_settings(self):
+        # The real activation path creates the workspace blank chat from
+        # config-owned defaults (formerly `_default_console_session_settings`);
+        # an unmounted stub has no config, so a plain None matches this
+        # stub's historical settings shape.
+        return None
+
+    def _console_new_chat_default_generation(self):
+        return 0
+
 
 class _RealStoreCoreStub(_RealActivateStub):
     """Make core sync exercise the real store's active-session invariant."""

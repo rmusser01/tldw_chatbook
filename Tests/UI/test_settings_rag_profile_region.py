@@ -95,7 +95,7 @@ class _FakeApp:
 async def test_library_rag_renders_future_console_policy_defaults_separately(
     monkeypatch, tmp_path
 ):
-    """The canonical F9 surface keeps both policy axes distinct from mode."""
+    """The canonical F4 surface keeps both policy axes distinct from mode."""
     _wire_rag_profile_adapter(monkeypatch, tmp_path)
     app = _build_test_app()
     host = DestinationHarness(app, "settings")

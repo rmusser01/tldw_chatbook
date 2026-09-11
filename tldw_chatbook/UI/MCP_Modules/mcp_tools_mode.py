@@ -658,10 +658,22 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
             # `_local_tools_enabled` (the last `update_local_config()`
             # value), never a fresh config read, which could race the
             # workbench's own save/resync.
+            #
+            # Qodo #2600 #15: the cached value and the label are updated
+            # OPTIMISTICALLY, before the save is posted. Without that, a
+            # second press landing before the save/resync round trip read
+            # the stale value and posted the SAME request again -- an
+            # accidental toggle could not be reversed until the first one
+            # finished. A failed save calls `update_local_config()` back
+            # (`MCPWorkbench._refresh_local_tools_controls()`), which
+            # overwrites both with the persisted truth.
             event.stop()
-            self.post_message(
-                self.LocalToolsEnabledChanged(not self._local_tools_enabled)
+            requested = not self._local_tools_enabled
+            self._local_tools_enabled = requested
+            self.query_one("#mcp-tools-local-enabled", Button).label = (
+                _local_tools_toggle_label(requested)
             )
+            self.post_message(self.LocalToolsEnabledChanged(requested))
             return
         if event.button.id == "mcp-tools-workspace-save":
             event.stop()

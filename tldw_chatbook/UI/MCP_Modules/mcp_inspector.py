@@ -1186,7 +1186,14 @@ class MCPInspector(Vertical):
         SAME string `remove_tool_arg_rule()` matches against. `MCPWorkbench`
         deletes it, resyncs the matrix (its ``≡`` marker clears once no
         rule remains), and re-renders this same permission block with the
-        fresh (now-shorter) rule list."""
+        fresh (now-shorter) rule list.
+
+        Qodo #2597 #1: `owner_profile_id` is the profile the rule is
+        actually STORED in -- `list_tool_arg_rules()`'s own `profile_id`
+        field. For an INHERITED rule that is an ancestor of the profile
+        under review, and deleting it against the reviewed profile would
+        silently no-op while the rule kept quieting calls. `None` (no
+        owner reported) falls back to the reviewed profile."""
 
         def __init__(
             self,
@@ -1194,12 +1201,14 @@ class MCPInspector(Vertical):
             tool_name: str,
             rule_id: str,
             profile_context: PermissionProfileContext | None = None,
+            owner_profile_id: str | None = None,
         ) -> None:
             super().__init__()
             self.server_key = server_key
             self.tool_name = tool_name
             self.rule_id = rule_id
             self.profile_context = profile_context
+            self.owner_profile_id = owner_profile_id
 
     class RevokeSessionApprovalRequested(Message, namespace="mcp_inspector"):
         """Posted when the user presses Revoke on one session-approval row
@@ -2226,11 +2235,29 @@ class MCPInspector(Vertical):
             if set(tool.tags) & HIGH_RISK_TAGS
             else "Exact-input allow"
         )
+        # Qodo #2597 #1: an INHERITED rule (stored on an ancestor profile,
+        # listed here because it quiets calls made under the reviewed one)
+        # names its owner, so Remove's real blast radius -- every profile
+        # inheriting it, not just this one -- is visible before pressing.
+        reviewed_profile = getattr(
+            self._current_permission_profile_context, "profile_id", None
+        )
         for index, rule in enumerate(self._current_permission_arg_rules):
             args_json = str(rule.get("args_json", ""))
+            owner = rule.get("profile_id")
+            inherited_suffix = (
+                f" · from {owner}"
+                if isinstance(owner, str)
+                and owner
+                and isinstance(reviewed_profile, str)
+                and reviewed_profile
+                and owner != reviewed_profile
+                else ""
+            )
             widgets.append(
                 Static(
-                    f"{rule_prefix} · {_arg_rule_summary(args_json)}",
+                    f"{rule_prefix} · {_arg_rule_summary(args_json)}"
+                    f"{inherited_suffix}",
                     id=f"mcp-inspector-arg-rule-{index}",
                     classes="ds-field-row",
                     markup=False,
@@ -2343,6 +2370,16 @@ class MCPInspector(Vertical):
 
         A block that is not currently showing anything stays hidden --
         `_render_permission_container(None, None)` is its own no-op.
+
+        Args:
+            session_approvals: Every live session grant in the profile this
+                block is explaining, as ``(server_key, tool_name)`` pairs --
+                `MCPWorkbench._session_approvals_for_row()`'s fetch, itself
+                `UnifiedMCPControlPlaneService.list_session_approvals()`
+                scoped to one profile and sorted. The pairs are the GRANTS'
+                own identities, not this block's tool: the listing spans
+                the whole profile, and the order is what the mounted Revoke
+                buttons are index-aligned with. Empty clears the group.
         """
         async with self._refresh_lock:
             await self._render_permission_container(
@@ -3636,12 +3673,15 @@ class MCPInspector(Vertical):
             rule_id = rule.get("rule_id")
             if not isinstance(rule_id, str) or not rule_id:
                 return
+            owner = rule.get("profile_id")
             self.post_message(
                 self.RemoveArgRuleRequested(
                     tool.server_key,
                     tool.name,
                     rule_id,
                     self._current_permission_profile_context,
+                    # Qodo #2597 #1: delete where the rule actually LIVES.
+                    owner if isinstance(owner, str) and owner else None,
                 )
             )
             return

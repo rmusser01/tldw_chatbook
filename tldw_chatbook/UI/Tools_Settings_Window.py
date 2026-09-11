@@ -143,7 +143,7 @@ SETTINGS_DATABASES = (
 WEB_DEEP_SEARCH_TOOL_NAME = "web_deep_search"
 
 #: TASK-2775: the About text's canonical home is Utils/about_text (rendered by
-#: the F9 Settings screen's About category); re-exported here for back-compat.
+#: the F4 Settings screen's About category); re-exported here for back-compat.
 from tldw_chatbook.Utils.about_text import ABOUT_MARKDOWN  # noqa: E402,F401
 
 

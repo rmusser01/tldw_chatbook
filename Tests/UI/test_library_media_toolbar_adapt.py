@@ -237,12 +237,15 @@ async def test_long_type_values_are_capped_in_the_chooser_label():
         sort_button = app.query_one("#library-media-sort", Button)
         for button in (type_button, sort_button):
             assert button.region.x + button.region.width <= right
-def test_wide_row_prefixes_are_short_so_titles_survive():
-    """Row state prefixes must not displace the title (task-30044).
+def test_wide_row_state_is_short_and_never_displaces_the_title():
+    """Row state must not displace the title (task-30044, task-32364 AC#1).
 
     Critique 2026-09-03 P2: the wide-mode prefix "Loaded in Reader
     " consumed ~28 of ~35 label cells, leaving titles as "Quart"/"SQLit" --
     the row that matters most was the one you couldn't identify.
+    Critique #10 closed the other half: the SHORT word still prefixed the
+    title, so the row's identity was displaced by its status. Every row
+    now opens with its title and carries the state on the fact line.
     """
     from tldw_chatbook.Widgets.Library.library_media_canvas import (
         _media_row_label_rest,
@@ -251,18 +254,21 @@ def test_wide_row_prefixes_are_short_so_titles_survive():
     loaded = _media_row_label_rest(
         "Quarterly metrics narrative", "document · 3m", compact=False, loaded=True
     )
-    assert loaded.startswith(" Loaded · Quarterly")
+    assert loaded.startswith(" Quarterly")
+    assert loaded.endswith("document · 3m · loaded")
     loading = _media_row_label_rest(
         "Quarterly metrics narrative",
         "document · 3m",
         compact=False,
         loading=True,
     )
-    assert loading.startswith(" Loading · Quarterly")
+    assert loading.startswith(" Quarterly")
+    assert loading.endswith("document · 3m · loading")
     plain = _media_row_label_rest(
         "Quarterly metrics narrative", "document · 3m", compact=False
     )
     assert plain.startswith(" Quarterly")
+    assert plain.endswith("document · 3m")
 
 
 @pytest.mark.asyncio
