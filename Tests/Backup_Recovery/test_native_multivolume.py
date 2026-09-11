@@ -80,6 +80,245 @@ def test_actual_image_database_and_files_capture_to_host_archive(tmp_path):
     assert evidence["blocked_network_attempts"] == 0
 
 
+def test_actual_image_private_tree_flush_and_unsafe_topology(tmp_path):
+    evidence = _run_image_case(tmp_path, _TOPOLOGY, "topology-evidence.json")
+    assert evidence["refused"] == [
+        "symlink",
+        "hardlink",
+        "fifo",
+        "linked_descendant",
+        "foreign_device",
+    ]
+
+
+def test_actual_image_distinct_parent_barriers_and_lost_acknowledgement(tmp_path):
+    evidence = _run_image_case(tmp_path, _BARRIERS, "barrier-evidence.json")
+    assert len(evidence["cases"]) == 4
+
+
+def test_actual_image_four_process_file_and_tree_races(tmp_path):
+    evidence = _run_image_case(tmp_path, _RACES, "race-evidence.json")
+    assert all(row["outcomes"].count("published") == 1 for row in evidence["cases"])
+
+
+# Raw evidence uses the installed ungated primitives. It never replaces a
+# qualification function or runs an unqualified guarded publication wrapper.
+_PROTOCOL_SETUP = r"""
+from Tests.network_guard import install, blocked_attempts
+install()
+import errno, fcntl, json, os, stat
+from pathlib import Path
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+from tldw_chatbook.Backup_Recovery import native_files as native
+root=Path(os.environ['VOLUME_FIXTURE'])
+image=Path(os.environ['IMAGE_SOURCE'])
+with native.pinned_directory(image) as fd:
+    identity=native.native_identity(fd)
+    device=os.fstat(fd).st_dev
+assert identity=={'os':'Darwin','release':'25.5.0','arch':'arm64','python':'3.12.11','filesystem':'apfs','flags':76583448},identity
+assert device!=root.stat().st_dev
+def flush(path):
+    fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+    try:native._flush_private_tree(fd,device)
+    finally:os.close(fd)
+def receipt(name,facts):
+    with native.pinned_directory(image) as fd:
+        assert native.native_identity(fd)==identity and os.fstat(fd).st_dev==device
+    assert not blocked_attempts(),blocked_attempts()
+    facts.update(identity=identity,device=device,blocked_network_attempts=0)
+    (root/'logs'/name).write_text(json.dumps(facts,indent=2)+'\n')
+"""
+
+
+_TOPOLOGY = (
+    _PROTOCOL_SETUP
+    + r"""
+tree=image/'tree';tree.mkdir(mode=0o755)
+nested=tree/'nested';nested.mkdir(mode=0o755)
+empty=tree/'empty';empty.mkdir(mode=0o755)
+payload=nested/'payload';payload.write_bytes(b'private nested bytes');payload.chmod(0o644)
+single=image/'single';single.write_bytes(b'private regular bytes');single.chmod(0o644)
+paths=(payload,nested,empty,tree,single)
+inodes={str(path.relative_to(image)):path.stat().st_ino for path in paths}
+events=[]
+real_fsync,real_fcntl=os.fsync,fcntl.fcntl
+def observe_sync(fd):
+    result=real_fsync(fd);events.append(['fsync',os.fstat(fd).st_ino]);return result
+def observe_full(fd,command,*args):
+    result=real_fcntl(fd,command,*args)
+    if command==fcntl.F_FULLFSYNC:events.append(['full',os.fstat(fd).st_ino])
+    return result
+os.fsync=observe_sync;fcntl.fcntl=observe_full
+try:flush(tree);flush(single)
+finally:os.fsync=real_fsync;fcntl.fcntl=real_fcntl
+for path in paths:
+    inode=path.stat().st_ino
+    assert events.count(['fsync',inode])==events.count(['full',inode])==1
+    assert events.index(['fsync',inode])<events.index(['full',inode])
+    assert stat.S_IMODE(path.stat().st_mode)==(0o700 if path.is_dir() else 0o600)
+assert events.index(['full',payload.stat().st_ino])<events.index(['full',nested.stat().st_ino])<events.index(['full',tree.stat().st_ino])
+assert events.index(['full',empty.stat().st_ino])<events.index(['full',tree.stat().st_ino])
+assert payload.read_bytes()==b'private nested bytes' and single.read_bytes()==b'private regular bytes'
+refused=[]
+for kind in ('symlink','hardlink','fifo','linked_descendant'):
+    case=image/kind;case.mkdir(mode=0o700)
+    external=case/'original';external.write_bytes(b'unchanged original');external.chmod(0o644)
+    candidate=case/'candidate'
+    if kind=='symlink':candidate.symlink_to(external)
+    elif kind=='hardlink':os.link(external,candidate)
+    elif kind=='fifo':os.mkfifo(candidate)
+    else:
+        candidate.mkdir(mode=0o700);(candidate/'link').symlink_to(external)
+    try:flush(candidate)
+    except OSError as error:
+        if kind in ('symlink','linked_descendant'):assert error.errno==errno.ELOOP,error
+        else:assert str(error)==('staged_tree_linked' if kind=='hardlink' else 'staged_tree_not_regular'),error
+    else:raise AssertionError('unsafe topology accepted: '+kind)
+    assert external.read_bytes()==b'unchanged original' and stat.S_IMODE(external.stat().st_mode)==0o644
+    refused.append(kind)
+host_file=root/'host'/'different-device';host_file.write_bytes(b'host bytes')
+fd=os.open(host_file,os.O_RDONLY|os.O_NOFOLLOW)
+try:
+    try:native._flush_private_tree(fd,device)
+    except OSError as error:assert str(error)=='staged_tree_not_private'
+    else:raise AssertionError('foreign device accepted')
+finally:os.close(fd)
+assert host_file.read_bytes()==b'host bytes'
+refused.append('foreign_device')
+receipt('topology-evidence.json',{'inodes':inodes,'events':events,'refused':refused})
+"""
+)
+
+
+_BARRIERS = (
+    _PROTOCOL_SETUP
+    + r"""
+facts=[]
+for kind in ('file','empty_directory','populated_directory','lost_acknowledgement'):
+    case=image/kind;case.mkdir(mode=0o700)
+    a,b=case/'from',case/'to';a.mkdir(mode=0o700);b.mkdir(mode=0o700)
+    source,target=a/'candidate',b/'published'
+    if kind in ('file','lost_acknowledgement'):source.write_bytes(b'candidate bytes')
+    else:
+        source.mkdir(mode=0o755)
+        if kind=='populated_directory':(source/'payload').write_bytes(b'candidate bytes')
+    os.utime(source,ns=(1600000000000000000,1600000000000000000))
+    flush(source)
+    before=source.stat();events=[]
+    real_fcntl=fcntl.fcntl
+    def observe(fd,command,*args):
+        result=real_fcntl(fd,command,*args)
+        if command==fcntl.F_FULLFSYNC:
+            events.append({'inode':os.fstat(fd).st_ino,'source_exists':source.exists(),'target_exists':target.exists()})
+            if kind=='lost_acknowledgement' and os.fstat(fd).st_ino==b.stat().st_ino and target.exists():
+                raise OSError(errno.EIO,'fixture_lost_barrier_acknowledgement')
+        return result
+    fcntl.fcntl=observe
+    try:
+        with native.pinned_directory(a) as left,native.pinned_directory(b) as right:
+            native._rename_new(left,source.name,right,target.name)
+            try:native.flush_directory(right);native.flush_directory(left)
+            except OSError as error:
+                assert kind=='lost_acknowledgement' and error.errno==errno.EIO,error
+            else:assert kind!='lost_acknowledgement'
+    finally:fcntl.fcntl=real_fcntl
+    after=target.stat()
+    assert not source.exists()
+    assert (before.st_dev,before.st_ino,before.st_mode,before.st_mtime_ns)==(after.st_dev,after.st_ino,after.st_mode,after.st_mtime_ns)
+    expected=[b.stat().st_ino] if kind=='lost_acknowledgement' else [b.stat().st_ino,a.stat().st_ino]
+    assert [e['inode'] for e in events]==expected
+    assert all(not e['source_exists'] and e['target_exists'] for e in events)
+    if target.is_file():assert target.read_bytes()==b'candidate bytes'
+    if kind=='populated_directory':assert (target/'payload').read_bytes()==b'candidate bytes'
+    if kind=='lost_acknowledgement':
+        source.write_bytes(b'second candidate')
+        with native.pinned_directory(a) as left,native.pinned_directory(b) as right:
+            try:native._rename_new(left,source.name,right,target.name)
+            except FileExistsError:pass
+            else:raise AssertionError('lost acknowledgement overwrote destination')
+        assert source.read_bytes()==b'second candidate' and target.read_bytes()==b'candidate bytes'
+    facts.append({'kind':kind,'events':events,'preserved_inode':after.st_ino,'preserved_mtime_ns':after.st_mtime_ns,'mode':stat.S_IMODE(after.st_mode)})
+for kind in ('regular','symlink','hardlink','directory'):
+    case=image/('collision-'+kind);case.mkdir(mode=0o700)
+    original=case/'original';original.write_bytes(b'original')
+    target=case/'target';source=case/'source';source.write_bytes(b'candidate')
+    if kind=='regular':target.write_bytes(b'previous')
+    elif kind=='symlink':target.symlink_to(original)
+    elif kind=='hardlink':os.link(original,target)
+    else:target.mkdir(mode=0o700);(target/'retained').write_bytes(b'previous')
+    before=target.lstat()
+    with native.pinned_directory(case) as fd:
+        try:native._rename_new(fd,source.name,fd,target.name)
+        except FileExistsError:pass
+        else:raise AssertionError('existing destination overwritten')
+    assert target.lstat()==before and source.read_bytes()==b'candidate' and original.read_bytes()==b'original'
+    if kind=='regular':assert target.read_bytes()==b'previous'
+    if kind=='directory':assert (target/'retained').read_bytes()==b'previous'
+receipt('barrier-evidence.json',{'cases':facts,'preserved_target_types':['regular','symlink','hardlink','directory']})
+"""
+)
+
+
+_RACES = (
+    _PROTOCOL_SETUP
+    + r"""
+import select,subprocess,sys
+child_code=r'''
+from Tests.network_guard import install
+install()
+import os,sys
+from pathlib import Path
+from tldw_chatbook.Backup_Recovery import native_files as native
+source,target=Path(sys.argv[1]),Path(sys.argv[2])
+fd=os.open(source,os.O_RDONLY|os.O_NOFOLLOW)
+try:native._flush_private_tree(fd,os.fstat(fd).st_dev)
+finally:os.close(fd)
+with native.pinned_directory(source.parent) as a,native.pinned_directory(target.parent) as b:
+    print('ready',flush=True)
+    assert sys.stdin.readline()=='go\n'
+    try:
+        native._rename_new(a,source.name,b,target.name)
+        native.flush_directory(b);native.flush_directory(a)
+    except FileExistsError:print('exists',flush=True)
+    else:print('published',flush=True)
+'''
+facts=[]
+for kind in ('file','populated_directory'):
+    case=image/kind;case.mkdir(mode=0o700)
+    a,b=case/'from',case/'to';a.mkdir(mode=0o700);b.mkdir(mode=0o700)
+    sources=[a/str(i) for i in range(4)];target=b/'winner'
+    for index,source in enumerate(sources):
+        if kind=='file':source.write_text(str(index))
+        else:source.mkdir(mode=0o700);(source/'payload').write_text(str(index))
+    inodes=[source.stat().st_ino for source in sources]
+    children=[subprocess.Popen([sys.executable,'-u','-c',child_code,str(source),str(target)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True) for source in sources]
+    try:
+        for child in children:
+            assert select.select([child.stdout],[],[],10)[0],'child not ready'
+            assert child.stdout.readline().strip()=='ready'
+        for child in children:child.stdin.write('go\n');child.stdin.flush()
+        outputs=[child.communicate(timeout=10) for child in children]
+        assert all(child.returncode==0 for child in children),outputs
+        outcomes=[out.strip() for out,error in outputs]
+        assert outcomes.count('published')==1 and outcomes.count('exists')==3,outcomes
+        winner=outcomes.index('published')
+        assert target.stat().st_ino==inodes[winner] and not sources[winner].exists()
+        assert (target if kind=='file' else target/'payload').read_text()==str(winner)
+        for index,source in enumerate(sources):
+            if index==winner:continue
+            assert source.stat().st_ino==inodes[index]
+            assert (source if kind=='file' else source/'payload').read_text()==str(index)
+        facts.append({'kind':kind,'outcomes':outcomes,'source_inodes':inodes,'winner_inode':target.stat().st_ino})
+    finally:
+        for child in children:
+            if child.poll() is None:child.kill();child.wait(timeout=3)
+receipt('race-evidence.json',{'cases':facts})
+"""
+)
+
+
 _RAW = r"""
 from Tests.network_guard import install, blocked_attempts
 install()
