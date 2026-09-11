@@ -13262,18 +13262,66 @@ class LibraryScreen(BaseAppScreen):
         registry = self._library_ingest_registry()
         jobs_fn = getattr(registry, "jobs", None)
         if callable(jobs_fn):
-            for job in jobs_fn():
-                if (
-                    job.state is IngestJobState.FAILED
-                    and not job.permanent
-                    and not job.dismissed
-                    and not job.superseded
-                ):
-                    return LibraryLandingAttentionAction(
-                        message="An import needs review.",
-                        action_label="Review",
-                        action_kind="ingest-review",
-                    )
+            # (Qodo 2) ``jobs()`` already hides superseded and dismissed jobs
+            # and NOTHING else, so this is exactly the set the Review queue
+            # renders -- permanent failures included. The card is still
+            # offered only when something in it can actually be retried (the
+            # pre-existing trigger), but once offered it must count what the
+            # queue shows, or the sentence disagrees with the screen it sends
+            # the user to.
+            live = tuple(
+                job for job in jobs_fn() if not job.dismissed and not job.superseded
+            )
+            if any(
+                job.state is IngestJobState.FAILED and not job.permanent
+                for job in live
+            ):
+                failures = [job for job in live if job.state is IngestJobState.FAILED]
+                # task-32351 AC#2 (critique #10, B D2): after 4 of 6 files
+                # failed the landing said only "An import needs review." --
+                # neutral where the queue itself was exact. The counts are
+                # already in the registry snapshot this walks.
+                #
+                # (review finding 1) The sentence says "Last import", so it
+                # counts ONE import: the most recent submission that has a
+                # failure, not every unreviewed job in the queue -- two
+                # unreviewed imports summed into one sentence would be a
+                # wrong count, which is worse than the vague one this
+                # replaced. The card still appears for ANY live failure (the
+                # trigger above is unchanged); only what it counts is scoped.
+                # A job submitted on its own carries no batch id, so it is
+                # its own import.
+                #
+                # (Qodo 3) Ordered by ``finished_at_wall``, not
+                # ``submitted_at``: the latter is a ``time.monotonic()`` float
+                # with no fixed epoch, so a job restored from before a reboot
+                # can outrank one submitted after it. ``finished_at_wall`` is
+                # the ISO-8601 UTC stamp ``mark_failed`` writes for exactly
+                # this ordering; it is "" only on a row that never reached a
+                # terminal state, which cannot be in ``failures``, so
+                # ``submitted_at`` stays as the tiebreaker.
+                newest = max(
+                    failures, key=lambda job: (job.finished_at_wall, job.submitted_at)
+                )
+                last_import = newest.batch_id or newest.job_id
+                members = [
+                    job for job in live if (job.batch_id or job.job_id) == last_import
+                ]
+                failed = sum(
+                    1 for job in members if job.state is IngestJobState.FAILED
+                )
+                skipped = sum(
+                    1 for job in members if job.state is IngestJobState.SKIPPED
+                )
+                noun = "file" if failed == 1 else "files"
+                parts = [f"{failed} {noun} failed"]
+                if skipped:
+                    parts.append(f"{skipped} skipped")
+                return LibraryLandingAttentionAction(
+                    message=f"Last import: {', '.join(parts)}.",
+                    action_label="Review",
+                    action_kind="ingest-review",
+                )
 
         if (
             self._library_media_browse_controller.freshness == "stale"
@@ -20293,8 +20341,35 @@ class LibraryScreen(BaseAppScreen):
         ):
             self._library_onboarding_all_empty = True
             self._library_onboarding_status = LibraryEvidenceStatus.SETTLED
+            lifecycle = self._library_lifecycle
+            # task-32349 (critique #10, PROVEN in critique #8): an EXPANDED
+            # nobody chose is a DEFAULT, not a decision --
+            # ``coerce_library_lifecycle(raw=None, is_new_profile=False)``
+            # returns EXPANDED so a returning user's full rail does not flash
+            # a starter rail while this evidence loads. Once the evidence
+            # settles all-EMPTY there is nothing to expand, so an UNSTORED
+            # EXPANDED falls back to UNKNOWN and the aggregate below resolves
+            # it to STARTER. A STORED "expanded" is a real Explore press
+            # (``explore_library_lifecycle``, which mirrors it into the config
+            # this read consults) and is left alone -- which is also what
+            # keeps "Back to Get started" (``library_rail.py``: EXPANDED +
+            # all-empty) offered only to someone who HAS seen Get started.
+            # Storage is re-read here rather than reusing the construction-time
+            # ``_library_lifecycle_was_stored``: that snapshot never updates,
+            # so an Explore press followed by any later evidence round (a
+            # screen resume) would have been demoted back to Get started.
+            # (review finding 3) It is the stored VALUE that has to say
+            # "expanded", not merely the key being present: a corrupt
+            # ``lifecycle = "not-a-lifecycle"`` also coerces to EXPANDED, and
+            # nobody pressed Explore to produce it.
+            if (
+                lifecycle is LibraryLifecycle.EXPANDED
+                and self._load_library_lifecycle_value()[0]
+                != LibraryLifecycle.EXPANDED.value
+            ):
+                lifecycle = LibraryLifecycle.UNKNOWN
             self._set_library_lifecycle(
-                aggregate_library_lifecycle(self._library_lifecycle, evidence)
+                aggregate_library_lifecycle(lifecycle, evidence)
             )
         else:
             self._library_onboarding_all_empty = False
