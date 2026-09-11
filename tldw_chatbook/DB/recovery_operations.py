@@ -634,7 +634,172 @@ _SUBSCRIPTIONS_SCHEMA += (
 )
 
 
+def _briefing_relocation_authorizer(read_authorizer):
+    """Permit only the installed locator update in a disposable candidate."""
+
+    def authorize(action, first, second, database, source):
+        if source is None and (
+            action == sqlite3.SQLITE_TRANSACTION
+            and database is None
+            and first in {"BEGIN", "COMMIT", "ROLLBACK"}
+            or action == sqlite3.SQLITE_UPDATE
+            and database == "main"
+            and (first, second) == ("briefing_audio", "file_path")
+        ):
+            return sqlite3.SQLITE_OK
+        return read_authorizer(action, first, second, database, source)
+
+    return authorize
+
+
 class _SubscriptionsAdapter(_SQLiteDeclaration):
+    def relocate_restore(
+        self, item: StorageItem, candidate: Path, mapping: Mapping[str, Path]
+    ) -> None:
+        """Relocate only completed rows through their original declared asset IDs."""
+        from tldw_chatbook.Backup_Recovery.models import DiscoveryContext
+        from tldw_chatbook.Backup_Recovery.recovery_files import _tree_member_id
+        from tldw_chatbook.Backup_Recovery.sqlite_validation import _Restrictions
+        from tldw_chatbook.DB.private_sqlite import open_recovery_validation
+
+        parts = item.logical_id.split(":")
+        if (
+            item.owner != self.owner_id
+            or len(parts) != 3
+            or parts[0] != "profile"
+            or parts[2] != self.owner_id
+            or not parts[1]
+        ):
+            raise ValueError("briefing_audio_mapping_required")
+        context = DiscoveryContext(Path("/historical-selector-not-opened"), parts[1])
+        with (
+            open_recovery_validation(
+                self.owner_id, candidate, writable=True
+            ) as connection,
+            connection,
+        ):
+            restrictions = _Restrictions(connection)
+            connection.set_authorizer(
+                _briefing_relocation_authorizer(restrictions.authorize)
+            )
+            connection.execute("BEGIN IMMEDIATE")
+            issues = self._validate_catalog(connection)
+            if issues:
+                raise ValueError(issues[0])
+            updates = []
+            for row_id, value in connection.execute(
+                "SELECT id,file_path FROM briefing_audio WHERE status='complete'"
+            ):
+                if (
+                    not isinstance(value, str)
+                    or not Path(value).is_absolute()
+                    or ".." in Path(value).parts
+                ):
+                    raise ValueError("briefing_audio_mapping_required")
+                original = Path(value)
+                key = _tree_member_id(
+                    context, "subscriptions.assets", original.parent, original
+                )
+                selected = mapping.get(key)
+                if (
+                    key not in item.dependencies
+                    or not isinstance(selected, Path)
+                    or not selected.is_absolute()
+                    or ".." in selected.parts
+                    or selected.name != original.name
+                ):
+                    raise ValueError("briefing_audio_mapping_required")
+                if str(selected) != value:
+                    updates.append((str(selected), row_id))
+            connection.executemany(
+                "UPDATE briefing_audio SET file_path=? WHERE id=?", updates
+            )
+
+    def validate_restore_dependencies(
+        self,
+        item: StorageItem,
+        candidate: Path,
+        candidates: Mapping[str, Path],
+        *,
+        topology: Mapping[str, tuple[str, str | None, str, str]],
+    ) -> tuple[str, ...]:
+        """Bind relocated rows to the selected config and original finite topology.
+
+        Archive and publication fingerprints check bytes; this hook checks the
+        declared relationship and regular candidate, without opening source paths.
+        """
+        import tomllib
+
+        from tldw_chatbook.Backup_Recovery.recovery_files import _RawDeclaration
+        from tldw_chatbook.Backup_Recovery.storage_admission import _read_recovery_file
+        from tldw_chatbook.DB.private_sqlite import open_recovery_validation
+
+        parts = item.logical_id.split(":")
+        if (
+            item.owner != self.owner_id
+            or len(parts) != 3
+            or parts[0] != "profile"
+            or parts[2] != self.owner_id
+            or not parts[1]
+        ):
+            return ("invalid_dependency_context",)
+        issues = self.validate_restore(item, candidate)
+        if issues:
+            return issues
+        try:
+            with open_recovery_validation(
+                self.owner_id, candidate, writable=False
+            ) as connection:
+                paths = tuple(
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT file_path FROM briefing_audio WHERE status='complete'"
+                    )
+                )
+            if not paths:
+                return ()
+            config_key = f"profile:{parts[1]}:config"
+            if config_key not in item.dependencies or config_key not in candidates:
+                return ("dependency_unavailable",)
+            config = tomllib.loads(
+                _read_recovery_file(
+                    "config", candidates[config_key], max_bytes=16 * 1024**2
+                ).decode("utf-8")
+            )
+            root = user_data_dir(config) / "briefing_audio"
+            prefix = f"profile:{parts[1]}:subscriptions.assets:"
+            for value in paths:
+                if (
+                    not isinstance(value, str)
+                    or not Path(value).is_absolute()
+                    or ".." in Path(value).parts
+                    or Path(value).parent != root
+                ):
+                    return ("dependency_unavailable",)
+                matches = []
+                for key in item.dependencies:
+                    if not key.startswith(prefix) or key not in candidates:
+                        continue
+                    record = topology.get(key)
+                    if record is None:
+                        continue
+                    root_id, parent_id, relative, kind = record
+                    if (
+                        kind == "file"
+                        and relative == Path(value).name
+                        and parent_id == root_id
+                        and root_id.startswith(prefix)
+                        and topology.get(root_id) == (root_id, None, "", "directory")
+                    ):
+                        matches.append(key)
+                if len(matches) != 1 or _RawDeclaration(
+                    "subscriptions.assets"
+                ).validate(candidates[matches[0]]):
+                    return ("dependency_unavailable",)
+            return ()
+        except (OSError, ValueError, sqlite3.Error):
+            return ("dependency_unavailable",)
+
     def discover(self, config: Mapping[str, object]) -> tuple[StorageItem, ...]:
         from dataclasses import replace
 
@@ -733,6 +898,39 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
         except (OSError, ValueError, sqlite3.Error):
             return ("dependency_unavailable",)
 
+    def _validate_catalog(self, connection: sqlite3.Connection) -> tuple[str, ...]:
+        issues = _validate_sqlite(
+            connection,
+            self.versions,
+            self.schemas,
+            version_query="SELECT MAX(version) FROM schema_version",
+        )
+        if issues:
+            return issues
+        if connection.execute(
+            "SELECT 1 FROM sqlite_schema WHERE name='db_schema_version'"
+        ).fetchone():
+            stamp = connection.execute(
+                "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
+            ).fetchone()
+            if stamp != (42,):
+                return ("unsupported_schema_version",)
+        return ()
+
+    def validate_restore(self, item: StorageItem, candidate: Path) -> tuple[str, ...]:
+        """Inspect disposable bytes without caching them as immutable live sources."""
+        from tldw_chatbook.DB.private_sqlite import open_recovery_validation
+
+        if item.owner != self.owner_id:
+            return ("invalid_dependency_context",)
+        try:
+            with open_recovery_validation(
+                self.owner_id, candidate, writable=False
+            ) as connection:
+                return self._validate_catalog(connection)
+        except (OSError, ValueError, sqlite3.Error):
+            return ("operational_validation_unavailable",)
+
     def validate(self, candidate: Path) -> tuple[str, ...]:
         from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
@@ -742,23 +940,7 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
                     "recovery.operations.subscriptions", candidate, read_only=True
                 )
             ) as connection:
-                issues = _validate_sqlite(
-                    connection,
-                    self.versions,
-                    self.schemas,
-                    version_query="SELECT MAX(version) FROM schema_version",
-                )
-                if issues:
-                    return issues
-                if connection.execute(
-                    "SELECT 1 FROM sqlite_schema WHERE name='db_schema_version'"
-                ).fetchone():
-                    stamp = connection.execute(
-                        "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
-                    ).fetchone()
-                    if stamp != (42,):
-                        return ("unsupported_schema_version",)
-                return ()
+                return self._validate_catalog(connection)
         except (OSError, ValueError, sqlite3.Error):
             return ("operational_validation_unavailable",)
 

@@ -65,6 +65,7 @@ def _config_targets(data, profile, config_target, doc, plan, owners):
     from tldw_chatbook.Model_Artifacts.recovery import _Artifacts, managed_artifact_root
     from tldw_chatbook.Persona_Visual.recovery import _Assets
     from tldw_chatbook.runtime_policy.recovery import _SourceState
+    from tldw_chatbook.Subscriptions.recovery import _BriefingAudio
     from tldw_chatbook.Workspaces.recovery import _ChangeTracking
 
     from .config_adapter import _Definition
@@ -134,6 +135,8 @@ def _config_targets(data, profile, config_target, doc, plan, owners):
             expected = user_data_dir(configured) / "change_review"
         elif type(owner) is _Assets:
             expected = owner._root(configured)
+        elif type(owner) is _BriefingAudio:
+            expected = user_data_dir(configured) / "briefing_audio"
         elif isinstance(owner, _Definition):
             expected = owner._definition_path(configured)
         elif type(owner) is _Artifacts:
