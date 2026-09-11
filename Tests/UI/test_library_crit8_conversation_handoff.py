@@ -6,9 +6,6 @@ refused with a toast naming a workspace the user had no way to link into.
 
 from __future__ import annotations
 
-import inspect
-import sys
-
 import pytest
 from textual.widgets import Button, Static
 
@@ -87,7 +84,7 @@ async def test_workspace_refusal_is_inline_with_a_link_action(
         id="library-conversation-reader",
     ) as pilot:
         open_console = pilot.app.query_one(
-            "#library-conversation-open-console", Button
+            "#library-conversation-use-source", Button
         )
         blocked = pilot.app.query_one(
             "#library-conversation-open-console-blocked", Static
@@ -129,13 +126,13 @@ async def test_linking_clears_the_inline_refusal(widget_pilot) -> None:
         await pilot.pause()
 
         open_console = pilot.app.query_one(
-            "#library-conversation-open-console", Button
+            "#library-conversation-use-source", Button
         )
         blocked = pilot.app.query_one(
             "#library-conversation-open-console-blocked", Static
         )
         link = pilot.app.query_one("#library-conversation-link-workspace", Button)
-        assert str(open_console.label) == "Open in Console"
+        assert str(open_console.label) == "Use as source"
         assert open_console.disabled is False
         assert blocked.display is False
         assert link.display is False
@@ -185,12 +182,12 @@ def test_link_to_workspace_makes_the_conversation_eligible() -> None:
 
 def test_conversation_open_console_has_a_keyboard_route() -> None:
     """AC#1: 'c' reaches the hand-off, mirroring Media's own binding."""
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Screens.library_screen import (
         LIBRARY_ROW_BROWSE_CONVERSATIONS,
         LIBRARY_ROW_BROWSE_MEDIA,
         LibraryScreen,
     )
-    from Tests.UI.app_factory import _build_test_app
 
     actions = {
         binding.action
@@ -213,8 +210,8 @@ def test_conversation_open_console_has_a_keyboard_route() -> None:
         {"id": "chat-a", "title": "Alpha planning"}
     ]
 
-    # Blocked: the key stays live and explains (task-32101) -- what it must
-    # never do is silently perform the hand-off the button refuses.
+    # Resume reopens the original identity; source membership gates only
+    # the separate Use as source action.
     assert screen.check_action("library_conversation_open_console", ()) is True
 
     registry.link_membership(
@@ -285,7 +282,7 @@ async def test_mounted_reader_offers_the_link_then_enables_the_handoff() -> None
             await pilot.pause(0.01)
 
         open_console = screen.query_one(
-            "#library-conversation-open-console", Button
+            "#library-conversation-use-source", Button
         )
         blocked = screen.query_one(
             "#library-conversation-open-console-blocked", Static
@@ -295,13 +292,11 @@ async def test_mounted_reader_offers_the_link_then_enables_the_handoff() -> None
             "This conversation is not in this workspace. Press 'Link to "
             "workspace' to add it to the active workspace."
         )
-        assert str(open_console.label) == "○ Open in Console"
+        assert str(open_console.label) == "○ Use as source"
         assert open_console.disabled is True
         assert link.display is True
-        # The accelerator stays live and says the same sentence the control
-        # shows (task-32101); the footer chip is what tracks readiness.
+        # Resume is independent of source workspace eligibility.
         assert screen.check_action("library_conversation_open_console", ()) is True
-        assert ("c", "open in Console") not in screen._library_route_shortcuts_for_current_state()
 
         link.press()
         await pilot.pause()
@@ -311,9 +306,9 @@ async def test_mounted_reader_offers_the_link_then_enables_the_handoff() -> None
             item_type="conversation", item_id="chat-a"
         )
         open_console = screen.query_one(
-            "#library-conversation-open-console", Button
+            "#library-conversation-use-source", Button
         )
-        assert str(open_console.label) == "Open in Console"
+        assert str(open_console.label) == "Use as source"
         assert open_console.disabled is False
         assert (
             screen.query_one(
@@ -386,7 +381,7 @@ async def test_non_linkable_block_keeps_its_own_recovery_copy(
         id="library-conversation-reader",
     ) as pilot:
         open_console = pilot.app.query_one(
-            "#library-conversation-open-console", Button
+            "#library-conversation-use-source", Button
         )
         link = pilot.app.query_one("#library-conversation-link-workspace", Button)
         assert link.display is False
@@ -428,38 +423,6 @@ def test_link_remedy_refuses_a_stale_retained_transcript() -> None:
     )
 
 
-def test_use_as_source_handler_is_gone() -> None:
-    """task-32101 AC#1: the handler bound to an uncomposed button is deleted.
-
-    ``#library-conversation-use-source`` had zero compose sites anywhere in
-    ``tldw_chatbook/`` while two handlers (the controller's and the screen's
-    delegator) still claimed its press. Nothing can press it, so nothing
-    should answer for it.
-    """
-    from tldw_chatbook.UI.Library_Modules.library_conversations_controller import (
-        LibraryConversationsController,
-    )
-    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
-
-    assert not hasattr(LibraryScreen, "use_selected_conversation_as_source")
-    assert not hasattr(
-        LibraryConversationsController, "use_selected_conversation_as_source"
-    )
-    # (fix round 1) The id alone let a docstring keep naming the method and
-    # its "Use as source" copy three lines below the deleted handler, which
-    # is what task-32101 AC#3 is about -- so the pin greps for all three.
-    for module in (LibraryScreen, LibraryConversationsController):
-        source = inspect.getsource(sys.modules[module.__module__])
-        for leftover in (
-            "library-conversation-use-source",
-            "use_selected_conversation_as_source",
-            "Use as source",
-        ):
-            assert leftover not in source, (
-                f"{module.__module__} still names {leftover!r}"
-            )
-
-
 @pytest.mark.asyncio
 async def test_blocked_state_paints_the_action_name_once(widget_pilot) -> None:
     """task-32101 AC#4: one control, one action name, one sentence.
@@ -481,30 +444,23 @@ async def test_blocked_state_paints_the_action_name_once(widget_pilot) -> None:
         id="library-conversation-reader",
     ) as pilot:
         open_console = pilot.app.query_one(
-            "#library-conversation-open-console", Button
+            "#library-conversation-use-source", Button
         )
         blocked = pilot.app.query_one(
             "#library-conversation-open-console-blocked", Static
         )
-        assert str(open_console.label) == "○ Open in Console"
+        assert str(open_console.label) == "○ Use as source"
         assert open_console.disabled is True
         assert blocked.display is True
-        assert "Open in Console" not in str(blocked.renderable)
+        assert "Use as source" not in str(blocked.renderable)
         # ...and it is the very sentence the tooltip gives.
         assert str(blocked.renderable) == str(open_console.tooltip)
         assert "not in this workspace" in str(blocked.renderable)
 
 
-def test_blocked_c_key_says_what_the_control_says() -> None:
-    """task-32101 AC#2/#4: 'c' is never silent on a blocked conversation.
-
-    Reverses the fix-round-1 rule from task-32056 (``check_action`` refused
-    the key exactly where the button was disabled). That removed the toast
-    but left a dead key: pressing ``c`` on a blocked conversation did
-    nothing at all, with no way to learn why. The key now reaches the action
-    and speaks the SAME sentence the on-screen control already shows --
-    which, unlike the old toast, names a remedy that is on screen.
-    """
+def test_blocked_c_key_says_what_the_resume_control_says() -> None:
+    """Keep dev's explanatory key while fencing the original loaded identity."""
+    from dataclasses import replace
     from unittest.mock import Mock
 
     from Tests.UI.app_factory import _build_test_app
@@ -515,34 +471,130 @@ def test_blocked_c_key_says_what_the_control_says() -> None:
     )
 
     app = _build_test_app()
+    app.notify = Mock()
+    app.resume_console_conversation = Mock()
+    app.open_chat_with_handoff = Mock()
+    screen = LibraryScreen(app)
+    screen.restore_state({"library_selected_row_id": LIBRARY_ROW_BROWSE_CONVERSATIONS})
+    screen._conversations_state.reader_state = replace(
+        _loaded_reader_state(), loading=True, complete=False
+    )
+    assert screen.check_action("library_conversation_open_console", ()) is True
+    assert ("c", "resume conversation") not in screen._library_route_shortcuts_for_current_state()
+    screen.action_library_conversation_open_console()
+    app.resume_console_conversation.assert_not_called()
+    app.open_chat_with_handoff.assert_not_called()
+    app.notify.assert_called_once_with(
+        "Wait for the selected conversation to finish loading.", severity="warning"
+    )
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    assert screen.check_action("library_conversation_open_console", ()) is False
+
+
+def test_ready_resume_key_ignores_source_workspace_membership() -> None:
+    """Original-ID resume remains available when the source handoff is refused."""
+    from unittest.mock import Mock
+
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Screens.library_screen import (
+        LIBRARY_ROW_BROWSE_CONVERSATIONS,
+        LibraryScreen,
+    )
+
+    app = _build_test_app()
     registry = app.workspace_registry_service
     registry.create_workspace(workspace_id="workspace-a", name="Workspace A")
     registry.set_active_workspace("workspace-a")
-    app.notify = Mock()
+    app.resume_console_conversation = Mock()
     app.open_chat_with_handoff = Mock()
     screen = LibraryScreen(app)
-    screen.restore_state(
-        {"library_selected_row_id": LIBRARY_ROW_BROWSE_CONVERSATIONS}
-    )
+    screen.restore_state({"library_selected_row_id": LIBRARY_ROW_BROWSE_CONVERSATIONS})
     screen._conversations_state.reader_state = _loaded_reader_state()
-    screen._local_source_records["conversations"] = [
-        {"id": "chat-a", "title": "Alpha planning"}
-    ]
-
-    assert screen.check_action("library_conversation_open_console", ()) is True
+    screen._conversations_state.freshness = "fresh"
+    screen._local_source_records["conversations"] = [{"id": "chat-a", "title": "Alpha planning"}]
+    assert screen._library_conversation_workspace_block()[0]
+    assert ("c", "resume conversation") in screen._library_route_shortcuts_for_current_state()
     screen.action_library_conversation_open_console()
-
+    app.resume_console_conversation.assert_called_once_with("chat-a")
     app.open_chat_with_handoff.assert_not_called()
-    app.notify.assert_called_once()
-    said = app.notify.call_args.args[0]
-    # (fix round 1) The literal shipped sentence -- the one the reader's
-    # blocked line and media-and-conversations.md both quote -- not a second
-    # call to the helper the action itself calls, which could not fail.
-    assert said == (
-        "This conversation is not in this workspace. Press 'Link to "
-        "workspace' to add it to the active workspace."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dispatch", ["button", "key"])
+@pytest.mark.parametrize("exists_now", [True, False])
+async def test_stale_list_resume_dispatches_original_and_checks_current_storage(
+    dispatch, exists_now, monkeypatch
+) -> None:
+    """List freshness cannot silence Resume; fresh storage still decides recovery."""
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Console_Modules.archive import request_conversation_resume
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+    from tldw_chatbook.UI.Screens.library_screen import (
+        LIBRARY_ROW_BROWSE_CONVERSATIONS,
+        LibraryScreen,
     )
 
-    # The key is still scoped to the Conversations canvas.
-    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
-    assert screen.check_action("library_conversation_open_console", ()) is False
+    app = _build_test_app()
+    app.notify = Mock()
+    app.post_message = Mock()
+    app.resume_console_conversation = Mock()
+    app.open_chat_with_handoff = Mock()
+    registry = app.workspace_registry_service
+    registry.create_workspace(
+        workspace_id="current-workspace", name="Current workspace"
+    )
+    read_workspace = Mock(wraps=registry.get_workspace)
+    monkeypatch.setattr(registry, "get_workspace", read_workspace)
+    current_metadata = {
+        "id": "chat-a",
+        "version": 9,
+        "archived": False,
+        "workspace_id": "current-workspace",
+    }
+    read_metadata = Mock(return_value=current_metadata if exists_now else None)
+    app.local_chat_conversation_service = SimpleNamespace(
+        get_conversation_metadata=read_metadata
+    )
+    screen = LibraryScreen(app)
+    screen.restore_state({"library_selected_row_id": LIBRARY_ROW_BROWSE_CONVERSATIONS})
+    screen._conversations_state.reader_state = _loaded_reader_state()
+    screen._conversations_state.freshness = "stale"
+    assert screen._library_conversation_handoff_ready()
+    assert (
+        "c",
+        "resume conversation",
+    ) in screen._library_route_shortcuts_for_current_state()
+
+    if dispatch == "button":
+        screen.open_selected_conversation_in_console(
+            Button.Pressed(Button(id="library-conversation-open-console"))
+        )
+    else:
+        screen.action_library_conversation_open_console()
+    app.resume_console_conversation.assert_called_once_with("chat-a")
+
+    screen.use_selected_conversation_as_source(
+        Button.Pressed(Button(id="library-conversation-use-source"))
+    )
+    app.open_chat_with_handoff.assert_not_called()
+    # Follow the same typed request invoked by the application dispatcher.
+    await request_conversation_resume(
+        app, app.resume_console_conversation.call_args.args[0]
+    )
+    assert read_metadata.call_count == (2 if exists_now else 1)
+    assert all(call.args == ("chat-a",) for call in read_metadata.call_args_list)
+    claim = app.pending_handoffs.claim(HandoffChannel.CONSOLE_CONVERSATION_RESUME)
+    if exists_now:
+        read_workspace.assert_called_once_with("current-workspace")
+        assert claim is not None and claim.value.conversation_id == "chat-a"
+        app.post_message.assert_called_once()
+    else:
+        read_workspace.assert_not_called()
+        assert claim is None
+        app.post_message.assert_not_called()
+        app.notify.assert_called_once_with(
+            "This conversation is no longer available.", severity="warning"
+        )

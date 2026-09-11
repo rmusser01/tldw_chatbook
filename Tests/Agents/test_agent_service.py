@@ -460,7 +460,7 @@ def test_catalog_schema_tokens_measures_one_complete_native_schema_set(monkeypat
 
     monkeypatch.setattr(agent_service, "estimate_tokens", estimate)
     monkeypatch.setattr(
-        agent_service, "provider_supports_native_tools", lambda _endpoint: True
+        agent_service, "provider_supports_native_tools", lambda _endpoint, **_kwargs: True
     )
 
     assert (

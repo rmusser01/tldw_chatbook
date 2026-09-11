@@ -217,7 +217,11 @@ _MESSAGES = {
 }
 
 OBSIDIAN_MARKER_DIRECTORY = ".obsidian"
-"""The directory whose presence at the selected root marks an Obsidian vault."""
+"""The directory whose presence at the selected root marks an Obsidian vault.
+
+Matched casefolded, like the skip map below: Windows and macOS preserve a
+marker's casing but compare it case-insensitively.
+"""
 
 _OBSIDIAN_SKIPPED_ROOT_FOLDERS = {
     OBSIDIAN_MARKER_DIRECTORY: "obsidian_config",
@@ -252,8 +256,7 @@ def discover_import_sources(
         obsidian_mode: Whether a detected Obsidian vault's own folders
             (``.obsidian/``, ``.trash/`` and ``Templates/``) are skipped with a
             reason instead of walked. It has no effect on a folder that is not a
-            vault, and none at all on the Windows adapter, which never reports a
-            detected vault.
+            vault. Both platform strategies honour it (task-32178).
 
     Returns:
         An immutable description of admitted sources and safe failures.
@@ -272,6 +275,7 @@ def discover_import_sources(
         return discover_windows_sources(
             paths,
             bounds,
+            obsidian_mode=obsidian_mode,
             filesystem=_windows_filesystem(),  # type: ignore[arg-type]
         )
     return _discover_import_sources_posix(paths, bounds, obsidian_mode=obsidian_mode)
@@ -1131,7 +1135,7 @@ def _carries_obsidian_marker(
 ) -> bool:
     """Return whether the selected root holds Obsidian's own config directory."""
     return any(
-        scanned_entry.entry.name == OBSIDIAN_MARKER_DIRECTORY
+        scanned_entry.entry.name.casefold() == OBSIDIAN_MARKER_DIRECTORY
         and scanned_entry.metadata is not None
         and not _is_link_or_reparse(scanned_entry.metadata)
         and stat.S_ISDIR(scanned_entry.metadata.st_mode)

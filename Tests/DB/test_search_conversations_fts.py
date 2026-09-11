@@ -581,6 +581,10 @@ class TestListLibraryConversationsPage:
                 "keywords",
                 "keyword_total",
                 "keywords_truncated",
+                "archived",
+                "workspace_id",
+                "scope_type",
+                "state",
             }
             for item in page["items"]
         )
