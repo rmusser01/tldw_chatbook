@@ -71,6 +71,7 @@ from tldw_chatbook.Widgets.Library import (
     LibrarySkillsListCanvas,
     LibraryStudyHandoffCanvas,
 )
+from tldw_chatbook.Widgets.Library.library_rail import LibraryRail, library_dim_label_text
 from Tests.UI.background_signals import (
     await_background_task,
     wait_for_background_signal,
@@ -2918,6 +2919,80 @@ async def test_stale_landing_deferred_sync_performs_zero_dom_mutation():
 
         assert tuple(recents_owner.children) == children_before
         assert children_before[0].parent is recents_owner
+
+
+@pytest.mark.asyncio
+async def test_workspace_handoff_snapshot_sync_retains_summary_action_focus_and_scroll() -> (
+    None
+):
+    """Source arrival updates the retained Details summary at reconciliation."""
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=[], media=[])
+    # Keep preferences fixed across source arrival: toggling after mount changes
+    # the shape contract and makes the next rail sync legitimately recompose.
+    app.app_config.setdefault("library", {}).setdefault("rail_state", {})[
+        "sections"
+    ] = {"details_open": True}
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(120, 18)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one("#library-rail-section-body-details").display,
+            message="Details did not open",
+        )
+        rail = screen.query_one("#library-rail", LibraryRail)
+        summary = rail.query_one("#library-workspaces-handoff", Static)
+        button = rail.query_one("#library-use-in-console", Button)
+        before = screen._workspace_handoff_summary_label(
+            screen._library_workspace_depth_state()
+        )
+        assert summary.renderable == library_dim_label_text("Handoff", before)
+        assert "unavailable" in before
+        button.focus()
+        await pilot.pause()
+        rail.scroll_to(y=2, animate=False, force=True)
+        await pilot.pause()
+        scroll_y = rail.scroll_y
+        assert scroll_y > 0
+        assert screen.focused is button
+
+        assert _apply_changed_snapshot(
+            screen,
+            notes=(
+                {
+                    "id": "note-handoff",
+                    "title": "Retained source",
+                    "content": "Body",
+                    "last_modified": "2026-08-13T10:00:00Z",
+                },
+            ),
+        )
+        generation = screen._library_snapshot_state_generation
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_snapshot_rendered_generation == generation
+                and screen._library_entry_reconcile_pending is None
+            ),
+            message="Source snapshot did not finish reconciliation",
+        )
+        state = screen._library_workspace_depth_state()
+        expected = screen._workspace_handoff_summary_label(state)
+        assert expected != before
+        blocked, tooltip = screen._workspace_handoff_action_state(state)
+        assert button.tooltip == tooltip
+        assert button.has_class("library-source-action-blocked") is blocked
+        assert button.disabled is False
+        assert screen.query_one("#library-rail", LibraryRail) is rail
+        assert rail.query_one("#library-workspaces-handoff", Static) is summary
+        assert rail.query_one("#library-use-in-console", Button) is button
+        assert screen.focused is button
+        assert button.is_attached
+        assert rail.scroll_y == scroll_y
+        assert summary.renderable == library_dim_label_text("Handoff", expected)
 
 
 @pytest.mark.asyncio

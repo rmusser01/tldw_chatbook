@@ -3865,3 +3865,73 @@ ceilings; new dev adds Collections and Skills overruns. LibraryScreen32715 is
 1026 over31689; import628 remains41 over587. No budget is raised. Remaining
 ownership decomposition, Handoff repair, final-head Qodo/checks and normal
 protected merge are open. Every process mentioned in this checkpoint is terminal.
+
+### September10 approved Handoff repair and Qodo callable contracts
+
+The user approved the independently reviewed written Handoff spec and the
+existing weekly follow-up. The bounded implementation plan was written and
+independently approved before production edits. No new policy, cleanup owner,
+dependency or architecture decision is introduced.
+
+Qodo comments3985628196 and3985628201 are repaired by local commitca0871b6ec:
+the command-route mutation parameter/return and database fixture Path argument
+now have accurate types and Google-style documentation. Normalized executable
+ASTs are identical; database finally-close and every assertion are unchanged.
+Both complete files pass77 tests,2 warnings,7.50s
+(`/private/tmp/pr2427-qodo-callable-docs.log`); scoped Ruff, whitespace and
+independent review pass. Publication and exact-thread replies follow the saved
+repair. Comment3985628204 remains open for actual size reductions, not cap raises.
+
+Handoff RED captures5 failed/6 passed in the new focused selection
+(`/private/tmp/pr2427-handoff-red-corrected.log`) and both original failures
+(`/private/tmp/pr2427-handoff-original-red.log`). The mounted regression reaches
+the stale-label assertion after confirming current button policy, retained
+identities, focus and exact nonzero scroll. Four other RED cases reject the
+previously absent keyword. The fix adds the optional presentation string to
+the rail's existing in-place update and passes the existing owner's formatter
+at all three Screen callers. No body-factory invocation or state cache is added.
+Omitted, empty and absent-row controls retain their distinct contracts.
+
+Focused GREEN:11 passed/89 deselected,3 warnings,9.43s
+(`/private/tmp/pr2427-handoff-green.log`). The complete action-sync and unchanged
+post-release workspace-depth files pass20 tests
+(`/private/tmp/pr2427-handoff-workspaces-green.log`). Three small files pass
+Ruff; Screen retains exactly its49 baseline findings. Sequential independent
+spec and quality reviews found no issues. Screen grows only the required nine callsite lines,
+to32724/31689. Fresh size/private-owner guards finish126 passed/13 failed,
+2 warnings,3.44s (`/private/tmp/pr2427-handoff-size.log`), with the same13 size
+failures and no raised ceilings.
+
+Published e11bbb1cfd's entire PR Fast Lane workflow34557609212, including its
+derived-artifact job, is now successful. Dev subsequently advanced8 commits
+to0fcb79e596b3e527778c56867cf7ee0c62c17894; read-only comparison shows only ten
+Backlog files. Save and qualify the repair before that next rebase. This
+published-head CI result is not clearance for unpushed code or a protected merge.
+
+The complete four-file native run is terminal:135 passed/1 failed,3 warnings,
+168.24s (`/private/tmp/pr2427-handoff-native.log`). All original Handoff cases
+and new controls pass. The final inventory has six descriptors (stdio plus
+the already attributed pytest selector-loop/socketpair baseline), no SQLite
+or instance-lock retention. Report:
+`/private/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-handoff-native.PxhU1U/fd_identity.jsonl`.
+All seven derived checks pass (`/private/tmp/pr2427-handoff-preflight.log`).
+
+The one unchanged failure is
+`test_pending_conversation_open_cannot_overwrite_same_route_user_selection`:
+its selected-ID, SUPERSEDED result and canvas-identity assertions pass, but it
+expects focus on a row disabled by the in-flight locator. It reproduces alone
+(`/private/tmp/pr2427-handoff-conversation-focus.log`) and with the exact
+pre-repair LibraryRail.sync_state body, discarding only the newly added summary
+keyword (`/private/tmp/pr2427-no-handoff-control-fixed.log`). An observation
+before locator release proves loading=True, row.disabled=True, row attached,
+and focus already on library-conversations-library-grip; a new diagnostic
+precondition fails before the original asynchronous race assertion
+(`/private/tmp/pr2427-focus-disabled-evidence.log`). This is not TASK32302.
+The loading-disabled projection comes from incoming TASK32275/ADR147; no
+production focus or loading policy was altered. The temporary diagnostic
+runner lives outside the repository and changes no retained test assertions.
+The user was asked to approve an enabled rail-Search focus target with an
+explicit acquisition precondition while preserving the selected-ID, owner,
+SUPERSEDED and exact-focus oracles. That test-only correction is not yet made.
+Do not report the full136 as green. Protected merge remains blocked by this
+fixture repair,13 size ceilings, and final-head review/checks.

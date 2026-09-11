@@ -10970,6 +10970,9 @@ class LibraryScreen(BaseAppScreen):
                     workspace_handoff_action=self._workspace_handoff_action_state(
                         self._library_workspace_depth_state()
                     ),
+                    workspace_handoff_summary=self._workspace_handoff_summary_label(
+                        self._library_workspace_depth_state()
+                    ),
                 )
             header_renderable = header.renderable
             header_text = getattr(header_renderable, "plain", str(header_renderable))
@@ -11315,6 +11318,9 @@ class LibraryScreen(BaseAppScreen):
                 lifecycle=self._library_lifecycle,
                 onboarding_all_empty=self._library_onboarding_all_empty,
                 workspace_handoff_action=self._workspace_handoff_action_state(
+                    self._library_workspace_depth_state()
+                ),
+                workspace_handoff_summary=self._workspace_handoff_summary_label(
                     self._library_workspace_depth_state()
                 ),
             )
@@ -19614,6 +19620,9 @@ class LibraryScreen(BaseAppScreen):
             lifecycle=self._library_lifecycle,
             onboarding_all_empty=self._library_onboarding_all_empty,
             workspace_handoff_action=self._workspace_handoff_action_state(
+                self._library_workspace_depth_state()
+            ),
+            workspace_handoff_summary=self._workspace_handoff_summary_label(
                 self._library_workspace_depth_state()
             ),
         )
