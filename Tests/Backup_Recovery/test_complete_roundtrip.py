@@ -390,11 +390,8 @@ print('TWO_PROFILE_ISOLATED_PLAN_VALIDATED',flush=True)
 )
 
 
-def test_two_captured_profiles_plan_shared_concrete_roots_for_isolated_restore(
-    tmp_path,
-):
-    """Stage2a plans every earned root; it does not publish or approve owners."""
-    root, environment = _capture_two_profiles(tmp_path)
+def _isolated_environment(root, environment):
+    """Give restoration its own private selectors and native control storage."""
     for name in (
         "restore-home",
         "restore-config",
@@ -407,7 +404,7 @@ def test_two_captured_profiles_plan_shared_concrete_roots_for_isolated_restore(
     selector = root / "restore-config" / "config.toml"
     selector.write_text('[general]\nusers_name="restore-parent"\n', encoding="utf-8")
     selector.chmod(0o600)
-    environment = dict(
+    return dict(
         environment,
         HOME=str(root / "restore-home"),
         USERPROFILE=str(root / "restore-home"),
@@ -417,6 +414,170 @@ def test_two_captured_profiles_plan_shared_concrete_roots_for_isolated_restore(
         TMPDIR=str(root / "restore-tmp"),
         TLDW_CONFIG_PATH=str(selector),
     )
+
+
+def test_two_captured_profiles_plan_shared_concrete_roots_for_isolated_restore(
+    tmp_path,
+):
+    """Stage2a plans every earned root; it does not publish or approve owners."""
+    root, environment = _capture_two_profiles(tmp_path)
+    environment = _isolated_environment(root, environment)
     assert "TWO_PROFILE_ISOLATED_PLAN_VALIDATED" in _run_profile_child(
         root, "stage2-plan", _PLAN_ISOLATED, environment
+    )
+
+
+_OPEN_RESTORED = r"""
+import asyncio,json,sys
+from pathlib import Path
+from Tests.network_guard import install,blocked_attempts
+install()
+for name in ('sounddevice','pyaudio'):sys.modules[name]=None
+fixture=Path(sys.argv[-1]);args=sys.argv[1:-1]
+profile=args[args.index('--recovery-profile')+1]
+control=Path(args[args.index('--recovery-control-root')+1])
+attempt=args[args.index('--recovery-launch-attempt')+1]
+expected=json.loads((fixture/'stage2-installed.json').read_text())[profile]
+seed=json.loads((fixture/(expected['label']+'-seed.json')).read_text())
+sys.argv=['tldw-chatbook',*args,'--help']
+from tldw_chatbook.cli import main_cli_runner
+try:main_cli_runner()
+except SystemExit as error:assert error.code in (None,0),error
+from tldw_chatbook.app import TldwCli
+from tldw_chatbook.Backup_Recovery.profile_open import opened_receipt
+from tldw_chatbook.Library.library_ingest_jobs import IngestJobState
+assert opened_receipt(profile,control,attempt) is None
+async def main():
+ app=TldwCli()
+ async with app.run_test(size=(100,36)):
+  async with asyncio.timeout(20):
+   while not getattr(app,'_recovery_open_checked',False):await asyncio.sleep(.03)
+  receipt=opened_receipt(profile,control,attempt)
+  assert receipt is not None
+  assert app._initial_screen_pushed and app._ui_ready
+  assert receipt.installation_id==app.client_id==expected['installation_id']
+  assert str(app.chachanotes_db.db_path)==expected['core']
+  assert str(app.media_db.db_path)==expected['media']
+  assert str(app.prompts_db.db_path)==expected['prompts']
+  label=expected['label'];core=app.chachanotes_db
+  assert core.get_note_by_id(seed['note'])['content']==label+' native note bytes'
+  assert core.get_note_by_id(seed['deleted']) is None
+  assert core.get_message_by_id(seed['message'])['content']==label+' message bytes'
+  assert core.get_note_by_title('After capture '+label) is None
+  other='beta' if label=='alpha' else 'alpha'
+  assert core.get_note_by_title(other+' retained note') is None
+  assert app.media_db.get_media_by_id(seed['media'])['content']==label+' media bytes'
+  assert app.local_research_service.get_session(seed['research'])['query']==label+' research query'
+  assert app.local_research_service.get_session(seed['deleted_research']) is None
+  for original in ('alpha','beta'):
+   identity=json.loads((fixture/(original+'-seed.json')).read_text())
+   assert app.prompts_db.get_prompt_by_id(identity['prompt'])['user_prompt']==original+' prompt bytes'
+  job=app.library_ingest_jobs.get_job('ingest-job-1')
+  assert job is not None and job.state==IngestJobState.FAILED
+  assert job.error=='Interrupted by app restart' and not job.permanent
+  assert job.source_path==str(fixture/(label+'-input.txt'))
+  created=core.add_note('Restored ordinary write '+label,'Fresh installation '+label)
+  row=core.get_note_by_id(created)
+  assert row['content']=='Fresh installation '+label and row['client_id']==app.client_id
+ assert not blocked_attempts(),blocked_attempts()
+ print('RESTORED_PROFILE_OPENED',label,flush=True)
+asyncio.run(main())
+"""
+
+
+_RESTORE_ISOLATED = "".join(
+    (
+        _PLAN_ISOLATED,
+        r"""
+import hashlib,sqlite3,stat,subprocess
+from contextlib import closing
+from tldw_chatbook.Backup_Recovery.isolated_restore import restore_isolated,_launch_descriptor
+from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+selected=dict(plan.restore)
+source_paths=[fixture/label/'config.toml' for label in ('alpha','beta')]
+source_paths += [fixture/label/'custom'/leaf for label in ('alpha','beta') for leaf in ('notes.db','media.db','research.db')]
+source_paths.append(fixture/'shared'/'prompts.db')
+source_hashes={str(path):hashlib.sha256(path.read_bytes()).hexdigest() for path in source_paths}
+control=fixture/'restore-home'/'control'
+first=restore_isolated(archive,plan,control,threading.Event())
+assert all(path.is_file() for key,path in plan.restore if key in {row.logical_id for row in doc.files})
+planned_metadata={key:(desired,applied) for key,desired,applied in plan.metadata}
+for row in doc.directories:
+ if row.synthetic:continue
+ desired,applied=planned_metadata[row.logical_id]
+ assert desired==row.metadata
+ assert applied.mode==0o700 and applied.mtime_ns==desired.mtime_ns
+ assert ('metadata_normalized:'+row.logical_id in plan.issues)==(desired!=applied)
+ info=selected[row.logical_id].stat()
+ assert stat.S_ISDIR(info.st_mode)
+ assert stat.S_IMODE(info.st_mode)==applied.mode
+ assert info.st_mtime_ns==desired.mtime_ns,(row.logical_id,info.st_mtime_ns,desired.mtime_ns)
+service=RecoveryService(control)
+try:
+ rows=service.profiles()
+ assert len(rows)==2 and first in {row['profile_id'] for row in rows}
+ assert all(row['status']=='restoration_validated' and row['needs_setup'] and row['requirements_checked'] for row in rows)
+ assert len({row['generation'] for row in rows})==1
+ installed={}
+ for row in rows:
+  entry=_launch_descriptor(row['profile_id'],control)
+  profile=entry.source_profile
+  def path_for(owner):
+   matches=[item for item in doc.files if item.owner_id==owner and item.logical_id.startswith('profile:'+profile+':')]
+   assert len(matches)==1,(owner,matches)
+   return selected[matches[0].logical_id]
+  core=path_for('db.chachanotes.primary')
+  with closing(sqlite3.connect(core.as_uri()+'?mode=ro',uri=True)) as db:
+   labels=[label for label in ('alpha','beta') if db.execute('SELECT 1 FROM notes WHERE id=?',(json.loads((fixture/(label+'-seed.json')).read_text())['note'],)).fetchone()]
+   assert len(labels)==1,labels
+   label=labels[0];seed=json.loads((fixture/(label+'-seed.json')).read_text())
+   assert db.execute('SELECT content,deleted FROM notes WHERE id=?',(seed['deleted'],)).fetchone()==('Retained soft deletion '+label,1)
+   assert db.execute('SELECT 1 FROM notes WHERE title=?',('After capture '+label,)).fetchone() is None
+  with closing(sqlite3.connect(path_for('research.local').as_uri()+'?mode=ro',uri=True)) as db:
+   assert db.execute('SELECT deleted FROM research_sessions WHERE id=?',(seed['deleted_research'],)).fetchone()==(1,)
+  with closing(sqlite3.connect(path_for('db.library_ingest_jobs').as_uri()+'?mode=ro',uri=True)) as db:
+   assert db.execute('SELECT job_id,state FROM ingest_jobs').fetchall()==[('ingest-job-1','queued')]
+  empty=selected[f'profile:{profile}:chatbooks.archives']
+  assert empty.is_dir() and not list(empty.iterdir())
+  installed[entry.profile_id]={'label':label,'installation_id':entry.installation_id,'config':entry.config,'core':str(core),'media':str(path_for('db.media.primary')),'prompts':str(path_for('db.prompts.primary'))}
+ assert len({row['installation_id'] for row in installed.values()})==2
+ assert len({row['core'] for row in installed.values()})==2
+ assert len({row['prompts'] for row in installed.values()})==1
+ prompts=Path(next(iter(installed.values()))['prompts'])
+ assert prompts.stat().st_ino!=(fixture/'shared'/'prompts.db').stat().st_ino
+ (fixture/'stage2-installed.json').write_text(json.dumps(installed,indent=2))
+ print('TWO_PROFILE_RESTORATION_VALIDATED',flush=True)
+ original_call=subprocess.call
+ def headless(argv,**kwargs):
+  profile=argv[argv.index('--recovery-profile')+1]
+  output_path=fixture/('stage2-open-'+installed[profile]['label']+'.log')
+  with output_path.open('w') as output:
+   result=subprocess.run([sys.executable,'-c',OPEN_CHILD,*argv[4:],str(fixture)],**kwargs,stdout=output,stderr=subprocess.STDOUT,text=True,timeout=45)
+  assert result.returncode==0,output_path.read_text()[-14000:]
+  return result.returncode
+ subprocess.call=headless
+ try:
+  for row in rows:
+   operation=service.start_open_profile(row['profile_id'])
+   state=service.wait(operation,timeout=50)
+   assert state['state']=='succeeded',dict(state)
+   assert state['result']['opened_successfully'] and state['result']['needs_setup'],dict(state)
+ finally:subprocess.call=original_call
+ assert all(row['needs_setup'] and row['status']=='restoration_validated' for row in service.profiles())
+finally:service.close()
+assert source_hashes=={str(path):hashlib.sha256(path.read_bytes()).hexdigest() for path in source_paths}
+assert not blocked_attempts(),blocked_attempts()
+print('TWO_PROFILE_RESTORED_AND_OPENED',flush=True)
+""",
+    )
+)
+
+
+def test_two_captured_profiles_restore_and_open_with_native_content(tmp_path):
+    """Stage2b executes and opens the finite cohort without approving owners."""
+    root, environment = _capture_two_profiles(tmp_path)
+    environment = _isolated_environment(root, environment)
+    script = "OPEN_CHILD=" + repr(_OPEN_RESTORED) + "\n" + _RESTORE_ISOLATED
+    assert "TWO_PROFILE_RESTORED_AND_OPENED" in _run_profile_child(
+        root, "stage2-restore", script, environment, timeout=75
     )
