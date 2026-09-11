@@ -6307,6 +6307,16 @@ class PermissionsHubService(FakeHubService):
     def set_kill_switch(self, value):
         self._store.set_kill_switch(value)
 
+    def list_tool_arg_rules(self, server_key, tool_name, *, profile_id="default"):
+        return self._store.list_tool_arg_rules(
+            server_key, tool_name, profile_id=profile_id
+        )
+
+    def remove_tool_arg_rule(self, server_key, tool_name, rule_id, *, profile_id="default"):
+        return self._store.remove_tool_arg_rule(
+            server_key, tool_name, rule_id, profile_id=profile_id
+        )
+
     async def load_section(self, section=None):
         effective_section = section or self.context.selected_section or "overview"
         if self.context.selected_source == "local":
@@ -6690,6 +6700,50 @@ def test_tool_state_label_marker_precedence():
         )
         == "Ask ⚑"
     )
+
+
+def test_tool_has_arg_rules_reads_the_raw_payload_directly(tmp_path):
+    """task-32281 AC#2: `_tool_has_arg_rules()` -- the raw-payload read
+    `_build_permission_rows()`/`_builtin_permission_matrix_rows()` both
+    check to append the matrix's ``≡`` marker -- reuses the caller's own
+    already-loaded `servers_payload` slice rather than a fresh store
+    round-trip, mirroring `_raw_tool_state()`'s own precedent."""
+    store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
+    tool = HubTool(
+        server_key="srv",
+        server_label="Server",
+        source="mcp",
+        name="search",
+        description="A tool.",
+        input_schema={"type": "object"},
+        tags=(),
+        stale=False,
+        executable=True,
+    )
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+    servers_payload = store.load()["profiles"]["default"]["servers"]
+    has_rules = MCPWorkbench._tool_has_arg_rules
+
+    assert has_rules(servers_payload, "srv", "search") is True
+    assert has_rules(servers_payload, "srv", "other-tool") is False
+    assert has_rules(servers_payload, "other-server", "search") is False
+    assert has_rules({}, "srv", "search") is False
+
+    # Regression: `_tool_policy_inventory()` feeds `_build_permission_rows()`
+    # a FROZEN snapshot (`read_profile_inventory_snapshot()`, via
+    # `permission_store._freeze_snapshot()`), which turns every stored
+    # list -- `arg_rules` included -- into a tuple. An `isinstance(...,
+    # list)` check here would silently never mark a real matrix row (only
+    # ever exercised through `store.load()`'s plain-list payload above).
+    frozen_payload = store.read_profile_inventory_snapshot().payload
+    frozen_servers = frozen_payload["profiles"]["default"]["servers"]
+    assert isinstance(frozen_servers["srv"]["tools"]["search"]["arg_rules"], tuple)
+    assert has_rules(frozen_servers, "srv", "search") is True
 
 
 @pytest.mark.asyncio
@@ -7881,6 +7935,53 @@ async def test_permissions_mode_tool_row_selection_shows_permission_block(tmp_pa
         # Routed through show_permission(), NOT show_tool() -- the full
         # tool-detail-plus-Test-Tool block is Tools mode's own surface.
         assert not list(app.query("#mcp-inspector-tool-name"))
+
+
+# -- task-32281: exact-input allow rules, end to end -------------------------
+
+
+@pytest.mark.asyncio
+async def test_matrix_marks_and_inspector_lists_and_removes_arg_rules(tmp_path):
+    """AC#1/#2 end to end: a tool with a stored exact-input allow rule
+    gets the matrix's ``≡`` marker; selecting its row lists the rule in
+    the inspector with a Remove button; pressing Remove deletes the store
+    entry AND clears both the marker and the inspector row -- proving
+    the next identical call would ask again (the store-level mechanism is
+    pinned separately in `Tests/MCP/test_permission_store.py`)."""
+    store_path = tmp_path / "mcp_permissions.json"
+    store = MCPPermissionStore(store_path)
+    store.add_tool_arg_rule(
+        "local:docs", "search", args={"query": "x"}, definition_hash="a" * 64
+    )
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        tool_cells = {row[0].strip(): row[1] for row in _perm_all_rows(app)}
+        assert "≡" in tool_cells["search"]
+        assert "≡" not in tool_cells["fetch"]
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)  # local:docs::search
+        await pilot.press("enter")
+        await pilot.pause()
+
+        rule_row = app.query_one("#mcp-inspector-arg-rule-0", Static)
+        assert "Exact-input allow" in str(rule_row.renderable)
+        assert '"query": "x"' in str(rule_row.renderable)
+
+        await pilot.click("#mcp-inspector-arg-rule-remove-0")
+        await pilot.pause()
+
+        assert store.list_tool_arg_rules("local:docs", "search") == []
+        assert not list(app.query("#mcp-inspector-arg-rule-0"))
+        assert not list(app.query("#mcp-inspector-arg-rule-remove-0"))
+        tool_cells_after = {row[0].strip(): row[1] for row in _perm_all_rows(app)}
+        assert "≡" not in tool_cells_after["search"]
 
 
 @pytest.mark.asyncio

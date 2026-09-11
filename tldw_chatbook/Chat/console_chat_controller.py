@@ -13024,6 +13024,21 @@ class ConsoleChatController:
                 initiator="agent",
             )
 
+        def persist_arg_rule(hub: "HubTool", args: Mapping[str, Any]) -> None:
+            # task-32281: same shape as `MCPToolProvider._apply_verdict()`'s
+            # own "allow_matching" handling -- persist scoped to EXACTLY
+            # the displayed arguments, never a whole-tool allow.
+            service.add_tool_arg_rule(
+                hub.server_key,
+                hub.name,
+                args=dict(args),
+                tool=hub,
+                **profile_kwargs,
+            )
+
+        def arg_rule_allows(hub: "HubTool", args: Mapping[str, Any]) -> bool:
+            return service.arg_rule_allows_call(hub, dict(args), **profile_kwargs)
+
         from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
 
         provider = VirtualCliProvider(
@@ -13038,6 +13053,8 @@ class ConsoleChatController:
                 hub.server_key, hub.name, **profile_kwargs
             ),
             persist_approval=persist,
+            persist_arg_rule=persist_arg_rule,
+            arg_rule_allows=arg_rule_allows,
             record_decision=record,
             root_guard=root_guard,
             authority_scope=authority_scope,

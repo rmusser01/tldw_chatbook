@@ -447,6 +447,24 @@ its filter can answer "what did I refuse?":
 A Deny you press in Console lands here as its own row, exactly as each
 approval does.
 
+### Exact-input allow rules
+
+Alongside **Approve once** / **Approve for session** / **Always allow** /
+**Deny**, the approval card can offer a fifth choice: **Always allow this
+exact input**. Unlike **Always allow** — which sets the whole tool to
+Allow — this remembers only the *exact arguments shown on that card*: the
+same tool called again with different arguments still asks. It's scoped
+per tool, tied to that tool's current definition the same way **Always
+allow** is (a server that changes the tool's definition invalidates the
+rule, same rug-pull guard).
+
+A tool that carries one or more of these rules gets a `≡` marker on its
+State cell in the Permissions matrix (see the legend line under the
+matrix). Selecting that tool's row lists each stored rule in the
+inspector — its (capped) argument summary and a **Remove** button — right
+below the permission explanation. Removing a rule takes effect
+immediately: the next call with those exact arguments asks again.
+
 ## Advanced (legacy control plane)
 
 Opt in from the inspector's **Advanced…** toggle (it persists across
@@ -521,4 +539,8 @@ every remaining producer of the bare "denied" token for a refusal the
 user did not make (MCP/local/virtual-CLI kill-switch paths, the Hub's Test
 Tool gate denial, a run stopped while a card was pending) now records the
 refuser that actually applies — **Blocked (kill switch)** is new; the rest
-land in the existing **Blocked (Off)** / **Denied (no decision)** buckets.*
+land in the existing **Blocked (Off)** / **Denied (no decision)** buckets.
+Docs pass 2026-09-10 (task-32281, against code and tests, not a live
+screen): added "Exact-input allow rules" — the inspector now lists each
+stored rule with a Remove action, and the Permissions matrix marks a tool
+that carries one with a `≡` suffix.*

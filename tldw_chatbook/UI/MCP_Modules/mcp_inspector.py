@@ -6,7 +6,7 @@ import asyncio
 import json
 import math
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from functools import partial
 from typing import Any
 
@@ -317,6 +317,11 @@ _RISK_FLOORED_NOTICE = (
     "High-risk tool — asks even though the inherited default is Allow."
 )
 _REALLOW_TOOLTIP = "Store the new definition hash and allow again."
+# task-32281: cap on one exact-input allow rule row's displayed argument
+# summary -- long enough to be legible, short enough that a row with a big
+# argument payload doesn't dominate the permission block.
+_ARG_RULE_SUMMARY_LIMIT = 60
+_ARG_RULE_REMOVE_TOOLTIP = "Remove this exact-input allow rule."
 
 # Task 3 (MCP Hub Phase 6): cascade provenance -- `show_permission()`'s
 # `cascade` tuple, when given, replaces the single `_ORIGIN_SENTENCES`
@@ -408,6 +413,17 @@ def _stale_result_toast_text(tool_name: str) -> str:
     return _safe_tool_test_text(
         f"{tool_name} finished running, but its result isn't shown here."
     )
+
+
+def _arg_rule_summary(args_json: str, *, limit: int = _ARG_RULE_SUMMARY_LIMIT) -> str:
+    """One exact-input allow rule's row text, capped at `limit` chars
+    (task-32281 AC#1). `args_json` is already the rule's canonical
+    argument rendering (`permission_store._canonical_args_json()`'s
+    output) -- shown as-is rather than re-formatted, so what's on the row
+    is exactly what the store matches calls against."""
+    if len(args_json) <= limit:
+        return args_json
+    return args_json[: limit - 1] + "…"
 
 
 def _cascade_rungs(
@@ -1120,6 +1136,30 @@ class MCPInspector(Vertical):
             self.tool_name = tool_name
             self.profile_context = profile_context
 
+    class RemoveArgRuleRequested(Message, namespace="mcp_inspector"):
+        """Posted when the user presses Remove on one exact-input allow
+        rule row (task-32281; `#mcp-inspector-arg-rule-remove-{index}`,
+        one per rule -- see `_render_permission_container()`'s own
+        `arg_rules` rendering). `rule_id` is the rule's canonical
+        ``args_json`` -- `list_tool_arg_rules()`'s own `rule_id` field, the
+        SAME string `remove_tool_arg_rule()` matches against. `MCPWorkbench`
+        deletes it, resyncs the matrix (its ``≡`` marker clears once no
+        rule remains), and re-renders this same permission block with the
+        fresh (now-shorter) rule list."""
+
+        def __init__(
+            self,
+            server_key: str,
+            tool_name: str,
+            rule_id: str,
+            profile_context: PermissionProfileContext | None = None,
+        ) -> None:
+            super().__init__()
+            self.server_key = server_key
+            self.tool_name = tool_name
+            self.rule_id = rule_id
+            self.profile_context = profile_context
+
     class AuditOpenToolRequested(Message, namespace="mcp_inspector"):
         """Posted when the user presses "Open tool" (`#mcp-audit-open-tool`)
         on an execution-log entry's detail view (`show_audit_entry()`).
@@ -1242,6 +1282,12 @@ class MCPInspector(Vertical):
         # `ReallowRequested` without re-querying the workbench.
         self._current_permission_tool: HubTool | None = None
         self._current_permission_profile_context: PermissionProfileContext | None = None
+        # task-32281: the exact-input allow rules `#mcp-inspector-permission`
+        # is currently listing (index-aligned with the mounted `mcp-
+        # inspector-arg-rule-remove-{index}` buttons) -- read by that
+        # button's press handler (below) to resolve the pressed row's
+        # `rule_id` for `RemoveArgRuleRequested` without re-fetching.
+        self._current_permission_arg_rules: list[Mapping[str, Any]] = []
         # T7 (MCP Hub Phase 5): the raw execution-log entry dict
         # `#mcp-inspector-audit` currently describes, or `None` when
         # hidden -- set by `show_audit_entry()`, the single writer. Read by
@@ -1798,6 +1844,7 @@ class MCPInspector(Vertical):
         *,
         effective: EffectiveToolState | None = None,
         profile_context: PermissionProfileContext | None = None,
+        arg_rules: Sequence[Mapping[str, Any]] = (),
     ) -> None:
         """Rebuild `#mcp-inspector-tool` for the given tool, or hide it.
 
@@ -1927,7 +1974,7 @@ class MCPInspector(Vertical):
             # wiring is `show_permission()`-only per the brief, so this path
             # keeps rendering the plain origin sentence.
             await self._render_permission_container(
-                tool, effective, show_goto_button=True
+                tool, effective, show_goto_button=True, arg_rules=arg_rules
             )
 
     async def _render_permission_container(
@@ -1937,6 +1984,7 @@ class MCPInspector(Vertical):
         *,
         cascade: tuple[str | None, str | None, str] | None = None,
         show_goto_button: bool = False,
+        arg_rules: Sequence[Mapping[str, Any]] = (),
     ) -> None:
         """Rebuild `#mcp-inspector-permission` for one tool's resolved
         permission state, or hide it.
@@ -1959,18 +2007,26 @@ class MCPInspector(Vertical):
         "Change in Permissions" jump button (`#mcp-inspector-goto-
         permission`) -- `show_tool()`'s own call site only; see its
         docstring.
+
+        `arg_rules` (task-32281): this tool's stored exact-input allow
+        rules (`MCPWorkbench._arg_rules_for_row()`'s fetch, threaded
+        through by every real caller) -- rendered as one row per rule with
+        a Remove button, below the state explanation. Empty (the default)
+        renders no rule rows at all, same as a tool with none stored.
         """
         container = self.query_one("#mcp-inspector-permission", Vertical)
         await container.remove_children()
         if tool is None or effective is None:
             container.display = False
             self._current_permission_tool = None
+            self._current_permission_arg_rules = []
             # task-2270: restore the badge -- unless another detail view
             # (tool/audit/finding) still shows content.
             self._sync_state_badge_display()
             return
         container.display = True
         self._current_permission_tool = tool
+        self._current_permission_arg_rules = list(arg_rules)
         # task-2270: a Permissions-matrix row selection hides the badge
         # exactly like Tools mode does; synced before the mounts below so
         # no paint frame shows badge + populated detail together.
@@ -2057,6 +2113,29 @@ class MCPInspector(Vertical):
                     markup=False,
                 )
             )
+        # task-32281 AC#1: one row per stored exact-input allow rule --
+        # a Static summary plus its own Remove button, index-aligned with
+        # `self._current_permission_arg_rules` so the press handler below
+        # can resolve `rule_id` without re-fetching.
+        for index, rule in enumerate(self._current_permission_arg_rules):
+            args_json = str(rule.get("args_json", ""))
+            widgets.append(
+                Static(
+                    f"Exact-input allow · {_arg_rule_summary(args_json)}",
+                    id=f"mcp-inspector-arg-rule-{index}",
+                    classes="ds-field-row",
+                    markup=False,
+                )
+            )
+            widgets.append(
+                Button(
+                    "Remove",
+                    id=f"mcp-inspector-arg-rule-remove-{index}",
+                    classes="console-action-secondary",
+                    compact=True,
+                    tooltip=_ARG_RULE_REMOVE_TOOLTIP,
+                )
+            )
         if show_goto_button:
             widgets.append(
                 Button(
@@ -2076,6 +2155,7 @@ class MCPInspector(Vertical):
         *,
         cascade: tuple[str | None, str | None, str] | None = None,
         profile_context: PermissionProfileContext | None = None,
+        arg_rules: Sequence[Mapping[str, Any]] = (),
     ) -> None:
         """Render `#mcp-inspector-permission` standalone -- Permissions-mode's
         matrix tool-row selection entry point
@@ -2098,7 +2178,9 @@ class MCPInspector(Vertical):
         """
         async with self._refresh_lock:
             self._current_permission_profile_context = profile_context
-            await self._render_permission_container(tool, effective, cascade=cascade)
+            await self._render_permission_container(
+                tool, effective, cascade=cascade, arg_rules=arg_rules
+            )
 
     async def show_audit_entry(
         self,
@@ -3365,6 +3447,31 @@ class MCPInspector(Vertical):
                         self._current_permission_profile_context,
                     )
                 )
+            return
+        if button_id.startswith("mcp-inspector-arg-rule-remove-"):
+            # task-32281: one Remove button per exact-input allow rule row,
+            # index-aligned with `_current_permission_arg_rules` (the SAME
+            # list `_render_permission_container()` just rendered from).
+            event.stop()
+            tool = self._current_permission_tool
+            if tool is None:
+                return
+            try:
+                index = int(button_id.rsplit("-", 1)[-1])
+                rule = self._current_permission_arg_rules[index]
+            except (ValueError, IndexError):
+                return
+            rule_id = rule.get("rule_id")
+            if not isinstance(rule_id, str) or not rule_id:
+                return
+            self.post_message(
+                self.RemoveArgRuleRequested(
+                    tool.server_key,
+                    tool.name,
+                    rule_id,
+                    self._current_permission_profile_context,
+                )
+            )
             return
         if button_id == "mcp-inspector-goto-permission":
             # Task 3: the Tools-mode permission block's own jump button --

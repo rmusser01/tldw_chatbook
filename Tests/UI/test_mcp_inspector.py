@@ -54,6 +54,9 @@ def test_profile_scoped_inspector_requests_preserve_captured_context():
     reallow_request = MCPInspector.ReallowRequested(
         "local:docs", "search", context
     )
+    remove_arg_rule_request = MCPInspector.RemoveArgRuleRequested(
+        "local:docs", "search", "rule-1", context
+    )
     jump_request = MCPInspector.ChangeInPermissionsRequested(
         "local:docs", "search", context
     )
@@ -66,6 +69,8 @@ def test_profile_scoped_inspector_requests_preserve_captured_context():
 
     assert preview_request.profile_context == context
     assert test_request.profile_context == context
+    assert remove_arg_rule_request.profile_context == context
+    assert remove_arg_rule_request.rule_id == "rule-1"
     assert reallow_request.profile_context == context
     assert jump_request.profile_context == context
     assert audit_open_request.profile_context == context
@@ -185,6 +190,9 @@ class InspectorApp(ConsolidatedCSSApp):
         self.events.append(event)
 
     def on_mcp_inspector_reallow_requested(self, event) -> None:
+        self.events.append(event)
+
+    def on_mcp_inspector_remove_arg_rule_requested(self, event) -> None:
         self.events.append(event)
 
     def on_mcp_inspector_change_in_permissions_requested(self, event) -> None:
@@ -4347,6 +4355,104 @@ async def test_reallow_button_press_posts_reallow_requested_with_server_key_and_
         assert len(events) == 1
         assert events[0].server_key == "local:docs"
         assert events[0].tool_name == "search"
+
+
+# -- task-32281: exact-input allow rules, listed and removable --------------
+
+
+@pytest.mark.asyncio
+async def test_show_permission_renders_one_row_per_arg_rule():
+    """AC#1: the permission block lists every stored exact-input allow
+    rule, each with its (capped) argument summary and a Remove button."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool(server_key="local:docs", name="search")
+        await inspector.show_permission(
+            tool,
+            EffectiveToolState(state="ask", origin="server_default"),
+            arg_rules=[
+                {"rule_id": "r1", "args_json": '{"query": "x"}'},
+                {"rule_id": "r2", "args_json": '{"query": "y"}'},
+            ],
+        )
+        await pilot.pause()
+
+        rows = [
+            str(s.renderable)
+            for s in app.query(Static)
+            if (s.id or "").startswith("mcp-inspector-arg-rule-")
+        ]
+        assert rows == [
+            'Exact-input allow · {"query": "x"}',
+            'Exact-input allow · {"query": "y"}',
+        ]
+        assert app.query_one("#mcp-inspector-arg-rule-remove-0", Button)
+        assert app.query_one("#mcp-inspector-arg-rule-remove-1", Button)
+
+
+@pytest.mark.asyncio
+async def test_show_permission_with_no_arg_rules_renders_no_rule_rows():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(), EffectiveToolState(state="ask", origin="server_default")
+        )
+        await pilot.pause()
+
+        assert not list(app.query("#mcp-inspector-arg-rule-remove-0"))
+
+
+@pytest.mark.asyncio
+async def test_arg_rule_summary_is_capped_at_60_chars():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        long_args = '{"query": "%s"}' % ("x" * 80)
+        await inspector.show_permission(
+            _tool(),
+            EffectiveToolState(state="ask", origin="server_default"),
+            arg_rules=[{"rule_id": "r1", "args_json": long_args}],
+        )
+        await pilot.pause()
+
+        text = str(app.query_one("#mcp-inspector-arg-rule-0", Static).renderable)
+        # "Exact-input allow · " prefix plus a summary capped at 60 chars.
+        summary = text.removeprefix("Exact-input allow · ")
+        assert len(summary) == 60
+        assert summary.endswith("…")
+
+
+@pytest.mark.asyncio
+async def test_remove_arg_rule_button_press_posts_requested_with_rule_id():
+    """AC#1: pressing Remove posts the pressed row's own rule_id, not
+    (say) always the first row's -- verified with two rules present."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool(server_key="local:docs", name="search")
+        await inspector.show_permission(
+            tool,
+            EffectiveToolState(state="ask", origin="server_default"),
+            arg_rules=[
+                {"rule_id": "r1", "args_json": '{"query": "x"}'},
+                {"rule_id": "r2", "args_json": '{"query": "y"}'},
+            ],
+        )
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-arg-rule-remove-1")
+        await pilot.pause()
+
+        events = [
+            e
+            for e in app.events
+            if isinstance(e, MCPInspector.RemoveArgRuleRequested)
+        ]
+        assert len(events) == 1
+        assert events[0].server_key == "local:docs"
+        assert events[0].tool_name == "search"
+        assert events[0].rule_id == "r2"
 
 
 @pytest.mark.asyncio

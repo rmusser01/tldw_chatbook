@@ -666,6 +666,77 @@ def test_permission_is_rechecked_after_review(tmp_path):
     assert not result.ok and result.outcome == "blocked"
 
 
+# -- task-32281: "Always allow this exact input" is honoured, not dropped ---
+#
+# `pending_gate_for()` offers `allow_matching` (it passes no `options`, so
+# the approval card renders all five decisions -- see
+# `chat_approval_card.py`'s `_DECISION_OPTIONS`), but `_ask_verdict()` used
+# to recognise only approve_once/approve_session/always_allow/deny/timeout:
+# a pre-stamped "allow_matching" matched neither its allow branch nor its
+# deny/timeout branch and fell through to a silent re-ask (or "timeout"
+# with no callback); the live-callback counterpart came back as the literal
+# string "allow_matching", which `invoke()`'s `verdict != "allow"` check
+# then DENIED outright. Both paths now persist an exact-input rule (via the
+# injected `persist_arg_rule` callable) and allow the call, mirroring
+# `MCPToolProvider._apply_verdict()`'s own "allow_matching" handling.
+
+
+def test_allow_matching_stamp_persists_rule_and_allows_this_call(tmp_path):
+    persisted = []
+    provider = make_provider(
+        tmp_path,
+        persist_arg_rule=lambda hub, args: persisted.append((hub.name, dict(args))),
+    )
+    call = ToolCall("virtual_cli", {"command": "ls", "argv": ["."]}, "c1")
+    pending = provider.pending_gate_for(call)
+    assert pending is not None
+    provider.apply_batch_decisions("run", {"c1": "allow_matching"}, [pending])
+
+    with use_run_id("run"), use_tool_call_id("c1"):
+        result = provider.invoke("virtual_cli", {"command": "ls", "argv": ["."]})
+
+    assert result.ok
+    assert persisted == [("ls", {"command": "ls", "argv": ["."]})]
+
+
+def test_allow_matching_via_live_callback_persists_rule_and_allows(tmp_path):
+    persisted = []
+
+    def approve_callback(pendings):
+        return {(p.call_id or p.llm_name): "allow_matching" for p in pendings}
+
+    provider = make_provider(
+        tmp_path,
+        approval_callback=approve_callback,
+        persist_arg_rule=lambda hub, args: persisted.append((hub.name, dict(args))),
+    )
+
+    result = provider.invoke("virtual_cli", {"command": "ls", "argv": ["."]})
+
+    assert result.ok
+    assert persisted == [("ls", {"command": "ls", "argv": ["."]})]
+
+
+def test_arg_rule_allows_skips_the_card_for_a_matching_call(tmp_path):
+    """A rule an earlier `allow_matching` decision persisted is CONSULTED
+    on the next call -- `pending_gate_for()` never offers a card for it,
+    and `invoke()` allows it without a callback at all. A different `argv`
+    for the same command still asks (and times out with no callback)."""
+    provider = make_provider(
+        tmp_path,
+        arg_rule_allows=lambda hub, args: args.get("argv") == ["."],
+    )
+    call = ToolCall("virtual_cli", {"command": "ls", "argv": ["."]}, "c1")
+
+    assert provider.pending_gate_for(call) is None
+
+    matching = provider.invoke("virtual_cli", {"command": "ls", "argv": ["."]})
+    other = provider.invoke("virtual_cli", {"command": "ls", "argv": ["subdir"]})
+
+    assert matching.ok
+    assert not other.ok and other.outcome == "blocked"
+
+
 def test_console_virtual_cli_callbacks_capture_the_exact_named_profile(tmp_path):
     from types import SimpleNamespace
 

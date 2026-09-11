@@ -5306,6 +5306,35 @@ class UnifiedMCPControlPlaneService:
             return False
         return arg_rule_allows(store.load(), tool, args, profile_id=profile_id)
 
+    def list_tool_arg_rules(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        profile_id: str = "default",
+    ) -> list[dict[str, Any]]:
+        """List one tool's stored exact-input allow rules (task-32281)."""
+        store = self.permission_store
+        if store is None:
+            return []
+        return store.list_tool_arg_rules(server_key, tool_name, profile_id=profile_id)
+
+    def remove_tool_arg_rule(
+        self,
+        server_key: str,
+        tool_name: str,
+        rule_id: str,
+        *,
+        profile_id: str = "default",
+    ) -> bool:
+        """Delete one exact-input allow rule (task-32281)."""
+        store = self.permission_store
+        if store is None:
+            return False
+        return store.remove_tool_arg_rule(
+            server_key, tool_name, rule_id, profile_id=profile_id
+        )
+
     def gate_tool_test(
         self, tool: HubTool, *, profile_id: str = "default"
     ) -> EffectiveToolState:

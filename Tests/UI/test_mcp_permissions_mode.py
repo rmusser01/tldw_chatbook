@@ -688,6 +688,7 @@ async def test_legend_line_renders_fixed_marker_key():
         legend = str(app.query_one("#mcp-perm-legend", Static).renderable)
         assert legend == (
             "• override · ⚠ definition changed · ⚑ high-risk floor · "
+            "≡ exact-input allows · "
             "Space cycles Inherit → Allow → Ask → Off"
         )
 
@@ -735,6 +736,7 @@ async def test_update_matrix_with_no_gate_breadcrumb_shows_bare_legend():
         legend = str(app.query_one("#mcp-perm-legend", Static).renderable)
         assert legend == (
             "• override · ⚠ definition changed · ⚑ high-risk floor · "
+            "≡ exact-input allows · "
             "Space cycles Inherit → Allow → Ask → Off"
         )
 

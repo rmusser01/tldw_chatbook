@@ -53,6 +53,7 @@ _TOOL_ROW_INDENT = "  "
 # through `update_matrix()`.
 _LEGEND_TEXT = (
     "• override · ⚠ definition changed · ⚑ high-risk floor · "
+    "≡ exact-input allows · "
     "Space cycles Inherit → Allow → Ask → Off"
 )
 
