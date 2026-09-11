@@ -5096,7 +5096,7 @@ class LibraryFileNotesWorkspace(Vertical):
         task.add_done_callback(self._commit_settlement_tasks.discard)
 
     def _update_controls(self) -> None:
-        if not self._active or not self.is_mounted:
+        if not self._active or not self.is_mounted or not self.is_running:
             return
         self._update_static_content(
             self.query_one("#file-notes-path-label", Static),

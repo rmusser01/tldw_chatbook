@@ -3104,7 +3104,7 @@ async def test_library_onboarding_back_requires_fresh_empty_evidence_and_focuses
             assert screen._library_selected_row_id == ""
             assert screen._library_footer_shortcuts_for_current_state() == (
                 ("i", "import content"),
-                ("n", "new note"),
+                ("ctrl+n", "new note"),
                 ("F6", "next pane"),
             )
             assert screen.query_one(
@@ -4223,9 +4223,9 @@ async def test_ordinary_rail_restores_custom_owner_after_collapse_and_adaptive_r
             assert shell.library.styles.width.value == saved_width
             assert shell.library_grip.region.x == shell.library.region.right
 
-            # TASK-31633/31951 reduce Media/Conversations grips to one cell;
-            # 115 now fits all panes for the narrowest saved Library width.
-            await pilot.resize_terminal(105, 48)
+            # TASK-32200 restores five-cell grips on every reader. This
+            # width fits Items + Work, but not the saved Library pane too.
+            await pilot.resize_terminal(115, 48)
             await _wait_for_condition(
                 pilot,
                 lambda: (
@@ -4246,7 +4246,7 @@ async def test_ordinary_rail_restores_custom_owner_after_collapse_and_adaptive_r
             assert shell.library.styles.width.value == 0
             assert shell.items.display
             assert shell.library_grip.display
-            expected_grip_width = 5 if row_id == LIBRARY_ROW_BROWSE_NOTES else 1
+            expected_grip_width = 5
             assert shell.effective_layout.grip_width == expected_grip_width
             assert shell.library_grip.styles.width.value == expected_grip_width
             assert shell.items_grip.display
@@ -5726,7 +5726,7 @@ async def test_library_production_width_matrix_ordinary(
         (235, 231, 0, False, True),
         (170, 166, 0, False, True),
         (120, 116, 0, False, True),
-        (100, 100, 0, False, False),
+        (100, 100, 0, False, True),
         (80, 80, 0, False, False),
         (60, 60, 0, False, False),
     ),
@@ -7113,6 +7113,12 @@ async def test_slash_focuses_the_prompts_filter_not_the_rail_search(tmp_path):
 
             prompts_filter = screen.query_one("#library-prompts-filter", Input)
             rail_search = screen.query_one("#library-search-input", Input)
+            screen.query_one(f"#library-prompt-row-{prompt_id}").focus()
+            await _wait_for_condition(
+                pilot,
+                lambda: screen.query_one(f"#library-prompt-row-{prompt_id}").has_focus,
+                message="Prompt row did not take focus before the slash shortcut.",
+            )
             assert not prompts_filter.has_focus
             await pilot.press("/")
             await pilot.pause()
@@ -7336,7 +7342,7 @@ async def test_library_shell_conversation_row_switches_selection():
 
 
 @pytest.mark.asyncio
-async def test_library_shell_open_in_console_triggers_handoff():
+async def test_library_shell_use_conversation_as_source_triggers_handoff():
     app = _build_test_app()
     _seed_conversations(
         app,
@@ -7361,9 +7367,16 @@ async def test_library_shell_open_in_console_triggers_handoff():
         await _wait_for_library_shell(screen, pilot)
 
         screen.query_one("#library-row-browse-conversations").press()
-        await _wait_for_selector(screen, pilot, "#library-conversation-open-console")
+        await _wait_for_selector(screen, pilot, "#library-conversation-use-source")
 
-        screen.query_one("#library-conversation-open-console").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query_one(
+                "#library-conversation-use-source", Button
+            ).disabled,
+            message="Conversation source handoff never became ready.",
+        )
+        screen.query_one("#library-conversation-use-source").press()
         await pilot.pause()
         await pilot.pause()
 
@@ -8329,18 +8342,21 @@ async def test_library_shell_search_rag_mode_blocks_run_when_endpoint_named_but_
         # that (the pre-Task-7 bug), Run would be enabled here. It must
         # stay blocked because no credential resolves for that provider.
         assert screen.query_one("#library-rag-run-query", Button).disabled is True
-        # ...and the copy must name the CREDENTIAL, not the provider (PR-T2
-        # review round 3, finding I1). This assertion previously read
-        # `"Select a provider/model" in ...` -- which was the regression:
-        # Task 7 widened this branch to cover "endpoint named, credential
-        # missing", making it the only way a user with a configured
-        # provider reaches the block, and the inherited copy then told them
-        # to select the provider they had already selected and pointed at
-        # Console controls instead of at a key.
+        # TASK-32236 keeps credential recovery actionable through Settings;
+        # environment-variable and TOML paths belong in diagnostic details.
         visible = _visible_text(screen)
         assert "Select a provider/model" not in visible
-        assert "OPENAI_API_KEY" in visible
-        assert "api_settings.openai" in visible
+        assert str(
+            screen.query_one("#library-rag-query-blocked-callout", Static).renderable
+        ) == (
+            "No analysis provider is configured · "
+            "Set one in Settings ▸ Providers & Models."
+        )
+        assert "OPENAI_API_KEY" not in visible
+        assert "api_settings.openai" not in visible
+        settings = screen.query_one("#library-rag-open-provider-settings", Button)
+        assert settings.display
+        assert not settings.disabled
 
 
 @pytest.mark.asyncio
@@ -13984,6 +14000,7 @@ async def test_library_conversations_next_loads_second_service_page():
             "query": None,
             "limit": 20,
             "offset": 20,
+            "archive_scope": "active",
         }
         assert len(screen.query(".library-conversation-row")) == 20
         assert str(
@@ -20703,6 +20720,8 @@ class _TouchingNotesScopeService(StaticLibraryNotesScopeService):
                 else note
                 for note in self.notes
             )
+            if isinstance(result, dict):
+                result = {**result, "last_modified": stamp}
         return result
 
 
@@ -23122,9 +23141,9 @@ async def test_library_shell_note_use_in_console_without_open_note_notifies():
 def test_library_note_css_bounds_editor_body_and_mutes_meta():
     """Generated-CSS presence check (house pattern: see
     ``test_library_source_actions_use_console_text_control_style``) --
-    the note editor's ``TextArea`` must never be left at Textual's default
-    ``height: 1fr`` inside the scrolling Library canvas, and the meta line
-    must use the same muted tone as the media viewer's.
+    the note editor's ``TextArea`` fills its editor region with a six-row
+    floor rather than the retired twenty-row ceiling, and the meta line
+    uses the same muted tone as the media viewer's.
     """
     source_css = Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text(
         encoding="utf-8"
@@ -23134,9 +23153,9 @@ def test_library_note_css_bounds_editor_body_and_mutes_meta():
         assert "#library-note-body {" in css
         body_block = css[css.index("#library-note-body {") :]
         body_block = body_block[: body_block.index("}")]
-        assert "height: auto;" in body_block
-        assert "min-height: 12;" in body_block
-        assert "max-height: 20;" in body_block
+        assert "height: 1fr;" in body_block
+        assert "min-height: 6;" in body_block
+        assert "max-height: 20;" not in body_block
 
         assert "#library-note-meta {" in css
         meta_block = css[css.index("#library-note-meta {") :]
@@ -23970,6 +23989,151 @@ async def test_library_shell_blank_note_typed_then_deleted_all_is_gc_from_real_d
             )
         assert screen._notes_state.view == "list"
         assert screen._notes_state.session_blank_id is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mount_id", "missing_id"),
+    [
+        ("library-note-work-pane", "library-note-title"),
+        ("library-note-context-keywords-row", "library-note-context-keywords"),
+        ("library-note-mode-controls", "library-note-edit"),
+        ("library-note-wide-utilities", "library-note-keywords"),
+        ("library-note-delete-actions", "library-note-delete-confirm"),
+    ],
+)
+async def test_library_note_backlinks_during_editor_mount_keep_latest_presentation(
+    real_notes_scope_service, monkeypatch, mount_id, missing_id
+):
+    """Backlinks can finish before either the whole or a nested subtree mounts."""
+    from textual.widget import Widget
+
+    from tldw_chatbook.UI.Library_Modules.library_notes_controller import (
+        LibraryNotesController,
+    )
+    from tldw_chatbook.Widgets.Library.library_note_work_pane import (
+        LibraryNoteWorkPane,
+    )
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.notes_scope_service = real_notes_scope_service
+    note_id = await real_notes_scope_service.save_note(
+        scope="local_note",
+        title="Mounting note",
+        content="Original body",
+        user_id="default_user",
+    )
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    backlinks_done = asyncio.Event()
+    painted = asyncio.Event()
+    original_mount = Widget.mount_all
+    original_backlinks = LibraryNotesController._load_library_note_backlinks
+    original_post_compose = LibraryNoteWorkPane._apply_post_compose_state
+    pane = None
+    latest = None
+    ordering = []
+
+    async def gated_mount(self, widgets, **kwargs):
+        nonlocal pane
+        if (
+            self.id == mount_id
+            and not entered.is_set()
+        ):
+            candidate = screen.query_one(LibraryNoteWorkPane)
+            if candidate.mode != "editor" or candidate.presentation_state is None:
+                return await original_mount(self, widgets, **kwargs)
+            pane = candidate
+            assert self is pane or pane in self.ancestors
+            assert pane.is_mounted
+            assert not pane.query(f"#{missing_id}")
+            ordering.append("mount held")
+            entered.set()
+            await asyncio.wait_for(release.wait(), 5)
+        return await original_mount(self, widgets, **kwargs)
+
+    async def gated_backlinks(self, requested_id):
+        assert requested_id == note_id
+        await asyncio.wait_for(entered.wait(), 5)
+        try:
+            if mount_id != "library-note-work-pane":
+                async with asyncio.timeout(5):
+                    while not pane.query("#library-note-title"):
+                        await asyncio.sleep(0.001)
+                assert pane.query("#library-note-title")
+                assert any(not child.is_mounted for child in pane.children)
+            await original_backlinks(self, requested_id)
+            assert not pane.query(f"#{missing_id}")
+            ordering.append("backlinks projected")
+        finally:
+            backlinks_done.set()
+
+    def observed_post_compose(self):
+        original_post_compose(self)
+        if self is pane and latest is not None and self.presentation_state is latest:
+            assert (
+                str(self.query_one("#library-note-meta", Static).renderable)
+                == latest.metadata_line
+            )
+            if not painted.is_set():
+                ordering.append("latest painted")
+                painted.set()
+
+    monkeypatch.setattr(Widget, "mount_all", gated_mount)
+    monkeypatch.setattr(
+        LibraryNotesController, "_load_library_note_backlinks", gated_backlinks
+    )
+    monkeypatch.setattr(
+        LibraryNoteWorkPane, "_apply_post_compose_state", observed_post_compose
+    )
+    host = LibraryHarness(app)
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-notes").press()
+            row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+            row.press()
+            try:
+                await asyncio.wait_for(backlinks_done.wait(), 5)
+                assert ordering == ["mount held", "backlinks projected"]
+                assert pane.presentation_state.backlinks_status == "ready"
+                latest = dataclasses.replace(
+                    pane.presentation_state,
+                    metadata_line="Newest mounted presentation",
+                    status_line="Newest pending presentation",
+                )
+                authority = pane.query("#library-note-work-authority")
+                authority_before = (
+                    str(authority.first(Static).renderable) if authority else None
+                )
+                pane.apply_session_state(latest)
+                assert pane.presentation_state is latest
+                assert not pane.query(f"#{missing_id}")
+                if authority:
+                    assert str(authority.first(Static).renderable) == authority_before
+            finally:
+                release.set()
+            await asyncio.wait_for(painted.wait(), 5)
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._notes_state.editor_armed,
+                message="EditorReady did not arm dirty tracking",
+            )
+            assert ordering == ["mount held", "backlinks projected", "latest painted"]
+            body = screen.query_one("#library-note-body", TextArea)
+            body.focus()
+            await pilot.pause()
+            body.text = "Edit after mount"
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_note_session.snapshot.dirty
+                and screen._library_note_session.snapshot.body == "Edit after mount",
+                message="Mounted editor did not accept the next dirty edit",
+            )
+    finally:
+        release.set()
 
 
 @pytest.mark.asyncio
@@ -25060,9 +25224,7 @@ async def _enter_task8_editor_state(screen, pilot, state: str) -> None:
             "delete-confirmation",
             {
                 "#library-note-heading": 1,
-                "#library-note-title-row": 1,
-                "#library-note-body-label": 1,
-                "#library-note-body": 4,
+                "#library-note-context-region": 6,
                 "#library-note-status": 1,
                 "#library-note-delete-confirm-copy": 1,
                 "#library-note-delete-actions": 1,
@@ -25085,15 +25247,8 @@ async def _enter_task8_editor_state(screen, pilot, state: str) -> None:
             "context",
             {
                 "#library-note-heading": 1,
-                # task-32177: #library-note-context-status was removed (dead
-                # duplicate of #library-note-status, task-32142 had already
-                # hidden it) -- its row-height entry is gone with it. This
-                # parametrization is pre-existing baseline-broken (stale
-                # #library-notes-row-0 selector, see task-6-report.md) and
-                # cannot currently run far enough to re-measure
-                # #library-note-context-region's own height, so that entry
-                # is left as-is rather than guessed.
-                "#library-note-context-region": 7,
+                # TASK-32177 removed the dead status row; Info gains it.
+                "#library-note-context-region": 8,
                 "#library-note-primary-actions": 2,
                 "#library-note-mode-controls": 1,
                 "#library-note-task-actions": 1,
@@ -25114,6 +25269,9 @@ async def test_library_note_60x20_editor_state_allocation(
         await _wait_for_library_shell(screen, pilot)
         await _wait_for_library_notes_compact(screen, pilot, True)
         await _enter_task8_editor_state(screen, pilot, state)
+        if state == "delete-confirmation":
+            assert screen.query_one("#library-note-editor-region").display is False
+            assert screen.query_one("#library-note-context-region").display is True
 
         await _assert_task8_rows(
             screen,
@@ -28666,9 +28824,8 @@ async def test_library_shell_restored_export_canvas_rekicks_counts_worker_on_mou
 
         scope_line = str(screen.query_one("#library-export-scope-line").renderable)
         assert scope_line == screen._build_library_export_state().scope_line
-        assert all(
-            fragment in scope_line
-            for fragment in ("1 media", "1 conversations", "1 notes", "0 prompts")
+        assert scope_line == (
+            "Everything: 1 media item · 1 conversation · 1 note · 0 prompts"
         )
         # Non-empty scope + counts landed: Export is no longer stuck
         # disabled by a permanent "Counting…" (only the missing
@@ -30601,6 +30758,8 @@ async def test_library_search_typed_text_survives_registry_recompose(tmp_path):
     async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = harness.screen_stack[-1]
         await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
         await _wait_for_selector(screen, pilot, "#library-search-input")
 
         search = screen.query_one("#library-search-input", Input)
@@ -32369,7 +32528,7 @@ async def test_library_note_wide_deep_link_back_clears_explicit_intent() -> None
         await pilot.pause()
         assert screen._notes_state.stage == "rail"
         assert screen._notes_state.explicit_stage_intent is False
-        assert getattr(screen.focused, "id", None) == "library-row-browse-notes"
+        assert getattr(screen.focused, "id", None) == "library-search-input"
 
         await pilot.resize_terminal(60, 20)
         await _wait_for_library_notes_compact(screen, pilot, True)
@@ -32377,6 +32536,8 @@ async def test_library_note_wide_deep_link_back_clears_explicit_intent() -> None
         assert screen._notes_state.explicit_stage_intent is False
         assert screen.query_one("#library-rail").display is True
         assert screen.query_one("#library-canvas").display is False
+        # TASK-32233 changes the Escape hop, not the existing compact
+        # resize fallback to the selected rail row.
         assert getattr(screen.focused, "id", None) == "library-row-browse-notes"
 
         screen.query_one("#library-row-browse-notes").press()
@@ -32779,7 +32940,7 @@ async def test_library_note_compact_stage_drills_in_and_back_without_losing_orig
         assert screen.query_one("#library-rail").display is True
         assert screen.query_one("#library-canvas").display is False
         assert screen.query_one("#library-note-work-pane").display is True
-        assert getattr(screen.focused, "row_id", None) == LIBRARY_ROW_BROWSE_NOTES
+        assert getattr(screen.focused, "id", None) == "library-search-input"
 
 
 @pytest.mark.asyncio
@@ -32899,8 +33060,8 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
                 "#library-note-primary-actions",
             ),
             (1, 1, 2),
-            11,
-            17,
+            12,
+            18,
         ),
     ),
 )
@@ -33644,6 +33805,10 @@ async def test_library_note_local_shortcuts_are_region_scoped_and_flush_guarded(
         await _wait_for_library_shell(screen, pilot)
         await _wait_for_library_notes_compact(screen, pilot, True)
 
+        # Landing intentionally offers Ctrl+N (TASK-32138). Exercise the
+        # inactive Notes shortcut on an unrelated destination instead.
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
         selected_before = screen._library_selected_row_id
         await pilot.press("ctrl+n")
         await pilot.pause()
@@ -33775,9 +33940,11 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
         footer.update_db_sizes_display("DB 2 MB")
         ancillary = (
             screen.query_one("#footer-word-count", Static),
-            screen.query_one("#footer-token-count", Static),
             screen.query_one("#internal-db-size-indicator", Static),
         )
+        token_indicator = screen.query_one("#footer-token-count", Static)
+        assert not token_indicator.display
+        assert str(token_indicator.renderable) == ""
         contents = tuple(
             getattr(widget.renderable, "plain", str(widget.renderable))
             for widget in ancillary
@@ -33800,6 +33967,8 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
         # same tier this test already asserts once — but do not read a green
         # run of this file as having covered them.
         assert all(widget.display is True for widget in ancillary)
+        assert not token_indicator.display
+        assert str(token_indicator.renderable) == ""
         assert (
             tuple(
                 getattr(widget.renderable, "plain", str(widget.renderable))
@@ -33812,7 +33981,7 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
         await _wait_for_library_notes_compact(screen, pilot, True)
         screen.query_one("#library-note-context-delete").press()
         await _wait_for_display(screen, pilot, "#library-note-delete-confirmation")
-        await wait_footer("enter confirm | esc cancel")
+        await wait_footer("enter cancel | tab switch | esc cancel")
         await pilot.press("escape")
         await wait_footer("enter run action | esc note")
         await pilot.press("escape")
@@ -33874,7 +34043,10 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
             await _wait_for_condition(
                 pilot,
                 lambda: footer_shortcuts() == expected,
-                message=f"Footer did not settle to {expected!r}.",
+                message=lambda: (
+                    f"Footer did not settle to {expected!r}; got {footer_shortcuts()!r}; "
+                    f"focus={screen.focused!r}."
+                ),
             )
 
         screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}").press()
@@ -33913,31 +34085,101 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
             lambda: screen._notes_state.stage == "rail",
             message="Navigator Escape did not return to the Library rail.",
         )
-        await _wait_for_condition(
-            pilot,
-            # task-3315 re-pin: at the compact rail stage the footer now
-            # restores the rail-stage guidance ("/ focus search | esc focus
-            # rail") rather than the old "u use Library context in Console"
-            # hint (that hint is Search/RAG-context copy in
-            # LIBRARY_SHORTCUTS; the compact stage footers came with the
-            # notes-adaptive PR #1439 -- reproduced failing at dev base
-            # ebeae1440). The invariant kept: leaving Notes must clear the
-            # notes-local help and restore Library-level guidance.
-            lambda: (
-                "focus search" in footer_shortcuts()
-                and "esc rail" not in footer_shortcuts()
-                and "ctrl+n new" not in footer_shortcuts()
-            ),
-            message="Library footer guidance did not restore after Notes exit.",
-        )
+        # TASK-32233 lands Escape in the rail input; TASK-31223 then
+        # advertises typing, not printable shortcuts that input swallows.
+        await wait_footer(" typing in field | F6 next pane | esc focus rail")
+        assert screen.query_one("#library-search-input").has_focus
+        assert "esc rail" not in footer_shortcuts()
+        assert "ctrl+n new" not in footer_shortcuts()
         assert all(
             screen.query_one(selector).display is True
             for selector in (
                 "#footer-word-count",
-                "#footer-token-count",
                 "#internal-db-size-indicator",
             )
         )
+        token_indicator = screen.query_one("#footer-token-count", Static)
+        assert not token_indicator.display
+        assert str(token_indicator.renderable) == ""
+
+
+@pytest.mark.asyncio
+async def test_library_note_footer_exit_keeps_token_retired_and_other_metrics() -> None:
+    """Leaving compact Notes restores live metrics without reviving tokens."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    async with LibraryHarness(app).run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(pilot.app)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_library_notes_compact(screen, pilot, True)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-filter")
+        footer = screen.query_one(AppFooterStatus)
+        screen.refresh(recompose=True)
+        await _wait_for_condition(
+            pilot, lambda: screen.query_one(AppFooterStatus) is not footer,
+            message="Screen recompose did not replace the footer",
+        )
+        footer = screen.query_one(AppFooterStatus)
+        await _wait_for_condition(
+            pilot,
+            lambda: footer.shortcut_text.rsplit(" | ", 1)[0]
+            == "ctrl+n new | / find | esc rail",
+            message="Replacement footer lost its Notes registration",
+        )
+        footer.update_word_count(12)
+        footer.update_token_count("Tokens: 34")
+        footer.update_db_sizes_display("DB 2 MB")
+        metrics = [
+            screen.query_one(selector, Static)
+            for selector in ("#footer-word-count", "#internal-db-size-indicator")
+        ]
+        contents = [str(widget.renderable) for widget in metrics]
+        assert all(not widget.display for widget in metrics)
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._notes_state.stage == "rail",
+            message="Notes did not exit to the rail",
+        )
+        assert all(widget.display for widget in metrics)
+        assert [str(widget.renderable) for widget in metrics] == contents
+        token = screen.query_one("#footer-token-count", Static)
+        assert not token.display
+        assert str(token.renderable) == ""
+
+
+@pytest.mark.asyncio
+async def test_notes_footer_registration_preserves_media_route_typing_hints() -> None:
+    """The Notes dispatcher still delegates a real sibling route's focus changes."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media").press()
+        row = await _wait_for_selector(screen, pilot, "#library-media-row-0")
+        row.focus()
+        await pilot.pause()
+        screen._register_footer_shortcuts()
+        source, shortcuts = screen._footer_shortcut_registration
+        assert source == "library"
+        assert ("/", "focus search") in shortcuts
+        assert ("s", "select") in shortcuts
+        assert ("", "typing in field") not in shortcuts
+
+        field = screen.query_one("#library-media-filter", Input)
+        field.focus()
+        await pilot.pause()
+        screen._register_footer_shortcuts()
+        assert screen._footer_shortcut_registration == (
+            "library",
+            (("", "typing in field"), ("F6", "next pane"), ("esc", "focus rail")),
+        )
+        assert "typing in field" in screen.query_one(AppFooterStatus).shortcut_text
+        assert screen.focused is field and field.is_attached
+        assert host.screen is screen
 
 
 def test_library_note_ctrl_s_is_unavailable_while_save_remains_explicit() -> None:
@@ -34291,22 +34533,31 @@ async def test_library_note_pilot_delete_pending_locks_and_cancel_restores_conte
         await _open_note_editor(screen, pilot)
         screen.query_one("#library-note-context").press()
         context = await _wait_for_display(screen, pilot, "#library-note-context-region")
-        screen.query_one("#library-note-context-delete").focus()
-        origin_scroll = await _scroll_task9_context_to_nonzero_offset(context, pilot)
+        await _scroll_task9_context_to_nonzero_offset(context, pilot)
+        delete_action = screen.query_one("#library-note-context-delete")
+        delete_action.focus()
+        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: delete_action.has_focus
+            and context.content_region.contains_region(delete_action.region),
+            message="Delete did not become a visible keyboard action.",
+        )
+        origin_scroll = context.scroll_y
+        assert origin_scroll > 0
         snapshot_before = screen._library_note_session.snapshot
         assert snapshot_before is not None
         save_calls_before = len(app.notes_scope_service.save_calls)
 
-        delete_action = screen.query_one("#library-note-context-delete")
-        delete_action.press()
+        await pilot.press("enter")
         delete_action.press()
         await _wait_for_display(screen, pilot, "#library-note-delete-confirmation")
 
         admission = screen._library_note_session.destructive_admission
         assert admission is not None
         assert screen._library_note_session.destructive_running is False
-        assert screen._notes_state.context is False
-        assert screen.query_one("#library-note-editor-region").display is True
+        assert screen._notes_state.context is True
+        assert screen.query_one("#library-note-editor-region").display is False
         delete_action.press()
         await pilot.pause()
         assert screen._library_note_session.destructive_admission == admission
@@ -34324,7 +34575,13 @@ async def test_library_note_pilot_delete_pending_locks_and_cancel_restores_conte
         assert screen._library_note_session.snapshot == snapshot_before
 
         await pilot.press("escape")
-        await _wait_for_display(screen, pilot, "#library-note-context-region")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_note_session.destructive_admission is None
+            and not screen._notes_state.confirming_delete
+            and delete_action.has_focus,
+            message="Cancel did not restore the initiating Delete action.",
+        )
         assert screen._library_note_session.destructive_admission is None
         assert screen._notes_state.confirming_delete is False
         assert screen._notes_state.context is True
@@ -34412,10 +34669,19 @@ async def test_library_note_pilot_delete_running_blocks_duplicate_delete_edits_a
             context = await _wait_for_display(
                 screen, pilot, "#library-note-context-region"
             )
-            origin_scroll = await _scroll_task9_context_to_nonzero_offset(
-                context, pilot
+            await _scroll_task9_context_to_nonzero_offset(context, pilot)
+            delete_action = screen.query_one("#library-note-context-delete")
+            delete_action.focus()
+            await pilot.pause()
+            await _wait_for_condition(
+                pilot,
+                lambda: delete_action.has_focus
+                and context.content_region.contains_region(delete_action.region),
+                message="Delete did not become a visible keyboard action.",
             )
-            screen.query_one("#library-note-context-delete").press()
+            origin_scroll = context.scroll_y
+            assert origin_scroll > 0
+            await pilot.press("enter")
             await _wait_for_display(screen, pilot, "#library-note-delete-confirmation")
             snapshot_before = screen._library_note_session.snapshot
             assert snapshot_before is not None
@@ -34453,7 +34719,13 @@ async def test_library_note_pilot_delete_running_blocks_duplicate_delete_edits_a
                 assert screen._notes_state.view == "list"
                 assert screen._library_note_session.snapshot is None
             else:
-                await _wait_for_display(screen, pilot, "#library-note-context-region")
+                await _wait_for_condition(
+                    pilot,
+                    lambda: screen._library_note_session.destructive_admission is None
+                    and not screen._notes_state.confirming_delete
+                    and delete_action.has_focus,
+                    message="Failed delete did not restore the initiating action.",
+                )
                 assert screen._library_note_session.destructive_admission is None
                 assert screen._notes_state.delete_receipt is None
                 assert "(2)" in str(screen.query_one("#library-row-browse-notes").label)
@@ -36042,6 +36314,7 @@ async def test_background_recompose_focus_fallback_stays_inside_screen_content()
         # models the drop; Textual's own removal handler happens to fall
         # back to the row's scroll parent, which a recompose of the whole
         # subtree does not).
+        screen._disarm_library_list_entry_focus()
         await row.remove()
         screen.set_focus(None)
         await pilot.pause()
@@ -36061,18 +36334,20 @@ async def test_background_recompose_focus_fallback_stays_inside_screen_content()
 
 
 @pytest.mark.asyncio
-async def test_background_recompose_restores_focus_on_an_empty_conversations_list():
+async def test_background_recompose_restores_focus_on_an_empty_conversations_list(
+    monkeypatch,
+):
     """task-31946 (PR L review item 2): the stand-down cannot strand focus.
 
-    The seam stands down while a one-shot focus channel is armed, because
-    a foreign ``set_focus`` in that window disarms it. Conversations is
-    absent from ``_LIBRARY_LIST_ROW_CLASS_BY_ROW_ID``, so the armed
-    channel lands NOTHING there -- standing down for it left a background
-    recompose inside the settle window with no restore at all, and the
-    keyboard dead for good.
+    TASK-32228 registers Conversations with the one-shot focus channel.
+    The generic seam stands down while that channel owns the window; an
+    empty list must still land focus on its attached recovery action after
+    recompose; a true empty page has no filter input.
     """
     app = _build_test_app()
     _seed_conversations(app, [])
+    open_console = Mock(wraps=app.open_console_for_live_work)
+    monkeypatch.setattr(app, "open_console_for_live_work", open_console)
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -36081,17 +36356,20 @@ async def test_background_recompose_restores_focus_on_an_empty_conversations_lis
 
         rail_row = screen.query_one("#library-row-browse-conversations")
         rail_row.press()
-        await _wait_for_selector(screen, pilot, "#library-conversations-canvas")
+        await _wait_for_selector(screen, pilot, "#library-conversations-empty-console")
+        open_console.assert_not_called()
+        # Route entry may replace the rail; never inject detached focus.
+        rail_row = screen.query_one("#library-row-browse-conversations")
+        assert rail_row.is_attached
         screen.set_focus(rail_row)
         await pilot.pause()
         assert screen.focused is rail_row
         assert not screen.query(".library-conversation-row"), "list must be empty"
 
-        # Inside the armed settle window: the channel owns the window on a
-        # route it can serve, and this one it cannot.
+        # The registered channel owns the armed settle window.
         screen._arm_library_list_entry_focus()
         assert screen._library_pending_list_entry_focus is True
-        assert screen._library_focus_channel_owns_this_window() is False
+        assert screen._library_focus_channel_owns_this_window() is True
 
         screen.refresh(recompose=True)
         await pilot.pause()
@@ -36103,6 +36381,88 @@ async def test_background_recompose_restores_focus_on_an_empty_conversations_lis
             "Conversations list with no focused widget"
         )
         assert focused.is_attached, focused
+        assert focused.id == "library-conversations-empty-console"
+        assert screen.query_one("#screen-content") in focused.ancestors
+        assert host.screen is screen
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
+        open_console.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_empty_conversations_filter_miss_focus_stays_on_filter() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
+        screen._start_library_conversation_page_request(1, "no-matching-conversation")
+        await _wait_for_selector(screen, pilot, "#library-conversations-empty-clear-filter")
+        assert not screen.query(".library-conversation-row")
+        rail = screen.query_one("#library-row-browse-conversations")
+        screen.set_focus(rail)
+        await pilot.pause()
+        screen._arm_library_list_entry_focus()
+        screen.refresh(recompose=True)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.focused is not None and screen.focused.is_attached
+            and screen.focused.id == "library-conversations-filter",
+            message="Filtered-empty Conversations did not restore its filter",
+        )
+        assert host.screen is screen
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("end_window", ["expiry", "user_focus"])
+async def test_empty_conversations_unavailable_target_preserves_focus_window(
+    end_window,
+    monkeypatch,
+) -> None:
+    """An unavailable action retries once per chain and respects its old bounds."""
+    app = _build_test_app()
+    _seed_conversations(app, [])
+    open_console = Mock(wraps=app.open_console_for_live_work)
+    monkeypatch.setattr(app, "open_console_for_live_work", open_console)
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations").press()
+        action = await _wait_for_selector(screen, pilot, "#library-conversations-empty-console")
+        open_console.assert_not_called()
+        action.disabled = True
+        rail = screen.query_one("#library-row-browse-conversations")
+        screen.set_focus(rail)
+        await pilot.pause()
+        screen._arm_library_list_entry_focus()
+        generation = screen._library_list_entry_focus_generation
+        screen._focus_library_list_entry_if_current(generation)
+        retry = screen._library_list_entry_focus_retry_timer
+        assert retry is not None
+        screen._focus_library_list_entry_if_current(generation)
+        assert screen._library_list_entry_focus_retry_timer is retry
+        assert screen.focused is rail
+        if end_window == "user_focus":
+            expected = screen.query_one("#library-search-input")
+            expected.focus()
+        else:
+            expected = rail
+        await _wait_for_condition(
+            pilot, lambda: not screen._library_pending_list_entry_focus,
+            message="Unavailable Conversations target outlived its focus window",
+        )
+        assert screen._library_list_entry_focus_retry_timer is None
+        assert screen._library_list_entry_focus_timer is None
+        action.disabled = False
+        screen._focus_library_list_entry_if_current(generation)
+        await pilot.pause()
+        assert screen.focused is expected and expected.is_attached
+        assert host.screen is screen
+        open_console.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -36122,9 +36482,8 @@ async def test_background_recompose_restores_focus_on_a_filtered_empty_media_lis
 
     The strict "the Media channel cannot land at all" leg is now
     UNPINNED. The Conversations sibling directly above does not cover it:
-    that one stands down at ``library_screen.py``'s row-class lookup
-    (Conversations is absent from ``_LIBRARY_LIST_ROW_CLASS_BY_ROW_ID``),
-    a different branch from the media-specific
+    TASK-32228 registered Conversations, whose true empty page has a Console
+    recovery action, a different branch from the media-specific
     ``_library_media_empty_list_fallback_target() is None`` leg. Re-pinning
     it needs a Media page that composes no enabled fallback at all -- an
     empty list with the type or sort chooser OPEN is the remaining one,

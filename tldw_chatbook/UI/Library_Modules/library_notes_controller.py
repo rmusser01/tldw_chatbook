@@ -2718,7 +2718,6 @@ class LibraryNotesController:
         # and skip the no-op display writes.
         for selector in (
             "#footer-word-count",
-            "#footer-token-count",
             "#internal-db-size-indicator",
         ):
             indicator = self._library_layout_ref(selector)

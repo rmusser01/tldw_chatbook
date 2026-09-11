@@ -7872,7 +7872,7 @@ class LibraryScreen(BaseAppScreen):
         ``_library_note_editor_active`` etc.) can never leave the footer
         stale the way an easily-missed per-call-site registration could.
         """
-        shortcuts = self._library_footer_shortcuts_for_current_state()
+        shortcuts = self._library_notes_footer_shortcuts()
         self.register_footer_shortcuts(source="library", shortcuts=shortcuts)
         for bar in self.query(LibraryEmergencyReturn):
             self._sync_library_emergency_return(bar)
@@ -9799,9 +9799,18 @@ class LibraryScreen(BaseAppScreen):
                 # ended with nothing focused at all. Same filter-input
                 # answer the two rows above already give.
                 "library-notes-row": "#library-notes-filter",
-                # task-32228: same answer for an empty conversation list.
-                "library-conversation-row": "#library-conversations-filter",
             }.get(row_class)
+            if row_class == "library-conversation-row":
+                for selector in (
+                    "#library-conversations-filter",
+                    "#library-conversations-empty-console",
+                ):
+                    candidates = self.query(selector)
+                    if candidates:
+                        control = candidates.first(Widget)
+                        if control.is_attached and control.focusable:
+                            fallback_selector = selector
+                            break
             if fallback_selector is not None:
                 try:
                     control = self.query_one(fallback_selector, Widget)

@@ -2655,12 +2655,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         idempotent. The screen owns the presentation-sync guard around calls
         that may assign ``Input`` or ``TextArea`` values.
         """
-        if self.mode != "editor" or not self.is_mounted:
-            self.presentation_state = state
-            self.compact = state.compact
-            return
         self.presentation_state = state
         self.compact = state.compact
+        # A queryable title can precede a sibling subtree's initial mount.
+        # Textual marks each direct root mounted only after it has awaited
+        # its composed descendants; the existing post-compose hook replays us.
+        if (
+            self.mode != "editor"
+            or not self.is_mounted
+            or not self.query("#library-note-title")
+            or any(not child.is_mounted for child in self.children)
+        ):
+            return
         authority = self.query_one(f"#{self.authority_id}", Static)
         authority_copy = self._authority_copy()
         if self._static_text(authority) != authority_copy:
