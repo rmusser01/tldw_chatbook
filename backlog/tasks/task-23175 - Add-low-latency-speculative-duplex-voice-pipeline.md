@@ -4,7 +4,7 @@ title: Add low-latency speculative duplex voice pipeline
 status: In Progress
 assignee: []
 created_date: '2026-08-28 23:49'
-updated_date: '2026-09-08 06:02'
+updated_date: '2026-09-11 03:58'
 labels: []
 dependencies: []
 ---
@@ -37,6 +37,7 @@ Reduce perceived voice-response latency by starting a cancellable speculative re
 - [x] #18 Queued startup heartbeat or close traffic cannot displace the already-read bootstrap; startup control sequence and credit accounting remain valid and early close still prevents native start.
 - [x] #19 The combined audio integration branch is based on current dev, includes the existing Console functionality required by the complete audio feature, preserves newer dev behavior and schema history, and passes targeted port/integration checks before a PR targets dev.
 - [ ] #20 The rebased PR corrects validated review findings with focused software evidence and records an open-PR handoff without claiming broader voice qualification complete.
+- [ ] #21 The final current-dev integration preserves archive schema 71 plus voice schema 72 and records targeted software evidence, resolved review findings and explicit approval for merging PR 2504 without changing release qualification.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -164,6 +165,8 @@ Approved process-isolation software slice complete at c36f89e24a1aa73cc302f30f96
 Approved N1 follow-up: retired never-issued local proposals no longer receive late-terminal bookkeeping. Three real-Mailbox rejection regressions failed before the three-line shared-retirement fix; six positive cases preserve admitted late records for all three provider terminal opcodes with zero/one-data boundaries, duplicate rejection and conflicting end boundaries. Final four-file targeted gate: 244 passed, zero skips, one existing Requests dependency warning, 6.55s; both changed Python files pass full-file Ruff lint/format, and git diff --check passes. Independent read-only N1 review accepts with no findings. Existing ADR098 applies (no new ADR, protocol, authority or bounds changes); developer guide and process spec updated while historical deferred evidence remains intact. Only AC17 newly checked; task remains In Progress, I1 unresolved. No app/audio, provider/model, native hold, qualification, hardware, soak or full-suite run. Protected19 and qualification/build identities unchanged. Exact commands, RED/GREEN output, hashes and review are retained at /private/tmp/tldw-voice-n1.qYPBK7/evidence.md.
 
 Approved startup-race repair: register the already-read bootstrap with the existing mailbox/receiver before starting pipe threads. Deterministic real-subprocess lease/early-close cases failed with child EOF before the reorder and pass after it; they preserve control sequence 2, startup credit suppression, early-close prevention of native start and both clean closure receipts. Independent review accepted production ordering and found one P3 test-helper exit-code gap; queued_startup-only propagation plus a wrong-root bootstrap refusal regression closed it (RED exit0 vs2, then GREEN). An initial malformed-transport exit oracle correctly triggered POSIX self-containment -9; its expected2 was a test assumption, not a runtime defect, and the discarded variant/evidence remain recorded. Final six-file targeted gate: 302 passed, zero skips, one existing Requests dependency warning,19.80s. Three changed Python files pass Ruff lint/format; diff checks clean; narrow re-review accepts with no remaining findings. Existing ADR098 applies; no new protocol, custody, timeout, priority or runtime boundary. Developer guide, process spec and incident-backed lesson updated. AC18 checked; overall task remains In Progress. This fixes a reproduced startup race present at the historical I1 boundary but cannot conclusively attribute the old incident without its missing stage/exit evidence. No app/audio/native hold, hardware/qualification, provider/model, soak or full-suite run. Protected19 and qualification/build identities unchanged. Exact commands, RED/GREEN/raw outputs, hashes and review retained at /private/tmp/tldw-voice-startup-race.R4Q8QY/evidence.md.
+
+2026-09-10: User explicitly approved updating PR #2504 to current dev and merging once verification passes. This supersedes the earlier merge hold only. Approved integration plan: Docs/superpowers/plans/2026-09-10-voice-pr-2504-final-rebase-and-merge.md. Pinned inputs: published 098f904355cf18ff523e9931fa449406827ab646, prior base 2e3389e694e93592a1c66e5c3416bf29a1057d6c, current dev 0fcb79e596b3e527778c56867cf7ee0c62c17894. Existing ADRs apply; no new ADR. No full suite, live audio, native/local model execution, installs or cleanup; automatic PR CI remains approved. Keep this broader qualification task In Progress.
 <!-- SECTION:NOTES:END -->
 
 ## Implementation Notes — final native integration corrections, 2026-09-04
