@@ -2521,7 +2521,6 @@ thinking. A live native calculator exchange on port 9099 retained its exact
 thinking in `/apply-template` and returned 221. Keep wire-field, rendered-prompt,
 and transcript-retention assertions separate; only claim the layer verified.
 
-
 ## Observe populated rails across cache expiry, not just initial layout
 
 **TASK-32311, 2026-09-10.** Portrait resize tests settled, but the user saw the
@@ -2552,6 +2551,57 @@ believing either result: a zero count in the tree you thought you were
 testing means you are testing the wrong tree, not that the code is missing.
 After any suspicious run, `pwd` plus `git -C <tree> status` is one second
 of insurance against a split-brain patch.
+
+## A performance claim gets re-measured at the commit it was made on, before you go hunting (TASK-32260, 2026-09-11)
+
+**What happened.** The critique reported Library opening in 12.6 s on a
+27-item profile against 2.7 s on an empty one — a 12x gap, cause untraced.
+Rebuilding the profile with the same seed script and driving the same open
+at 235x52 gave 0.68 s to the painted shell and 1.01 s fully settled. Rather
+than argue about the machine, I added a detached worktree at the critique's
+OWN base commit (`git worktree add --detach ... e6cb464239`), re-seeded a
+profile with THAT tree's code, and measured the same open: 1.24 s. Two
+numbers, one branch apart, and the reported gap in neither — which
+distinguishes "already fixed by something in the 509 intervening commits"
+from "never reproducible", and those call for completely different work.
+The likeliest real cause was the measuring session: the same crit-base tree
+booted in 9.1 s cold against 4.1 s warm, and that review ran several app
+instances at once.
+
+**What to do.** Before optimising anything from a reported number, measure
+it (a) on your branch and (b) at the commit the report names, with the same
+fixture. A detached worktree plus a re-seed is ten minutes. Then ship the
+pin the report should have had: a budget test on a fixture that HAS content,
+with an assertion that the content really reached the screen — an
+open-latency test on an empty profile is how a 12x claim stands for a week.
+
+## A peer's ad-hoc script in the shared scratch dir shadowed a real package (wave-3, 2026-09-11)
+
+**What happened.** Several wave agents shared one scratch directory. A peer
+had written `click.py` and `find.py` there as tmux helpers. Running my own
+probe from that cwd made `import click` load the peer's script, which read
+`sys.argv[1]` and exited — so the app probe died with a bare `NOT FOUND` on
+stderr and exit 1, no traceback, and it only misbehaved when PYTHONPATH
+pointed at my worktree, which sent me looking for a sitecustomize that did
+not exist.
+
+**The same hazard bit the test baseline, harder.** The wave also shared a
+detached `devbase` worktree at the merge-base, and a peer had left it DIRTY
+(a modified `test_library_notes_wave_list.py` plus an untracked new test
+file). My branch-vs-base FAILED-set diff for that one file was therefore
+comparing against a peer's edits, and it read as "base has a failure my
+branch does not" — i.e. as though my change had fixed something. It had
+not; the failing test only existed in the peer's copy. `git status` in the
+"base" worktree took two seconds and dissolved it.
+
+**What to do.** Run scratch scripts from a directory only you write to
+(`<scratch>/<group>-scripts/`), never from the shared wave root. Create
+your OWN detached base worktree for test comparisons and remove it when
+done — never reuse a shared one, and `git status` it before trusting a
+single number out of it. When a Python process dies with output that
+belongs to no code you can find, list `*.py` in the cwd before anything
+else: `sys.path[0]` is the cwd, and a one-word filename there outranks
+site-packages.
 
 ## A blank modal in a tmux capture was two modals, not a broken picker (task-32250 wave, 2026-09-11)
 
@@ -2586,4 +2636,3 @@ Put helper scripts in a per-task subdirectory (`scratchpad/wave3/tools-<group>/`
 and import them by that absolute path. A `NameError` for a symbol you know you
 defined means you are reading a different file, the same way an
 `AttributeError` for a symbol your feature defines means the wrong tree.
-
