@@ -20167,8 +20167,30 @@ class LibraryScreen(BaseAppScreen):
         ):
             self._library_onboarding_all_empty = True
             self._library_onboarding_status = LibraryEvidenceStatus.SETTLED
+            lifecycle = self._library_lifecycle
+            # task-32349 (critique #10, PROVEN in critique #8): an EXPANDED
+            # nobody chose is a DEFAULT, not a decision --
+            # ``coerce_library_lifecycle(raw=None, is_new_profile=False)``
+            # returns EXPANDED so a returning user's full rail does not flash
+            # a starter rail while this evidence loads. Once the evidence
+            # settles all-EMPTY there is nothing to expand, so an UNSTORED
+            # EXPANDED falls back to UNKNOWN and the aggregate below resolves
+            # it to STARTER. A STORED "expanded" is a real Explore press
+            # (``explore_library_lifecycle``, which mirrors it into the config
+            # this read consults) and is left alone -- which is also what
+            # keeps "Back to Get started" (``library_rail.py``: EXPANDED +
+            # all-empty) offered only to someone who HAS seen Get started.
+            # Storage is re-read here rather than reusing the construction-time
+            # ``_library_lifecycle_was_stored``: that snapshot never updates,
+            # so an Explore press followed by any later evidence round (a
+            # screen resume) would have been demoted back to Get started.
+            if (
+                lifecycle is LibraryLifecycle.EXPANDED
+                and not self._load_library_lifecycle_value()[1]
+            ):
+                lifecycle = LibraryLifecycle.UNKNOWN
             self._set_library_lifecycle(
-                aggregate_library_lifecycle(self._library_lifecycle, evidence)
+                aggregate_library_lifecycle(lifecycle, evidence)
             )
         else:
             self._library_onboarding_all_empty = False

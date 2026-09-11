@@ -2020,9 +2020,20 @@ async def test_library_onboarding_new_generation_cancels_previous_worker() -> No
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("stored", [None, "not-a-lifecycle"])
+@pytest.mark.parametrize(
+    "stored,settled",
+    [
+        # task-32349: both OPEN Expanded (the no-flash default), but an
+        # ABSENT value was nobody's decision, so an all-empty settle takes it
+        # back to Get started. A corrupt value is still a stored one -- the
+        # profile has been here before -- and keeps the full rail.
+        (None, LibraryLifecycle.STARTER),
+        ("not-a-lifecycle", LibraryLifecycle.EXPANDED),
+    ],
+)
 async def test_library_onboarding_legacy_and_corrupt_preferences_open_expanded(
     stored,
+    settled,
 ) -> None:
     gates = _LibraryEvidenceGates()
     app = _new_library_onboarding_app(gates)
@@ -2046,7 +2057,7 @@ async def test_library_onboarding_legacy_and_corrupt_preferences_open_expanded(
                 ),
                 message="legacy evidence round did not settle",
             )
-            assert screen._library_lifecycle is LibraryLifecycle.EXPANDED
+            assert screen._library_lifecycle is settled
     finally:
         gates.release_all()
 
