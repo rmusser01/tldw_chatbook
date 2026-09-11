@@ -1,11 +1,13 @@
 ---
 id: TASK-32263
 title: >-
-  Library Notes Import once rewrites wikilinks into note-uuid identifiers
-  inside the user's own prose -- design decision to revisit
-status: To Do
-assignee: []
+  Library Notes Import once rewrites wikilinks into note-uuid identifiers inside
+  the user's own prose -- design decision to revisit
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-10 18:05'
+updated_date: '2026-09-11 15:24'
 labels:
   - library
   - notes
@@ -34,3 +36,9 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 - [ ] #1 A user decision is recorded on rewrite-at-import versus resolve-at-render
 - [ ] #2 If revised: an imported note's body round-trips through Export Markdown with its links intact and readable by Obsidian
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Record the ruling: display-text links, [[Title]](note://uuid), rendered as the title in Preview.\n2. rewrite_wikilinks emits the wikilink form so the importer's own parser round-trips it and Obsidian reads the link; the (note://id) tail keeps get_notes_linking_to working.\n3. WIKILINK_SCAN swallows an existing (note://id) tail so a re-import cannot accumulate them.\n4. Preview renders the stored form as the title.\n5. RED/GREEN tests on the rewrite, the round-trip and the Preview transform.
+<!-- SECTION:PLAN:END -->

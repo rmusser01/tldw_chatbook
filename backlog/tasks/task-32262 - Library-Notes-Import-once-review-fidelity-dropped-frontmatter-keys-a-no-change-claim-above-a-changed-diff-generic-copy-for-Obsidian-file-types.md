@@ -3,9 +3,11 @@ id: TASK-32262
 title: >-
   Library Notes Import once review fidelity: dropped frontmatter keys, a no-
   change claim above a changed diff, generic copy for Obsidian file types
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-10 18:05'
+updated_date: '2026-09-11 15:24'
 labels:
   - library
   - notes
@@ -39,3 +41,9 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 - [ ] #4 Obsidian-specific file types get vault-aware copy rather than the generic unsupported string
 - [ ] #5 Covered by tests for the no-change/diff agreement and for the dropped-key report
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Report non-tag frontmatter keys the import drops (parser records them, review row states them).\n2. Show the existing-note diff only on a row whose action writes content, so a no-change row never carries a changed diff.\n3. Pre-select the safe collision default and stop pre-arming the rename error.\n4. Vault-aware unsupported copy for .canvas and the other non-note types.\n5. RED/GREEN tests per item.
+<!-- SECTION:PLAN:END -->

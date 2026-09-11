@@ -493,7 +493,11 @@ async def test_import_gate_carries_disabled_reason_in_label_and_tooltip() -> Non
         await pilot.pause()
         import_button = app.query_one("#note-import-import", Button)
         assert import_button.disabled is True
-        assert import_button.label.plain == "Import selected items unavailable"
+        # task-32257: the reason is the label's own text, not the tooltip's
+        # alone -- the control used to read "unavailable" and nothing else.
+        assert import_button.label.plain == (
+            "Import selected items unavailable — Resolve the folder collision first"
+        )
         assert import_button.tooltip == "Resolve the folder collision first."
 
 

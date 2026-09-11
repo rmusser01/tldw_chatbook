@@ -1,11 +1,13 @@
 ---
 id: TASK-32256
 title: >-
-  Library Notes Add from files: both relationship explanations are cut mid-
-  word at 235 columns
-status: To Do
-assignee: []
+  Library Notes Add from files: both relationship explanations are cut mid- word
+  at 235 columns
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-10 18:05'
+updated_date: '2026-09-11 15:23'
 labels:
   - library
   - notes
@@ -30,3 +32,9 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 - [ ] #2 Neither description is cut mid-word at any supported width: below the width where they fit they wrap or disclose
 - [ ] #3 Covered by a test asserting the full description text at 235x52
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce the mid-word cut at 235x52 against the cited captures and a rendered probe.\n2. If it reproduces, make the descriptions wrap; if not, pin the full text with a render-level test and report the non-reproduction.
+<!-- SECTION:PLAN:END -->

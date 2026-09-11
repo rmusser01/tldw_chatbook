@@ -750,6 +750,47 @@ async def test_group_actions_say_they_only_change_this_page() -> None:
         assert labels == {"Skip all on this page", "Create all on this page"}
 
 
+# --- task-32257 -----------------------------------------------------------
+
+
+async def test_a_disabled_import_control_carries_its_reason_as_text() -> None:
+    """The reason lived on the tooltip, so the control said only 'unavailable'."""
+    app = _ImportHost(
+        _import_snapshot(
+            phase="review",
+            status_line="Review 1 item before import.",
+            preview_items=(_item(1),),
+            can_import=False,
+            import_disabled_reason="Choose how to handle the folder name collision.",
+        )
+    )
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        label = str(app.query_one("#note-import-import", Button).label)
+
+    assert "Import selected items" in label
+    assert "Choose how to handle the folder name collision" in label
+
+
+async def test_a_disabled_check_control_carries_its_reason_as_text() -> None:
+    """Check selection shares the helper, so it shared the defect (32257)."""
+    app = _ImportHost(
+        _import_snapshot(
+            phase="select",
+            can_check=False,
+            check_disabled_reason="Choose a source first.",
+        )
+    )
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        label = str(app.query_one("#note-import-check", Button).label)
+
+    assert "Check selection" in label
+    assert "Choose a source first" in label
+
+
 def test_the_canvas_takes_its_non_importable_set_from_the_planner_enum() -> None:
     """task-32176: one source of truth for what cannot be imported."""
     from tldw_chatbook.Notes.note_import_plan_models import (

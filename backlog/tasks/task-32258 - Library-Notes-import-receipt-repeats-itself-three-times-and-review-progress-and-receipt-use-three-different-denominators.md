@@ -3,9 +3,11 @@ id: TASK-32258
 title: >-
   Library Notes import receipt repeats itself three times and review progress
   and receipt use three different denominators
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-10 18:05'
+updated_date: '2026-09-11 15:24'
 labels:
   - library
   - notes
@@ -30,3 +32,9 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 - [ ] #2 The receipt states its outcome once
 - [ ] #3 Covered by a test asserting the three surfaces agree for a single import
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Run one real import end to end and compare review/progress/receipt numbers.\n2. Name the denominator on every surface and state the receipt outcome once.\n3. RED/GREEN test asserting the three surfaces agree for one import.
+<!-- SECTION:PLAN:END -->

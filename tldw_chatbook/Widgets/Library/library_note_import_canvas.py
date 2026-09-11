@@ -61,9 +61,19 @@ def _choice_label(*, selected: bool, text: str) -> str:
     return f"{glyph} {text}"
 
 
-def _disabled_action_label(text: str, *, disabled: bool) -> str:
-    """Keep an unavailable action's reason discoverable without colour."""
-    return f"{text} unavailable" if disabled else text
+def _disabled_action_label(text: str, *, disabled: bool, reason: str = "") -> str:
+    """Keep an unavailable action's reason readable at the control itself.
+
+    task-32257: the reason was on the tooltip only, so the control stated
+    that it was unavailable and nothing else. The grammar is the one this
+    screen already uses four panels away ("Unavailable — server sync-folder
+    capability not installed"): the blocker is the label's own text.
+    """
+    if not disabled:
+        return text
+    if not reason:
+        return f"{text} unavailable"
+    return f"{text} unavailable — {reason.rstrip('.')}"
 
 
 _SOURCE_NAME_BUDGET = 48
@@ -352,7 +362,9 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
             check = self.query_one("#note-import-check", Button)
             check.disabled = not snapshot.can_check
             check.label = _disabled_action_label(
-                "Check selection", disabled=not snapshot.can_check
+                "Check selection",
+                disabled=not snapshot.can_check,
+                reason=snapshot.check_disabled_reason,
             )
             check.tooltip = snapshot.check_disabled_reason or (
                 "Check the selected sources without changing Notes."
@@ -390,7 +402,9 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
             submit = self.query_one("#note-import-import", Button)
             submit.disabled = not snapshot.can_import
             submit.label = _disabled_action_label(
-                "Import selected items", disabled=not snapshot.can_import
+                "Import selected items",
+                disabled=not snapshot.can_import,
+                reason=snapshot.import_disabled_reason,
             )
             submit.tooltip = snapshot.import_disabled_reason or (
                 "Import the exact choices shown in this review."
@@ -449,7 +463,11 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
     ) -> ComposeResult:
         if state.phase in {"select", "destination"}:
             check = Button(
-                _disabled_action_label("Check selection", disabled=not state.can_check),
+                _disabled_action_label(
+                    "Check selection",
+                    disabled=not state.can_check,
+                    reason=state.check_disabled_reason,
+                ),
                 id="note-import-check",
                 classes="library-canvas-action note-import-primary",
                 compact=True,
@@ -476,7 +494,9 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
         elif state.phase == "review":
             submit = Button(
                 _disabled_action_label(
-                    "Import selected items", disabled=not state.can_import
+                    "Import selected items",
+                    disabled=not state.can_import,
+                    reason=state.import_disabled_reason,
                 ),
                 id="note-import-import",
                 classes="library-canvas-action note-import-primary",

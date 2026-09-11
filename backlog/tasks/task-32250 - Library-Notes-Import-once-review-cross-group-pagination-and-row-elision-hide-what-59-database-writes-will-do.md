@@ -1,11 +1,13 @@
 ---
 id: TASK-32250
 title: >-
-  Library Notes Import once review: cross-group pagination and row elision
-  hide what 59 database writes will do
-status: To Do
-assignee: []
+  Library Notes Import once review: cross-group pagination and row elision hide
+  what 59 database writes will do
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-10 18:05'
+updated_date: '2026-09-11 15:24'
 labels:
   - library
   - notes
@@ -40,3 +42,9 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 - [ ] #6 The review owns the full pane width while it is the task in hand
 - [ ] #7 Covered by a test for the un-elided row at 235x52 and a test for group-contained pagination
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Page over classification-ordered items so groups are contiguous; the heading states what its count means when a group spans pages.\n2. Collapse a long uniform run into one summary row with a disclosure.\n3. Middle-elide the path so the decision-bearing outcome survives at 235x52.\n4. Disabled pager buttons carry their state as text.\n5. The review takes the pane while it is the task in hand.\n6. RED/GREEN tests for the un-elided row and group-contained pagination.
+<!-- SECTION:PLAN:END -->

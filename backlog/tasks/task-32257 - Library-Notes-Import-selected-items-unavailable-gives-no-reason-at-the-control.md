@@ -3,9 +3,11 @@ id: TASK-32257
 title: >-
   Library Notes: Import selected items unavailable gives no reason at the
   control
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-10 18:05'
+updated_date: '2026-09-11 15:23'
 labels:
   - library
   - notes
@@ -32,3 +34,9 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 - [ ] #2 The reason names what would make it available
 - [ ] #3 Covered by a test asserting the reason string in the disabled state
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Trace the disabled Import control: _disabled_action_label puts the reason on the tooltip only.\n2. Move the reason into the label text for both disabled primaries (Check selection shares the helper and the defect).\n3. RED test asserting the reason string in the rendered disabled label; fix; GREEN.
+<!-- SECTION:PLAN:END -->
