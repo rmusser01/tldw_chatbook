@@ -145,6 +145,41 @@ def test_support_names_live_in_their_module(module: str, names: list[str]) -> No
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("keyword_state", [False, True], ids=["positional", "keyword"])
+def test_handoff_formatter_lives_in_support_and_screen_delegates_once(
+    monkeypatch: pytest.MonkeyPatch, keyword_state: bool
+) -> None:
+    """The instance wrapper forwards the exact state and helper return objects.
+
+    Args:
+        monkeypatch: Fixture replacing the Screen module's helper alias.
+        keyword_state: Whether to pass the state by keyword instead of position.
+    """
+    helper_mod = importlib.import_module("tldw_chatbook.UI.Library_Modules.screen_helpers")
+    helper = getattr(helper_mod, "_workspace_handoff_summary_label", None)
+    assert callable(helper), "screen_helpers must own the Handoff formatter"
+    assert helper.__module__ == helper_mod.__name__
+    assert helper.__globals__ is vars(helper_mod)
+
+    screen_mod = importlib.import_module("tldw_chatbook.UI.Screens.library_screen")
+    assert screen_mod._workspace_handoff_summary_label is helper
+    state = object()
+    sentinel = object()
+    calls: list[object] = []
+
+    def record_call(received_state: object) -> object:
+        calls.append(received_state)
+        return sentinel
+
+    monkeypatch.setattr(screen_mod, "_workspace_handoff_summary_label", record_call)
+    wrapper = screen_mod.LibraryScreen._workspace_handoff_summary_label
+    result = wrapper(None, state=state) if keyword_state else wrapper(None, state)
+    assert result is sentinel
+    assert len(calls) == 1
+    assert calls[0] is state
+
+
+@pytest.mark.unit
 def test_screen_still_re_exports_every_moved_name() -> None:
     screen_mod = importlib.import_module("tldw_chatbook.UI.Screens.library_screen")
     for names in _SURFACE.values():
