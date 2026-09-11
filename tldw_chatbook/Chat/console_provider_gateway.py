@@ -66,6 +66,11 @@ from tldw_chatbook.Chat.console_provider_support import (
     build_local_thinking_payload_fields,
     resolve_console_provider_identity,
 )
+from tldw_chatbook.Chat.custom_endpoint_registry import (
+    custom_endpoint_provider_settings,
+    entry_for,
+    family_execution_key,
+)
 from tldw_chatbook.Chat.llamacpp_think_filter import StartAnchoredThinkFilter
 from tldw_chatbook.Chat.console_thinking import publish_thinking, thinking_display
 from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
@@ -1769,9 +1774,22 @@ class ConsoleProviderGateway:
                 visible_copy="Select a provider and model before sending.",
             )
 
-        identity = resolve_console_provider_identity(selection.provider)
+        app_config = self._config_provider() or {}
+        # ADR-146 custom endpoint registry: a resolvable ``custom-ep:<slug>``
+        # id executes through its entry's family -- llama_cpp entry -> direct
+        # llama path, openai_compatible -> generic custom path, ollama ->
+        # ollama -- with the entry, not ``api_settings``, as the
+        # provider-settings and endpoint source. Unresolvable ids keep the
+        # generic fallback identity resolved by
+        # ``resolve_console_provider_identity``.
+        custom_entry = entry_for(app_config, selection.provider)
+        if custom_entry is not None:
+            identity = resolve_console_provider_identity(
+                family_execution_key(custom_entry.family)
+            )
+        else:
+            identity = resolve_console_provider_identity(selection.provider)
         if identity.uses_direct_llama_path:
-            app_config = self._config_provider() or {}
             readiness = get_provider_readiness(
                 identity.readiness_key,
                 app_config,
@@ -1786,9 +1804,14 @@ class ConsoleProviderGateway:
                     execution_key=identity.execution_key,
                     api_key_source=readiness.api_key_source,
                 )
+            llama_base_url = selection.base_url
+            if custom_entry is not None and not (llama_base_url or "").strip():
+                # The session base_url is the endpoint carrier; a blank
+                # session falls back to the entry's config-backed endpoint.
+                llama_base_url = custom_entry.base_url
             resolved = await self.resolve_llamacpp(
                 LlamaCppProviderConfig(
-                    base_url=selection.base_url or DEFAULT_LLAMACPP_BASE_URL,
+                    base_url=llama_base_url or DEFAULT_LLAMACPP_BASE_URL,
                     explicit_model=selection.explicit_model,
                     configured_model=selection.configured_model,
                     api_key=readiness.api_key,
@@ -1832,20 +1855,30 @@ class ConsoleProviderGateway:
                 execution_key=identity.execution_key,
             )
 
-        app_config = self._config_provider() or {}
-        try:
-            provider_settings = _provider_settings(app_config, identity.readiness_key)
-        except ProviderSettingsError:
-            return self._blocked_resolution(
-                selection,
-                provider=selection.provider,
-                visible_copy=(
-                    "QwenCloud blocked: provider settings must be a configuration "
-                    "table under api_settings.qwencloud."
-                ),
-                readiness_key=identity.readiness_key,
-                execution_key=identity.execution_key,
+        provider_settings: Mapping[str, object]
+        if custom_entry is not None:
+            # Registry entries flatten to the provider-settings aliases; the
+            # family's own ``api_settings`` table is never consulted. The
+            # entry resolved above guarantees a non-None view here.
+            provider_settings = (
+                custom_endpoint_provider_settings(app_config, selection.provider) or {}
             )
+        else:
+            try:
+                provider_settings = _provider_settings(
+                    app_config, identity.readiness_key
+                )
+            except ProviderSettingsError:
+                return self._blocked_resolution(
+                    selection,
+                    provider=selection.provider,
+                    visible_copy=(
+                        "QwenCloud blocked: provider settings must be a configuration "
+                        "table under api_settings.qwencloud."
+                    ),
+                    readiness_key=identity.readiness_key,
+                    execution_key=identity.execution_key,
+                )
         model = _first_string(
             selection.explicit_model,
             selection.configured_model,
@@ -1965,8 +1998,11 @@ class ConsoleProviderGateway:
                 selection.base_url, provider_settings
             )
 
+        # Resolvable custom-ep providers never reach the endpoint-not-saved
+        # guard: their endpoint is config-backed by construction (the entry).
         if (
-            provider_uses_endpoint(identity.readiness_key, provider_settings)
+            custom_entry is None
+            and provider_uses_endpoint(identity.readiness_key, provider_settings)
             and endpoint_differs
         ):
             return self._blocked_resolution(

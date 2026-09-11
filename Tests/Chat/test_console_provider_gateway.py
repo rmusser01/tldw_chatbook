@@ -6083,3 +6083,80 @@ def test_aclose_still_sweeps_a_finished_turns_idle_loop():
         idle_loop.close()
 
     assert scheduled == [(idle_client, idle_loop)]
+
+
+# -- Custom endpoint registry (ADR-146) ------------------------------------
+#
+# A `custom-ep:<slug>` provider addresses a `[custom_endpoints.<slug>]`
+# registry entry. The gateway must resolve it through the entry's FAMILY
+# execution path (llama_cpp entry -> direct llama path, openai_compatible
+# entry -> generic custom path), source provider settings from the entry,
+# and never block it with the endpoint-not-saved guard: the entry's
+# base_url is config-backed by construction.
+
+
+@pytest.mark.asyncio
+async def test_custom_endpoint_resolves_family_execution_and_entry_url() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"id": "server-model"}]})
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        config_provider=lambda: {
+            "custom_endpoints": {
+                "gpu": {
+                    "display_name": "GPU llama",
+                    "family": "llama_cpp",
+                    "base_url": "http://192.168.1.5:8080",
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="custom-ep:gpu",
+            explicit_model="m",
+            base_url="http://192.168.1.5:8080",
+        )
+    )
+
+    assert resolved.ready is True
+    assert resolved.readiness_key == "llama_cpp"
+    assert resolved.execution_key == "llama_cpp"
+    assert "192.168.1.5:8080" in resolved.base_url
+    assert "not saved" not in resolved.visible_copy
+
+
+@pytest.mark.asyncio
+async def test_custom_endpoint_openai_family_uses_generic_path() -> None:
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "custom_endpoints": {
+                "paid": {
+                    "display_name": "Paid",
+                    "family": "openai_compatible",
+                    "base_url": "https://api.example.com/v1",
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="custom-ep:paid",
+            explicit_model="m",
+            base_url="https://api.example.com/v1",
+        )
+    )
+
+    assert resolved.ready is True
+    assert resolved.readiness_key == "custom"
+    assert resolved.execution_key == "custom-openai-api"
+    # The custom family materializes the chat-completions URL from the
+    # entry's base_url (provider endpoint contract), so assert the entry
+    # URL flowed rather than exact equality.
+    assert "api.example.com/v1" in resolved.base_url
+    assert "not saved" not in resolved.visible_copy
