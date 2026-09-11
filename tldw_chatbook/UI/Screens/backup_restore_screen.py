@@ -63,6 +63,7 @@ class BackupRestoreScreen(Screen):
         self._requested_backup_operation = None
         self._requested_restore_operation = None
         self._restore_review_codes_seen = ()
+        self._safety_scope_seen = ()
         self._rollback_copy_id = None
         self._rollback_plan = None
 
@@ -172,6 +173,7 @@ class BackupRestoreScreen(Screen):
                         id="backup-rollback-confirm",
                     )
                     yield Vertical(id="backup-restore-credential-review", classes="backup-form")
+                    yield Vertical(id="backup-safety-scope", classes="backup-form")
                     yield Static(
                         "Review the actual restore, retirement and preservation plan.",
                         id="backup-restore-preview",
@@ -736,6 +738,17 @@ class BackupRestoreScreen(Screen):
                 isinstance(control, Input) and control.password
             ):
                 self._forget_restore_credential_review()
+            if isinstance(control, (Input, Select)) and not (
+                isinstance(control, Input) and control.password
+            ):
+                self._forget_safety_scope()
+
+    def _forget_safety_scope(self):
+        self._safety_scope_seen = ()
+        self.query_one("#backup-safety-scope").display = False
+        for box in self.query(".backup-safety-member"):
+            box.value = False
+            box.disabled = True
 
     def _forget_restore_credential_review(self):
         """A rollback omission belongs to the unchanged replacement choices."""
@@ -894,6 +907,7 @@ class BackupRestoreScreen(Screen):
 
     def _clear_inspection(self, *, dismiss_current=False):
         self._forget_restore_credential_review()
+        self._forget_safety_scope()
         if dismiss_current:
             current = self.service.current()
             self._dismissed_inspection_id = (
@@ -1221,11 +1235,17 @@ class BackupRestoreScreen(Screen):
                 for box in self.query(".backup-acknowledge-restore-credential")
                 if mode == "replace" and box.value and box.name in self._restore_review_codes_seen
             ),
+            tuple(
+                box.name
+                for box in self.query(".backup-safety-member")
+                if mode == "replace" and box.value
+                and box.name in {row[0] for row in self._safety_scope_seen}
+            ),
         )
 
     @work(exclusive=True, thread=True, group="backup-restore-preview")
     def _preview_restore(
-        self, app, revision, inspection, mode, destinations, names, target, acknowledged
+        self, app, revision, inspection, mode, destinations, names, target, acknowledged, safety_scope
     ):
         try:
             inventory = (
@@ -1240,6 +1260,7 @@ class BackupRestoreScreen(Screen):
                 target=inventory,
                 profile_names=names,
                 acknowledged_credential_issues=acknowledged,
+                safety_scope=safety_scope,
             )
         except (OSError, ValueError, RuntimeError) as error:
             self._deliver(
@@ -1248,7 +1269,7 @@ class BackupRestoreScreen(Screen):
         else:
             self._deliver(app, self._restore_ready, revision, plan, None)
 
-    def _restore_ready(self, revision, plan, issue):
+    async def _restore_ready(self, revision, plan, issue):
         if not self.is_mounted or revision != self._revision:
             return
         if plan is None:
@@ -1256,6 +1277,40 @@ class BackupRestoreScreen(Screen):
                 "Restore review refused: " + issue
             )
             return
+        choices = tuple(
+            (item.logical_id, item.owner, str(item.path))
+            for item in (plan.target.items if plan.target is not None else ())
+            if item.path is not None
+            and item.status in {"included", "included_directory"}
+            and (item.logical_id, item.path) in plan.preserve
+        )
+        if choices != self._safety_scope_seen:
+            area = self.query_one("#backup-safety-scope", Vertical)
+            await area.remove_children()
+            if not self.is_mounted or revision != self._revision:
+                return
+            self._safety_scope_seen = choices
+            area.display = bool(choices)
+            if choices:
+                await area.mount(
+                    Static(
+                        "Optional additions to the encrypted before-replacement copy. "
+                        "Select preserved files and their declared folders when restored data depends on them. "
+                        "These live files stay in place. Review restore again after selecting.",
+                        markup=False,
+                    ),
+                    *(
+                        Checkbox(Text(f"{owner}: {path}"), name=key, classes="backup-safety-member")
+                        for key, owner, path in choices
+                    ),
+                )
+            if not self.is_mounted or revision != self._revision:
+                return
+            if plan.safety_scope:
+                self.query_one("#backup-restore-preview", Static).update(
+                    "Safety-copy sources changed. Select additions and review restore again."
+                )
+                return
         self._restore_plan = plan
         rows = [
             "Reviewed local restore plan",
@@ -1268,6 +1323,7 @@ class BackupRestoreScreen(Screen):
         ):
             rows.extend(f"{label}: {key} → {path}" for key, path in entries)
         rows.extend(f"Issue: {issue}" for issue in plan.issues)
+        rows.extend(f"Additional safety-copy source: {key}" for key in plan.safety_scope)
         rows.extend(
             f"Acknowledged safety-copy credential omission: {issue}"
             for issue in plan.acknowledged_credential_issues
