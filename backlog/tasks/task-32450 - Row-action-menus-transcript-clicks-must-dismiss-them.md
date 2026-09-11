@@ -1,5 +1,5 @@
 ---
-id: TASK-32311
+id: TASK-32450
 title: 'Row action menus: transcript clicks must dismiss them'
 status: Done
 assignee:
@@ -23,6 +23,15 @@ Clicking the transcript (most of the screen) left the conversation/workspace act
 - [x] #3 Composer and rail outside-clicks keep folding the menus (regression)
 - [x] #4 Menu-internal clicks (border/padding/buttons) still never fold it (regression)
 <!-- AC:END -->
+
+## Renumbering
+
+TASK-19601 owner rule: this task originally took id 32311, which collided
+with the older arrival ``task-32311 - Allow-Console-portraits-to-expand-
+within-the-Character-area.md`` already on dev. Renumbered to TASK-32450
+(dev max + headroom) with this provenance section; doc comments and test
+references were updated with it. Earlier commit messages on this branch
+still name TASK-32311.
 
 ## Implementation Plan
 
