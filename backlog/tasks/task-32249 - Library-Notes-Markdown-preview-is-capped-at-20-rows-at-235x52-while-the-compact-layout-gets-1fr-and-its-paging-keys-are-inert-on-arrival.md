@@ -3,11 +3,11 @@ id: TASK-32249
 title: >-
   Library Notes Markdown preview is capped at 20 rows at 235x52 while the
   compact layout gets 1fr, and its paging keys are inert on arrival
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-10 18:05'
-updated_date: '2026-09-11 15:42'
+updated_date: '2026-09-11 16:48'
 labels:
   - library
   - notes
@@ -32,11 +32,11 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The preview uses the available height in the wide layout (`1fr`, as the compact layout already does); no fixed 20-row cap at 235x52
-- [ ] #2 Activating Preview focuses the region, so the footer's `pgup/pgdn scroll` promise is true on arrival without a click
-- [ ] #3 An Obsidian callout renders as a callout rather than leaking its `[!note]` marker into the text
-- [ ] #4 The status line does not advertise editing behaviour while Preview is showing
-- [ ] #5 Covered by a test pinning the preview height rule in the wide layout
+- [x] #1 The preview uses the available height in the wide layout (`1fr`, as the compact layout already does); no fixed 20-row cap at 235x52
+- [x] #2 Activating Preview focuses the region, so the footer's `pgup/pgdn scroll` promise is true on arrival without a click
+- [x] #3 An Obsidian callout renders as a callout rather than leaking its `[!note]` marker into the text
+- [x] #4 The status line does not advertise editing behaviour while Preview is showing
+- [x] #5 Covered by a test pinning the preview height rule in the wide layout
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -49,3 +49,19 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 5. Stop the status line advertising autosave while Preview is showing
 6. RED->GREEN tests in Tests/UI/test_library_notes_w3_layout.py; guide + stamp
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+AC#1/#5 were already true at HEAD: task-32217 deleted `max-height: 20` from both the component source and `LibraryScreen.BUNDLED_CSS`, and `test_the_note_preview_takes_the_same_height_the_body_does` pins it at 170x48. Added a second pin at the critique's own 235x52 rather than re-deleting anything (`test_the_wide_preview_fills_the_work_pane_at_the_critique_width`); measured live, the box now runs to the pane floor.
+
+Three things were still true there and are fixed:
+
+- Activating Preview focuses `#library-note-preview-region`, mirroring the Info handler two functions away. The region is the sole scroll owner, so the footer's "pgup/pgdn scroll" line was false until the reader clicked inside the box.
+- `render_obsidian_callouts` (`Utils/markdown_parsing.py`) rewrites `> [!note] Title` into `> **Note: Title**` before the Markdown widget parses it. Textual has no callout extension, so the marker rendered as literal text INSIDE the quote bar the callout was already drawing; keeping the bar and bolding the words is the whole fix. Applied at both the compose and the in-place sync site, and the sync's staleness comparison moved to the rewritten source so a callout note does not re-render on every sync.
+- The status line no longer offers "Keep editing; changes save automatically" on a read-only surface: `state.presentation == "preview"` now yields "Next: Press Edit to change this note."
+
+Live at 235x52 on a seeded profile: `wave3-caps/layout/02-preview-before.txt` (leaked `[!note]`, "Keep editing", focus ring on the Preview button) -> `11-preview-after.txt` ("▌ Note: Obsidian callout", "Next: Press Edit to change this note.").
+
+Modified: `tldw_chatbook/Utils/markdown_parsing.py`, `tldw_chatbook/Widgets/Library/library_notes_canvas.py`, `tldw_chatbook/UI/Library_Modules/library_notes_controller.py`, `Tests/UI/test_library_notes_w3_layout.py`, `Docs/User_Guide/library/notes.md`.
+<!-- SECTION:NOTES:END -->
