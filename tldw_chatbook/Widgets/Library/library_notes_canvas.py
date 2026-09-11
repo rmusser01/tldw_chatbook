@@ -13,7 +13,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.events import Resize
+from textual.events import Focus, Resize
 from textual.widgets import Button, Input, Markdown, Static, TextArea
 
 from tldw_chatbook.Library.library_notes_state import (
@@ -306,6 +306,18 @@ _NOTE_FIELD_TAB_BINDINGS = [
 class NoteEditorInput(Input):
     """A note field whose Tab moves focus BEFORE the next key is forwarded.
 
+    task-32253: it also does NOT select its content on focus, and parks the
+    caret at the end instead. Textual's ``Input`` default is select-on-focus
+    -- browser behaviour, and right for a query box you are about to
+    replace. It is wrong for the one field on this screen whose content must
+    not be destroyed: live at dev 4a14b3f36f, Shift+Tab out of the body into
+    the Title selected "Ideas for study decks" whole, one "!" replaced it,
+    and autosave committed the loss a second later ("Saved 15:23"). Textual's
+    ``Input`` has no undo, so nothing could bring the title back. The keyword
+    boxes share this class and the same rule for the same reason; the path
+    fields that genuinely WANT select-on-focus are a different widget
+    (task-32251).
+
     task-32106 AC#1: ``Screen.BINDINGS``' ``Binding("tab", "app.focus_next")``
     is not ``priority=True``, so ``Key(tab)`` is posted to the focused
     ``Input`` and has to bubble one message-queue hop per ancestor up to the
@@ -328,9 +340,33 @@ class NoteEditorInput(Input):
 
     BINDINGS = _NOTE_FIELD_TAB_BINDINGS
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Build the field with select-on-focus off unless asked otherwise."""
+        kwargs.setdefault("select_on_focus", False)
+        super().__init__(*args, **kwargs)
+
+    def _on_focus(self, event: Focus) -> None:
+        super()._on_focus(event)
+        if not self.select_on_focus:
+            # Textual leaves the caret wherever it was (position 0 on a
+            # fresh field), which reads as "type here and push the title
+            # along". End-of-text is where a reader arriving by Shift+Tab
+            # means to continue.
+            self.action_end()
+
 
 class NoteEditorTextArea(TextArea):
     """The note body, with the same synchronous Tab as the fields around it.
+
+    task-32247: it also carries the document-end and document-start keys.
+    Textual 8.2.8's ``TextArea`` binds ``home``/``end`` to the LINE ends and
+    defines neither a ``ctrl+end`` binding nor a ``cursor_document_end``
+    action at all -- so on a 35 KB note, Ctrl+End (in every encoding: the
+    named key, ``\\x1b[1;5F``, ``\\x1bOF``-style variants all resolve to the
+    one key name ``ctrl+end``) was not swallowed by anything upstream, as
+    the report inferred; there was simply no key to swallow, and typing
+    after it landed at character 0. Editing near the end of a long note was
+    unreachable by keyboard.
 
     The body has the identical defect one widget over (coordinator addendum
     from a peer session): bursting ``hello`` + Tab + ``world`` into it left
@@ -345,7 +381,19 @@ class NoteEditorTextArea(TextArea):
     trusting the default.
     """
 
-    BINDINGS = _NOTE_FIELD_TAB_BINDINGS
+    BINDINGS = [
+        *_NOTE_FIELD_TAB_BINDINGS,
+        Binding("ctrl+end", "cursor_document_end", "End of note", show=False),
+        Binding("ctrl+home", "cursor_document_start", "Start of note", show=False),
+    ]
+
+    def action_cursor_document_end(self) -> None:
+        """Move the caret to the end of the note body."""
+        self.move_cursor(self.document.end)
+
+    def action_cursor_document_start(self) -> None:
+        """Move the caret to the start of the note body."""
+        self.move_cursor((0, 0))
 
 
 @dataclass(frozen=True)

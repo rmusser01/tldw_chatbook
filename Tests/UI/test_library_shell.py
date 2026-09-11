@@ -33145,7 +33145,11 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
             )
 
         await _open_note_editor(screen, pilot)
-        await wait_footer("esc notes")
+        # task-32247 AC#2: the editor tier gained the document-end key, in
+        # both width tiers (the honesty contract requires the same keys in
+        # the same order), with Escape kept first so the narrow stage's one
+        # legible chip is still the exit.
+        await wait_footer("esc notes | ctrl+end end")
         footer = screen.query_one(AppFooterStatus)
         footer.update_word_count(12)
         footer.update_token_count("Tokens: 34")
@@ -33188,7 +33192,7 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
         await wait_footer("pgup/pgdn scroll | esc notes")
 
         screen.query_one("#library-note-edit").press()
-        await wait_footer("esc notes")
+        await wait_footer("esc notes | ctrl+end end")
 
         body = screen.query_one("#library-note-body", TextArea)
         body.text = "local conflict text"
@@ -33211,7 +33215,7 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
             ),
             message="Reload did not resolve the conflict.",
         )
-        await wait_footer("esc notes")
+        await wait_footer("esc notes | ctrl+end end")
         assert screen._notes_state.shortcut_status == ""
 
 

@@ -1466,8 +1466,23 @@ class LibraryScreen(BaseAppScreen):
         ("/", "find"),
         ("esc", "rail"),
     )
-    LIBRARY_NOTES_EDITOR_SHORTCUTS = (("esc", "back to notes"),)
-    LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT = (("esc", "notes"),)
+    # task-32247 AC#2: the document-end key is advertised beside the other
+    # editor keys. Without it the only way to learn it was to guess -- and
+    # before the binding existed, guessing it did nothing.
+    # Escape stays FIRST here, unlike its sibling tiers: the compact tier
+    # is what the ≤64-column narrow stage paints, where one chip is all
+    # that fits legibly (task-32346) and the exit is the chip that must
+    # survive -- ``test_compact_editor_context_reaches_the_paint_at_60_cols``
+    # pins the displayed string on it. The two tiers still carry the same
+    # keys in the same order, which the honesty contract requires.
+    LIBRARY_NOTES_EDITOR_SHORTCUTS = (
+        ("esc", "back to notes"),
+        ("ctrl+end", "end of note"),
+    )
+    LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT = (
+        ("esc", "notes"),
+        ("ctrl+end", "end"),
+    )
     LIBRARY_NOTES_PREVIEW_SHORTCUTS = (
         ("pgup/pgdn", "scroll"),
         ("esc", "back to notes"),
