@@ -342,7 +342,7 @@ def _material(staging):
 
 
 def plan_credential_scopes(
-    staging: Path, *, isolated: bool = False
+    staging: Path, *, isolated: bool = False, fresh: bool = False
 ) -> Mapping[str, str]:
     """Plan only: caller journals this mapping before applying any credential."""
     plans = {}
@@ -360,7 +360,7 @@ def plan_credential_scopes(
             raise ValueError("credential_store_unavailable") from None
         purpose = (
             record["purpose"]
-            if current == record["value"]
+            if not fresh and current == record["value"]
             else "recovery_" + uuid4().hex + "_" + record["purpose"]
         )
         target = {**record, "purpose": purpose}
@@ -1109,3 +1109,126 @@ def process_credentials(
         return tuple(issues)
     except (OSError, ValueError, TypeError, sqlite3.Error):
         return ("credential_processing_unavailable",)
+
+
+def replacement_credential_records(staging: Path, scope_map: Mapping[str, str]):
+    """Validate private immutable material against a fresh local scope plan."""
+    records = {
+        record["id"]: record
+        for record in _material(staging)
+        if record["status"] == "captured"
+    }
+    if set(records) != set(scope_map):
+        raise ValueError("credential_scope_changed")
+    for key, record in records.items():
+        plan = json.loads(scope_map[key])
+        if plan.get("material") != _fingerprint(record):
+            raise ValueError("credential_scope_changed")
+        if plan.get("action") == "retain":
+            if set(plan) != {"action", "material"}:
+                raise ValueError("credential_scope_changed")
+        elif (
+            set(plan) != {"action", "purpose", "expected", "material"}
+            or plan.get("action") != "create"
+            or record["kind"] != "server"
+            or not record["remappable"]
+            or not re.fullmatch(
+                "recovery_[0-9a-f]{32}_" + re.escape(record["purpose"]),
+                plan.get("purpose", ""),
+            )
+        ):
+            raise ValueError("credential_scope_changed")
+    return records
+
+
+def remap_credential_copies(
+    staging: Path, scope_map: Mapping[str, str], copies: Mapping[str, Path]
+) -> None:
+    """Rewrite private publication copies only; do not touch values or originals."""
+    for key, record in replacement_credential_records(staging, scope_map).items():
+        plan = json.loads(scope_map[key])
+        if plan["action"] == "retain":
+            continue
+        path = _staged_path(staging, copies[record["file"]])
+        if path == Path(staging) / record["file"]:
+            raise ValueError("credential_original_mutation")
+        data = json.loads(_read(path))
+        matches = [
+            target
+            for target in _targets(data)
+            if target["server_id"] == record["server_id"]
+        ]
+        if not matches:
+            raise ValueError("credential_reference_changed")
+        for target in matches:
+            target["auth_reference"] = "keyring:" + plan["purpose"]
+        _write(path, json.dumps(data))
+
+
+def check_replacement_credential(record, plan, *, allow_existing=False) -> None:
+    """Recheck current shared and new scopes, redacting backend failures."""
+    if plan["action"] == "retain":
+        return
+    try:
+        store = _credential_store()
+        if _fingerprint(_read_scope(record, store)) != plan["expected"]:
+            raise ValueError("credential_scope_changed")
+        occupied = _read_scope({**record, "purpose": plan["purpose"]}, store)
+        if occupied is not None and (not allow_existing or occupied != record["value"]):
+            raise ValueError("credential_scope_changed")
+    except Exception:  # noqa: BLE001 - backend errors can include secret values
+        raise ValueError("credential_scope_changed") from None
+
+
+def apply_replacement_credential(record, plan) -> dict[str, str]:
+    """Apply/recheck one durably intended fresh scope, never a shared value."""
+    from tldw_chatbook.runtime_policy.server_credentials import ServerCredentialScope
+
+    check_replacement_credential(record, plan, allow_existing=True)
+    if plan["action"] == "retain":
+        return {
+            "record_id": record["id"],
+            "action": "retain",
+            "purpose": "",
+            "value_digest": "",
+        }
+    try:
+        store = _credential_store()
+        scope = ServerCredentialScope.legacy(record["server_id"], plan["purpose"])
+        if store.get_scoped_secret(scope) is None:
+            store.set_recovery_secret_if_absent(scope, record["value"])
+        actual = store.get_scoped_secret(scope)
+        if actual != record["value"]:
+            raise ValueError("credential_scope_changed")
+    except Exception:  # noqa: BLE001 - backend errors can include secret values
+        raise ValueError("credential_scope_apply_unavailable") from None
+    return {
+        "record_id": record["id"],
+        "action": "create",
+        "purpose": plan["purpose"],
+        "value_digest": _fingerprint(actual),
+    }
+
+
+def verify_replacement_credential(record, plan) -> dict[str, str]:
+    """Read back a previously applied scope without recreating a missing value."""
+    check_replacement_credential(record, plan, allow_existing=True)
+    if plan["action"] == "retain":
+        return {
+            "record_id": record["id"],
+            "action": "retain",
+            "purpose": "",
+            "value_digest": "",
+        }
+    try:
+        value = _read_scope({**record, "purpose": plan["purpose"]}, _credential_store())
+    except Exception:  # noqa: BLE001 - backend errors can include secret values
+        raise ValueError("credential_scope_apply_unavailable") from None
+    if value != record["value"]:
+        raise ValueError("credential_scope_changed")
+    return {
+        "record_id": record["id"],
+        "action": "create",
+        "purpose": plan["purpose"],
+        "value_digest": _fingerprint(value),
+    }

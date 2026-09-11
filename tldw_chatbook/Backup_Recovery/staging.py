@@ -339,6 +339,68 @@ def stage_restore(
                 )
                 if issues:
                     raise ValueError(issues[0])
+            elif plan.mode == "replace" and doc.credential_policy != "exclude":
+                from dataclasses import replace
+
+                from .credentials import (
+                    _material,
+                    plan_credential_scopes,
+                    process_credentials,
+                    remap_credential_copies,
+                )
+                from .models import Inventory
+
+                _copy(
+                    stage / "payload" / "credential-recovery.json",
+                    stage / "credential-recovery.json",
+                    cancel,
+                )
+                selected_payloads = {
+                    row.payload for row in doc.files if row.logical_id in selected
+                }
+                records = [
+                    record
+                    for record in _material(stage)
+                    if record["file"] in selected_payloads
+                ]
+                (stage / "credential-recovery.json").write_bytes(
+                    json.dumps(
+                        {
+                            "version": 1,
+                            "mode": doc.credential_policy,
+                            "records": records,
+                        },
+                        sort_keys=True,
+                    ).encode()
+                )
+                credentials = dict(plan_credential_scopes(stage, fresh=True))
+                publication_payloads = {}
+                for payload in doc.files:
+                    if payload.logical_id not in selected:
+                        continue
+                    copy = (
+                        stage
+                        / "credential-publication"
+                        / hashlib.sha256(payload.logical_id.encode()).hexdigest()
+                    )
+                    _mkdirs(copy.parent, stage)
+                    _copy(extracted[payload.logical_id], copy, cancel)
+                    extracted[payload.logical_id] = copy
+                    publication_payloads[payload.payload] = copy
+                rebound = tuple(
+                    replace(item, path=extracted[key])
+                    for key, item in items.items()
+                    if key in extracted and key in selected
+                )
+                issues = process_credentials(
+                    stage / "credential-publication",
+                    Inventory(rebound, False, "", ()),
+                    mode="exclude",
+                    encrypted=False,
+                )
+                if issues:
+                    raise ValueError(issues[0])
+                remap_credential_copies(stage, credentials, publication_payloads)
             for payload in doc.files:
                 if payload.logical_id not in selected:
                     continue
@@ -416,7 +478,11 @@ def stage_restore(
                 if previous != validated[item.logical_id]:
                     raise ValueError("shared_candidate_mismatch")
         material = stage / "payload" / "credential-recovery.json"
-        if doc.credential_policy != "exclude" and not isolated_profiles:
+        if (
+            doc.credential_policy != "exclude"
+            and not isolated_profiles
+            and plan.mode != "replace"
+        ):
             from .credentials import _material, plan_credential_scopes
 
             if not material.exists():
@@ -622,15 +688,41 @@ def stage_restore(
         recheck_targets(plan)
         reader.verify_sealed(archive, cancel)
         reader._check(cancel)
+        from .journal import observe_artifact
+
         descriptor = {
             "version": 1,
             "archive_digest": archive.digest,
+            "archive_source": {
+                "path": str(archive.path),
+                "digest": archive.digest,
+                "manifest_digest": hashlib.sha256(archive.manifest_bytes).hexdigest(),
+                "encrypted_source": {
+                    "path": str(archive.encrypted_source.path),
+                    "digest": archive.encrypted_source.digest,
+                    "identity": list(archive.encrypted_source.identity),
+                    "plaintext_digest": archive.encrypted_source.plaintext_digest,
+                    "manifest_digest": archive.encrypted_source.manifest_digest,
+                }
+                if archive.encrypted_source
+                else None,
+            },
             "target_fingerprint": plan.target_fingerprint,
             "profile_names": dict(plan.profile_names),
             "issues": plan.issues,
             "artifacts": artifacts,
             "containers": containers,
             "credential_scopes": credentials,
+            "credential_issues": ["credential_isolated_retention_required"]
+            if plan.mode == "replace"
+            and any(
+                json.loads(value)["action"] == "retain"
+                for value in credentials.values()
+            )
+            else [],
+            "credential_material": observe_artifact(stage / "credential-recovery.json")
+            if credentials and plan.mode == "replace"
+            else None,
             "private_roots": [str(path) for path in volume_roots],
             "isolated_profiles": list(isolated_profiles),
             "retained_credentials": retained_credentials,

@@ -22,6 +22,7 @@ from .journal import (
     _Object,
     _Prepared,
     _PublicationContext,
+    _ReplacementProfile,
     _RetainedCredentials,
     _Rollback,
     _states,
@@ -60,6 +61,10 @@ def _plan_digest(plan):
         ],
         "issues": plan.issues,
     }
+    if plan.safety_scope:
+        value["safety_scope"] = plan.safety_scope
+    if plan.acknowledged_credential_issues:
+        value["acknowledged_credential_issues"] = plan.acknowledged_credential_issues
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
@@ -179,6 +184,11 @@ def finalize_candidate(candidate: Path, plan: RestorePlan, journal, *, session) 
         if context is None or context.plan_digest != _plan_digest(plan):
             raise ValueError("publication_context_unverified")
         _finalization_session(session, context, prepared)
+        if any(
+            not _matches(row.source, row.source.path, metadata=True)
+            for row in prepared.safety_sources
+        ):
+            raise ValueError("safety_source_changed")
         committed = records[-1] if records[-1].event == "committed" else None
         _pending(
             journal,
@@ -263,6 +273,20 @@ def finalize_candidate(candidate: Path, plan: RestorePlan, journal, *, session) 
                 journal._append(parent, "catalog_registered", catalog_proof)
             elif catalog.evidence != catalog_proof:
                 raise ValueError("finalization_catalog_changed")
+        credential = next(
+            (row for row in records if row.event == "credentials_completed"), None
+        )
+        if prepared.credential_scopes:
+            from .replacement import _verify_applied_credentials
+
+            _verify_applied_credentials(
+                candidate, journal, session=session, records=records
+            )
+        if prepared.incoming_credentials and not _matches(
+            prepared.incoming_credentials.ciphertext,
+            prepared.incoming_credentials.ciphertext.path,
+        ):
+            raise ValueError("retained_ciphertext_changed")
         if committed is None:
             journal._append(
                 parent,
@@ -270,6 +294,9 @@ def finalize_candidate(candidate: Path, plan: RestorePlan, journal, *, session) 
                 {
                     "generation": prepared.generation,
                     "activation_digest": _evidence_digest(proof),
+                    "credential_digest": _evidence_digest(credential.evidence)
+                    if credential
+                    else None,
                     "catalog_digest": _evidence_digest(catalog_proof)
                     if catalog_proof
                     else None,
@@ -288,6 +315,20 @@ def finalize_candidate(candidate: Path, plan: RestorePlan, journal, *, session) 
             != proof["records"]
         ):
             raise ValueError("finalization_activation_changed")
+        if any(
+            not _matches(row.source, row.source.path, metadata=True)
+            for row in prepared.safety_sources
+        ):
+            raise ValueError("safety_source_changed")
+        if prepared.incoming_credentials and not _matches(
+            prepared.incoming_credentials.ciphertext,
+            prepared.incoming_credentials.ciphertext.path,
+        ):
+            raise ValueError("retained_ciphertext_changed")
+        if prepared.credential_scopes:
+            _verify_applied_credentials(
+                candidate, journal, session=session, records=journal._records(parent)
+            )
         committed = journal._records(parent)[-1]
         _pending(
             journal,
@@ -620,9 +661,11 @@ def _directory_observations(prepared, item):
 
 
 def _publication_targets(prepared):
-    return [Path(item.target) for item in prepared.artifacts] + [
-        Path(item.previous.path) for item in prepared.directory_metadata
-    ]
+    return (
+        [Path(item.source.path) for item in prepared.safety_sources]
+        + [Path(item.target) for item in prepared.artifacts]
+        + [Path(item.previous.path) for item in prepared.directory_metadata]
+    )
 
 
 def _sidecar_main(item, items, owners):
@@ -725,7 +768,16 @@ def _rollback_sources(plan, artifacts, owners):
 
 
 def _prepare(
-    journal, candidate, plan, bootstrap_root, namespaces, selectors, generation
+    journal,
+    candidate,
+    plan,
+    bootstrap_root,
+    namespaces,
+    selectors,
+    generation,
+    *,
+    replacement_profiles=(),
+    incoming_credentials=None,
 ):
     with journal._locked(exclusive=True) as parent:
         records = journal._records(parent)
@@ -779,6 +831,19 @@ def _prepare(
             for row in document.get("isolated_profiles", [])
         ]
         retained_credentials = document.get("retained_credentials")
+        replacement_profiles = [
+            _ReplacementProfile.model_validate(row) for row in replacement_profiles
+        ]
+        if replacement_profiles and (
+            plan.mode != "replace"
+            or isolated_profiles
+            or {row.config for row in replacement_profiles} != restored_selectors
+            or len(replacement_profiles) != len(restored_selectors)
+            or len({row.installation_id for row in replacement_profiles})
+            != len(replacement_profiles)
+        ):
+            raise ValueError("replacement_identity_mapping_invalid")
+
         if isolated_profiles:
             configs = {
                 row.logical_id.split(":")[1]: str(dict(plan.restore)[row.logical_id])
@@ -807,6 +872,21 @@ def _prepare(
                 raise ValueError("isolated_catalog_intent_invalid")
             if doc.credential_policy != "exclude" and retained_credentials is None:
                 raise ValueError("encrypted_retention_required")
+        if replacement_profiles:
+            if doc.credential_policy != "exclude" and incoming_credentials is None:
+                raise ValueError("encrypted_retention_required")
+            if incoming_credentials is not None:
+                retained = _RetainedCredentials.model_validate(incoming_credentials)
+                if (
+                    Path(retained.ciphertext.path)
+                    != journal.root.parent
+                    / ("replacement-" + journal.operation_id)
+                    / "credentials.age"
+                    or retained.plaintext_digest != receipt.archive_digest
+                    or retained.manifest_digest != receipt.manifest_digest
+                    or not _matches(retained.ciphertext, retained.ciphertext.path)
+                ):
+                    raise ValueError("encrypted_retention_unverified")
         if retained_credentials is not None:
             retained = _RetainedCredentials.model_validate(retained_credentials)
             if (
@@ -1002,6 +1082,59 @@ def _prepare(
             installed_paths.append(
                 {"path": str(target), "device": info.st_dev, "inode": info.st_ino}
             )
+        if plan.mode == "replace":
+            credential_issues = (
+                ["credential_isolated_retention_required"]
+                if any(
+                    json.loads(value)["action"] == "retain"
+                    for value in document.get("credential_scopes", {}).values()
+                )
+                else []
+            )
+            if document.get("credential_issues", []) != credential_issues or not set(
+                credential_issues
+            ) <= set(plan.acknowledged_credential_issues):
+                raise ValueError("credential_omission_acknowledgement_required")
+        credential_material = (
+            document.get("credential_material") if plan.mode == "replace" else None
+        )
+        if document.get("credential_scopes") and plan.mode == "replace":
+            if credential_material is None:
+                raise ValueError("credential_material_unverified")
+            material = _Object.model_validate(credential_material)
+            if material.path != str(
+                candidate / "credential-recovery.json"
+            ) or not _matches(material, material.path):
+                raise ValueError("credential_material_unverified")
+        safety_sources = []
+        target_by_id = (
+            {item.logical_id: item for item in plan.target.items} if plan.target else {}
+        )
+        for key in plan.safety_scope:
+            item = target_by_id[key]
+            adapter = owners.get(item.owner)
+            policy = _item_validator(adapter, item).schema_policy() if adapter else None
+            if (
+                item.status != "included"
+                or adapter is None
+                or policy is None
+                or policy.schema_sql
+                or (item.logical_id, item.path) not in plan.preserve
+                or item.shared_group
+                and any(
+                    other.logical_id not in plan.safety_scope
+                    for other in plan.target.items
+                    if other.shared_group == item.shared_group
+                )
+            ):
+                raise ValueError("safety_scope_capability_unavailable")
+            safety_sources.append(
+                {
+                    "logical_id": key,
+                    "owner_id": item.owner,
+                    "source": observe_artifact(item.path, metadata=True),
+                }
+            )
         journal._append(
             parent,
             "prepared",
@@ -1010,6 +1143,15 @@ def _prepare(
                 "mode": plan.mode,
                 "isolated_profiles": [row.model_dump() for row in isolated_profiles],
                 "retained_credentials": retained_credentials,
+                "replacement_profiles": [
+                    row.model_dump() for row in replacement_profiles
+                ],
+                "safety_sources": safety_sources,
+                "incoming_credentials": incoming_credentials,
+                "credential_scopes": document.get("credential_scopes", {})
+                if plan.mode == "replace"
+                else {},
+                "credential_material": credential_material,
                 "artifacts": artifacts,
                 "publication": context.model_dump(),
                 "installed_paths": installed_paths,
@@ -1079,6 +1221,8 @@ def _verify_rollback(journal, path, password, work_root, cancel, coverage):
         directory_metadata = {
             item.logical_id: item for item in prepared.directory_metadata
         }
+        if prepared.safety_sources:
+            raise ValueError("rollback_safety_held_capture_required")
         if set(coverage) != set(previous) | set(directory_metadata):
             raise ValueError("rollback_coverage_mismatch")
         if any(item.rollback_projection_roots for item in previous.values()):
@@ -1138,7 +1282,12 @@ def _verify_rollback(journal, path, password, work_root, cancel, coverage):
 
 
 def publish_candidate(
-    candidate: Path, plan: RestorePlan, journal, rollback_archive: Path | None
+    candidate: Path,
+    plan: RestorePlan,
+    journal,
+    rollback_archive: Path | None,
+    *,
+    session=None,
 ) -> None:
     """Publish only fully verified local context; incomplete evidence stays fenced."""
     with journal._locked(exclusive=True) as parent:
@@ -1161,6 +1310,16 @@ def publish_candidate(
         ):
             raise ValueError("publication_context_unverified")
         _pending(journal, context)
+        if any(
+            not _matches(row.source, row.source.path, metadata=True)
+            for row in prepared.safety_sources
+        ):
+            raise ValueError("safety_source_changed")
+        if prepared.incoming_credentials and not _matches(
+            prepared.incoming_credentials.ciphertext,
+            prepared.incoming_credentials.ciphertext.path,
+        ):
+            raise ValueError("retained_ciphertext_changed")
         if context.descriptor.path != str(candidate / "candidate.json") or not _matches(
             context.descriptor, str(candidate / "candidate.json")
         ):
@@ -1178,6 +1337,12 @@ def publish_candidate(
                 raise ValueError("rollback_ciphertext_changed")
         elif rollback_archive is not None:
             raise ValueError("unexpected_rollback_archive")
+        if prepared.credential_scopes:
+            from .replacement import _verify_applied_credentials
+
+            _verify_applied_credentials(
+                candidate, journal, session=session, records=records
+            )
         started = any(row.event == "publication_started" for row in records)
         if not started:
             _check_directory_states(prepared, records)

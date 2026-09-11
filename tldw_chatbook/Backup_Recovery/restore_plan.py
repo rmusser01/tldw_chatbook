@@ -36,6 +36,8 @@ class RestorePlan:
     metadata: tuple[tuple[str, Metadata | None, Metadata], ...] = ()
     issues: tuple[str, ...] = ()
     containers: tuple[tuple[str, Path], ...] = ()
+    safety_scope: tuple[str, ...] = ()
+    acknowledged_credential_issues: tuple[str, ...] = ()
 
 
 def _document(archive):
@@ -129,6 +131,11 @@ def _paths(plan):
             *plan.selectors,
             *plan.destinations,
             *plan.containers,
+            *(
+                (item.logical_id, item.path)
+                for item in (plan.target.items if plan.target else ())
+                if item.logical_id in plan.safety_scope
+            ),
         )
     )
 
@@ -150,6 +157,8 @@ def plan_restore(
     destinations: Mapping[str, Path],
     target: Inventory | None,
     profile_names: Mapping[str, str] | None = None,
+    safety_scope: tuple[str, ...] = (),
+    acknowledged_credential_issues: tuple[str, ...] = (),
 ) -> RestorePlan:
     """Plan from explicit local owner selections; never load current configuration.
 
@@ -160,6 +169,32 @@ def plan_restore(
         raise ValueError("target_unverified")
     if mode not in {"isolated", "replace"}:
         raise ValueError("invalid_restore_mode")
+    if (
+        type(safety_scope) is not tuple
+        or type(acknowledged_credential_issues) is not tuple
+        or any(
+            type(key) is not str
+            for key in (*safety_scope, *acknowledged_credential_issues)
+        )
+        or len(set(safety_scope)) != len(safety_scope)
+        or len(set(acknowledged_credential_issues))
+        != len(acknowledged_credential_issues)
+        or any(
+            not issue.startswith("credential_") or len(issue) > 256
+            for issue in acknowledged_credential_issues
+        )
+        or mode != "replace"
+        and (safety_scope or acknowledged_credential_issues)
+    ):
+        raise ValueError("invalid_replacement_review")
+    if safety_scope:
+        by_id = {item.logical_id: item for item in target.items}
+        if set(safety_scope) - by_id.keys() or any(
+            by_id[key].path is None
+            or by_id[key].status not in {"included", "included_directory"}
+            for key in safety_scope
+        ):
+            raise ValueError("safety_scope_unverified")
     doc = _document(archive)
     if mode == "replace" and doc.consistency != "coherent":
         raise ValueError("partial_replacement")
@@ -551,7 +586,7 @@ def plan_restore(
         from .projection_publication import dependent_retirements
 
         retire, preserve, projection_issues = dependent_retirements(
-            target, restore, retire, preserve
+            target, restore, retire, preserve, safety_scope=safety_scope
         )
     projection_issues += tuple(
         "projection_reconciliation_required:" + row.logical_id
@@ -572,6 +607,8 @@ def plan_restore(
         target,
         tuple(sorted(selectors.items())),
         tuple(sorted(names.items())),
+        safety_scope=tuple(sorted(safety_scope)),
+        acknowledged_credential_issues=tuple(sorted(acknowledged_credential_issues)),
     )
     from dataclasses import replace
 

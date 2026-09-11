@@ -20,7 +20,11 @@ _selected_installation: str | None = None
 
 def installation_client_id() -> str:
     """Return the verified startup identity, preserving ordinary CLI behavior."""
-    return _selected_installation or "tldw_cli_local_instance_v1"
+    if _selected_installation is not None:
+        return _selected_installation
+    from .activation import replacement_installation_id
+
+    return replacement_installation_id() or "tldw_cli_local_instance_v1"
 
 
 def restore_isolated(

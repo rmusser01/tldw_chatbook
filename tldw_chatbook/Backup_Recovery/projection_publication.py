@@ -57,7 +57,7 @@ def projection_groups(items):
     return result
 
 
-def dependent_retirements(target, restore, retire, preserve):
+def dependent_retirements(target, restore, retire, preserve, *, safety_scope=()):
     """Follow declared dependencies; omitted dependent roots cannot stay active."""
     changed_paths = {path for _, path in (*restore, *retire)}
     changed = {
@@ -122,7 +122,7 @@ def dependent_retirements(target, restore, retire, preserve):
         }
         if dependencies - by_id.keys():
             raise ValueError("projection_source_scope_unverified")
-        if not dependencies <= changed:
+        if not dependencies <= changed | set(safety_scope):
             raise ValueError("shared_scope_expansion_required")
         if root.path not in paths and any(root.path in path.parents for path in paths):
             raise ValueError("projection_root_incomplete")

@@ -376,3 +376,70 @@ class ActivationStore:
                 return record.generation == generation and record.owner == owner
         except (OSError, ValueError, RuntimeError):
             return False
+
+
+def replacement_installation_id() -> str | None:
+    """Read a committed replacement identity before ordinary config composition.
+
+    Missing ordinary history retains legacy behavior. Any surviving restored pair
+    requires its real journal and activation records; no service or config import.
+    """
+    from .journal import Journal, _evidence_digest, _Prepared
+
+    selector = lexical_path(bootstrap.effective_config_path())
+    root = bootstrap.default_bootstrap_root()
+    allowed, reason = bootstrap.startup_permission(selector, root)
+    if not allowed:
+        raise bootstrap.RecoveryRequired(reason)
+    _, profiles, associations = bootstrap._control_records(root)
+    profile = next((row for row in profiles if row["selector"] == str(selector)), None)
+    association = next(
+        (row for row in associations if row["selector"] == str(selector)), None
+    )
+    witness = profile.get("activation") if profile else None
+    if witness is None and association is None:
+        return None
+    if witness is None or association is None or association["activation"] != witness:
+        raise bootstrap.RecoveryRequired("replacement_identity_unverified")
+    control = Path(witness["store_root"]).parent
+    operation = witness["operation_id"]
+    if not (control / ("operation-" + bootstrap._key(operation))).is_dir():
+        raise bootstrap.RecoveryRequired("replacement_identity_unverified")
+    journal = Journal(control, operation)
+    with journal._locked(exclusive=False) as parent:
+        rows = journal._records(parent)
+    if not rows or rows[-1].event != "committed":
+        raise bootstrap.RecoveryRequired("replacement_identity_unverified")
+    prepared = _Prepared.model_validate(
+        next(row.evidence for row in rows if row.event == "prepared")
+    )
+    if prepared.isolated_profiles:
+        # Explicit isolated launch selects its verified identity before this call.
+        raise bootstrap.RecoveryRequired("isolated_profile_selector_required")
+    if not prepared.replacement_profiles:
+        if prepared.mode == "replace":
+            raise bootstrap.RecoveryRequired("replacement_identity_unverified")
+        return None
+    expected = next(
+        (row for row in prepared.replacement_profiles if row.config == str(selector)),
+        None,
+    )
+    event = next((row for row in rows if row.event == "activation_recorded"), None)
+    binding = bootstrap._binding(selector, profiles, bootstrap._registry(root))
+    if (
+        expected is None
+        or binding is None
+        or event is None
+        or prepared.publication.bootstrap_root != str(root)
+        or prepared.generation != witness["generation"]
+        or prepared.publication.namespaces != witness["namespaces"]
+        or str(selector) not in event.evidence["selectors"]
+        or event.evidence["owners"] != witness["owners"]
+        or rows[-1].evidence["activation_digest"] != _evidence_digest(event.evidence)
+    ):
+        raise bootstrap.RecoveryRequired("replacement_identity_unverified")
+    store = ActivationStore(Path(witness["store_root"]))
+    with _private(store._generation(prepared.generation)) as parent:
+        if store._required(parent, prepared.generation).owners != witness["owners"]:
+            raise bootstrap.RecoveryRequired("replacement_identity_unverified")
+    return expected.installation_id

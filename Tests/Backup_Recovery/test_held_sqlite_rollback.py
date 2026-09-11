@@ -39,6 +39,7 @@ def replacement_case(
     omit_shm=False,
     extras=None,
     missing_selector=False,
+    prepared=True,
 ):
     owner = recovery_adapters()[0]
     live = tmp_path / "live"
@@ -235,6 +236,9 @@ def replacement_case(
     candidate = stage_restore(
         archive, plan, tmp_path / "candidate", Event(), journal=journal
     )
+    if not prepared:
+        yield candidate, plan, journal, None, source, selector
+        return
     selectors = (live / "unrelated.toml",) if missing_selector else (selector,)
     register_pending(root, journal.operation_id, ("profile",), control, selectors)
     with authority.maintenance(

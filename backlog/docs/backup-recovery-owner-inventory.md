@@ -245,7 +245,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Backup_Recovery/staging.py | stage_restore | ZipFile | 1 | disposable | backup_restore_staging |
 | tldw_chatbook/Backup_Recovery/staging.py | stage_restore | create_private_file | 2 | disposable | backup_restore_staging |
 | tldw_chatbook/Backup_Recovery/staging.py | stage_restore | write | 2 | disposable | backup_restore_staging |
-| tldw_chatbook/Backup_Recovery/staging.py | stage_restore | write_bytes | 1 | disposable | backup_restore_staging |
+| tldw_chatbook/Backup_Recovery/staging.py | stage_restore | write_bytes | 2 | disposable | backup_restore_staging |
 | tldw_chatbook/Backup_Recovery/staging.py | stage_restore | write_text | 1 | disposable | backup_restore_staging |
 | tldw_chatbook/Backup_Recovery/mcp_source_participants.py | backup_corrupt | os.replace | 2 | generic_boundary | exact five MCP source lifetimes; custom sources ordinary; service/runtime pending |
 | tldw_chatbook/Backup_Recovery/mcp_source_participants.py | reader | open | 1 | generic_boundary | exact five MCP source lifetimes; custom sources ordinary; service/runtime pending |

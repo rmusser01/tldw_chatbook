@@ -129,6 +129,12 @@ class _SqliteRollback(_RollbackSource):
     payload_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+class _SafetySource(_Evidence):
+    logical_id: str = Field(min_length=1, max_length=1024)
+    owner_id: str = Field(min_length=1, max_length=256)
+    source: _Object
+
+
 class _Rollback(_Evidence):
     ciphertext: _Object
     sealed_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -141,6 +147,9 @@ class _Rollback(_Evidence):
         default_factory=list, max_length=MAX_EVENTS
     )
     credential_issues: list[str] = Field(default_factory=list, max_length=4096)
+    safety_sources: list[_SafetySource] = Field(
+        default_factory=list, max_length=MAX_EVENTS
+    )
 
 
 class _Progress(_Evidence):
@@ -170,6 +179,16 @@ class _RetainedCredentials(_Evidence):
     manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+class _ReplacementProfile(_Evidence):
+    config: str
+    installation_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+
+    @field_validator("config")
+    @classmethod
+    def absolute_path(cls, value):
+        return _Object.absolute_path(value)
+
+
 class _Prepared(_Evidence):
     generation: str = Field(min_length=1, max_length=256)
     mode: Literal["isolated", "replace"]
@@ -177,6 +196,15 @@ class _Prepared(_Evidence):
         default_factory=list, max_length=4096
     )
     retained_credentials: _RetainedCredentials | None = None
+    replacement_profiles: list[_ReplacementProfile] = Field(
+        default_factory=list, max_length=4096
+    )
+    safety_sources: list[_SafetySource] = Field(
+        default_factory=list, max_length=MAX_EVENTS
+    )
+    credential_scopes: dict[str, str] = Field(default_factory=dict, max_length=10000)
+    credential_material: _Object | None = None
+    incoming_credentials: _RetainedCredentials | None = None
     artifacts: list[_Artifact] = Field(default_factory=list, max_length=MAX_EVENTS)
     rollback_sources: list[_RollbackSource] = Field(
         default_factory=list, max_length=MAX_EVENTS
@@ -424,10 +452,30 @@ class _CatalogRecorded(_Evidence):
     records: list[_Object] = Field(min_length=1, max_length=4096)
 
 
+class _CredentialIntent(_Evidence):
+    plan_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    descriptor_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    material: _Object
+    scopes: dict[str, str] = Field(min_length=1, max_length=10000)
+
+
+class _CredentialApplied(_Evidence):
+    record_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    action: Literal["create", "retain"]
+    purpose: str
+    value_digest: str
+
+
+class _CredentialsComplete(_Evidence):
+    intent_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    applied_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class _Committed(_Evidence):
     generation: str = Field(min_length=1, max_length=256)
     activation_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     catalog_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    credential_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class _Event(_Evidence):
@@ -445,6 +493,9 @@ class _Event(_Evidence):
         "installed_validated",
         "activation_recorded",
         "catalog_registered",
+        "credential_intended",
+        "credential_applied",
+        "credentials_completed",
         "committed",
         "directory_metadata_started",
         "directory_metadata_applied",
@@ -460,7 +511,17 @@ def _encoded(record: _Event) -> bytes:
 
 def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -> dict:
     events = [record.event for record in prior]
-    lifecycle = [value for value in events if value != "candidate_staged"]
+    lifecycle = [
+        value
+        for value in events
+        if value
+        not in {
+            "candidate_staged",
+            "credential_intended",
+            "credential_applied",
+            "credentials_completed",
+        }
+    ]
     prepared_record = next((row for row in prior if row.event == "prepared"), None)
     allowed = (
         {"candidate_staged", "prepared"}
@@ -483,6 +544,16 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
             else set()
         )
     )
+    if (
+        events
+        and events[-1] == "rollback_verified"
+        and prepared_record.evidence.get("credential_scopes")
+    ):
+        allowed = {"credential_intended"}
+    if events and events[-1] in {"credential_intended", "credential_applied"}:
+        allowed = {"credential_applied", "credentials_completed"}
+    if events and events[-1] == "credentials_completed":
+        allowed = {"publication_started"}
     if events and events[-1] == "committed":
         allowed = set()
     elif events and events[-1] == "activation_recorded":
@@ -512,6 +583,9 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
         "installed_validated": _Installed,
         "activation_recorded": _ActivationRecorded,
         "catalog_registered": _CatalogRecorded,
+        "credential_intended": _CredentialIntent,
+        "credential_applied": _CredentialApplied,
+        "credentials_completed": _CredentialsComplete,
         "committed": _Committed,
         "directory_metadata_started": _DirectoryIntent,
         "directory_metadata_applied": _DirectoryProgress,
@@ -520,6 +594,8 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
         validated = model.model_validate(dict(evidence))
         if isinstance(validated, _Rollback):
             prepared = _Prepared.model_validate(prepared_record.evidence)
+            if validated.safety_sources != prepared.safety_sources:
+                raise ValueError("rollback_safety_coverage_mismatch")
             expected_projections = {
                 row.path: row
                 for artifact in prepared.artifacts
@@ -597,6 +673,56 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
                 != len(validated.records)
             ):
                 raise ValueError("catalog_context_invalid")
+        elif isinstance(validated, _CredentialIntent):
+            prepared = _Prepared.model_validate(prepared_record.evidence)
+            if (
+                validated.material != prepared.credential_material
+                or validated.scopes != prepared.credential_scopes
+                or validated.plan_digest != prepared.publication.plan_digest
+                or validated.descriptor_digest != prepared.publication.descriptor.sha256
+                or "rollback_verified" not in events
+            ):
+                raise ValueError("credential_intent_invalid")
+        elif isinstance(validated, _CredentialApplied):
+            intent = next(
+                row.evidence for row in prior if row.event == "credential_intended"
+            )
+            planned = json.loads(intent["scopes"].get(validated.record_id, "{}"))
+            if (
+                validated.action != planned.get("action")
+                or validated.purpose != planned.get("purpose", "")
+                or any(
+                    row.event == "credential_applied"
+                    and row.evidence["record_id"] == validated.record_id
+                    for row in prior
+                )
+                or (validated.action == "retain" and validated.value_digest != "")
+                or (
+                    validated.action == "create"
+                    and (
+                        len(validated.value_digest) != 64
+                        or any(
+                            c not in "0123456789abcdef" for c in validated.value_digest
+                        )
+                    )
+                )
+            ):
+                raise ValueError("credential_application_invalid")
+        elif isinstance(validated, _CredentialsComplete):
+            intent = next(
+                row.evidence for row in prior if row.event == "credential_intended"
+            )
+            applied = {
+                row.evidence["record_id"]: row.evidence
+                for row in prior
+                if row.event == "credential_applied"
+            }
+            if (
+                set(applied) != set(intent["scopes"])
+                or validated.intent_digest != _evidence_digest(intent)
+                or validated.applied_digest != _evidence_digest(applied)
+            ):
+                raise ValueError("credential_application_incomplete")
         elif isinstance(validated, _Committed):
             activation = next(
                 row for row in prior if row.event == "activation_recorded"
@@ -604,8 +730,13 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
             catalog = next(
                 (row for row in prior if row.event == "catalog_registered"), None
             )
+            credential = next(
+                (row for row in prior if row.event == "credentials_completed"), None
+            )
             if (
-                validated.generation != activation.evidence["generation"]
+                validated.credential_digest
+                != (_evidence_digest(credential.evidence) if credential else None)
+                or validated.generation != activation.evidence["generation"]
                 or validated.activation_digest != _evidence_digest(activation.evidence)
                 or validated.catalog_digest
                 != (_evidence_digest(catalog.evidence) if catalog else None)
@@ -869,6 +1000,14 @@ class Journal:
 
     def record(self, event: str, evidence: Mapping[str, object]) -> None:
         """Flush one strictly typed exclusive record; failed writes remain evidence."""
+        if event in {
+            "credential_intended",
+            "credential_applied",
+            "credentials_completed",
+        }:
+            raise ValueError("credential_held_application_required")
+        if event == "rollback_verified" and evidence.get("safety_sources"):
+            raise ValueError("rollback_held_capture_required")
         if event == "catalog_registered":
             raise ValueError("catalog_finalization_required")
         if event == "rollback_verified" and (
@@ -935,13 +1074,30 @@ class Journal:
         flush_directory(parent)
 
     def prepare_publication(
-        self, candidate, plan, *, bootstrap_root, namespaces, selectors, generation
+        self,
+        candidate,
+        plan,
+        *,
+        bootstrap_root,
+        namespaces,
+        selectors,
+        generation,
+        replacement_profiles=(),
+        incoming_credentials=None,
     ):
         """Bind an explicit local publication context; never infer its scope."""
         from .publication import _prepare
 
         _prepare(
-            self, candidate, plan, bootstrap_root, namespaces, selectors, generation
+            self,
+            candidate,
+            plan,
+            bootstrap_root,
+            namespaces,
+            selectors,
+            generation,
+            replacement_profiles=replacement_profiles,
+            incoming_credentials=incoming_credentials,
         )
 
     def record_candidate(self, stage, plan, archive):
