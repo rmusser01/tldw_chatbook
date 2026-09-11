@@ -990,12 +990,16 @@ class LibraryIngestController:
         """Re-register the Ingest footer when its state-derived set changed.
 
         task-32364 AC#3 (fix round 1): every other entry in this set turns on
-        a REGISTRY event, and the registry listener was the only thing that
-        re-registered -- it fires once the import is already running. The
-        Enter label is the first entry driven by FORM state, so without this
-        the first Enter opened the Start gate and the footer went on
-        advertising "check this path" while Enter now started the import: the
-        same wrong-label defect, moved onto the more expensive press.
+        a REGISTRY event, and the Enter label is the first one driven by FORM
+        state. Two things re-registered before this existed -- the registry
+        listener, which fires once the import is already running, and, by
+        side effect, ``_update_library_ingest_dynamic_regions``'s STRUCTURAL
+        branch, which recomposes when the type-group set (or the unavailable
+        / backend lines) changes. The common blank-to-valid-path transition
+        happens to take that branch; every gate transition that does not left
+        the footer advertising "check this path" while Enter had started
+        starting the import -- the same wrong-label defect this task exists
+        to remove, moved onto the more expensive press.
 
         Deduped on the registration tuple, so an unchanged set costs nothing.
         """
@@ -2087,11 +2091,11 @@ class LibraryIngestController:
         # (task-2042) In-place for the same reason as the trigger: the
         # result can land while the user is typing or mid-click.
         self._update_library_ingest_dynamic_regions()
-        # task-32364 AC#3 (fix round 1): this is the seam every Start-gate
-        # transition passes through, and the gate now drives a FOOTER label.
-        # The line above only re-registers as a side effect of its STRUCTURAL
-        # branch (a changed type-group set), so a gate that opens without one
-        # left the footer naming the previous step's action.
+        # task-32364 AC#3 (fix round 1): the seam every Start-gate transition
+        # passes through, and the gate now drives a FOOTER label. The line
+        # above re-registers only as a side effect of its STRUCTURAL branch,
+        # so a gate that opens without one left the footer naming the
+        # previous step's action.
         self._resync_library_ingest_footer()
 
     @on(Button.Pressed, "#library-ingest-start")
