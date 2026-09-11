@@ -2941,3 +2941,8 @@ cannot grant readiness or execution approval. The bounded read/union/publication
 holds the pinned directory lock, and failed publication refuses indexing.
 Explicitly unavailable native backup capabilities retain ordinary in-memory
 hints without claiming durable dependency or recovery qualification.
+| tldw_chatbook/Backup_Recovery/control_records.py | _recover_activation_pairs | os.unlink | 1 | generic_boundary | backup_control |
+| tldw_chatbook/Backup_Recovery/control_records.py | _resume_activation_record | os.replace | 1 | generic_boundary | backup_control |
+| tldw_chatbook/Backup_Recovery/control_records.py | _resume_activation_record | os.unlink | 1 | generic_boundary | backup_control |
+| tldw_chatbook/Backup_Recovery/publication.py | _reverse_native_move | open | 1 | generic_boundary | verified native rollback publication |
+| tldw_chatbook/Backup_Recovery/replacement.py | _rollback_replacement | os.unlink | 1 | generic_boundary | backup_control |

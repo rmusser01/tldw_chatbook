@@ -593,7 +593,7 @@ def _directory_expected(prepared, records):
         item.previous.path: item.previous for item in prepared.directory_metadata
     }
     for record in records:
-        if record.event in {"artifact_retired", "artifact_published"}:
+        if record.event in {"artifact_retired", "artifact_published", "move_observed"}:
             for value in record.evidence.get("directories", []):
                 state = _DirectoryState.model_validate(value)
                 expected[state.path] = state
@@ -1343,6 +1343,9 @@ def publish_candidate(
             _verify_applied_credentials(
                 candidate, journal, session=session, records=records
             )
+        if any(row.event == "publication_started" for row in records):
+            _reconcile_moves(journal, parent, prepared, finish=True)
+            records = journal._records(parent)
         started = any(row.event == "publication_started" for row in records)
         if not started:
             _check_directory_states(prepared, records)
@@ -1377,7 +1380,9 @@ def publish_candidate(
                 raise ValueError("publication_objects_changed")
             if state == "staged" and item.previous is not None:
                 _check_directory_states(prepared, journal._records(parent))
+                intent = _begin_move(journal, parent, item, "retire")
                 _retire(item)
+                _complete_move(journal, parent, prepared, intent, moved=True)
                 journal._append(
                     parent,
                     "artifact_retired",
@@ -1395,6 +1400,7 @@ def publish_candidate(
                 if not _matches(item.candidate, item.candidate.path):
                     raise ValueError("candidate_content_changed")
                 parents = {row.path: (row.device, row.inode) for row in item.parents}
+                intent = _begin_move(journal, parent, item, "publish")
                 publish_new(
                     Path(item.candidate.path),
                     Path(item.target),
@@ -1405,6 +1411,7 @@ def publish_candidate(
                 )
                 if not _matches(item.candidate, item.target):
                     raise ValueError("publication_objects_changed")
+                _complete_move(journal, parent, prepared, intent, moved=True)
                 journal._append(
                     parent,
                     "artifact_published",
@@ -1847,3 +1854,222 @@ def _validate_installed_copies(items, candidates, topology, synthetic, owners):
                 issues = ()
             if issues:
                 raise ValueError(issues[0])
+
+
+def _move_child(parent, path):
+    """Observe an immediate sibling without reading its payload or following links."""
+    from .journal import _MoveChild
+
+    info = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+    return _MoveChild(
+        path=str(path),
+        device=info.st_dev,
+        inode=info.st_ino,
+        mode=info.st_mode,
+        owner=info.st_uid,
+        size=info.st_size,
+        links=info.st_nlink,
+        mtime_ns=info.st_mtime_ns,
+        ctime_ns=info.st_ctime_ns,
+    )
+
+
+def _move_topology(source, destination):
+    """Pin both parents and record unaffected immediate entries, without capture."""
+    from .journal import MAX_EVENTS
+
+    parents = []
+    for path in sorted({source.parent, destination.parent}):
+        excluded = {p.name for p in (source, destination) if p.parent == path}
+        state = _directory_state(path)
+        with pinned_directory(path) as fd:
+            names = sorted(os.listdir(fd))
+            if len(names) > MAX_EVENTS:
+                raise ValueError("move_topology_limit")
+            children = {
+                name: _move_child(fd, path / name).model_dump()
+                for name in names
+                if name not in excluded
+            }
+            if _directory_state(path) != state or names != sorted(os.listdir(fd)):
+                raise ValueError("move_parent_changed")
+            if any(
+                _move_child(fd, path / name).model_dump() != value
+                for name, value in children.items()
+            ):
+                raise ValueError("move_parent_changed")
+        parents.append({"state": state.model_dump(), "children": children})
+    return parents
+
+
+def _move_position(intent):
+    """Only the exact before/after name transition can reconcile an interrupted move."""
+    from .journal import _absent
+
+    source, target = Path(intent.source.path), Path(intent.destination)
+    before = _matches(intent.source, str(source)) and _absent(str(target))
+    after = _absent(str(source)) and _matches(intent.source, str(target))
+    if before == after:
+        raise ValueError("move_state_uncertain")
+    for entry in intent.parents:
+        path = Path(entry.state.path)
+        current = _directory_state(path)
+        if (current.device, current.inode, current.mode) != (
+            entry.state.device,
+            entry.state.inode,
+            entry.state.mode,
+        ):
+            raise ValueError("move_parent_changed")
+        if before and current != entry.state:
+            raise ValueError("move_parent_changed")
+        excluded = {p.name for p in (source, target) if p.parent == path}
+        with pinned_directory(path) as fd:
+            names = set(os.listdir(fd))
+            if names - excluded != set(entry.children):
+                raise ValueError("move_topology_changed")
+            for name, child in entry.children.items():
+                if _move_child(fd, path / name) != child:
+                    raise ValueError("move_topology_changed")
+    return "after" if after else "before"
+
+
+def _complete_move(journal, parent, prepared, intent, *, moved):
+    from .journal import _evidence_digest
+
+    if _move_position(intent) != ("after" if moved else "before"):
+        raise ValueError("move_state_uncertain")
+    directories = [
+        _directory_state(item.previous.path).model_dump()
+        for item in prepared.directory_metadata
+    ]
+    journal._append(
+        parent,
+        "move_observed",
+        {
+            "intent_digest": _evidence_digest(intent.model_dump()),
+            "moved": moved,
+            "directories": directories,
+        },
+    )
+    journal._flush_records(parent)
+
+
+def _begin_move(journal, parent, item, step):
+    from .journal import _MoveIntent
+
+    if step == "retire":
+        source, destination = Path(item.target), Path(item.retained)
+    elif step == "publish":
+        source, destination = Path(item.candidate.path), Path(item.target)
+    elif step == "unpublish":
+        source, destination = Path(item.target), Path(item.candidate.path)
+    else:
+        source, destination = Path(item.retained), Path(item.target)
+    proof = {
+        "logical_id": item.logical_id,
+        "step": step,
+        "source": observe_artifact(source),
+        "destination": str(destination),
+        "parents": _move_topology(source, destination),
+    }
+    intent = _MoveIntent.model_validate(proof)
+    if _move_position(intent) != "before":
+        raise ValueError("move_state_uncertain")
+    journal._append(parent, "move_intended", proof)
+    journal._flush_records(parent)
+    return intent
+
+
+def _reverse_native_move(intent):
+    """Preserve checked original bytes and metadata through native no-replace."""
+    source, destination = Path(intent.source.path), Path(intent.destination)
+    if _move_position(intent) != "before":
+        raise ValueError("move_state_uncertain")
+    with (
+        pinned_directory(source.parent) as left,
+        pinned_directory(destination.parent) as right,
+    ):
+        parents = {
+            entry.state.path: (entry.state.device, entry.state.inode)
+            for entry in intent.parents
+        }
+        for path, fd in ((source.parent, left), (destination.parent, right)):
+            info = os.fstat(fd)
+            if (info.st_dev, info.st_ino) != parents[str(path)]:
+                raise ValueError("move_parent_changed")
+        info = os.fstat(left)
+        if info.st_dev != os.fstat(right).st_dev:
+            raise ValueError("cross_volume_retirement_unqualified")
+        for operation in (
+            "publish_new",
+            "publish_directory"
+            if intent.source.kind == "directory"
+            else "publish_file",
+        ):
+            allowed, reason = _qualified_identity(operation, native_identity(right))
+            if not allowed:
+                raise ValueError(reason)
+        fd = os.open(
+            source.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=left
+        )
+        try:
+            _flush_original(fd, info.st_dev)
+            if _move_position(intent) != "before" or os.stat(
+                source.name, dir_fd=left, follow_symlinks=False
+            ) != os.fstat(fd):
+                raise ValueError("move_state_uncertain")
+            _rename_new(left, source.name, right, destination.name)
+            flush_directory(right)
+            flush_directory(left)
+        finally:
+            os.close(fd)
+    if _move_position(intent) != "after":
+        raise ValueError("move_state_uncertain")
+
+
+def _reconcile_moves(journal, parent, prepared, *, finish):
+    """Reconcile actual intent boundaries, never infer a missing move from labels."""
+    from .journal import _MoveIntent
+
+    records = journal._records(parent)
+    if records[-1].event == "move_intended":
+        intent = _MoveIntent.model_validate(records[-1].evidence)
+        position = _move_position(intent)
+        if position == "before" and finish:
+            _reverse_native_move(intent)
+            position = "after"
+        _complete_move(journal, parent, prepared, intent, moved=position == "after")
+    records = journal._records(parent)
+    if any(row.event == "rollback_started" for row in records):
+        return
+    for index, record in enumerate(records):
+        if record.event != "move_observed" or not record.evidence["moved"]:
+            continue
+        intent = _MoveIntent.model_validate(records[index - 1].evidence)
+        event = {"retire": "artifact_retired", "publish": "artifact_published"}.get(
+            intent.step
+        )
+        if event is None or any(
+            row.event == event and row.evidence["logical_id"] == intent.logical_id
+            for row in records
+        ):
+            continue
+        item = next(
+            item for item in prepared.artifacts if item.logical_id == intent.logical_id
+        )
+        journal._append(
+            parent,
+            event,
+            {
+                "logical_id": item.logical_id,
+                "observed": observe_artifact(
+                    Path(intent.destination), metadata=event == "artifact_retired"
+                ),
+                "directories": [
+                    row
+                    for row in record.evidence["directories"]
+                    if row["path"] == str(Path(item.target).parent)
+                ],
+            },
+        )
+        journal._flush_records(parent)

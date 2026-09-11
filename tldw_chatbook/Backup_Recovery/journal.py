@@ -108,6 +108,7 @@ class _PublicationContext(_Evidence):
 
 
 class _CandidateReceipt(_Evidence):
+    local_plan: _Object | None = None
     stage: _Object
     descriptor: _Object
     archive_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -424,6 +425,61 @@ def _states(prepared: _Prepared, *, logical_id: str | None = None) -> dict[str, 
     return result
 
 
+class _MoveChild(_Directory):
+    mode: int = Field(ge=0)
+    owner: int = Field(ge=0)
+    size: int = Field(ge=0)
+    links: int = Field(ge=0)
+    mtime_ns: int
+    ctime_ns: int
+
+
+class _MoveParent(_Evidence):
+    state: _DirectoryState
+    children: dict[str, _MoveChild] = Field(max_length=MAX_EVENTS)
+
+
+class _MoveIntent(_Evidence):
+    logical_id: str
+    step: Literal["retire", "publish", "unpublish", "restore"]
+    source: _Object
+    destination: str
+    parents: list[_MoveParent] = Field(min_length=1, max_length=2)
+
+
+class _MoveObserved(_Evidence):
+    intent_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    moved: bool
+    directories: list[_DirectoryState] = Field(max_length=MAX_EVENTS)
+
+
+class _RollbackStarted(_Evidence):
+    prepared_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    rollback_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    generation: str = Field(pattern=r"^[0-9a-f]{32}$")
+    profiles: list[_ReplacementProfile] = Field(min_length=1, max_length=4096)
+    retained_credential_scopes: list[str] = Field(max_length=10000)
+
+
+class _OriginalsValidated(_Evidence):
+    rollback_started_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    artifacts: list[_Object] = Field(max_length=MAX_EVENTS)
+    directories: list[_DirectoryState] = Field(max_length=MAX_EVENTS)
+
+
+class _RollbackActivation(_Evidence):
+    generation: str = Field(pattern=r"^[0-9a-f]{32}$")
+    selectors: list[str] = Field(min_length=1, max_length=4096)
+    owners: list[str] = Field(min_length=1, max_length=4096)
+    originals_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    records: list[_Object] = Field(min_length=1, max_length=20000)
+
+
+class _RolledBack(_Evidence):
+    generation: str
+    activation_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class _Installed(_Evidence):
     plan_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     descriptor_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -497,6 +553,14 @@ class _Event(_Evidence):
         "credential_applied",
         "credentials_completed",
         "committed",
+        "move_intended",
+        "move_observed",
+        "rollback_started",
+        "originals_validated",
+        "rollback_activation_recorded",
+        "rolled_back",
+        "rollback_metadata_started",
+        "rollback_metadata_applied",
         "directory_metadata_started",
         "directory_metadata_applied",
     ]
@@ -520,6 +584,8 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
             "credential_intended",
             "credential_applied",
             "credentials_completed",
+            "move_intended",
+            "move_observed",
         }
     ]
     prepared_record = next((row for row in prior if row.event == "prepared"), None)
@@ -566,6 +632,32 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
         allowed = {"committed"}
     elif events and events[-1] == "installed_validated":
         allowed.add("activation_recorded")
+    rolling = "rollback_started" in events
+    if "publication_started" in events and not rolling and "committed" not in events:
+        allowed.add("move_intended")
+    if (
+        prepared_record is not None
+        and prepared_record.evidence["mode"] == "replace"
+        and "rollback_verified" in events
+        and not rolling
+        and "committed" not in events
+    ):
+        allowed.add("rollback_started")
+    if rolling:
+        allowed = {
+            "move_intended",
+            "rollback_metadata_started",
+            "rollback_metadata_applied",
+            "originals_validated",
+        }
+        if events[-1] == "originals_validated":
+            allowed = {"rollback_activation_recorded"}
+        elif events[-1] == "rollback_activation_recorded":
+            allowed = {"rolled_back"}
+        elif events[-1] == "rolled_back":
+            allowed = set()
+    if events and events[-1] == "move_intended":
+        allowed = {"move_observed"}
     if event not in allowed:
         raise ValueError("journal_transition_invalid")
     if (
@@ -575,6 +667,14 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
     ):
         raise ValueError("rollback_required")
     model = {
+        "move_intended": _MoveIntent,
+        "move_observed": _MoveObserved,
+        "rollback_started": _RollbackStarted,
+        "originals_validated": _OriginalsValidated,
+        "rollback_activation_recorded": _RollbackActivation,
+        "rolled_back": _RolledBack,
+        "rollback_metadata_started": _DirectoryIntent,
+        "rollback_metadata_applied": _DirectoryProgress,
         "candidate_staged": _CandidateReceipt,
         "prepared": _Prepared,
         "rollback_verified": _Rollback,
@@ -592,7 +692,18 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
     }.get(event, _Evidence)
     try:
         validated = model.model_validate(dict(evidence))
-        if isinstance(validated, _Rollback):
+        if event in {
+            "move_intended",
+            "move_observed",
+            "rollback_started",
+            "originals_validated",
+            "rollback_activation_recorded",
+            "rolled_back",
+            "rollback_metadata_started",
+            "rollback_metadata_applied",
+        }:
+            _validate_reverse_evidence(event, validated, prior, prepared_record)
+        elif isinstance(validated, _Rollback):
             prepared = _Prepared.model_validate(prepared_record.evidence)
             if validated.safety_sources != prepared.safety_sources:
                 raise ValueError("rollback_safety_coverage_mismatch")
@@ -911,6 +1022,180 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
         raise ValueError("journal_evidence_invalid") from None
 
 
+def _validate_reverse_evidence(event, value, prior, prepared_record):
+    prepared = _Prepared.model_validate(prepared_record.evidence)
+    items = {item.logical_id: item for item in prepared.artifacts}
+    rolling = next((row for row in prior if row.event == "rollback_started"), None)
+    if event == "move_intended":
+        item = items.get(value.logical_id)
+        if item is None or (value.step in {"unpublish", "restore"}) != (
+            rolling is not None
+        ):
+            raise ValueError("move_context_invalid")
+        source, target = {
+            "retire": (item.previous, item.retained),
+            "publish": (item.candidate, item.target),
+            "unpublish": (
+                item.candidate,
+                item.candidate.path if item.candidate else None,
+            ),
+            "restore": (item.previous, item.target),
+        }[value.step]
+        source_path = (
+            item.target
+            if value.step == "unpublish"
+            else item.retained
+            if value.step == "restore"
+            else source.path
+            if source
+            else None
+        )
+        if (
+            source is None
+            or value.source.model_dump(exclude={"path"})
+            != source.model_dump(exclude={"path"})
+            or value.source.path != source_path
+            or value.destination != target
+        ):
+            raise ValueError("move_mapping_invalid")
+        paths = {str(Path(source_path).parent), str(Path(target).parent)}
+        if {p.state.path for p in value.parents} != paths or len(value.parents) != len(
+            paths
+        ):
+            raise ValueError("move_parent_invalid")
+        for parent in value.parents:
+            for name, child in parent.children.items():
+                if Path(name).name != name or child.path != str(
+                    Path(parent.state.path) / name
+                ):
+                    raise ValueError("move_child_invalid")
+    elif event == "move_observed":
+        if prior[
+            -1
+        ].event != "move_intended" or value.intent_digest != _evidence_digest(
+            prior[-1].evidence
+        ):
+            raise ValueError("move_context_invalid")
+        expected = {
+            row.previous.path: (row.previous.device, row.previous.inode)
+            for row in prepared.directory_metadata
+        }
+        if {row.path: (row.device, row.inode) for row in value.directories} != expected:
+            raise ValueError("move_directory_invalid")
+    elif event == "rollback_started":
+        rollback = next(row for row in prior if row.event == "rollback_verified")
+        if (
+            value.prepared_digest != _evidence_digest(prepared_record.evidence)
+            or value.rollback_digest != _evidence_digest(rollback.evidence)
+            or value.generation == prepared.generation
+            or {row.config for row in value.profiles}
+            != {row.config for row in prepared.replacement_profiles}
+            or len(value.profiles) != len(prepared.replacement_profiles)
+            or {row.installation_id for row in value.profiles}
+            & {row.installation_id for row in prepared.replacement_profiles}
+            or len({row.installation_id for row in value.profiles})
+            != len(value.profiles)
+        ):
+            raise ValueError("rollback_context_invalid")
+        if value.retained_credential_scopes != sorted(prepared.credential_scopes):
+            raise ValueError("rollback_credential_context_invalid")
+    elif event == "originals_validated":
+        expected = {
+            item.target: item.previous_metadata
+            for item in prepared.artifacts
+            if item.previous is not None
+        }
+        if (
+            value.rollback_started_digest != _evidence_digest(rolling.evidence)
+            or {row.path: row for row in value.artifacts} != expected
+            or len(value.artifacts) != len(expected)
+        ):
+            raise ValueError("originals_evidence_invalid")
+        originals = {
+            row.previous.path: row.previous for row in prepared.directory_metadata
+        }
+        if (
+            len(value.directories) != len(originals)
+            or {row.path for row in value.directories} != set(originals)
+            or any(
+                (row.device, row.inode, row.mode, row.mtime_ns)
+                != (
+                    originals[row.path].device,
+                    originals[row.path].inode,
+                    originals[row.path].mode,
+                    originals[row.path].mtime_ns,
+                )
+                for row in value.directories
+            )
+        ):
+            raise ValueError("original_metadata_invalid")
+    elif event == "rollback_activation_recorded":
+        from .owner_registry import install_adapters
+
+        if (
+            value.generation != rolling.evidence["generation"]
+            or value.originals_digest != _evidence_digest(prior[-1].evidence)
+            or len({row.path for row in value.records}) != len(value.records)
+            or any(row.kind != "file" for row in value.records)
+            or value.selectors
+            != sorted(row["config"] for row in rolling.evidence["profiles"])
+            or value.owners
+            != sorted(
+                {row.owner_id for row in install_adapters() if row.activation_required}
+            )
+        ):
+            raise ValueError("rollback_activation_invalid")
+    elif event == "rolled_back":
+        if value.generation != rolling.evidence[
+            "generation"
+        ] or value.activation_digest != _evidence_digest(prior[-1].evidence):
+            raise ValueError("rollback_terminal_invalid")
+    elif event in {"rollback_metadata_started", "rollback_metadata_applied"}:
+        item = next(
+            (
+                row
+                for row in prepared.directory_metadata
+                if row.logical_id == value.logical_id
+            ),
+            None,
+        )
+        if item is None or any(
+            row.event == event and row.evidence["logical_id"] == value.logical_id
+            for row in prior
+        ):
+            raise ValueError("rollback_metadata_invalid")
+        if event == "rollback_metadata_started":
+            if (
+                value.before.path != item.previous.path
+                or value.applied.mode != item.previous.mode
+                or value.applied.mtime_ns != item.previous.mtime_ns
+                or (value.before.device, value.before.inode)
+                != (item.previous.device, item.previous.inode)
+            ):
+                raise ValueError("rollback_metadata_invalid")
+        elif (
+            not any(
+                row.event == "rollback_metadata_started"
+                and row.evidence["logical_id"] == value.logical_id
+                for row in prior
+            )
+            or value.observed.path != item.previous.path
+            or (
+                value.observed.device,
+                value.observed.inode,
+                value.observed.mode,
+                value.observed.mtime_ns,
+            )
+            != (
+                item.previous.device,
+                item.previous.inode,
+                item.previous.mode,
+                item.previous.mtime_ns,
+            )
+        ):
+            raise ValueError("rollback_metadata_invalid")
+
+
 class Journal:
     """Serialize local records under a stable lock and retain incomplete writes.
 
@@ -977,7 +1262,8 @@ class Journal:
         names = sorted(
             name
             for name in os.listdir(parent)
-            if name not in {"journal.lock", "verified-manifest.json"}
+            if name
+            not in {"journal.lock", "verified-manifest.json", "restore-plan.json"}
         )
         if len(names) > MAX_EVENTS:
             raise ValueError("journal_limit")
@@ -1000,6 +1286,17 @@ class Journal:
 
     def record(self, event: str, evidence: Mapping[str, object]) -> None:
         """Flush one strictly typed exclusive record; failed writes remain evidence."""
+        if event in {
+            "move_intended",
+            "move_observed",
+            "rollback_started",
+            "originals_validated",
+            "rollback_activation_recorded",
+            "rolled_back",
+            "rollback_metadata_started",
+            "rollback_metadata_applied",
+        }:
+            raise ValueError("recovery_execution_required")
         if event in {
             "credential_intended",
             "credential_applied",
@@ -1132,10 +1429,14 @@ class Journal:
                     os.fsync(stream.fileno())
                     fcntl.fcntl(stream.fileno(), fcntl.F_FULLFSYNC)
             flush_directory(parent)
+            from .plan_records import save_plan
+
+            local_plan = save_plan(self, parent, plan)
             self._append(
                 parent,
                 "candidate_staged",
                 {
+                    "local_plan": local_plan,
                     "stage": observe_artifact(stage),
                     "descriptor": observe_artifact(stage / "candidate.json"),
                     "archive_digest": archive.digest,

@@ -408,11 +408,15 @@ def replacement_installation_id() -> str | None:
     journal = Journal(control, operation)
     with journal._locked(exclusive=False) as parent:
         rows = journal._records(parent)
-    if not rows or rows[-1].event != "committed":
+    if not rows or rows[-1].event not in {"committed", "rolled_back"}:
         raise bootstrap.RecoveryRequired("replacement_identity_unverified")
     prepared = _Prepared.model_validate(
         next(row.evidence for row in rows if row.event == "prepared")
     )
+    if rows[-1].event == "rolled_back":
+        return _rollback_installation_id(
+            selector, root, witness, profiles, rows, prepared
+        )
     if prepared.isolated_profiles:
         # Explicit isolated launch selects its verified identity before this call.
         raise bootstrap.RecoveryRequired("isolated_profile_selector_required")
@@ -432,7 +436,8 @@ def replacement_installation_id() -> str | None:
         or event is None
         or prepared.publication.bootstrap_root != str(root)
         or prepared.generation != witness["generation"]
-        or prepared.publication.namespaces != witness["namespaces"]
+        or witness["namespaces"] != binding["namespaces"]
+        or not set(witness["namespaces"]) <= set(prepared.publication.namespaces)
         or str(selector) not in event.evidence["selectors"]
         or event.evidence["owners"] != witness["owners"]
         or rows[-1].evidence["activation_digest"] != _evidence_digest(event.evidence)
@@ -443,3 +448,36 @@ def replacement_installation_id() -> str | None:
         if store._required(parent, prepared.generation).owners != witness["owners"]:
             raise bootstrap.RecoveryRequired("replacement_identity_unverified")
     return expected.installation_id
+
+
+def _rollback_installation_id(selector, root, witness, profiles, rows, prepared):
+    """Consume only the actual durable rollback terminal and fresh activation pair."""
+    from .journal import _evidence_digest
+
+    started = next(row for row in rows if row.event == "rollback_started")
+    activation = next(
+        row for row in rows if row.event == "rollback_activation_recorded"
+    )
+    entry = next(
+        (row for row in started.evidence["profiles"] if row["config"] == str(selector)),
+        None,
+    )
+    binding = bootstrap._binding(selector, profiles, bootstrap._registry(root))
+    if (
+        entry is None
+        or binding is None
+        or prepared.publication.bootstrap_root != str(root)
+        or witness["generation"] != started.evidence["generation"]
+        or rows[-1].evidence["activation_digest"]
+        != _evidence_digest(activation.evidence)
+        or witness["namespaces"] != binding["namespaces"]
+        or not set(witness["namespaces"]) <= set(prepared.publication.namespaces)
+        or str(selector) not in activation.evidence["selectors"]
+        or activation.evidence["owners"] != witness["owners"]
+    ):
+        raise bootstrap.RecoveryRequired("rollback_identity_unverified")
+    store = ActivationStore(Path(witness["store_root"]))
+    with _private(store._generation(witness["generation"])) as parent:
+        if store._required(parent, witness["generation"]).owners != witness["owners"]:
+            raise bootstrap.RecoveryRequired("rollback_identity_unverified")
+    return entry["installation_id"]

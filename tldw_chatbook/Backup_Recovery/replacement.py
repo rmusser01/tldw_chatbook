@@ -1,7 +1,7 @@
 """Held original capture and encrypted rollback verification for replacement.
 
-This internal operation does not publish replacement data, apply credentials or
-release admission. Only this call chain can produce SQLite-owner rollback proof.
+Replacement and interrupted recovery compose the existing held capture, credential,
+publication and activation operations with authenticated local rollback evidence.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import json
 import os
 import stat
 import zipfile
+from contextlib import contextmanager
 from dataclasses import replace as _replace
 from pathlib import Path
 from threading import Event
@@ -599,8 +600,8 @@ def replace(
 ) -> str:
     """Replace reviewed data under one uninterrupted native maintenance session.
 
-    Failures retain the exact operation journal and persistent pending fence.
-    Reverse recovery is a separate explicit operation, never implicit cleanup.
+    Interrupted publication retains the exact journal and pending fence. A failed
+    installed validation reverses provable originals while this session stays held.
     """
     from . import bootstrap
     from .control_records import (
@@ -746,7 +747,29 @@ def replace(
         )
         reader._check(cancel)
         publish_candidate(candidate, plan, journal, rollback, session=session)
-        finalize_candidate(candidate, plan, journal, session=session)
+        try:
+            finalize_candidate(candidate, plan, journal, session=session)
+        except (OSError, ValueError, RuntimeError):
+            with journal._locked(exclusive=False) as parent:
+                rows = journal._records(parent)
+            if any(row.event == "committed" for row in rows):
+                raise
+            prepared = _Prepared.model_validate(
+                next(row.evidence for row in rows if row.event == "prepared")
+            )
+            # After live publication, complete a provable reversal under this same
+            # held session; cancellation never abandons an in-flight native move.
+            recovery_cancel = Event()
+            from .control_records import _recover_activation_pairs
+
+            with _unlock_recovery(
+                journal, prepared, rollback_password, session, recovery_cancel
+            ) as check_credentials:
+                _recover_activation_pairs(journal, prepared, session)
+                _rollback_replacement(
+                    journal, prepared, session, check_credentials, recovery_cancel
+                )
+            raise ValueError("replacement_rolled_back") from None
     return operation
 
 
@@ -887,3 +910,385 @@ def _read_credential_records(candidate, prepared, session):
     ):
         raise ValueError("credential_material_changed")
     return records
+
+
+@contextmanager
+def _unlock_recovery(journal, prepared, password, session, cancel):
+    """Authenticate this exact held rollback archive and check original credentials."""
+    from .credentials import _credential_store, _fingerprint, _read_scope
+    from .journal import _evidence_digest, _Rollback
+    from .space import require_capacity
+
+    require_rollback_password(password)
+    with journal._locked(exclusive=False) as parent:
+        records = journal._records(parent)
+    proof = _Rollback.model_validate(
+        next(row.evidence for row in records if row.event == "rollback_verified")
+    )
+    if not _matches(proof.ciphertext, proof.ciphertext.path):
+        raise ValueError("rollback_ciphertext_changed")
+    work = journal.root.parent / ("recovery-readback-" + uuid4().hex)
+    require_capacity({journal.root.parent: proof.ciphertext.size * 3})
+    create_private_directory(work)
+    try:
+        archive = reader.acquire(
+            Path(proof.ciphertext.path),
+            work / "acquired",
+            ArchiveLimits(),
+            password,
+            cancel,
+        )
+        doc = reader.verify_sealed(archive, cancel)
+        if (
+            archive.digest != proof.sealed_digest
+            or hashlib.sha256(archive.manifest_bytes).hexdigest()
+            != proof.manifest_digest
+            or doc.credential_policy != "rollback"
+        ):
+            raise ValueError("rollback_archive_changed")
+        require_capacity({work: sum(row.size for row in doc.files)})
+        view = work / "material"
+        create_private_directory(view)
+        from .staging import _copy, _mkdirs
+
+        for payload in doc.files:
+            destination = view / payload.payload
+            _mkdirs(destination.parent, view)
+            _copy_verified_payload(archive, payload, destination, cancel)
+        _copy(
+            view / "payload" / "credential-recovery.json",
+            view / "credential-recovery.json",
+            cancel,
+        )
+        if not _matches(proof.ciphertext, proof.ciphertext.path):
+            raise ValueError("rollback_ciphertext_changed")
+        limits = ArchiveLimits()
+
+        def check_credentials():
+            _finalization_session(session, prepared.publication, prepared)
+            with session._capture_bound_sources(
+                (), view, limits, limits.expanded_bytes
+            ):
+                material = _material(view)
+                checked = {}
+                for record in material:
+                    if (
+                        record["status"] != "captured"
+                        or record["kind"] == "encrypted_config"
+                    ):
+                        continue
+                    try:
+                        value = _read_scope(record, _credential_store())
+                    except Exception:  # noqa: BLE001 - backend errors may contain secrets
+                        raise ValueError("rollback_credential_scope_changed") from None
+                    if value != record["value"]:
+                        raise ValueError("rollback_credential_scope_changed")
+                    checked[record["id"]] = _fingerprint(value)
+            return _evidence_digest(checked)
+
+        check_credentials()
+        yield check_credentials
+    finally:
+        import shutil
+
+        shutil.rmtree(work)
+
+
+def recover_replacement(
+    operation_id: str,
+    *,
+    control_root: Path,
+    action: str,
+    rollback_password: bytes | None,
+    cancel: Event,
+) -> str:
+    """Finish or reverse one still-fenced local replacement using durable evidence."""
+    from . import bootstrap
+    from .control_records import (
+        UNBOUND_NAMESPACE,
+        _existing_admission_authority,
+        _recover_activation_pairs,
+        _recovery_pending,
+    )
+    from .journal import Journal
+    from .plan_records import load_plan
+    from .publication import finalize_candidate, publish_candidate
+
+    if action not in {"finish", "rollback"}:
+        raise ValueError("recovery_action_invalid")
+    root = bootstrap.default_bootstrap_root()
+    if (
+        type(operation_id) is not str
+        or not (control_root / ("operation-" + bootstrap._key(operation_id))).is_dir()
+    ):
+        raise ValueError("recovery_pending_missing")
+    journal = Journal(control_root, operation_id)
+    plan = load_plan(journal)
+    with journal._locked(exclusive=False) as parent:
+        records = journal._records(parent)
+    prepared = _Prepared.model_validate(
+        next(row.evidence for row in records if row.event == "prepared")
+    )
+    if prepared.mode != "replace" or prepared.publication.bootstrap_root != str(root):
+        raise ValueError("replacement_recovery_required")
+    if records[-1].event == "committed" and action == "rollback":
+        raise ValueError("later_rollback_required")
+    _recovery_pending(root, journal, prepared)
+    candidate = Path(records[0].evidence["stage"]["path"])
+    with _existing_admission_authority(root).maintenance(
+        (*prepared.publication.namespaces, UNBOUND_NAMESPACE), 30
+    ) as session:
+        _finalization_session(session, prepared.publication, prepared)
+        with _unlock_recovery(
+            journal, prepared, rollback_password, session, cancel
+        ) as check_credentials:
+            _recover_activation_pairs(journal, prepared, session)
+            if action == "rollback":
+                _rollback_replacement(
+                    journal, prepared, session, check_credentials, cancel
+                )
+                return "rolled_back"
+            if any(row.event == "rollback_started" for row in records):
+                raise ValueError("rollback_direction_selected")
+            _apply_replacement_credentials(
+                candidate, journal, session=session, cancel=cancel
+            )
+            rollback = next(
+                row.evidence["ciphertext"]["path"]
+                for row in records
+                if row.event == "rollback_verified"
+            )
+            if records[-1].event != "committed":
+                publish_candidate(
+                    candidate, plan, journal, Path(rollback), session=session
+                )
+            try:
+                finalize_candidate(candidate, plan, journal, session=session)
+            except (OSError, ValueError, RuntimeError):
+                with journal._locked(exclusive=False) as parent:
+                    current = journal._records(parent)
+                if any(row.event == "committed" for row in current):
+                    raise
+                _recover_activation_pairs(journal, prepared, session)
+                _rollback_replacement(
+                    journal, prepared, session, check_credentials, Event()
+                )
+                raise ValueError("replacement_rolled_back") from None
+            return "committed"
+
+
+def _rollback_replacement(journal, prepared, session, check_credentials, cancel):
+    """Reverse unchanged retained originals; unsupported credential drift stays fenced."""
+    from .activation import bind_activation
+    from .archive_models import Metadata
+    from .bootstrap import _key
+    from .journal import _evidence_digest, _states
+    from .native_files import flush_directory, pinned_directory
+    from .publication import (
+        _activation_proof,
+        _begin_move,
+        _check_directory_states,
+        _complete_move,
+        _installed_metadata,
+        _reconcile_moves,
+        _reverse_native_move,
+    )
+
+    context = prepared.publication
+    root = Path(context.bootstrap_root)
+    name = "pending-" + _key(journal.operation_id) + ".json"
+    with pinned_directory(root) as bootstrap:
+        root_identity = (os.fstat(bootstrap).st_dev, os.fstat(bootstrap).st_ino)
+        pending_before = observe_artifact(root / name)
+    with journal._locked(exclusive=True) as parent:
+        records = journal._records(parent)
+        if any(row.event == "committed" for row in records):
+            raise ValueError("later_rollback_required")
+        _finalization_session(session, context, prepared)
+        _pending(journal, context, targets=_publication_targets(prepared), durable=True)
+        _reconcile_moves(journal, parent, prepared, finish=False)
+        records = journal._records(parent)
+        started = next(
+            (row for row in records if row.event == "rollback_started"), None
+        )
+        if started is None:
+            _check_directory_states(prepared, records)
+            if "uncertain" in _states(prepared).values():
+                raise ValueError("rollback_originals_unverified")
+            check_credentials()
+            rollback = next(row for row in records if row.event == "rollback_verified")
+            prepared_record = next(row for row in records if row.event == "prepared")
+            journal._append(
+                parent,
+                "rollback_started",
+                {
+                    "prepared_digest": _evidence_digest(prepared_record.evidence),
+                    "rollback_digest": _evidence_digest(rollback.evidence),
+                    "generation": uuid4().hex,
+                    "profiles": [
+                        {"config": row.config, "installation_id": uuid4().hex}
+                        for row in prepared.replacement_profiles
+                    ],
+                    "retained_credential_scopes": sorted(prepared.credential_scopes),
+                },
+            )
+            journal._flush_records(parent)
+            started = journal._records(parent)[-1]
+        completed = any(row.event == "originals_validated" for row in records)
+        if not completed:
+            for item in reversed(prepared.artifacts):
+                reader._check(cancel)
+                _finalization_session(session, context, prepared)
+                state = _states(prepared, logical_id=item.logical_id)[item.logical_id]
+                if state == "uncertain":
+                    raise ValueError("rollback_originals_unverified")
+                if state == "published":
+                    intent = _begin_move(journal, parent, item, "unpublish")
+                    _reverse_native_move(intent)
+                    _complete_move(journal, parent, prepared, intent, moved=True)
+                    state = "retired" if item.previous else "staged"
+                if state == "retired":
+                    intent = _begin_move(journal, parent, item, "restore")
+                    _reverse_native_move(intent)
+                    _complete_move(journal, parent, prepared, intent, moved=True)
+            for item in reversed(prepared.directory_metadata):
+                records = journal._records(parent)
+                done = any(
+                    row.event == "rollback_metadata_applied"
+                    and row.evidence["logical_id"] == item.logical_id
+                    for row in records
+                )
+                if done:
+                    continue
+                intent = next(
+                    (
+                        row
+                        for row in records
+                        if row.event == "rollback_metadata_started"
+                        and row.evidence["logical_id"] == item.logical_id
+                    ),
+                    None,
+                )
+                applied = Metadata(
+                    version=1, mode=item.previous.mode, mtime_ns=item.previous.mtime_ns
+                )
+                if intent is None:
+                    before = _directory_state(item.previous.path)
+                    journal._append(
+                        parent,
+                        "rollback_metadata_started",
+                        {
+                            "logical_id": item.logical_id,
+                            "before": before.model_dump(),
+                            "applied": applied.model_dump(),
+                        },
+                    )
+                    journal._flush_records(parent)
+                else:
+                    from .journal import _DirectoryState
+
+                    before = _DirectoryState.model_validate(intent.evidence["before"])
+                _installed_metadata(
+                    Path(item.previous.path),
+                    (item.previous.device, item.previous.inode),
+                    applied.model_dump(),
+                    previous=before,
+                    parent_identity=(item.parent.device, item.parent.inode),
+                )
+                journal._append(
+                    parent,
+                    "rollback_metadata_applied",
+                    {
+                        "logical_id": item.logical_id,
+                        "observed": _directory_state(item.previous.path).model_dump(),
+                    },
+                )
+                journal._flush_records(parent)
+            proof = _originals_proof(prepared, started, check_credentials)
+            journal._append(parent, "originals_validated", proof)
+            journal._flush_records(parent)
+        else:
+            _originals_proof(prepared, started, check_credentials)
+        records = journal._records(parent)
+        validated = next(row for row in records if row.event == "originals_validated")
+        activation = next(
+            (row for row in records if row.event == "rollback_activation_recorded"),
+            None,
+        )
+        generation = started.evidence["generation"]
+        selectors = sorted(row["config"] for row in started.evidence["profiles"])
+        owners = sorted(
+            owner.owner_id for owner in install_adapters() if owner.activation_required
+        )
+        if activation is None:
+            for selector in selectors:
+                bind_activation(
+                    Path(context.bootstrap_root),
+                    journal.operation_id,
+                    Path(selector),
+                    generation,
+                    tuple(owners),
+                    session=session,
+                )
+            proof = {
+                "generation": generation,
+                "selectors": selectors,
+                "owners": owners,
+                "originals_digest": _evidence_digest(validated.evidence),
+                "records": _activation_proof(
+                    journal, context, generation, selectors, owners
+                ),
+            }
+            journal._append(parent, "rollback_activation_recorded", proof)
+            journal._flush_records(parent)
+            activation = journal._records(parent)[-1]
+        if (
+            _activation_proof(journal, context, generation, selectors, owners)
+            != activation.evidence["records"]
+        ):
+            raise ValueError("rollback_activation_changed")
+        _originals_proof(prepared, started, check_credentials)
+        if journal._records(parent)[-1].event != "rolled_back":
+            journal._append(
+                parent,
+                "rolled_back",
+                {
+                    "generation": generation,
+                    "activation_digest": _evidence_digest(activation.evidence),
+                },
+            )
+            journal._flush_records(parent)
+        _finalization_session(session, context, prepared)
+        _originals_proof(prepared, started, check_credentials)
+        _pending(journal, context, targets=_publication_targets(prepared), durable=True)
+        with pinned_directory(root) as bootstrap:
+            info = os.fstat(bootstrap)
+            if (info.st_dev, info.st_ino) != root_identity:
+                raise ValueError("finalization_authority_changed")
+            if observe_artifact(root / name) != pending_before:
+                raise ValueError("finalization_pending_changed")
+            os.unlink(name, dir_fd=bootstrap)
+            flush_directory(bootstrap)
+
+
+def _originals_proof(prepared, started, check_credentials):
+    from .journal import _evidence_digest, _states
+
+    if any(state != "staged" for state in _states(prepared).values()):
+        raise ValueError("rollback_originals_unverified")
+    for row in prepared.safety_sources:
+        if not _matches(row.source, row.source.path, metadata=True):
+            raise ValueError("safety_source_changed")
+    check_credentials()
+    return {
+        "rollback_started_digest": _evidence_digest(started.evidence),
+        "artifacts": [
+            observe_artifact(Path(item.target), metadata=True)
+            for item in prepared.artifacts
+            if item.previous
+        ],
+        "directories": [
+            _directory_state(item.previous.path).model_dump()
+            for item in prepared.directory_metadata
+        ],
+    }

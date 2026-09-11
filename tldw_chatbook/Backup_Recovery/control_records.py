@@ -116,6 +116,12 @@ def admission_authority(bootstrap_root: Path) -> Admission:
         authority = Admission(bootstrap_root / "admission")
         authority.register(UNBOUND_NAMESPACE, (marker,))
         return authority
+    return _existing_admission_authority(bootstrap_root)
+
+
+def _existing_admission_authority(bootstrap_root):
+    """Open existing native authority for the operation-bound recovery executor."""
+    marker = bootstrap_root / "unbound-owner"
     try:
         authority = Admission.open_existing(bootstrap_root / "admission")
         with authority._directory() as parent:
@@ -385,13 +391,20 @@ def _bind_activation(
     if old_witness and (
         old_witness["operation_id"] == operation_id
         and old_witness != witness
+        and not _rollback_activation_successor(
+            control, operation_id, old_witness, witness, selected
+        )
         or old_witness["operation_id"] != operation_id
         and old_witness["generation"] == generation
     ):
         raise ValueError("activation_generation_conflict")
     store = ActivationStore(control / "activation")
-    if store._generation(generation).exists() and not any(
-        a["activation"] == witness for a in associations
+    if (
+        store._generation(generation).exists()
+        and not any(a["activation"] == witness for a in associations)
+        and not _operation_activation_generation(
+            control, operation_id, witness, selected
+        )
     ):
         raise ValueError("activation_generation_already_used")
     profile = _Profile(
@@ -477,3 +490,256 @@ def _bind_activation(
         os.unlink(intent_name, dir_fd=parent)
         flush_directory(parent)
     return store.root
+
+
+def _rollback_activation_successor(
+    control, operation_id, previous, requested, selector
+):
+    """Verify the same operation's durable reverse generation under held admission.
+
+    The executor retains its journal lock during activation; read its pinned chain
+    directly here instead of trying to acquire the same non-reentrant flock again.
+    """
+    from .journal import Journal, _matches, _Object, _Prepared
+    from .owner_registry import install_adapters
+
+    path = control / ("operation-" + _key(operation_id))
+    if not path.is_dir():
+        return False
+    journal = Journal(control, operation_id)
+    with pinned_directory(journal.root) as parent:
+        rows = journal._records(parent)
+    start = next((row for row in rows if row.event == "rollback_started"), None)
+    validated = next((row for row in rows if row.event == "originals_validated"), None)
+    if (
+        start is None
+        or validated is None
+        or rows[-1].event
+        not in {"originals_validated", "rollback_activation_recorded", "rolled_back"}
+    ):
+        return False
+    prepared = _Prepared.model_validate(
+        next(row.evidence for row in rows if row.event == "prepared")
+    )
+    return (
+        previous["generation"] == prepared.generation
+        and requested["generation"] == start.evidence["generation"]
+        and str(selector) in {row["config"] for row in start.evidence["profiles"]}
+        and requested["owners"]
+        == sorted(
+            owner.owner_id for owner in install_adapters() if owner.activation_required
+        )
+        and all(
+            _matches(_Object.model_validate(row), row["path"], metadata=True)
+            for row in validated.evidence["artifacts"]
+        )
+    )
+
+
+class _ActivationUpdate(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    version: int = Field(ge=1, le=1)
+    operation_id: str = Field(min_length=1, max_length=256)
+    selector: str
+    before: list[dict | None] = Field(min_length=2, max_length=2)
+    after: list[dict] = Field(min_length=2, max_length=2)
+
+
+def _operation_activation_generation(control, operation_id, witness, selector):
+    """Allow only a generation already named by actual installed local evidence."""
+    from .journal import Journal, _Prepared
+    from .owner_registry import install_adapters
+
+    if not (control / ("operation-" + _key(operation_id))).is_dir():
+        return False
+    journal = Journal(control, operation_id)
+    with pinned_directory(journal.root) as parent:
+        rows = journal._records(parent)
+    prepared = _Prepared.model_validate(
+        next(row.evidence for row in rows if row.event == "prepared")
+    )
+    rolling = next((row for row in rows if row.event == "rollback_started"), None)
+    generation = rolling.evidence["generation"] if rolling else prepared.generation
+    validated = "originals_validated" if rolling else "installed_validated"
+    return (
+        prepared.mode == "replace"
+        and bool(prepared.replacement_profiles)
+        and any(row.event == validated for row in rows)
+        and witness["generation"] == generation
+        and witness["operation_id"] == operation_id
+        and witness["store_root"] == str(control / "activation")
+        and str(selector) in prepared.publication.selectors
+        and set(witness["namespaces"]) <= set(prepared.publication.namespaces)
+        and witness["owners"]
+        == sorted(
+            owner.owner_id for owner in install_adapters() if owner.activation_required
+        )
+    )
+
+
+def _recovery_pending(root, journal, prepared):
+    """Read the exact fixed pointer even while paired activation reads are fenced."""
+    expected = _Pending(
+        operation_id=journal.operation_id,
+        control_root=str(journal.root.parent),
+        namespaces=prepared.publication.namespaces,
+        selectors=prepared.publication.selectors,
+    )
+    with pinned_directory(root) as parent:
+        record = _Pending.model_validate(
+            _read(parent, "pending-" + _key(journal.operation_id) + ".json")
+        )
+    if record != expected:
+        raise ValueError("publication_pending_mismatch")
+    return record
+
+
+def _recover_activation_pairs(journal, prepared, session):
+    """Finish exact local before/after pairs; ordinary readers never repair them."""
+    from .activation import ActivationStore
+    from .publication import _finalization_session
+
+    root = Path(prepared.publication.bootstrap_root)
+    _finalization_session(session, prepared.publication, prepared)
+    pending = _recovery_pending(root, journal, prepared)
+    registry = _registry(root)
+    with journal._locked(exclusive=True), pinned_directory(root) as parent:
+        names = sorted(
+            name for name in os.listdir(parent) if name.startswith("activation-update-")
+        )
+        for name in names:
+            update = _ActivationUpdate.model_validate(_read(parent, name))
+            selector = Path(update.selector)
+            key = _key(update.selector)
+            after_profile = _Profile.model_validate(update.after[0]).model_dump(
+                exclude_none=True
+            )
+            after_association = update.after[1]
+            witness = after_profile.get("activation")
+            if (
+                name != "activation-update-" + key + ".json"
+                or update.operation_id != journal.operation_id
+                or update.selector not in pending.selectors
+                or after_profile["selector"] != update.selector
+                or after_profile["fingerprint"] != _fingerprint(selector)
+                or after_association
+                != {"version": 1, "selector": update.selector, "activation": witness}
+                or not _operation_activation_generation(
+                    journal.root.parent, journal.operation_id, witness, selector
+                )
+                or after_profile["namespaces"] != witness["namespaces"]
+                or after_profile["roots"]
+                != sorted(
+                    {
+                        path
+                        for scope in witness["namespaces"]
+                        for path in registry[scope]["roots"]
+                    }
+                )
+            ):
+                raise ValueError("activation_recovery_context_invalid")
+            if update.before[0] is not None:
+                previous = _Profile.model_validate(update.before[0]).model_dump(
+                    exclude_none=True
+                )
+                if (
+                    previous["selector"] != update.selector
+                    or previous["namespaces"] != after_profile["namespaces"]
+                    or previous["roots"] != after_profile["roots"]
+                ):
+                    raise ValueError("activation_recovery_context_invalid")
+                old = previous.get("activation")
+            else:
+                old = None
+            if update.before[1] != (
+                None
+                if old is None
+                else {"version": 1, "selector": update.selector, "activation": old}
+            ):
+                raise ValueError("activation_pair_inconsistent")
+            store = ActivationStore(Path(witness["store_root"]))
+            with pinned_directory(
+                store._generation(witness["generation"])
+            ) as generation_parent:
+                if (
+                    store._required(generation_parent, witness["generation"]).owners
+                    != witness["owners"]
+                ):
+                    raise ValueError("activation_recovery_context_invalid")
+            intent_identity = os.stat(name, dir_fd=parent, follow_symlinks=False)
+            for index, prefix in ((1, "activation-"), (0, "profile-")):
+                target = prefix + key + ".json"
+                temporary = "activation-stage-" + key + "-" + str(1 - index) + ".json"
+                _resume_activation_record(
+                    root,
+                    parent,
+                    target,
+                    temporary,
+                    update.before[index],
+                    update.after[index],
+                )
+            _finalization_session(session, prepared.publication, prepared)
+            _recovery_pending(root, journal, prepared)
+            if (
+                _read(parent, name) != update.model_dump()
+                or os.stat(name, dir_fd=parent, follow_symlinks=False)
+                != intent_identity
+            ):
+                raise ValueError("activation_record_changed")
+            os.unlink(name, dir_fd=parent)
+            flush_directory(parent)
+    _control_records(root)
+
+
+def _resume_activation_record(root, parent, name, temporary, before, after):
+    """Reconcile an actual paired write using only its durable exact JSON states."""
+    try:
+        current = _read(parent, name)
+    except FileNotFoundError:
+        current = None
+    if current not in (before, after):
+        raise ValueError("activation_record_changed")
+    identity = _activation_record_identity(parent, name, current)
+    try:
+        staged = _read(parent, temporary)
+    except FileNotFoundError:
+        staged = None
+    if staged is not None and staged != after:
+        raise ValueError("activation_record_changed")
+    staged_identity = (
+        os.stat(temporary, dir_fd=parent, follow_symlinks=False)
+        if staged is not None
+        else None
+    )
+    if current != after:
+        if staged is None:
+            Admission._write_new_record(parent, temporary, json.dumps(after).encode())
+        if _activation_record_identity(parent, name, before) != identity:
+            raise ValueError("activation_record_changed")
+        if _read(parent, temporary) != after or (
+            staged_identity is not None
+            and os.stat(temporary, dir_fd=parent, follow_symlinks=False)
+            != staged_identity
+        ):
+            raise ValueError("activation_record_changed")
+        if before is None:
+            info = os.fstat(parent)
+            publish_new(
+                root / temporary,
+                root / name,
+                parent_identities=((info.st_dev, info.st_ino),) * 2,
+            )
+        else:
+            os.replace(temporary, name, src_dir_fd=parent, dst_dir_fd=parent)
+        flush_directory(parent)
+    elif staged is not None:
+        if (
+            _read(parent, temporary) != after
+            or os.stat(temporary, dir_fd=parent, follow_symlinks=False)
+            != staged_identity
+        ):
+            raise ValueError("activation_record_changed")
+        os.unlink(temporary, dir_fd=parent)
+        flush_directory(parent)
+    if _read(parent, name) != after:
+        raise ValueError("activation_record_changed")
