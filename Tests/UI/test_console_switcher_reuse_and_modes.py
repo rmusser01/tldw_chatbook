@@ -164,7 +164,7 @@ async def test_current_mode_is_painted_independently_of_focus(size, tmp_path):
             (tmp_path / f"mode-{label.replace(' ', '-')}.svg").write_text(
                 app.export_screenshot()
             )
-            await pilot.press("f3")
+            await pilot.press("shift+f3")
         await pilot.pause()
         await pilot.press("escape")
 

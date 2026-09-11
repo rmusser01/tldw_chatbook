@@ -20597,7 +20597,7 @@ class ConsoleChatController:
                 # Logs is finally true.
                 "Not sent: your conversation database could not be opened, so "
                 "this message could not be saved. Your draft was kept; a "
-                "temporary chat still sends. Open Logs (F8) for the recorded "
+                "temporary chat still sends. Open Logs (F3) for the recorded "
                 "database error."
             )
         else:

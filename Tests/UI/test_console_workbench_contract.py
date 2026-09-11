@@ -1255,7 +1255,7 @@ def test_console_workbench_state_exposes_core_actions_visibly():
 
     assert {
         "Settings",
-        "Attach context",
+        "Context rail",
         "Search Library",
         "Help",
     } <= action_labels
@@ -1798,7 +1798,7 @@ async def test_console_f1_help_lists_visible_actions():
         assert _is_displayed(panel)
         body = str(host.screen.query_one("#workbench-help-body").renderable)
         assert "Settings" in body
-        assert "Attach context" in body
+        assert "Context rail" in body
         assert "Search Library" in body
         assert "F6" in body
         assert "next pane" in body

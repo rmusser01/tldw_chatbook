@@ -23,6 +23,44 @@ SUBSTRING_SECRET_METADATA_KEYS = frozenset(
 )
 
 EVIDENCE_STATUSES = frozenset({"available", "blocked", "missing", "stale", "unknown"})
+
+#: Source types the send-side normalizer
+#  (``RAG_Search.local_citation_capture._SOURCE_ALIASES``) accepts. A
+# staged reference with an "available" status but a source_type OUTSIDE
+# this set renders in the tray but is REJECTED on send -- task-2375's
+# "staged while the model receives nothing" class (skills-context,
+# wc-context, and any future handoff kind). Keep in sync with that
+# allowlist; mirrored here (rather than imported) because the capture
+# module's mapping is private and Chat must not depend on RAG_Search
+# internals (the sync direction is tested below).
+DELIVERABLE_EVIDENCE_SOURCE_TYPES = frozenset(
+    {"media", "media_db", "media-db", "note", "notes", "conversation",
+     "conversations", "chat", "chat_history", "chat-history"}
+)
+
+
+def reference_can_deliver(reference: "EvidenceReference") -> bool:
+    """Return whether a reference can reach the model on send (TASK-32330).
+
+    Mirrors BOTH gates the send-side capture path applies, in the same
+    order: the local-owner check first (``RAG_Search.local_citation_
+    capture.normalize_console_evidence_references`` skips non-local
+    owners before anything else), then the source-kind allowlist.
+
+    Args:
+        reference: Staged evidence reference.
+
+    Returns:
+        True when the reference's content can reach the model; False when
+        it is listed-only (a non-local owner, or a handoff source kind
+        the normalizer rejects -- skills-context, wc-context, ...).
+    """
+    if str(reference.source_owner).strip().lower() != "local":
+        return False
+    return (
+        str(reference.source_type or "").strip().lower()
+        in DELIVERABLE_EVIDENCE_SOURCE_TYPES
+    )
 CITATION_STATUSES = frozenset(
     {"validated", "blocked", "unknown", "stale", "missing", "uncited"}
 )

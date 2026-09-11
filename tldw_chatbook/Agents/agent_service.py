@@ -167,7 +167,6 @@ from .project_instruction_runtime import (
 from .tool_catalog import (
     CHECK_AGENTS_SCHEMA,
     DISCARD_AGENT_WORKTREE_SCHEMA,
-    FIND_TOOLS_SCHEMA,
     build_find_tools_schema,
     INSTALL_SKILL_TOOL_SCHEMA,
     MERGE_AGENT_WORKTREE_SCHEMA,
@@ -918,7 +917,9 @@ def _first_request_plan_fits(
         system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
     from .canvas_tool_provider import build_canvas_runtime_guidance
 
-    canvas_guidance = build_canvas_runtime_guidance(schemas, messages=messages)
+    canvas_guidance = build_canvas_runtime_guidance(
+        schemas, messages=messages, system_prompt=plan.system_prompt
+    )
     if canvas_guidance:
         system_content = f"{system_content}\n\n{canvas_guidance}"
     system_content = _append_workspace_context_note(
@@ -2284,7 +2285,9 @@ class AgentService:
             system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
         from .canvas_tool_provider import build_canvas_runtime_guidance
 
-        canvas_guidance = build_canvas_runtime_guidance(schemas, messages=messages)
+        canvas_guidance = build_canvas_runtime_guidance(
+            schemas, messages=messages, system_prompt=config.system_prompt
+        )
         if canvas_guidance:
             system_content = f"{system_content}\n\n{canvas_guidance}"
         from tldw_chatbook.Notes.agent_lessons import (
@@ -2695,7 +2698,9 @@ class AgentService:
                 system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
             from .canvas_tool_provider import build_canvas_runtime_guidance
 
-            canvas_guidance = build_canvas_runtime_guidance(schemas, messages=messages)
+            canvas_guidance = build_canvas_runtime_guidance(
+                schemas, messages=messages, system_prompt=config.system_prompt
+            )
             if canvas_guidance:
                 system_content = f"{system_content}\n\n{canvas_guidance}"
             from tldw_chatbook.Notes.agent_lessons import (
