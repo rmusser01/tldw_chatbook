@@ -62,6 +62,47 @@ def test_a_binding_exists_for_the_inspect_rail():
     )
 
 
+def test_a_binding_exists_for_the_context_rail():
+    """TASK-32320: the Context rail gets the keyboard dignity alt+i gave
+    the Inspector."""
+    assert "alt+c" in _binding_keys(), (
+        "no Binding opens or closes the Context rail"
+    )
+
+
+def test_the_context_shortcut_is_advertised():
+    """TASK-32320: the F1 vocabulary must teach Alt+C alongside Alt+I."""
+    from tldw_chatbook.UI.Screens.chat_screen import (
+        CONSOLE_WORKBENCH_SHORTCUT_GROUPS,
+    )
+
+    text = " ".join(
+        f"{key} {label}"
+        for _title, shortcuts in CONSOLE_WORKBENCH_SHORTCUT_GROUPS
+        for key, label in shortcuts
+    )
+    assert "Alt+C" in text
+
+
+def test_palette_offers_both_rail_toggles():
+    """TASK-32320: the command palette is the fallback when a terminal eats
+    alt chords (the Alt+M lesson)."""
+    from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
+
+    class _ScreenStub:
+        # Every action the provider references, as inert stubs: the test
+        # asserts the LABEL contract, not any action's behaviour.
+        def __getattr__(self, name):
+            if name.startswith("action_"):
+                return lambda: None
+            raise AttributeError(name)
+
+    commands = ConsoleCommandProvider._commands(None, _ScreenStub())
+    labels = [label for label, _, _ in commands]
+    assert any("Toggle Context rail" in label for label in labels)
+    assert any("Toggle Inspector rail" in label for label in labels)
+
+
 def test_the_inspect_shortcut_is_advertised():
     """TASK-24604: an accelerator nothing announces is not discoverable."""
     labels = " ".join(f"{key} {label}" for key, label in CONSOLE_WORKBENCH_SHORTCUTS)
@@ -308,3 +349,45 @@ def test_the_approval_route_is_in_the_f1_reference_not_only_the_footer():
         f"Panes group: {panes}"
     )
     assert approval[0][1] == "Review pending approval", approval
+
+
+# --- TASK-32320: the left rail gets the same keyboard dignity -----------------
+
+
+@pytest.mark.asyncio
+async def test_alt_c_toggles_the_context_rail_from_any_focus():
+    """TASK-32320: the Context rail had no keyboard toggle at all -- the
+    Inspector's alt+i had no mirror, and no palette entry reached it.
+
+    Mirrors TASK-24604's alt+i contract: works with focus in the composer
+    (and is not gated on the rail being displayed), opens by moving focus
+    into the rail, closes by returning focus to the composer.
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = KeyboardHarness(app)
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        left_rail = console.query_one("#console-left-rail")
+        assert left_rail.display is True  # defaults open
+
+        # Close it from the composer: focus returns to the composer.
+        await pilot.press("alt+c")
+        await pilot.pause()
+        await pilot.pause()
+        assert left_rail.display is False
+        focused = host.focused
+        assert focused is not None and focused.id == "console-native-composer"
+
+        # Reopen from anywhere: focus moves INTO the rail, on a content
+        # control -- never the collapse button (TASK-32321).
+        await pilot.press("alt+c")
+        await pilot.pause()
+        await pilot.pause()
+        assert left_rail.display is True
+        focused = host.focused
+        assert focused is not None
+        assert left_rail in focused.ancestors_with_self
+        assert focused.id != "console-context-rail-collapse"

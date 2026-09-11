@@ -546,6 +546,8 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 | Ctrl+T | New Console tab |
 | Alt+1 … Alt+9 | Jump to Console tab 1–9 |
 | Alt+M | Quick "Model" popover |
+| Alt+C | Open or close the Context (left) rail |
+| Alt+I | Open or close the Inspector (right) rail |
 | Alt+W | "Change Workspace" switcher |
 | Alt+V | Paste an image from the clipboard |
 | Ctrl+Shift+P | "Chat Context" viewer (what the model will see) |

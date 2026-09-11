@@ -1190,6 +1190,7 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     # card had no key binding at all before this, so its accelerator is
     # only discoverable if the footer teaches it.
     ("Alt+A", "approval"),
+    ("Alt+C", "context rail"),
     ("Ctrl+P", "palette"),
 )
 
@@ -1202,7 +1203,12 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
 #: toggle already gets for the same reason.
 CONSOLE_WORKBENCH_SHORTCUTS_SINGLE_PANE = (
     ("Alt+I", "inspect"),
-    *(pair for pair in CONSOLE_WORKBENCH_SHORTCUTS if pair[0] != "Alt+I"),
+    ("Alt+C", "context rail"),
+    *(
+        pair
+        for pair in CONSOLE_WORKBENCH_SHORTCUTS
+        if pair[0] not in ("Alt+I", "Alt+C")
+    ),
 )
 
 #: TASK-2154.8 (FR-06): while the first-run setup modal locks the composer,
@@ -1248,6 +1254,7 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
             # -- the footer advertises Alt+A but this never-truncating
             # reference didn't.
             ("Alt+A", "Review pending approval"),
+            ("Alt+C", "open or close the Context rail"),
             ("Escape", "return to the composer"),
         ),
     ),
@@ -1945,6 +1952,12 @@ class ChatScreen(BaseAppScreen):
         # common widths. This routes through the same seam as the
         # inspector's button (`_route_console_pending_approval_focus`).
         Binding("alt+a", "review_pending_approval", "Approval", show=True),
+        # TASK-32320: the left rail's own toggle -- alt+c mirrors alt+i
+        # (C for Context) with the same not-gated-on-display and
+        # focus-into-the-rail contract. 'c' as a bare htop key would be
+        # swallowed by the focused transcript's own bindings, so it rides
+        # the alt chord like its sibling.
+        Binding("alt+c", "toggle_console_context_rail", "Context", show=True),
         Binding("alt+v", "paste_clipboard_image", "Paste image", show=True),
         # ctrl+shift+h, not alt+h: on macOS terminals "alt" is the Option
         # key, which types a composed character (˙) unless the profile
@@ -2663,6 +2676,30 @@ class ChatScreen(BaseAppScreen):
         # destructive, and is the thing they came to read. Falls back to the
         # pane's normal targets if it is not mounted.
         self.call_after_refresh(self._focus_opened_console_inspector_rail)
+
+    def action_toggle_console_context_rail(self) -> None:
+        """Toggle the Context rail; mirror alt+i's contract (TASK-32320).
+
+        Not gated on the rail being displayed (a collapsed rail at narrow
+        widths is exactly when the way back matters); opening moves focus
+        into the rail on a content control (TASK-32321's map already
+        provides one), closing returns focus to the composer.
+        """
+        if self._focus_console_setup_modal_if_blocking():
+            return
+        opening = not self._is_console_widget_displayed("console-left-rail")
+        self._set_console_rail_preference(left_open=opening)
+        if not opening:
+            self._focus_console_workbench_target("console-native-composer")
+            return
+        # The rail is already composed (it defaults open and only display
+        # flips), so focus can land immediately; still deferred one refresh
+        # so a just-reopened rail has mounted its targets.
+        self.call_after_refresh(self._focus_opened_console_context_rail)
+
+    def _focus_opened_console_context_rail(self) -> None:
+        """Place the caret on the left rail's first non-destructive target."""
+        self._focus_console_workbench_target("console-left-rail")
 
     def _focus_opened_console_inspector_rail(self) -> None:
         """Place the caret on the rail's most useful non-destructive target."""
