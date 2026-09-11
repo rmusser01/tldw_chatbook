@@ -55,7 +55,7 @@ _LEGEND_TEXT = (
     "• override · ⚠ definition changed · ⚑ high-risk floor · "
     "≡ exact-input allows · "
     "(session) approved until Chatbook exits · "
-    "Space cycles Inherit → Allow → Ask → Off"
+    "Space cycles Inherit → Ask → Allow → Off"
 )
 
 # T8: exact copy pinned by the server-source governance section below --

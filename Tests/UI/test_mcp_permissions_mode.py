@@ -429,8 +429,9 @@ async def test_space_on_tool_row_posts_next_state_per_cycle_helper():
         assert event.row_kind == "tool"
         assert event.server_key == "local:docs"
         assert event.tool_name == "search"
-        # cycle_ui_state(None) == "allow"
-        assert event.new_state == "allow"
+        # Wave B: cycle_ui_state(None) == "ask" (Allow is a deliberate
+        # second press, never the first stop from Inherit)
+        assert event.new_state == "ask"
 
 
 @pytest.mark.asyncio
@@ -699,7 +700,7 @@ async def test_legend_line_renders_fixed_marker_key():
             "• override · ⚠ definition changed · ⚑ high-risk floor · "
             "≡ exact-input allows · "
             "(session) approved until Chatbook exits · "
-            "Space cycles Inherit → Allow → Ask → Off"
+            "Space cycles Inherit → Ask → Allow → Off"
         )
 
 
@@ -748,7 +749,7 @@ async def test_update_matrix_with_no_gate_breadcrumb_shows_bare_legend():
             "• override · ⚠ definition changed · ⚑ high-risk floor · "
             "≡ exact-input allows · "
             "(session) approved until Chatbook exits · "
-            "Space cycles Inherit → Allow → Ask → Off"
+            "Space cycles Inherit → Ask → Allow → Off"
         )
 
 

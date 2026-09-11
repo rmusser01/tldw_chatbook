@@ -7290,15 +7290,15 @@ async def test_builtin_enumeration_failure_still_shows_a_cyclable_server_default
 # `_last_hub_tools`, the MCP catalog. Built-in tools never populate that
 # list (Task 3's built-in section is rendered from `builtin_permission_
 # rows()`, a completely separate path -- Constraint 1), so `_tool_for()`
-# always returned `None` for an `agent:builtin` row. Since `cycle_ui_state`
-# is Inherit -> Allow -> Ask -> Off, the FIRST Space press from the default
-# state always lands on "allow" -- which the vanished-tool guard then
-# rejected before any write, with a factually wrong "no longer in the
-# catalog" toast. `ask`/`deny` were consequently unreachable: you can't
-# advance the ring past the step that's permanently blocked. These tests
-# exercise the first press specifically (a pre-seeded "allow" and cycling
-# from there would miss the bug entirely), plus the rest of the ring, an
-# orphaned row, and an MCP-row regression guard.
+# always returned `None` for an `agent:builtin` row. Whichever press
+# first reaches "allow" (Wave B reordered the ring to Inherit -> Ask ->
+# Allow -> Off, so that is now the SECOND press), the vanished-tool guard
+# rejected the transition before any write with a factually wrong "no
+# longer in the catalog" toast. The rungs beyond it were consequently
+# unreachable: you can't advance the ring past the step that's permanently
+# blocked. These tests exercise that transition specifically (a pre-seeded
+# "allow" and cycling from there would miss the bug entirely), plus the
+# rest of the ring, an orphaned row, and an MCP-row regression guard.
 
 
 @pytest.mark.asyncio
@@ -7577,9 +7577,11 @@ async def test_space_cycle_round_trip_mutates_store_and_rerenders_override_marke
         tool_entry = payload["profiles"]["default"]["servers"]["local:docs"]["tools"][
             "search"
         ]
-        assert tool_entry["state"] == "allow"
+        # Wave B: first press from Inherit stores "ask" -- still an
+        # explicit override, so the marker bullet must render.
+        assert tool_entry["state"] == "ask"
 
-        assert _perm_table_texts(app, 3) == ["  search", "Allow •"]
+        assert _perm_table_texts(app, 3) == ["  search", "Ask •"]
         # Sibling rows are untouched by the single-row mutation.
         assert _perm_table_texts(app, 2) == ["  fetch", "Ask"]
         assert _perm_table_texts(app, 0) == ["Global default", "Ask"]
@@ -7603,11 +7605,12 @@ async def test_space_on_server_default_row_round_trips_through_store(tmp_path):
         await pilot.pause()
 
         payload = app.unified_mcp_service.permission_store.load()
+        # Wave B: first press from Inherit lands on "ask"
         assert (
             payload["profiles"]["default"]["servers"]["local:docs"]["default"]
-            == "allow"
+            == "ask"
         )
-        assert _perm_table_texts(app, 1) == ["Server default — docs", "Allow •"]
+        assert _perm_table_texts(app, 1) == ["Server default — docs", "Ask •"]
 
 
 @pytest.mark.asyncio
@@ -7787,7 +7790,7 @@ async def test_preview_shows_override_count_when_no_server_selected(tmp_path):
         # transient echo prefix now -- the override-count SUFFIX this test
         # exists to pin is still computed correctly underneath it.
         assert str(preview.renderable) == (
-            "search → Allow · global default: ask · 1 override across 1 server"
+            "search → Ask · global default: ask · 1 override across 1 server"
         )
 
 
@@ -7869,8 +7872,8 @@ async def test_double_space_cycle_on_tool_row_stays_on_that_row(tmp_path):
     so a SECOND press used to land on row 0 (Global default) instead of the
     tool row the user was still looking at -- silently cycling the global
     default instead of the tool. Two Space presses on the tool row must
-    advance the TOOL two cycle steps (Inherit -> Allow -> Ask) and must
-    leave the global default untouched.
+    advance the TOOL two cycle steps (Inherit -> Ask -> Allow, Wave B's
+    order) and must leave the global default untouched.
     """
     app = PermissionsApp(tmp_path / "mcp_permissions.json")
     async with app.run_test(size=(120, 40)) as pilot:
@@ -7896,10 +7899,10 @@ async def test_double_space_cycle_on_tool_row_stays_on_that_row(tmp_path):
         tool_entry = payload["profiles"]["default"]["servers"]["local:docs"]["tools"][
             "search"
         ]
-        # cycle_ui_state(None) == "allow", cycle_ui_state("allow") == "ask"
-        assert tool_entry["state"] == "ask"
+        # Wave B: cycle_ui_state(None) == "ask", cycle_ui_state("ask") == "allow"
+        assert tool_entry["state"] == "allow"
         assert payload["profiles"]["default"]["global_default"] == "ask"
-        assert _perm_table_texts(app, 3) == ["  search", "Ask •"]
+        assert _perm_table_texts(app, 3) == ["  search", "Allow •"]
         assert _perm_table_texts(app, 0) == ["Global default", "Ask"]
 
 
@@ -8149,7 +8152,12 @@ async def test_cycling_the_selected_tool_refreshes_its_open_permission_block(tmp
             == "▸ Global default: Ask"
         )
 
-        await pilot.press("space")  # cycle_ui_state(None) == "allow"
+        # Wave B: two presses to reach "allow" (Inherit -> Ask -> Allow)
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause(0.3)
+        await pilot.press("space")
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -8331,6 +8339,8 @@ async def test_reallow_round_trip_clears_config_changed_marker_and_matrix_warnin
         tool_entry = payload["profiles"]["default"]["servers"]["local:docs"]["tools"][
             "search"
         ]
+
+
         assert tool_entry["state"] == "allow"
 
         assert _perm_table_texts(app, 3) == ["  search", "Allow •"]
@@ -8625,7 +8635,8 @@ async def test_space_cycle_prefixes_preview_with_mutation_echo(tmp_path):
         await pilot.pause()
 
         preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
-        assert preview.startswith("search → Allow · ")
+        # Wave B: first press from Inherit echoes Ask
+        assert preview.startswith("search → Ask · ")
 
 
 @pytest.mark.asyncio
@@ -8651,22 +8662,22 @@ async def test_double_space_cycle_echo_replaces_not_appends(tmp_path):
         table = app.query_one("#mcp-perm-table", DataTable)
         table.focus()
         table.move_cursor(row=3)  # local:docs::search
-        await pilot.press("space")  # cycle_ui_state(None) == "allow"
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause(0.3)
-
-        preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
-        assert preview.startswith("search → Allow · ")
-        assert preview.count("→") == 1
-
-        await pilot.press("space")  # cycle_ui_state("allow") == "ask"
+        await pilot.press("space")  # Wave B: cycle_ui_state(None) == "ask"
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause(0.3)
 
         preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
         assert preview.startswith("search → Ask · ")
+        assert preview.count("→") == 1
+
+        await pilot.press("space")  # Wave B: cycle_ui_state("ask") == "allow"
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause(0.3)
+
+        preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
+        assert preview.startswith("search → Allow · ")
         assert preview.count("→") == 1
 
 
@@ -8736,7 +8747,8 @@ async def test_full_resync_clears_mutation_echo(tmp_path):
         await app.workers.wait_for_complete()
         await pilot.pause()
         preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
-        assert preview.startswith("search → Allow · ")
+        # Wave B: first press from Inherit echoes Ask
+        assert preview.startswith("search → Ask · ")
 
         # A full `_sync_children()` pass isn't itself a standalone mutation
         # resync -- it must clear the echo without anyone calling a
@@ -8745,7 +8757,7 @@ async def test_full_resync_clears_mutation_echo(tmp_path):
         await pilot.pause()
 
         preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
-        assert not preview.startswith("search → Allow · ")
+        assert not preview.startswith("search → Ask · ")
         assert preview == "global default: ask · 1 override across 1 server"
 
 
@@ -8886,6 +8898,12 @@ async def test_space_cycle_propagates_fresh_states_to_tools_mode_without_full_re
         table = app.query_one("#mcp-perm-table", DataTable)
         table.focus()
         table.move_cursor(row=3)  # local:docs::search
+        # Wave B: two presses to reach "allow" (Inherit -> Ask -> Allow) --
+        # a distinctly different cell from the pre-mutation plain "Ask".
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause(0.3)
         await pilot.press("space")
         await pilot.pause()
         await app.workers.wait_for_complete()
@@ -11283,6 +11301,11 @@ async def test_virtual_cli_permission_cycle_remains_independent_of_raw_shell(
         table = app.query_one("#mcp-perm-table", DataTable)
         table.focus()
         table.move_cursor(row=_perm_row_keys(app).index("local:__virtual_cli__::ls"))
+        # Wave B: two presses to reach "allow" (Inherit -> Ask -> Allow)
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause(0.3)
         await pilot.press("space")
         await pilot.pause()
         await app.workers.wait_for_complete()
@@ -11314,6 +11337,19 @@ async def test_matrix_marks_and_inspector_revokes_session_approvals(tmp_path):
     service = app.unified_mcp_service
     service.session_approvals.add(("default", "local:docs", "search"))
     service.session_approvals.add(("default", "agent:builtin", "calculator"))
+
+# -- Wave A (2026-09-11 MCP Hub UX program): bounded polish -----------------
+
+
+@pytest.mark.asyncio
+async def test_entering_permissions_mode_focuses_the_matrix():
+    """A1/F5a: entering Permissions mode puts the keyboard on the matrix.
+    Space-cycling is the mode's primary gesture, but the binding lives on
+    the canvas -- with focus left wherever the previous mode had it (e.g.
+    a mode chip, where Space ACTIVATES the chip), the advertised key did
+    something else entirely. Focus already inside the permissions canvas
+    (e.g. the filter Input mid-typing) is left alone."""
+    app = WorkbenchApp()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
@@ -11408,3 +11444,79 @@ def test_tool_has_arg_rules_marks_an_inherited_rule(tmp_path):
         has_rules(child_servers, "srv", "other", ancestor_servers=(default_servers,))
         is False
     )
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        assert app.screen.focused is table
+
+        filter_input = app.query_one("#mcp-perm-filter-text", Input)
+        filter_input.focus()
+        await pilot.pause()
+        workbench.set_mode("tools")
+        workbench.set_mode("permissions")
+        await pilot.pause()
+        assert app.screen.focused is filter_input
+
+
+@pytest.mark.asyncio
+async def test_cycle_failure_toast_names_the_service_error(tmp_path):
+    """A3/F10: a failed Space-cycle surfaces the service's own error text
+    ("Permission update failed: <reason>"), not just the bare generic
+    sentence -- the typed service methods raise user-ready messages, and
+    the generic toast left the user with nothing to act on."""
+
+    class ExplodingPermissionsService(PermissionsHubService):
+        def set_tool_state(self, *args, **kwargs):
+            raise RuntimeError("profile store busy")
+
+    store_path = tmp_path / "mcp_permissions.json"
+    MCPPermissionStore(store_path)  # create the default profile
+    app = PermissionsApp(store_path)
+    app.unified_mcp_service = ExplodingPermissionsService(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        # Row 0 = global, row 1 = docs server default, row 2 = docs tool.
+        await pilot.press("down", "down", "space")
+        await pilot.pause()
+
+        assert notifications
+        message, severity = notifications[-1]
+        assert severity == "error"
+        assert "Permission update failed" in message
+        assert "profile store busy" in message
+
+
+@pytest.mark.asyncio
+async def test_test_tool_key_falls_back_to_tools_cursor_row():
+    """A7/O5: `t` with nothing selected in the INSPECTOR falls back to the
+    Tools table's cursor row -- telling a user who just arrowed onto a row
+    to "Select a tool in Tools mode first." reads as broken. The fallback
+    drives the same inspector tool view a selection would, so the
+    server-source row surfaces its own honest phase-note refusal."""
+    app = ServerToolsApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        table = app.query_one("#mcp-tools-table", DataTable)
+        table.focus()
+        table.move_cursor(row=0)
+        await pilot.pause()
+
+        await workbench.open_test_for_selected_tool()
+        await pilot.pause()
+
+        assert workbench.active_mode == "tools"
+        assert not any(
+            "Select a tool in Tools mode first." in message
+            for message, _ in notifications
+        )
+        assert any("display-only" in message for message, _ in notifications)
