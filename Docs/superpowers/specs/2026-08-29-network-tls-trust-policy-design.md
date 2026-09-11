@@ -189,6 +189,7 @@ smoke tests:
   (regenerates on certifi or custom change); factory injection (policy applied;
   caller's explicit `verify=` wins); `ssl_context_for_transport()` shapes
   (`None`/CERT_NONE-context/additive-context; the additive context's `get_ca_certs()` contains
+  (`None`/`False`/context; the additive context's `get_ca_certs()` contains
   every certifi cert **plus** the custom bundle's certs — asserted by comparing
   DER sets against a certifi-only context); merged-bundle file contains both
   PEMs concatenated and regenerates when either source's `(mtime_ns, size)`

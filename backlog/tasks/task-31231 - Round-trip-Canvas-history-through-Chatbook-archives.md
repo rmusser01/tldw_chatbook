@@ -12,6 +12,12 @@ labels:
   - import
 dependencies:
   - TASK-31227
+status: To Do
+assignee: []
+created_date: '2026-09-03'
+updated_date: '2026-09-03'
+labels: [canvas, chatbooks, export, import]
+dependencies: [TASK-31227]
 priority: medium
 ---
 
@@ -62,3 +68,23 @@ Reason: archive schema/versioning, graph identity remapping, atomic restore beha
 - Manual inspection of a produced archive showed two Canvas documents and four deterministic `.html.txt` revisions, including a sibling branch, title change, soft deletion, deleted historical origin, reopen hint, and inert `canvas-v9` profile. Manifest IDs, parents, origins, sizes, and digests were understandable without executing content, and no runnable `.html` member existed. The disposable archive/database were removed after inspection.
 - ADR check: existing ADR-121 was updated with format 3.0 fields and limits, container defenses, atomic identity semantics, integrated schema 68 (historically schema 67 before current-dev reconciliation), inert unsupported-profile behavior, sync exclusion, and manual checkpoint evidence. No new ADR was needed.
 <!-- SECTION:NOTES:END -->
+Make durable Canvas documents and immutable revision graphs portable through local conversation/Chatbook export and import while keeping source inert and preserving older archive compatibility.
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 Archives containing Canvas use Chatbook format 3.0 while archives without Canvas remain eligible for 2.0
+- [ ] #2 Export includes inert manifests and exact source files with Canvas/revision ancestry, titles, provenance, runtime profiles, digests, sizes, and deletion metadata
+- [ ] #3 Import validates paths, counts, declared and actual uncompressed sizes, UTF-8, digests, duplicate identities, cycles, parent ownership, and origin messages before mutation or rendering
+- [ ] #4 Same-identity restore is digest-idempotent and refuses conflicting content without silent overwrite
+- [ ] #5 Import-as-new remaps conversation, message, Canvas, revision, parent, origin, and reopen-hint identities as one graph
+- [ ] #6 Unsupported runtime profiles remain inert and never execute under a guessed or weaker profile
+- [ ] #7 V1/V2 archives retain existing behavior and Canvas data stays excluded from all synchronization paths
+- [ ] #8 Export and import remain atomic under interruption or injected write failure
+- [ ] #9 Focused unit, property, decompression-bomb, transaction, backward-compatibility, and whole-graph round-trip tests pass
+<!-- AC:END -->
+
+## Related Design
+
+- `Docs/superpowers/specs/2026-09-03-chatbook-canvas-design.md`
+- `Docs/superpowers/plans/2026-09-03-chatbook-canvas-implementation.md`
+- `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
