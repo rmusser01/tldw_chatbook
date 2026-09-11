@@ -143,6 +143,11 @@ def _toolbar_shape(pane_width: int, compact: bool) -> tuple[bool, bool]:
 #: 3-, 12- and 6-character labels "New", "Sort: Newest" and "Select".
 _TOOLBAR_ACTION_CHROME = 4
 
+#: Terminal columns below which the Notes canvas drops its authority prefix
+#: (review F1). The guide's own narrow-stage threshold: above it the line
+#: has room for the noun, below it the compact sheet's two-row cap does not.
+_AUTHORITY_PREFIX_MIN_WIDTH = 64
+
 
 def browse_row_overflows(pane_width: int, labels: tuple[str, ...]) -> bool:
     """Whether these actions cannot all be painted on one row of the pane.
@@ -711,13 +716,28 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         task-32360 AC#2 (critique #10): the compact sheet caps this line at
         two rows, and at 60 columns the pane is 32 cells wide, where the
         full line takes three -- so "files." was simply cut off the bottom,
-        with no ellipsis and no way to know something was missing. Compact
-        drops the prefix instead: the source strip directly above already
-        says "Library notes | Folder files", so the authority is named on
-        screen either way, and what is left ("Ready · Next: Create a note
-        or add from files.") fits the two rows whole.
+        with no ellipsis and no way to know something was missing. The
+        narrow stage drops the prefix instead: the source strip directly
+        above already says "Library notes | Folder files", so the authority
+        is named on screen either way, and what is left ("Ready · Next:
+        Create a note or add from files.") fits the two rows whole.
+
+        Review F1: gated on ``compact`` alone this dropped the noun on
+        EVERY terminal under 120 columns (``LIBRARY_NOTES_COMPACT_BREAKPOINT``)
+        -- including the standard 100-column stage, where the line has room
+        and nothing clips, and where the guide's own "narrower than 64
+        columns" then described something the app did not do. The threshold
+        is the one the guide states, measured off the terminal the stage is
+        resolved from rather than off this pane (at 100 columns the Items
+        pane is only 42 cells, so a pane-width test would drop it there
+        too). A widget with no live app keeps the prefix: that is the
+        answer that loses nothing.
         """
-        return "" if self.compact else NOTES_AUTHORITY_PREFIX
+        try:
+            narrow_stage = self.compact and self.app.size.width < _AUTHORITY_PREFIX_MIN_WIDTH
+        except Exception:
+            narrow_stage = False
+        return "" if narrow_stage else NOTES_AUTHORITY_PREFIX
 
     def _authority_copy(self) -> str:
         """Describe Library storage, current status, and the next action."""

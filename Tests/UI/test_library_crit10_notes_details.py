@@ -342,4 +342,35 @@ async def test_notes_copy_is_not_clipped_mid_word_below_64_columns():
             f"actions painted off the {canvas.region.width}-column pane: "
             f"{offenders}"
         )
-        assert "Select" in painted and "     Sel\n" not in painted, painted
+        # Review F11: the crop shows as a MISSING word, not as a "Sel" run
+        # followed by a newline (trailing spaces pad the row), so "Select"
+        # in the paint is the whole check -- it is the clause that fails in
+        # the reverted run.
+        assert "Select" in painted, painted
+
+
+@pytest.mark.parametrize(
+    ("size", "keeps_prefix"), [((100, 30), True), ((60, 24), False)]
+)
+@pytest.mark.asyncio
+async def test_the_authority_noun_survives_above_the_narrow_stage(size, keeps_prefix):
+    """Review F1: the prefix was dropped on `compact`, which is every
+    terminal under 120 columns -- so 64..119 lost the noun where nothing
+    was clipping, and the guide's own "narrower than 64 columns" became
+    false. It is the narrow STAGE that has no room, not compact.
+    """
+    host = _notes_host(notes=7)
+    async with host.run_test(size=size) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_notes_list(screen, pilot)
+        for _ in range(10):
+            await pilot.pause()
+
+        authority = str(
+            screen.query_one("#library-notes-authority", Static).renderable
+        )
+        assert authority.startswith("Library notes · ") is keeps_prefix, (
+            size,
+            authority,
+        )
