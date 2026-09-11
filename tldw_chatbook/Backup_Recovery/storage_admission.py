@@ -1570,8 +1570,13 @@ class MaintenanceSession:
             if info.st_uid != os.geteuid() or info.st_mode & 0o077:
                 raise bootstrap.RecoveryRequired("capture_staging_not_private")
         staging = staging.resolve(strict=True)
+        # Recovery can move these names while reading private credential material
+        # under the journal lock. Preserve the admitted canonical source names
+        # for this overlap check; source access still requires its own checked scope.
+        protected = set(self._recovery_roots or ())
         for root in self._all_roots + (self._control,):
-            root = root.resolve(strict=True)
+            protected.add(root.resolve(strict=self._recovery_roots is None))
+        for root in protected:
             if root == staging or root in staging.parents or staging in root.parents:
                 raise bootstrap.RecoveryRequired("capture_staging_overlaps_source")
         scope = _CaptureScope(self, tuple(selected), staging, limits, byte_budget)
@@ -1594,13 +1599,18 @@ class MaintenanceSession:
             _local.maintenance_session = None
 
 
-def _mint_maintenance_session(roots, all_roots, control, names, control_identity):
+def _mint_maintenance_session(
+    roots, all_roots, control, names, control_identity, *,
+    recovery_roots=None, publication_roots=(),
+):
     session = object.__new__(MaintenanceSession)
     session._roots = tuple(roots)
     session._all_roots = tuple(all_roots)
     session._control = control
     session._names = names
     session._control_identity = control_identity
+    session._recovery_roots = recovery_roots
+    session._publication_roots = publication_roots
     session._pid = os.getpid()
     session._thread = threading.get_ident()
     session._active = True

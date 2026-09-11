@@ -1452,6 +1452,121 @@ def validate_replacement_abort(operation_id, *, control_root, cancel):
     _abort_prepublication(journal, load_plan(journal), cancel, execute=False)
 
 
+def _recovery_admission_record(journal, admission_root):
+    """Bind recovery admission to the existing pending local replacement."""
+    from . import bootstrap
+    from .control_records import UNBOUND_NAMESPACE, _recovery_pending
+    from .journal import Journal
+    from .plan_records import load_plan
+
+    root = bootstrap.default_bootstrap_root()
+    if type(journal) is not Journal or admission_root != root / "admission":
+        raise ValueError("replacement_recovery_required")
+    plan = load_plan(journal)
+    with journal._locked(exclusive=False) as parent:
+        records = journal._records(parent)
+    prepared = _Prepared.model_validate(
+        next(row.evidence for row in records if row.event == "prepared")
+    )
+    if (
+        prepared.mode != "replace"
+        or plan.mode != prepared.mode
+        or _plan_digest(plan) != prepared.publication.plan_digest
+        or plan.archive_digest != prepared.publication.archive_digest
+        or prepared.publication.bootstrap_root != str(root)
+        or not any(row.event == "rollback_verified" for row in records)
+    ):
+        raise ValueError("replacement_recovery_required")
+    _recovery_pending(root, journal, prepared)
+    names = tuple(sorted({*prepared.publication.namespaces, UNBOUND_NAMESPACE}))
+    return names, prepared, records
+
+
+def _recovery_admission_aliases(journal, admission_root, names, roots):
+    """Resolve only missing registered roots inside a checked native move gap."""
+    from .journal import _absent, _MoveIntent
+    from .publication import _check_parents, _move_position
+
+    expected, prepared, records = _recovery_admission_record(journal, admission_root)
+    if names != expected:
+        raise ValueError("replacement_recovery_scope_changed")
+    latest = {}
+    for row in records:
+        if row.event == "move_intended":
+            intent = _MoveIntent.model_validate(row.evidence)
+            latest[intent.logical_id] = (intent, None)
+        elif row.event == "move_observed":
+            latest[intent.logical_id] = (intent, row.evidence["moved"])
+    aliases, checked = {}, {}
+    for root in roots:
+        resolved = root.resolve(strict=False)
+        candidates = [
+            item
+            for item in prepared.artifacts
+            if resolved == Path(item.target) or Path(item.target) in resolved.parents
+        ]
+        if len(candidates) != 1:
+            raise ValueError("recovery_root_unverified")
+        item = candidates[0]
+        target = Path(item.target)
+        if item.logical_id not in checked:
+            if item.logical_id not in latest or not _absent(item.target):
+                raise ValueError("recovery_root_unverified")
+            intent, moved = latest[item.logical_id]
+            if intent.step not in {"retire", "publish", "unpublish", "restore"}:
+                raise ValueError("recovery_move_unqualified")
+            if moved is None:
+                moved = _move_position(intent) == "after"
+            away = intent.step in {"retire", "unpublish"}
+            if moved != away:
+                raise ValueError("recovery_root_unverified")
+            held = Path(intent.destination if away else intent.source.path)
+            if (intent.source.path if away else intent.destination) != item.target:
+                raise ValueError("recovery_root_unverified")
+            original = intent.step in {"retire", "restore"}
+            expected_object = item.previous_metadata if original else item.candidate
+            expected_path = item.retained if original else item.candidate.path
+            if (
+                expected_object is None
+                or str(held) != expected_path
+                or not _matches(intent.source, str(held))
+                or not _matches(expected_object, str(held), metadata=original)
+            ):
+                raise ValueError("recovery_root_unverified")
+            _check_parents(item)
+            holders = [held]
+            if not original and item.previous is not None:
+                if not _matches(item.previous_metadata, item.retained, metadata=True):
+                    raise ValueError("recovery_root_unverified")
+                holders.append(Path(item.retained))
+            checked[item.logical_id] = holders
+        suffix = resolved.relative_to(target)
+        held_children = tuple(
+            path / suffix
+            for path in checked[item.logical_id]
+            if (path / suffix).exists()
+        )
+        if not held_children:
+            raise ValueError("recovery_root_unverified")
+        aliases[root] = resolved, held_children
+    return aliases
+
+
+def _recovery_staging_roots(journal, admission_root, names, roots):
+    """Freeze original canonical source names for private-staging overlap checks."""
+    canonical, missing = set(), []
+    for root in roots:
+        try:
+            canonical.add(root.resolve(strict=True))
+        except FileNotFoundError:
+            missing.append(root)
+    aliases = _recovery_admission_aliases(
+        journal, admission_root, names, tuple(missing)
+    )
+    canonical.update(resolved for resolved, _ in aliases.values())
+    return tuple(sorted(canonical))
+
+
 def recover_replacement(
     operation_id: str,
     *,
@@ -1463,7 +1578,6 @@ def recover_replacement(
     """Finish or reverse one still-fenced local replacement using durable evidence."""
     from . import bootstrap
     from .control_records import (
-        UNBOUND_NAMESPACE,
         _existing_admission_authority,
         _recover_activation_pairs,
         _recovery_pending,
@@ -1498,8 +1612,8 @@ def recover_replacement(
         raise ValueError("later_rollback_required")
     _recovery_pending(root, journal, prepared)
     candidate = Path(records[0].evidence["stage"]["path"])
-    with _existing_admission_authority(root).maintenance(
-        (*prepared.publication.namespaces, UNBOUND_NAMESPACE), 30
+    with _existing_admission_authority(root)._replacement_recovery(
+        journal, 30, cancel=cancel
     ) as session:
         _finalization_session(session, prepared.publication, prepared)
         with _unlock_recovery(

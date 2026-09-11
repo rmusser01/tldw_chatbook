@@ -111,7 +111,7 @@ def _publication_scope_path(path, *, items=(), prepared=None):
 
 def _finalization_session(session, context, prepared):
     from .control_records import UNBOUND_NAMESPACE
-    from .storage_admission import MaintenanceSession, _contains_owned_path
+    from .storage_admission import MaintenanceSession
 
     if type(session) is not MaintenanceSession:
         raise ValueError("maintenance_session_required")
@@ -125,15 +125,22 @@ def _finalization_session(session, context, prepared):
         if (info.st_dev, info.st_ino) != session._control_identity:
             raise ValueError("finalization_authority_changed")
     registry = _registry(Path(context.bootstrap_root))
+
+    def covered(path):
+        # Scope comes from native admission, not the inode the operation is
+        # replacing. All move/parent/content checks still observe live objects.
+        selected = _publication_scope_path(path, prepared=prepared).resolve(strict=False)
+        return any(
+            selected == root or (directory and root in selected.parents)
+            for root, directory in session._publication_roots
+        )
+
     if (
         registry is None
         or not set(context.namespaces) <= set(session._names)
         or any(name not in registry for name in context.namespaces)
         or any(
-            not any(
-                _contains_owned_path(root, _publication_scope_path(path, prepared=prepared))
-                for root in session._roots
-            )
+            not covered(path)
             for path in (
                 *map(Path, context.selectors),
                 *_publication_targets(prepared),

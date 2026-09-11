@@ -350,14 +350,44 @@ class Admission:
                 )
         return result
 
-    def _groups(self, registry: _Registry, names: tuple[str, ...]) -> tuple[str, ...]:
+    def _groups(
+        self, registry: _Registry, names: tuple[str, ...], recovery_journal=None
+    ) -> tuple[str, ...]:
         if any(n not in registry.entries for n in names):
             raise AdmissionError("namespace_unregistered")
-        tokens = {
-            n: set(entry.historical)
-            | self._tokens(tuple(Path(r) for r in entry.roots + entry.proposed))
-            for n, entry in registry.entries.items()
-        }
+        tokens, missing = {}, {}
+        for name, entry in registry.entries.items():
+            roots = tuple(Path(r) for r in entry.roots + entry.proposed)
+            tokens[name] = set(entry.historical)
+            try:
+                tokens[name].update(self._tokens(roots))
+            except FileNotFoundError:
+                if recovery_journal is None:
+                    raise
+                for root in roots:
+                    try:
+                        tokens[name].update(self._tokens((root,)))
+                    except FileNotFoundError:
+                        missing.setdefault(root, set()).add(name)
+        if recovery_journal is not None:
+            from .replacement import _recovery_admission_aliases
+
+            aliases = _recovery_admission_aliases(
+                recovery_journal, self.control_root, names, tuple(missing)
+            )
+            for root, (resolved, held) in aliases.items():
+                recovered = self._tokens(held) | {
+                    "path:" + str(root),
+                    "path:" + str(resolved),
+                }
+                for name in missing[root]:
+                    if (
+                        root != resolved
+                        and "path:" + str(resolved)
+                        not in registry.entries[name].historical
+                    ):
+                        raise AdmissionError("recovery_root_alias_changed")
+                    tokens[name].update(recovered)
         selected = set(names)
         while True:
             shared = set().union(*(tokens[n] for n in selected))
@@ -385,6 +415,41 @@ class Admission:
             yield
         finally:
             _local.admitted = False
+
+    def _publication_root(self, root):
+        """Observe the kind and canonical name of one natively held root."""
+        tokens = self._tokens((root,))
+        resolved = root.resolve(strict=True)
+        info = root.stat()
+        if (
+            "path:" + str(resolved) not in tokens
+            or f"inode:{info.st_dev}:{info.st_ino}" not in tokens
+        ):
+            raise AdmissionError("root_identity_unverified")
+        return resolved, stat.S_ISDIR(info.st_mode)
+
+    def _publication_roots(self, roots, names, recovery_journal):
+        """Retain selected publication scope across this session's native moves."""
+        observed, missing = set(), []
+        for root in roots:
+            try:
+                observed.add(self._publication_root(root))
+            except FileNotFoundError:
+                if recovery_journal is None:
+                    raise
+                missing.append(root)
+        if missing:
+            from .replacement import _recovery_admission_aliases
+
+            aliases = _recovery_admission_aliases(
+                recovery_journal, self.control_root, names, tuple(missing)
+            )
+            for resolved, held in aliases.values():
+                kinds = [self._publication_root(path)[1] for path in held]
+                # If a replacement changes kind, neither version can widen an
+                # exact-file namespace to descendants during this operation.
+                observed.add((resolved, all(kinds)))
+        return tuple(sorted(observed))
 
     def register(self, namespace: str, roots: tuple[Path, ...]) -> None:
         """Register physically verified roots; busy alias introduction is refused."""
@@ -432,6 +497,7 @@ class Admission:
         deadline: float | None,
         cancel: threading.Event | None,
         incompatible: bool = False,
+        recovery_journal=None,
     ) -> Iterator[None]:
         names = self._names(namespaces)
         with self._nonnested(), self._directory() as parent, ExitStack() as leases:
@@ -445,7 +511,7 @@ class Admission:
                         parent, "registry.lock", fcntl.LOCK_SH, deadline, cancel
                     ):
                         registry = self._read(parent)
-                        group = self._groups(registry, names)
+                        group = self._groups(registry, names, recovery_journal)
                         if any(registry.entries[n].pending for n in group):
                             raise AdmissionError("remap_recovery_required")
                         for name in group:
@@ -507,7 +573,7 @@ class Admission:
                         )
                     )
                     current = self._read(parent)
-                    if self._groups(current, names) != group or any(
+                    if self._groups(current, names, recovery_journal) != group or any(
                         current.entries[n].pending for n in group
                     ):
                         raise AdmissionError("admission_scope_changed")
@@ -516,6 +582,21 @@ class Admission:
                         _mint_maintenance_session,
                         _failed_capture_holds,
                     )
+
+                    recovery_roots = None
+                    if recovery_journal is not None:
+                        from .replacement import _recovery_staging_roots
+
+                        recovery_roots = _recovery_staging_roots(
+                            recovery_journal,
+                            self.control_root,
+                            names,
+                            tuple(
+                                Path(r)
+                                for entry in current.entries.values()
+                                for r in entry.roots
+                            ),
+                        )
 
                     session = _mint_maintenance_session(
                         (Path(r) for n in group for r in current.entries[n].roots),
@@ -527,6 +608,14 @@ class Admission:
                         self.control_root,
                         group,
                         self._identity,
+                        recovery_roots=recovery_roots,
+                        publication_roots=self._publication_roots(
+                            tuple(
+                                Path(r) for n in group for r in current.entries[n].roots
+                            ),
+                            names,
+                            recovery_journal,
+                        ),
                     )
                     try:
                         yield session
@@ -606,6 +695,15 @@ class Admission:
     ) -> ContextManager[None]:
         """Close new admission, drain safely, then hold exclusive owner access."""
         return self._admit(namespaces, True, self._deadline(timeout), cancel)
+
+    def _replacement_recovery(self, journal, timeout, *, cancel=None):
+        """Hold the same stable locks across journal-proven rename gaps only."""
+        from .replacement import _recovery_admission_record
+
+        names, _, _ = _recovery_admission_record(journal, self.control_root)
+        return self._admit(
+            names, True, self._deadline(timeout), cancel, recovery_journal=journal
+        )
 
     def incompatible(self, namespaces: tuple[str, ...]) -> ContextManager[None]:
         """Represent positively observed incompatible activity for its OS lifetime."""
