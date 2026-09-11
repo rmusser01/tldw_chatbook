@@ -2282,22 +2282,32 @@ class LibraryMediaController:
         self._stop_library_media_filter_timer()
         self._request_library_media_filter(event.value)
 
-    @on(Button.Pressed, "#library-media-filter-clear")
-    @on(Button.Pressed, "#library-media-scope-clear")
-    def handle_library_media_filter_clear(self, event: Button.Pressed) -> None:
-        event.stop()
+    def _clear_library_media_filter(self, *, clear_type: bool) -> None:
+        """Drop the applied filter, and the type facet when asked.
+
+        Args:
+            clear_type: True for the scope line's Clear, which clears the
+                whole scope that line states; False for the toolbar's
+                "Clear filter", which clears only the filter it names.
+        """
         self._stop_library_media_filter_timer()
         # task-32350 AC#2: clearing the APPLIED filter clears the box too --
         # leaving a draft behind is exactly the split-brain this task closes.
         box = self.query("#library-media-filter")
         if box:
             box.first(Input).value = ""
-        # The scope line's Clear clears the whole scope that line states,
-        # type included; the toolbar's "Clear filter" keeps clearing only
-        # the filter its label names.
-        self._request_library_media_filter(
-            "", clear_type=event.button.id == "library-media-scope-clear"
-        )
+        self._request_library_media_filter("", clear_type=clear_type)
+
+    @on(Button.Pressed, "#library-media-filter-clear")
+    def handle_library_media_filter_clear(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._clear_library_media_filter(clear_type=False)
+
+    @on(Button.Pressed, "#library-media-scope-clear")
+    def handle_library_media_scope_clear(self, event: Button.Pressed) -> None:
+        """Clear the whole scope the scope line states (task-32350)."""
+        event.stop()
+        self._clear_library_media_filter(clear_type=True)
 
     def _load_library_media_list_if_needed(self) -> None:
         """Load the exact list after a direct viewer had no applied page."""

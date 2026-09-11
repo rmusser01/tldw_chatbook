@@ -455,12 +455,23 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             self.actions.handle_library_media_filter_submitted(event)
 
     @on(Button.Pressed, "#library-media-filter-clear")
-    @on(Button.Pressed, "#library-media-scope-clear")
     def handle_library_media_filter_clear(self, event: Button.Pressed) -> None:
-        """Route "Clear filter" and the scope line's Clear to the controller."""
+        """Route "Clear filter" to the media controller."""
         actions = self._media_actions_for_press(event)
         if actions is not None:
             actions.handle_library_media_filter_clear(event)
+
+    @on(Button.Pressed, "#library-media-scope-clear")
+    def handle_library_media_scope_clear(self, event: Button.Pressed) -> None:
+        """Route the scope line's Clear to the media controller (task-32350).
+
+        A separate row from "Clear filter" on purpose: the two clear
+        different things, and the region-ownership census maps one handler
+        to exactly one selector.
+        """
+        actions = self._media_actions_for_press(event)
+        if actions is not None:
+            actions.handle_library_media_scope_clear(event)
 
     @on(Button.Pressed, "#library-media-sort")
     def handle_library_media_sort(self, event: Button.Pressed) -> None:
