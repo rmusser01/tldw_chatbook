@@ -99,3 +99,14 @@ build/configure/compilation/loading/binding/GIL/callback/installed-wheel check,
 qualification harness, repeated conversation or soak. Hosted native builds are
 only the previously approved automatic PR CI. Packaged qualification and build
 identity bytes remain hard off; merging into dev does not qualify a release.
+
+## Final reviewed target advance
+
+After the integration repair commit `107b0853fd`, root reviewed the four-path
+composer voice-chip width change in exact dev
+`d80d85d9714513c48ef7cff5582cada537546f48`. A normal rebase preserved that delta
+without conflicts, producing code checkpoint
+`58d56090c1523fef7359248c068a1c020ecbcecb`. The delta changes no CSS sources or
+voice ownership/provider handlers. Verify its focused mounted geometry tests and
+the existing fake-only ConsoleHarness Hands-free controls; prior frozen inputs
+and cohort evidence above remain historical, not rewritten as new-head runs.
