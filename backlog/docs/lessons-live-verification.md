@@ -2495,3 +2495,15 @@ and legacy fenced tool results looked like new user turns and discarded active
 thinking. A live native calculator exchange on port 9099 retained its exact
 thinking in `/apply-template` and returned 221. Keep wire-field, rendered-prompt,
 and transcript-retention assertions separate; only claim the layer verified.
+
+
+## Observe populated rails across cache expiry, not just initial layout
+
+**TASK-32311, 2026-09-10.** Portrait resize tests settled, but the user saw the
+actual served Console rail repeatedly move. Tracing the populated local profile
+showed the Conversations body alternating between 53 and 13 rows every two
+seconds: TTL expiry returned an empty list while its background query ran.
+Retaining the same-key cached rows during refresh stopped the motion. Actual
+browser screenshots taken 23 seconds apart then had identical left-rail pixels.
+Use a populated profile and observe across refresh intervals; a single screenshot
+or an empty harness cannot establish that a layout stays still.

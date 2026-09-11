@@ -145,6 +145,9 @@ from ..Console_Modules.left_rail import (
     CONSOLE_RETRY_GENERATION_SETTINGS_ID,
     ConsoleLeftRail,
 )
+from ..Console_Modules.workspace import (
+    CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS as CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS,
+)
 from ..Console_Modules.message import ConsoleMessageController
 from ..Console_Modules.right_rail import ConsoleInspectorRail
 from ..Console_Modules.provider_continuation_recovery import (
@@ -775,13 +778,6 @@ CONSOLE_ACTIVE_RUN_STATUSES: tuple[ConsoleRunStatus, ...] = tuple(
 # is actively streaming (e.g. a sub-agent finished in a *different*
 # Console session/tab).
 CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS = 2.0
-# TASK-251 (audit P1 B1): the persisted conversation-browser rows behind
-# `_refresh_console_persisted_rows_cache` queries the DB per scope (global +
-# every workspace) on every 0.2s poll tick -- measured 11-70ms/tick. Modeled
-# directly on the sub-agent badge-count TTL cache above (same staleness
-# bound, same "explicit invalidation is a nice-to-have, the TTL is the
-# correctness backstop" philosophy).
-CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
 # Cost-ticker PR3 (task-5): the 0.2s transcript tick stops once a run leaves
 # an active status (`_start_console_transcript_sync_timer`), so a WARM
 # prompt cache that later goes EXPIRED on its own -- with no further sync

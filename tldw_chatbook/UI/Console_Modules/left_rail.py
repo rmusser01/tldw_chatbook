@@ -121,8 +121,8 @@ CONSOLE_REFRESH_RUNNING_APP_ID = "console-refresh-running-app"
 CONSOLE_DISMISS_DEFAULT_REFRESH_ID = "console-dismiss-default-refresh"
 #: The two peer list sections whose bounded-section ceilings grow to fill
 #: the rail (half the measured viewport each, via
-#: `console_rail_section_height_budget`). Every other section keeps the
-#: historical fixed ceiling.
+#: `console_rail_section_height_budget`). Character uses the full viewport
+#: minus its header; the remaining sections keep their fixed ceilings.
 _ADAPTIVE_BUDGET_SECTION_IDS = frozenset({"workspace", "conversations"})
 
 CharacterAvatarBox = tuple[int, int]
@@ -292,8 +292,7 @@ class ConsoleLeftRail(Vertical):
                 continue
             self.post_message(
                 self.SectionToggled(section_id=descriptor.section_id, opened=opened)
-                )
-
+            )
 
     class SectionToggled(Message):
         """A rail section's toggle button was pressed by the user.
@@ -462,6 +461,7 @@ class ConsoleLeftRail(Vertical):
         self._character_avatar_box: CharacterAvatarBox | None = None
         self._character_avatar_fit_generation = 0
         self._character_avatar_geometry_epoch = 0
+        self._character_avatar_controls_geometry: tuple[int, int] | None = None
         self._character_avatar_viewport_size: tuple[int, int] | None = None
         self._character_avatar_fit_signature: tuple[int, int, int] | None = None
         self._character_avatar_fit_result: CharacterAvatarBox | None = None
@@ -474,9 +474,7 @@ class ConsoleLeftRail(Vertical):
         )
         self._manual_reaction_label = str(manual_reaction_label or "").strip()
         self._settings_session_id = settings_session_id
-        self._settings_persistence_failures = dict(
-            settings_persistence_failures or {}
-        )
+        self._settings_persistence_failures = dict(settings_persistence_failures or {})
         self._default_durability_state = (
             default_durability_state or ConsoleDefaultDurabilityState()
         )
@@ -508,7 +506,9 @@ class ConsoleLeftRail(Vertical):
         """Synchronize body content and the collapsed Character summary."""
 
         try:
-            widget = self.query_one("#console-character-context", ConsoleCharacterContext)
+            widget = self.query_one(
+                "#console-character-context", ConsoleCharacterContext
+            )
             header = self.query_one(
                 "#console-rail-section-header-character",
                 DestinationRailSectionHeader,
@@ -674,7 +674,9 @@ class ConsoleLeftRail(Vertical):
         generation = failures.get(ConsoleSettingsComponent.GENERATION_SETTINGS)
         context = failures.get(ConsoleSettingsComponent.CONTEXT_POLICY)
         default_copy = self._default_recovery_copy(default_state)
-        has_warning = generation is not None or context is not None or bool(default_copy)
+        has_warning = (
+            generation is not None or context is not None or bool(default_copy)
+        )
 
         try:
             title = self.query_one("#console-rail-section-title-model", Static)
@@ -688,9 +690,7 @@ class ConsoleLeftRail(Vertical):
             context_button = self.query_one(
                 f"#{CONSOLE_RETRY_CONTEXT_SETTINGS_ID}", Button
             )
-            retry_default = self.query_one(
-                f"#{CONSOLE_RETRY_DEFAULT_SAVE_ID}", Button
-            )
+            retry_default = self.query_one(f"#{CONSOLE_RETRY_DEFAULT_SAVE_ID}", Button)
             discard_default = self.query_one(
                 f"#{CONSOLE_DISCARD_DEFAULT_RETRY_ID}", Button
             )
@@ -1248,6 +1248,12 @@ class ConsoleLeftRail(Vertical):
                 and section.max_content_lines != adaptive_budget
             ):
                 section.max_content_lines = adaptive_budget
+            if descriptor.section_id == "character" and viewport_height > 0:
+                header = self.query_one("#console-rail-section-header-character")
+                section.max_content_lines = max(
+                    descriptor.max_content_lines,
+                    viewport_height - header.outer_size.height,
+                )
             section.set_allocation(None)
             if section.native_scroll_owner is None:
                 section.styles.height = "auto"
@@ -1358,6 +1364,9 @@ class ConsoleLeftRail(Vertical):
             body = self.query_one("#console-rail-section-body-character", Vertical)
             frame = self.query_one("#console-character-avatar-frame", Horizontal)
             holder = self.query_one("#console-character-avatar", ClickableAvatarBox)
+            section = self.query_one(
+                "#console-bounded-section-character", ConsoleBoundedSection
+            )
         except (NoMatches, QueryError):
             return
         if not body.display or not body.is_mounted or not holder.is_mounted:
@@ -1366,8 +1375,12 @@ class ConsoleLeftRail(Vertical):
         complete_rows = max(0, body.virtual_region_with_margin.height)
         image_rows = max(0, frame.virtual_region_with_margin.height)
         measured_non_image_rows = max(0, complete_rows - image_rows)
-        available_rows = max(0, 35 - measured_non_image_rows)
+        available_rows = max(0, section.max_content_lines - measured_non_image_rows)
         available_cols = max(0, body.content_region.width)
+        controls_geometry = (available_cols, measured_non_image_rows)
+        if controls_geometry != self._character_avatar_controls_geometry:
+            self._character_avatar_controls_geometry = controls_geometry
+            self.invalidate_character_avatar_geometry()
         is_followup = self._character_avatar_followup_pending
         self._character_avatar_followup_pending = False
         fit_signature = (
@@ -2123,7 +2136,9 @@ class ConsoleLeftRail(Vertical):
             )
             avatar_holder.styles.width = "auto"
             avatar_holder.styles.height = "auto"
-            avatar_frame = Horizontal(avatar_holder, id="console-character-avatar-frame")
+            avatar_frame = Horizontal(
+                avatar_holder, id="console-character-avatar-frame"
+            )
             avatar_frame.styles.width = "100%"
             avatar_frame.styles.height = "auto"
             avatar_frame.styles.align_horizontal = "center"
