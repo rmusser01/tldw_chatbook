@@ -276,7 +276,11 @@ def test_authoritative_projection_distinguishes_unfiltered_from_literal_all_type
 
 
 def test_rows_with_type_and_age_secondary_and_missing_last():
-    """Rows sorted by recency with secondary showing '{type} · {age}' or fallback."""
+    """Rows sorted by recency with secondary showing '{type} · {age}' or fallback.
+
+    task-32347: the age is labelled ("added 3m ago"), not bare -- on an audio
+    or video row a bare "3m" reads as the item's duration.
+    """
     records = [
         {
             "id": "media-b",
@@ -302,8 +306,8 @@ def test_rows_with_type_and_age_secondary_and_missing_last():
 
     assert isinstance(state, LibraryMediaCanvasState)
     assert [row.media_id for row in state.rows] == ["media-a", "media-b", "media-c"]
-    assert state.rows[0].secondary == "pdf · 3m"
-    assert state.rows[1].secondary == "video · 2h"
+    assert state.rows[0].secondary == "pdf · added 3m ago"
+    assert state.rows[1].secondary == "video · added 2h ago"
     # No age available -> no " · {age}" suffix
     assert state.rows[2].secondary == "audio"
     for row in state.rows:
@@ -504,7 +508,10 @@ def test_limit_truncates_rows_to_max_after_sorting():
 
 
 def test_id_title_type_key_fallbacks():
-    """Test key fallbacks: media_id/id/uuid, title, type/media_type."""
+    """Test key fallbacks: media_id/id/uuid, title, type/media_type.
+
+    task-32347: the secondary's age is labelled ("added 3m ago"), not bare.
+    """
     records = [
         {
             "media_id": "mid-99",
@@ -526,12 +533,12 @@ def test_id_title_type_key_fallbacks():
     row_a = state.rows[0]  # sorted by recency
     assert row_a.media_id == "mid-99"
     assert row_a.title == "Fallback Media"
-    assert row_a.secondary == "video · 3m"
+    assert row_a.secondary == "video · added 3m ago"
 
     row_b = state.rows[1]
     assert row_b.media_id == "uuid-77"
     assert row_b.title == "UUID Media"
-    assert row_b.secondary == "pdf · 2h"
+    assert row_b.secondary == "pdf · added 2h ago"
 
 
 def test_untitled_fallback_for_missing_title():

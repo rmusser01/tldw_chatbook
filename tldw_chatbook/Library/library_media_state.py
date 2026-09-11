@@ -951,6 +951,30 @@ def media_trash_age_copy(trash_date: str | None, *, now: datetime | None = None)
     return f"trashed {age}" if age else ""
 
 
+def media_added_age_copy(value: str, *, now: datetime) -> str:
+    """Return the Media row's age, labelled for what it is.
+
+    task-32347 (critique #10 P1): the bare compact age ("10m") sat where a
+    reader of an `audio` or `video` row reads a DURATION -- the same row
+    read 11m and 14m later (A caps 36/39/47). The Trash list solved this
+    long ago by labelling its own age ("trashed 3m"); this is the browse
+    list's half of the same rule. ``format_console_relative_age`` returns
+    the word "now" under a minute, which no "N ago" phrasing survives, so
+    that case gets its own sentence.
+
+    Args:
+        value: The record's timestamp text.
+        now: Reference time.
+
+    Returns:
+        "added 10m ago", "added just now", or "" when unparseable.
+    """
+    age = format_console_relative_age(value, now=now)
+    if not age:
+        return ""
+    return "added just now" if age == "now" else f"added {age} ago"
+
+
 def build_library_media_trash_state(
     records: Sequence[Any] | None,
     *,
@@ -1123,7 +1147,7 @@ def build_library_media_browse_state(
             media_type=_first_present_text(item, ("media_type",)),
             secondary=_secondary_text(
                 _first_present_text(item, ("media_type",)),
-                format_console_relative_age(
+                media_added_age_copy(
                     _first_present_text(item, ("updated_at",)), now=reference_now
                 ),
                 analysed=bool(item["has_analysis"]),
@@ -1450,7 +1474,7 @@ def build_library_media_state(
             media_type=entry.media_type,
             secondary=_secondary_text(
                 entry.media_type,
-                format_console_relative_age(entry.updated_raw, now=reference_now),
+                media_added_age_copy(entry.updated_raw, now=reference_now),
             ),
             selected=entry.media_id == resolved_selected_id,
             checked=entry.media_id in selected_ids,
