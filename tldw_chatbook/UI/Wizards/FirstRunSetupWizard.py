@@ -6559,16 +6559,28 @@ class ToolsStep(SetupStep):
     # modules at compose time. An unknown (future) tool degrades to its
     # capitalized name with no description rather than breaking the step.
     _TOOL_COPY = {
-        "read_file": ("Read file", "Read a file you point the assistant at."),
-        "list_directory": ("List directory", "Browse the contents of a folder."),
+        "read_file": (
+            "Read file",
+            "Read a file you point the assistant at. Asks you each time before running.",
+        ),
+        "list_directory": (
+            "List directory",
+            "Browse the contents of a folder. Asks you each time before running.",
+        ),
         "write_file": ("Write file", "⚠ Creates or overwrites files on disk."),
         "create_note": ("Create note", "⚠ Adds new notes to your notebook."),
         "update_note": ("Update note", "⚠ Edits your existing notes."),
-        "glob_files": ("Find files", "Match file names by pattern (like *.md)."),
-        "grep_files": ("Search in files", "Search inside files for text."),
+        "glob_files": (
+            "Find files",
+            "Match file names by pattern (like *.md). Asks you each time before running.",
+        ),
+        "grep_files": (
+            "Search in files",
+            "Search inside files for text. Asks you each time before running.",
+        ),
         "expand_document": (
             "Expand document",
-            "Read the whole document behind a search result.",
+            "Read the whole document behind a search result. Asks you each time before running.",
         ),
     }
 
