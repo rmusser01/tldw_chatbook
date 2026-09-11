@@ -13755,8 +13755,8 @@ class LibraryScreen(BaseAppScreen):
     ) -> tuple[Any, ...]:
         """Build the Actions group's Details rail rows.
 
-        Only the two action buttons plus one dim WIP note survive here; the
-        Workspace group's Handoff row now carries the eligible/blocked
+        Only the two action buttons plus one dim storage note survive here;
+        the Workspace group's Handoff row now carries the eligible/blocked
         status, so the retired ready/blocked/next-step callouts that used to
         repeat it are gone.
         """
@@ -15002,7 +15002,15 @@ class LibraryScreen(BaseAppScreen):
             anchors = list(self.query("#library-details-body"))
             if not anchors:
                 return
-            header, parent = library_diagnostics_disclosure(False)
+            # Review F10: the rail owns the open/closed state, so a
+            # disclosure mounted here has to arrive in the state the rail
+            # believes it is in -- otherwise a reopen after the sizes
+            # briefly vanished would leave `diagnostics_open` True against
+            # a closed body, and the next toggle press would read as inert.
+            rail = self._active_library_rail()
+            header, parent = library_diagnostics_disclosure(
+                bool(rail is not None and rail.diagnostics_open)
+            )
             try:
                 await anchors[0].parent.mount_all([header, parent], after=anchors[0])
             except Exception:
