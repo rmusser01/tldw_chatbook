@@ -704,3 +704,41 @@ async def test_the_reason_line_sits_directly_under_the_action_it_describes(
             order.index("library-conversation-open-console-blocked")
             == order.index("library-conversation-use-source") + 1
         ), order
+
+
+@pytest.mark.asyncio
+async def test_the_receipt_never_stands_beside_the_refusal_it_resolved() -> None:
+    """task-32107 (re-review P3): "can now be used in Console" has to stay true.
+
+    The other half of the stale-receipt problem the id-based Undo fix does not
+    cover: activate a workspace this conversation is NOT in and the block
+    comes straight back, so the reader would paint the refusal sentence and a
+    receipt claiming the opposite, one under the other.
+    """
+    host = _conversations_host(linked=False)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_first_conversation(host, pilot)
+        screen.query_one("#library-conversation-use-source", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen.query_one("#library-conversation-link-receipt", Static).display
+        assert not screen.query_one(
+            "#library-conversation-open-console-blocked", Static
+        ).display
+
+        # The active workspace moves to one this conversation is not in.
+        host.registry.create_workspace(workspace_id="workspace-b", name="Other")
+        host.registry.set_active_workspace("workspace-b")
+        screen._invalidate_library_workspace_depth_state()
+        screen._sync_library_conversation_reader()
+        await pilot.pause()
+
+        blocked = screen.query_one(
+            "#library-conversation-open-console-blocked", Static
+        )
+        receipt = screen.query_one("#library-conversation-link-receipt", Static)
+        assert blocked.display is True, "the block came back"
+        assert receipt.display is False, str(receipt.renderable)
+        assert screen.query_one(
+            "#library-conversation-link-undo", Button
+        ).display is False

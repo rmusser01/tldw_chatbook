@@ -78,6 +78,28 @@ Files: tldw_chatbook/Widgets/Library/library_conversation_reader.py, tldw_chatbo
   Console" control row (it is `Resume conversation`/`Restore and resume`, and
   it does not stage source context) is corrected while the page is open
   (review nit 9).
+
+### Fix round 2 (re-review P3)
+
+The other half of the stale-receipt problem the id-based Undo fix did not
+cover: activating a workspace this conversation is NOT in brings the block
+straight back, and the reader painted the refusal sentence with a receipt
+claiming "this conversation can now be used in Console" directly under it.
+
+`_workspace_link_receipt()` now withholds the receipt (and its Undo) while any
+workspace block stands. That is the receipt's own claim restated as its
+display rule, so it needs no extra state and no second copy of "which
+workspace is active": the block is recomputed on every sync, and the receipt
+reappears untouched if that workspace is made active again. Pinned red-first
+with a workspace switch (`test_the_receipt_never_stands_beside_the_refusal_it_resolved`).
+
+Chosen over the suggested id-match because the reader is a pure widget: an
+id comparison would need the active workspace id injected at BOTH metadata
+sites, one of which is outside this branch's owned ranges, to answer a
+question the existing block already answers. Residual, deliberately not
+covered: switching to a DIFFERENT workspace that also holds this membership
+leaves a receipt naming the first one while its claim is still true; Undo
+still removes the membership that receipt names, so the two stay consistent.
 <!-- SECTION:NOTES:END -->
 
 ## Decision

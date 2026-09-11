@@ -190,7 +190,19 @@ class LibraryConversationReader(Vertical):
         return self._actions_enabled() or self._workspace_link_offered()
 
     def _workspace_link_receipt(self) -> str:
-        """Return the workspace the last press linked into, or empty."""
+        """Return the workspace the last press linked into, or empty.
+
+        (re-review P3) Withheld while ANY workspace block stands, because the
+        receipt's whole claim is "this conversation can now be used in
+        Console". Activating a workspace this conversation is not in brings
+        the block straight back, and the reader would otherwise paint the
+        refusal sentence and a receipt contradicting it, one under the other.
+        The block is recomputed on every sync, so this needs no state of its
+        own -- and the receipt reappears untouched if that workspace is made
+        active again.
+        """
+        if self._workspace_block():
+            return ""
         return str(self.loaded_metadata.get("_workspace_link_receipt") or "").strip()
 
     def _source_label(self) -> str:
