@@ -458,10 +458,71 @@ class _RecoveredAdapter:
         return ()
 
     def relocate_restore(self, item, candidate, mapping):
-        """Generated relative locators need no rewrite; validate the exact role."""
+        """Preserve source identities and add the selected profile's aliases."""
         issues = self.validate_restore(item, candidate)
         if issues:
             raise ValueError(issues[0])
+        if self.restore_role(item) != "sqlite":
+            return  # Generated payload locators remain relative and unchanged.
+
+        from .profile_paths import lexical_path as selected_path
+
+        parts = item.logical_id.split(":")
+        if len(parts) < 3 or parts[0] != "profile" or parts[2] != self.owner_id:
+            raise ValueError("recovered_profile_mapping_required")
+        config_id = f"profile:{parts[1]}:config"
+        destination = mapping.get(config_id)
+        if config_id not in item.dependencies or not isinstance(destination, Path):
+            raise ValueError("recovered_profile_mapping_required")
+        profile = hashlib.sha256(str(selected_path(destination)).encode()).hexdigest()[
+            :24
+        ]
+        with (
+            closing(
+                connect_private_sqlite("recovery.recovered_media", candidate)
+            ) as connection,
+            connection,
+        ):
+            connection.execute("BEGIN IMMEDIATE")
+            # Validate again on the same connection that owns all alias changes.
+            issues = self._validate_connection(connection)
+            if issues:
+                raise ValueError(issues[0])
+            references = connection.execute(
+                "SELECT r.message,r.slug,r.media_type,r.asset_id,a.state "
+                "FROM refs r JOIN assets a USING(asset_id) WHERE r.profile=? "
+                "ORDER BY r.message,r.slug,r.media_type",
+                (parts[1],),
+            ).fetchall()
+            deleted = set()
+            for message, slug, media_type, asset_id, state in references:
+                identity = (profile, message, slug, media_type)
+                existing = connection.execute(
+                    "SELECT asset_id FROM refs WHERE profile=? AND message=? AND slug=? AND media_type=?",
+                    identity,
+                ).fetchone()
+                if existing is not None and existing != (asset_id,):
+                    raise ValueError("recovered_reference_collision")
+                if existing is None:
+                    connection.execute(
+                        "INSERT INTO refs VALUES (?,?,?,?,?)", identity + (asset_id,)
+                    )
+                    if state == "deleted":
+                        deleted.add(asset_id)
+            for asset_id in sorted(deleted):
+                references = list(
+                    connection.execute(
+                        "SELECT profile,message,slug,media_type FROM refs WHERE asset_id=? ORDER BY profile,message,slug,media_type",
+                        (asset_id,),
+                    )
+                )
+                connection.execute(
+                    "UPDATE tombstones SET references_json=? WHERE asset_id=?",
+                    (json.dumps(references), asset_id),
+                )
+            issues = self._validate_connection(connection)
+            if issues:
+                raise ValueError(issues[0])
 
     def validate_restore_dependencies(self, item, candidate, candidates, *, topology):
         """Match ready catalog entries to declared archive-local payload IDs."""
