@@ -1299,7 +1299,8 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         )
 
     def _tool_gate_widgets(self) -> list[Widget]:
-        """Build the `[tools]`/`[console]` gate rows (task-3240).
+        """Build the `[tools]`/`[console]` gate rows (task-3240; moved to
+        the AGENT detail by ADR-148 Wave D).
 
         Builtin-source snapshots only, same gate as `_builtin_toggle_
         widgets()` -- spec review finding 5 (branch (b)): `_collect_
@@ -1316,7 +1317,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         it is flipping -- against a stale mapping.
         """
         snapshot = self._detail_snapshot
-        if snapshot is None or snapshot.source != "builtin":
+        if snapshot is None or snapshot.source != "agent":
             self._tool_gates_by_id = {}
             return []
         gates = all_tool_gates()
@@ -1507,9 +1508,18 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             lines.append(f"Resources · {_count_display(snapshot.resource_count)}")
             lines.append(f"Prompts · {_count_display(snapshot.prompt_count)}")
             lines.append("External server records: see Advanced ▸ External Servers.")
+        elif snapshot.source == "agent":
+            lines.append(
+                "Registers the in-process tools Console agents can see — it "
+                "does not grant permission; the Permissions matrix still "
+                "gates every call."
+            )
         else:  # builtin
             lines.append("Runs over stdio when an MCP client launches it:")
             lines.append("  python3 -m tldw_chatbook.MCP")
+            # ADR-148 Wave D: the agent tool gates moved to their own rail
+            # row's detail -- leave a pointer so nobody hunts for them here.
+            lines.append("Agent tool gates live under Agent tools in the rail.")
             # A3c/Task 10: the old "Exposes · tools, resources" prose line
             # (a human-readable summary of the expose_* flags) is now the
             # four Checkbox rows built by `_builtin_toggle_widgets()` --
