@@ -43,8 +43,11 @@ replica=FileNotesReplica(data/'replica.db');files=FileNotesService(folder,replic
 _,profiles,_=bootstrap._control_records(bootstrap.default_bootstrap_root())
 witness=next(p['activation'] for p in profiles if p['selector']==str(config))
 store=ActivationStore(Path(witness['store_root']))
-store.approve(witness['generation'],'config')
-store.approve(witness['generation'],'db.chachanotes.primary')
+def assert_unrelated_owners_inactive():
+ for other in ('config','db.chachanotes.primary','skills','runtime.sync_state','db.scheduled_tasks'):
+  assert other in witness['owners'],other
+  assert not store.allowed(witness['generation'],other),other
+assert_unrelated_owners_inactive()
 """
 
 _MANUAL = (
@@ -110,15 +113,21 @@ elif action=='incomplete':
 else:
  approve(review)
  assert store.allowed(witness['generation'],owner)
- assert not store.allowed(witness['generation'],'sync.state')
+ other_notes='notes.file_notes' if route=='sync' else 'notes.sync_bindings'
+ assert not store.allowed(witness['generation'],other_notes)
  if route=='sync':
   session,progress=asyncio.run(sync.sync_folder(folder,'test',SyncDirection.DISK_TO_DB))
   assert progress.created_notes and ':' in session
   assert notes.get_note_by_id('test',progress.created_notes[0])['content']==disk.decode()
+  with db.transaction() as connection:
+   conflict=connection.execute("INSERT INTO sync_conflicts(session_id,file_path,conflict_type) VALUES(?,?,?)",(session,str(folder/'one.md'),'both_changed')).lastrowid
+  assert sync.resolve_conflict(conflict,'skip','test')
+  assert db.get_connection().execute('SELECT resolution FROM sync_conflicts WHERE id=?',(conflict,)).fetchone()[0]=='skip'
  else:
   assert files.reconcile().created==('one.md',)
   assert replica.get_bytes(files.root_key,'one.md')==disk
  assert (folder/'one.md').read_bytes()==disk
+assert_unrelated_owners_inactive()
 assert not blocked_attempts()
 db.close_connection();replica.close()
 print('retired and reopened')
@@ -369,7 +378,7 @@ folder=data/'new-local-notes';folder.mkdir();(folder/'new.md').write_text('Fresh
 _,profiles,_=bootstrap._control_records(bootstrap.default_bootstrap_root())
 witness=next(p['activation'] for p in profiles if p['selector']==str(selector))
 store=ActivationStore(Path(witness['store_root']))
-for owner in ('config','db.chachanotes.primary'):store.approve(witness['generation'],owner)
+for owner in ('config','db.chachanotes.primary'):assert not store.allowed(witness['generation'],owner)
 review=service.preview_recovery(folder,'test')
 assert review.historical_owners==('captured-machine',),review
 assert not service.resolve_conflict(conflict,'use_disk','test')
@@ -380,6 +389,7 @@ session,progress=asyncio.run(service.sync_folder(folder,'test',SyncDirection.DIS
 assert ':' in session and progress.created_notes
 row=notes.get_connection().execute('SELECT status,client_id FROM sync_sessions WHERE session_id=?',('old-running-session',)).fetchone()
 assert tuple(row)==('running','captured-machine')
+for owner in ('config','db.chachanotes.primary'):assert not store.allowed(witness['generation'],owner)
 notes.close();assert not blocked_attempts()
 print('actual archived Notes history remains inert after owner review')
 """
@@ -544,11 +554,13 @@ with MonkeyPatch.context() as patch, replacement_case(base,patch,prepared=False)
  (folder/'note.md').write_text('Unchanged live File Notes bytes')
  _,profiles,_=bootstrap._control_records(bootstrap.default_bootstrap_root())
  prior=next(p['activation'] for p in profiles if p['selector']==str(selector))
- store=ActivationStore(Path(prior['store_root']));store.approve(prior['generation'],'config')
+ store=ActivationStore(Path(prior['store_root']))
+ assert not store.allowed(prior['generation'],'config')
  from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
  from tldw_chatbook.Notes.file_notes_service import FileNotesService
  replica=FileNotesReplica(selector.parent/'replica.db');files=FileNotesService(folder,replica)
  files.approve_recovery(files.preview_recovery())
+ assert not store.allowed(prior['generation'],'config')
  old_claims=[(p.name,p.read_bytes()) for p in store._generation(prior['generation']).glob('notes-pairing-*.json')]
  assert old_claims
  replica.close()
@@ -569,7 +581,8 @@ with MonkeyPatch.context() as patch, replacement_case(base,patch,prepared=False)
  assert not current_store.allowed(current['generation'],'notes.file_notes')
  for name,data in old_claims:
   path=current_store._generation(current['generation'])/name;path.write_bytes(data);path.chmod(0o600)
- for owner in ('config','notes.file_notes'):current_store.approve(current['generation'],owner)
+ current_store.approve(current['generation'],'notes.file_notes')
+ assert not current_store.allowed(current['generation'],'config')
  observed=files.reconcile()
  assert observed.replica_warning and not replica.list_active_files(files.root_key)
  assert (folder/'note.md').read_text()=='Unchanged live File Notes bytes'

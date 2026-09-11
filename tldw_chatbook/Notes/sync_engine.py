@@ -39,7 +39,7 @@ def _sync_execution(method):
     async def call(self, root_path, user_id, *args, **kwargs):
         from tldw_chatbook.Backup_Recovery.activation import execution_scope
 
-        owners = ("config", "notes.sync_bindings", "db.chachanotes.primary")
+        owners = ("notes.sync_bindings",)
         db_path = None if str(self.db.db_path) == ":memory:" else Path(self.db.db_path)
         if not isinstance(user_id, str) or not user_id.strip():
             raise ValueError("user_id must be a non-empty string for DB operations.")

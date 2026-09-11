@@ -176,7 +176,7 @@ class NotesSyncService:
 
         db_path = None if str(self.db.db_path) == ":memory:" else Path(self.db.db_path)
         with execution_scope(
-            ("config", "notes.sync_bindings", "db.chachanotes.primary"), db_path
+            ("notes.sync_bindings",), db_path
         ) as allowed:
             if not allowed:
                 return False

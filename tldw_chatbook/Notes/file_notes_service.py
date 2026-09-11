@@ -230,7 +230,7 @@ class FileNotesService:
             if self._replica is not None and not self._replica.is_memory_db
             else None
         )
-        owners = ("config", "notes.file_notes")
+        owners = ("notes.file_notes",)
         with (
             execution_scope(owners, self.root) as root_allowed,
             execution_scope(owners, replica_path) as replica_allowed,
