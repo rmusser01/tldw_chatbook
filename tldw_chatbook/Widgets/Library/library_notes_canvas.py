@@ -206,7 +206,14 @@ def _library_note_back_label(compact: bool) -> str:
 #: The storage authority every Database Notes surface answers to. Painted once
 #: per screen: the mounted list pane owns it, and a work pane beside it drops
 #: it rather than repeating the same sentence (task-32063).
-NOTES_AUTHORITY_PREFIX = "Library notes · Library database"
+#:
+#: task-32218: ONE noun for this source. It used to read "Library notes ·
+#: Library database", and three sibling sites said "Database Notes · Library
+#: database" -- five names for two sources across one journey, so the word a
+#: reader clicked in the strip ("Library notes") never reappeared where they
+#: landed. The source strip's own label is the noun; everything else here
+#: quotes it.
+NOTES_AUTHORITY_PREFIX = "Library notes"
 
 #: Every control a reader types a note into. A refresh that would recompose
 #: this canvas while one of them has focus is deferred instead (task-32062).
@@ -327,7 +334,7 @@ def resolve_database_note_status_channels(
         content, safe = "Unsaved changes", None
     else:
         content, safe = "Saved", None
-    return NotesStatusChannels(content, "Database Notes · Library database", safe)
+    return NotesStatusChannels(content, NOTES_AUTHORITY_PREFIX, safe)
 
 
 @dataclass(frozen=True)
@@ -1769,7 +1776,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         status_line = presentation_state.status_line
         channels = presentation_state.status_channels or NotesStatusChannels(
             status_line or "Saved",
-            "Database Notes · Library database",
+            NOTES_AUTHORITY_PREFIX,
         )
 
         # File-synced notes may carry YAML front matter; consume it instead
@@ -2309,7 +2316,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             preview_body.update(snapshot.body)
         channels = state.status_channels or NotesStatusChannels(
             state.status_line or "Saved",
-            "Database Notes · Library database",
+            NOTES_AUTHORITY_PREFIX,
         )
         content_copy = channels.content_recovery
         if channels.safe_next_action:
