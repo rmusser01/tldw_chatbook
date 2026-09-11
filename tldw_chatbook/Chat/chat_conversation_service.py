@@ -819,6 +819,7 @@ class ChatConversationService:
         state: str | None = None,
         topic_label: str | None = None,
         character_id: int | None = None,
+        character_scope: str | None = None,
     ) -> dict[str, Any]:
         """Return one normalized, bounded page of local conversations.
 
@@ -845,6 +846,12 @@ class ChatConversationService:
             state: Optional normalized conversation-state filter.
             topic_label: Optional exact topic-label filter.
             character_id: Optional exact character owner.
+            character_scope: Optional character-ownership class filter --
+                ``"character"`` (only character conversations), ``"generic"``
+                (only non-character conversations), or None for no filter.
+                Applied before counts and pagination, so lane owners can
+                exclude conversations they do not display without wasting
+                page slots on them.
 
         Returns:
             A mapping containing normalized ``items`` and a ``pagination``
@@ -901,6 +908,7 @@ class ChatConversationService:
             state=_normalize_state(state) if state is not None else None,
             topic_label=_clean_text(topic_label),
             character_id=character_id,
+            character_scope=character_scope,
             limit=limit,
             offset=offset,
         )
