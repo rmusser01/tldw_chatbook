@@ -181,15 +181,6 @@ the rail or the canvas. Activating a rail destination opens its canvas; use
 the co-present layout and prior focus/scroll position when no newer action has
 replaced it.
 
-- **Chunking Lab strip** — directly under the header, on *every* Library
-  canvas: a **Chunking Lab** button and a **Try selected text** button.
-  This is a developer tool for comparing chunking strategies, not part of
-  the destination you are on; **Chunking Lab** opens it full-screen (see
-  [Search & RAG](library/search-and-rag.md) for what chunking affects).
-  It is deliberately undocumented per-canvas because it is identical
-  everywhere. Escape does not currently leave the Lab — use the nav bar or
-  the command palette. Demoting this strip out of every canvas header is
-  tracked as task-32064.
 - **Header line** — reads **Library | Local**, or **Library | Server:
   \<label\>** when a server runtime is configured.
 - **Left rail**, top to bottom. A new empty profile first sees the compact
@@ -229,7 +220,12 @@ replaced it.
     selected row is marked **▸**, and the Flashcards row shows "due: N"
     instead of a plain count;
   - a **Details** section, collapsed by default (see below). Section
-    headers toggle open (**▾**) and closed (**▸**).
+    headers toggle open (**▾**) and closed (**▸**). **Chunking Lab** and
+    **Try selected text** live inside it — see the control table below.
+    When the rail is too short to show everything at once, its last line
+    reads "▾ scroll for more" (hover it for the keyboard route: **F6**
+    moves focus into the rail). The line disappears as soon as the whole
+    rail fits.
 - **Canvas** (the right pane) — there are no tabs here: the canvas swaps
   to match whichever rail row is selected. Before you pick one, a populated
   profile sees the returning landing described above. Import… and New note
@@ -291,7 +287,7 @@ leading `▸` uses cannot collide on one control.
 | **New note** | Opens the production note-creation canvas. It is shown directly in the Get started rail. |
 | **Explore all tools** | Reveals and remembers the complete Library without changing section disclosures. |
 | **Back to Get started** | Returns an explicitly expanded, still-empty Library to the Get started landing and compact rail, with focus on **Import…**. It is never offered after graduation. |
-| **Search Library…** | Type a query and press Enter: lands on the Search / RAG canvas and runs it (empty submit just opens the canvas) — see [Search & RAG](library/search-and-rag.md). **x** beside the box empties it. The box shows the live query only on the Search / RAG canvas; every other canvas gets an empty box, and returning to Search / RAG restores the query and its results. |
+| **Search Library…** | Type a query and press Enter: lands on the Search / RAG canvas and runs it (empty submit just opens the canvas) — see [Search & RAG](library/search-and-rag.md). **x** beside the box empties it. The box shows the live query only on the Search / RAG canvas; every other canvas gets an empty box, and returning to Search / RAG restores the query and its results. Text typed into the box on another canvas and never submitted is discarded when you leave — it never becomes the Search / RAG query. |
 | **Chunking Lab** / **Try selected text** | Under **Details ▸ Actions**, above the line "Chunking Lab — compare how text is split for search". Opens a full-screen A/B tool; **Escape** there returns to the Library canvas you came from, including from the sample editor. |
 | **▾** / **▸** (section headers) | Open or collapse that rail section — see [State glyphs](#state-glyphs). |
 
@@ -394,8 +390,8 @@ current as of that open, not a reading cached at some earlier repaint.
 
 | Group | Contents |
 |---|---|
-| **Status** | A "Source · Local" (or "Source · Server: \<label\>") line, and a counts row: "Notes N · Media N · Conversations N". |
-| **Workspace** | "Active · \<workspace name\>" and "Handoff · \<summary\>" lines. |
+| **Status** | A "Source · Local" (or "Source · Server: \<label\>") line, a counts row ("Notes N · Media N · Conversations N"), and — once a reading exists — a "DB sizes" label with one line per database ("Prompts 180.0KB", "Chats/Notes 1.1MB", "Media 508.0KB"), a line each so no size is split across two rail lines. |
+| **Workspace** | "Active · \<workspace name\>" and a "Handoff" line. With nothing blocked it is a bare count ("0 eligible"). When something is blocked it names the reason and the next step: "2 eligible · 1 blocked · not in this workspace · Link it from the conversation's header". |
 | **Actions** | The buttons below, plus the note "Server sync WIP · local only". |
 
 | Action | What it does |
@@ -844,3 +840,14 @@ legend is now stated once, under **State glyphs**.
 Fix round 1 adds the Import queue's own `●`/`≡`/`⊘`, and round 2 splits `●`
 by context: leading a queue row it means "still working", inside a line it
 is a count marker or a colour swatch, neither of them a state.)*
+
+*Verified against fix/library-crit9-rail — 2026-09-10 (task-32219: the Layout
+tour no longer claims the Chunking Lab strip sits under every canvas header —
+the control table's "Details ▸ Actions" is now the page's only statement of
+its placement, and the rail says "▾ scroll for more" when its content runs
+past the fold. task-32212: the rail search row keeps the pane's frame at 235,
+100 and 60 columns. task-32220: the rail heading ellipsises instead of
+cutting to "Navigati". task-32226: rail text typed on another canvas and
+never submitted no longer seeds the Search / RAG query box. task-32230: the
+Details DB sizes take a line each, and the Handoff line names the blocked
+item's reason and its next step.)*
