@@ -367,6 +367,7 @@ class BackupRestoreScreen(Screen):
 
     @work(exclusive=True, thread=True, group="backup-list")
     def _refresh_list(self, app, revision, mode):
+        current = self.service.current_requirements() if mode == "profiles" else None
         try:
             entries = (
                 self.service.recovery_copies()
@@ -390,11 +391,12 @@ class BackupRestoreScreen(Screen):
                 (),
                 (),
                 self.service.issue_code(error),
+                current,
             )
         else:
-            self._deliver(app, self._list_ready, revision, mode, entries, pending, None)
+            self._deliver(app, self._list_ready, revision, mode, entries, pending, None, current)
 
-    async def _list_ready(self, revision, mode, entries, pending, issue):
+    async def _list_ready(self, revision, mode, entries, pending, issue, current=None):
         if not self.is_mounted or mode != self._mode or revision != self._revision:
             return
         self.query_one("#backup-list-title", Static).update(
@@ -412,7 +414,24 @@ class BackupRestoreScreen(Screen):
         self.query_one("#backup-delete-preview", Static).update("")
         listing = self.query_one("#backup-list", Vertical)
         await listing.remove_children()
-        if not entries and not pending:
+        if current is not None:
+            if current["status"] == "no_verified_generation":
+                setup = "No verified recovery generation for this current profile. Optional features may still require setup."
+            elif not current["requirements_checked"]:
+                setup = "Setup requirements unavailable. Local recovery evidence needs attention."
+            elif current["needs_setup"]:
+                setup = "Needs setup\nReview these features in their settings before enabling them:\n" + "\n".join(
+                    "• " + owner.replace(".", " / ").replace("_", " ")
+                    for owner in current["pending_owners"]
+                )
+            else:
+                setup = "Owner reviews complete. Optional features may still require setup."
+            generation = "\nGeneration: " + current["generation"] if current["generation"] else ""
+            await listing.mount(Static(
+                f"Current profile\n{current['config']}{generation}\n{setup}",
+                id="backup-current-requirements", markup=False,
+            ))
+        if not entries and not pending and current is None:
             await listing.mount(Static("No local entries.", markup=False))
         for entry in entries:
             if mode == "copies":

@@ -648,6 +648,53 @@ class RecoveryService:
 
         return self._start("delete_recovery_copy", delete)
 
+    def current_requirements(self):
+        """Present current paired owner state independently of historical copies."""
+        from . import bootstrap
+        from .activation import ActivationStore
+        from .generation_witnesses import _witnesses
+        from .storage_admission import acquire_storage
+
+        selected = bootstrap.effective_config_path()
+        unknown = {
+            "config": str(selected), "operation_id": None, "generation": None,
+            "required_owners": None, "pending_owners": None,
+            "requirements_checked": False, "needs_setup": None,
+            "status": "requirements_unavailable",
+        }
+        try:
+            with acquire_storage(selected) as lease:
+                witnesses = _witnesses(selected, lease)
+                root, _ = lease.execution_context(selected)
+                _, profiles, _ = bootstrap._control_records(root)
+                profile = next((row for row in profiles if row["selector"] == str(selected)), None)
+                witness = profile.get("activation") if profile else None
+                if witness is None:
+                    # No surviving selected-generation evidence is not a claim
+                    # that every optional capability is configured or approved.
+                    return MappingProxyType({**unknown, "status": "no_verified_generation"})
+                if witness not in witnesses:
+                    return MappingProxyType(unknown)
+                required = tuple(witness["owners"])
+                store = ActivationStore(Path(witness["store_root"]))
+                pending = tuple(owner for owner in required if not store.allowed(witness["generation"], owner))
+                checked = _witnesses(selected, lease)
+                _, latest, _ = bootstrap._control_records(root)
+                if (
+                    bootstrap.effective_config_path() != selected
+                    or checked != witnesses
+                    or next((row for row in latest if row["selector"] == str(selected)), None) != profile
+                ):
+                    return MappingProxyType(unknown)
+                return MappingProxyType({
+                    "config": str(selected), "operation_id": witness["operation_id"],
+                    "generation": witness["generation"], "required_owners": required,
+                    "pending_owners": pending, "requirements_checked": True,
+                    "needs_setup": bool(pending), "status": "requirements_checked",
+                })
+        except (OSError, ValueError, RuntimeError):
+            return MappingProxyType(unknown)
+
     def profiles(self):
         """Enumerate locally associated restored profiles and recheck launch evidence."""
         from . import bootstrap
