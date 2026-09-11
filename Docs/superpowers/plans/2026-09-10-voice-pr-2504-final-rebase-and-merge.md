@@ -124,3 +124,10 @@ ADR path: N/A; reason: test-only fixture alignment, not a runtime-policy change.
 The two fake-clock cases changed from two expected assertion failures to two
 passes (1.16s, two existing dependency warnings). Scoped Ruff and diff checks
 pass. No real app, audio, provider or native work ran in these cases.
+
+Before publication, dev advanced to `423ae37c1b5394cb596d0d975c1579c9e6f790d3`
+with PR2590's25 Library Notes paths. Root reviewed the controller/widget/CSS
+delta; the normal rebase was conflict-free and preserved voice runtime bytes.
+The six scoped Library/widget cases, two fake-clock cases and boot CSS budget
+passed together (9 passed, four warnings,11.11s). Parsed CSS is745199/768000;
+no ceiling changed. Official CSS regeneration produced no tracked drift.
