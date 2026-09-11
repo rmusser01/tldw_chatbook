@@ -56,14 +56,13 @@ class NotesSyncService:
         progress_callback: Optional[Callable[[SyncProgress], None]] = None,
     ) -> Tuple[str, SyncProgress]:
         """Execute one-time sync for a folder."""
-        self.sync_engine.progress_callback = progress_callback
-
         return await self.sync_engine.sync(
             root_path=root_folder,
             user_id=user_id,
             direction=direction,
             conflict_resolution=conflict_resolution,
             extensions=extensions,
+            progress_callback=progress_callback,
         )
 
     def get_sync_history(self, limit: int = 50) -> List[Dict[str, Any]]:
@@ -151,6 +150,20 @@ class NotesSyncService:
         Returns:
             True if resolved successfully
         """
+        from tldw_chatbook.Backup_Recovery.activation import execution_scope
+
+        db_path = None if str(self.db.db_path) == ":memory:" else Path(self.db.db_path)
+        with execution_scope(
+            ("config", "notes.sync_bindings", "db.chachanotes.primary"), db_path
+        ) as allowed:
+            if not allowed:
+                return False
+            return self._resolve_conflict(conflict_id, resolution, user_id)
+
+    def _resolve_conflict(
+        self, conflict_id: int, resolution: str, user_id: str
+    ) -> bool:
+        """Apply the existing reconciliation decision under its accepted scope."""
         try:
             with self.db.transaction() as conn:
                 # Get conflict details

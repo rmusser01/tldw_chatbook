@@ -6,6 +6,8 @@ import hashlib
 import json
 import time
 import uuid
+from contextlib import ExitStack
+from functools import wraps
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple, Set, Callable
@@ -26,6 +28,51 @@ from .sync_paths import PinnedSyncRoot, SafeSyncFile, SyncPathError
 ########################################################################################################################
 #
 # Classes and Functions:
+
+_PROGRESS_UNCHANGED = object()
+
+
+def _sync_execution(method):
+    """Hold both real sources through one finite synchronization invocation."""
+
+    @wraps(method)
+    async def call(self, root_path, user_id, *args, **kwargs):
+        from tldw_chatbook.Backup_Recovery.activation import execution_scope
+
+        owners = ("config", "notes.sync_bindings", "db.chachanotes.primary")
+        db_path = None if str(self.db.db_path) == ":memory:" else Path(self.db.db_path)
+        if not isinstance(user_id, str) or not user_id.strip():
+            raise ValueError("user_id must be a non-empty string for DB operations.")
+        try:
+            # _get_db uses this cache first and the template on a miss. Observe
+            # both without opening a DB; installed close APIs may evict the cache.
+            # Cache creation always derives from the same constructor template.
+            with self.notes_service._db_lock:
+                targets = (
+                    self.notes_service.unified_db_template,
+                    self.notes_service._db_instances.get(user_id.strip()),
+                )
+                content_paths = [
+                    None
+                    if target.db_path_str == ":memory:"
+                    else Path(target.db_path_str)
+                    for target in targets
+                    if target is not None
+                ]
+            if not content_paths:
+                raise ValueError("notes_content_source_unavailable")
+        except (AttributeError, TypeError, ValueError):
+            raise PermissionError("notes_content_source_unavailable") from None
+        with ExitStack() as scopes:
+            allowed = [
+                scopes.enter_context(execution_scope(owners, path))
+                for path in dict.fromkeys([Path(root_path), db_path, *content_paths])
+            ]
+            if not all(allowed):
+                raise PermissionError("notes_sync_activation_required")
+            return await method(self, root_path, user_id, *args, **kwargs)
+
+    return call
 
 
 class SyncDirection(Enum):
@@ -515,6 +562,7 @@ class NotesSyncEngine:
         """Check if a sync session has been cancelled."""
         return session_id in self._cancelled_sessions
 
+    @_sync_execution
     async def sync(
         self,
         root_path: Path,
@@ -523,6 +571,8 @@ class NotesSyncEngine:
         conflict_resolution: ConflictResolution = ConflictResolution.ASK,
         extensions: Optional[List[str]] = None,
         post_sync_cleanup: bool = False,
+        *,
+        progress_callback=_PROGRESS_UNCHANGED,
     ) -> Tuple[str, SyncProgress]:
         """
         Main sync method.
@@ -538,6 +588,8 @@ class NotesSyncEngine:
         Returns:
             Tuple of (session_id, progress)
         """
+        if progress_callback is not _PROGRESS_UNCHANGED:
+            self.progress_callback = progress_callback
         start_time = time.time()
         log_counter(
             "sync_engine_sync_attempt",
