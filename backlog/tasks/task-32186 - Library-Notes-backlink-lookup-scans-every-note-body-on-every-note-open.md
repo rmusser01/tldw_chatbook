@@ -152,6 +152,14 @@ does not get two fixes. Nothing in this task's change alters that hand-off:
 the table-backed lookup returns the same rows to the same worker tail, which
 calls the same presentation sync.
 
+Two regressions the full run caught, both fixed here and worth knowing:
+`sqlite3.Cursor.execute` returns the cursor itself, so the link writes added
+inside the importer's `_update_note` overwrote the `result.rowcount` its return
+value read (18 tests; lesson filed); and three migration tests asserted the
+post-open schema version as the literal `72` — "the version current when I was
+written" rather than "the chain completed" — which every bump breaks, now the
+constant.
+
 Modified: `tldw_chatbook/DB/ChaChaNotes_DB.py`,
 `tldw_chatbook/DB/migrations/chachanotes_v72_to_v73_note_links.sql` (new),
 `tldw_chatbook/DB/sql_validation.py`,
@@ -161,5 +169,7 @@ Modified: `tldw_chatbook/DB/ChaChaNotes_DB.py`,
 `Tests/DB/test_chachanotes_v73_note_links_migration.py` (new),
 `Tests/Notes/test_note_backlink_query.py`,
 `Tests/Notes/test_note_import_executor.py`,
+`Tests/DB/test_conversation_archive.py`,
+`Tests/DB/test_chachanotes_v72_voice_trace_provenance_migration.py`,
 `Docs/User_Guide/library/notes.md`.
 <!-- SECTION:NOTES:END -->
