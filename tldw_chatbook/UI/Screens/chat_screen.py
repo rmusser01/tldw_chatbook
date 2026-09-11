@@ -327,6 +327,7 @@ from ...Chat.console_chat_models import (
     FEEDBACK_ACTIVE_RUN_STATUSES,
     MessageAttachment,
     ConsoleWorkspaceContext,
+    console_pending_round_copy_for,
     derive_console_session_title,
 )
 from ...UI.character_display_text import sanitize_character_display_label
@@ -17899,7 +17900,7 @@ class ChatScreen(BaseAppScreen):
         if run_state.status is ConsoleRunStatus.IDLE:
             return ""
         if controller.has_pending_approval_round(session_id or ""):
-            return "Waiting for your approval."
+            return f"{console_pending_round_copy_for(controller, session_id or '')}."
         return run_state.visible_copy or run_state.status.value
 
     def _console_active_run_copy(self) -> str:
@@ -17941,15 +17942,17 @@ class ChatScreen(BaseAppScreen):
         # skill_script, worktree_merge, and question -- not just MCP
         # approvals. `_console_pending_approval_count` / `ConsoleInspector
         # State.pending_approval_count` (console_display_state.py) instead
-        # count the viewed session's mounted APPROVAL card only. So during
-        # a non-approval round (e.g. an ask_user question card) this chip
-        # says "Waiting for your approval" while the inspector correctly
-        # shows no pending approval -- imprecise copy, not a bug; a
-        # kind-aware pending registry (rider, filed as a follow-up to
-        # task program 2026-09-10-approval-card-fix-wave) would let this
-        # say "Waiting for your answer." for a question round instead.
+        # count the viewed session's mounted APPROVAL card only.
+        #
+        # Qodo #4 (the rider this comment used to describe, now done): that
+        # generic predicate answers "is anything waiting" -- right for the
+        # gate above, wrong for the copy -- so a question card used to
+        # render "Waiting for your approval" while the inspector correctly
+        # showed zero pending approvals. The KIND now picks the sentence;
+        # an approval among the outstanding rounds still wins, which is
+        # what keeps this and the inspector's count agreeing.
         if controller.has_pending_approval_round(session_id or ""):
-            return "Waiting for your approval."
+            return f"{console_pending_round_copy_for(controller, session_id or '')}."
         return run_state.visible_copy or run_state.status.value
 
     def _sync_console_mode_bar(self) -> None:

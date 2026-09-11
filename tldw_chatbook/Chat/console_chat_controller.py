@@ -3663,6 +3663,14 @@ class ConsoleChatController:
         #     viewed session's own terminal transition is seen live and is
         #     deliberately never stamped here.
         self._pending_approvals: dict[str, set[str]] = {}
+        #: Qodo #4 (task-32345): the KIND of each outstanding round, kept
+        #: beside `_pending_approvals` rather than inside it -- that map's
+        #: `set[str]` value is asserted on verbatim across eight test files,
+        #: and the lifecycle logic wants "is anything outstanding", not the
+        #: kind. Same key, same writers, same lock; `pending_round_kinds`
+        #: reads it. An entry is only ever present for a round id that is
+        #: also in `_pending_approvals`.
+        self._pending_round_kinds: dict[str, dict[str, str]] = {}
         self._unvisited_outcomes: dict[str, ConsoleRunMarker] = {}
         self._ordinary_outcome_ids: dict[str, str] = {}
         self._ordinary_outcome_assistant_ids: dict[str, str | None] = {}
@@ -5535,7 +5543,9 @@ class ConsoleChatController:
         """
         return len(self._live_busy_session_ids())
 
-    def add_pending_round(self, session_id: str, round_id: str) -> None:
+    def add_pending_round(
+        self, session_id: str, round_id: str, kind: str = "approval"
+    ) -> None:
         """Register ``round_id`` as an outstanding approval-like round for ``session_id``.
 
         TASK-1050 (Defect A): the fleet-visible pending-approval badge used
@@ -5566,6 +5576,16 @@ class ConsoleChatController:
             round_id: The round's own unique id (a real bridge round id, or
                 the reserved ``_LEGACY_PENDING_APPROVAL_ROUND_ID`` sentinel
                 -- see ``set_run_pending_approval``).
+            kind: Which interrupt kind is waiting -- a
+                ``console_interrupt_rounds.KIND_SETTER_ATTRS`` key
+                (``approval``, ``question``, ``skill_install``,
+                ``skill_script``, ``worktree_merge``). Qodo #4: the badge and
+                lifecycle do not care, but the run chip and activity line do
+                -- they used to translate this registry's generic "something
+                is pending" into "Waiting for your approval" even for a
+                question. Defaults to ``approval``, which is what every
+                caller without a kind of its own (the deprecated boolean
+                shim, direct test drives) has always meant.
         """
         # F2b fix (Qodo wave), preserved: reachable from a worker thread
         # while the UI thread concurrently iterates `_pending_approvals`
@@ -5575,6 +5595,9 @@ class ConsoleChatController:
             rounds = self._pending_approvals.setdefault(session_id, set())
             changed = round_id not in rounds
             rounds.add(round_id)
+            self._pending_round_kinds.setdefault(session_id, {})[round_id] = str(
+                kind or "approval"
+            )
         if changed:
             if self._buddy_sink is not None:
                 self._buddy_sink.approval_round(session_id, round_id, pending=True)
@@ -5605,6 +5628,11 @@ class ConsoleChatController:
                 return
             changed = round_id in rounds
             rounds.discard(round_id)
+            kinds = self._pending_round_kinds.get(session_id)
+            if kinds is not None:
+                kinds.pop(round_id, None)
+                if not kinds:
+                    self._pending_round_kinds.pop(session_id, None)
             if not rounds:
                 self._pending_approvals.pop(session_id, None)
         if changed:
@@ -5647,6 +5675,29 @@ class ConsoleChatController:
         """
         with self._approval_state_lock:
             return session_id in self._pending_approvals
+
+    def pending_round_kinds(self, session_id: str) -> frozenset[str]:
+        """Return the KINDS of ``session_id``'s outstanding interrupt rounds.
+
+        Qodo #4: ``has_pending_approval_round`` answers "is anything waiting
+        on the user", which is the right question for the badge and the
+        lifecycle but the wrong one for copy -- the shared registry holds
+        questions, skill-install/skill-script confirms and worktree-merge
+        confirms as well as MCP approvals, and translating the generic
+        predicate into "Waiting for your approval" mislabels the other four
+        (and can disagree with the inspector, which counts mounted approval
+        cards only).
+
+        Args:
+            session_id: The session to read.
+
+        Returns:
+            Every distinct kind currently outstanding for ``session_id``
+            (``console_interrupt_rounds.KIND_SETTER_ATTRS`` keys), empty
+            when nothing is.
+        """
+        with self._approval_state_lock:
+            return frozenset(self._pending_round_kinds.get(session_id, {}).values())
 
     def set_run_pending_approval(self, session_id: str, pending: bool) -> None:
         """DEPRECATED boolean shim -- prefer ``add_pending_round``/``discard_pending_round``.
@@ -26738,6 +26789,7 @@ class ConsoleChatController:
             # stays correct if a future caller ever moves this off-thread).
             with self._approval_state_lock:
                 self._pending_approvals.pop(target, None)
+                self._pending_round_kinds.pop(target, None)
             if self._buddy_sink is not None:
                 self._buddy_sink.release_session(target, sources={"approval"})
             # PR3a-2 Task 5: a terminal transition frees send capacity
