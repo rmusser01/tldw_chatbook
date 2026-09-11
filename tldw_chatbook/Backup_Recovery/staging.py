@@ -205,7 +205,7 @@ def _items(doc, plan):
     return result
 
 
-def _validate_dependencies(doc, items, owners, candidate_paths, topology):
+def _validate_dependencies(doc, items, owners, candidate_paths, topology, plan=None, manifest_digest=None):
     """Check only private candidates; no live maintenance authority is required."""
     from types import MappingProxyType
 
@@ -221,6 +221,10 @@ def _validate_dependencies(doc, items, owners, candidate_paths, topology):
                 raise ValueError("invalid_synthetic_asset_root")
             if key in synthetic:
                 continue  # Fabricated containers carry no source owner data.
+            from .later_rollback import validate_snapshot_builtin_restore
+
+            if validate_snapshot_builtin_restore(plan, manifest_digest, item, candidate_paths, topology):
+                continue
             restore_check = getattr(owner, "validate_restore_dependencies", None)
             legacy_check = getattr(owner, "validate_dependencies", None)
             if callable(restore_check):
@@ -732,7 +736,7 @@ def stage_restore(
             }
         )
         if session is None:
-            _validate_dependencies(doc, items, owners, candidate_paths, topology)
+            _validate_dependencies(doc, items, owners, candidate_paths, topology, plan, hashlib.sha256(archive.manifest_bytes).hexdigest())
         else:
             from concurrent.futures import ThreadPoolExecutor
 
@@ -744,6 +748,8 @@ def stage_restore(
                     owners,
                     candidate_paths,
                     topology,
+                    plan,
+                    hashlib.sha256(archive.manifest_bytes).hexdigest(),
                 ).result()
         for payload in doc.files:
             if payload.logical_id not in selected:

@@ -322,12 +322,13 @@ def test_builtin_semantic_validation_checks_actual_core_references(builtin_case)
     from tldw_chatbook.Backup_Recovery.replacement import _validate_builtin_safety
 
     _archive, _plan_for, members, selected = builtin_case
+    plan = _plan_for(item.logical_id for item in members)
     candidates = {i.logical_id: i.path for i in members if i.status == "included"}
     candidates["profile:profile:db.chachanotes.primary"] = (
         selected.parents[2] / "core.db"
     )
     owners = {a.owner_id: a for a in install_adapters()}
-    _validate_builtin_safety(members, candidates, owners)
+    _validate_builtin_safety(members, candidates, owners, plan)
     selected.write_bytes(b"different selected bytes")
     with pytest.raises(ValueError, match="asset_digest_mismatch"):
-        _validate_builtin_safety(members, candidates, owners)
+        _validate_builtin_safety(members, candidates, owners, plan)

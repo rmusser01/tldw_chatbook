@@ -58,7 +58,7 @@ class RollbackCredentialReviewRequired(CaptureReviewRequired):
         self.args = ("rollback_credential_coverage_changed",)
 
 
-def _validate_builtin_safety(items, candidates, owners):
+def _validate_builtin_safety(items, candidates, owners, plan):
     """Validate finite builtin roots against the actual captured core and files."""
     from tldw_chatbook.Persona_Visual.recovery import _Assets
 
@@ -72,6 +72,10 @@ def _validate_builtin_safety(items, candidates, owners):
             owner = owners.get(item.owner)
             if type(owner) is not _Assets:
                 raise ValueError("rollback_owner_unavailable")
+            from .later_rollback import validate_created_builtin_capture
+
+            if validate_created_builtin_capture(plan, item, items, candidates):
+                continue
             issues = owner.validate_dependencies(item, item.path, candidates)
             if issues:
                 raise ValueError(issues[0])
@@ -380,7 +384,7 @@ def capture_verify_rollback(
         validate_groups(
             inventory.items, candidates, stage, cancel, limits, limits.expanded_bytes
         )
-        _validate_builtin_safety(inventory.items, candidates, owners)
+        _validate_builtin_safety(inventory.items, candidates, owners, plan)
         rebound = _replace(
             inventory, items=tuple(_replace(item, path=path) for item, path in staged)
         )
@@ -512,7 +516,7 @@ def capture_verify_rollback(
             private = verified / hashlib.sha256(item.logical_id.encode()).hexdigest()
             _copy_verified_payload(archive, payload, private, cancel)
             verified_candidates[item.logical_id] = private
-        _validate_builtin_safety(inventory.items, verified_candidates, owners)
+        _validate_builtin_safety(inventory.items, verified_candidates, owners, plan)
         projection_candidates = {}
         for item in inventory.items:
             if item.owner != "rag.projections" or item.status != "included":

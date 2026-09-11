@@ -399,9 +399,36 @@ def _builtin_sources(plan):
     )
 
 
+def _stage_read_sources(plan):
+    """Read preserved builtin and exactly reviewed created-tree retirements."""
+    sources = {item.logical_id: item for item in _builtin_sources(plan)}
+    retired = dict(plan.retire)
+    roots = {
+        item.logical_id: item
+        for item in plan.target.items
+        if item.owner in {"persona.visual_identity_builtin", "eval.definitions"}
+        and item.status == "included_directory"
+        and item.metadata is not None
+        and item.metadata.parent_id is None
+        and item.metadata.root_id == item.logical_id
+        and retired.get(item.logical_id) == item.path
+    }
+    for item in plan.target.items:
+        root = roots.get(item.metadata.root_id) if item.metadata else None
+        if (
+            root is not None
+            and item.owner == root.owner
+            and item.status in {"included", "included_directory"}
+            and retired.get(item.logical_id) == item.path
+            and item.path == root.path / item.metadata.relative_path
+        ):
+            sources[item.logical_id] = item
+    return tuple(sources.values())
+
+
 def _builtin_stage_names(plan):
     """Use only current native bindings containing authenticated safety sources."""
-    sources = _builtin_sources(plan)
+    sources = _stage_read_sources(plan)
     if not sources:
         return ()
     root = bootstrap.default_bootstrap_root()
@@ -600,7 +627,462 @@ def _discard(work, identity):
     shutil.rmtree(work)
 
 
-def _known_absences(plan, original, prepared):
+def _created_manifest(journal, original, prepared, rows):
+    """Read the installed incoming manifest from its original local receipt."""
+    from .journal import _CandidateReceipt
+
+    receipt = _CandidateReceipt.model_validate(rows[0].evidence)
+    installed = next(row.evidence for row in rows if row.event == "installed_validated")
+    if (
+        rows[-1].event != "committed"
+        or receipt.plan_digest != prepared.publication.plan_digest
+        or receipt.archive_digest != original.archive_digest
+        or installed["plan_digest"] != receipt.plan_digest
+        or installed["manifest_digest"] != receipt.manifest_digest
+    ):
+        raise ValueError("local_snapshot_created_source_changed")
+    limits = ArchiveLimits()
+    with archive_reader._regular(journal.root / "verified-manifest.json") as stream:
+        info = os.fstat(stream.fileno())
+        if (
+            info.st_uid != os.geteuid()
+            or info.st_nlink != 1
+            or stat.S_IMODE(info.st_mode) != 0o600
+        ):
+            raise ValueError("verified_manifest_changed")
+        raw = stream.read(limits.manifest_bytes + 1)
+        if archive_reader._identity(info) != archive_reader._identity(
+            os.fstat(stream.fileno())
+        ):
+            raise ValueError("verified_manifest_changed")
+    if (
+        len(raw) > limits.manifest_bytes
+        or hashlib.sha256(raw).hexdigest() != receipt.manifest_digest
+    ):
+        raise ValueError("verified_manifest_changed")
+    return archive_reader._manifest(
+        raw, limits, encrypted=True
+    ), receipt.manifest_digest
+
+
+def _created_destination_target(
+    journal, original, prepared, rows, target, *, session=None
+):
+    """Reobserve only committed inactive builtin/eval roots created by this copy."""
+    from pydantic import TypeAdapter
+
+    from tldw_chatbook.Evals.recovery import _DefinitionsAdapter
+    from tldw_chatbook.Persona_Visual.recovery import _Assets
+
+    from .activation import ActivationStore, _private
+    from .generation_witnesses import _witnesses
+    from .models import DISCOVERY_CONTEXT_KEY, DiscoveryContext
+    from .owner_registry import install_adapters
+    from .recovery_files import _RawDeclaration
+    from .staging import _items
+    from .storage_admission import (
+        _contains_owned_path,
+        _digest_recovery_file,
+        acquire_storage,
+    )
+
+    originals = {item.logical_id: item for item in original.target.items}
+    artifacts = [
+        row
+        for row in prepared.artifacts
+        if row.action == "publish"
+        and row.previous is None
+        and (
+            row.logical_id not in originals
+            or originals[row.logical_id].path != Path(row.target)
+        )
+    ]
+    if not artifacts or rows[-1].event != "committed":
+        return target, {}
+    document, _ = _created_manifest(journal, original, prepared, rows)
+    limits = ArchiveLimits()
+    saved = _items(document, original)
+    owners = {owner.owner_id: owner for owner in install_adapters()}
+    updated = list(target.items)
+    mapped_roots, observations = {}, []
+    for artifact in artifacts:
+        item = saved.get(artifact.logical_id)
+        if (
+            item is None
+            or item.metadata is None
+            or item.metadata.parent_id is not None
+            or artifact.candidate is None
+            or artifact.candidate.kind != "directory"
+            or item.path != Path(artifact.target)
+        ):
+            raise ValueError("local_snapshot_absence_unclassified")
+        owner = owners.get(item.owner)
+        if not (
+            item.owner == "persona.visual_identity_builtin"
+            and type(owner) is _Assets
+            or item.owner == "eval.definitions"
+            and type(owner) is _DefinitionsAdapter
+        ):
+            raise ValueError("local_snapshot_absence_unclassified")
+        members = [
+            row for row in saved.values() if row.metadata.root_id == item.logical_id
+        ]
+        if any(row.owner != item.owner for row in members) or not any(
+            row.status == "included" for row in members
+        ):
+            raise ValueError("local_snapshot_created_members_changed")
+        pending = [row.logical_id for row in members]
+        seen, configs = set(), set()
+        while pending:
+            key = pending.pop()
+            if key in seen or key not in saved:
+                continue
+            seen.add(key)
+            source = saved[key]
+            if source.owner == "config":
+                configs.add(source.path)
+            else:
+                pending.extend(source.dependencies)
+        selected = [
+            row
+            for row in target.items
+            if row.owner == "config"
+            and row.status == "included"
+            and row.path in configs
+        ]
+        if len(configs) != 1 or len(selected) != 1:
+            raise ValueError("local_snapshot_created_scope_unverified")
+        config = selected[0]
+        if any(
+            row.path is not None
+            and (
+                row.path == item.path
+                or item.path in row.path.parents
+                or row.path in item.path.parents
+            )
+            for row in original.target.items
+            if row.logical_id in original.safety_scope
+        ):
+            raise ValueError("local_snapshot_absence_overlap")
+        lease = acquire_storage(item.path) if session is None else None
+        try:
+            before = bootstrap._control_records(bootstrap.default_bootstrap_root())
+            _, profiles, associations = before
+            binding = next(
+                (row for row in profiles if row["selector"] == str(config.path)), None
+            )
+            generation = binding.get("activation") if binding else None
+            if (
+                generation is None
+                or generation["operation_id"] != journal.operation_id
+                or generation["generation"] != prepared.generation
+                or Path(generation["store_root"]) != journal.root.parent / "activation"
+                or [
+                    row["activation"]
+                    for row in associations
+                    if row["selector"] == str(config.path)
+                ]
+                != [generation]
+                or not any(
+                    _contains_owned_path(Path(path), item.path)
+                    for path in binding["roots"]
+                )
+            ):
+                raise ValueError("local_snapshot_created_scope_unverified")
+            if lease is not None:
+                if generation not in _witnesses(item.path, lease):
+                    raise ValueError("local_snapshot_created_scope_unverified")
+            else:
+                session._check()
+                if (
+                    session._control != bootstrap.default_bootstrap_root() / "admission"
+                    or not set(binding["namespaces"]) <= set(session._names)
+                    or not any(
+                        _contains_owned_path(path, item.path) for path in session._roots
+                    )
+                ):
+                    raise ValueError("local_snapshot_created_scope_unverified")
+                store = ActivationStore(Path(generation["store_root"]))
+                with _private(store._generation(prepared.generation)) as parent:
+                    if (
+                        store._required(parent, prepared.generation).owners
+                        != generation["owners"]
+                    ):
+                        raise ValueError("local_snapshot_created_scope_unverified")
+            info = item.path.lstat()
+            if not stat.S_ISDIR(info.st_mode) or (info.st_dev, info.st_ino) != (
+                artifact.candidate.device,
+                artifact.candidate.inode,
+            ):
+                raise ValueError("local_snapshot_created_root_changed")
+            context = DiscoveryContext(config.path, config.logical_id.split(":", 2)[1])
+            entries = _RawDeclaration(item.owner)._tree(
+                {DISCOVERY_CONTEXT_KEY: context}, item.path
+            )
+            if {(row.path, row.status) for row in entries} != {
+                (row.path, row.status) for row in members
+            } or any(
+                row.status not in {"included", "included_directory"} for row in entries
+            ):
+                raise ValueError("local_snapshot_created_members_changed")
+            for row in entries:
+                if row.status == "included":
+                    if owner.validate(row.path):
+                        raise ValueError("local_snapshot_created_member_invalid")
+                    observations.append(
+                        (
+                            str(row.path),
+                            _digest_recovery_file(
+                                item.owner, row.path, max_bytes=limits.member_bytes
+                            ),
+                        )
+                    )
+            by_path = {row.path: row for row in entries}
+            replaced = [
+                row
+                for row in updated
+                if row.path in by_path
+                or row.logical_id in {entry.logical_id for entry in entries}
+            ]
+            if any(
+                row.path not in by_path
+                or row.owner != item.owner
+                or row.status != by_path[row.path].status
+                for row in replaced
+            ):
+                raise ValueError("local_snapshot_created_owner_conflict")
+            remap = {row.logical_id: by_path[row.path].logical_id for row in replaced}
+            updated = [
+                replace(
+                    row,
+                    dependencies=tuple(remap.get(key, key) for key in row.dependencies),
+                )
+                for row in updated
+                if row not in replaced
+            ]
+            updated.extend(entries)
+            mapped_roots[artifact.logical_id] = by_path[item.path].logical_id
+            if bootstrap._control_records(bootstrap.default_bootstrap_root()) != before:
+                raise ValueError("local_snapshot_created_scope_unverified")
+            if lease is not None and generation not in _witnesses(item.path, lease):
+                raise ValueError("local_snapshot_created_scope_unverified")
+            observations.append(generation)
+        finally:
+            if lease is not None:
+                lease.close()
+    result = replace(
+        target,
+        items=tuple(sorted(updated, key=lambda row: row.logical_id)),
+        scope_digest="",
+    )
+    return replace(
+        result,
+        scope_digest=_evidence_digest(
+            {
+                "target": TypeAdapter(type(result)).dump_python(result, mode="json"),
+                "observed": observations,
+            }
+        ),
+    ), mapped_roots
+
+
+def _created_builtin_members(plan, root, *, seen=()):
+    """Prove a current inactive tree from the exact local created publication."""
+    from .models import DiscoveryContext
+    from .recovery_files import _tree_member_id
+    from .staging import _items
+
+    journal, _ = verify_snapshot_source(plan)
+    identity = (str(journal.root), root.logical_id)
+    if identity in seen or len(seen) >= 8:
+        raise ValueError("local_snapshot_created_history_unverified")
+    seen = (*seen, identity)
+    original = load_plan(journal)
+    with journal._locked(exclusive=False) as parent:
+        rows = journal._records(parent)
+    prepared = _Prepared.model_validate(
+        next(row.evidence for row in rows if row.event == "prepared")
+    )
+    document, digest = _created_manifest(journal, original, prepared, rows)
+    source_items = _items(document, original)
+    artifacts = [
+        row
+        for row in prepared.artifacts
+        if row.target == str(root.path)
+        and row.action == "publish"
+        and row.previous is None
+        and row.candidate is not None
+        and row.candidate.kind == "directory"
+    ]
+    if len(artifacts) != 1:
+        raise ValueError("local_snapshot_created_history_unverified")
+    source = source_items.get(artifacts[0].logical_id)
+    if (
+        source is None
+        or source.owner != "persona.visual_identity_builtin"
+        or source.metadata is None
+        or source.metadata.parent_id is not None
+        or source.path != root.path
+        or any(
+            row.path is not None and bootstrap._overlap(row.path, root.path)
+            for row in original.target.items
+            if row.logical_id in original.safety_scope
+        )
+    ):
+        raise ValueError("local_snapshot_created_history_unverified")
+    if source.logical_id != f"profile:{source.logical_id.split(':')[1]}:{source.owner}":
+        _snapshot_builtin_members(original, digest, source, seen=seen)
+    configs = [
+        row
+        for row in plan.target.items
+        if row.owner == "config"
+        and row.logical_id in root.dependencies
+        and row.status == "included"
+    ]
+    if len(configs) != 1 or configs[0].path not in {
+        row.path for row in source_items.values() if row.owner == "config"
+    }:
+        raise ValueError("local_snapshot_created_history_unverified")
+    config = configs[0]
+    context = DiscoveryContext(config.path, config.logical_id.split(":", 2)[1])
+    members = [
+        row
+        for row in source_items.values()
+        if row.metadata.root_id == source.logical_id
+    ]
+    expected = {}
+    for row in members:
+        key = _tree_member_id(context, source.owner, root.path, row.path)
+        parent = (
+            _tree_member_id(context, source.owner, root.path, row.path.parent)
+            if row.metadata.parent_id is not None
+            else None
+        )
+        expected[key] = (
+            root.logical_id,
+            parent,
+            row.metadata.relative_path,
+            row.metadata.kind,
+        )
+    actual = {
+        row.logical_id: row
+        for row in plan.target.items
+        if row.metadata is not None and row.metadata.root_id == root.logical_id
+    }
+    if (
+        set(actual) != set(expected)
+        or root.logical_id not in expected
+        or any(
+            row.owner != source.owner
+            or _topology(row) != expected[key]
+            or row.path != root.path / row.metadata.relative_path
+            or set(row.dependencies)
+            != (
+                {config.logical_id, row.metadata.parent_id}
+                if row.metadata.parent_id
+                else {config.logical_id}
+            )
+            for key, row in actual.items()
+        )
+    ):
+        raise ValueError("local_snapshot_created_history_unverified")
+    return actual
+
+
+def _snapshot_builtin_members(plan, manifest_digest, root, *, seen=()):
+    """Verify encrypted-copy coverage and its original created-tree provenance."""
+    journal, proof = verify_snapshot_source(plan)
+    if proof.manifest_digest != manifest_digest:
+        raise ValueError("local_snapshot_source_changed")
+    original = load_plan(journal)
+    sources = {row.logical_id: row for row in original.target.items}
+    source = sources.get(root.logical_id)
+    with journal._locked(exclusive=False) as parent:
+        rows = journal._records(parent)
+    prepared = _Prepared.model_validate(
+        next(row.evidence for row in rows if row.event == "prepared")
+    )
+    covered = [
+        row
+        for row in prepared.artifacts
+        if row.target == str(source.path if source else None)
+        and row.previous is not None
+        and row.previous.kind == "directory"
+        and proof.coverage.get(row.logical_id) == root.logical_id
+    ]
+    if (
+        source is None
+        or source.owner != "persona.visual_identity_builtin"
+        or len(covered) != 1
+        or dict(plan.restore).get(root.logical_id) != source.path
+        or _topology(root) != _topology(source)
+    ):
+        raise ValueError("local_snapshot_created_history_unverified")
+    return _created_builtin_members(original, source, seen=seen)
+
+
+def _topology(item):
+    meta = item.metadata
+    return (
+        (meta.root_id, meta.parent_id, meta.relative_path, meta.kind) if meta else None
+    )
+
+
+def _validate_created_builtin_members(expected, root, candidates, topology):
+    """Validate every declared private member; no ID-only owner exemption."""
+    from tldw_chatbook.Persona_Visual.recovery import _Assets
+
+    from .owner_registry import install_adapters
+
+    owner = next(
+        row
+        for row in install_adapters()
+        if row.owner_id == "persona.visual_identity_builtin"
+    )
+    if type(owner) is not _Assets or {
+        key: value for key, value in topology.items() if value[0] == root.logical_id
+    } != {key: _topology(value) for key, value in expected.items()}:
+        raise ValueError("local_snapshot_created_members_changed")
+    for key, item in expected.items():
+        if item.metadata.kind == "file" and (
+            key not in candidates or owner.validate(candidates[key])
+        ):
+            raise ValueError("local_snapshot_created_member_invalid")
+
+
+def validate_created_builtin_capture(plan, root, items, candidates):
+    """Qualify this local retirement's private copies using its source history."""
+    if plan.local_snapshot is None or root.logical_id.count(":") == 2:
+        return False
+    expected = _created_builtin_members(plan, root)
+    _validate_created_builtin_members(
+        expected,
+        root,
+        candidates,
+        {item.logical_id: _topology(item) for item in items if item.metadata},
+    )
+    return True
+
+
+def validate_snapshot_builtin_restore(
+    plan, manifest_digest, root, candidates, topology
+):
+    """Handle only receipt-proved local inactive builtin copies at restore."""
+    if (
+        plan is None
+        or plan.local_snapshot is None
+        or root.owner != "persona.visual_identity_builtin"
+        or root.metadata is None
+        or root.metadata.parent_id is not None
+        or root.logical_id.count(":") == 2
+    ):
+        return False
+    expected = _snapshot_builtin_members(plan, manifest_digest, root)
+    _validate_created_builtin_members(expected, root, candidates, topology)
+    return True
+
+
+def _known_absences(plan, original, prepared, created=None):
     """Expose exact locally recorded absent targets as reviewed retirements."""
     from .projection_publication import dependent_retirements
     from .restore_plan import _fingerprint, _paths
@@ -615,7 +1097,12 @@ def _known_absences(plan, original, prepared):
         if not path.exists() and not path.is_symlink():
             continue
         prior = original_items.get(artifact.logical_id)
-        item = current.get(artifact.logical_id)
+        created_key = (created or {}).get(artifact.logical_id)
+        item = current.get(created_key or artifact.logical_id)
+        if created_key:
+            prior = (
+                item  # Exact original absence was proved from the publication above.
+            )
         if (
             prior is None
             or item is None
@@ -740,10 +1227,17 @@ def _preview(journal, proof, archive, target, acknowledged, *, session=None):
     snapshot = LocalSnapshotSource(
         journal.root.parent, journal.operation_id, _evidence_digest(proof.model_dump())
     )
-    _, authenticated = _verify_snapshot_source(snapshot, "replace", archive.digest, archive)
+    _, authenticated = _verify_snapshot_source(
+        snapshot, "replace", archive.digest, archive
+    )
     if authenticated.safety_sources != prepared.safety_sources:
         raise ValueError("local_snapshot_preservation_unverified")
-    target = _builtin_snapshot_target(original, authenticated, document, target, session=session)
+    target = _builtin_snapshot_target(
+        original, authenticated, document, target, session=session
+    )
+    target, created = _created_destination_target(
+        journal, original, prepared, rows, target, session=session
+    )
     preserved = _preserved_snapshot_members(snapshot, archive, target)
     plan = plan_restore(
         archive,
@@ -755,7 +1249,7 @@ def _preview(journal, proof, archive, target, acknowledged, *, session=None):
         acknowledged_credential_issues=acknowledged,
         local_snapshot=snapshot,
     )
-    plan = _known_absences(plan, original, prepared)
+    plan = _known_absences(plan, original, prepared, created)
     verify_snapshot_source(plan, archive)
     _current_config_scope(plan, document)
     recheck_targets(plan)
@@ -841,11 +1335,21 @@ def execute_rollback(
             with authority.maintenance(
                 (UNBOUND_NAMESPACE, *_builtin_stage_names(current)), 30, cancel=cancel
             ) as session:
-                sources = tuple(item.path for item in _builtin_sources(current) if item.status == "included")
+                sources = tuple(
+                    item.path
+                    for item in _stage_read_sources(current)
+                    if item.status == "included"
+                )
                 if sources:
                     with session.capture_scope(sources, work, limits=ArchiveLimits()):
-                        held = _preview(journal, proof, archive, current.target,
-                            current.acknowledged_credential_issues, session=session)
+                        held = _preview(
+                            journal,
+                            proof,
+                            archive,
+                            current.target,
+                            current.acknowledged_credential_issues,
+                            session=session,
+                        )
                     if held != current:
                         raise ValueError("target_changed")
                 candidate = stage_restore(

@@ -1898,6 +1898,8 @@ def _validate_installed(journal, candidate, plan, *, session=None):
                     synthetic,
                     owners,
                     raw_configs,
+                    plan,
+                    receipt.manifest_digest,
                 ).result()
             verify()
             for row in sorted(
@@ -1998,7 +2000,7 @@ def _apply_directory_metadata(journal, parent, prepared, item):
 
 
 def _validate_installed_copies(
-    items, candidates, topology, synthetic, owners, raw_configs=None
+    items, candidates, topology, synthetic, owners, raw_configs=None, plan=None, manifest_digest=None
 ):
     """Validate operation-private copies without receiving live native authority."""
     from types import MappingProxyType
@@ -2037,6 +2039,10 @@ def _validate_installed_copies(
                 if issues:
                     raise ValueError(issues[0])
             if key in synthetic:
+                continue
+            from .later_rollback import validate_snapshot_builtin_restore
+
+            if validate_snapshot_builtin_restore(plan, manifest_digest, item, candidates, topology):
                 continue
             validator = getattr(owner, "validate_restore_dependencies", None)
             legacy = getattr(owner, "validate_dependencies", None)
