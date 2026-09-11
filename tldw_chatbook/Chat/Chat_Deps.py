@@ -24,10 +24,21 @@ class ChatAuthenticationError(ChatAPIError):
 
 
 class ChatConfigurationError(ChatAPIError):
-    """Exception for configuration issues (e.g., missing key, invalid model)."""
+    """Exception for configuration issues (e.g., missing key, invalid model).
 
-    def __init__(self, message="Chat provider configuration error.", provider=None):
-        super().__init__(message, status_code=500, provider=provider)  # Default to 500
+    ``status_code`` defaults to 500 but accepts ``None`` for a failure that
+    never reached the provider at all -- a client-side request-preparation
+    error (task-32273). Carrying no status keeps such a failure out of every
+    surface that reads one as "the provider answered".
+    """
+
+    def __init__(
+        self,
+        message="Chat provider configuration error.",
+        provider=None,
+        status_code=500,
+    ):
+        super().__init__(message, status_code=status_code, provider=provider)
 
 
 class ChatBadRequestError(ChatAPIError):

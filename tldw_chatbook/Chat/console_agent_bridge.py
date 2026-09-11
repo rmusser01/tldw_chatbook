@@ -1961,19 +1961,24 @@ class AgentLiveSnapshot:
     idle, so both must expose the same shape.
 
     Attributes:
-        status: Run status -- ``"idle"``, ``"running"``, or a terminal
-            ``RunOutcome.status`` value (``"done"``/``"error"``/
-            ``"cancelled"``/``"stuck"``).
+        status: Run status -- ``"idle"``, ``"running"``, ``"setup"``
+            (task-32344: the send is composing this turn's tool surface and
+            no run exists yet), or a terminal ``RunOutcome.status`` value
+            (``"done"``/``"error"``/``"cancelled"``/``"stuck"``).
         step: Total number of steps observed so far for this run.
         steps: The most recent steps (bounded to the last 5), oldest first.
         subagents: Summaries of this run's spawned sub-agents, in the order
             they were spawned/recorded.
+        setup_started_at: ``time.monotonic()`` reading the ``"setup"``
+            status began at, so the rail can time it. ``None`` in every
+            other status -- a run's own steps carry their own bases.
     """
 
     status: str = "idle"
     step: int = 0
     steps: tuple[AgentLiveStep, ...] = ()
     subagents: tuple[SubAgentSummary, ...] = ()
+    setup_started_at: float | None = None
 
 
 @dataclass
@@ -4483,6 +4488,10 @@ class ConsoleAgentBridge:
         #: Which `_live[conversation_id]` key holds the rail's summary --
         #: the newest turn's primary run. Only `run_reply` writes it.
         self._live_primary_keys: dict[str, str] = {}
+        #: task-32344: conversations currently in pre-provider setup, each
+        #: mapped to the `time.monotonic()` the phase began, so the rail
+        #: can name and time a window that publishes no step of its own.
+        self._setup_started_at: dict[str, float] = {}
         self._historical_cache: dict[str, AgentLiveSnapshot] = {}
         self._run_log_authorities: dict[str, _ConsoleRunLogAuthority] = {}
         self._run_log_authority_lock = threading.Lock()
@@ -7385,7 +7394,16 @@ class ConsoleAgentBridge:
         Falls back to the published snapshot untouched when this
         conversation has no coordinator -- the inline/kill-switch path,
         where there is no live status to read and never was.
+
+        task-32344: a conversation marked in pre-provider setup short-
+        circuits everything below it. No run exists yet, so there is
+        nothing published to merge with and no fleet to re-derive -- and
+        the PREVIOUS turn's terminal snapshot (still in ``_live``) must
+        not leak back over the turn now being set up.
         """
+        started_at = self._setup_started_at.get(conversation_id)
+        if started_at is not None:
+            return AgentLiveSnapshot(status="setup", setup_started_at=started_at)
         self._prune_settled_fleet_survivors(conversation_id)
         # PR3a-1 Task 6b (audit F1): the summary line is the NEWEST TURN's
         # primary run, resolved through `_live_primary_keys` -- never
@@ -7402,6 +7420,31 @@ class ConsoleAgentBridge:
             snapshot,
             subagents=_subagent_summaries_from_fleet(handles, list(snapshot.subagents)),
         )
+
+    def begin_setup_phase(
+        self, conversation_id: str, *, now: float | None = None
+    ) -> None:
+        """Mark this conversation as in pre-provider setup (task-32344).
+
+        The window between "send accepted" and "provider called" publishes
+        no step -- the run does not exist yet -- so the rail's snapshot was
+        idle and the assistant row rendered blank for however long that
+        setup took. On the first send of a process that is the whole lazy
+        cost of the turn's tool surface, including the Personal Context
+        bootstrap's OS credential-store round trip.
+
+        Args:
+            conversation_id: The conversation whose row should say so.
+            now: ``time.monotonic()`` base for the elapsed segment,
+                injected so the state is testable without sleeping.
+        """
+        self._setup_started_at[conversation_id] = (
+            time.monotonic() if now is None else now
+        )
+
+    def end_setup_phase(self, conversation_id: str) -> None:
+        """Clear the setup mark; a no-op when it was never set."""
+        self._setup_started_at.pop(conversation_id, None)
 
     def live_run_snapshot(
         self, conversation_id: str, run_id: str
