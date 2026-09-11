@@ -27,6 +27,7 @@ from Tests.UI.test_library_shell import (
     _wait_for_condition,
     _wait_for_selector,
 )
+from tldw_chatbook.Library.library_notes_tree_state import LibraryNotesTreeRow
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.UI.Library_Modules.library_notes_work_session import (
@@ -38,6 +39,30 @@ from tldw_chatbook.Widgets.Library import (
     LibraryNoteWorkPane,
     LibraryNotesCanvas,
 )
+
+
+@pytest.fixture(autouse=True)
+async def _drain_pending_repaints():
+    """task-32298: let a queued repaint land before the next app starts.
+
+    `KeyError: "No 'text-area--gutter' key in COMPONENT_CLASSES"` is raised
+    when Textual repaints a `TextArea` whose component styles teardown has
+    already cleared (TASK-32114 proved the same key on a REAL teardown --
+    Escape closing the MCP Test Tool panel on Linux CI -- so this is not
+    confined to the harness). Every test here that leaves the Notes editor
+    mounted ends by tearing its app down, and whether the repaint queued by
+    its last action runs before or after that teardown is pure loop timing:
+    the same two nodes flip between passing alone and failing at whole-file
+    scope. Giving the loop its turns after each test drains that repaint
+    while the widgets it targets are still alive.
+
+    This is a harness mitigation, not the product guard: the durable fix is
+    `app.batch_update()` around the canvas removal (the shape TASK-32114
+    used), which the Library route switch does not do yet.
+    """
+    yield
+    for _ in range(3):
+        await asyncio.sleep(0)
 
 
 def test_folder_files_reader_authority_scaffold_is_distinct() -> None:
@@ -59,6 +84,11 @@ def test_folder_files_reader_authority_scaffold_is_distinct() -> None:
 
     assert set(get_args(library_screen_module.LibraryReaderDestination)) == {
         "media",
+        # task-32294: Collections became a reader destination of its own
+        # (screen_support_types.LibraryReaderDestination); this inventory is
+        # the list of destinations that own reader preferences, so it grew
+        # with it.
+        "collections",
         "conversations",
         "notes",
         "notes_files",
@@ -254,19 +284,29 @@ async def test_database_notes_capability_inventory_and_modes(
 
         mutations: list[tuple[str, dict[str, object]]] = []
         pushed: list[tuple[object, object]] = []
-        folder = SimpleNamespace(
+        # task-32185: the REAL projection row, not a SimpleNamespace. The
+        # hand-rolled stand-in went stale the moment the move mutation
+        # started carrying ``source_placement_id`` -- it raised
+        # AttributeError deep inside the production handler instead of
+        # failing where the contract changed. A dataclass cannot drift.
+        folder = LibraryNotesTreeRow(
+            placement_id="folder:folder-1",
             kind="folder",
-            protected=False,
-            folder_id="folder-1",
-            version=7,
             label="Projects",
-        )
-        note = SimpleNamespace(
-            kind="note",
-            protected=False,
+            depth=0,
             folder_id="folder-1",
+            protected=False,
+            version=7,
+        )
+        note = LibraryNotesTreeRow(
+            placement_id="placement-1",
+            kind="note",
+            label="Note one",
+            depth=1,
             note_id="note-1",
+            folder_id="folder-1",
             membership_id="member-1",
+            protected=False,
             version=11,
         )
         tree_screen = SimpleNamespace(
@@ -346,6 +386,8 @@ async def test_database_notes_capability_inventory_and_modes(
                 "note_id": "note-1",
                 "destination_folder_id": "folder-2",
                 "source_folder_id": "folder-1",
+                "source_membership_id": "member-1",
+                "source_placement_id": "placement-1",
                 "membership_version": 11,
                 "protected": False,
             },
@@ -356,6 +398,8 @@ async def test_database_notes_capability_inventory_and_modes(
             {
                 "folder_id": "folder-1",
                 "note_id": "note-1",
+                "source_membership_id": "member-1",
+                "source_placement_id": "placement-1",
                 "expected_version": 11,
                 "protected": False,
             },

@@ -15,7 +15,7 @@ from textual.widgets import Button, Checkbox, Select, Static
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.ACP_Interop.runtime_session import ACPRuntimeSessionState
@@ -195,6 +195,44 @@ class StaticLibraryNotesScopeService:
             start_offset=offset,
             previous_offset=previous_offset,
             next_offset=next_offset,
+        )
+
+    async def search_note_tree_placements(self, **kwargs):
+        """Page the query's matching placements, as the real seam does.
+
+        task-32201: the Database Notes filter submits through
+        ``NotesScopeService.search_note_tree_placements`` (the folder tree
+        pages placements, not notes) -- this fake carried only
+        ``search_notes``, so ``_run_library_notes_filter``'s
+        ``callable(...)`` guard returned before ever calling it and EVERY
+        filter assertion in the Library suites was measuring a filter that
+        had silently done nothing. Matching is delegated to this fake's own
+        ``search_notes`` so the one substring rule (and the
+        ``search_calls`` record the filter tests assert on) stays in one
+        place; the fixture has no folders, so every match is an unfiled
+        placement, exactly as ``page_note_placements`` returns them.
+        """
+        offset = int(kwargs["offset"])
+        limit = int(kwargs["limit"])
+        matches = await self.search_notes(
+            scope=kwargs.get("scope", "local_note"),
+            query=kwargs.get("query"),
+            limit=None,
+            user_id=kwargs.get("user_id"),
+            offset=offset,
+        )
+        window = matches[offset : offset + limit]
+        placements = tuple(
+            NotePlacementRecord(note=dict(note), folder_id=None, membership=None)
+            for note in window
+        )
+        next_offset = offset + len(placements)
+        return NotePlacementPage(
+            placements=placements,
+            total_placements=len(matches),
+            start_offset=offset,
+            previous_offset=max(0, offset - limit) if offset else None,
+            next_offset=next_offset if next_offset < len(matches) else None,
         )
 
     async def count_notes(self, *, scope, user_id=None, **kwargs):
@@ -391,10 +429,18 @@ class StaticLibraryNotesScopeService:
         return restored
 
 
-class StaticLibraryNotesListScopeService:
-    def __init__(self, notes):
-        self.notes = tuple(notes)
-        self.calls = []
+class StaticLibraryNotesListScopeService(StaticLibraryNotesScopeService):
+    """List-only Notes fake, kept for the callers that only need rows.
+
+    task-32185 AC#9: it used to implement ``list_notes`` ALONE, which was
+    enough while the canvas rendered a flat list. The Database Notes canvas
+    renders the folder tree now and pages it through
+    ``page_note_folder_children`` / ``page_note_placements``, so a fake
+    without them mounts no rows at all -- ``test_library_notes_list_focuses_
+    first_row_and_arrow_keys_move_it`` timed out on "Both note rows never
+    mounted". Inheriting the full fake supplies those seams; the plain-list
+    ``list_notes`` below is kept because callers assert on its shape.
+    """
 
     async def list_notes(self, **kwargs):
         self.calls.append(kwargs)
@@ -3905,12 +3951,7 @@ class _CssTrueDestinationHarness(DestinationHarness):
     in ``backlog/docs/lessons-testing-evidence.md``.
     """
 
-    CSS_PATH = str(
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "tldw_cli_modular.tcss"
-    )
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 @pytest.mark.asyncio
@@ -4252,7 +4293,7 @@ async def test_settings_console_paste_collapse_toggle_reflects_and_persists_conf
     from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
 
     class _StyledDestinationHarness(DestinationHarness):
-        CSS_PATH = str(BUNDLED_STYLESHEET)
+        CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     host = _StyledDestinationHarness(app, "settings")
 

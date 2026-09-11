@@ -87,6 +87,10 @@ from tldw_chatbook.Library.library_rag_state import (
     LibraryRagPanelState,
 )
 from tldw_chatbook.Library.library_notes_state import LibraryNotesFocusIdentity
+from tldw_chatbook.Library.library_notes_tree_paging import (
+    LIBRARY_NOTES_TREE_PAGE_SIZE,
+)
+from tldw_chatbook.Utils.adaptive_reader_state import ITEMS_TARGET_WIDTH
 from tldw_chatbook.Library.library_media_state import (
     MediaBrowseResult,
     MediaBrowseScope,
@@ -3816,7 +3820,16 @@ async def _wait_for_selector(screen, pilot, selector, *, attempts=120, timeout=3
         matches = list(screen.query(selector))
         if matches:
             await pilot.pause()
-            return matches[0]
+            # task-32201/task-32185: re-query AFTER the settle pause. The
+            # match that satisfied the loop can belong to a compose that the
+            # very next frame replaces (leaving select mode recomposes the
+            # whole notes canvas, for one), and a caller that then presses
+            # the returned Button presses a DETACHED node: the press posts
+            # nothing, the editor never opens, and the test reports the
+            # symptom several assertions later. Returning the live node is
+            # what every caller already means by "the row that is there now".
+            settled = list(screen.query(selector))
+            return settled[0] if settled else matches[0]
         if time.monotonic() >= deadline:
             break
         await pilot.pause(0.02)
@@ -5799,10 +5812,22 @@ def test_library_production_width_matrix_normalizes_persisted_custom_widths(
         "neutral_items_width",
     ),
     (
-        (235, 231, (False, True), 56),
-        (170, 166, (False, True), 56),
-        (120, 116, (False, True), 56),
-        (100, 100, (False, True), 42),
+        # task-32184: the wide rows used to expect 56. task-32127 gave the
+        # Notes reader profile ``list_grows`` and a 64-cell
+        # ``list_comfort_width``, so the list now takes the surplus up to
+        # that ceiling (235/170) and, below it, everything the work pane's
+        # 48-cell floor and the two 5-cell grips leave (116 - 10 - 48 = 58;
+        # 100 - 10 - 48 = 42). The assertion added at the bottom of the
+        # neutral block pins these against the resolver itself, so the next
+        # profile change fails as a disagreement rather than as a constant.
+        (235, 231, (False, True), 64),
+        (170, 166, (False, True), 64),
+        (120, 116, (False, True), 58),
+        # 100 columns no longer fits the list at all: the saved Items width
+        # is ``ITEMS_TARGET_WIDTH`` (50), and 10 grip cells + 50 + the work
+        # pane's 48-cell floor is 108. Measured, not derived -- the four
+        # 100-column cases were red on dev for this same reason.
+        (100, 100, (False, False), 0),
         (80, 80, (False, False), 0),
         (60, 60, (False, False), 0),
     ),
@@ -5882,6 +5907,21 @@ async def test_library_production_width_matrix_custom_preferences(
         if expected_items_open:
             assert adaptive.items.region.width == neutral_items_width
         assert adaptive.work.region.width == expected_work_width
+        # task-32184 AC#2: the shell sync and a standalone resolve of the
+        # SAME shell width must agree at every terminal width -- the earlier
+        # constants agreed only at the narrow ones, which is what let a
+        # profile change (task-32127) sit unnoticed behind them.
+        assert (
+            neutral.items_width
+            == library_screen_module.resolve_adaptive_reader_layout(
+                adaptive.region.width,
+                screen._library_notes_work_first_preferences(
+                    screen._notes_state.reader_preferences
+                ),
+                library_screen_module.LIBRARY_NOTES_READER_PROFILE,
+                reader_has_item=screen._notes_state.view != "list",
+            ).items_width
+        )
 
         screen._sync_library_notes_reader_layout_from_shell(priority="library")
         await pilot.pause()
@@ -5889,7 +5929,9 @@ async def test_library_production_width_matrix_custom_preferences(
         if expected_content_width >= saved_width + 98:
             priority_open = (True, True)
             priority_library_width = saved_width
-            priority_items_width = 40
+            # task-32184: the reopened list gets its saved width
+            # (``ITEMS_TARGET_WIDTH``), not the 40 this line used to name.
+            priority_items_width = ITEMS_TARGET_WIDTH
             expected_priority = None
         else:
             priority_open = (True, False)
@@ -23289,6 +23331,7 @@ def _real_notes_scope_service(tmp_path):
     """
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+    from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
     from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 
     db_dir = tmp_path / "chachanotes"
@@ -23305,6 +23348,14 @@ def _real_notes_scope_service(tmp_path):
         local_notes_service=interop,
         server_service=None,
         policy_enforcer=None,
+        # task-32185 AC#7/#8: production composes the facade with a
+        # ``LocalNoteFolderRepository`` over the same database
+        # (``app._build_notes_scope_service``). Without it every folder seam
+        # raises FolderCapabilityError, so the Database Notes tree these
+        # tests browse paints "Couldn't load folders / Couldn't load notes"
+        # and never mounts a row -- the fixture, not the product, predated
+        # the folder tree.
+        folder_repository=LocalNoteFolderRepository(global_db),
     )
 
 
@@ -24128,8 +24179,20 @@ def _assert_task8_compact_chrome(screen: LibraryScreen) -> None:
     assert authority.region.height == 2
     assert notes.content_region.contains_region(authority.region)
     authority_text = getattr(authority.renderable, "plain", str(authority.renderable))
-    assert "Library notes" in authority_text
-    assert "Next:" in authority_text
+    # task-32202 AC#1: at 60 columns the authority line does NOT carry the
+    # "Library notes" prefix -- task-32360 (critique #10) dropped it below 64
+    # columns because the full line took three rows in a two-row box and
+    # "files." was simply cut off; the source strip directly above names the
+    # authority instead. And the loading state carries no "Next:" clause by
+    # design (task-32063: a "Next:" names a control the reader can press, and
+    # "wait" names none). Assert where each half really lives.
+    strip_labels = " ".join(
+        str(button.label) for button in strip.query(Button)
+    )
+    assert "Library notes" in strip_labels, strip_labels
+    assert authority_text.strip(), "the authority line must still say something"
+    if "Loading note" not in authority_text:
+        assert "Next:" in authority_text
     assert footer.region.height == 1
     assert (
         navigation.region.height
@@ -31928,7 +31991,14 @@ async def test_library_note_editor_back_restores_exact_wide_browse_context() -> 
                 f"calls={app.notes_scope_service.search_calls!r}."
             ),
         )
-        assert len(screen._notes_state.filter_records) == 32
+        # task-32201: the filter is PAGED through the folder tree
+        # (``search_note_tree_placements``, 20 placements a page), so
+        # ``filter_records`` is one window, not the whole match set. Pin
+        # both halves -- the window AND the total the seam reported -- which
+        # is strictly more than the old "all 32 records" line could say.
+        assert len(screen._notes_state.filter_records) == LIBRARY_NOTES_TREE_PAGE_SIZE
+        assert screen._notes_state.tree_filter_state is not None
+        assert screen._notes_state.tree_filter_state.total == 32
         assert len(screen.query(".library-notes-row")) >= 20
 
         rail = screen.query_one("#library-rail")
