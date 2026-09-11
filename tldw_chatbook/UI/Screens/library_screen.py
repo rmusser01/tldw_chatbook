@@ -772,6 +772,7 @@ from ..Library_Modules.screen_constants import (
     LIBRARY_PROMPT_TEXT_MAX_CHARS,
     LIBRARY_PROMPT_SAVE_STATUS_COPY,
     LIBRARY_SKILL_TEXT_MAX_CHARS,
+    LIBRARY_PROMPT_DIRTY_ESCAPE_CHIP,
     LIBRARY_PROMPT_DIRTY_VETO_COPY,
     LIBRARY_SKILL_DIRTY_VETO_COPY,
     LIBRARY_SKILL_TRUST_MISMATCH_COPY,
@@ -2857,6 +2858,9 @@ class LibraryScreen(BaseAppScreen):
             refresh_local_source_snapshot=(
                 lambda *a, **k: self._refresh_local_source_snapshot(*a, **k)
             ),
+            register_footer_shortcuts=(
+                lambda *a, **k: self._register_footer_shortcuts(*a, **k)
+            ),
             run_library_service_call=(
                 lambda *a, **k: self._run_library_service_call(*a, **k)
             ),
@@ -4288,6 +4292,17 @@ class LibraryScreen(BaseAppScreen):
                     )
                     + trash_keys
                     + escape_chip
+                )
+            if self._library_prompt_editor_active() and self._prompts_state.dirty:
+                # task-32393: while the prompt editor is dirty Escape genuinely
+                # REFUSES to leave (``_exit_library_prompt_editor_guarded``'s
+                # veto, which now says so) -- so the chip names the blocker
+                # rather than promising an exit the key will not make. The
+                # skill editor's own set two branches below is the same idiom.
+                return (
+                    ("/", "focus search"),
+                    ("F6", "next pane"),
+                    ("esc", LIBRARY_PROMPT_DIRTY_ESCAPE_CHIP),
                 )
             return self.LIBRARY_DETAIL_BACK_SHORTCUTS
         if self._library_skill_editor_active():

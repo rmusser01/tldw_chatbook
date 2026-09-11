@@ -199,6 +199,11 @@ LIBRARY_SKILL_TEXT_MAX_CHARS = LIBRARY_NOTE_CONTENT_MAX_CHARS
 LIBRARY_PROMPT_DIRTY_VETO_COPY = (
     "Unsaved Prompt changes — Save or Discard changes first."
 )
+# task-32393: the footer's Escape chip while that veto is in force. "esc back to
+# list" is a promise the key will refuse to keep once the editor is dirty, which
+# is the same lie task-31271/31272 closed at the other Library seams -- so the
+# chip names the blocker instead, in the veto toast's own words.
+LIBRARY_PROMPT_DIRTY_ESCAPE_CHIP = "save or discard first"
 # Exact outcome copy for the skill editor's #library-skill-save-status line,
 # keyed by ``classify_skill_save_error``'s return value. "version-conflict"
 # is deliberately absent -- it routes into the conflict banner instead (see

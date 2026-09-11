@@ -572,8 +572,9 @@ you're on:
   [Notes](library/notes.md). Nothing autosaves in the Prompts or Skills
   editor: while you have unsaved edits, leaving the editor (Back,
   Escape, another row, another screen) is blocked until you save or
-  resolve the edit. Skills says so when it refuses; Prompts refuses
-  without a message today, so Escape looks like it did nothing — see
+  resolve the edit. Both say so when they refuse, and the Prompts
+  editor's Escape chip reads "esc save or discard first" while the edit
+  is unsaved rather than promising a return to the list — see
   [Prompts](library/prompts.md).
 - **Editing, deleting, or re-analyzing inside the media viewer** — the
   media viewer's Edit / Delete / Edit analysis forms have no dirty-edit
@@ -971,3 +972,8 @@ the same picture as the active destination).*
 *Verified against fix/library-crit10-docs — 2026-09-11 (task-32366: 14
 critique-10 claims reconciled; surface fixes in task-32346, 32348, 32349,
 32354, 32355).*
+
+*Verified against fix/library-decisions-32302-32393-32306 — 2026-09-11
+(task-32393: a dirty Prompts editor now refuses Back and Escape out loud —
+"Unsaved Prompt changes — Save or Discard changes first." — and its footer
+chip reads "esc save or discard first" while the edit is unsaved.)*

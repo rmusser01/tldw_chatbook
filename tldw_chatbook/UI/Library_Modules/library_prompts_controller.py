@@ -449,6 +449,7 @@ class LibraryPromptsController:
         library_note_keywords_from_input,
         open_library_export_canvas,
         refresh_local_source_snapshot,
+        register_footer_shortcuts,
         run_library_service_call,
         safe_text,
         sanitize_media_field,
@@ -518,6 +519,7 @@ class LibraryPromptsController:
         self._library_note_keywords_from_input_fn = library_note_keywords_from_input
         self._open_library_export_canvas_fn = open_library_export_canvas
         self._refresh_local_source_snapshot_fn = refresh_local_source_snapshot
+        self._register_footer_shortcuts_fn = register_footer_shortcuts
         self._run_library_service_call_fn = run_library_service_call
         self._safe_text_fn = safe_text
         self._sanitize_media_field_fn = sanitize_media_field
@@ -710,6 +712,10 @@ class LibraryPromptsController:
     @property
     def _refresh_local_source_snapshot(self) -> Any:
         return self._refresh_local_source_snapshot_fn
+
+    @property
+    def _register_footer_shortcuts(self) -> Any:
+        return self._register_footer_shortcuts_fn
 
     @property
     def _run_library_service_call(self) -> Any:
@@ -2633,18 +2639,15 @@ class LibraryPromptsController:
     async def on_prompt_block_editor_back_requested(
         self, event: PromptBlockEditor.BackRequested
     ) -> None:
-        """Use the Library editor's existing dirty-aware back behavior."""
+        """Use the Library editor's existing dirty-aware back behavior.
+
+        task-32393: this used to say that while re-implementing the guarded
+        exit's body inline, one copy behind -- so the block editor's own Back
+        was the one exit that neither explained its dirty veto nor re-focused
+        the list it returned to. It now genuinely calls that seam.
+        """
         event.stop()
-        if self._library_prompts_mutation_in_flight:
-            return
-        if not await self._flush_library_prompt_save():
-            return
-        self._reset_library_prompt_editor_state()
-        self._request_library_prompts_browse(
-            self._library_prompt_browse_controller.mutation_refresh_scope,
-            focus_identity=None,
-        )
-        self._refresh_local_source_snapshot()
+        await self._exit_library_prompt_editor_guarded()
 
     def _read_library_prompt_editor_fields(
         self,
@@ -2835,6 +2838,12 @@ class LibraryPromptsController:
                 dirty=self._library_prompt_dirty,
             )
         )
+        # task-32393: the footer's Escape chip reads the same dirty flag this
+        # line just repainted (see ``_library_footer_shortcuts_for_current_
+        # state``), and this seam is deliberately the one that updates the
+        # marker WITHOUT a recompose -- so without re-registering here the chip
+        # would only catch up on some later, unrelated redraw.
+        self._register_footer_shortcuts()
 
     def _sync_library_prompt_save_action_widgets(self) -> None:
         """Patch save/update action truth after identity or version changes."""
@@ -3456,6 +3465,13 @@ class LibraryPromptsController:
         if self._library_prompts_mutation_in_flight:
             return False
         if not await self._flush_library_prompt_save():
+            # task-32393: the veto is deliberate, but it was also SILENT --
+            # live, four Escape presses on a dirty editor produced no exit, no
+            # notice and no visible change, which reads as the app having hung.
+            # Said here, at the one seam both Escape and "‹ Back to list" route
+            # through, in the skills twin's shape
+            # (``_exit_library_skill_editor_guarded``).
+            self._notify_prompt_dirty_veto()
             return False
         self._reset_library_prompt_editor_state()
         self._request_library_prompts_browse(
