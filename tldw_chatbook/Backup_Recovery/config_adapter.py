@@ -1,15 +1,15 @@
 """Pure configuration/definition recovery policy; no bootstrap or decryption."""
 
-from copy import deepcopy
-from dataclasses import dataclass, replace
 import hashlib
-from pathlib import Path
 import re
 import tomllib
+from copy import deepcopy
+from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Mapping
 
 from .models import OwnerAdapter, StorageItem, discovery_context, storage_logical_id
-from .profile_paths import DATABASE_PATHS, user_data_dir, default_config_path, setting
+from .profile_paths import DATABASE_PATHS, default_config_path, setting, user_data_dir
 from .recovery_files import _RawDeclaration
 
 _CONFIG_HISTORY = re.compile(r"config_backup_[0-9]{8}_[0-9]{6}\.toml\Z")
@@ -130,8 +130,9 @@ class _History(_RawDeclaration):
         context = discovery_context(config)
         current = context.config_path
         paths = [current.with_suffix(current.suffix + ".bak")]
-        from .bootstrap import pinned_directory
         import os
+
+        from .bootstrap import pinned_directory
 
         try:
             with pinned_directory(current.parent) as parent:
@@ -323,6 +324,35 @@ class _Generated(_RawDeclaration):
                 item = replace(item, status="unsupported")
             result.append(item)
         video_root = user_data_dir(config) / "generated_videos"
+        # VideoStore._root_lease opens only this default sibling in append-binary
+        # mode for portalocker. No payload is ever written into the lease file.
+        lock = self._item(
+            config,
+            video_root.parent / ".generated_videos.capacity.lock",
+            "video_capacity_lock",
+        )
+        if lock.status == "included":
+            import os
+            import stat
+
+            from .bootstrap import pinned_directory
+
+            try:
+                with pinned_directory(lock.path.parent) as parent:
+                    info = os.stat(lock.path.name, dir_fd=parent, follow_symlinks=False)
+                    empty = (
+                        stat.S_ISREG(info.st_mode)
+                        and info.st_nlink == 1
+                        and info.st_size == 0
+                    )
+                lock = replace(
+                    lock, status="intentionally_excluded" if empty else "unsupported"
+                )
+            except (OSError, ValueError, RuntimeError):
+                lock = replace(lock, status="unavailable")
+        elif lock.status == "unused":
+            lock = replace(lock, status="intentionally_excluded")
+        result.append(lock)
         if context.selections.temporary_media:
             result.extend(self._tree(config, video_root))
             # No claim that available pathname bytes establish transcript/media
@@ -363,8 +393,9 @@ class _Generated(_RawDeclaration):
 
 class _Diagnostics(_RawDeclaration):
     def discover(self, config):
-        from .bootstrap import pinned_directory
         import os
+
+        from .bootstrap import pinned_directory
 
         context = discovery_context(config)
         root = user_data_dir(config)

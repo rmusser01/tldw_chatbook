@@ -5,11 +5,10 @@ Current physical catalogs were captured from actual installed constructors at
 Imported history stays inert; activation consumers must allocate fresh live claims.
 """
 
+import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
-from dataclasses import dataclass
 from pathlib import Path
-import sqlite3
 from threading import Event
 
 from tldw_chatbook.Backup_Recovery.models import (
@@ -18,9 +17,8 @@ from tldw_chatbook.Backup_Recovery.models import (
     discovery_context,
     storage_logical_id,
 )
-from tldw_chatbook.DB.recovery_sqlite import _checked_capture, _validate_sqlite
-
 from tldw_chatbook.DB.recovery_operations import _SQLiteDeclaration
+from tldw_chatbook.DB.recovery_sqlite import _checked_capture, _validate_sqlite
 
 _FILE_NOTES_SCHEMA = (
     (
@@ -41,6 +39,38 @@ _FILE_NOTES_SCHEMA = (
 
 
 class _FileNotesAdapter(_SQLiteDeclaration):
+    def discover(self, config):
+        from dataclasses import replace
+
+        from tldw_chatbook.Backup_Recovery.profile_paths import setting
+        from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+        from tldw_chatbook.DB.recovery_core import core_adapters
+
+        item = super().discover(config)[0]
+        if item.status != "unused":
+            return (item,)
+        if setting(config, "file_notes", "root"):
+            return (replace(item, status="missing_required"),)
+        core = next(
+            a for a in core_adapters() if a.owner_id == "db.chachanotes.primary"
+        )
+        source = core.discover(config)[0]
+        if source.status != "included" or core.validate(source.path):
+            return (replace(item, status="unavailable"),)
+        try:
+            with closing(
+                connect_private_sqlite(
+                    core.backup_owner_id, source.path, read_only=True
+                )
+            ) as connection:
+                if connection.execute(
+                    "SELECT 1 FROM notes WHERE file_path_on_disk IS NOT NULL OR sync_root_folder IS NOT NULL LIMIT 1"
+                ).fetchone():
+                    item = replace(item, status="missing_required")
+        except (OSError, ValueError, sqlite3.Error):
+            item = replace(item, status="unavailable")
+        return (item,)
+
     def validate(self, candidate: Path) -> tuple[str, ...]:
         from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
@@ -130,7 +160,13 @@ class _ReceiptsAdapter(_SQLiteDeclaration):
 def recovery_adapters() -> tuple[OwnerAdapter, ...]:
     return (
         _FileNotesAdapter(
-            "notes.file_notes", None, "file_notes.sqlite", (0,), _FILE_NOTES_SCHEMA, ()
+            "notes.file_notes",
+            None,
+            "file_notes.sqlite",
+            (0,),
+            _FILE_NOTES_SCHEMA,
+            (),
+            optional_default=True,
         ),
         _ReceiptsAdapter(
             "notes.sync_state",
@@ -139,6 +175,7 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             (1,),
             _RECEIPTS_SCHEMA,
             ("db.chachanotes.primary",),
+            optional_default=True,
         ),
         _SyncBindings(),
     )

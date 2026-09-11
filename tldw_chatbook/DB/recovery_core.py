@@ -1,8 +1,8 @@
 """Installed core recovery declarations, independent of runtime constructors."""
 
-from dataclasses import dataclass
-from contextlib import ExitStack, closing
 import sqlite3
+from contextlib import ExitStack, closing
+from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
 from typing import Mapping
@@ -27,7 +27,15 @@ class _CoreAdapter:
     def discover(self, config: Mapping[str, object]) -> tuple[StorageItem, ...]:
         context = discovery_context(config)
         path = database_path(config, self.setting_name)
-        status = "included" if path.is_file() else "missing_required"
+        from .recovery_operations import _sqlite_inventory_status
+
+        status = _sqlite_inventory_status(
+            config,
+            path,
+            owner=self.owner_id,
+            setting_name=self.setting_name,
+            optional_default=self.owner_id == "db.library_ingest_jobs",
+        )
         dependent_owners = self.dependent_owners
         if self.owner_id == "db.chachanotes.primary" and status == "included":
             from .private_sqlite import connect_private_sqlite
@@ -35,6 +43,7 @@ class _CoreAdapter:
             if not self.validate(path):
                 with closing(connect_private_sqlite("recovery.core.chachanotes", path, read_only=True)) as connection:
                     optional_groups = {
+                        "notes.file_notes": "SELECT 1 FROM notes WHERE file_path_on_disk IS NOT NULL OR sync_root_folder IS NOT NULL LIMIT 1",
                         "persona.assets": "SELECT 1 FROM persona_visual_assets LIMIT 1",
                         "persona.visual_identity": "SELECT 1 FROM visual_identity_assets a JOIN visual_identity_pack_versions v ON a.pack_version_id=v.id JOIN visual_identity_packs p ON v.pack_id=p.id WHERE p.source_kind != 'builtin' LIMIT 1",
                         "persona.visual_identity_builtin": "SELECT 1 FROM visual_identity_assets a JOIN visual_identity_pack_versions v ON a.pack_version_id=v.id JOIN visual_identity_packs p ON v.pack_id=p.id WHERE p.source_kind = 'builtin' LIMIT 1",
@@ -42,6 +51,44 @@ class _CoreAdapter:
                     }
                     absent = {owner for owner, query in optional_groups.items() if connection.execute(query).fetchone() is None}
                     dependent_owners = tuple(owner for owner in dependent_owners if owner not in absent)
+        elif self.owner_id == "db.library_collections" and status == "included":
+            from .private_sqlite import connect_private_sqlite
+
+            if not self.validate(path):
+                with closing(
+                    connect_private_sqlite(self.backup_owner_id, path, read_only=True)
+                ) as connection:
+                    kinds = {
+                        row[0].lower()
+                        for row in connection.execute(
+                            "SELECT DISTINCT source_type FROM library_collection_items"
+                        )
+                    }
+                    targets = {
+                        "media": "db.media.primary",
+                        "note": "db.chachanotes.primary",
+                        "conversation": "db.chachanotes.primary",
+                        "prompt": "db.prompts.primary",
+                        "skill": "skills",
+                    }
+                    required = {targets[kind] for kind in kinds if kind in targets}
+                    dependent_owners = tuple(
+                        owner for owner in dependent_owners if owner in required
+                    )
+        elif self.owner_id == "db.library_ingest_jobs" and status == "included":
+            from .private_sqlite import connect_private_sqlite
+
+            if not self.validate(path):
+                with closing(
+                    connect_private_sqlite(self.backup_owner_id, path, read_only=True)
+                ) as connection:
+                    if (
+                        connection.execute(
+                            "SELECT 1 FROM ingest_jobs WHERE origin='local' AND media_id IS NOT NULL LIMIT 1"
+                        ).fetchone()
+                        is None
+                    ):
+                        dependent_owners = ()
         return (
             StorageItem(
                 self.owner_id,
@@ -76,8 +123,9 @@ class _CoreAdapter:
         )
 
     def capture(self, item: StorageItem, destination: Path, cancel: Event) -> None:
-        from .private_sqlite import copy_private_sqlite
         from tldw_chatbook.Backup_Recovery.admission import _local
+
+        from .private_sqlite import copy_private_sqlite
 
         if (
             item.owner != self.owner_id
@@ -162,7 +210,7 @@ class _CoreAdapter:
         Later asset owners remain responsible for validating their byte inventories.
         """
         from .private_sqlite import connect_private_sqlite
-        from .sql_validation import validate_identifier, escape_identifier
+        from .sql_validation import escape_identifier, validate_identifier
 
         if item.owner != self.owner_id or not item.logical_id.startswith("profile:"):
             return ("invalid_dependency_context",)

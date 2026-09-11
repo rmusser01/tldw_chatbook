@@ -328,6 +328,7 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             "tldw_chatbook_tts_profiles.db",
             (4,),
             _SCHEMA,
+            optional_default=True,
         ),
         _References(
             "tts.references",
@@ -335,5 +336,6 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             "tldw_chatbook_tts_profiles.db",
             (4,),
             _SCHEMA,
+            optional_default=True,
         ),
     )

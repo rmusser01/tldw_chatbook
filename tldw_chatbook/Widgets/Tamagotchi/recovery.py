@@ -1,9 +1,10 @@
 """Exact optional ConfigFileStorage state; dormant custom stores have no locator."""
 
-import os
 import hashlib
-from pathlib import Path
+import os
 import re
+from dataclasses import replace
+from pathlib import Path
 
 from tldw_chatbook.Backup_Recovery.models import (
     OwnerAdapter,
@@ -24,6 +25,30 @@ class _ConfiguredPets(_RawDeclaration):
             else Path("~/.config")
         ).expanduser() / "tldw_chatbook"
         path = parent / "tamagotchi_pets.json"
+        from tldw_chatbook.Backup_Recovery.file_inventory import _inventory_root
+
+        # A checked absent canonical parent also proves its JSON/backups absent.
+        # Inspect the parent itself first so links and unsafe traversal refuse.
+        parent_item = _inventory_root(parent, owner=self.owner_id, external=False)
+        if parent_item.status == "unavailable":
+            container = _inventory_root(
+                parent.parent, owner=self.owner_id, external=False
+            )
+            if container.status == "unused":
+                parent_item = replace(parent_item, status="unused")
+        if parent_item.status != "included_directory":
+            context = discovery_context(config)
+            return (
+                replace(
+                    parent_item,
+                    path=path,
+                    logical_id=storage_logical_id(context, self.owner_id),
+                    status="unused"
+                    if parent_item.status == "unused"
+                    else "unavailable",
+                    metadata=None,
+                ),
+            )
         items = [self._item(config, path)]
         if not parent.exists():
             return tuple(items)

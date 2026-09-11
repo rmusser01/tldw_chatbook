@@ -1323,6 +1323,7 @@ copy census rows therefore remain unchanged by this consolidation.
 | tldw_chatbook/Kanban_Interop/recovery.py | _KanbanAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
 | tldw_chatbook/Kanban_Interop/recovery.py | _KanbanAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
 | tldw_chatbook/Notes/recovery.py | _FileNotesAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Notes/recovery.py | _FileNotesAdapter.discover | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
 | tldw_chatbook/Notes/recovery.py | _FileNotesAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
 | tldw_chatbook/Notes/recovery.py | _ReceiptsAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
 | tldw_chatbook/Notes/recovery.py | _ReceiptsAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
@@ -1426,7 +1427,7 @@ may infer production drain from fixture GC.
 
 ## Configuration and durable-file recovery census (TASK-31992)
 
-| tldw_chatbook/DB/recovery_core.py | _CoreAdapter.discover | connect_private_sqlite | 1 | generic_boundary | qualified-core-reference-discovery |
+| tldw_chatbook/DB/recovery_core.py | _CoreAdapter.discover | connect_private_sqlite | 3 | generic_boundary | qualified-core-reference-discovery |
 | tldw_chatbook/Persona_Visual/recovery.py | _Assets._references | connect_private_sqlite | 1 | generic_boundary | qualified-persona-reference-discovery |
 | tldw_chatbook/TTS/recovery.py | _Profiles.validate | connect_private_sqlite | 1 | generic_boundary | qualified-tts-schema-validation |
 | tldw_chatbook/TTS/recovery.py | _Profiles.capture | copy_private_sqlite | 1 | generic_boundary | qualified-tts-capture |

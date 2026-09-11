@@ -5,10 +5,10 @@ Current physical catalogs were captured from actual installed constructors at
 Imported history stays inert; activation consumers must allocate fresh live claims.
 """
 
+import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
-import sqlite3
 from threading import Event
 from typing import Mapping
 
@@ -23,6 +23,44 @@ from tldw_chatbook.Backup_Recovery.profile_paths import database_path, user_data
 from tldw_chatbook.DB.recovery_sqlite import _checked_capture, _validate_sqlite
 
 
+def _sqlite_inventory_status(
+    config, path, *, owner, setting_name=None, optional_default=False
+):
+    """Recognize observable absence only for an explicitly optional default.
+
+    This cannot prove historical never-use after all deletion evidence is gone.
+    Existing files, explicit selectors and residual SQLite state are never unused.
+    """
+    from tldw_chatbook.Backup_Recovery.file_inventory import _inventory_root
+    from tldw_chatbook.Backup_Recovery.profile_paths import (
+        DATABASE_PATHS,
+        custom_database_input,
+        setting,
+    )
+
+    item = _inventory_root(path, owner=owner, external=False)
+    if item.status != "unused":
+        return "unsupported" if item.status == "included_directory" else item.status
+    if not optional_default:
+        return "missing_required"
+    if setting_name:
+        row = next(row for row in DATABASE_PATHS if row[1] == setting_name)
+        legacy = str(Path("~/.local/share/tldw_cli") / row[3]) if row[3] else None
+        if (
+            custom_database_input(setting(config, "database", setting_name), legacy)
+            is not None
+        ):
+            return "missing_required"
+    suffixes = ("-wal", "-shm", "-journal")
+    if owner in {"tts.profile_store", "tts.references"}:
+        suffixes += (".lock",)
+    for suffix in suffixes:
+        sidecar = _inventory_root(Path(str(path) + suffix), owner=owner, external=False)
+        if sidecar.status != "unused":
+            return "missing_required" if sidecar.status == "included" else "unavailable"
+    return "unused"
+
+
 @dataclass(frozen=True)
 class _SQLiteDeclaration:
     owner_id: str
@@ -32,6 +70,7 @@ class _SQLiteDeclaration:
     schemas: tuple[tuple[int, tuple[str, ...]], ...]
     dependencies: tuple[str, ...] = ()
     activation_required: bool = True
+    optional_default: bool = False
 
     def discover(self, config: Mapping[str, object]) -> tuple[StorageItem, ...]:
         context = discovery_context(config)
@@ -41,10 +80,13 @@ class _SQLiteDeclaration:
             path = database_path(config, "chachanotes_db_path").parent / self.leaf
         else:
             path = user_data_dir(config) / self.leaf
-        try:
-            status = "included" if path.is_file() else "missing_required"
-        except OSError:
-            status = "unavailable"
+        status = _sqlite_inventory_status(
+            config,
+            path,
+            owner=self.owner_id,
+            setting_name=self.setting_name,
+            optional_default=self.optional_default,
+        )
         return (
             StorageItem(
                 self.owner_id,
@@ -595,8 +637,9 @@ _SUBSCRIPTIONS_SCHEMA += (
 class _SubscriptionsAdapter(_SQLiteDeclaration):
     def discover(self, config: Mapping[str, object]) -> tuple[StorageItem, ...]:
         from dataclasses import replace
-        from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
         from tldw_chatbook.Backup_Recovery.recovery_files import _tree_member_id
+        from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
         item = super().discover(config)[0]
         if item.status != "included":
@@ -639,12 +682,12 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
     def validate_dependencies(
         self, item: StorageItem, candidate: Path, candidates: Mapping[str, Path]
     ) -> tuple[str, ...]:
-        from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
         from tldw_chatbook.Backup_Recovery.models import DiscoveryContext
         from tldw_chatbook.Backup_Recovery.recovery_files import (
-            _tree_member_id,
             _RawDeclaration,
+            _tree_member_id,
         )
+        from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
         parts = item.logical_id.split(":")
         if (
@@ -750,6 +793,7 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             (12,),
             _AGENT_RUNS_SCHEMA,
             ("db.chachanotes.primary",),
+            optional_default=True,
         ),
         _SubscriptionsAdapter(
             "db.subscriptions",
