@@ -30,6 +30,42 @@ organized into four modes: Servers, Tools, Permissions, and Audit.
 - Press **Ctrl+9**, click **⌃9 MCP** in the nav bar, or press **Ctrl+P** →
   "Tab Navigation: Switch to MCP".
 
+## Adding your first MCP server (step by step)
+
+Local servers run as stdio processes chatbook launches for you. Secrets are
+never stored — reference them as `KEY=$ENV_VAR` and export the variable in
+your shell before connecting.
+
+1. **Open the screen** (Ctrl+9). On a fresh install the overview table is
+   showing, with the built-in server listed and the `Add server` and
+   `Import…` buttons at the top. (You can also press `a` in any mode.)
+2. **Press Add server** (or `a`). Fill in:
+   - **Name** — a short id (`docs`); letters, digits, `-`, `_` only.
+   - **Command** — the executable (`npx`, `python3`, `uvx`, …).
+   - **Args** — one per line (e.g. `-y` and `@modelcontextprotocol/server-filesystem`).
+   - **Env** — one `KEY=value` per line; a bare `$VAR` value becomes a
+     placeholder read from your environment at launch.
+3. **Press Save and connect.** The profile is saved and chatbook launches
+   it immediately; the row's status moves from `○ Needs setup` to `● Ready`
+   (or an actionable reason, e.g. a missing `$ENV_VAR`, stays on screen).
+4. **Check permissions.** Press `3` (Permissions). Your server's tools are
+   grouped under a `Server default — <name>` row; every tool starts at
+   **Ask**, meaning each call shows an approval card in Console. Select a
+   row and press **Space** to cycle Inherit → Ask → Allow → Off. The
+   `Server default` row sets the fallback for that whole server — one
+   change instead of one per tool. (Tools you haven't connected yet don't
+   appear here at all; if a server you added is missing, the line under
+   the legend says so and points you back to Servers mode.)
+5. **Try a tool.** Press `2` (Tools), arrow onto the tool, and press `t`
+   to open the Test Tool panel — a form built from the tool's schema (or
+   a raw-JSON box when the schema is too complex). An Ask-gated tool asks
+   once per run; the run is recorded in Audit (`4`).
+
+To remove a server, select its row in Servers mode and use **Delete**
+(a two-step confirm; Escape backs out). **Import…** accepts a
+Claude-Desktop-style `{"mcpServers": …}` config — secret-shaped values
+come in as placeholders, never stored literals.
+
 ## Running Chatbook as a standalone MCP server
 
 Install the packaged optional extra, then configure the external client to

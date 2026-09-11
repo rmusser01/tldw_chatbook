@@ -64,6 +64,52 @@ _SERVER_PROFILES_POINTER = (
     "above is chatbook's client-side gate and still applies."
 )
 
+# Wave C (F8): shown under the profile selector whenever a non-default
+# tool-policy profile is selected -- the matrix reads as the whole story
+# otherwise, but Console applies the profile (and persona policy may floor
+# tools on top of it).
+_PROFILE_HINT_TEXT = (
+    "Console agents run with this profile; persona policy may still floor "
+    "some tools to Ask."
+)
+
+# Wave C (F3): cap on how many undiscovered server names the discovery
+# hint names inline before collapsing to "+N more" -- the hint is one dim
+# line under the legend, not a second table.
+_UNDISCOVERED_NAME_CAP = 3
+
+
+def _undiscovered_servers_hint(snapshots: list) -> str | None:
+    """One-line hint naming KNOWN servers with no discovered tools.
+
+    Wave C (F3): a saved-but-unconnected server contributes zero rows to
+    the matrix (registration/discovery precedes permission -- an
+    undiscovered tool has nothing to permit yet), so "where is docs?" had
+    no answer at the point of confusion. Local-source snapshots only (the
+    built-in row is never "connected", and server-source records embed
+    their own tool lists); `tool_count` None or 0 counts as undiscovered.
+    Returns None when every known server has tools (nothing to explain).
+    """
+    from tldw_chatbook.MCP.readiness import ReadinessSnapshot
+
+    names = [
+        snap.label
+        for snap in snapshots
+        if isinstance(snap, ReadinessSnapshot)
+        and snap.source == "local"
+        and not snap.tool_count
+    ]
+    if not names:
+        return None
+    shown = names[:_UNDISCOVERED_NAME_CAP]
+    text = ", ".join(shown)
+    if len(names) > len(shown):
+        text += f", +{len(names) - len(shown)} more"
+    return (
+        f"No tools yet — {text}. Connect them in Servers mode to configure "
+        "their permissions."
+    )
+
 
 # Task 1 (MCP Hub Phase 6): concrete Rich styles for `state_text()` -- the
 # semantic-state-word coloring shared by every DataTable cell across the Hub
@@ -398,6 +444,14 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         min-height: 0;
         color: $text-muted;
     }
+    /* Wave C (F8): the non-default-profile hint is the same quiet, dimmed
+    one-liner tier as the kill-switch hint below. */
+    #mcp-perm-profile-hint {
+        height: auto;
+        min-height: 0;
+        color: $text-muted;
+        padding: 0 1;
+    }
     /* task-2242: the kill-switch scope hint is the same quiet, dimmed
     one-liner tier as the legend below the matrix. */
     #mcp-perm-kill-switch-hint {
@@ -540,6 +594,11 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
             id="mcp-perm-tool-profile",
             allow_blank=False,
         )
+        # Wave C (F8): populated by `set_profile_hint()` -- hidden while
+        # empty (the default profile needs no Console-context caveat).
+        hint = Static("", id="mcp-perm-profile-hint", markup=False)
+        hint.display = False
+        yield hint
         yield Button(
             _kill_switch_label(self._kill_switch),
             id="mcp-perm-kill-switch",
@@ -593,6 +652,7 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         preview: str,
         echo: str | None = None,
         gate_breadcrumb: str | None = None,
+        discovery_hint: str | None = None,
         profile_context: PermissionProfileContext | None = None,
     ) -> None:
         """Rebuild the matrix from a fresh `PermRow` list.
@@ -673,8 +733,22 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         self._apply_filter()
 
         self.query_one("#mcp-perm-preview", Static).update(f"{echo}{preview}" if echo else preview)
-        legend_text = f"{_LEGEND_TEXT}\n{gate_breadcrumb}" if gate_breadcrumb else _LEGEND_TEXT
+        legend_text = _LEGEND_TEXT
+        for extra_line in (gate_breadcrumb, discovery_hint):
+            if extra_line:
+                legend_text = f"{legend_text}\n{extra_line}"
         self.query_one("#mcp-perm-legend", Static).update(legend_text)
+
+    def set_profile_hint(self, text: str | None) -> None:
+        """Wave C (F8): render (or clear) the non-default-profile hint line
+        under the profile selector. `None`/empty hides the Static entirely
+        so the default profile renders no caveat."""
+        hint = self.query_one("#mcp-perm-profile-hint", Static)
+        if text:
+            hint.update(text)
+            hint.display = True
+        else:
+            hint.display = False
 
     def update_tool_policy_profiles(
         self,

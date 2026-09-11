@@ -947,12 +947,20 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
                 return
 
     def _detail_toolbar_widgets(self) -> list[Button]:
-        """Build the local-profile toolbar (Edit/Disconnect/Delete), or the
-        arm-then-confirm pair once Delete has been pressed.
+        """Build the local-profile toolbar (Edit/lifecycle/Disconnect/Delete),
+        or the arm-then-confirm pair once Delete has been pressed.
 
         Local-source snapshots only: built-in is edited via config.toml, and
         server-source profiles are mutated server-side (Advanced), so both
         render no toolbar at all here.
+
+        Wave C (F7b): the lifecycle verbs the inspector's readiness actions
+        carry also live here, on the surface the user is already looking at
+        -- Connect (primary) for a not-yet-connected profile, Refresh tools
+        for a connected one. Both post the SAME `HubActionRequested` the
+        inspector's buttons post, so there is exactly one execution path;
+        diagnostics (Check readiness) stay inspector-only to keep the
+        toolbar to at most four verbs.
         """
         snapshot = self._detail_snapshot
         if snapshot is None or snapshot.source != "local":
@@ -991,6 +999,25 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
                     classes="console-action-secondary",
                     compact=True,
                     tooltip="Disconnect the running server.",
+                )
+            )
+            widgets.append(
+                Button(
+                    "Refresh tools",
+                    id="mcp-detail-refresh",
+                    classes="console-action-secondary",
+                    compact=True,
+                    tooltip="Reconnect and refresh the tool catalog.",
+                )
+            )
+        else:
+            widgets.append(
+                Button(
+                    "Connect",
+                    id="mcp-detail-connect",
+                    classes="console-action-primary",
+                    compact=True,
+                    tooltip="Connect and discover this server's tools.",
                 )
             )
         widgets.append(
@@ -1531,6 +1558,23 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
                 self.post_message(
                     MCPInspector.HubActionRequested(
                         HubAction.EDIT_CONFIG, self._detail_snapshot.server_key
+                    )
+                )
+            return
+        if button_id in ("mcp-detail-connect", "mcp-detail-refresh"):
+            # Wave C (F7b): same execution path as the inspector's readiness
+            # action buttons -- the workbench's HubActionRequested handler
+            # routes both through the typed lifecycle methods.
+            event.stop()
+            if self._detail_snapshot is not None:
+                action = (
+                    HubAction.CONNECT
+                    if button_id == "mcp-detail-connect"
+                    else HubAction.REFRESH_DISCOVERY
+                )
+                self.post_message(
+                    MCPInspector.HubActionRequested(
+                        action, self._detail_snapshot.server_key
                     )
                 )
             return

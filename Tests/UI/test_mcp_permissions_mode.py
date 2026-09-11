@@ -1540,3 +1540,71 @@ async def test_filter_input_has_nonzero_geometry_with_bundled_css():
         assert filter_input.outer_size.height > 0, (
             "filter Input collapsed to zero height under bundled CSS"
         )
+
+
+# -- Wave C (2026-09-11 MCP Hub UX program): flow fixes ---------------------
+
+
+def test_undiscovered_servers_hint_names_zero_tool_servers():
+    """C2/F3: local servers that are KNOWN but have no discovered tools are
+    invisible in the matrix (registration/discovery precedes permission) --
+    the hint line names them so "where is docs?" has an answer at the point
+    of confusion. Discovered servers and the built-in row are never named."""
+    from tldw_chatbook.MCP.readiness import ReadinessState, ReadinessSnapshot
+    from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
+        _undiscovered_servers_hint,
+    )
+
+    def _snap(key, label, source, tool_count):
+        return ReadinessSnapshot(
+            server_key=key,
+            label=label,
+            source=source,
+            state=ReadinessState.READY,
+            reasons=(),
+            message="",
+            tool_count=tool_count,
+        )
+
+    snapshots = [
+        _snap("local:docs", "docs", "local", None),
+        _snap("local:web", "web", "local", 0),
+        _snap("local:ok", "ok", "local", 3),
+        _snap("builtin:tldw_chatbook", "tldw_chatbook (built-in)", "builtin", None),
+    ]
+    hint = _undiscovered_servers_hint(snapshots)
+    assert hint is not None
+    assert "docs" in hint and "web" in hint
+    assert "ok" not in hint
+    assert "built-in" not in hint
+    assert "Servers" in hint
+
+    # Everything discovered (or nothing known): no hint at all.
+    assert _undiscovered_servers_hint(snapshots[2:]) is None
+    assert _undiscovered_servers_hint([]) is None
+
+
+@pytest.mark.asyncio
+async def test_update_matrix_renders_discovery_hint_line():
+    """C2/F3: the discovery hint renders as its own dim line under the
+    legend (same slot family as the gate breadcrumb), and clears on the
+    next ordinary render that passes no hint."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix(
+            [_global_row()],
+            kill_switch=False,
+            preview="global default: ask",
+            discovery_hint="docs · web: no tools yet — connect in Servers mode.",
+        )
+        await pilot.pause()
+        legend = str(app.query_one("#mcp-perm-legend", Static).renderable)
+        assert "no tools yet" in legend
+
+        await canvas.update_matrix(
+            [_global_row()], kill_switch=False, preview="global default: ask"
+        )
+        await pilot.pause()
+        legend = str(app.query_one("#mcp-perm-legend", Static).renderable)
+        assert "no tools yet" not in legend

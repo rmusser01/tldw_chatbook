@@ -1808,3 +1808,65 @@ async def test_restart_class_gates_carry_a_restart_marker(monkeypatch):
         assert "⟳" not in str(first_cb.label)
         master = app.query_one("#mcp-gate-local_tools_enabled", Checkbox)
         assert "⟳" not in str(master.label)
+
+
+# -- Wave C (2026-09-11 MCP Hub UX program): flow fixes ---------------------
+
+
+@pytest.mark.asyncio
+async def test_local_detail_toolbar_offers_lifecycle_actions():
+    """C4/F7b: the canvas detail toolbar carries the lifecycle verbs for
+    local profiles -- Connect when not connected, Refresh tools when
+    connected -- posting the same HubActionRequested the inspector's
+    buttons use. Check/diagnostics stay inspector-only (toolbar economy)."""
+
+    class HubActionCaptureApp(CanvasApp):
+        def __init__(self) -> None:
+            super().__init__()
+            self.events: list[object] = []
+
+        def on_mcp_inspector_hub_action_requested(self, event) -> None:
+            self.events.append(event)
+
+    from tldw_chatbook.MCP.readiness import ReadinessState, ReadinessSnapshot
+
+    def _local_snap(connected: bool) -> ReadinessSnapshot:
+        return ReadinessSnapshot(
+            server_key="local:docs",
+            label="docs",
+            source="local",
+            state=ReadinessState.READY if connected else ReadinessState.NEEDS_SETUP,
+            reasons=(),
+            message="",
+            tool_count=2,
+            is_connected=connected,
+        )
+
+    app = HubActionCaptureApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+
+        await canvas.show_detail(_local_snap(connected=False))
+        await pilot.pause()
+        labels = [
+            str(button.label)
+            for button in app.query("#mcp-detail-toolbar Button")
+        ]
+        assert "Connect" in labels
+        assert "Edit" in labels and "Delete" in labels
+        assert "Disconnect" not in labels and "Refresh tools" not in labels
+
+        app.query_one("#mcp-detail-connect", Button).press()
+        await pilot.pause()
+        assert app.events, "Connect press must post a HubActionRequested"
+        assert app.events[-1].action is HubAction.CONNECT
+        assert app.events[-1].server_key == "local:docs"
+
+        await canvas.show_detail(_local_snap(connected=True))
+        await pilot.pause()
+        labels = [
+            str(button.label)
+            for button in app.query("#mcp-detail-toolbar Button")
+        ]
+        assert "Disconnect" in labels and "Refresh tools" in labels
+        assert "Connect" not in labels
