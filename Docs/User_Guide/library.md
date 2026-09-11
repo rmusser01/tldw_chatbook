@@ -212,7 +212,11 @@ readable measure rather than stretched across the whole canvas.
   - a **Navigation** heading with **Collapse** at the opposite edge. Collapse
     hides the rail without changing the selected destination, search query,
     section disclosures, or canvas. The slim **Nav** handle expands it again;
-    it is keyboard-focusable and remains part of the **F6** pane cycle;
+    it is keyboard-focusable and remains part of the **F6** pane cycle. The
+    handle is five cells wide, so it spells its name **downwards** —
+    `N`/`a`/`v` down the column, with the collapse arrows below it. The
+    handle beside the list pane does the same with that pane's name
+    (**Items**, **Prompts**, **Skills**, **Folder files**);
   - the **Import…** button ("Add files, links, and transcripts to
     your Library.");
   - the **Search Library…** box — submitting it lands on the
@@ -258,7 +262,8 @@ readable measure rather than stretched across the whole canvas.
   landing adds "i import content"
   and "n new note" (single-letter accelerators for the hub actions);
   the Search / RAG canvas adds "u use Library
-  context in Console", "enter select evidence", and "o open evidence";
+  context in Console", "o open evidence", and an "enter" hint that names
+  whatever Enter does on the control you are focused on;
   a Media/Notes/Prompts/Skills/Collections list adds "esc focus rail";
   that list's item viewer/editor (or the media viewer) adds "esc back to
   list" instead; the Export canvas adds "esc back to Media" (or whichever
@@ -266,6 +271,12 @@ readable measure rather than stretched across the whole canvas.
   staging canvas adds "esc back to hub". Every hint is a per-key
   "key action" pair — the Notes editor, for example, shows "ctrl+s save
   note | esc back to notes".
+  While a text field has focus the footer leads with `typing in field`,
+  names the Escape chip for that surface (`esc leave field` where nothing
+  else owns the key — a list canvas keeps its own `esc focus rail`), and
+  carries the canvas verbs after `after esc:` — they are not live until you
+  leave the field. Under 64 columns there is room for a single chip, so the
+  footer names only what Escape does there and the verbs are not listed.
 
 One special case: selecting **Notes** adds a
 **Library notes | Folder files** strip above the workbench. **Folder files**
@@ -274,6 +285,13 @@ the rail stays beside it; on compact terminals the canvas becomes the single
 visible stage so its controls remain on-screen. Escape (or the
 **Library notes** link) returns to the notes list — see
 [File Notes](library/file-notes.md).
+
+Opening a **note for editing** is the one place the rail steps aside on a
+wide terminal, deliberately: at 120 columns and more of editor width the
+rail collapses to its **Nav** handle so the note gets the room, and Escape
+(or **Nav**) brings it straight back. Expanding it by hand ends that for the
+rest of the visit — the rail then stays put while you open one note after
+another.
 
 ## Features & controls
 
@@ -305,11 +323,11 @@ leading `▸` uses cannot collide on one control.
 | Control | What it does |
 |---|---|
 | **Collapse** | Hides the wide navigation rail in place and gives the canvas the reclaimed width. The choice lasts for the current Library screen session. |
-| **Nav** | Expands a manually collapsed rail and returns focus to **Search Library…**. On compact terminals, Library's existing one-pane routing takes precedence and the manual collapse returns when the terminal is wide again. |
+| **Nav** | Expands a collapsed rail and returns focus to **Search Library…**. The handle spells `Nav` down its five-cell column, so it is readable without hovering. On compact terminals, Library's existing one-pane routing takes precedence and the manual collapse returns when the terminal is wide again. Used on the rail a note editor collapsed, it also ends that editor's claim on the width for the rest of the visit. |
 | **Import…** | Opens the Import media canvas — see [Import & export](library/import-and-export.md). |
 | **New note** | Opens the production note-creation canvas. It is shown directly in the Get started rail. |
 | **Explore all tools** | Reveals and remembers the complete Library without changing section disclosures. |
-| **Back to Get started** | Returns an explicitly expanded, still-empty Library to the Get started landing and compact rail, with focus on **Import…**. It is never offered after graduation. |
+| **Back to Get started** | Returns an explicitly expanded, still-empty Library to the Get started landing and compact rail, with focus on **Import…**. It is offered only after you have explicitly expanded a still-empty Library from Get started, and never after graduation. |
 | **Search Library…** | Type a query and press Enter: lands on the Search / RAG canvas and runs it (empty submit just opens the canvas) — see [Search & RAG](library/search-and-rag.md). **x** beside the box empties it. The box shows the live query only on the Search / RAG canvas; every other canvas gets an empty box, and returning to Search / RAG restores the query and its results. Text typed into the box on another canvas and never submitted is discarded when you leave — it never becomes the Search / RAG query. |
 | **Chunking Lab** / **Try selected text** | Under **Details ▸ Actions**, above the line "Chunking Lab — compare how text is split for search". Opens a full-screen A/B tool; **Escape** there returns to the Library canvas you came from, including from the sample editor. |
 | **▾** / **▸** (section headers) | Open or collapse that rail section — see [State glyphs](#state-glyphs). |
@@ -320,6 +338,13 @@ Media, Conversations, and Prompts replace an empty page's disabled paging and
 selection controls with a useful next step. The exact total remains visible in
 the title, but there is no meaningless “page 1 of 1” or “nothing to select”
 mechanic.
+
+The paging half of that rule is Library-wide: **Skills, Collections and the
+media Trash** drop “page 1 of 1”, the boundary reason and both **Previous** /
+**Next** controls too whenever everything fits on one page, keeping only the
+item range. Every part comes back the moment a second page exists. Paging that
+is *paused* rather than absent — a stale page whose totals are withheld — keeps
+its controls, disabled and carrying the reason.
 
 ```text
 source really has no items          active filter has no matches
@@ -898,3 +923,25 @@ available yet.", and the DB sizes moved into a closed **Diagnostics**
 disclosure inside Details. The glyph table's claim that `●` marks the blocked
 count was already stale — task-32230 retired that dot — and is corrected
 here.)*
+
+*Verified against fix/library-crit10-viewer — 2026-09-11 (task-32346: with the
+caret in the Search/RAG query box the footer reads "typing in field | esc leave
+field | after esc: u use Library context in Console · o open evidence | enter
+run search | F6 next pane"; the same shape on the Media list keeps "s select"
+behind the same gesture, and "F6 next pane" is last so a narrow footer drops it
+before any verb).*
+
+*Verified against fix/library-crit10-pagers — 2026-09-11 (task-32354: the
+single-page pager rule this page documents now holds for Skills, Collections
+and the media Trash as well as Media, Conversations and Prompts).*
+
+*Verified against fix/library-crit10-onboarding-import — 2026-09-11
+(task-32349: a Library with no content yet lands on Get started however old its
+config file is, so "Back to Get started" is offered only to someone who has
+seen Get started).*
+
+*Verified against fix/library-crit10-layout — 2026-09-11 (task-32355: both
+pane handles paint their own name down the column, and the note editor's
+deliberate claim on the rail's width is stated where the rail is described;
+task-32359: a focused rail row carries the house `█` bar, so it is no longer
+the same picture as the active destination).*

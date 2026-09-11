@@ -87,6 +87,10 @@ def coerce_library_lifecycle(
 
     Returns:
         The stored lifecycle, or the safe default for absent/corrupt storage.
+
+    An absent value defaults to EXPANDED so a returning profile does not flash
+    the starter rail; the screen demotes an unstored EXPANDED once the
+    six-source evidence settles all-EMPTY (task-32349).
     """
     if raw is None:
         if is_new_profile:

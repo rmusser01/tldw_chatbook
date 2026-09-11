@@ -2020,9 +2020,21 @@ async def test_library_onboarding_new_generation_cancels_previous_worker() -> No
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("stored", [None, "not-a-lifecycle"])
+@pytest.mark.parametrize(
+    "stored,settled",
+    [
+        # task-32349: both OPEN Expanded (the no-flash default), and neither
+        # value is a decision anybody made -- an absent one is the default,
+        # a corrupt one coerces to it -- so an all-empty settle takes both
+        # back to Get started. Only a stored "expanded" is a real Explore
+        # press (review finding 3).
+        (None, LibraryLifecycle.STARTER),
+        ("not-a-lifecycle", LibraryLifecycle.STARTER),
+    ],
+)
 async def test_library_onboarding_legacy_and_corrupt_preferences_open_expanded(
     stored,
+    settled,
 ) -> None:
     gates = _LibraryEvidenceGates()
     app = _new_library_onboarding_app(gates)
@@ -2046,7 +2058,7 @@ async def test_library_onboarding_legacy_and_corrupt_preferences_open_expanded(
                 ),
                 message="legacy evidence round did not settle",
             )
-            assert screen._library_lifecycle is LibraryLifecycle.EXPANDED
+            assert screen._library_lifecycle is settled
     finally:
         gates.release_all()
 
@@ -27216,7 +27228,8 @@ def test_library_landing_attention_prefers_recoverable_import_and_never_persists
     assert action is not None
     assert action.action_kind == "ingest-review"
     assert action.action_label == "Review"
-    assert action.message == "An import needs review."
+    # task-32351 AC#2: the card names the count it is asking about.
+    assert action.message == "Last import: 1 file failed."
     assert "PRIVATE" not in repr(action)
     persisted = screen.save_state()
     persisted_text = repr(persisted)
@@ -27281,7 +27294,7 @@ async def test_library_landing_attention_tracks_failed_import_and_opens_review()
         await _wait_for_selector(screen, pilot, "#library-hub-attention-action")
         button = screen.query_one("#library-hub-attention-action", Button)
         assert str(button.label) == "Review"
-        assert "An import needs review." in _visible_text(screen)
+        assert "Last import: 1 file failed." in _visible_text(screen)
 
         app.library_ingest_jobs.requeue(job.job_id)
         await _wait_for_condition(

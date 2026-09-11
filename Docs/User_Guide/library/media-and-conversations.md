@@ -296,7 +296,11 @@ Escape returns to the list.
 Notes on the edges: with nothing deleted the view says "Trash is empty.
 Items you delete from Media land here." and "Restore" reads "○ Restore"
 with a reason tooltip; if the trash holds more items than one fetch page,
-a status line says "showing X of N" honestly. Entering Trash clears any
+a status line says "showing X of N" honestly. The pager under the list is
+drawn **only when a second page exists**: a trash that fits on one page keeps
+the item range ("1-1 of 1") and drops "Page 1 of 1" along with both
+**Previous** / **Next**, the same rule the rest of the Library follows (see
+[Library](../library.md)), so Restore sits directly under the last row. Entering Trash clears any
 "✓ deleted…" receipt still showing on the list — the Trash view is the
 durable path that receipt pointed at. Trashed items are **excluded from
 search** (Library search and RAG keyword retrieval both skip them) until
@@ -501,6 +505,12 @@ still spans the pane.
   a two-line analysis puts them on the next line, not at the bottom of the
   pane. A long analysis scrolls the tab, carrying its actions to the end of
   the text rather than clipping them.
+  A Markdown analysis renders like the Read tab, with the same
+  Rendered/Raw toggle. While a Find query is active the analysis shows its
+  stored text instead — only that view can mark the matches — and the strip
+  says so ("Showing the stored text so matches can be marked · clear the
+  search to read it rendered."); clearing the search hands the rendered view
+  straight back.
   Analysis is produced at import time (the "Analyze after import" option),
   written by hand here, or generated in place: **"Generate"** (**"Regenerate"**
   once one exists) calls the configured analysis provider without leaving
@@ -526,7 +536,7 @@ still spans the pane.
 
 | Button | What it does |
 |---|---|
-| "Find" | Opens the search bar for the tab you are reading — the transcript on Read, the analysis on Analysis — focused and ready to type; a second press or Escape closes it. Walking with `]`/`[` keeps an active query but never moves your cursor into the field. This never filters Items. |
+| "Find" | Opens the search bar for the tab you are reading — the transcript on Read, the analysis on Analysis — focused and ready to type; a second press or Escape closes it. Walking with `]`/`[` keeps an active query but never moves your cursor into the field. This never filters Items. `Ctrl+F` opens it from the keyboard. On Highlights and Info it is disabled and says so — those tabs have no text to search. |
 | "Use in Console" | Stages this item as context for your next Console message. |
 | "Read later" ↔ "Remove later" | Toggles the loaded item's persisted reading-list state. |
 | "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. Opening it adds one toolbar row directly beneath this one — the tab row and the reading body shift down a single line (two on a Reader too narrow to fit all four actions side by side), never off the fold — the button reads "More ▴" while the row is open, and focus stays on it so a second press closes the row. |
@@ -668,8 +678,10 @@ requested load.
 | "Filter conversations… (Enter)" | Type and press Enter to search conversation titles, stable IDs, and indexed message content before the 20-item result page is chosen. Clearing it restores unfiltered page 1. |
 | "Previous" / "Next" | Moves through complete 20-item pages; the final page may contain fewer rows. Disabled buttons state why they cannot move. |
 | Row press | Selects the row and loads it into the **Conversation reader** — not a preview. See below. |
-| "Open in Console" | In the reader header, beside **Read** and **Info** (keyboard: `c`). Stages the conversation as **source context** in Console — see below. |
-| "Link to workspace" | Appears in the same header row only while the open conversation is not in the active workspace. One press links it, and "Open in Console" enables in place. |
+| "Resume conversation" / "Restore and resume" | In the reader header, beside **Read** and **Info** (keyboard: `c`). Reopens the original conversation in Console — it does **not** stage it as source context, and it does not depend on workspace membership. |
+| "Use as source" | In the reader header. Stages the open conversation as **source context** in Console. If the conversation is not in the active workspace, the press **links it first**, then continues — see below. |
+| "Link to workspace" | Appears in the same header row only while the open conversation is not in the active workspace. Press it to take on the membership **without** handing anything to Console. |
+| "Undo link" | Appears under the **"✓ linked · \<workspace\>"** receipt after a link, and removes exactly the membership that press added. |
 | "Export…" / "Select" | The shared grammar; export packages conversations into a bundle. |
 
 **The detail pane is a transcript reader.** Pressing a row loads the whole
@@ -860,20 +872,33 @@ Escape's return to the list live at 100x30).*
   collection scopes apply before paging; selections retain captured versions
   across pages, and a failed refresh keeps the last applied rows read-only with
   an exact Retry action. See [Library prompts](prompts.md).
-- **A conversation outside the active workspace says so on the button.**
-  The handoff requires the conversation to be eligible for the active
-  workspace. When it is not, the button dims to "○ Open in Console" and one
-  sentence beneath it states the reason and the remedy — "This conversation
-  is not in this workspace. Press 'Link to workspace' to add it to the
-  active workspace." — with the **"Link to workspace"** button right there
-  to perform it. (The action name is painted once, on the button; the line
-  under it is the explanation, not a second control.) Pressing `c` while it
-  is blocked says that same sentence as a message rather than doing
-  nothing. A block that linking cannot resolve states its own remedy
-  instead and offers no link (with no active workspace: "Select an active
-  workspace before using this item in Console."), never naming a button
-  that is not on screen. The same gate guards the other "Use in Console"
-  actions.
+- **A conversation outside the active workspace links itself on use.**
+  Workspace membership decides which items a Console turn may read, so a
+  conversation that is not in the active workspace cannot simply be handed
+  over in silence — but it is not refused either. **"Use as source" stays
+  pressable**, and one sentence beneath it says what the press will do:
+  "This conversation is not in this workspace. Pressing this adds it to the
+  active workspace first, and you can undo that." The press links it,
+  continues to Console, and leaves a receipt — **"✓ linked ·
+  \<workspace\> · this conversation can now be used in Console"** — with
+  **"Undo link"** beside it, which removes exactly that membership. The
+  separate **"Link to workspace"** button is still there for taking on the
+  membership without a hand-off. (The action name is painted once, on the
+  button; the line under it is the explanation, not a second control.)
+  A block that a link cannot resolve still refuses: the button dims to
+  "○ Use as source", states its own remedy (with no active workspace:
+  "Select an active workspace before using this item in Console.") and
+  offers no link, never naming a button that is not on screen. Pressing `c`
+  while the load fence blocks Resume says that same sentence as a message
+  rather than doing nothing. The rail's "Use in Console" keeps its own
+  pressable-with-reason grammar: it acts on a SET whose members can be
+  blocked for different reasons, so no single link would unblock it.
+- **The reader takes the width once a conversation is open.** With nothing
+  loaded the list absorbs the empty reader's columns (the density rule); as
+  soon as a row is open, the split is restored and the reader gets the
+  majority of a wide terminal — measured at 235x52: reader 132 columns,
+  list 49. At 100x30 the rail steps aside and the two panes share the stage
+  (reader 44, list 45); at 60x24 the reader is the single stage.
 - **Staging now actually reaches the model.** "Use in Console" (media)
   and "Open in Console" (conversations) used to stage content that
   displayed as attached but never made it into what the model was sent
@@ -1176,3 +1201,35 @@ loaded the conversation list takes the columns the empty Reader was holding).*
 (task-32228: the Conversations list takes entry focus on arrival like every
 other browse list, so Up/Down walks its rows and the Escape hop -- "focus
 Items", then "focus Library" -- is live and named from the first frame).*
+
+*Verified against fix/library-crit10-viewer — 2026-09-11 (task-32348: Ctrl+F
+opens the Reader's Find bar and the footer names it, the Highlights and Info
+tabs refuse it with "This tab has no text to search · switch to Read or
+Analysis.", and "t" cannot arm the delete confirmation while Find is open;
+task-32365: a stored analysis beginning "## Key contributions" paints as a
+heading with a Rendered|Raw toggle above it, and a plain-prose analysis is
+offered no toggle).*
+
+*Verified against fix/library-crit10-viewer — 2026-09-11, fix round 1
+(task-32365 review finding 1: submitting a Find query over a rendered
+analysis now shows the stored text, where the matches are actually marked,
+with "○ Rendered" refused and its reason on the line beneath; clearing the
+query restores the rendered view).*
+
+*Verified against fix/library-crit10-pagers — 2026-09-11 (task-32354: a
+single-page Trash draws no "Page 1 of 1" and no Previous/Next, and its pager
+block is one row instead of two. Live at 235x52 on a seeded profile with one
+trashed item and with the list filtered to none.)*
+
+*Verified against fix/library-crit10-layout — 2026-09-11, fix round 1
+(task-32107: the refusal/promise sentence renders directly under the action it
+describes, and Undo removes the membership from the workspace its receipt
+names rather than whichever workspace is active when it is pressed; the
+Resume row above no longer claims to stage source context).*
+
+*Verified against fix/library-crit10-layout — 2026-09-11 (task-32107, user
+decision: "Use as source" links a conversation into the active workspace in
+one undoable step, with a receipt and an "Undo link" beside it, and the
+blocks a link cannot resolve keep refusing; task-32361: the reader wins the
+width once a conversation is open — measured live and in tests at 235x52,
+100x30 and 60x24).*
