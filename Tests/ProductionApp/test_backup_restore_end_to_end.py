@@ -1,6 +1,7 @@
 """Actual terminal F9 backup, inspected isolated restore and fresh profile open."""
 
 import errno
+import hashlib
 import json
 import os
 import select
@@ -42,6 +43,8 @@ except SystemExit as error:assert error.code in (None,0),error
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Backup_Recovery.profile_open import opened_receipt
 from tldw_chatbook.config import get_cli_config_path
+import tldw_chatbook
+assert Path(tldw_chatbook.__file__).resolve()==Path(expected['package'])/'tldw_chatbook'/'__init__.py'
 assert opened_receipt(profile,control,attempt) is None
 async def main():
  app=TldwCli()
@@ -70,11 +73,17 @@ _FLOW = (
     )
     + r"""
 import faulthandler,hashlib,json,subprocess,threading,tomllib,zipfile
-from textual.widgets import Input,Button,Static
+from textual.widgets import Input,Button,Static,Checkbox
 from tldw_chatbook.Backup_Recovery import archive_reader,storage_admission
 from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
 from tldw_chatbook.Backup_Recovery.profile_catalog import ProfileCatalog
 fixture=Path.home().parent
+package=Path(os.environ['TLDW_F9_PACKAGE'])
+test_root=Path(os.environ['TLDW_F9_TEST_ROOT'])
+import tldw_chatbook
+assert Path(tldw_chatbook.__file__).resolve()==package/'tldw_chatbook'/'__init__.py'
+encrypted=os.environ['TLDW_F9_TEST_ENCRYPTED']=='1'
+password=b'private F9 archive passphrase' if encrypted else None
 diagnostics=(fixture/'ui-stacks.log').open('w')
 faulthandler.dump_traceback_later(100,file=diagnostics)
 async def main():
@@ -82,7 +91,7 @@ async def main():
  app.app_config['_first_run']=False
  app.app_config.setdefault('first_run',{})['setup_completed']=True
  note=app.chachanotes_db.add_note('UI captured note','Captured through F9')
- destination=Path.home()/'ui.tldw-backup.zip'
+ destination=Path.home()/('ui.tldw-backup.zip.age' if encrypted else 'ui.tldw-backup.zip')
  restored=fixture/'restored';restored.mkdir(mode=0o700)
  async with app.run_test(headless=False,size=(120,42)) as pilot:
   async def press(query):
@@ -122,6 +131,11 @@ async def main():
   screen=app.screen
   await press('#backup-open-create')
   screen.query_one('#backup-destination',Input).value=str(destination)
+  if encrypted:
+   screen.query_one('#backup-encrypted',Checkbox).focus();await pilot.press('space')
+   assert screen.query_one('#backup-encrypted',Checkbox).value
+   screen.query_one('#backup-password',Input).value=password.decode()
+   screen.query_one('#backup-password-confirm',Input).value=password.decode()
   await press('#backup-review')
   await ready(lambda:not screen.query_one('#backup-create',Button).disabled)
   assert 'Complete coverage' in str(screen.query_one('#backup-coverage',Static).render())
@@ -129,9 +143,13 @@ async def main():
   created,state=await finished('backup')
   assert state['result']['archive_verified'] and state['result']['complete'],dict(state)
   assert not state['result'].get('restoration_validated',False)
+  assert not screen.query_one('#backup-password',Input).value
+  assert not screen.query_one('#backup-password-confirm',Input).value
+  with destination.open('rb') as file:assert file.read(24).startswith(b'age-encryption.org/') is encrypted
   assert storage_admission._pause is None
   after=app.chachanotes_db.add_note('After UI capture','Resumed native writer')
-  acquired=await asyncio.to_thread(archive_reader.acquire,destination,fixture/'readback',ArchiveLimits(),None,threading.Event())
+  acquired=await asyncio.to_thread(archive_reader.acquire,destination,fixture/'readback',ArchiveLimits(),password,threading.Event())
+  assert (acquired.encrypted_source is not None) is encrypted
   doc=archive_reader.verify_sealed(acquired)
   assert doc.consistency=='coherent' and len(doc.profile_ids)==1
   assert selector.read_bytes()==original_config
@@ -140,9 +158,11 @@ async def main():
     if row.owner_id in {'config','config.history'}:assert b'synthetic-f9-secret' not in archive.read(row.payload)
   await press('#backup-open-inspect')
   screen.query_one('#backup-source',Input).value=str(destination)
+  if encrypted:screen.query_one('#backup-inspect-password',Input).value=password.decode()
   await press('#backup-inspect')
   await ready(lambda:screen.query_one('#backup-restore-form').display)
   assert screen._inspection_summary['archive_verified']
+  assert not screen.query_one('#backup-inspect-password',Input).value
   roots={row.logical_id:row for row in doc.directories if row.parent_id is None}
   producers={row.logical_id:row for row in doc.producer_inventory}
   ordinary={'db.chachanotes.primary','chat.attachments','notes.sync_bindings','quiz.local','study.local','db.media.primary','research.local','db.prompts.primary','chatbooks.registry','db.evals','db.library_collections','db.library_ingest_jobs','db.scheduled_tasks','db.subscriptions','db.workspaces','kanban.local','mcp.targets','notifications.client','runtime.event_state','runtime.sync_state','writing.local'}
@@ -172,14 +192,16 @@ async def main():
   assert state['result']['restoration_validated'] and not state['result'].get('opened',False),dict(state)
   config_path,data_path=ProfileCatalog(app.recovery_service.control_root).resolve(state['result']['profile_id'])
   core=next(row for row in doc.files if row.owner_id=='db.chachanotes.primary')
-  installed={'config':str(config_path),'core':str(dict(plan.restore)[core.logical_id]),'note':note,'after':after}
+  installed={'config':str(config_path),'core':str(dict(plan.restore)[core.logical_id]),'note':note,'after':after,'package':str(package)}
   (fixture/'ui-installed.json').write_text(json.dumps(installed))
   assert config_path==restored/'config'/'config.toml' and data_path==restored/'data'
   original_call=subprocess.call
   def child(argv,**kwargs):
    assert argv[:4]==[sys.executable,'-P','-m','tldw_chatbook']
+   assert kwargs['env']['PYTHONPATH']==str(package)
+   reader='import sys;sys.path.append('+repr(str(test_root))+')\n'+OPEN_CHILD
    with (fixture/'ui-child.log').open('w') as output:
-    result=subprocess.run([sys.executable,'-c',OPEN_CHILD,*argv[4:],str(fixture)],**kwargs,stdout=output,stderr=subprocess.STDOUT,text=True,timeout=45)
+    result=subprocess.run([sys.executable,'-c',reader,*argv[4:],str(fixture)],**kwargs,stdout=output,stderr=subprocess.STDOUT,text=True,timeout=45)
    assert result.returncode==0,(fixture/'ui-child.log').read_text()[-10000:]
    return result.returncode
   subprocess.call=child
@@ -198,7 +220,7 @@ async def main():
   assert app.chachanotes_db.get_note_by_id(after)['content']=='Resumed native writer'
   assert app.chachanotes_db.get_note_by_id(note)['content']=='Captured through F9'
   assert not blocked_attempts(),blocked_attempts()
-  (fixture/'ui-result.json').write_text(json.dumps({'backup':created,'restore':restored_operation,'open':opened_operation,'archive_sha256':hashlib.sha256(destination.read_bytes()).hexdigest(),'source_preserved':True,'opened':True}))
+  (fixture/'ui-result.json').write_text(json.dumps({'backup':created,'restore':restored_operation,'open':opened_operation,'archive_sha256':hashlib.sha256(destination.read_bytes()).hexdigest(),'source_preserved':True,'opened':True,'encrypted':encrypted}))
  assert app.recovery_service._closed
 asyncio.run(main())
 faulthandler.cancel_dump_traceback_later()
@@ -207,8 +229,70 @@ diagnostics.close()
 )
 
 
+@pytest.fixture(scope="module")
+def native_package(tmp_path_factory):
+    """Install the real native wheel without changing source helper capability."""
+    from Tests.Packaging.test_backup_helper_distribution import (
+        _build_wheel,
+        _copy_build_source,
+        _native_tuple,
+    )
+
+    root = tmp_path_factory.mktemp("f9-native-package")
+    source = root / "source"
+    source.mkdir()
+    _copy_build_source(source)
+    goos, goarch = _native_tuple()
+    wheel = _build_wheel(source, root / "wheels", target=f"{goos}/{goarch}")
+    installed = root / "installed"
+    result = subprocess.run(  # nosec B603: fixed interpreter, local built wheel.
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--no-index",
+            "--no-deps",
+            "--disable-pip-version-check",
+            "--target",
+            str(installed),
+            str(wheel),
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    files = {
+        path: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in installed.rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts
+    }
+    (root / "native-package.json").write_text(
+        json.dumps(
+            {
+                "wheel": str(wheel),
+                "sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
+                "installed": str(installed),
+                "installed_files": len(files),
+            },
+            indent=2,
+        )
+    )
+    yield installed
+    assert all(
+        hashlib.sha256(path.read_bytes()).hexdigest() == digest
+        for path, digest in files.items()
+    )
+
+
 @pytest.mark.skipif(sys.platform != "darwin", reason="Native macOS terminal cell")
-def test_f9_created_archive_restores_and_opens_through_actual_controls(tmp_path):
+@pytest.mark.parametrize("encrypted", [False, True], ids=["plain", "encrypted"])
+def test_f9_created_archive_restores_and_opens_through_actual_controls(
+    tmp_path, encrypted, native_package
+):
     """Keep the real terminal suspend path while driving finite native fixtures."""
     import pty
 
@@ -223,12 +307,18 @@ def test_f9_created_archive_restores_and_opens_through_actual_controls(tmp_path)
         TLDW_TEST_MODE="1",
         TLDW_DISABLE_CONFIG_WATCH="1",
         TERM="xterm-256color",
+        TLDW_F9_TEST_ENCRYPTED="1" if encrypted else "0",
+        TLDW_F9_PACKAGE=str(native_package),
+        TLDW_F9_TEST_ROOT=str(Path(__file__).resolve().parents[2]),
+        PYTHONPATH=os.pathsep.join(
+            (str(native_package), str(Path(__file__).resolve().parents[2]))
+        ),
     )
     master, slave = pty.openpty()
     script = "OPEN_CHILD=" + repr(_OPEN) + "\n" + _FLOW
     process = subprocess.Popen(  # nosec B603
         [sys.executable, "-c", script],
-        cwd=Path(__file__).resolve().parents[2],
+        cwd=tmp_path,
         env=environment,
         stdin=slave,
         stdout=slave,
@@ -263,3 +353,4 @@ def test_f9_created_archive_restores_and_opens_through_actual_controls(tmp_path)
         os.close(master)
     result = json.loads((tmp_path / "ui-result.json").read_text())
     assert result["source_preserved"] and result["opened"]
+    assert result["encrypted"] is encrypted
