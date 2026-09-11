@@ -13,6 +13,9 @@ from textual.widgets import Button, Select, Static
 import tldw_chatbook.Chat.console_session_settings as session_settings
 from tldw_chatbook.Chat.console_context_repository import ConsoleMemoryRecord
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
+from tldw_chatbook.Chat.console_provider_support import (
+    resolve_console_provider_identity,
+)
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
     ConsoleSettingsContextEstimate,
@@ -35,6 +38,9 @@ from tldw_chatbook.Chat.provider_test_evidence import (
 )
 from tldw_chatbook.Chat.provider_endpoint_contract import (
     canonical_connection_identity,
+)
+from tldw_chatbook.Chat.custom_endpoint_registry import (
+    custom_endpoint_provider_settings,
 )
 from tldw_chatbook.Utils.token_counter import count_tokens_messages
 from tldw_chatbook.Widgets.Console.console_context_controls import (
@@ -3346,3 +3352,40 @@ def test_summary_state_carries_structured_sampling_fields():
     state = _build_console_settings_summary_state_for_test()
     assert state.temperature == "0.70"
     assert state.max_tokens == "4096"
+
+
+def _registry_config() -> dict:
+    return {
+        "custom_endpoints": {
+            "gpu": {"display_name": "GPU llama", "family": "llama_cpp",
+                    "base_url": "http://192.168.1.5:8080"},
+            "paid": {"display_name": "Paid compat", "family": "openai_compatible",
+                     "base_url": "https://api.example.com/v1",
+                     "api_key_env": "PAID_KEY"},
+        }
+    }
+
+def test_custom_endpoint_readiness_is_family_readiness():
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="custom-ep:gpu", model="m",
+                               base_url="http://192.168.1.5:8080"),
+        app_config=_registry_config(), environ={})
+    assert readiness.label == "Ready"
+    assert readiness.native_send_supported is True
+
+def test_custom_endpoint_keyed_family_requires_key():
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="custom-ep:paid", model="m",
+                               base_url="https://api.example.com/v1"),
+        app_config=_registry_config(), environ={})
+    assert readiness.native_send_supported is False
+
+def test_provider_settings_resolves_custom_endpoint_aliases():
+    settings_view = custom_endpoint_provider_settings(_registry_config(), "custom-ep:paid")
+    assert settings_view["api_base_url"] == "https://api.example.com/v1"
+    assert settings_view["api_key_env"] == "PAID_KEY"
+
+def test_unresolvable_custom_endpoint_falls_back_to_generic_family():
+    identity = resolve_console_provider_identity("custom-ep:ghost")
+    assert identity.is_supported is True
+    assert identity.execution_key == "custom"

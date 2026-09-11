@@ -8,7 +8,7 @@ import math
 import os
 import re
 from dataclasses import dataclass, fields, replace
-from typing import Callable, Literal, Mapping, Sequence, overload
+from typing import TYPE_CHECKING, Callable, Literal, Mapping, Sequence, overload
 from urllib.parse import urlparse, urlunparse
 
 from tldw_chatbook.Chat.console_provider_support import (
@@ -34,6 +34,7 @@ from tldw_chatbook.Chat.provider_catalog import (
     provider_display_name,
 )
 from tldw_chatbook.Chat.provider_readiness import (
+    ProviderReadiness,
     get_provider_readiness,
     provider_config_key,
 )
@@ -51,11 +52,20 @@ from tldw_chatbook.Chat.provider_test_evidence import (
     ProviderDraftIdentity,
     ProviderTestEvidence,
 )
-from tldw_chatbook.config import ProviderSettingsError, provider_settings_for_key
+from tldw_chatbook.config import (
+    ProviderSettingsError,
+    provider_settings_for_key,
+    resolve_provider_api_key,
+)
 from tldw_chatbook.model_capabilities import anthropic_model_rejects_disabled_thinking
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.token_counter import count_tokens_messages
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+
+if TYPE_CHECKING:
+    # Imported lazily at call sites: custom_endpoint_registry imports this
+    # module for URL normalization, so a module-level import would cycle.
+    from tldw_chatbook.Chat.custom_endpoint_registry import CustomEndpointEntry
 
 
 NATIVE_CONSOLE_PROVIDER_KEYS = DIRECT_CONSOLE_PROVIDER_KEYS
@@ -1408,7 +1418,20 @@ def build_console_settings_readiness(
     """Project one deterministic Console blocker and independent evidence."""
     if type(active_run) is not bool:
         raise ValueError("Active-run state must be boolean.")
-    canonical_provider = _canonical_chat_provider_id(settings.provider)
+    # ADR-146 (registry seam): a custom-ep provider resolves through its
+    # registry entry -- the family it executes as, and the entry's persisted
+    # endpoint when the session carries no explicit base URL. Lazy import:
+    # custom_endpoint_registry imports this module for URL normalization, so
+    # a module-level import would cycle.
+    from tldw_chatbook.Chat.custom_endpoint_registry import (
+        entry_for,
+        family_execution_key,
+    )
+
+    entry = entry_for(app_config, settings.provider)
+    canonical_provider = _canonical_chat_provider_id(
+        family_execution_key(entry.family) if entry is not None else settings.provider
+    )
     identity = resolve_console_provider_identity(
         canonical_provider,
         handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
@@ -1418,10 +1441,22 @@ def build_console_settings_readiness(
     send_capable_keys = _send_capable_readiness_keys(native_provider_keys)
 
     base_url = _string_value(settings.base_url)
+    if entry is not None and not base_url:
+        # ADR-146: the entry is the persisted endpoint carrier, so a blank
+        # session base_url resolves from it instead of the family default.
+        base_url = entry.base_url
     provider_settings, provider_configuration_invalid = (
-        _provider_settings_with_validity(app_config, provider_key)
+        _provider_settings_with_validity(
+            app_config,
+            settings.provider if entry is not None else provider_key,
+        )
     )
     readiness = get_provider_readiness(provider_key, app_config, environ=environ)
+    if entry is not None and readiness.ready:
+        readiness = (
+            _custom_endpoint_missing_key_readiness(entry, provider_key, environ)
+            or readiness
+        )
     exact_identity_evidence = bool(
         evidence is not None
         and current_identity is not None
@@ -1841,6 +1876,19 @@ def _canonical_chat_provider_id(provider: str | None) -> str:
 def _provider_settings(
     app_config: Mapping[str, object], provider_key: str
 ) -> Mapping[str, object]:
+    # ADR-146 (registry seam): custom-ep providers read their settings from
+    # the registry entry, not the api_settings table. Lazy import:
+    # custom_endpoint_registry imports this module for URL normalization, so
+    # a module-level import would cycle.
+    from tldw_chatbook.Chat.custom_endpoint_registry import (
+        custom_endpoint_provider_settings,
+    )
+
+    custom_endpoint_settings = custom_endpoint_provider_settings(
+        app_config, provider_key
+    )
+    if custom_endpoint_settings is not None:
+        return custom_endpoint_settings
     api_settings = _mapping_value(app_config, "api_settings")
     try:
         return provider_settings_for_key(api_settings, provider_key)
@@ -1848,11 +1896,76 @@ def _provider_settings(
         return {}
 
 
+def _custom_endpoint_missing_key_readiness(
+    entry: "CustomEndpointEntry",
+    provider_key: str,
+    environ: Mapping[str, str] | None,
+) -> ProviderReadiness | None:
+    """Return missing-key readiness for an entry whose declared credential
+    does not resolve, or None when it resolves or nothing is declared.
+
+    ADR-146: entry credentials mirror provider-settings semantics — the env
+    reference wins over the stored key, and an entry declaring neither rides
+    the plain family readiness. An entry that declares a credential the
+    environment cannot satisfy blocks the send instead of silently sending
+    keyless through a family that is otherwise keyless-ready.
+
+    Args:
+        entry: Resolved registry entry for the session's custom-ep provider.
+        provider_key: Family readiness key the entry executes as.
+        environ: Environment mapping, injectable for deterministic tests;
+            ``None`` reads ``os.environ``.
+
+    Returns:
+        A not-ready ``ProviderReadiness`` naming the recovery, or None when
+        the family readiness should stand.
+    """
+    env = environ if environ is not None else os.environ
+    stored_key = resolve_provider_api_key(entry.api_key)
+    env_key = (
+        resolve_provider_api_key(env.get(entry.api_key_env, ""))
+        if entry.api_key_env
+        else None
+    )
+    if not entry.api_key_env and stored_key is None:
+        return None
+    if env_key is not None or stored_key is not None:
+        return None
+    if entry.api_key_env:
+        recovery = (
+            f"Set {entry.api_key_env} or update the stored api_key for the "
+            f"'{entry.display_name}' endpoint."
+        )
+    else:
+        recovery = f"Update the stored api_key for the '{entry.display_name}' endpoint."
+    return ProviderReadiness(
+        provider=entry.display_name,
+        provider_key=provider_key,
+        requires_api_key=True,
+        ready=False,
+        api_key=None,
+        api_key_source=None,
+        env_var=entry.api_key_env,
+        reason="Missing API key",
+        recovery=recovery,
+    )
+
+
 def _provider_settings_with_validity(
     app_config: Mapping[str, object], provider_key: str
 ) -> tuple[Mapping[str, object], bool]:
     """Return selected provider settings and whether their table is malformed."""
 
+    # ADR-146: a registry entry is its own settings carrier, so an entry
+    # provider is never "missing from api_settings" -- route it through the
+    # registry-aware reader and skip the table-validity walk.
+    from tldw_chatbook.Chat.custom_endpoint_registry import (
+        custom_endpoint_provider_settings,
+    )
+
+    custom = custom_endpoint_provider_settings(app_config, provider_key)
+    if custom is not None:
+        return custom, False
     raw_api_settings = app_config.get("api_settings", {})
     if not isinstance(raw_api_settings, Mapping):
         return {}, "api_settings" in app_config
