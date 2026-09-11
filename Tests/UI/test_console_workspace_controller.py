@@ -4592,70 +4592,136 @@ def test_expired_browser_cache_retains_only_matching_rows_during_refresh(request
 
 
 @pytest.mark.asyncio
-async def test_persisted_rows_route_character_conversations_out_of_flat_lane():
-    """TASK-32309: global persisted rows carrying a character_id keep that
-    identity (the state builder then excludes them from the flat lane);
-    plain global rows stay character-free."""
-    workspace = SimpleNamespace(workspace_id="workspace-7", name="Workspace 7")
-    registry = SimpleNamespace(
-        ensure_default_workspace=lambda: workspace,
-        list_workspaces=lambda: (workspace,),
-        list_workspace_conversations=lambda _workspace_id: (),
-    )
+async def test_workspace_page_rows_carry_character_identity():
+    """TASK-32309 (review finding 6): workspace Tree pages legitimately
+    contain character conversations (workspace wins), so their rows must
+    carry the same character identity the native loader sets -- labeled from
+    the character cards DB, degrading to empty when the card is gone."""
+    calls: list[dict[str, object]] = []
 
     async def list_conversations(**kwargs):
-        if kwargs["scope_type"] == "global":
-            return {
-                "items": [
-                    {"id": "chat-plain", "title": "Plain chat", "scope_type": "global"},
-                    {
-                        "id": "chat-vale",
-                        "title": "Locket case",
-                        "scope_type": "global",
-                        "character_id": 7,
-                    },
-                    {
-                        "id": "chat-deleted-card",
-                        "title": "Orphaned chat",
-                        "scope_type": "global",
-                        "character_id": 9,
-                    },
-                ],
-                "total": 3,
-            }
-        return {"items": [], "total": 0}
+        calls.append(kwargs)
+        return {
+            "items": [
+                {
+                    "id": "chat-vale",
+                    "title": "Locket case",
+                    "character_id": 7,
+                },
+                {
+                    "id": "chat-deleted-card",
+                    "title": "Orphaned chat",
+                    "character_id": 9,
+                },
+                {"id": "chat-plain", "title": "Plain workspace chat"},
+            ],
+            "total": 3,
+        }
 
     app = SimpleNamespace(
-        workspace_registry_service=registry,
         chat_conversation_scope_service=SimpleNamespace(
             list_conversations=list_conversations,
             local_service=None,
         ),
         chachanotes_db=SimpleNamespace(
-            list_character_cards=lambda limit=500: [
-                {"id": 7, "name": "Detective Vale"}
-            ],
+            get_character_card_by_id=lambda card_id: (
+                {"id": card_id, "name": "Detective Vale"} if card_id == 7 else None
+            ),
         ),
     )
     controller = _workspace_controller(app_instance=app)
 
-    rows, _total, error = await controller._persisted_console_browser_rows()
+    rows, _total, _error = await controller._fetch_workspace_rows(
+        "ws-research", query="", cursor=0
+    )
 
-    assert error == ""
     by_key = {row.row_key: row for row in rows}
-    assert by_key["chat-plain"].character_id is None
     assert by_key["chat-vale"].character_id == "7"
     assert by_key["chat-vale"].character_label == "Detective Vale"
-    # A conversation whose card is gone keeps its id and degrades to an
-    # empty label.
     assert by_key["chat-deleted-card"].character_id == "9"
     assert by_key["chat-deleted-card"].character_label == ""
+    assert by_key["chat-plain"].character_id is None
+    assert by_key["chat-plain"].character_label == ""
+
+
+def test_character_label_resolution_skips_the_db_without_character_ids():
+    """Review finding 7: no character ids on candidate rows means no cards
+    query at all -- the common build never touches the cards table."""
+    reads: list[int] = []
+    app = SimpleNamespace(
+        chachanotes_db=SimpleNamespace(
+            get_character_card_by_id=lambda card_id: (
+                reads.append(card_id) or {"id": card_id, "name": "Card"}
+            ),
+        ),
+    )
+    controller = _workspace_controller(app_instance=app)
+
+    assert controller._console_browser_character_labels_for(()) == {}
+    assert controller._console_browser_character_labels_for(("", None, "  ")) == {}
+    assert reads == []
+
+    labels = controller._console_browser_character_labels_for(("7", "7", "8"))
+    assert labels == {"7": "Card", "8": "Card"}
+    # Only the DISTINCT ids are read, once each.
+    assert sorted(reads) == [7, 8]
+
+
+@pytest.mark.asyncio
+async def test_persisted_flat_fetch_excludes_character_conversations_at_the_query():
+    """TASK-32309 (review finding 1): the flat lane excludes character
+    conversations AT THE SERVICE QUERY (``character_scope="generic"``), so
+    they never consume limit/offset/total math -- not post-fetch."""
+    workspace = SimpleNamespace(workspace_id="workspace-7", name="Workspace 7")
+    registry = SimpleNamespace(
+        ensure_default_workspace=lambda: workspace,
+        list_workspaces=lambda: (workspace,),
+        list_workspace_conversations=lambda _workspace_id: (),
+    )
+    calls: list[dict[str, object]] = []
+
+    async def list_conversations(**kwargs):
+        calls.append(kwargs)
+        if kwargs["scope_type"] != "global":
+            return {"items": [], "total": 0}
+        # A well-behaved service honoring character_scope="generic" -- the
+        # character conversations are filtered out BEFORE pagination, and
+        # the total counts only the returned (generic) rows.
+        if kwargs.get("character_scope") == "generic":
+            return {"items": [{"id": "chat-plain", "title": "Plain chat"}], "total": 1}
+        return {
+            "items": [
+                {"id": "chat-plain", "title": "Plain chat"},
+                {"id": "chat-vale", "title": "Locket case", "character_id": 7},
+            ],
+            "total": 2,
+        }
+
+    app = SimpleNamespace(
+        workspace_registry_service=registry,
+        chat_conversation_scope_service=SimpleNamespace(
+            list_conversations=list_conversations,
+            local_service=None,
+        ),
+    )
+    controller = _workspace_controller(app_instance=app)
+
+    rows, total, error = await controller._persisted_console_browser_rows()
+
+    assert error == ""
+    assert all(call.get("character_scope") == "generic" for call in calls), (
+        "every flat-lane service call must filter character conversations"
+    )
+    assert [row.row_key for row in rows] == ["chat-plain"]
+    assert rows[0].character_id is None
+    assert total == 1
 
 
 @pytest.mark.asyncio
 async def test_persisted_character_rows_leave_the_built_flat_state():
-    """End-to-end through the state builder: the persisted character row is
-    absent from the built flat Chats section."""
+    """End-to-end through the state builder: the flat fetch excludes
+    character conversations at the query, so the built Chats section shows
+    only the generic rows with the correct total."""
     workspace = SimpleNamespace(workspace_id="workspace-7", name="Workspace 7")
     registry = SimpleNamespace(
         ensure_default_workspace=lambda: workspace,
@@ -4664,31 +4730,35 @@ async def test_persisted_character_rows_leave_the_built_flat_state():
     )
 
     async def list_conversations(**kwargs):
-        if kwargs["scope_type"] == "global":
+        if kwargs["scope_type"] != "global":
+            return {"items": [], "total": 0}
+        # Honor character_scope like the real service: the flat lane's
+        # generic filter never returns the character conversation.
+        if kwargs.get("character_scope") == "generic":
             return {
                 "items": [
-                    {"id": "chat-plain", "title": "Plain chat", "scope_type": "global"},
-                    {
-                        "id": "chat-vale",
-                        "title": "Locket case",
-                        "scope_type": "global",
-                        "character_id": 7,
-                    },
+                    {"id": "chat-plain", "title": "Plain chat", "scope_type": "global"}
                 ],
-                "total": 2,
+                "total": 1,
             }
-        return {"items": [], "total": 0}
+        return {
+            "items": [
+                {"id": "chat-plain", "title": "Plain chat", "scope_type": "global"},
+                {
+                    "id": "chat-vale",
+                    "title": "Locket case",
+                    "scope_type": "global",
+                    "character_id": 7,
+                },
+            ],
+            "total": 2,
+        }
 
     app = SimpleNamespace(
         workspace_registry_service=registry,
         chat_conversation_scope_service=SimpleNamespace(
             list_conversations=list_conversations,
             local_service=None,
-        ),
-        chachanotes_db=SimpleNamespace(
-            list_character_cards=lambda limit=500: [
-                {"id": 7, "name": "Detective Vale"}
-            ],
         ),
     )
     controller = _workspace_controller(app_instance=app)

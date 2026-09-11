@@ -1692,14 +1692,15 @@ def test_keyword_metadata_updates_do_not_reindex_unrelated_text(tmp_path: Path) 
     assert service.keyword_search("BEFORE_TERM").total == 2
 
 
-def test_recent_groups_exclude_workspace_scoped_conversations(tmp_path: Path) -> None:
-    """TASK-32309 workspace-wins: a character chat inside a named workspace
-    belongs to that workspace's Console Tree node, never under its character.
+def test_recent_groups_exclude_workspace_scoped_conversations() -> None:
+    """Recent groups count and list only global/Default-scope character chats.
 
-    The Character section's recent groups must count and list only
-    global/Default-scope character conversations.
+    TASK-32309 workspace-wins: a character chat inside a named workspace
+    belongs to that workspace's Console Tree node, never under its
+    character. Runs on a real in-memory SQLite database -- the schema and
+    queries are identical to file-backed operation.
     """
-    db = CharactersRAGDB(tmp_path / "workspace-scope.sqlite", client_id="scope")
+    db = CharactersRAGDB(":memory:", client_id="scope")
     character_id = _card(db, "Detective Vale")
     try:
         _chat(
@@ -1733,11 +1734,12 @@ def test_recent_groups_exclude_workspace_scoped_conversations(tmp_path: Path) ->
         db.close_connection()
 
 
-def test_page_for_character_excludes_workspace_scoped_conversations(
-    tmp_path: Path,
-) -> None:
-    """The per-character paging path applies the same workspace-wins rule."""
-    db = CharactersRAGDB(tmp_path / "page-scope.sqlite", client_id="page")
+def test_page_for_character_excludes_workspace_scoped_conversations() -> None:
+    """The per-character keyset paging path applies the workspace-wins rule.
+
+    Runs on a real in-memory SQLite database.
+    """
+    db = CharactersRAGDB(":memory:", client_id="page")
     character_id = _card(db, "Detective Vale")
     try:
         _chat(
@@ -1767,5 +1769,98 @@ def test_page_for_character_excludes_workspace_scoped_conversations(
 
         assert page.total == 1
         assert [row.title for row in page.rows] == ["Global chat"]
+    finally:
+        db.close_connection()
+
+
+def test_keyword_search_excludes_workspace_scoped_conversations() -> None:
+    """Keyword search totals and rows exclude workspace-scoped character chats.
+
+    TASK-32309 (review finding 2): the shared scope predicate must hold on
+    the keyword path too -- removing it there would silently resurface
+    workspace-owned chats in Character search. Runs on a real in-memory
+    SQLite database with a fully built keyword index.
+    """
+    db = CharactersRAGDB(":memory:", client_id="keyword-scope")
+    character_id = _card(db, "Detective Vale")
+    try:
+        _chat(
+            db,
+            conversation_id="keyword-global",
+            character_id=character_id,
+            title="Global canary",
+            content="SHARED_SCOPE_CANARY global",
+            modified="2026-09-03T10:00:00Z",
+        )
+        _chat(
+            db,
+            conversation_id="keyword-workspace",
+            character_id=character_id,
+            title="Workspace canary",
+            content="SHARED_SCOPE_CANARY workspace",
+            modified="2026-09-03T11:00:00Z",
+        )
+        with db.transaction() as connection:
+            connection.execute(
+                "UPDATE conversations SET scope_type = 'workspace', "
+                "workspace_id = 'ws-research' WHERE id = 'keyword-workspace'"
+            )
+
+        service = CharacterConversationNavigationService(db)
+        assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+
+        page = service.keyword_search("SHARED_SCOPE_CANARY")
+
+        assert page.total == 1
+        assert [row.title for row in page.rows] == ["Global canary"]
+    finally:
+        db.close_connection()
+
+
+def test_unavailable_page_excludes_workspace_scoped_conversations() -> None:
+    """Unavailable-character paging excludes workspace-scoped conversations.
+
+    TASK-32309 (review finding 2): the unavailable lane lists only
+    global/Default-scope character conversations whose card cannot be
+    resolved; workspace-scoped ones belong to their workspace's Tree node.
+    Runs on a real in-memory SQLite database.
+    """
+    db = CharactersRAGDB(":memory:", client_id="unavailable-scope")
+    try:
+        _chat(
+            db,
+            conversation_id="unavailable-global",
+            character_id=_card(db, "Gone card A"),
+            title="Global unavailable",
+            content="global",
+            modified="2026-09-03T10:00:00Z",
+        )
+        _chat(
+            db,
+            conversation_id="unavailable-workspace",
+            character_id=_card(db, "Gone card B"),
+            title="Workspace unavailable",
+            content="workspace",
+            modified="2026-09-03T11:00:00Z",
+        )
+        with db.transaction() as connection:
+            # Unresolvable the same way the incumbent unavailable tests
+            # build it: a foreign/absent authority never matches the local
+            # one, so both rows are unavailable to the Character section.
+            connection.execute(
+                "UPDATE conversations SET assistant_authority_id = NULL, "
+                "assistant_id = 'unknown' "
+                "WHERE id IN ('unavailable-global', 'unavailable-workspace')"
+            )
+            connection.execute(
+                "UPDATE conversations SET scope_type = 'workspace', "
+                "workspace_id = 'ws-research' WHERE id = 'unavailable-workspace'"
+            )
+
+        service = CharacterConversationNavigationService(db)
+        page = service.unavailable_page()
+
+        assert page.total == 1
+        assert [row.title for row in page.rows] == ["Global unavailable"]
     finally:
         db.close_connection()

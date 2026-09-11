@@ -91,6 +91,35 @@ and the Character section states the workspace-wins exclusion.
 `Tests/DB/test_character_conversation_search_projection.py`, and the doc
 above.
 
+
+**Review round (Qodo, PR #2609).** All seven findings addressed:
+
+1. *(High)* Character chats crowding out flat-lane pagination: the flat
+   fetch now excludes character conversations AT THE SERVICE QUERY --
+   `ChatConversationService.list_conversations` gained a `character_scope`
+   parameter (forwarded to the storage filter, applied before counts and
+   pagination) and `_persisted_console_browser_rows` passes
+   `character_scope="generic"`. Totals and page slots count only generic
+   rows. Service-level test added.
+2. Keyword/unavailable coverage: repository tests now pin workspace-scoped
+   exclusion on the keyword-search path (with a built index) and the
+   unavailable-page path, not just recent groups and paging.
+3./4. My two repository tests moved to real in-memory SQLite databases and
+   Google-style docstrings.
+5./7. Label resolution no longer lists 500 cards: it resolves ONLY the
+   distinct character ids present on candidate rows via per-id card
+   lookups (`get_character_card_by_id`, non-deleted cards only) and skips
+   the database entirely when no candidate row carries a character id.
+6. `_fetch_workspace_rows` (workspace Tree paging) populates
+   `character_id`/`character_label` with the same normalization and shared
+   label resolver; test proves both fields survive workspace paging,
+   including the deleted-card degradation.
+
+Verification after the round: 397 passed across the six affected suites
+(state, subagents, navigation, payloads, conversation service, workspace
+controller, Character context, repository) with zero failures; ruff clean
+for all new code.
+
 **ADR check.** Not required — routing policy over existing data and queries;
 no schema, storage, or interface-boundary change.
 
