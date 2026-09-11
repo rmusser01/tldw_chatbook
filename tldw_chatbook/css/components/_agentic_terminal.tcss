@@ -7758,6 +7758,7 @@ ChatScreen.-focus #console-workbench-header {
 
 .console-staged-source-primary-ready { color: $ds-status-ready; }
 .console-staged-source-primary-warning { color: $ds-status-warning; }
+.console-staged-source-primary-listed { color: $ds-status-paused; }  /* TASK-32330: muted tone for listed-not-sent rows */
 .console-staged-source-primary-blocked { color: $ds-status-blocked; }
 
 .console-staged-source-detail {

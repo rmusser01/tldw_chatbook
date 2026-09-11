@@ -712,12 +712,22 @@ CANVAS_DISCOVERY_HINT = (
 
 
 def _append_canvas_discovery_hint(prompt: str, allowed_tools: Collection[str]) -> str:
-    """Advertise Canvas discovery only when this run offers all V1 tools."""
-    from tldw_chatbook.Agents.canvas_tool_provider import CANVAS_TOOL_NAMES
+    """Offer before authoring and name only this run's available capabilities."""
+    from tldw_chatbook.Agents.canvas_tool_provider import CANVAS_ARTIFACT_TOOL_NAMES
+    from tldw_chatbook.Canvas.guide import CANVAS_OFFER_POLICY
 
-    if not CANVAS_TOOL_NAMES.issubset(allowed_tools):
+    sections = []
+    if CANVAS_ARTIFACT_TOOL_NAMES.issubset(allowed_tools):
+        sections.append(CANVAS_DISCOVERY_HINT)
+    if "canvas_guide" in allowed_tools:
+        sections.append(
+            "Canvas authoring documentation is available through canvas_guide; "
+            "after the user requests or accepts Canvas, use find_tools and "
+            "load_tools to access only needed topics."
+        )
+    if not sections:
         return prompt
-    return f"{prompt}\n\n{CANVAS_DISCOVERY_HINT}"
+    return f"{prompt}\n\n{CANVAS_OFFER_POLICY} {' '.join(sections)}"
 
 
 def _combine_state_scopes(scopes: list) -> "Any | None":

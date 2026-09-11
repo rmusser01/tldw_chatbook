@@ -25,7 +25,7 @@ is shown as such; Console does not invent missing history.
 
 ## Capture On, Capture Off, and temporary chats
 
-Capture is on by default. Change the global default in **F9 > Console
+Capture is on by default. Change the global default in **F4 > Console
 Behavior**, or press **c** in a live Trace to choose **Next send**, **This
 conversation**, or **Global default**. Capture Off affects future calls and does
 not delete existing trace history.
@@ -207,7 +207,7 @@ pages after logical collection, Console can reuse that exact completed
 collection result; it does not create duplicate collection records merely to
 reconsider physical compaction.
 
-**F9 > Privacy & Security** reports content-free physical-maintenance state,
+**F4 > Privacy & Security** reports content-free physical-maintenance state,
 bounded progress, retry reason, and allocated/free byte totals before and after
 a completed run. It never shows trace payloads or internal trace identities.
 An interrupted app run is recognized after its lease expires; the database is

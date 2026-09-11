@@ -16,15 +16,17 @@ you touch them; some are read-only and point you elsewhere.
 
 ## Getting there
 
-- **Press F9 from anywhere** — it works even while a text field has focus.
-  Settings is the last of thirteen destinations: the first ten get
-  **Ctrl+1 … Ctrl+0**, and the remaining three get function keys — the nav
-  bar labels say so ("F7 Lab", "F8 Logs", "F9 Settings").
-- **Click "F9 Settings" in the nav bar.** On a narrow window a "More ▾"
+- **Press F4 from anywhere** — it works even while a text field has focus.
+  Settings is the thirteenth of fifteen destinations: the first ten get
+  **Ctrl+1 … Ctrl+0**, and the remaining five continue onto the function-key
+  row from its left end — **F2**, **F3**, **F4**, **F5**, then **F7** (F6 is
+  reserved for pane cycling) — the nav bar labels say so ("F2 Lab", "F3
+  Logs", "F4 Settings", "F5 Research", "F7 Meetings").
+- **Click "F4 Settings" in the nav bar.** On a narrow window a "More ▾"
   button appears at the right edge and opens a menu listing every
-  destination — pick "F9 Settings" there; when everything fits, no button
+  destination — pick "F4 Settings" there; when everything fits, no button
   shows. Once Settings opens, the strip scrolls so the highlighted
-  "F9 Settings" tab stays visible (task-4024).
+  "F4 Settings" tab stays visible (task-4024).
 - **Ctrl+P** → "Tab Navigation: Switch to Settings", or "Settings &
   Preferences: Open Settings Tab". Typing **stats** also surfaces the Settings
   entry, because "stats" is one of this screen's legacy route names — but the
@@ -103,7 +105,7 @@ or **Test saved settings** in Web Search.
 
 ### Web Search: first setup and additional backends
 
-Open **F9 → Web Search** under **Core**, or filter categories by a provider
+Open **F4 → Web Search** under **Core**, or filter categories by a provider
 name such as Brave, Serper, or SearXNG.
 
 1. Choose **Default search backend**. Basic and deep search use this saved
@@ -404,7 +406,7 @@ feedback.
 **Skip on keypress** does what it says as of TASK-21591: with it on (the
 default), any key pressed while the splash is up dismisses it and boot
 continues immediately. That key is consumed by the splash and does nothing
-else — pressing `F9` mid-splash skips to the app's normal startup screen
+else — pressing `F4` mid-splash skips to the app's normal startup screen
 rather than jumping to Settings, and `ctrl+q` mid-splash dismisses the splash,
 so quitting takes a second press. Turn the setting off and the splash always
 runs its full **Duration (s)**, with keys routed exactly as before. Before the
@@ -854,7 +856,7 @@ swatches, the Dark toggle and the preset target are painted; Actions sit above
 the palette; the rest of this page's content unchanged from the prior stamp).*
 *Verified against dev @ 642567627 — 2026-08-10 (task-4024: driven live at
 80 and 120 cols — opening Settings from the nav bar's "More ▾" overflow
-menu now leaves the strip scrolled so "F9 Settings" is visible and
+menu now leaves the strip scrolled so "F4 Settings" is visible and
 highlighted, and it stays that way; the rest of this page's content
 unchanged from the prior stamp).*
 *Console Behavior — Status row placement added against TASK-17652 —
@@ -902,7 +904,7 @@ upward, and nothing focused the splash. It now takes focus when the skip is
 enabled, and consumes the dismissing key so a navigation key pressed during
 startup cannot also act on the app being booted. Verified in a real terminal,
 not only under Pilot: against a 25 s splash, Space 23 ms after the first
-painted frame dismissed it and boot completed; `F9` at the same moment
+painted frame dismissed it and boot completed; `F4` at the same moment
 dismissed it and left the app on Home, not Settings; and with the setting off
 the same key left the splash up for its full 20 s. The rest of this page's
 content unchanged from the prior stamp.)*

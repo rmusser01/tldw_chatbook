@@ -1,5 +1,26 @@
 # Lessons: verifying against the real thing
 
+## A process's No route to host can be an app privacy denial
+
+**TASK-32459, 2026-09-10.** curl and Python sockets to the user-authorized
+llama.cpp endpoint failed immediately, including outside the execution sandbox.
+The initial report incorrectly called the server unreachable from the Mac.
+The user could load its UI in Firefox. A route lookup found the target on en0;
+macOS nehelper logs explicitly said
+`Local network denied by preference for ChatGPT (com.openai.codex)`.
+
+Attribute connection evidence to the process that produced it. Check the
+route and app-specific network permission diagnostics before asking the user to
+repair a working server. Sandbox escalation does not grant macOS Local Network
+permission. Obtain approval to change that privacy setting; do not route around
+the denial through another app.
+
+The same sample initially constructed provider resolution manually, skipping
+native-tool capability discovery, and attempted an edit before confirming the
+temporary Canvas settlement. Normal `resolve_for_send` and an assertion of
+committed, reachable source resolved those harness defects. Keep that headless
+bridge evidence separate from the full Console UI and durable persistence.
+
 ## A healthy local model does not prove capture or tool outcomes (TASK-32194–32197)
 
 **2026-09-09.** The llama.cpp server answered uncaptured messages while captured
@@ -2521,7 +2542,6 @@ thinking. A live native calculator exchange on port 9099 retained its exact
 thinking in `/apply-template` and returned 221. Keep wire-field, rendered-prompt,
 and transcript-retention assertions separate; only claim the layer verified.
 
-
 ## Observe populated rails across cache expiry, not just initial layout
 
 **TASK-32311, 2026-09-10.** Portrait resize tests settled, but the user saw the
@@ -2603,3 +2623,37 @@ single number out of it. When a Python process dies with output that
 belongs to no code you can find, list `*.py` in the cwd before anything
 else: `sys.path[0]` is the cwd, and a one-word filename there outranks
 site-packages.
+
+## A blank modal in a tmux capture was two modals, not a broken picker (task-32250 wave, 2026-09-11)
+
+**What happened.** Driving Library ▸ Notes ▸ Add from files ▸ Import once, the
+`FileOpen` picker rendered as an empty box: a border fragment down the right of
+the work pane and nothing inside it. Three sessions reproduced it, and an
+isolated `run_test` harness — with and without the app stylesheet — laid the
+dialog out perfectly, which made it look like an app-level regression. It was
+not. The drive script was clicking a Textual `Button` twice (focus, then
+activate) and THEN pressing Enter, so the same action fired twice and pushed
+two modals; what the capture showed was one dialog painted over another. With
+one click and one Enter, plus a settle pause, the picker rendered normally,
+breadcrumbs and all — about forty minutes after it was written off as broken.
+
+**What to do.** In this app a click on a Button focuses it and a second click
+or Enter activates it, so "click twice" and "click then Enter" are two
+presses, not one. Before concluding a widget is broken, check the screen for a
+SECOND instance of what you just opened, and confirm the same fragment
+survives a single, unambiguous activation. An isolated harness that renders
+the widget fine is evidence about the driver, not about the widget.
+
+## Helper scripts in a shared wave scratchpad get overwritten by peers (task-32250 wave, 2026-09-11)
+
+**What happened.** I wrote a tmux driver at `scratchpad/wave3/drive.py` and
+used it for a dozen captures. A later call failed with `NameError: name 'cap'
+is not defined` — a peer implementer working the same wave had written their
+own `drive.py` at the same path, and my imports were silently resolving to
+theirs. The failure looked like a Python import bug, not a file swap.
+
+**What to do.** The wave directory is shared by every implementer in the wave.
+Put helper scripts in a per-task subdirectory (`scratchpad/wave3/tools-<group>/`)
+and import them by that absolute path. A `NameError` for a symbol you know you
+defined means you are reading a different file, the same way an
+`AttributeError` for a symbol your feature defines means the wrong tree.

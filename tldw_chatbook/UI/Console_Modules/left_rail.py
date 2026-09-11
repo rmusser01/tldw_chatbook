@@ -42,7 +42,6 @@ message rather than matched by id prefix in the screen's
 from __future__ import annotations
 
 import asyncio
-import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
@@ -1072,8 +1071,48 @@ class ConsoleLeftRail(Vertical):
             return
         collapse.styles.text_style = "underline" if outer_active else "none"
 
+    def on_focus(self) -> None:
+        """TASK-32322: announce the rail's exit keys when focus arrives.
+
+        Tab is region-locked on purpose (TASK-2154.11 AC-02), so F6 and Esc
+        are the exits -- and nothing else surfaces them at the point of
+        need. Focusing the rail asks the screen to refresh its footer
+        hints, which then carry the escape line while focus stays here.
+        """
+        refresh_footer = getattr(
+            self.screen, "_register_console_footer_shortcuts", None
+        )
+        if callable(refresh_footer):
+            refresh_footer()
+
+    def on_blur(self) -> None:
+        """Defer exit-hint removal until replacement focus is committed."""
+        self.call_after_refresh(self._refresh_footer_if_rail_not_focused)
+
+    def _refresh_footer_if_rail_not_focused(self) -> None:
+        focused = self.app.focused
+        if focused is self or (
+            isinstance(focused, Widget) and self in focused.ancestors
+        ):
+            return
+        refresh_footer = getattr(
+            self.screen, "_register_console_footer_shortcuts", None
+        )
+        if callable(refresh_footer):
+            refresh_footer()
+
     def on_descendant_focus(self, event: DescendantFocus) -> None:
         """Activate owned keyboard targets and paint the current scroll owner."""
+
+        # TASK-32322: descendant focus is the rail's common entry (Alt+C,
+        # F6 land on a content control, not the rail root), so the footer
+        # escape-hint refresh rides here too. A second on_descendant_focus
+        # would be shadowed by this one — a live-smoke catch.
+        refresh_footer = getattr(
+            self.screen, "_register_console_footer_shortcuts", None
+        )
+        if callable(refresh_footer):
+            refresh_footer()
 
         target = event.widget
         section_id = self._section_for_owned_target(target)
@@ -1137,7 +1176,11 @@ class ConsoleLeftRail(Vertical):
     def on_descendant_blur(self, _event: DescendantBlur) -> None:
         """Clear transient underlines when keyboard focus leaves this rail."""
 
+        # TASK-32322: same moment, second job — the footer's escape hint
+        # must leave with the focus that brought it (deferred until the
+        # replacement focus is committed, mirroring _clear_focus_owner).
         self.call_after_refresh(self._clear_focus_owner_if_focus_left)
+        self.call_after_refresh(self._refresh_footer_if_rail_not_focused)
 
     def _clear_focus_owner_if_focus_left(self) -> None:
         """Clear cues only after Textual has committed the replacement focus."""
@@ -2221,14 +2264,11 @@ class ConsoleLeftRail(Vertical):
             summary_state = self._settings_summary_state
             # TASK-23196: provider_row/model_row are deliberately NOT read
             # here any more; the status bar owns those two values.
-            temperature_match = re.search(
-                r"T ([\d.]+)", summary_state.sampling_row or ""
-            )
-            temperature_value = temperature_match.group(1) if temperature_match else "—"
-            max_tokens_match = re.search(
-                r"max_tokens (\d+)", summary_state.sampling_row or ""
-            )
-            max_tokens_value = max_tokens_match.group(1) if max_tokens_match else "—"
+            # TASK-32338: structured fields on the summary state replace
+            # regex-parsing of the formatted sampling_row (which rendered a
+            # silent em-dash whenever the copy's wording shifted).
+            temperature_value = summary_state.temperature or "—"
+            max_tokens_value = summary_state.max_tokens or "—"
 
             # TASK-23196: the Provider and Model rows that stood here were
             # the third simultaneous rendering of the same two values -- the

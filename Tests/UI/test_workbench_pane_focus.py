@@ -71,20 +71,23 @@ async def test_console_f6_cycles_wraps_backward_and_targets_expand_when_collapse
         await pilot.pause()
         console.query_one("#console-native-composer").focus()
 
+        # TASK-32321: F6 now lands each rail on its first CONTENT control,
+        # not the collapse button (a reflexive Enter used to hide the pane
+        # the user just entered).
         await pilot.press("f6")
-        await _wait_for_focused_id(app, pilot, "console-context-rail-collapse")
+        await _wait_for_focused_id(app, pilot, "console-terminal-open")
 
         await pilot.press("f6")
         await _wait_for_focused_id(app, pilot, "console-native-transcript")
 
         await pilot.press("f6")
-        await _wait_for_focused_id(app, pilot, "console-inspector-rail-collapse")
+        await _wait_for_focused_id(app, pilot, "console-send-authority-summary")
 
         await pilot.press("f6")
         await _wait_for_focused_id(app, pilot, "console-native-composer")
 
         await pilot.press("shift+f6")
-        await _wait_for_focused_id(app, pilot, "console-inspector-rail-collapse")
+        await _wait_for_focused_id(app, pilot, "console-send-authority-summary")
 
         console._set_console_composer_collapsed(True)
         await pilot.pause()

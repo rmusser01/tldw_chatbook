@@ -92,7 +92,7 @@ async def test_the_skipping_key_is_consumed_and_does_not_also_fire_a_binding() -
     during the splash, but it also let a shell-destination key through, and
     since `action_shell_destination` *posts* its `NavigateToScreen`, the
     request was handled after the now-immediate splash close had pushed the
-    initial screen -- so F9 mid-splash landed on Settings, which is the
+    initial screen -- so F4 mid-splash landed on Settings, which is the
     exact thing `test_navigation_keypress_during_splash_is_safely_ignored`
     (task-1339) locks against. The splash is a modal over an app that is
     not interactive yet; the key's only job while it is up is to dismiss it.

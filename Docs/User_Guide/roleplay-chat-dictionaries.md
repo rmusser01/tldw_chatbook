@@ -19,7 +19,7 @@ The details live on three child pages:
 
 ## Getting there
 
-- Press **Ctrl+5** from anywhere, or click **⌃5 Roleplay** in the nav bar.
+- Press **Ctrl+4** from anywhere, or click **⌃4 Roleplay** in the nav bar.
 - **Ctrl+P** → "Tab Navigation: Switch to Roleplay & Chat Dictionaries".
   Four more palette
   entries land here too: "Character/Persona Management: Create New
