@@ -2110,16 +2110,19 @@ class ConsoleMessageController:
             )
 
     def _console_notes_owner_id(self) -> str:
-        """Return the identity every Console note write must be saved under.
+        """Return the identity every Console note write is saved under.
 
-        Local notes are owned by the configured notes identity
-        (``app.notes_user_id`` drives every local note view and ingest), so
-        a note written under any other id is saved and then invisible in
-        Library ▸ Notes. TASK-31759 stated this for its own two actions;
-        task-32146 found ``_save_console_message_as_note`` still writing
-        under a ``current_user`` attribute nothing in the tree ever sets --
-        i.e. always the literal "default_user" fallback -- and hoisted the
-        one resolution here so all three Console note writers share it.
+        ``user_id`` becomes the row's ``client_id`` -- the author id sync
+        attribution and optimistic locking read -- and the key
+        ``Notes_Library`` caches one DB connection per. It is NOT a
+        visibility filter: the ``notes`` table has no owner column and
+        ``list_notes`` has no owner clause, so Library ▸ Notes lists every
+        note whatever id wrote it. ``_save_console_message_as_note`` used to
+        pass ``current_user``, which nothing in the tree sets, so its notes
+        carried the literal "default_user" as author and each write opened a
+        second cached connection to the same file. task-32146 hoisted the
+        one resolution here for all three Console note writers (fix round 1
+        corrected this docstring: those notes were never invisible).
         """
         return getattr(self.app_instance, "notes_user_id", None) or "default_user"
 
@@ -2227,9 +2230,11 @@ class ConsoleMessageController:
                 content=content,
                 note_id=None,
                 version=None,
-                # task-32146: was `current_user`, an attribute nothing in
-                # the tree sets -- every note this path saved landed under
-                # "default_user" while Library ▸ Notes reads `notes_user_id`.
+                # task-32146: was `current_user`, which nothing in the tree
+                # sets -- every note this path saved carried the literal
+                # "default_user" as its author id (sync attribution /
+                # locking identity) and opened a second cached connection.
+                # Never a visibility problem; see _console_notes_owner_id.
                 user_id=self._console_notes_owner_id(),
                 workspace_id=None,
                 keywords=["console"],
@@ -2292,11 +2297,11 @@ class ConsoleMessageController:
                 content=content,
                 note_id=None,
                 version=None,
-                # TASK-31759 review: notes are owned by the configured
-                # notes identity (app.notes_user_id drives every local
-                # note view/ingest), NOT current_user -- saving under a
-                # different id would make the note invisible in the
-                # library.
+                # TASK-31759 review, corrected by task-32146 fix round 1:
+                # the configured notes identity, NOT current_user (which
+                # nothing sets). The id is the row's author/client_id and
+                # the per-connection cache key -- not a visibility filter;
+                # see _console_notes_owner_id.
                 user_id=self._console_notes_owner_id(),
                 workspace_id=None,
                 keywords=keywords,

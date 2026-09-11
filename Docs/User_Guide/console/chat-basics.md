@@ -408,7 +408,7 @@ fifteen characters, which is why the last two read short.
 | ---> | Continue — extend the selected message with more generated text. | All messages |
 | Retry | Retry a failed reply. | Failed assistant replies |
 | More… | Opens the captured message's **Save as…**, **Helpful**, **Not helpful**, **Delete** and note actions. Delete still requires confirmation and removes the message plus everything under it. | User and Assistant messages with an available overflow action |
-| Capture as note | Saves this one reply into Library ▸ Notes: the note is titled with the reply's first line, holds the reply verbatim, and is tagged `console`, `conversation:<id>` and `message:<id>` so it records where it came from. Nothing is sent to a model. | Finished assistant replies (disabled in a temporary chat) |
+| Capture as note | Saves this one reply into Library ▸ Notes: the note is titled with the reply's first line of text (a leading code fence or heading mark is dropped), holds the reply verbatim, and is tagged `console`, `conversation:<id>` and `message:<id>` so it records where it came from. Nothing is sent to a model. | Finished assistant replies (disabled in a temporary chat) |
 | View / Save Image | Cycle how an inline image renders / save the message's images to disk. These controls live on the image card — see [attachments, images & voice](attachments-images-voice.md). | Messages with images |
 | Play / Save copy | Play a generated video or save its ephemeral bytes. These controls live on the video card. | Generated videos while their bytes remain available |
 
@@ -448,7 +448,8 @@ fifteen characters, which is why the last two read short.
    going — either way the note is already saved (toast: "Saved answer as
    Note.").
 
-The note's title is the reply's first line, its body is the reply verbatim,
+The note's title is the reply's first line of text (a leading code fence or
+heading mark is dropped), its body is the reply verbatim,
 and its keywords are `console`, `conversation:<id>` and `message:<id>` — so
 the note says which conversation and which message it came from. This is the
 return leg of Library ▸ Notes' **Use in Console**.
@@ -571,6 +572,18 @@ TASK-23088's production-shaped provider-free journey on 2026-08-27.*
 profile — More… ▸ Capture as note ▸ "Saved to Notes" ▸ **Open note** landing
 in the Library note editor; the saved note's keywords were read back from the
 database as `console`, `conversation:<id>`, `message:<id>`. The More… menu
-contents above were read off that same walk. Save as… ▸ Note was ALSO saving
-under an owner id nothing sets, so its notes never appeared in Library ▸
-Notes; both routes now write under the configured notes identity.)*
+contents above were read off that same walk. This stamp was "Save as… ▸ Note
+was ALSO saving under an owner id nothing sets, so its notes never appeared in
+Library ▸ Notes; both routes now write under the configured notes identity" —
+superseded by task-32146 fix round 1 below.)*
+
+*Verified against fix/library-notes-w3-capture-console — 2026-09-11
+(task-32146 fix round 1: the owner-id sentence in the stamp above was wrong
+and is withdrawn — notes have no owner column and Library ▸ Notes lists every
+note whatever identity wrote it, so nothing saved by Save as… ▸ Note was ever
+missing. What changed is only which identity a note records as its author:
+the configured notes identity instead of a literal nothing sets. Both routes
+write under it. Also: a captured reply that opens with a code fence or a
+heading is now titled by its first line of text, and Capture as note refuses
+at dispatch in a temporary chat as well as being offered disabled. Copy-only
+correction checked against the notes schema and list query; no live walk.)*

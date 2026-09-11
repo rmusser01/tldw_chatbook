@@ -528,8 +528,11 @@ async def test_capture_note_records_the_conversation_and_message_it_came_from():
 async def test_console_note_writes_use_the_configured_notes_identity():
     """Regression (task-32146): Save as... > Note wrote under a `current_user`
     attribute that nothing in the tree ever sets, so every note it saved
-    landed under "default_user" while Library > Notes reads `notes_user_id`
-    -- the note was saved and then invisible."""
+    carried the literal "default_user" as its author id (the client_id sync
+    attribution and optimistic locking read) and opened a second cached DB
+    connection. Not a visibility bug -- notes have no owner column and the
+    list has no owner filter -- so this pins only the identity recorded
+    (fix round 1 corrected the docstring; the assertion is unchanged)."""
     app, screen = _build_screen()
     app.notes_user_id = "notes-owner-1"
     saved: list[dict] = []

@@ -698,7 +698,8 @@ automatic-sync setting.
 ### Capture a Console answer as a note
 The return leg of **Use in Console**. In the Console, select an assistant
 reply, click **More…**, then **Capture as note**. The reply is saved here
-immediately — titled with its first line, holding the answer verbatim — and
+immediately — titled with its first line of text (a leading code fence or
+heading mark is dropped), holding the answer verbatim — and
 a "Saved to Notes" receipt offers **Open note**, which lands you on that note
 in the editor.
 
@@ -1126,3 +1127,7 @@ what had drifted.*
 100x30 — the receipt's **Open note** landed on the new note in this screen's
 editor, and the note's `console` / `conversation:<id>` / `message:<id>`
 keywords were read back from the database.)*
+
+*Verified against fix/library-notes-w3-capture-console — 2026-09-11
+(task-32146 fix round 1: the title wording above gained the code-fence /
+heading rule; copy-only, no live walk.)*
