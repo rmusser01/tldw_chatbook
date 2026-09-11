@@ -124,6 +124,7 @@ from ...Library.library_conversation_reader_state import (
     project_conversation_multiselect,
 )
 from ...Library.library_export_scope import (
+    ExportPreview,
     ExportScope,
     resolve_export_selections,
 )
@@ -18784,6 +18785,10 @@ class LibraryScreen(BaseAppScreen):
     def _compute_library_export_counts(scope: ExportScope, media_db: Any, chachanotes_db: Any, prompts_db: Any) -> dict[str, int]:
         return LibraryExportController._compute_library_export_counts(scope, media_db, chachanotes_db, prompts_db)
 
+    @staticmethod
+    def _compute_library_export_preview(scope: ExportScope, media_db: Any) -> ExportPreview:
+        return LibraryExportController._compute_library_export_preview(scope, media_db)
+
     def _start_library_export_counts_worker(self) -> None:
         """Kick off the export scope's full-query counts (Task 1's resolver).
 
@@ -18812,12 +18817,14 @@ class LibraryScreen(BaseAppScreen):
             counts = self._compute_library_export_counts(
                 scope, media_db, chachanotes_db, prompts_db
             )
+            preview = self._compute_library_export_preview(scope, media_db)
             result = self._apply_library_export_counts(
                 scope,
                 counts,
                 generation=generation,
                 route_key=route_key,
                 request_id=request_id,
+                preview=preview,
             )
             if (
                 result is not LibraryEntryReconcileResult.APPLIED
@@ -18835,6 +18842,7 @@ class LibraryScreen(BaseAppScreen):
                     generation=generation,
                     route_key=route_key,
                     request_id=request_id,
+                    preview=preview,
                 )
             return
         self._run_library_export_counts_worker(
@@ -18861,6 +18869,10 @@ class LibraryScreen(BaseAppScreen):
         counts = self._compute_library_export_counts(
             scope, media_db, chachanotes_db, prompts_db
         )
+        # task-32353 AC#2: the same worker, the same connection -- the
+        # contents/size read never happens on the UI thread, and its wrapper
+        # logs then degrades rather than letting a failure escape here.
+        preview = self._compute_library_export_preview(scope, media_db)
         # ``self.app`` (Textual's own running-App property), not
         # ``self.app_instance`` -- ``call_from_thread`` needs the App whose
         # event loop is actually running this screen (see
@@ -18875,6 +18887,7 @@ class LibraryScreen(BaseAppScreen):
                 generation=generation,
                 route_key=route_key,
                 request_id=request_id,
+                preview=preview,
             )
         except Exception:
             # A shutdown/detach mid-marshal can raise RuntimeError OR
@@ -18890,6 +18903,7 @@ class LibraryScreen(BaseAppScreen):
         generation: int | None = None,
         route_key: tuple[object, ...] | None = None,
         request_id: int,
+        preview: ExportPreview | None = None,
     ) -> LibraryEntryReconcileResult:
         """Marshal a landed counts result onto the export form (UI thread).
 
@@ -18920,6 +18934,8 @@ class LibraryScreen(BaseAppScreen):
             counts: The landed counts (keys "media"/"conversations"/"notes"/
                 "prompts").
             request_id: Monotonic identity of the Export visit/count request.
+            preview: The sibling contents/size read (task-32353 AC#2),
+                landed under the same staleness guards as ``counts``.
         """
         if request_id != self._export_state.counts_request_id:
             return LibraryEntryReconcileResult.SUPERSEDED
@@ -18952,6 +18968,7 @@ class LibraryScreen(BaseAppScreen):
         if not self._library_entry_reconcile_is_current(generation, active_route_key):
             return LibraryEntryReconcileResult.SUPERSEDED
         self._export_state.counts = counts
+        self._export_state.preview = preview or ExportPreview()
         state = self._build_library_export_state()
         try:
             canvas = self.query_one("#library-export-canvas", LibraryExportCanvas)
@@ -18981,6 +18998,27 @@ class LibraryScreen(BaseAppScreen):
             apply_library_export_submit_gate(submit_button, state)
         except (NoMatches, QueryError):
             return LibraryEntryReconcileResult.FAILED
+        # task-32353 AC#2: both new lines are empty until counts land, so
+        # this patcher owns them too (recompose discipline -- the in-place
+        # updater owns every conditional compose owns). Deliberately AFTER
+        # the gate, in its own guard: the Export button's disabled/label/
+        # tooltip must never be left stale by a quiet line failing to
+        # resolve, which is what sharing the `try` above would have done.
+        for selector, text, shown in (
+            (
+                "#library-export-consequence-line",
+                state.consequence_line,
+                bool(state.consequence_line),
+            ),
+            (
+                "#library-export-contents",
+                "\n".join(state.contents_lines),
+                bool(state.contents_lines),
+            ),
+        ):
+            for line in self.query(selector):
+                line.update(text)
+                line.display = shown
         return LibraryEntryReconcileResult.APPLIED
 
     def _build_library_export_state(self) -> LibraryExportFormState:
@@ -19010,6 +19048,9 @@ class LibraryScreen(BaseAppScreen):
             error_line=self._export_state.error,
             last_export_line=last_export_line,
             quality_choices_visible=self._export_state.quality_choices_visible,
+            titles=self._export_state.preview.titles,
+            approx_bytes=self._export_state.preview.approx_bytes,
+            item_count=self._export_state.preview.item_count,
         )
 
     # ----- Export canvas: execution (Task 3) ------------------------------

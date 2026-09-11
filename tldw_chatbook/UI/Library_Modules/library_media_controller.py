@@ -3944,6 +3944,12 @@ class LibraryMediaController:
             and viewer.confirming_delete == self._library_media_confirming_delete
             and tuple(viewer.highlights) == highlights
             and viewer.editing_analysis == self._library_media_editing_analysis
+            # Qodo #8 on PR #2601: assigned on the changed path below but
+            # never compared here, so a generation that started with nothing
+            # else changing took the unchanged path and the Reader kept
+            # rendering the PREVIOUS reason -- "No analysis to search yet."
+            # while one was generating, plus a stale "○" label and tooltip.
+            and viewer.generating_analysis == self._library_media_generating_analysis
             and viewer.analysis_provider_reason == analysis_provider_reason
             and viewer.content_query == self._library_media_content_query
             and viewer.content_match_index == self._library_media_content_match_index
