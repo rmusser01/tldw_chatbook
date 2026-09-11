@@ -12,7 +12,7 @@ dependencies:
 - task-32004
 - task-32005
 - task-32006
-updated_date: 2026-09-11 19:55
+updated_date: 2026-09-11 20:06
 ---
 
 ## Description
@@ -68,4 +68,5 @@ Final local-model Settings UI2 independently APPROVED /private/tmp/chatbook-rag-
 Actual F9 create→isolated succeeded then Profiles view stalled. Independent pure-rendering probe reproduced overlapping same-revision _list_ready calls causing DuplicateIds (backup-open-media) in0.23s; one current panel/two media buttons. Source race is concrete, whether full stall samecause remains to verify. Release minimal list-render concurrency/stale-view correction in UI/Screens/backup_restore_screen.py and new Tests/Backup_Recovery/test_profile_list_refresh.py only. Write failing deterministic rendering tests first; preserve native service/owner/admission behavior. Root owns separate fullproductionUItest +tracking; run it after finite fix as integration evidence.
 Actual PTY F9 create/isolated restore/open integration at base63a plus frozen list-render correction failed at child180s cap (backup-f9-product-render-final.log). Fresh native child opened successfully (ui-opened.json); parent stack shows compositor writing into stopped Textual writer while open_recovery_profile awaits service.wait inside suspend(). Scope released: only app.py open_recovery_profile terminal redraw deferral and a focused actual-terminal regression, followed by existing full F9 testcase. No changes to Admission, subprocess launch, runtime completion or terminal library. Root owns method/test; failure is not counted as pass.
 List refresh correction verified independently and ready for incremental commit: accepted delivery token + freshness recheck after removal + one batched widget mount. Actual red3/1.24s -> final frozen green3/0.81s, narrow local list and actual recovery-copy confirmation/tombstone compatibility also pass (5 distinct cases). Production Ruff/Bandit0; new test6 expected B101 only. Exact source matches tested snapshot; P independent review approved /private/tmp/profile-list-render-independent-review.md. Does not claim parent terminal suspend failure or full F9 flow resolved.
+Terminal2 ready for incremental commit: outer batch_update defers actual redraw until suspended terminal resumes; expected synchronous service errors caught inside suspend and reported after resume. Existing shielded service settlement/cancellation preserved. Actual PTY red2fail17.54 -> finalclean4pass8.17s; success/cancel/failedservice/start-error all resume real writer. Root independently reviewed full source/test and frozen source/testedAST/patch/11receipts /private/tmp/profile-terminal-independent-review.md. App baselineRuff404→404/Bandit35→35, testRuff0/3B101 only. No native/source/admission semantics changed; full actual F9 launch rerun running separately.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

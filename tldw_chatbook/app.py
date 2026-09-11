@@ -11778,18 +11778,26 @@ class TldwCli(
             self.notify("Another recovery operation is running.", severity="warning")
             return
         cancellation = None
+        failure = None
         try:
-            with self.suspend():
-                operation = service.start_open_profile(profile_id)
-                settling = asyncio.create_task(asyncio.to_thread(service.wait, operation))
-                while not settling.done():
-                    try:
-                        await asyncio.shield(settling)
-                    except asyncio.CancelledError as error:
-                        cancellation = cancellation or error
-                settling.result()
+            # Keep redraw paused until the terminal resumes; catch service errors
+            # inside suspend so synchronous failures also reach its resume step.
+            with self.batch_update(), self.suspend():
+                try:
+                    operation = service.start_open_profile(profile_id)
+                    settling = asyncio.create_task(asyncio.to_thread(service.wait, operation))
+                    while not settling.done():
+                        try:
+                            await asyncio.shield(settling)
+                        except asyncio.CancelledError as error:
+                            cancellation = cancellation or error
+                    settling.result()
+                except (OSError, RuntimeError, ValueError) as error:
+                    failure = error
         except (OSError, RuntimeError, ValueError, SuspendNotSupported) as error:
-            self.notify("Profile opening failed: " + service.issue_code(error), severity="error")
+            failure = error
+        if failure is not None:
+            self.notify("Profile opening failed: " + service.issue_code(failure), severity="error")
         if cancellation is not None:
             raise cancellation
 
