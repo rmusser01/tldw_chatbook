@@ -30378,7 +30378,19 @@ class LibraryScreen(BaseAppScreen):
         eight distinct ``esc …`` chips live.
         """
         session = self._media_state.reader_session
-        if self._media_state.confirming_delete:
+        # Qodo on PR #2583 (task-32222): mirror the FIRST THREE branches of
+        # ``action_library_media_viewer_back`` -- it closes the metadata-edit
+        # and analysis-edit forms exactly as it closes a delete confirm, but
+        # this label checked only the delete, so the footer advertised "focus
+        # Items" over a form Escape would merely close. That is the same
+        # chip-vs-key drift task-31272 closed at four other seams, and
+        # LIBRARY_MEDIA_SUBSTATE_BACK_SHORTCUTS already promised all three
+        # sub-states this one word.
+        if (
+            self._media_state.editing
+            or self._media_state.confirming_delete
+            or self._media_state.editing_analysis
+        ):
             return "close"
         if session.more_open:
             return "close"
