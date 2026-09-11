@@ -440,6 +440,7 @@ from ...Widgets.Library import (
     LibraryNotesCanvas,
     LibraryNavigationRailHandle,
     PaneToggleRequested,
+    LibraryPaneVisibilityChanged,
     LibraryPromptWorkPane,
     LibraryPromptsListCanvas,
     LibraryRail,
@@ -758,6 +759,8 @@ from ..Library_Modules.screen_constants import (
     LIBRARY_ONBOARDING_EVIDENCE_TIMEOUT_SECONDS,
     LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS,
     LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS,
+    LIBRARY_LIST_ENTRY_FOCUS_RETRY_SECONDS,
+    _LIBRARY_SLASH_CANVAS_FILTERS,
     LIBRARY_NOTES_AUTOSAVE_SECONDS,
     LIBRARY_NOTE_CONTENT_MAX_CHARS,
     LIBRARY_NOTE_BLANK_SEED_TITLE,
@@ -1021,6 +1024,15 @@ class LibraryScreen(BaseAppScreen):
         # ``_library_media_confirming_delete`` branch).
         ("escape", "library_media_bulk_delete_cancel", "Cancel delete confirmation"),
         ("escape", "library_emergency_return", "Return to Library rail"),
+        # task-32225: the adaptive-reader twin of the binding above. That one
+        # covers the ordinary (shell-less) routes; this one covers a route
+        # whose reader shell has CLOSED the Library pane, where the focus hop
+        # declared below would aim at a widget inside that closed pane and
+        # move nothing. Declared here, above ``library_blur_text_field`` and
+        # ``library_list_focus_rail``, because Textual resolves same-key
+        # bindings in DECLARATION ORDER and getting back to a rail that is off
+        # screen outranks both a blur and a hop that cannot land.
+        ("escape", "library_narrow_stage_return", "Back to Library"),
         # task-32051: the LAST resort before the focus-rail hop -- Escape in
         # a Library text box hands focus back to the canvas. Position is the
         # whole contract: every binding above owns Escape for its own
@@ -3913,6 +3925,9 @@ class LibraryScreen(BaseAppScreen):
         # prior timer before scheduling a new one -- see both methods.
         self._library_list_entry_focus_timer: Timer | None = None
         self._library_list_entry_focus_deadline: float | None = None
+        #: task-32228 (re-review N5): handle of the in-flight retry tick, so
+        #: only one chain runs per arm and a disarm can stop it early.
+        self._library_list_entry_focus_retry_timer: Timer | None = None
         # task-15459: seed from the app-scoped snapshot cache now, pre-mount,
         # so a warm revisit's FIRST ``compose_content`` already renders real
         # data instead of the loading placeholder -- see
@@ -4423,6 +4438,29 @@ class LibraryScreen(BaseAppScreen):
             shortcuts = tuple(pair for pair in shortcuts if pair[0] != "esc") + (
                 ("esc", "rail"),
             )
+        elif self._library_narrow_stage_return_active():
+            # task-32225: the adaptive-reader twin of the swap above. Applied
+            # here rather than in each of the route function's eight branches
+            # so no destination can be left behind with the old chip, and the
+            # label matches the "‹ Library" control that is on screen with it.
+            #
+            # FIRST, not appended: this context exists only below 64 columns,
+            # exactly where AppFooterStatus keeps a PREFIX of the actions and
+            # drops the tail -- appended, the chip was registered and never
+            # painted (live capture at 60x24 showed "/ focus search | F6 next
+            # pane" and no return). Recovery outranks navigation here anyway,
+            # which is the order that ladder assumes.
+            shortcuts = (("esc", "back to Library"),) + tuple(
+                pair for pair in shortcuts if pair[0] != "esc"
+            )
+        # re-review N4: below 64 columns the box "/" jumps to can be inside a
+        # CLOSED pane -- mounted, so the handler finds it, but unfocusable, so
+        # the key moves nothing. Drop the chip rather than paint the same
+        # dead-key lie task-32225 closed for Escape one key over. Guarded by
+        # ``is_mounted`` for the same reason the narrow-stage gate is: this
+        # runs from ``compose_content`` on an unmounted screen too.
+        if self.is_mounted and not self._library_slash_would_land():
+            shortcuts = tuple(pair for pair in shortcuts if pair[0] != "/")
         if self._library_lifecycle not in (
             LibraryLifecycle.UNKNOWN,
             LibraryLifecycle.STARTER,
@@ -6720,6 +6758,159 @@ class LibraryScreen(BaseAppScreen):
                 here so the canvas-action handlers do not also see it.
         """
         event.stop()
+        self.action_library_narrow_stage_return()
+
+    def _library_slash_would_land(self) -> bool:
+        """Whether "/" would actually move focus right now (re-review N4).
+
+        The chip promises a jump to a search or filter box. Below 64 columns
+        every one of those boxes can be inside a CLOSED pane -- mounted, so a
+        query finds it, but absent from the focus chain, so ``focus()`` is a
+        no-op. Measured in the Media Reader at 60x24: "/ focus search" was the
+        first painted chip, ``#library-media-filter`` was mounted inside the
+        collapsed Items pane, and the key moved nothing. That is the same
+        dead-chip lie task-32225 closed for Escape, one key over.
+
+        Mirrors ``on_key``'s order (Conversations' own gate, then the Notes
+        binding's ``check_action``, then the shared canvas-filter map, then
+        the rail's global search) and shares that map with it, so the two can
+        only disagree about a destination one of them stops modelling. The
+        handler stays the authority on what the key DOES; this only decides
+        whether the footer says so.
+
+        Returns:
+            Whether some reachable control would take the key.
+        """
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
+            selector = (
+                "#library-conversations-filter"
+                if self._conversations_state.reader_layout.items_open
+                else ""
+            )
+        elif self.check_action("library_notes_focus_filter", ()):
+            return True
+        else:
+            selector = (
+                _LIBRARY_SLASH_CANVAS_FILTERS.get(self._library_selected_row_id) or ""
+            )
+            if not self._library_focusable(selector):
+                rail = self._active_library_rail()
+                selector = (
+                    "#library-search-input"
+                    if rail is not None and rail.display
+                    else ""
+                )
+        return self._library_focusable(selector)
+
+    def _library_focusable(self, selector: str) -> bool:
+        """Whether ``selector`` names a control that can take focus now."""
+        if not selector:
+            return False
+        controls = self.query(selector)
+        if not controls:
+            return False
+        return controls.first(Widget) in self.focus_chain
+
+    def _library_narrow_stage_return_active(self) -> bool:
+        """Whether the Library pane is closed on the live adaptive route.
+
+        task-32225: while it is, the footer's "esc focus rail" chip was a lie
+        on every adaptive-reader destination -- the hop's destination
+        (``#library-search-input``) lives INSIDE the closed pane, so Escape
+        moved nothing at 60x24 and the "‹ Library" control that does work was
+        never named. This is the eighth honest Escape context; it is disjoint
+        from ``library_emergency_return`` by construction (that stage is only
+        ever set when NO reader shell is mounted, see
+        ``_apply_library_emergency_geometry``).
+
+        Fix round 1 (review finding 1): this is also the LAST of the Escape
+        contexts, not a width-only one. Every Escape binding declared above
+        ``library_narrow_stage_return`` -- viewer back, the three editor
+        backs, trash back, an armed delete confirm, ... -- and Textual gives
+        the key to the first gate that passes, so at 60x24 in the Media viewer
+        the footer read "back to Library" while Escape went to the media list
+        and the Library pane stayed shut. The gate now stands down whenever an
+        earlier Escape action is live, which is the same stand-down the
+        ``emergency.enabled`` branch beside it performs through its own
+        ``guarded`` projection ("an editor/viewer/confirm is open").
+
+        Returns:
+            Whether Escape should reopen the Library pane instead of hopping.
+        """
+        # Bounded to the single-stage band, the same floor task-32065 gave the
+        # "‹ Library" control. ABOVE it a closed Library pane is an ordinary
+        # collapsed pane one grip away, and Escape there is the pinned
+        # step-back through the visible roles ("focus Items", then "focus
+        # Library"); taking the key from that would break the contract
+        # test_conversations_escape_moves_to_nearest_visible_prior_role holds.
+        #
+        # ``Screen.size`` is ``self.app.size - gutter``, NOT ``Widget.size``:
+        # read without an active app it RAISES ``NoActiveAppError`` rather
+        # than returning ``Size(0, 0)``. This gate is reached from
+        # ``_register_footer_shortcuts`` <- ``apply_navigation_context``,
+        # which is driven on an unmounted screen, so the guard is the same
+        # ``is_mounted`` one ``_library_emergency_return_eligibility`` (two
+        # lines above this branch's caller) carries for its own ``self.app``
+        # read. The width check stays for the measured-but-zero case that
+        # ``ordinary_emergency_required`` refuses.
+        if not self.is_mounted:
+            return False
+        width = self.size.width
+        if width <= 0 or not ordinary_emergency_required(width):
+            return False
+        # Read off BINDINGS rather than a second hand-written list of their
+        # names: ``library_blur_text_field`` learned the same lesson
+        # (task-32051), and every hard-coded roster -- or COUNT -- of Escape
+        # bindings in this file has gone stale at least once, this docstring
+        # included (re-review N2: it said "eleven"; there are twelve).
+        if any(
+            self.check_action(earlier, ())
+            for earlier in self._library_escape_actions_before(
+                "library_narrow_stage_return"
+            )
+        ):
+            return False
+        shells = self.query(_LIBRARY_READER_SHELL_SELECTOR)
+        if not shells:
+            return False
+        # Queried, not read from ``_library_reader_shell_ref``: that cache is
+        # probed once per compose generation and stays False for the rest of
+        # it when the probe ran before the route mounted -- which is exactly
+        # the first frames of the visit this context has to be right about.
+        layout = getattr(shells.first(Widget), "effective_layout", None)
+        return layout is not None and not layout.library_open
+
+    @on(LibraryPaneVisibilityChanged)
+    def _library_pane_visibility_changed(
+        self, event: LibraryPaneVisibilityChanged
+    ) -> None:
+        """Re-register the footer when a pane's applied visibility settles.
+
+        task-32225 / task-32228: the footer is registered from
+        ``compose_content``, which runs BEFORE the shell has resolved its
+        allocation -- so several chips were decided against a pane state that
+        was not yet true and nothing revisited them. Live on the seeded
+        profile: at 60x24 the "back to Library" chip never appeared though
+        Escape worked, and at 100x30 the Conversations canvas advertised only
+        "F6 next pane" while its Filter box was on screen and "/" focused it.
+        Both chips read a pane-open flag, and this message fires exactly when
+        one of those flags changes, so one re-registration fixes both.
+
+        Unconditional because the message itself is the gate: the shell posts
+        it only when an APPLIED visibility genuinely flips (route entry, a
+        grip press, a breakpoint crossing), never per frame.
+        """
+        event.stop()
+        self._register_footer_shortcuts()
+
+    def action_library_narrow_stage_return(self) -> None:
+        """Reopen the closed Library pane (task-32225).
+
+        The one seam the "‹ Library" control, its keyboard binding and the
+        pane grips all reach: the shell's own ``PaneToggleRequested``, so the
+        preference write and the persistence generation are handled exactly
+        once, by ``_toggle_library_media_reader_pane``.
+        """
         self.post_message(PaneToggleRequested("library"))
 
     def _sync_library_media_reader_layout_from_shell(
@@ -8085,10 +8276,9 @@ class LibraryScreen(BaseAppScreen):
             # widget, e.g. the Media viewer sub-view where no list filter is
             # mounted -- falls through to the rail-search grab, the prior
             # behaviour.
-            canvas_filter = {
-                LIBRARY_ROW_BROWSE_MEDIA: "#library-media-filter",
-                LIBRARY_ROW_BROWSE_PROMPTS: "#library-prompts-filter",
-            }.get(self._library_selected_row_id)
+            canvas_filter = _LIBRARY_SLASH_CANVAS_FILTERS.get(
+                self._library_selected_row_id
+            )
             if canvas_filter is not None:
                 try:
                     self.query_one(canvas_filter, Input).focus()
@@ -9542,6 +9732,16 @@ class LibraryScreen(BaseAppScreen):
         live.
         """
         self._media_state.successful_focus_ownership = None
+        # Same reason PR #1410's review stopped the settle timer below: a
+        # retry tick left over from the PREVIOUS arm carries that arm's
+        # generation, so it no-ops when it fires -- while its stored handle
+        # blocks this arm from starting a chain of its own. Live effect after
+        # dev's conversations change added a second arm to the route entry:
+        # the rows mounted 0.44s in, with 1.75s of window left, and nothing
+        # re-requested focus.
+        if self._library_list_entry_focus_retry_timer is not None:
+            self._library_list_entry_focus_retry_timer.stop()
+            self._library_list_entry_focus_retry_timer = None
         if self._library_list_entry_focus_timer is not None:
             self._library_list_entry_focus_timer.stop()
             self._library_list_entry_focus_timer = None
@@ -9562,9 +9762,14 @@ class LibraryScreen(BaseAppScreen):
                 self._focus_library_list_entry_if_current,
                 self._library_list_entry_focus_generation,
             )
-        elif media_return is None:
-            self.call_after_refresh(self._focus_library_list_entry)
         else:
+            # One branch since Qodo #3 on PR #2585 guarded the ``media_return
+            # is None`` case: the plain call re-checked neither the pending
+            # flag nor the arm generation, so a user who took control between
+            # this schedule and the callback had focus pulled back into the
+            # list -- the yank task-2856's review round 2 added the immediate
+            # disarm for. Both remaining cases now want the identical guarded
+            # continuation, so they say so once.
             self.call_after_refresh(
                 self._focus_library_list_entry_if_current,
                 self._library_list_entry_focus_generation,
@@ -9574,6 +9779,55 @@ class LibraryScreen(BaseAppScreen):
                 LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS,
                 self._disarm_library_list_entry_focus,
             )
+
+    def _retry_library_list_entry_focus_while_armed(self) -> None:
+        """Re-attempt entry focus once the list's rows have actually mounted.
+
+        task-32228: the arm schedules ONE ``call_after_refresh`` attempt and
+        then relies on ``compose_content`` re-requesting while the flag stays
+        armed. That covers a canvas whose rows arrive on a SCREEN recompose;
+        it does not cover one whose rows arrive on a canvas-level recompose,
+        which is why Conversations landed on nothing (measured: the single
+        attempt ran with zero ``.library-conversation-row`` widgets mounted,
+        the flag was still armed when they appeared, and nothing re-fired).
+
+        Bounded by the arm's own settle window on both axes: the deadline
+        stops the polling, and ``_focus_library_list_entry_if_current`` drops
+        any tick whose generation a disarm has already superseded. So this
+        cannot outlive a user taking control, and on a genuinely empty list it
+        stops at the deadline rather than spinning. One chain at a time, and
+        the handle is stored so a disarm can stop it early -- the same shape
+        ``_arm_library_list_entry_focus`` uses for its own settle timer
+        (re-review N5: every no-rows attempt used to start its own chain, and
+        ``compose_content`` re-requests on each recompose while armed, so
+        several ran concurrently for one arm).
+        """
+        # ponytail: bounded by LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS (2s), so
+        # a list that takes longer than that to arrive still lands nowhere --
+        # measured live on the seeded profile, where the FIRST visit to
+        # Conversations (cold DB) misses the window and a warm re-entry hits
+        # it. The other list canvases share that ceiling (a cold Prompts visit
+        # lands in its filter rather than row 0), and task-32260 measured
+        # Library at 12.6s to open, so the miss is routine rather than rare.
+        # Upgrade path filed as task-32301: re-arm from each destination's own
+        # "list arrived" seam instead of a fixed window.
+        deadline = self._library_list_entry_focus_deadline
+        if (
+            self._library_list_entry_focus_retry_timer is not None
+            or not self._library_pending_list_entry_focus
+            or deadline is None
+            or time.monotonic() >= deadline
+        ):
+            return
+        generation = self._library_list_entry_focus_generation
+
+        def _tick() -> None:
+            self._library_list_entry_focus_retry_timer = None
+            self._focus_library_list_entry_if_current(generation)
+
+        self._library_list_entry_focus_retry_timer = self.set_timer(
+            LIBRARY_LIST_ENTRY_FOCUS_RETRY_SECONDS, _tick
+        )
 
     def _disarm_library_list_entry_focus(self) -> None:
         """End an entry-focus request's settle window (task-2856 AC1).
@@ -9590,6 +9844,11 @@ class LibraryScreen(BaseAppScreen):
         timer dangling behind it.
         """
         self._library_list_entry_focus_generation += 1
+        # re-review N5: the retry chain gets the same early stop the settle
+        # timer has, instead of ticking on to its deadline after a disarm.
+        if self._library_list_entry_focus_retry_timer is not None:
+            self._library_list_entry_focus_retry_timer.stop()
+            self._library_list_entry_focus_retry_timer = None
         self._library_pending_list_entry_focus = False
         self._library_pending_list_entry_media_return = None
         self._library_pending_list_entry_focus_anchor = None
@@ -9885,6 +10144,8 @@ class LibraryScreen(BaseAppScreen):
                 # ended with nothing focused at all. Same filter-input
                 # answer the two rows above already give.
                 "library-notes-row": "#library-notes-filter",
+                # task-32228: same answer for an empty conversation list.
+                "library-conversation-row": "#library-conversations-filter",
             }.get(row_class)
             if fallback_selector is not None:
                 try:
@@ -9893,13 +10154,22 @@ class LibraryScreen(BaseAppScreen):
                     pass
                 else:
                     self.set_focus(control)
-                    return
+                    # task-32228: only a landing counts as done. A control
+                    # that is mounted but not yet focusable (a canvas still
+                    # composing) leaves focus on None, and returning here made
+                    # that indistinguishable from success -- which is how
+                    # Conversations ended up with nothing focused while its
+                    # rows were mounting.
+                    if self.focused is control:
+                        return
             if row_class == "library-media-row":
                 control = self._library_media_empty_list_fallback_target()
                 if control is not None:
                     self._library_notes_programmatic_focus_target = control
                     self.set_focus(control)
-                    return
+                    if self.focused is control:
+                        return
+            self._retry_library_list_entry_focus_while_armed()
             return
         if (
             row_class == "library-media-row"
@@ -13648,9 +13918,12 @@ class LibraryScreen(BaseAppScreen):
                     # replacement-owner geometry can settle exact scroll.
                     self.set_focus(None)
                 self._media_state.return_settlement = None
-            elif pending_media_return is None:
-                self.call_after_refresh(self._focus_library_list_entry)
             else:
+                # Qodo #3 on PR #2585: the recompose re-request carries the arm
+                # generation too, so a disarm between this compose and the
+                # callback stands it down instead of re-focusing the list.
+                # Same continuation with or without a pending media return,
+                # so it is written once.
                 self.call_after_refresh(
                     self._focus_library_list_entry_if_current,
                     self._library_list_entry_focus_generation,
@@ -20945,6 +21218,12 @@ class LibraryScreen(BaseAppScreen):
             LIBRARY_ROW_BROWSE_NOTES,
             LIBRARY_ROW_BROWSE_PROMPTS,
             LIBRARY_ROW_BROWSE_SKILLS,
+            # task-32228 (critique #9 fix round 1): Conversations is the fifth.
+            # It was left out, so arriving here put focus outside the reader
+            # shell -- which is why its Escape hop had nowhere to start from
+            # and its footer (correctly) withheld the chip. The keys were never
+            # missing; the state that makes them live was.
+            LIBRARY_ROW_BROWSE_CONVERSATIONS,
         ):
             self._arm_library_list_entry_focus()
         if self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT:
@@ -23774,6 +24053,11 @@ class LibraryScreen(BaseAppScreen):
             ) and bool(reader_state.selected_id or reader_state.loaded_id)
         if action == "library_emergency_return":
             return self._library_emergency_return_eligibility().enabled
+        if action == "library_narrow_stage_return":
+            # task-32225: exactly while the Library pane is closed on the live
+            # adaptive route -- the same predicate the footer chip reads, so
+            # the chip and the key can never disagree.
+            return self._library_narrow_stage_return_active()
         if action == "library_ingest_retry_last":
             # task-3313: only on the Ingest canvas AND while the affordance
             # itself is offered. THE SAME predicate the state builder uses

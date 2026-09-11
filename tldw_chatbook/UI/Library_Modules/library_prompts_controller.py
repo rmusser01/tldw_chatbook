@@ -805,6 +805,11 @@ class LibraryPromptsController:
             LIBRARY_PROMPTS_READER_PROFILE,
             previous=previous,
             priority=priority,
+            # task-32217 (critique #9 row 14): the work pane showing only
+            # "Select a prompt to edit it here." kept 132 of 235 columns while
+            # the list truncated names into 50. Media and Notes already pass
+            # this; the resolver's own task-31979 block does the rest.
+            reader_has_item=self._library_prompts_view != "list",
         )
         shell.sync_layout(layout)
         self._library_prompts_reader_layout = layout
