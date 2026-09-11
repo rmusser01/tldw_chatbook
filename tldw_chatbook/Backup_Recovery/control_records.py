@@ -60,7 +60,21 @@ class _Profile(BaseModel):
 
 
 @contextmanager
-def _enrollment(authority: Admission):
+def _enrollment(authority: Admission, *, session=None, names=()):
+    if session is not None:
+        from .storage_admission import MaintenanceSession
+
+        if type(session) is not MaintenanceSession:
+            raise ValueError("enrollment_session_required")
+        session._check()
+        if (
+            session._control != authority.control_root
+            or session._control_identity != authority._identity
+            or not {UNBOUND_NAMESPACE, *names} <= set(session._names)
+        ):
+            raise ValueError("enrollment_session_scope")
+        yield
+        return
     try:
         with authority.maintenance((UNBOUND_NAMESPACE,), 0.1):
             yield
@@ -229,6 +243,8 @@ def bind_profile(
     config_selector: Path,
     namespaces: tuple[str, ...],
     authority_root: Path,
+    *,
+    session=None,
 ) -> None:
     """Enroll an intact local mapping only after unbound owners have retired.
 
@@ -241,7 +257,7 @@ def bind_profile(
     authority = admission_authority(bootstrap_root)
     selected = lexical_path(config_selector)
     names = Admission._names(namespaces)
-    with _enrollment(authority):
+    with _enrollment(authority, session=session, names=names):
         pending, profiles = _records(bootstrap_root)
         if pending:
             raise RecoveryRequired("recovery_pending")

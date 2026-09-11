@@ -603,6 +603,99 @@ def _acquired_source(candidate: Path, plan: RestorePlan, cancel: Event):
     return archive
 
 
+def _first_binding_inventory(plan, selector):
+    """Rediscover one actual current profile, never an imported source locator."""
+    from .inventory import discover
+    from .storage_admission import _preview_reads
+
+    recheck_targets(plan)
+    install_adapters()
+    with _preview_reads():
+        current = discover((selector,))
+    if not current.complete:
+        raise ValueError("replacement_current_scope_unavailable")
+    approved = {item.logical_id: item for item in plan.target.items}
+    for item in current.items:
+        # These are independently recognized local protocol records, never payload.
+        if item.owner == "recovery.control" and item.status == "intentionally_excluded":
+            continue
+        previous = approved.get(item.logical_id)
+        if previous is None or (
+            item.owner, item.path, item.status, item.dependencies
+        ) != (
+            previous.owner, previous.path, previous.status, previous.dependencies
+        ):
+            raise ValueError("replacement_current_scope_changed")
+    recheck_targets(plan)
+    return current
+
+
+def _ensure_first_bindings(plan, selectors, root, cancel):
+    """Compose first ordinary binding under actual unbound/source retirement."""
+    from . import bootstrap
+    from .capture_service import _capture_names
+    from .control_records import UNBOUND_NAMESPACE, admission_authority, bind_profile
+
+    pending, profiles = bootstrap._records(root)
+    if pending:
+        raise ValueError("recovery_pending")
+    existing = {Path(row["selector"]): row for row in profiles}
+    missing = tuple(path for path in selectors if path not in existing)
+    if not missing:
+        return
+    authority = admission_authority(root)
+    names_by_selector = {}
+    inventories = {}
+    for selector in missing:
+        reader._check(cancel)
+        inventory = _first_binding_inventory(plan, selector)
+        inventories[selector] = inventory
+        names_by_selector[selector] = tuple(
+            name for name in _capture_names(authority, inventory)
+            if name != UNBOUND_NAMESPACE
+        )
+    names = tuple(sorted({UNBOUND_NAMESPACE, *(name for group in names_by_selector.values() for name in group)}))
+    registry = bootstrap._registry(root)
+    if registry is None or any(name not in registry for name in names):
+        raise ValueError("replacement_binding_changed")
+    expected_registry = {name: registry[name] for name in names}
+    with authority.maintenance(names, 30, cancel=cancel) as session:
+        reader._check(cancel)
+        pending, current_profiles = bootstrap._records(root)
+        if pending or any(Path(row["selector"]) in missing for row in current_profiles):
+            raise ValueError("replacement_binding_changed")
+        # Reuse independently discovered footprints: rediscovery opens SQLite
+        # readers and can change transient SHM after the approved observation.
+        # Native registry locks and real sources remain held through recheck/write.
+        registry = bootstrap._registry(root)
+        if registry is None or any(
+            registry.get(name) != entry for name, entry in expected_registry.items()
+        ):
+            raise ValueError("replacement_binding_changed")
+        recheck_targets(plan)
+        from .storage_admission import _contains_owned_path
+
+        for selector in missing:
+            roots = tuple(
+                Path(path)
+                for name in names_by_selector[selector]
+                for path in registry[name]["roots"]
+            )
+            if any(
+                not any(_contains_owned_path(root, item.path) for root in roots)
+                for item in inventories[selector].items
+                if item.path is not None
+                and item.status in {"included", "included_directory"}
+            ):
+                raise ValueError("replacement_current_scope_changed")
+            reader._check(cancel)
+            bind_profile(
+                root, selector, names_by_selector[selector], root / "admission",
+                session=session,
+            )
+        recheck_targets(plan)
+
+
 def replace(
     plan: RestorePlan,
     candidate: Path,
@@ -640,21 +733,34 @@ def replace(
     recheck_targets(plan)
     control_root = lexical_path(control_root)
     root = bootstrap.default_bootstrap_root()
-    _, profiles = bootstrap._records(root)
-    registry = bootstrap._registry(root)
+    config_keys = {row.logical_id for row in reader.verify_sealed(archive, cancel).files if row.owner_id == "config"}
+    config_destinations = [path for key, path in plan.restore if key in config_keys]
+    if len(config_destinations) != len(set(config_destinations)):
+        raise ValueError("replacement_config_mapping_ambiguous")
     selectors = tuple(
         sorted(
             {
                 item.path
                 for item in plan.target.items
                 if item.owner == "config"
-                and (item.logical_id, item.path) in plan.restore
+                and item.path in config_destinations
             }
         )
     )
-    selected = [row for row in profiles if Path(row["selector"]) in selectors]
-    if not selectors or len(selected) != len(selectors) or registry is None:
+    if not selectors:
         raise ValueError("replacement_local_binding_required")
+    _ensure_first_bindings(plan, selectors, root, cancel)
+    _, profiles = bootstrap._records(root)
+    registry = bootstrap._registry(root)
+    selected = [row for row in profiles if Path(row["selector"]) in selectors]
+    if len(selected) != len(selectors) or registry is None:
+        raise ValueError("replacement_local_binding_required")
+    if any(
+        any(name not in registry for name in row["namespaces"])
+        or row["roots"] != sorted({path for name in row["namespaces"] for path in registry[name]["roots"]})
+        for row in selected
+    ):
+        raise ValueError("replacement_binding_changed")
     affected = [path for _, path in (*plan.restore, *plan.retire)]
     affected += [
         item.path for item in plan.target.items if item.logical_id in plan.safety_scope
