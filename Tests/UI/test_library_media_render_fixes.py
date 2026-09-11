@@ -3630,9 +3630,9 @@ def _match_reason_items() -> list[dict]:
         (
             (100, 30),
             [
-                "article · updated 2m · keyword: notes ·…",
+                "article · updated 2m · keyword: notes…",
                 "article · updated 2m",
-                "article · updated 2m · keyword: notesan…",
+                "article · updated 2m · keyword: notes…",
             ],
         ),
     ],
@@ -3648,7 +3648,7 @@ async def test_keyword_only_rows_paint_the_keyword_that_matched(size, expected):
     36 cells -- ``notesandmorestuff`` would push the line past it whole.
 
     task-32347 made both sizes tighter and the expectations are now
-    per-size rather than shared: labelling the age ("updated 2m") costs 6
+    per-size rather than shared: labelling the age ("updated 2m") costs 8
     cells on every row, so the narrow pane no longer has room for the
     trailing "· loaded" on the row the Reader holds. The term itself still
     paints -- dropping the review round's " ago" is what bought that back.
@@ -3665,7 +3665,7 @@ async def test_keyword_only_rows_paint_the_keyword_that_matched(size, expected):
         lines = _painted_item_lines(host, screen)
         secondaries = [line.strip() for line in lines if "article · " in line]
         # task-32347 cost, pinned rather than hidden: labelling the age
-        # ("updated 2m", 8 cells where "2m" was 2) made every secondary 6
+        # ("updated 2m", 10 cells where "2m" was 2) made every secondary 8
         # cells longer, and task-32364 AC#1 adds "· loaded" to whichever
         # row the Reader holds. At the wide size both still fit; at the
         # narrow one the "· loaded" suffix is what runs out of room.
@@ -3679,7 +3679,7 @@ async def test_keyword_reason_clips_at_the_36_cell_items_floor():
 
     The ten-character cap keeps the line SHORT; it does not make it fit
     here. A 36-cell Items pane spends 4 cells on its own padding, so the
-    row has ~28 cells and `article · updated 2m · keyword: notes` needs 35 --
+    row has ~28 cells and `article · updated 2m · keyword: notes` needs 37 --
     at the floor a keyword row still cannot show its whole term, for the
     short keyword as well as the long one. The neighbouring
     `test_analysed_secondary_survives_the_36_cell_items_floor` shows what
@@ -3728,9 +3728,9 @@ async def test_keyword_reason_clips_at_the_36_cell_items_floor():
         # nobody re-derives "the cap makes it fit" from a pin that never
         # said so.
         assert secondaries == [
-            "article · updated 2m · keyw…",
+            "article · updated 2m · ke…",
             "article · updated 2m",
-            "article · updated 2m · keyw…",
+            "article · updated 2m · ke…",
         ], secondaries
         # The row without a reason still paints whole -- the shortfall is the
         # suffix's own cost, not a regression in the base secondary line.

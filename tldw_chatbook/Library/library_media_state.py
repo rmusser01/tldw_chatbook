@@ -1361,14 +1361,14 @@ def _secondary_text(
     - task-28008: an item whose newest version carries analysis text gets a
       trailing ' · analysed'. A WORD, not a colour or a glyph: the row has
       to say what it means at the Items pane's 36-cell floor -- which
-      'document · updated 5m · analysed' (30 cells) no longer does with room
+      'document · updated 5m · analysed' (32 cells) no longer does with room
       to spare the way the unlabelled 'document · 5m · analysed' (24) did.
     - task-28008 (critique #5 P2): a row the browse filter found through a
       keyword alone gets a trailing ' · keyword: <term>', the term capped
       at ten CELLS (task-31955 -- a code-point cap let ten CJK characters
       take twenty) so an arbitrarily long tag cannot run away with the
       line. The cap does NOT buy a fit: at the Items pane's 36-cell floor
-      'article · updated 2m · keyword: notes' (35 cells) clips at the pane
+      'article · updated 2m · keyword: notes' (37 cells) clips at the pane
       edge, and 'type · age · analysed · keyword: term' clips at the default width
       too -- the cap bounds the damage, it does not remove it. The cap is
       the term's OWN width, not the pane's, so the line does not change
