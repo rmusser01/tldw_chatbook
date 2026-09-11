@@ -3,9 +3,10 @@ id: TASK-32347
 title: >-
   Library Media rows: the age suffix '· 10m' reads as a duration on audio and
   video
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-11 06:14'
+updated_date: '2026-09-11 07:36'
 labels:
   - library
   - media
@@ -23,6 +24,26 @@ Every media row ends '· 10m' (audio · 10m, video · 10m, pdf · 10m). The valu
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Age is labelled ('added 10m ago') or replaced by type-aware metadata (duration for audio/video, pages for pdf/ebook, words for article/document) with the date on Info
-- [ ] #2 The pin is updated to the new format, not loosened
+- [x] #1 Age is labelled ('added 10m ago') or replaced by type-aware metadata (duration for audio/video, pages for pdf/ebook, words for article/document) with the date on Info
+- [x] #2 The pin is updated to the new format, not loosened
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. New test for media_added_age_copy in Tests/UI/test_library_crit10_media_rows.py\n2. Add media_added_age_copy beside media_trash_age_copy in library_media_state.py\n3. Swap the two browse call sites (browse state + legacy build_library_media_state); leave the Trash row alone\n4. Update the four pinned secondary strings to the labelled form
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Added media_added_age_copy() beside media_trash_age_copy in library_media_state.py and swapped the two BROWSE call sites (build_library_media_browse_state and the legacy build_library_media_state) to it; the Trash row keeps its own 'trashed <age>' label untouched. format_console_relative_age returns the bare word 'now' under a minute, which no 'N ago' phrasing survives, so that case reads 'added just now'.
+
+AC#2 (the pin updated, not loosened): the four strings that actually constrain the format -- test_library_media_state.py:305-306 and :529/:534 -- now read 'pdf · added 3m ago' / 'video · added 2h ago' / 'video · added 3m ago' / 'pdf · added 2h ago', with task-32347 named in both docstrings. test_media_secondary_fallback_when_no_type_no_age, which the task names, turned out to pin only the NO-TYPE fallback ('media') and needed no change. test_library_media_trash_state.py:490-491 is byte-identical.
+
+Three painted-row pins in Tests/UI/test_library_media_render_fixes.py were re-measured against the real output rather than softened: the labelled age costs ~10 cells on every secondary line. KNOWN COST, recorded in those pins: at the Items pane's narrow (100x30) width a keyword row now clips its term where it used to paint it whole, and at the 36-cell floor a keyword row no longer reaches its 'keyword:' label at all ('article · added 2m ago · …'). Dropping ' ago' would buy 4 of those cells back; the AC's own example and the plan both specify the 'added N ago' wording, so that is a product call left open rather than taken here.
+
+Live-verified at 235x52 and 100x30 on the seeded profile: rows read 'audio · added 1h ago', 'pdf · added 1h ago', 'video · added 1h ago'.
+
+Files: tldw_chatbook/Library/library_media_state.py; Tests/Library/test_library_media_state.py; Tests/UI/test_library_media_render_fixes.py; Tests/UI/test_library_crit10_media_rows.py (new); Docs/User_Guide/library/media-and-conversations.md.
+<!-- SECTION:NOTES:END -->
