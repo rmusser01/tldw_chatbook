@@ -410,7 +410,15 @@ _BUDGETS: dict[str, int] = {
     # vault-detection flag and the two `obsidian_mode` arguments threaded
     # through `_plan_selection`/`check`.
     "tldw_chatbook/UI/Library_Modules/library_note_import_controller.py": 602,
-    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2023,
+    # 2026-09-11, task-32243 (refused Check names its reason): 2023 -> 2024
+    # (+1), and that one line is the `check_failure_line` import. The refusal
+    # copy table and its two helpers live in
+    # `Library/library_notes_lasting_sync_state.py` with the rest of this
+    # screen's presentation state; both fallback strings moved into the helper
+    # (keyed on `root_id == ""` => setup), so each of the two Check paths
+    # spends exactly one line on it. This row was briefly pinned at 2128 with
+    # the table in the controller; that was rejected in review and reverted.
+    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2024,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
