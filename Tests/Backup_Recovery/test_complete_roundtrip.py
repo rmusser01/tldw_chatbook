@@ -47,6 +47,20 @@ from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
 from tldw_chatbook.Library.library_ingest_jobs import LibraryIngestJob,IngestJobState
 from tldw_chatbook.config import get_library_ingest_jobs_db_path,get_writing_db_path,get_notifications_db_path
 async def main():
+ import toml,tomllib
+ from tldw_chatbook.config import read_cli_config_serialized,replace_cli_config_serialized,read_cli_config_backup_serialized,get_cli_config_path
+ original=read_cli_config_serialized()
+ historical=tomllib.loads(original)
+ historical['roundtrip_history']={'marker':name+' retained config history','prose':name+' ordinary historical prose'}
+ synthetic_secret=name+'-synthetic-history-api-value'
+ historical.setdefault('api_settings',{}).setdefault('openai',{})['api_key']=synthetic_secret
+ replace_cli_config_serialized(toml.dumps(historical),create_backup=False)
+ recorded=read_cli_config_serialized()
+ _,backup=replace_cli_config_serialized(original,create_backup=True)
+ assert backup==get_cli_config_path().with_suffix('.toml.bak')
+ assert read_cli_config_backup_serialized()==recorded and synthetic_secret in recorded
+ assert 'roundtrip_history' not in tomllib.loads(read_cli_config_serialized())
+ config_history_record={'path':str(backup),'hex':recorded.encode().hex(),'secret':synthetic_secret,'ordinary':historical['roundtrip_history'],'database':historical['database']}
  app=TldwCli()
  try:
   assert app.chachanotes_db.db_path==selector.parent/'custom'/'notes.db'
@@ -135,9 +149,17 @@ async def main():
   style.write_text('name='+json.dumps(name+' retained style')+'\ncategory="Custom"\ndescription='+json.dumps(name+' style description')+'\nbase_prompt='+json.dumps('{{subject}}, '+name+' retained light')+'\nnegative_prompt='+json.dumps(name+' unwanted detail')+'\n')
   loaded_style=get_all_templates(reload=True)[style.stem]
   assert loaded_style.base_prompt=='{{subject}}, '+name+' retained light'
+  from tldw_chatbook.Notes.template_store import merge_templates,read_templates
+  note_template={'title':name+' template {date}','content':'# '+name+'\nRetained body\n','keywords':name+', recovery','description':name+' template description'}
+  template_key=name+'_retained'
+  keys,count=merge_templates([(template_key,note_template)])
+  assert keys==[template_key] and count==1
+  assert read_templates()=={template_key:note_template}
+  templates_path=get_cli_config_path().parent/'note_templates.json'
+  assert templates_path==selector.parent/'note_templates.json'
   durable_api=dict(persona=persona['id'],dictionary=dictionary['id'],dictionary_revision=dictionary_version['revision'],grammar=grammar['id'],feedback=feedback['feedback_id'],audio=audio['history_id'],template=template.name)
   durable_files={owner:dict(path=str(path),hex=path.read_bytes().hex()) for owner,path in (('chat.prompt_history',history.path),('ui.emoji_recents',selector.parent/'recent_emojis.json'),('ui.state',state),('ui.themes',theme),('personas',persona_service.persona_store_path),('chat.dictionary_history',dictionary_service.history_store_path),('chat.grammars',app.local_chat_grammars_service.store_path),('feedback',app.local_feedback_service.store_path),('audio.history',audio_service.history_store_path),('chunking.templates',templates.user_templates_dir/(template.name+'.json')))}
-  durable_files.update({owner:dict(path=str(path),hex=path.read_bytes().hex()) for owner,path in (('chat.dictionaries',exported),('generation.styles',style))})
+  durable_files.update({owner:dict(path=str(path),hex=path.read_bytes().hex()) for owner,path in (('chat.dictionaries',exported),('generation.styles',style),('notes.templates',templates_path))})
   collections=app.local_library_collections_service
   collection=collections.create_collection(name+' collection',description=name+' retained collection')
   collection_member=collections.add_item_to_collection(collection.collection_id,source_type='note',source_id=str(note),title=name+' linked note')
@@ -180,7 +202,7 @@ async def main():
   try:
    jobs.upsert_job(LibraryIngestJob('ingest-job-1',str(fixture/(name+'-input.txt')),state=IngestJobState.QUEUED))
   finally:jobs.close()
-  (fixture/(name+'-seed.json')).write_text(json.dumps(dict(note=note,deleted=deleted,conversation=conversation,message=message,media=media,prompt=prompt,research=session['id'],deleted_research=deleted_session['id'],empty=str(empty),domains=domains,durable_files=durable_files,durable_api=durable_api,registries=registries)))
+  (fixture/(name+'-seed.json')).write_text(json.dumps(dict(note=note,deleted=deleted,conversation=conversation,message=message,media=media,prompt=prompt,research=session['id'],deleted_research=deleted_session['id'],empty=str(empty),domains=domains,durable_files=durable_files,durable_api=durable_api,registries=registries,config_history=config_history_record,note_template=note_template)))
   assert not blocked_attempts(),blocked_attempts()
   print('SEEDED',name,flush=True)
  finally:
@@ -304,9 +326,21 @@ async def main():
     row=next(row for row in manifest['files'] if row['owner_id']==owner and source[row['logical_id']].path==Path(expected['path']))
     assert source[row['logical_id']].status=='included'
     assert (result.root/row['payload']).read_bytes()==bytes.fromhex(expected['hex'])
-   for owner,leaf in (('chat.dictionaries',label+'-dictionary.md'),('generation.styles',label+'-retained.toml')):
+   for owner,leaf in (('chat.dictionaries',label+'-dictionary.md'),('generation.styles',label+'-retained.toml'),('config.history','config.toml.bak'),('notes.templates','note_templates.json')):
     retained_files=[row for row in manifest['files'] if row['owner_id']==owner and source[row['logical_id']].path.name==leaf and source[row['logical_id']].path.is_relative_to(fixture/label)]
     assert len(retained_files)==1,(label,owner,'missing retained file')
+   import tomllib
+   history=seed['config_history']
+   history_rows=[row for row in manifest['files'] if row['owner_id']=='config.history' and source[row['logical_id']].path==Path(history['path'])]
+   assert len(history_rows)==1
+   history_bytes=(result.root/history_rows[0]['payload']).read_bytes()
+   historical=tomllib.loads(history_bytes.decode())
+   assert history['secret'].encode() not in history_bytes
+   assert 'api_key' not in historical.get('api_settings',{}).get('openai',{})
+   assert historical['roundtrip_history']==history['ordinary']
+   assert historical['database']==history['database']
+   assert Path(history['path']).read_bytes()==bytes.fromhex(history['hex'])
+   (fixture/(label+'-history-captured.json')).write_text(json.dumps({'logical_id':history_rows[0]['logical_id'],'hex':history_bytes.hex()}))
    collections=next(row for row in manifest['files'] if row['owner_id']=='db.library_collections' and source[row['logical_id']].path.is_relative_to(fixture/label))
    with closing(sqlite3.connect((result.root/collections['payload']).as_uri()+'?mode=ro',uri=True)) as db:
     assert db.execute('SELECT name FROM library_collections WHERE name=?',(label+' collection',)).fetchall()==[(label+' collection',)]
@@ -539,7 +573,7 @@ for key,row in roots.items():
  home=destination/profiles[profile]
  data=home/'data'/names[profile]
  if row.synthetic:
-  if owner in {'config','config.history','runtime.source_state','ui.state','ui.emoji_recents'}:target=home/'config'
+  if owner in {'config','config.history','notes.templates','runtime.source_state','ui.state','ui.emoji_recents'}:target=home/'config'
   elif owner in custom:target=home/'custom'
   elif owner in {'db.prompts.primary','chatbooks.registry'}:target=destination/'shared-prompts'
   elif owner=='eval.definitions':target=destination/'inactive-eval'
@@ -649,6 +683,20 @@ async def main():
   assert str(app.media_db.db_path)==expected['media']
   assert str(app.prompts_db.db_path)==expected['prompts']
   label=expected['label'];core=app.chachanotes_db
+  import tomllib
+  from tldw_chatbook.config import read_cli_config_backup_serialized,get_cli_config_path
+  from tldw_chatbook.Notes.template_store import read_templates
+  captured_history=json.loads((fixture/(label+'-history-captured.json')).read_text())
+  recovered_history=read_cli_config_backup_serialized()
+  assert recovered_history.encode()==bytes.fromhex(captured_history['hex'])
+  history=tomllib.loads(recovered_history)
+  assert seed['config_history']['secret'] not in recovered_history
+  assert 'api_key' not in history.get('api_settings',{}).get('openai',{})
+  assert history['roundtrip_history']==seed['config_history']['ordinary']
+  assert history['database']==seed['config_history']['database']
+  assert get_cli_config_path().with_suffix('.toml.bak')!=Path(seed['config_history']['path'])
+  assert read_templates()=={label+'_retained':seed['note_template']}
+  assert (get_cli_config_path().parent/'note_templates.json').read_bytes()==bytes.fromhex(seed['durable_files']['notes.templates']['hex'])
   from tldw_chatbook.Chat.prompt_history import PromptHistory,default_prompt_history_path
   from tldw_chatbook.Widgets.emoji_picker import load_recent_emojis
   history=PromptHistory(default_prompt_history_path());await history.load()
@@ -873,6 +921,7 @@ assert source_hashes=={str(path):hashlib.sha256(path.read_bytes()).hexdigest() f
 for label in ('alpha','beta'):
  seed=json.loads((fixture/(label+'-seed.json')).read_text())
  assert all(Path(row['path']).read_bytes()==bytes.fromhex(row['hex']) for row in seed['durable_files'].values())
+ assert Path(seed['config_history']['path']).read_bytes()==bytes.fromhex(seed['config_history']['hex'])
 assert not blocked_attempts(),blocked_attempts()
 print('TWO_PROFILE_RESTORED_AND_OPENED',flush=True)
 """,
