@@ -19,10 +19,9 @@ What the policy actually decides
 Two tiers:
 
 ``IMMEDIATE``
-    Started during ``on_mount``, before first paint, because something a user
-    can reach at once is degraded until they finish (or because they are
-    long-lived loops that spend their life awaiting and cost the interpreter
-    nothing).
+    Not queued behind the staggered concurrency gate. Some start during
+    ``on_mount``; the time-sensitive scheduler starts after ``_ui_ready``
+    and before the staggered workers so its first imports cannot delay readiness.
 
 ``STAGGERED``
     Started after ``_ui_ready``, in the declared order, at most
@@ -45,9 +44,9 @@ Deliberately NOT gated here
   already paces itself proportionally to each import's cost (TASK-22214), and
   it protects the FIRST click to Library/Settings -- queueing it behind a
   minutes-long FTS backfill would trade away the exact thing it exists for.
-* ``on_mount``'s coroutine workers (the scheduler loop and the research
-  startup reconciles). They are await-shaped: their thread time is bounded
-  ``asyncio.to_thread`` hops, and the scheduler loop is time-sensitive.
+* Coroutine workers (the post-readiness scheduler loop and ``on_mount``'s
+  research startup reconciles). They are await-shaped: their thread time is
+  bounded ``asyncio.to_thread`` hops, and the scheduler loop is time-sensitive.
 """
 
 from __future__ import annotations
@@ -73,7 +72,7 @@ __all__ = [
 class BootWorkerTier(str, Enum):
     """When a boot worker is allowed to start."""
 
-    #: Started in ``on_mount``, before first paint.
+    #: Bypasses the staggered gate; individual lifecycle readiness still applies.
     IMMEDIATE = "immediate"
     #: Started after ``_ui_ready``, in policy order, under the concurrency cap.
     STAGGERED = "staggered"
@@ -130,7 +129,7 @@ class BootWorkerSpec:
 #:    is exactly the member that must not sit in front of a worker a surface
 #:    can block on.
 BOOT_WORKER_POLICY: tuple[BootWorkerSpec, ...] = (
-    # -- IMMEDIATE: before first paint --
+    # -- IMMEDIATE: outside the staggered gate --
     BootWorkerSpec(
         key="scheduler_loop",
         name="run",
@@ -138,8 +137,8 @@ BOOT_WORKER_POLICY: tuple[BootWorkerSpec, ...] = (
         tier=BootWorkerTier.IMMEDIATE,
         unblocks=(
             "Reminders and scheduled watchlist checks that are already overdue "
-            "at launch. A coroutine worker that spends its life awaiting, so "
-            "starting it early costs the interpreter nothing; it must also stay "
+            "at launch. Starts after UI readiness, before staggered workers; "
+            "its first tick can import support modules. It must also stay "
             "on the app's one event loop (the watchlists in-flight guard is "
             "lock-free on that invariant)."
         ),

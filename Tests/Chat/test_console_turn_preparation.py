@@ -459,10 +459,11 @@ def test_preparation_bridge_rejects_stale_capture_on_state_for_capture_off() -> 
         )
 
 
-def test_preparation_bridge_requires_explicit_capture_on_policy_and_binds_route() -> (
+@pytest.mark.parametrize("ephemeral", [False, True])
+def test_preparation_bridge_requires_explicit_capture_on_policy_and_binds_route(ephemeral) -> (
     None
 ):
-    preparation = _preparation(ConsoleTurnPreparationState.READY)
+    preparation = replace(_preparation(ConsoleTurnPreparationState.READY), ephemeral=ephemeral)
 
     with pytest.raises(TraceProvenanceAlignmentError, match="capture-on"):
         build_console_request_for_preparation(
@@ -496,6 +497,7 @@ def test_preparation_bridge_requires_explicit_capture_on_policy_and_binds_route(
     )
     assert route_descriptor.route is ConsoleRequestRoute.FRESH
     assert route_descriptor.predicate == "fresh_submit"
+    assert request.capture_durability == ("temporary" if ephemeral else "durable")
 
 
 def test_capture_off_attempt_can_enter_ordinary_persistence_pause() -> None:

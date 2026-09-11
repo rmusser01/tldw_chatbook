@@ -22,12 +22,11 @@ CONSEQUENCE (never by asserting on the callable):
   deferred behind one.
 
 The remaining slots are covered by consequence too: a full viewless turn
-runs end to end, a terminal run state reaches nobody, a skill confirm
-fails closed immediately instead of blocking for its timeout, and an MCP
-approval round armed with no view is still registered and still carries
-its payload, so the next mount can claim it (plan Task 5 owns the
-surfacing policy; what must hold HERE is that the viewless default does
-not LOSE the round).
+runs end to end, a terminal run state reaches nobody, skill and MCP
+decision rounds armed with no view remain registered with their payloads,
+and the next mount can claim them (plan Task 5 owns notification and the
+active-time clock; what must hold HERE is that detach does not resolve or
+LOSE a round).
 
 Rig note: the viewless state is produced through the production
 ``ConsoleRuntime.detach_view`` seam. ``leave_console`` (the unmount path)
@@ -134,8 +133,10 @@ async def test_a_wake_delivered_with_no_view_keeps_the_unseen_mark(tmp_path):
     try:
         runtime = _runtime_for(rig)
         view = _mounted_view()
-        runtime.attach_view(view)
-        assert runtime.detach_view(view) is True, "the rig never went viewless"
+        generation = runtime.attach_view(view)
+        assert runtime.detach_view(view, generation) is True, (
+            "the rig never went viewless"
+        )
 
         await _deliver_one(runs_db, app, session, gateway, controller)
 
@@ -193,7 +194,7 @@ async def test_a_wake_is_not_deferred_by_a_user_claim_once_the_view_is_gone(
     try:
         runtime = _runtime_for(rig)
         view = _mounted_view(wake_user_priority_probe=lambda session_id: True)
-        runtime.attach_view(view)
+        generation = runtime.attach_view(view)
 
         _parent, run_id = _terminal_subagent_run(runs_db, session.id)
         wake = controller.fleet_wake
@@ -205,7 +206,7 @@ async def test_a_wake_is_not_deferred_by_a_user_claim_once_the_view_is_gone(
             "the wake, or this test cannot say anything about removing it"
         )
 
-        assert runtime.detach_view(view) is True
+        assert runtime.detach_view(view, generation) is True
         wake.retry_soon()
 
         assert await _settle(lambda: gateway.payloads), (
@@ -217,7 +218,7 @@ async def test_a_wake_is_not_deferred_by_a_user_claim_once_the_view_is_gone(
 
 
 # ---------------------------------------------------------------------------
-# delivery_ui_hook -- inert while detached, RE-ARMED by the next attach.
+# delivery_ui_hook -- inert detached, re-armed after successful reconciliation.
 # ---------------------------------------------------------------------------
 
 
@@ -230,9 +231,8 @@ async def test_a_delivery_started_with_no_view_re_arms_at_the_next_attach(
     A wake that starts while nothing is attached has no repaint target --
     correct, and inert. But the user who opens Console DURING that turn
     gets a live delivery and (before this) no transcript poll: PR 3a-2
-    Task 7 measured that live as a 4+ minute frozen Console. ``attach_view``
-    must therefore fire the newly-bound hook when a wake is still
-    delivering.
+    Task 7 measured that live as a 4+ minute frozen Console. The successful
+    full-reconciliation boundary must then fire the newly-bound hook.
     """
     rig = _controller_rig(tmp_path)
     chacha, app, runs_db, _store, session, gateway, _bridge, controller = rig
@@ -241,8 +241,8 @@ async def test_a_delivery_started_with_no_view_re_arms_at_the_next_attach(
         runtime = _runtime_for(rig)
         stale: list[str] = []
         view_one = _mounted_view(delivery_ui_hook=stale.append)
-        runtime.attach_view(view_one)
-        assert runtime.detach_view(view_one) is True
+        generation = runtime.attach_view(view_one)
+        assert runtime.detach_view(view_one, generation) is True
 
         _parent, run_id = _terminal_subagent_run(runs_db, session.id)
         wake = controller.fleet_wake
@@ -259,7 +259,11 @@ async def test_a_delivery_started_with_no_view_re_arms_at_the_next_attach(
         )
 
         armed: list[str] = []
-        runtime.attach_view(_mounted_view(delivery_ui_hook=armed.append))
+        successor = _mounted_view(delivery_ui_hook=armed.append)
+        successor_generation = runtime.attach_view(successor)
+        assert runtime.finish_view_reconciliation(
+            successor, successor_generation
+        )
 
         assert armed == [session.id], (
             "opening Console during a wake delivery left the transcript "
@@ -314,8 +318,8 @@ async def test_a_whole_turn_runs_with_no_view_attached(tmp_path):
     try:
         runtime = _runtime_for(rig)
         view = _mounted_view()
-        runtime.attach_view(view)
-        assert runtime.detach_view(view) is True
+        generation = runtime.attach_view(view)
+        assert runtime.detach_view(view, generation) is True
 
         result = await controller.submit_draft("hello", session_id=session.id)
 
@@ -349,36 +353,38 @@ async def test_a_viewless_turn_calls_none_of_the_departed_views_hooks(tmp_path):
     rig = _controller_rig(tmp_path)
     chacha, _app, _runs_db, _store, session, _gateway, _bridge, controller = rig
     try:
-        calls: list[str] = []
+        view_calls: list[str] = []
+        history_calls: list[str] = []
 
         class _RecordingHistory:
             async def append(self, text: str) -> None:
-                calls.append(f"prompt_history:{text}")
+                history_calls.append(text)
 
         runtime = _runtime_for(rig)
+        controller.prompt_history = _RecordingHistory()
         view = _mounted_view(
-            on_submission_accepted=lambda: calls.append("on_submission_accepted"),
-            prompt_history=_RecordingHistory(),
+            on_submission_accepted=lambda: view_calls.append(
+                "on_submission_accepted"
+            ),
+            prompt_history=object(),
         )
-        runtime.attach_view(view)
+        generation = runtime.attach_view(view)
 
         first = await controller.submit_draft("attached", session_id=session.id)
         assert getattr(first, "accepted", False), first
-        assert calls, (
-            "harness precondition: an ATTACHED view's hooks must fire, or "
-            "the detached assertion below proves nothing"
-        )
+        assert history_calls == ["attached"]
+        assert view_calls == []
 
-        assert runtime.detach_view(view) is True
-        calls.clear()
+        assert runtime.detach_view(view, generation) is True
 
         second = await controller.submit_draft("detached", session_id=session.id)
         assert getattr(second, "accepted", False), second
 
-        assert calls == [], (
+        assert view_calls == [], (
             "a turn running with no view attached called into the view that "
-            f"is gone: {calls}"
+            f"is gone: {view_calls}"
         )
+        assert history_calls == ["attached", "detached"]
     finally:
         chacha.close()
 
@@ -399,64 +405,113 @@ async def test_the_display_name_slot_is_never_cleared_to_none(tmp_path):
     chacha, _app, _runs_db, _store, session, _gateway, _bridge, controller = rig
     try:
         runtime = _runtime_for(rig)
+        app_owned_display_name = controller._global_user_display_name
         view = _mounted_view(_global_user_display_name=lambda: "Ada")
-        runtime.attach_view(view)
-        assert controller._presentation_context_for(session.id).user_name == "Ada"
+        generation = runtime.attach_view(view)
+        assert controller._global_user_display_name is app_owned_display_name
 
-        assert runtime.detach_view(view) is True
+        assert runtime.detach_view(view, generation) is True
 
-        assert callable(controller._global_user_display_name), (
-            "the display-name slot was cleared to a non-callable"
-        )
+        assert controller._global_user_display_name is app_owned_display_name
         assert controller._presentation_context_for(session.id).user_name == "User"
     finally:
         chacha.close()
 
 
 @pytest.mark.asyncio
-async def test_a_skill_install_confirm_with_no_view_fails_closed_at_once(
+async def test_skill_confirms_armed_viewless_wait_and_remount_without_denial(
     tmp_path,
 ):
-    """The two skill-confirm slots: deny immediately, never hang.
-
-    ``None`` is the CORRECT viewless value here and the read site says so:
-    "no UI bridge wired means the marshal below is a no-op and nothing can
-    ever set the Event -- fail closed immediately instead of blocking for
-    the full timeout". Pinned by consequence: denied, and denied fast.
-    """
+    """Detach cannot remove a tool or manufacture a skill denial."""
     rig = _controller_rig(tmp_path)
     chacha, app, _runs_db, _store, session, _gateway, _bridge, controller = rig
     try:
         controller.app = app
+        app.call_from_thread = lambda callback, *args: callback(*args)
         runtime = _runtime_for(rig)
+        old_projection_calls: list[tuple[str, object]] = []
         view = _mounted_view(
-            set_pending_skill_install=lambda payload: None,
-            set_pending_skill_script=lambda payload: None,
+            set_pending_skill_install=lambda payload: old_projection_calls.append(
+                ("install", payload)
+            ),
+            set_pending_skill_script=lambda payload: old_projection_calls.append(
+                ("script", payload)
+            ),
         )
-        runtime.attach_view(view)
-        assert runtime.detach_view(view) is True
-        controller.mcp_approval_timeout_seconds = lambda: 60.0
+        generation = runtime.attach_view(view)
+        old_projection_calls.clear()
+        assert runtime.detach_view(view, generation) is True
+        assert callable(controller.set_pending_skill_install)
+        assert callable(controller.set_pending_skill_script), (
+            "detaching removed the gate used to advertise run_skill_script"
+        )
+        controller.skill_install_confirm_timeout_seconds = lambda: 0.0
+        controller.skill_script_confirm_timeout_seconds = lambda: 0.0
 
         verdicts: dict[str, object] = {}
 
-        def _ask() -> None:
+        def _ask_install() -> None:
             verdicts["install"] = controller.request_skill_install_confirm(
                 "https://example.invalid/skill.zip", session_id=session.id
             )
+
+        def _ask_script() -> None:
             verdicts["script"] = controller.request_skill_script_confirm(
                 {"skill": "demo", "mechanism": "shell", "args": []},
                 session_id=session.id,
             )
 
-        worker = threading.Thread(target=_ask, daemon=True)
-        worker.start()
-        worker.join(timeout=5)
-
-        assert not worker.is_alive(), (
-            "a viewless skill confirm blocked instead of failing closed"
+        install_worker = threading.Thread(target=_ask_install, daemon=True)
+        script_worker = threading.Thread(target=_ask_script, daemon=True)
+        install_worker.start()
+        assert await _settle(lambda: bool(controller._pending_skill_install_rounds))
+        script_worker.start()
+        assert await _settle(lambda: bool(controller._pending_skill_script_rounds))
+        assert install_worker.is_alive() and script_worker.is_alive(), (
+            "viewless registration manufactured an immediate skill denial"
         )
-        assert verdicts["install"] is False
-        assert verdicts["script"] == {"allow": False, "remember": False}
+        assert verdicts == {}
+        assert old_projection_calls == []
+
+        mounted: dict[str, dict] = {}
+        successor = _mounted_view(
+            set_pending_skill_install=lambda payload: (
+                mounted.__setitem__("install", payload) or True
+            ),
+            set_pending_skill_script=lambda payload: (
+                mounted.__setitem__("script", payload) or True
+            ),
+        )
+        successor_generation = runtime.attach_view(successor)
+        assert runtime.finish_view_reconciliation(
+            successor, successor_generation
+        )
+        assert mounted["install"]["request_id"] in (
+            controller._pending_skill_install_rounds
+        )
+        assert mounted["script"] is None, "two mixed decision cards mounted"
+
+        controller.resolve_pending_skill_install(
+            True, request_id=mounted["install"]["request_id"]
+        )
+        install_worker.join(timeout=5)
+        assert await _settle(
+            lambda: mounted.get("script") is not None
+        ), "the script round was not promoted after the install head"
+        assert mounted["script"]["request_id"] in (
+            controller._pending_skill_script_rounds
+        )
+        controller.resolve_pending_skill_script(
+            True, False, request_id=mounted["script"]["request_id"]
+        )
+        script_worker.join(timeout=5)
+
+        assert not install_worker.is_alive()
+        assert not script_worker.is_alive()
+        assert verdicts == {
+            "install": True,
+            "script": {"allow": True, "remember": False},
+        }
     finally:
         chacha.close()
 
@@ -476,13 +531,14 @@ async def test_an_approval_round_armed_with_no_view_is_not_lost(tmp_path):
     chacha, app, _runs_db, _store, session, _gateway, _bridge, controller = rig
     try:
         controller.app = app
+        app.call_from_thread = lambda callback, *args: callback(*args)
         runtime = _runtime_for(rig)
         view = _mounted_view(
             set_pending_approval=lambda payload: None,
             park_pending_approval=lambda session_id: None,
         )
-        runtime.attach_view(view)
-        assert runtime.detach_view(view) is True
+        generation = runtime.attach_view(view)
+        assert runtime.detach_view(view, generation) is True
         controller.mcp_approval_timeout_seconds = lambda: 60.0
 
         decisions: dict[str, str] = {}
@@ -515,9 +571,12 @@ async def test_an_approval_round_armed_with_no_view_is_not_lost(tmp_path):
             "re-derive the card even knowing the round exists"
         )
 
-        # Unblock: ending the visit is the shipped resolution for an
-        # undecided round (AC#2), and it must still deny.
+        round_id = next(iter(controller._pending_approval_rounds))
         await asyncio.wait_for(runtime.leave_console(), timeout=5)
+        assert worker.is_alive()
+        controller.resolve_pending_approval(
+            {"write_file": "deny"}, round_id=round_id
+        )
         worker.join(timeout=10)
         assert decisions == {"write_file": "deny"}, decisions
     finally:
@@ -593,9 +652,9 @@ async def test_every_slot_names_a_real_attribute_on_the_target_it_declares():
     runtime.set_chat_store(store)
     runtime.set_chat_controller(controller)
     view = _View({})
-    runtime.attach_view(view)
+    generation = runtime.attach_view(view)
 
-    assert runtime.detach_view(view) is True
+    assert runtime.detach_view(view, generation) is True
 
     for slot in CONSOLE_VIEW_HOOK_SLOTS:
         assert getattr(targets[slot.target], slot.name) == slot.viewless_default, (

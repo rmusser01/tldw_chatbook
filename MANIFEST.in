@@ -40,6 +40,7 @@ include tldw_chatbook/LLM_Calls/LICENSE
 include tldw_chatbook/tldw_api/LICENSE
 
 # Exclude tests and development artifacts
+exclude scripts/run_speculative_voice_dev.py
 recursive-exclude Tests *
 recursive-exclude tests *
 recursive-exclude STests *

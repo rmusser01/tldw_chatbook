@@ -656,6 +656,43 @@ def console_run_budget() -> RunBudget:
     )
 
 
+def intersect_console_run_budget(
+    maximum: RunBudget, live: RunBudget
+) -> RunBudget:
+    """Intersect an admitted budget maximum with later live narrowing."""
+
+    def ceiling(admitted: int | float, current: int | float) -> int | float:
+        if admitted == 0:
+            return current
+        if current == 0:
+            return admitted
+        return min(admitted, current)
+
+    return RunBudget(
+        max_steps=min(maximum.max_steps, live.max_steps),
+        max_wall_seconds=min(maximum.max_wall_seconds, live.max_wall_seconds),
+        max_subagents=min(maximum.max_subagents, live.max_subagents),
+        max_subagent_result_chars=int(
+            ceiling(
+                maximum.max_subagent_result_chars,
+                live.max_subagent_result_chars,
+            )
+        ),
+        max_tool_result_chars=int(
+            ceiling(maximum.max_tool_result_chars, live.max_tool_result_chars)
+        ),
+        max_model_turns=min(maximum.max_model_turns, live.max_model_turns),
+        max_total_tokens=int(
+            ceiling(maximum.max_total_tokens, live.max_total_tokens)
+        ),
+        max_tool_call_seconds=float(
+            ceiling(maximum.max_tool_call_seconds, live.max_tool_call_seconds)
+        ),
+        max_model_retries=min(maximum.max_model_retries, live.max_model_retries),
+        budget_warning_fraction=min(maximum.budget_warning_fraction, live.budget_warning_fraction),
+    )
+
+
 _QUIET_STEP_TOOLS = {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}
 
 # Phase-3a Task 5: one-line pointer to the find/load discovery path, appended
@@ -3686,6 +3723,9 @@ def _compose_run_registry_and_allowed(
     mcp_provider: Any | None = None,
     builtin_gate: Any | None = None,
     workspace_id: str | None = None,
+    workspace_read_binding_ids: tuple[str, ...] | None = None,
+    workspace_write_binding_ids: tuple[str, ...] | None = None,
+    workspace_binding_authority: tuple[Any, ...] | None = None,
     ephemeral: bool = False,
     diff_sink: Callable[[tuple[str, str, str, str]], None] | None = None,
     scratch_root: Path | None = None,
@@ -3810,6 +3850,9 @@ def _compose_run_registry_and_allowed(
     builtin_provider = BuiltinToolProvider(
         gate=builtin_gate,
         workspace_id=workspace_id,
+        workspace_read_binding_ids=workspace_read_binding_ids,
+        workspace_write_binding_ids=workspace_write_binding_ids,
+        workspace_binding_authority=workspace_binding_authority,
         ephemeral=ephemeral,
         diff_sink=diff_sink,
         sandbox_root=scratch_root,
@@ -4000,6 +4043,10 @@ def build_console_first_request_plan(
     library_authority: Any | None,
     profile_provider: Any | None = None,
     workspace_id: str | None,
+    workspace_read_binding_ids: tuple[str, ...] | None = None,
+    workspace_write_binding_ids: tuple[str, ...] | None = None,
+    workspace_binding_authority: tuple[Any, ...] | None = None,
+    run_budget: RunBudget | None = None,
     ephemeral: bool,
     diff_sink: Callable[[tuple[str, str, str, str]], None] | None,
     scratch_root: Path | None,
@@ -4016,7 +4063,6 @@ def build_console_first_request_plan(
     agent_messages: list[dict],
     agent_definitions: tuple[AgentDefinition, ...] = (),
     fleet_max_live: int = 1,
-    run_budget: RunBudget | None = None,
     persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
     profile_context_service: Any | None = None,
     personal_context_snapshot: ProfileContextSnapshot | None = None,
@@ -4095,6 +4141,9 @@ def build_console_first_request_plan(
                 mcp_provider=mcp_provider,
                 builtin_gate=builtin_gate,
                 workspace_id=workspace_id,
+                workspace_read_binding_ids=workspace_read_binding_ids,
+                workspace_write_binding_ids=workspace_write_binding_ids,
+                workspace_binding_authority=workspace_binding_authority,
                 ephemeral=ephemeral,
                 diff_sink=diff_sink,
                 scratch_root=scratch_root,
@@ -4148,7 +4197,9 @@ def build_console_first_request_plan(
         offer_find_load=True,
     )
     discovery_prompt = _append_canvas_discovery_hint(discovery_prompt, allowed_tools)
-    workspace_note = workspace_context_note(workspace_id)
+    workspace_note = workspace_context_note(
+        workspace_id, binding_authority=workspace_binding_authority
+    )
     response_reserve = (
         getattr(resolution, "max_tokens", None) or DEFAULT_RESPONSE_RESERVATION
     )
@@ -4164,7 +4215,11 @@ def build_console_first_request_plan(
         provider=api_endpoint,
         fallback_providers=console_fallback_providers(),
         allowed_tools=allowed_tools,
-        budget=run_budget or console_run_budget(),
+        budget=(
+            intersect_console_run_budget(run_budget, console_run_budget())
+            if run_budget is not None
+            else console_run_budget()
+        ),
         native_tools=native_tools,
         reasoning_replay=getattr(resolution, "reasoning_replay", None),
         workspace_context_note=workspace_note,
@@ -4325,18 +4380,37 @@ class _BridgeSkillRunner:
         builtin_names: tuple[str, ...],
         local_names: tuple[str, ...] = (),
         skill_file_bindings: SkillFileBindings | None = None,
+        definition_digests: Mapping[str, str] | None = None,
     ) -> None:
         self._skills_service = skills_service
         self._skill_names = skill_names
         self._builtin_names = builtin_names
         self._local_names = local_names
         self._skill_file_bindings = skill_file_bindings
+        self._definition_digests = dict(definition_digests or {})
 
     def is_skill_tool(self, name: str) -> bool:
         return name in self._skill_names
 
     def run(self, name: str, args: str, spawn: Callable[..., ToolResult]) -> ToolResult:
         try:
+            expected_digest = self._definition_digests.get(name)
+            if expected_digest is not None:
+                local = getattr(self._skills_service, "local_service", None)
+                if local is None and hasattr(self._skills_service, "trust_service"):
+                    local = self._skills_service
+                trust = getattr(local, "trust_service", None)
+                current_digest = (
+                    trust.current_fingerprint_digest(name)
+                    if trust is not None
+                    else None
+                )
+                if current_digest != expected_digest:
+                    raise SkillTrustBlockedError(
+                        skill_name=name,
+                        reason_code="skill_definition_changed",
+                        trust_status="quarantined_modified",
+                    )
             result = asyncio.run(
                 self._skills_service.execute_skill(name, mode="local", args=args)
             )
@@ -4369,7 +4443,9 @@ class _BridgeSkillRunner:
         # block to the rendered task text whenever execute_skill reported
         # any (absent when the skill has no bundle beyond SKILL.md).
         if self._skill_file_bindings is not None:
-            self._skill_file_bindings.authorized.add(name)
+            self._skill_file_bindings.authorize(
+                name, self._definition_digests.get(name)
+            )
         refs = result.get("reference_files") if isinstance(result, Mapping) else None
         if refs and self._skill_file_bindings is not None:
             rows = ", ".join(
@@ -4550,6 +4626,17 @@ class ConsoleAgentBridge:
         # use -- see `_conversation_fleet_coordinator` for the sizing,
         # pruning and kill-switch rules.
         self._fleet_coordinators: dict[str, FleetCoordinator] = {}
+        # Destructive close and app shutdown must win atomically against
+        # lazy coordinator construction. The first unreleased generation for
+        # a conversation remains authoritative; a later incarnation cannot
+        # replace a timed-out fence with a token it could release. This lock
+        # serializes that ledger with the get-or-create path below. The
+        # coordinator's own fence is irreversible; a fully drained session
+        # close may discard it and its matching ledger entry so reopening the
+        # saved conversation starts a fresh incarnation. Timeout/app-shutdown
+        # fences stay latched.
+        self._fleet_admission_lock = threading.Lock()
+        self._fleet_fence_generations: dict[str, int] = {}
         # PR3a-1 Task 6a -- the services of FINISHED runs that still have
         # a live child, kept only so that child stays STOPPABLE.
         #
@@ -4566,18 +4653,13 @@ class ConsoleAgentBridge:
         # service per turn that left a child running, and live children
         # are themselves capped by the coordinator above.
         self._fleet_survivor_services: dict[str, list[AgentService]] = {}
-        # The ONE lock in this class's fleet state, and only because this
-        # entry is the only read-modify-write among them. Every other
-        # dict here is single-operation (a `.get`, a `[k] = v`, a `.pop`)
-        # and rides the GIL, as their own docstrings above argue. Pruning
-        # a retained list is not: it reads the list, filters it, and
-        # writes the result back, so a `run_reply` finally appending its
-        # own survivor in that window would be silently dropped -- and a
-        # dropped owner is an unstoppable child, the precise failure this
-        # retention exists to prevent. Held only across list rebuilds and
-        # never while calling into a coordinator's own lock in a way that
-        # could nest (a snapshot copy is taken, then the lock is
-        # released).
+        # This lock protects the survivor-service list's read-modify-write
+        # operations. The separate admission and activity locks above protect
+        # different state and are never nested with it. Every other fleet dict
+        # here uses a single `.get`, assignment, or `.pop` and rides the GIL.
+        # Pruning a retained list is not atomic: it reads, filters, and writes,
+        # so a `run_reply` finally appending its survivor in that window could
+        # otherwise be silently dropped, leaving an unstoppable child.
         self._fleet_survivor_lock = threading.Lock()
         # PR3a-1 Task 6c (audit F2) -- the change-review window that covers
         # what a turn's SURVIVORS do after that turn's E snapshot.
@@ -4626,6 +4708,16 @@ class ConsoleAgentBridge:
         # IDENTITY into the settle hook it hands `AgentService`, but
         # never touches this registry.
         self._fleet_drain_fanout = FleetDrainFanout()
+        # Task 22514: content-free fleet lifecycle fan-out and race-safe
+        # async drain waiters. Activity consumers receive only the opaque
+        # conversation id; waiters are registered before their first live
+        # snapshot so a child settling during that read cannot strand them.
+        self._fleet_activity_lock = threading.Lock()
+        self._fleet_activity_consumers: dict[str, Callable[[str], None]] = {}
+        self._fleet_terminal_waiters: dict[
+            str,
+            list[tuple[asyncio.AbstractEventLoop, asyncio.Future[bool]]],
+        ] = {}
         # PR3a-2 Task 4: the survivor discriminator. Assistant message ids
         # of turns whose `run_reply` is CURRENTLY executing -- added when
         # the turn publishes its fleet service, discarded first thing in
@@ -4693,6 +4785,7 @@ class ConsoleAgentBridge:
         scratch_lease: Callable[[], ContextManager[Path]] | None = None,
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
+        skills_context: Mapping[str, Any] | None = None,
         request_skill_install_enabled: bool = False,
         request_skill_script_enabled: bool = False,
         persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
@@ -4701,8 +4794,8 @@ class ConsoleAgentBridge:
         personal_context_snapshot: ProfileContextSnapshot | None = None,
     ) -> tuple[dict[str, Any], InstructionSnapshot] | None:
         """Build a disposable exact first request without a run or consent."""
-        context: Mapping[str, Any] = {}
-        if self._skills_service is not None:
+        context: Mapping[str, Any] = skills_context or {}
+        if self._skills_service is not None and skills_context is None:
             context = asyncio.run(self._skills_service.get_context(mode="local"))
         workspace_id = None
         ephemeral = False
@@ -4924,6 +5017,12 @@ class ConsoleAgentBridge:
         profile_provider: Any | None = None,
         canvas_provider: Any | None = None,
         canvas_authority: Any | None = None,
+        skills_context: Mapping[str, Any] | None = None,
+        workspace_id: str | None = None,
+        workspace_ephemeral: bool | None = None,
+        workspace_read_binding_ids: tuple[str, ...] | None = None,
+        workspace_write_binding_ids: tuple[str, ...] | None = None,
+        workspace_binding_authority: tuple[Any, ...] | None = None,
         # PR2a Task 7: called with the run id of every sub-agent this turn
         # cancels or abandons, so its still-armed approval cards are failed
         # closed and taken off screen instead of staying pressable for a
@@ -4951,6 +5050,8 @@ class ConsoleAgentBridge:
         thinking_owner_key: str | None = None,
         generation_token: int | None = None,
         startup_instruction_candidate: StartupInstructionCandidate | None = None,
+        project_instruction_nested_max_bytes: int | None = None,
+        run_budget: RunBudget | None = None,
         confirm_project_instruction_dispatch: Callable[[InstructionSnapshot], str]
         | None = None,
         on_project_instruction_activation: Callable[
@@ -5072,16 +5173,17 @@ class ConsoleAgentBridge:
         # service read, matching _BridgeSkillRunner.run's own
         # asyncio.run-in-worker-thread pattern just below.
         skill_file_bindings = None
-        context: Mapping[str, Any] = {}
-        if self._skills_service is not None:
+        context: Mapping[str, Any] = skills_context or {}
+        if self._skills_service is not None and skills_context is None:
             context = asyncio.run(self._skills_service.get_context(mode="local"))
-        run_workspace_id: str | None = None
-        run_is_ephemeral = False
-        if self._store is not None:
+        run_workspace_id = workspace_id
+        run_is_ephemeral = bool(workspace_ephemeral)
+        if self._store is not None and workspace_id is None:
             try:
                 run_workspace_id = self._store.session_workspace_id(session_id)
             except KeyError:
                 pass
+        if self._store is not None and workspace_ephemeral is None:
             try:
                 run_is_ephemeral = self._store.session_is_ephemeral(session_id)
             except KeyError:
@@ -5104,7 +5206,11 @@ class ConsoleAgentBridge:
                 else bool(self._native_tools_enabled())
             )
         )
-        run_budget = console_run_budget()
+        run_budget = (
+            intersect_console_run_budget(run_budget, console_run_budget())
+            if run_budget is not None
+            else console_run_budget()
+        )
         runtime_definitions, fleet_max_live = _console_first_request_runtime_context(
             self._db, run_budget
         )
@@ -5162,6 +5268,9 @@ class ConsoleAgentBridge:
             canvas_provider=canvas_provider,
             canvas_authority=canvas_authority,
             workspace_id=run_workspace_id,
+            workspace_read_binding_ids=workspace_read_binding_ids,
+            workspace_write_binding_ids=workspace_write_binding_ids,
+            workspace_binding_authority=workspace_binding_authority,
             ephemeral=run_is_ephemeral,
             diff_sink=pending_diffs.append,
             scratch_root=scratch_root,
@@ -5196,7 +5305,9 @@ class ConsoleAgentBridge:
         if startup_instruction_candidate is not None:
             project_instruction_context = _ProjectInstructionDispatchContext(
                 nested_max_bytes=coerce_int_setting(
-                    get_cli_setting(
+                    project_instruction_nested_max_bytes
+                    if project_instruction_nested_max_bytes is not None
+                    else get_cli_setting(
                         "console",
                         "project_instructions_nested_max_bytes",
                         DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
@@ -5251,12 +5362,30 @@ class ConsoleAgentBridge:
                         if callable(unbind_promotion_context):
                             unbind_promotion_context()
 
+        admitted_skill_definition_digests = {
+            str(item["name"]): str(item["definition_digest"])
+            for item in _eligible_skill_entries(context)
+            if item.get("name") and item.get("definition_digest")
+        }
         if self._skills_service is not None:
+            local_skills = getattr(self._skills_service, "local_service", None)
+            if local_skills is None and hasattr(
+                self._skills_service, "trust_service"
+            ):
+                local_skills = self._skills_service
+            trust_service = getattr(local_skills, "trust_service", None)
+
+            def current_skill_definition_digest(skill_name: str) -> str | None:
+                if trust_service is None:
+                    return None
+                return trust_service.current_fingerprint_digest(skill_name)
+
             skill_file_bindings = SkillFileBindings(
                 authorized=set(),
                 reader=lambda skill_name, path: asyncio.run(
                     self._skills_service.read_skill_file(skill_name, path, mode="local")
                 ),
+                current_definition_digest=current_skill_definition_digest,
             )
             skill_runner = _BridgeSkillRunner(
                 skills_service=self._skills_service,
@@ -5264,6 +5393,11 @@ class ConsoleAgentBridge:
                 builtin_names=first_request_plan.builtin_names,
                 local_names=first_request_plan.local_names,
                 skill_file_bindings=skill_file_bindings,
+                definition_digests={
+                    name: digest
+                    for name, digest in admitted_skill_definition_digests.items()
+                    if name in first_request_plan.skill_names
+                },
             )
         prepare_managed_skill_promotion_tool = None
         if (
@@ -5287,7 +5421,11 @@ class ConsoleAgentBridge:
         # (which can only happen when the controller's own skills-service-
         # gated substitution ran) has nothing to seed.
         if skill_file_bindings is not None:
-            skill_file_bindings.authorized.update(turn_skill_bindings)
+            for skill_name in turn_skill_bindings:
+                skill_file_bindings.authorize(
+                    skill_name,
+                    admitted_skill_definition_digests.get(skill_name),
+                )
         # Agent-callable skill install (5th runtime tool). Built only when
         # BOTH a skills service AND a confirm callback exist -- without a
         # callback the tool is simply absent (never advertised) rather than
@@ -6867,6 +7005,94 @@ class ConsoleAgentBridge:
         """
         self._fleet_drain_fanout.register(name, consumer)
 
+    def on_fleet_activity(
+        self, name: str, consumer: Callable[[str], None]
+    ) -> None:
+        """Register one bridge-lifetime content-free fleet activity listener."""
+
+        with self._fleet_activity_lock:
+            self._fleet_activity_consumers[name] = consumer
+
+    @staticmethod
+    def _resolve_fleet_terminal_waiter(future: asyncio.Future[bool]) -> None:
+        """Resolve one waiter on its owning loop without leaking races."""
+
+        if not future.done():
+            future.set_result(True)
+
+    def _notify_fleet_consumers(self, conversation_id: str) -> None:
+        """Publish content-free activity without reading the coordinator.
+
+        Reservation invokes this while the coordinator lock is still held so
+        a subsequent close fence cannot overtake its lifecycle revision. The
+        callback therefore deliberately avoids fleet snapshots and waiter
+        resolution, either of which would re-enter that coordinator.
+        """
+
+        with self._fleet_activity_lock:
+            consumers = tuple(self._fleet_activity_consumers.values())
+        for consumer in consumers:
+            try:
+                consumer(conversation_id)
+            except Exception as exc:  # noqa: BLE001 -- lifecycle fan-out is isolated
+                logger.warning(
+                    "fleet activity consumer raised (exception_type={})",
+                    type(exc).__name__,
+                )
+
+    def _notify_fleet_activity(self, conversation_id: str) -> None:
+        """Publish settlement activity and resolve terminal waiters."""
+
+        self._notify_fleet_consumers(conversation_id)
+        with self._fleet_activity_lock:
+            waiters = tuple(self._fleet_terminal_waiters.get(conversation_id, ()))
+        if not waiters or self._fleet_has_live_children(conversation_id):
+            return
+        for loop, future in waiters:
+            try:
+                loop.call_soon_threadsafe(
+                    self._resolve_fleet_terminal_waiter,
+                    future,
+                )
+            except RuntimeError:
+                continue
+
+    def _fleet_has_live_children(self, conversation_id: str) -> bool:
+        """Return whether the public fleet snapshot contains a live handle."""
+
+        return any(
+            handle.status not in TERMINAL_RUN_STATUSES
+            for handle in self.fleet_snapshot(conversation_id)
+        )
+
+    async def await_fleet_terminal(self, conversation_id: str) -> bool:
+        """Wait until one conversation has no live delegated children.
+
+        The waiter is registered before the first live snapshot. This closes
+        the finish-during-registration race without polling or sleeps. Timeout
+        policy belongs to the runtime caller so session-close and app-quit can
+        share one global deadline.
+        """
+
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[bool] = loop.create_future()
+        waiter = (loop, future)
+        with self._fleet_activity_lock:
+            self._fleet_terminal_waiters.setdefault(conversation_id, []).append(
+                waiter
+            )
+        try:
+            if not self._fleet_has_live_children(conversation_id):
+                return True
+            return await future
+        finally:
+            with self._fleet_activity_lock:
+                retained = self._fleet_terminal_waiters.get(conversation_id, [])
+                if waiter in retained:
+                    retained.remove(waiter)
+                if not retained:
+                    self._fleet_terminal_waiters.pop(conversation_id, None)
+
     def _on_fleet_child_settled(
         self,
         conversation_id: str,
@@ -6899,6 +7125,7 @@ class ConsoleAgentBridge:
         """
         if run_id is not None and self._buddy_sink is not None:
             self._buddy_sink.release_run(run_id)
+        drained_children: tuple[SettledChild, ...] | None = None
         with self._change_window_lock:
             # PR3a-2 Task 4: classify AT SETTLE TIME, per child, under the
             # same lock the window open/close uses -- a drain can carry a
@@ -6918,12 +7145,23 @@ class ConsoleAgentBridge:
             remaining = self._unsettled_child_counts.get(conversation_id, 1) - 1
             if remaining > 0:
                 self._unsettled_child_counts[conversation_id] = remaining
-                return
-            self._unsettled_child_counts.pop(conversation_id, None)
-            children = tuple(self._settling_children.pop(conversation_id, ()))
-        self._fleet_drain_fanout.fire(
-            FleetDrained(conversation_id=conversation_id, children=children)
-        )
+            else:
+                self._unsettled_child_counts.pop(conversation_id, None)
+                drained_children = tuple(
+                    self._settling_children.pop(conversation_id, ())
+                )
+        if drained_children is not None:
+            self._fleet_drain_fanout.fire(
+                FleetDrained(
+                    conversation_id=conversation_id,
+                    children=drained_children,
+                )
+            )
+        # Terminal waiters may release a graceful close's provisional fence.
+        # Publish only after drain consumers had their final chance to observe
+        # it, otherwise the child thread can race the app loop and leak a stale
+        # wake into a newly reopened saved conversation.
+        self._notify_fleet_activity(conversation_id)
 
     def _open_post_turn_change_window(
         self,
@@ -7291,16 +7529,22 @@ class ConsoleAgentBridge:
                 )
             )
         )
-        coordinator = self._fleet_coordinators.get(conversation_id)
-        if coordinator is None:
-            coordinator = FleetCoordinator(
-                max_live=max_live,
-                clock=self._clock,
-                retained_transcripts=retained_transcripts,
-                retained_transcript_max_chars=retained_transcript_max_chars,
-            )
-            self._fleet_coordinators[conversation_id] = coordinator
-            return coordinator
+        with self._fleet_admission_lock:
+            coordinator = self._fleet_coordinators.get(conversation_id)
+            if coordinator is None:
+                coordinator = FleetCoordinator(
+                    max_live=max_live,
+                    clock=self._clock,
+                    retained_transcripts=retained_transcripts,
+                    retained_transcript_max_chars=retained_transcript_max_chars,
+                    on_reserve=functools.partial(
+                        self._notify_fleet_consumers,
+                        conversation_id,
+                    ),
+                )
+                if conversation_id in self._fleet_fence_generations:
+                    coordinator.fence()
+                self._fleet_coordinators[conversation_id] = coordinator
         if coordinator.max_live != max_live:
             coordinator.set_max_live(max_live)
         if (
@@ -7312,6 +7556,67 @@ class ConsoleAgentBridge:
             )
         coordinator.prune_terminal()
         return coordinator
+
+    def fence_fleet(self, conversation_id: str, *, generation: int) -> bool:
+        """Stop one closing conversation from admitting new children.
+
+        The coordinator is lazy, so the fence is recorded even when no fleet
+        exists yet. The shared admission lock makes that record atomic with
+        coordinator construction; a stale parent cannot create an unfenced
+        coordinator after shutdown took its cancellation snapshot.
+
+        Args:
+            conversation_id: Conversation whose delegated fleet is closing.
+            generation: Monotonic close generation for stale-fence rejection.
+        """
+        with self._fleet_admission_lock:
+            if conversation_id in self._fleet_fence_generations:
+                return False
+            self._fleet_fence_generations[conversation_id] = generation
+            coordinator = self._fleet_coordinators.get(conversation_id)
+            if coordinator is not None:
+                coordinator.fence()
+            return True
+
+    def abort_fleet_fence(
+        self, conversation_id: str, *, generation: int
+    ) -> bool:
+        """Withdraw an exact provisional fence before cancellation begins."""
+
+        with self._fleet_admission_lock:
+            if self._fleet_fence_generations.get(conversation_id) != generation:
+                return False
+            self._fleet_fence_generations.pop(conversation_id, None)
+            coordinator = self._fleet_coordinators.get(conversation_id)
+            if coordinator is not None:
+                coordinator.abort_fence()
+            return True
+
+    def release_fleet_fence(
+        self, conversation_id: str, *, generation: int
+    ) -> bool:
+        """Release one matching provisional fence after a complete drain.
+
+        Once cancellation begins the coordinator itself is no longer reopened;
+        a graceful session close restores future admission by discarding that
+        drained coordinator. The runtime calls this only after every session
+        task and the fleet terminal waiter settled. A mismatch or live handle
+        fails closed; timeout and app-disposal paths never call this seam.
+        """
+
+        with self._fleet_admission_lock:
+            if self._fleet_fence_generations.get(conversation_id) != generation:
+                return False
+            coordinator = self._fleet_coordinators.get(conversation_id)
+            if coordinator is not None and any(
+                handle.status not in TERMINAL_RUN_STATUSES
+                for handle in coordinator.snapshot()
+            ):
+                return False
+            self._fleet_fence_generations.pop(conversation_id, None)
+            self._fleet_coordinators.pop(conversation_id, None)
+        self._prune_settled_fleet_survivors(conversation_id)
+        return True
 
     def _conversation_fleet_handles(self, conversation_id: str) -> list[FleetHandle]:
         """Every handle this conversation's coordinator still holds.

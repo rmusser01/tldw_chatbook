@@ -170,6 +170,28 @@ class CapturePolicyResolution:
     invalid_sources: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class FrozenProvisionalCaptureEligibility:
+    """Dispatch-time voice capture admission that cannot become retroactive."""
+
+    eligible: bool
+    reason: str
+
+
+def freeze_provisional_capture_eligibility(
+    *,
+    capture_enabled: bool,
+    session_is_saved: bool,
+) -> FrozenProvisionalCaptureEligibility:
+    """Freeze post-dispatch trace admission before the provider is invoked."""
+
+    if not capture_enabled:
+        return FrozenProvisionalCaptureEligibility(False, "capture_disabled")
+    if not session_is_saved:
+        return FrozenProvisionalCaptureEligibility(False, "temporary_session")
+    return FrozenProvisionalCaptureEligibility(True, "eligible_saved_session")
+
+
 @dataclass
 class CaptureBudget:
     """One bounded uncompressed capture budget shared by request and response."""

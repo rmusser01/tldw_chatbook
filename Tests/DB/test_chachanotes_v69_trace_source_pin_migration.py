@@ -48,22 +48,29 @@ def test_v68_upgrade_preserves_old_boundaries_and_checks_exact_call_source(
             owner = repository.attach_owner(
                 cursor, conversation_id=conversation, root_segment_id=segment.segment_id
             )
-            call = repository.reserve_call(
-                cursor,
-                owner_id=owner.owner_id,
-                segment_id=segment.segment_id,
-                turn_id=source,
-                run_id=new_opaque_id(),
-                call_sequence=0,
-                idempotency_key=new_opaque_id(),
-                policy_id=policy.policy_id,
+            # Seed the historical shape without current-version call readers.
+            call_id = new_opaque_id()
+            cursor.execute(
+                """INSERT INTO console_trace_calls(
+                       call_id, owner_id, segment_id, turn_id, run_id,
+                       call_sequence, idempotency_key, policy_id)
+                     VALUES (?, ?, ?, ?, ?, 0, ?, ?)""",
+                (
+                    call_id,
+                    owner.owner_id,
+                    segment.segment_id,
+                    source,
+                    new_opaque_id(),
+                    new_opaque_id(),
+                    policy.policy_id,
+                ),
             )
             old_event = repository.append_event(
                 cursor,
                 segment_id=segment.segment_id,
                 sequence=0,
                 event_type="call_boundary",
-                call_id=call.call_id,
+                call_id=call_id,
             )
         old.close()
 
@@ -83,7 +90,7 @@ def test_v68_upgrade_preserves_old_boundaries_and_checks_exact_call_source(
                 segment_id=segment.segment_id,
                 sequence=1,
                 event_type="call_boundary",
-                call_id=call.call_id,
+                call_id=call_id,
                 semantic_revision_id=revisions[source],
             )
             assert pinned.semantic_revision_id == revisions[source]
@@ -99,7 +106,7 @@ def test_v68_upgrade_preserves_old_boundaries_and_checks_exact_call_source(
                     segment_id=segment.segment_id,
                     sequence=2,
                     event_type=event_type,
-                    call_id=call.call_id,
+                    call_id=call_id,
                     semantic_revision_id=revision,
                 )
         with pytest.raises(sqlite3.IntegrityError), db.transaction() as cursor:
@@ -182,6 +189,8 @@ def test_source_pin_migration_requires_v68_and_fresh_schema_matches_upgrade(tmp_
             db._migrate_from_v68_to_v69(connection)
         assert _schema(connection) == upgraded_schema
 
-    with chachanotes_db_at_version(tmp_path / "fresh.sqlite", 69) as fresh:
+    with chachanotes_db_at_version(
+        tmp_path / "fresh.sqlite", 69, client_id="source-pin-fresh"
+    ) as fresh:
         assert fresh._get_db_version(fresh.get_connection()) == 69
         assert _schema(fresh.get_connection()) == upgraded_schema

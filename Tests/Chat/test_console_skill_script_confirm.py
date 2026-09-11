@@ -65,8 +65,14 @@ class _FakeApp:
     and ``Tests/UI/test_console_skill_install_confirm.py``.
     """
 
+    def __init__(self) -> None:
+        self.notifications: list[str] = []
+
     def call_from_thread(self, fn, *args, **kwargs):
         return fn(*args, **kwargs)
+
+    def notify(self, message, **_kwargs) -> None:
+        self.notifications.append(str(message))
 
 
 @pytest.fixture
@@ -524,8 +530,9 @@ def test_switch_session_no_longer_denies_a_pending_skill_script_confirm(
 def test_request_skill_script_confirm_parks_for_a_non_active_session(make_controller):
     """TASK-910 (AC#1): a round whose `session_id` differs from the store's
     ACTIVE session parks -- no card mount, the run-marker pending flag
-    flips, and `park_pending_approval` fires exactly once. Visiting the
-    owning session later mounts the SAME retained payload."""
+    flips and one app-owned sanitized notice is emitted. The retired screen
+    parking hook is never used. Visiting the owning session later mounts the
+    SAME retained payload."""
     from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
 
     controller = make_controller()
@@ -533,8 +540,9 @@ def test_request_skill_script_confirm_parks_for_a_non_active_session(make_contro
     viewed = controller.store.ensure_session().id
     background = controller.store.create_session().id
     controller.store.switch_session(viewed)  # keep viewing the first session
-    parked: list[str] = []
-    controller.park_pending_approval = parked.append
+    controller.park_pending_approval = lambda _session_id: pytest.fail(
+        "background decisions must not use the legacy screen notice hook"
+    )
     result = {}
 
     def worker():
@@ -546,7 +554,10 @@ def test_request_skill_script_confirm_parks_for_a_non_active_session(make_contro
     thread.start()
     _wait_until(lambda: bool(controller.pending_skill_script_ids()))
 
-    assert parked == [background]
+    assert controller.app.notifications == [
+        "A Console session needs confirmation to run a skill script. "
+        "Return to Console to respond."
+    ]
     # Never mounted -- the viewed session's own (empty) surface is untouched.
     assert all(payload is None for payload in controller.pending_skill_script_payloads)
     assert background in controller._pending_approvals

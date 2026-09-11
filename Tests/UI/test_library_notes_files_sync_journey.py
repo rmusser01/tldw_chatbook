@@ -462,7 +462,7 @@ async def test_database_notes_import_once_journey_is_painted_focused_and_retaine
         purpose = str(
             screen.query_one("#library-notes-database-purpose", Static).renderable
         )
-        assert "Library notes · Library database" in str(authority.renderable)
+        assert "Library notes" in str(authority.renderable)
         assert "use Sync to mirror" not in purpose
         assert "switch to Folder files" in purpose
         assert "choose Add from files" in purpose

@@ -67,6 +67,13 @@ def _assert_sanitized_receipt(db, run_id, *, outcome):
     return receipt
 
 
+def _pinned_bindings(reader, *, digest="digest-a"):
+    return SkillFileBindings(
+        authorized={"demo"},
+        reader=reader,
+        definition_digests={"demo": digest},
+        current_definition_digest=lambda _name: digest,
+    )
 # --- Step 1 unit tests (brief's exact contract) -----------------------------
 
 
@@ -96,7 +103,7 @@ def test_skill_file_schema_offered_first_turn_and_authorized_read_succeeds(tmp_p
         read_calls.append((skill_name, path))
         return {"content": "REF", "truncated": False, "size": 3}
 
-    bindings = SkillFileBindings(authorized={"demo"}, reader=reader)
+    bindings = _pinned_bindings(reader)
 
     script = [
         {
@@ -133,6 +140,115 @@ def test_skill_file_schema_offered_first_turn_and_authorized_read_succeeds(tmp_p
     _assert_sanitized_receipt(db, run_id, outcome="success")
 
 
+def test_skill_file_revalidates_the_admitted_definition_before_every_read(tmp_path):
+    current = {"digest": "digest-a", "body": "REFERENCE_A"}
+    read_calls = []
+
+    def reader(skill_name, path):
+        read_calls.append((skill_name, path, current["body"]))
+        return {"content": current["body"], "truncated": False, "size": 11}
+
+    def run_read(bindings, suffix):
+        calls = []
+        script = [
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": _skill_file_fence(
+                                "demo", "references/api.md"
+                            )
+                        }
+                    }
+                ]
+            },
+            {"choices": [{"message": {"content": "Done."}}]},
+        ]
+        def chat_call(**kwargs):
+            calls.append(kwargs)
+            return script.pop(0)
+
+        service = AgentService(
+            AgentRunsDB(tmp_path / f"runs-{suffix}.db", client_id="t"),
+            _registry_with_builtins(),
+            chat_call=chat_call,
+            skill_file_bindings=bindings,
+        )
+        run_id, outcome = service.run_turn(
+            conversation_id=f"c-{suffix}",
+            messages=[{"role": "user", "content": "go"}],
+            config=_base_config(),
+            api_endpoint="llama_cpp",
+        )
+        assert outcome.status == RUN_DONE
+        _assert_sanitized_receipt(service.db, run_id, outcome="failed" if suffix == "old" else "success")
+        return calls
+
+    old_bindings = SkillFileBindings(authorized={"demo"}, reader=reader)
+    old_bindings.definition_digests = {"demo": "digest-a"}
+    old_bindings.current_definition_digest = lambda _name: current["digest"]
+
+    current.update(digest="digest-b", body="REFERENCE_B")
+    refused = run_read(old_bindings, "old")
+
+    assert _next_provider_turn_contains(refused, "skill_definition_changed")
+    assert read_calls == []
+    assert "demo" not in old_bindings.authorized
+
+    new_bindings = SkillFileBindings(authorized={"demo"}, reader=reader)
+    new_bindings.definition_digests = {"demo": "digest-b"}
+    new_bindings.current_definition_digest = lambda _name: current["digest"]
+
+    accepted = run_read(new_bindings, "new")
+
+    assert _next_provider_turn_contains(accepted, "REFERENCE_B")
+    assert read_calls == [("demo", "references/api.md", "REFERENCE_B")]
+
+
+def test_skill_file_definition_mismatch_revokes_even_without_a_reader(tmp_path):
+    calls = []
+    bindings = SkillFileBindings(
+        authorized={"demo"},
+        reader=None,
+        definition_digests={"demo": "digest-a"},
+        current_definition_digest=lambda _name: "digest-b",
+    )
+    script = [
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": _skill_file_fence("demo", "references/api.md")
+                    }
+                }
+            ]
+        },
+        {"choices": [{"message": {"content": "Done."}}]},
+    ]
+    def chat_call(**kwargs):
+        calls.append(kwargs)
+        return script.pop(0)
+
+    service = AgentService(
+        AgentRunsDB(tmp_path / "runs.db", client_id="t"),
+        _registry_with_builtins(),
+        chat_call=chat_call,
+        skill_file_bindings=bindings,
+    )
+
+    run_id, outcome = service.run_turn(
+        conversation_id="c1",
+        messages=[{"role": "user", "content": "go"}],
+        config=_base_config(),
+        api_endpoint="llama_cpp",
+    )
+
+    assert outcome.status == RUN_DONE
+    _assert_sanitized_receipt(service.db, run_id, outcome="failed")
+    assert _next_provider_turn_contains(calls, "skill_definition_changed")
+    assert "demo" not in bindings.authorized
+
+
 def test_skill_file_unauthorized_name_is_refused(tmp_path):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_builtins()
@@ -142,7 +258,7 @@ def test_skill_file_unauthorized_name_is_refused(tmp_path):
 
     # "demo" is active in this run; "other" is not -- the model asks for
     # "other" anyway (e.g. a stale/hallucinated skill name).
-    bindings = SkillFileBindings(authorized={"demo"}, reader=reader)
+    bindings = _pinned_bindings(reader)
 
     script = [
         {
@@ -190,7 +306,7 @@ def test_skill_file_reader_returning_non_mapping_fails_the_call_not_the_run(
     def bad_reader(skill_name, path):
         return "not a dict"
 
-    bindings = SkillFileBindings(authorized={"demo"}, reader=bad_reader)
+    bindings = _pinned_bindings(bad_reader)
 
     script = [
         {
@@ -334,7 +450,7 @@ def test_skill_file_e2e_fork_reads_its_own_reference_file(tmp_path):
     def reader(skill_name, path):
         return asyncio.run(svc.read_skill_file(skill_name, path))
 
-    bindings = SkillFileBindings(authorized={"demo"}, reader=reader)
+    bindings = _pinned_bindings(reader)
 
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_builtins()

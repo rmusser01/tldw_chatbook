@@ -61,6 +61,7 @@ from tldw_chatbook.Chat.console_agent_bridge import (
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
+    ConsoleProviderSelection,
     ConsoleRunState,
     ConsoleRunStatus,
     ConsoleSubmissionOrigin,
@@ -74,6 +75,10 @@ from tldw_chatbook.Chat.console_fleet_wake import (
     AgentWakeAuthorization,
     ConsoleFleetWakeCoordinator,
     compose_wake_notice,
+)
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+from tldw_chatbook.Chat.console_turn_context import (
+    ConsoleTurnConfigurationSnapshot,
 )
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
@@ -329,7 +334,7 @@ def test_buddy_wake_callback_runs_outside_registry_lock_and_is_post_fenced():
 
 @pytest.mark.asyncio
 async def test_dispose_fences_delivery_completion_after_its_await():
-    """An accepted late result neither commits nor rebuilds disposed state."""
+    """An accepted late result finalizes only its durable ledger state."""
     started = asyncio.Event()
     release = asyncio.Event()
     sink = _RecordingBuddySink()
@@ -378,7 +383,7 @@ async def test_dispose_fences_delivery_completion_after_its_await():
     release.set()
     await task
 
-    assert runs_db.stamps == 0
+    assert runs_db.stamps == 1
     assert coordinator.pending_conversation_ids() == ()
     clear_index = sink.calls.index(("clear",))
     assert all(call[-1] is not True for call in sink.calls[clear_index + 1 :])
@@ -446,6 +451,37 @@ async def test_a_survivor_settle_wakes_the_supervisor_with_a_machine_notice(
             agent_runtime_enabled=False,
         )
         controller.fleet_wake.wire(app=app)
+        runtime = ConsoleRuntime(app)
+        runtime.set_chat_store(store)
+        runtime.set_chat_controller(controller)
+        screen_context_calls: list[str] = []
+
+        def screen_context(session_id: str) -> ConsoleTurnConfigurationSnapshot:
+            screen_context_calls.append(session_id)
+            return ConsoleTurnConfigurationSnapshot.capture(
+                session_id=session_id,
+                provider_selection=ConsoleProviderSelection(
+                    provider="screen-provider",
+                    explicit_model="screen-model",
+                ),
+            )
+
+        controller._turn_context_provider = screen_context
+        wake_stream_gate = asyncio.Event()
+        wake_gateway.stream_gate = wake_stream_gate
+        submit_calls: list[dict[str, object]] = []
+        submit_draft = controller.submit_draft
+
+        async def tracked_submit(draft: str, **kwargs):
+            submit_calls.append({"draft": draft, **kwargs})
+            return await submit_draft(draft, **kwargs)
+
+        controller.submit_draft = tracked_submit
+
+        async def reject_prompt_chain(**_kwargs):
+            raise AssertionError("agent wake must bypass prompt-chain scheduling")
+
+        controller.run_prompt_chain = reject_prompt_chain
         accepted_hook_calls: list[str] = []
         controller.on_submission_accepted = lambda: accepted_hook_calls.append(
             "composer-clear"
@@ -465,8 +501,34 @@ async def test_a_survivor_settle_wakes_the_supervisor_with_a_machine_notice(
             gate.set()
         _join_fleet_threads()
 
-        woke = await _settle(lambda: wake_gateway.payloads)
-        assert woke, "the survivor settled and NO wake turn ever reached the provider"
+        woke = await _settle(lambda: submit_calls)
+        assert woke, (
+            "the survivor settled and NO wake turn reached controller execution"
+        )
+        try:
+            assert len(runtime._turn_custody) == 1
+            record = next(iter(runtime._turn_custody.values()))
+            request = record.request
+            assert request is not None
+            assert request.turn_id == record.turn_id
+            assert request.session_id == session.id
+            assert request.attachment_ids == ()
+            assert request.staged_evidence_launch is None
+            assert record.inputs.attachments == ()
+            assert screen_context_calls == []
+            assert request.configuration.provider_selection.provider == "llama_cpp"
+            assert len(submit_calls) == 1
+            assert submit_calls[0]["draft"] == request.draft
+            assert submit_calls[0]["origin"] is ConsoleSubmissionOrigin.AGENT_WAKE
+            assert submit_calls[0]["configuration"] is request.configuration
+            authorization = submit_calls[0]["wake_authorization"]
+            assert isinstance(authorization, AgentWakeAuthorization)
+            assert controller.fleet_wake.authorizes(authorization, session.id)
+        finally:
+            wake_stream_gate.set()
+
+        assert await _settle(lambda: wake_gateway.payloads)
+        assert await _settle(lambda: not runtime._turn_custody)
         assert len(wake_gateway.payloads) == 1
 
         # The model payload: the notice is the TRAILING user-role entry,
@@ -629,6 +691,9 @@ async def test_a_refused_wake_loses_nothing_and_is_retried(tmp_path):
         tmp_path
     )
     try:
+        runtime = ConsoleRuntime(app)
+        runtime.set_chat_store(store)
+        runtime.set_chat_controller(controller)
         _parent, run_id = _terminal_subagent_run(runs_db, session.id)
         app.conversation_local_marks_service.set_mark(
             session.id, ConversationLocalMarksService.FLEET_UNSEEN
@@ -665,6 +730,46 @@ async def test_a_refused_wake_loses_nothing_and_is_retried(tmp_path):
         assert runs_db.get_run(run_id).get("wake_delivered_at"), (
             "the retried delivery must stamp the ledger"
         )
+        assert await _settle(lambda: not runtime._turn_custody)
+    finally:
+        chacha.close()
+
+
+@pytest.mark.asyncio
+async def test_post_durable_runtime_failure_settles_bound_wake_once(tmp_path):
+    chacha, app, runs_db, store, session, gateway, bridge, controller = (
+        _controller_rig(tmp_path)
+    )
+    try:
+        runtime = ConsoleRuntime(app)
+        runtime.set_chat_store(store)
+        runtime.set_chat_controller(controller)
+        _parent, run_id = _terminal_subagent_run(runs_db, session.id)
+        submit_draft = controller.submit_draft
+        attempts = 0
+
+        async def accepted_then_raise_once(draft: str, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            result = await submit_draft(draft, **kwargs)
+            if attempts == 1:
+                raise RuntimeError("post-durable failure")
+            return result
+
+        controller.submit_draft = accepted_then_raise_once
+        wake = controller.fleet_wake
+        wake.on_fleet_drained(
+            _drain(session.id, _survivor(run_id, session_id=session.id))
+        )
+
+        assert await _settle(lambda: attempts >= 1)
+        assert await _settle(lambda: not wake.has_pending(session.id))
+        assert await _settle(lambda: not runtime._turn_custody)
+        await _quiet(lambda: attempts > 1)
+
+        assert attempts == 1
+        assert len(gateway.payloads) == 1
+        assert runs_db.get_run(run_id).get("wake_delivered_at")
     finally:
         chacha.close()
 
@@ -1384,4 +1489,41 @@ def test_a_failed_delivery_task_never_wedges_the_delivering_flag(monkeypatch):
     healthy = _RecordingLoop()
     wake._loop = healthy
     wake._attempt("conv-1")
-    assert healthy.tasks, "the pending wake was lost after the failed attempt"
+    assert healthy.tasks, (
+        "the pending wake was lost after the failed attempt"
+    )
+
+
+def test_failed_runtime_admission_unwinds_delivery_and_keeps_pending(monkeypatch):
+    """A synchronous runtime scheduling failure is a retry, never loss."""
+    monkeypatch.setenv("TLDW_AGENTS_AUTOWAKE_ENABLED", "true")
+    session = SimpleNamespace(id="s-1", persisted_conversation_id="conv-1")
+    controller = SimpleNamespace(
+        _disposed=False,
+        store=SimpleNamespace(sessions=lambda: [session]),
+        send_refusal_copy=lambda session_id: None,
+    )
+    wake = ConsoleFleetWakeCoordinator(controller)
+
+    class _Loop:
+        def is_closed(self):
+            return False
+
+    wake._loop = _Loop()
+    calls: list[dict[str, object]] = []
+
+    def refuse_runtime(notice, **kwargs):
+        calls.append({"notice": notice, **kwargs})
+        raise RuntimeError("runtime scheduler unavailable")
+
+    wake.bind_runtime_submitter(refuse_runtime)
+    with wake._registry_lock:
+        wake._pending["conv-1"] = {"run-1": "done"}
+
+    wake._attempt("conv-1")
+
+    assert len(calls) == 1
+    assert isinstance(calls[0]["wake_authorization"], AgentWakeAuthorization)
+    assert wake.delivering_conversation_id() is None
+    assert wake.delivering_session_id() is None
+    assert wake.has_pending("conv-1")

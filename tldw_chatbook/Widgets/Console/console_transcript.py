@@ -142,6 +142,10 @@ from tldw_chatbook.Widgets.diff_widgets import make_diff
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.Widgets.Console.console_voice_preview import (
+        ConsoleVoicePreview,
+        VoicePreviewProjection,
+    )
     from textual.screen import Screen
 
 
@@ -1463,26 +1467,11 @@ class ConsoleMessageHeader(Horizontal):
     """Stable one-line speaker header with its sole visible speech control."""
 
     BUNDLED_CSS = """
-    ConsoleMessageHeader {
-        width: 100%;
-        height: 1;
-        min-height: 1;
-    }
-
+    ConsoleMessageHeader {width:100%;height:1;min-height:1;}
     ConsoleMessageHeader > .console-transcript-speaker-label {
-        width: 1fr;
-        height: 1;
-        min-height: 1;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
+        width:1fr;height:1;min-height:1;overflow:hidden;text-overflow:ellipsis;}
     ConsoleMessageHeader > .console-message-speech-presentation {
-        width: 14;
-        min-width: 14;
-        height: 1;
-        min-height: 1;
-    }
+        width:14;min-width:14;height:1;min-height:1;}
     """
 
     def __init__(
@@ -3126,6 +3115,10 @@ class ConsoleTranscript(VerticalScroll):
         # appends USER + ASSISTANT placeholder together, so the tail
         # alone can miss the send (PR #697 review).
         self._seen_message_ids: set[str] = set()
+        # Speculative voice text is a separate, ephemeral projection. It is
+        # never inserted into ``_messages`` or the durable row/grouping path.
+        self._voice_preview_projection: VoicePreviewProjection | None = None
+        self._voice_preview_widget: ConsoleVoicePreview | None = None
         #: TASK-371: last run status seen by `sync_jump_indicator`, so a scroll
         #: that detaches the reader can refresh the pill without a status source.
         self._last_run_status = "idle"
@@ -3255,6 +3248,15 @@ class ConsoleTranscript(VerticalScroll):
             self._row_widgets[row.key] = widget
             self._row_signatures[row.key] = row.signature
             yield widget
+        self._voice_preview_widget = None
+        if self._voice_preview_projection is not None:
+            from tldw_chatbook.Widgets.Console.console_voice_preview import ConsoleVoicePreview
+
+            self._voice_preview_widget = ConsoleVoicePreview(
+                self._voice_preview_projection,
+                id="console-voice-preview",
+            )
+            yield self._voice_preview_widget
         # TASK-371: docked (non-scrolling) jump-to-latest pill; hidden until
         # `sync_jump_indicator` shows it while the reader is scrolled up.
         pill = ConsoleTranscriptJumpPill(
@@ -3278,6 +3280,33 @@ class ConsoleTranscript(VerticalScroll):
         )
         hint.display = False
         yield hint
+
+    def set_voice_preview(self, projection: VoicePreviewProjection) -> None:
+        """Show one ephemeral speculative voice projection."""
+        from tldw_chatbook.Widgets.Console.console_voice_preview import (
+            ConsoleVoicePreview,
+            VoicePreviewProjection,
+        )
+
+        if type(projection) is not VoicePreviewProjection:
+            raise TypeError("projection must be a VoicePreviewProjection")
+        self._voice_preview_projection = projection
+        if not self.is_mounted:
+            return
+        if self._voice_preview_widget is None:
+            self._voice_preview_widget = ConsoleVoicePreview(
+                projection, id="console-voice-preview"
+            )
+            self.mount(self._voice_preview_widget, before="#console-transcript-jump-pill")
+        else:
+            self._voice_preview_widget.set_projection(projection)
+
+    def clear_voice_preview(self) -> None:
+        """Hide and forget provisional voice text without touching messages."""
+
+        self._voice_preview_projection = None
+        if self._voice_preview_widget is not None:
+            self._voice_preview_widget.clear()
 
     async def recompose(self) -> None:
         """Detach screen-owned message overflow UI before rebuilding rows."""
@@ -4715,6 +4744,61 @@ class ConsoleTranscript(VerticalScroll):
                 # never run.
                 self._suppress_boundary_hydration = False
         self._schedule_prune_check()
+
+    def mounted_message_content_ids(self) -> frozenset[str]:
+        """Return message IDs whose exact transcript content is attached.
+
+        Assistant media rows live inside ``ConsoleAssistantTurnWidget`` rather
+        than in this widget's top-level ``_row_widgets`` map. This method is
+        the transcript-owned successful-render evidence seam: ordinary
+        messages require their body, while generated image/video messages
+        require their exact nested card and its composed content.
+        """
+
+        def _mounted_card(
+            turn: ConsoleAssistantTurnWidget,
+            card_type: type[ConsoleGenerationCard] | type[ConsoleVideoCard],
+            message_id: str,
+        ) -> bool:
+            for child in turn.adjunct_stack.children:
+                if not isinstance(child, card_type):
+                    continue
+                if child.parent is not turn.adjunct_stack or not child.is_attached:
+                    continue
+                if getattr(getattr(child, "spec", None), "message_id", None) != message_id:
+                    continue
+                if child.children and all(
+                    nested.parent is child and nested.is_attached
+                    for nested in child.children
+                ):
+                    return True
+            return False
+
+        mounted: set[str] = set()
+        for message in self._messages:
+            if message.role is ConsoleMessageRole.ASSISTANT:
+                owner = self._row_widgets.get(f"assistant-turn:{message.id}")
+                if not isinstance(owner, ConsoleAssistantTurnWidget):
+                    continue
+                if owner.parent is not self or not owner.is_attached:
+                    continue
+                answer = owner.answer_widget
+                if answer.parent is not owner or not answer.is_attached:
+                    continue
+                if message.video_metadata is not None:
+                    if _mounted_card(owner, ConsoleVideoCard, message.id):
+                        mounted.add(message.id)
+                elif message.generation_metadata:
+                    if _mounted_card(owner, ConsoleGenerationCard, message.id):
+                        mounted.add(message.id)
+                else:
+                    mounted.add(message.id)
+                continue
+
+            row = self._row_widgets.get(f"message:{message.id}")
+            if row is not None and row.parent is self and row.is_attached:
+                mounted.add(message.id)
+        return frozenset(mounted)
 
     def _scroll_reveal_target_into_view(self, widget: Widget) -> None:
         """Scroll a just-revealed jump target to the top of the viewport."""

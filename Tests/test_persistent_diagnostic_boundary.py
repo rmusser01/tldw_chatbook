@@ -138,6 +138,7 @@ def test_real_rotating_sink_rejects_owned_standard_payloads_but_keeps_metadata(
             provider="openai",
             status="success",
             payload_length=len(PRIVATE_SENTINEL),
+            latency_ms=17,
         )
     finally:
         handler.close()
@@ -148,6 +149,7 @@ def test_real_rotating_sink_rejects_owned_standard_payloads_but_keeps_metadata(
     assert "event=provider_request" in persisted
     assert "provider=openai" in persisted
     assert "payload_length=" in persisted
+    assert "latency_ms=17" in persisted
 
 
 def test_real_rotating_sink_rejects_loguru_payload_from_owned_module(

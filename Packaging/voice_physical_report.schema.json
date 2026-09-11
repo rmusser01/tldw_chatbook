@@ -1,0 +1,698 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tldw.invalid/schemas/voice-physical-report-v2.json",
+  "title": "Speculative voice physical-device qualification report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evidence_kind",
+    "source_tree_digest",
+    "platform",
+    "device_class",
+    "app_version",
+    "safety_path",
+    "companion",
+    "automated_prerequisites",
+    "device",
+    "aec",
+    "isolation",
+    "transport_health",
+    "trials",
+    "degradation",
+    "operator_checklist",
+    "thresholds",
+    "passed"
+  ],
+  "properties": {
+    "schema_version": {"const": 2},
+    "evidence_kind": {"enum": ["physical", "synthetic-fixture"]},
+    "source_tree_digest": {"$ref": "#/$defs/sha256"},
+    "platform": {
+      "type": "string",
+      "pattern": "^(macos-(arm64|x86_64)|windows-x86_64|linux-(x86_64|aarch64))$"
+    },
+    "device_class": {"enum": ["builtin", "usb", "bluetooth"]},
+    "app_version": {"$ref": "#/$defs/version"},
+    "safety_path": {"enum": ["aec", "acoustic-isolation", "half-duplex"]},
+    "companion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "upstream_commit"],
+      "properties": {
+        "name": {"const": "tldw-voice-aec"},
+        "version": {"$ref": "#/$defs/version"},
+        "upstream_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      }
+    },
+    "automated_prerequisites": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_tree_digest",
+        "automated_report_sha256",
+        "corpus_section_sha256",
+        "latency_section_sha256",
+        "duplex_soak_report_sha256",
+        "cancellation_soak_report_sha256"
+      ],
+      "properties": {
+        "source_tree_digest": {"$ref": "#/$defs/sha256"},
+        "automated_report_sha256": {"$ref": "#/$defs/sha256"},
+        "corpus_section_sha256": {"$ref": "#/$defs/sha256"},
+        "latency_section_sha256": {"$ref": "#/$defs/sha256"},
+        "duplex_soak_report_sha256": {"$ref": "#/$defs/sha256"},
+        "cancellation_soak_report_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "device": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identity_salt",
+        "identity_sha256",
+        "transport",
+        "sample_rate_hz",
+        "channels",
+        "frame_duration_ms"
+      ],
+      "properties": {
+        "identity_salt": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        "identity_sha256": {"$ref": "#/$defs/sha256"},
+        "transport": {"enum": ["builtin", "usb", "wired", "bluetooth"]},
+        "sample_rate_hz": {"type": "integer", "minimum": 8000, "maximum": 192000},
+        "channels": {"type": "integer", "minimum": 1, "maximum": 2},
+        "frame_duration_ms": {"type": "integer", "minimum": 1, "maximum": 100}
+      }
+    },
+    "aec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "delay_estimate_available",
+        "delay_estimate_refined",
+        "health_path",
+        "processor_operational",
+        "erle_samples_db",
+        "median_erle_db",
+        "p10_erle_db"
+      ],
+      "properties": {
+        "delay_estimate_available": {"type": "boolean"},
+        "delay_estimate_refined": {"type": "boolean"},
+        "health_path": {"enum": ["healthy", "warming", "degraded"]},
+        "processor_operational": {"type": "boolean"},
+        "erle_samples_db": {
+          "type": "array",
+          "maxItems": 3600,
+          "items": {"type": "number", "minimum": -100, "maximum": 100}
+        },
+        "median_erle_db": {"$ref": "#/$defs/nullable_erle"},
+        "p10_erle_db": {"$ref": "#/$defs/nullable_erle"}
+      }
+    },
+    "isolation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "eligible_windows",
+        "required_windows",
+        "warmup_duration_ms",
+        "correlation_samples",
+        "p95_correlation",
+        "leakage_db_samples",
+        "p95_leakage_db",
+        "render_only_vad_events",
+        "demotions",
+        "demotion_reasons"
+      ],
+      "properties": {
+        "eligible_windows": {"type": "integer", "minimum": 0, "maximum": 3600},
+        "required_windows": {"const": 5},
+        "warmup_duration_ms": {"type": "number", "minimum": 0, "maximum": 1800000},
+        "correlation_samples": {
+          "type": "array",
+          "maxItems": 3600,
+          "items": {"type": "number", "minimum": 0, "maximum": 1}
+        },
+        "p95_correlation": {
+          "oneOf": [
+            {"type": "number", "minimum": 0, "maximum": 1},
+            {"type": "null"}
+          ]
+        },
+        "leakage_db_samples": {
+          "type": "array",
+          "maxItems": 3600,
+          "items": {"type": "number", "minimum": -200, "maximum": 100}
+        },
+        "p95_leakage_db": {
+          "oneOf": [
+            {"type": "number", "minimum": -200, "maximum": 100},
+            {"type": "null"}
+          ]
+        },
+        "render_only_vad_events": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "demotions": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "demotion_reasons": {
+          "type": "array",
+          "maxItems": 17,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/demotion_reason_record"}
+        }
+      }
+    },
+    "transport_health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capture_overflows",
+        "render_overflows",
+        "reference_overflows",
+        "control_overflows",
+        "saturation_events"
+      ],
+      "properties": {
+        "capture_overflows": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "render_overflows": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "reference_overflows": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "control_overflows": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "saturation_events": {"type": "integer", "minimum": 0, "maximum": 1000000}
+      }
+    },
+    "trials": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rendered_speech",
+        "double_talk",
+        "interruption",
+        "silence",
+        "device_switch",
+        "soak"
+      ],
+      "properties": {
+        "rendered_speech": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["minutes", "false_barge_events", "false_barges_per_30_minutes"],
+          "properties": {
+            "minutes": {"type": "number", "exclusiveMinimum": 0, "maximum": 1440},
+            "false_barge_events": {"type": "integer", "minimum": 0, "maximum": 1000000},
+            "false_barges_per_30_minutes": {"type": "number", "minimum": 0}
+          }
+        },
+        "double_talk": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["trials", "detected", "recall"],
+          "properties": {
+            "trials": {"type": "integer", "minimum": 0, "maximum": 1000000},
+            "detected": {"type": "integer", "minimum": 0, "maximum": 1000000},
+            "recall": {"type": "number", "minimum": 0, "maximum": 1}
+          }
+        },
+        "interruption": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "trials",
+            "stop_latency_samples_ms",
+            "p95_stop_latency_ms",
+            "manual_available"
+          ],
+          "properties": {
+            "trials": {"type": "integer", "minimum": 1, "maximum": 20},
+            "stop_latency_samples_ms": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 20,
+              "items": {"type": "number", "minimum": 0, "maximum": 10000}
+            },
+            "p95_stop_latency_ms": {"type": "number", "minimum": 0, "maximum": 10000},
+            "manual_available": {"type": "boolean"}
+          }
+        },
+        "silence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["minutes", "false_barge_events"],
+          "properties": {
+            "minutes": {"type": "number", "exclusiveMinimum": 0, "maximum": 1440},
+            "false_barge_events": {"type": "integer", "minimum": 0, "maximum": 1000000}
+          }
+        },
+        "device_switch": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["trials", "safe_fallbacks", "route_generation_trials"],
+          "properties": {
+            "trials": {"type": "integer", "minimum": 0, "maximum": 3},
+            "safe_fallbacks": {"type": "integer", "minimum": 0, "maximum": 3},
+            "route_generation_trials": {
+              "type": "array",
+              "maxItems": 3,
+              "items": {"$ref": "#/$defs/route_generation_trial"}
+            }
+          }
+        },
+        "soak": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "minutes",
+            "unbounded_task_growth",
+            "process_leaks",
+            "audio_ring_growth",
+            "device_handle_leaks",
+            "post_fence_callbacks"
+          ],
+          "properties": {
+            "minutes": {"type": "number", "exclusiveMinimum": 0, "maximum": 1440},
+            "unbounded_task_growth": {"type": "boolean"},
+            "process_leaks": {"type": "integer", "minimum": 0, "maximum": 1000000},
+            "audio_ring_growth": {"type": "boolean"},
+            "device_handle_leaks": {"type": "integer", "minimum": 0, "maximum": 1000000},
+            "post_fence_callbacks": {"type": "integer", "minimum": 0, "maximum": 1000000}
+          }
+        }
+      }
+    },
+    "degradation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "playback_speech_admission_closed",
+        "manual_interruption_available",
+        "unsuppressed_interruption_observed"
+      ],
+      "properties": {
+        "playback_speech_admission_closed": {"type": "boolean"},
+        "manual_interruption_available": {"type": "boolean"},
+        "unsuppressed_interruption_observed": {"type": "boolean"}
+      }
+    },
+    "operator_checklist": {"$ref": "#/$defs/operator_checklist"},
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "median_erle_db_min",
+        "p10_erle_db_min",
+        "false_barges_per_30_minutes_max",
+        "double_talk_recall_min",
+        "isolation_correlation_p95_max",
+        "isolation_eligible_windows_min",
+        "isolation_leakage_p95_db_max",
+        "isolation_render_only_vad_events_max",
+        "isolation_warmup_duration_ms_min",
+        "route_round_trips_required",
+        "stop_latency_p95_ms_max",
+        "soak_minutes_min"
+      ],
+      "properties": {
+        "median_erle_db_min": {"const": 20.0},
+        "p10_erle_db_min": {"const": 10.0},
+        "false_barges_per_30_minutes_max": {"const": 1.0},
+        "double_talk_recall_min": {"const": 0.95},
+        "isolation_correlation_p95_max": {"const": 0.12},
+        "isolation_eligible_windows_min": {"const": 5},
+        "isolation_leakage_p95_db_max": {"const": -30.0},
+        "isolation_render_only_vad_events_max": {"const": 0},
+        "isolation_warmup_duration_ms_min": {"const": 5000.0},
+        "route_round_trips_required": {"const": 3},
+        "stop_latency_p95_ms_max": {"const": 150.0},
+        "soak_minutes_min": {"const": 30.0}
+      }
+    },
+    "passed": {"type": "boolean"}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "aec": {
+            "required": ["erle_samples_db"],
+            "properties": {"erle_samples_db": {"maxItems": 0}}
+          }
+        },
+        "required": ["aec"]
+      },
+      "then": {
+        "properties": {
+          "aec": {
+            "properties": {
+              "median_erle_db": {"const": null},
+              "p10_erle_db": {"const": null}
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "aec": {
+            "properties": {
+              "median_erle_db": {"type": "number"},
+              "p10_erle_db": {"type": "number"}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "isolation": {
+            "required": ["correlation_samples"],
+            "properties": {"correlation_samples": {"maxItems": 0}}
+          }
+        },
+        "required": ["isolation"]
+      },
+      "then": {
+        "properties": {
+          "isolation": {"properties": {"p95_correlation": {"const": null}}}
+        }
+      },
+      "else": {
+        "properties": {
+          "isolation": {"properties": {"p95_correlation": {"type": "number"}}}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "isolation": {
+            "required": ["leakage_db_samples"],
+            "properties": {"leakage_db_samples": {"maxItems": 0}}
+          }
+        },
+        "required": ["isolation"]
+      },
+      "then": {
+        "properties": {
+          "isolation": {"properties": {"p95_leakage_db": {"const": null}}}
+        }
+      },
+      "else": {
+        "properties": {
+          "isolation": {"properties": {"p95_leakage_db": {"type": "number"}}}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "aec": {
+            "properties": {"delay_estimate_refined": {"const": true}}
+          }
+        },
+        "required": ["aec"]
+      },
+      "then": {
+        "properties": {
+          "aec": {
+            "properties": {"delay_estimate_available": {"const": true}}
+          }
+        }
+      }
+    },
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "device_class": {"const": "builtin"},
+            "device": {"properties": {"transport": {"const": "builtin"}}}
+          }
+        },
+        {
+          "properties": {
+            "device_class": {"const": "usb"},
+            "device": {"properties": {"transport": {"enum": ["usb", "wired"]}}}
+          }
+        },
+        {
+          "properties": {
+            "device_class": {"const": "bluetooth"},
+            "device": {"properties": {"transport": {"const": "bluetooth"}}}
+          }
+        }
+      ]
+    },
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "safety_path": {"const": "aec"},
+            "aec": {
+              "properties": {
+                "delay_estimate_available": {"const": true},
+                "delay_estimate_refined": {"const": true},
+                "health_path": {"const": "healthy"},
+                "processor_operational": {"const": true},
+                "erle_samples_db": {"minItems": 1}
+              }
+            }
+          },
+          "required": ["safety_path", "aec"]
+        },
+        {
+          "properties": {
+            "safety_path": {"const": "acoustic-isolation"},
+            "aec": {
+              "properties": {
+                "health_path": {"enum": ["warming", "degraded"]},
+                "processor_operational": {"const": true}
+              }
+            }
+          },
+          "required": ["safety_path", "aec"]
+        },
+        {
+          "properties": {"safety_path": {"const": "half-duplex"}},
+          "required": ["safety_path"]
+        }
+      ]
+    },
+    {
+      "if": {"properties": {"passed": {"const": true}}, "required": ["passed"]},
+      "then": {
+        "allOf": [
+          {
+            "properties": {
+              "operator_checklist": {"$ref": "#/$defs/completed_checklist"},
+              "transport_health": {
+                "properties": {
+                  "capture_overflows": {"const": 0},
+                  "render_overflows": {"const": 0},
+                  "reference_overflows": {"const": 0},
+                  "control_overflows": {"const": 0},
+                  "saturation_events": {"const": 0}
+                }
+              },
+              "trials": {
+                "properties": {
+                  "rendered_speech": {
+                    "properties": {"false_barges_per_30_minutes": {"maximum": 1.0}}
+                  },
+                  "interruption": {
+                    "properties": {"manual_available": {"const": true}}
+                  },
+                  "device_switch": {
+                    "properties": {
+                      "trials": {"const": 3},
+                      "safe_fallbacks": {"const": 3},
+                      "route_generation_trials": {"minItems": 3}
+                    }
+                  },
+                  "silence": {"properties": {"false_barge_events": {"const": 0}}},
+                  "soak": {
+                    "properties": {
+                      "minutes": {"minimum": 30.0},
+                      "unbounded_task_growth": {"const": false},
+                      "process_leaks": {"const": 0},
+                      "audio_ring_growth": {"const": false},
+                      "device_handle_leaks": {"const": 0},
+                      "post_fence_callbacks": {"const": 0}
+                    }
+                  }
+                }
+              },
+              "isolation": {"properties": {"demotions": {"const": 0}}},
+              "degradation": {
+                "properties": {
+                  "manual_interruption_available": {"const": true},
+                  "unsuppressed_interruption_observed": {"const": false}
+                }
+              }
+            }
+          },
+          {
+            "oneOf": [
+              {
+                "properties": {
+                  "safety_path": {"const": "aec"},
+                  "aec": {
+                    "properties": {
+                      "median_erle_db": {"minimum": 20.0},
+                      "p10_erle_db": {"minimum": 10.0}
+                    }
+                  },
+                  "trials": {
+                    "properties": {
+                      "double_talk": {
+                        "properties": {"trials": {"minimum": 1}, "recall": {"minimum": 0.95}}
+                      },
+                      "interruption": {
+                        "properties": {"p95_stop_latency_ms": {"maximum": 150.0}}
+                      }
+                    }
+                  },
+                  "degradation": {
+                    "properties": {"playback_speech_admission_closed": {"const": false}}
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "safety_path": {"const": "acoustic-isolation"},
+                  "isolation": {
+                    "properties": {
+                      "eligible_windows": {"minimum": 5},
+                      "required_windows": {"const": 5},
+                      "warmup_duration_ms": {"minimum": 5000.0},
+                      "correlation_samples": {"minItems": 1},
+                      "p95_correlation": {"type": "number", "maximum": 0.12},
+                      "leakage_db_samples": {"minItems": 1},
+                      "p95_leakage_db": {"type": "number", "maximum": -30.0},
+                      "render_only_vad_events": {"const": 0}
+                    }
+                  },
+                  "trials": {
+                    "properties": {
+                      "double_talk": {
+                        "properties": {"trials": {"minimum": 1}, "recall": {"minimum": 0.95}}
+                      },
+                      "interruption": {
+                        "properties": {"p95_stop_latency_ms": {"maximum": 150.0}}
+                      }
+                    }
+                  },
+                  "degradation": {
+                    "properties": {"playback_speech_admission_closed": {"const": false}}
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "safety_path": {"const": "half-duplex"},
+                  "degradation": {
+                    "properties": {
+                      "playback_speech_admission_closed": {"const": true},
+                      "manual_interruption_available": {"const": true}
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:\\.[0-9]+)?$"},
+    "nullable_erle": {
+      "oneOf": [
+        {"type": "number", "minimum": -100, "maximum": 100},
+        {"type": "null"}
+      ]
+    },
+    "demotion_reason_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "reason"],
+      "properties": {
+        "count": {"type": "integer", "minimum": 1, "maximum": 1000000},
+        "reason": {
+          "enum": [
+            "ambiguous-correlation",
+            "capture-sequence-gap",
+            "correlated-render",
+            "inaudible-render",
+            "invalid-capture-pcm",
+            "invalid-render-pcm",
+            "missing-render-reference",
+            "missing-timing",
+            "native-processor-failure",
+            "render-reference-failure",
+            "render-reference-gap",
+            "render-reference-overflow",
+            "render-sequence-gap",
+            "route-mismatch",
+            "saturation",
+            "timing-discontinuity",
+            "unbounded-timing"
+          ]
+        }
+      }
+    },
+    "route_generation_trial": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start_generation",
+        "alternate_generation",
+        "return_generation",
+        "alternate_admission_closed",
+        "return_admission_closed",
+        "returned_to_target"
+      ],
+      "properties": {
+        "start_generation": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+        "alternate_generation": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+        "return_generation": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+        "alternate_admission_closed": {"type": "boolean"},
+        "return_admission_closed": {"type": "boolean"},
+        "returned_to_target": {"type": "boolean"}
+      }
+    },
+    "operator_checklist": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rendered_speech_completed",
+        "double_talk_completed",
+        "interruption_completed",
+        "silence_completed",
+        "device_switch_completed",
+        "soak_completed"
+      ],
+      "properties": {
+        "rendered_speech_completed": {"type": "boolean"},
+        "double_talk_completed": {"type": "boolean"},
+        "interruption_completed": {"type": "boolean"},
+        "silence_completed": {"type": "boolean"},
+        "device_switch_completed": {"type": "boolean"},
+        "soak_completed": {"type": "boolean"}
+      }
+    },
+    "completed_checklist": {
+      "allOf": [
+        {"$ref": "#/$defs/operator_checklist"},
+        {
+          "properties": {
+            "rendered_speech_completed": {"const": true},
+            "double_talk_completed": {"const": true},
+            "interruption_completed": {"const": true},
+            "silence_completed": {"const": true},
+            "device_switch_completed": {"const": true},
+            "soak_completed": {"const": true}
+          }
+        }
+      ]
+    }
+  }
+}

@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from Tests.Chat.console_close_helpers import close_controller_session
 from Tests.Chat.test_console_automatic_library_preparation import _RagService, _row
 from Tests.Chat.test_console_dispatch_queue_recovery import _ephemeral_store
 from Tests.Chat.test_console_dispatch_recovery import (
@@ -409,6 +410,26 @@ async def test_automatic_accepted_restart_retry_requeries_durable_evidence(
     assert conversation_id is not None
 
     restarted, restarted_session_id = _restored_store(db, conversation_id)
+    restarted_session = next(
+        row for row in restarted.sessions() if row.id == restarted_session_id
+    )
+    restarted_session.library_policy_holder.snapshot = ConsoleLibraryPolicySnapshot(
+        auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+        assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+        policy_revision=1,
+        source="durable",
+    )
+
+    class _RestoredAutomaticPolicy:
+        async def capture_for_execution(self, _session_id: str):
+            return ConsoleLibraryPolicySnapshot(
+                auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+                assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+                policy_revision=1,
+                source="durable",
+            )
+
+    restarted.library_policy_coordinator = _RestoredAutomaticPolicy()
     retry_gateway = _OriginalSettlementGateway(db, outcome="success")
     retry = ConsoleChatController(
         store=restarted,
@@ -513,7 +534,7 @@ async def test_ephemeral_owner_survives_close_restore_and_dies_only_at_app_teard
     )
 
     with pytest.raises(RuntimeError, match="pending turn"):
-        replacement_controller.close_session(session_id)
+        close_controller_session(replacement_controller, session_id)
     assert not replacement_controller.prompt_queue_registry.snapshot(session_id).closing
     with pytest.raises(RuntimeError, match="pending turn"):
         store.close_session(session_id)

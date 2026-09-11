@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tldw.invalid/schemas/voice-qualification-manifest-v1.json",
+  "title": "Speculative voice rollout qualification manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "pipeline_version",
+    "app_version",
+    "source_tree_digest",
+    "aec_package",
+    "platforms"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "pipeline_version": {"const": 1},
+    "app_version": {"$ref": "#/$defs/version"},
+    "source_tree_digest": {"$ref": "#/$defs/sha256"},
+    "aec_package": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "upstream_commit"],
+      "properties": {
+        "name": {"const": "tldw-voice-aec"},
+        "version": {"$ref": "#/$defs/version"},
+        "upstream_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      }
+    },
+    "platforms": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "macos-arm64",
+        "macos-x86_64",
+        "windows-x86_64",
+        "linux-x86_64",
+        "linux-aarch64"
+      ],
+      "properties": {
+        "macos-arm64": {"$ref": "#/$defs/platform"},
+        "macos-x86_64": {"$ref": "#/$defs/platform"},
+        "windows-x86_64": {"$ref": "#/$defs/platform"},
+        "linux-x86_64": {"$ref": "#/$defs/platform"},
+        "linux-aarch64": {"$ref": "#/$defs/platform"}
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:\\.[0-9]+)?$"
+    },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "qualified",
+        "wheel_sha256",
+        "extension_sha256",
+        "automated_report_sha256",
+        "physical_report_sha256",
+        "history_gate_sha256",
+        "history_gate_passed"
+      ],
+      "properties": {
+        "qualified": {"type": "boolean"},
+        "wheel_sha256": {"$ref": "#/$defs/sha256"},
+        "extension_sha256": {"$ref": "#/$defs/sha256"},
+        "automated_report_sha256": {"$ref": "#/$defs/sha256"},
+        "physical_report_sha256": {"$ref": "#/$defs/sha256"},
+        "history_gate_sha256": {"$ref": "#/$defs/sha256"},
+        "history_gate_passed": {"type": "boolean"},
+        "python_tag": {
+          "type": "string",
+          "pattern": "^cp3(?:11|12|13)$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"qualified": {"const": true}},
+            "required": ["qualified"]
+          },
+          "then": {
+            "required": ["python_tag"],
+            "properties": {"history_gate_passed": {"const": true}}
+          }
+        }
+      ]
+    }
+  }
+}
