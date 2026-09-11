@@ -253,9 +253,7 @@ def _run_profile_child(root, name, script, environment, *, timeout=60):
     return output_path.read_text(encoding="utf-8")
 
 
-def test_two_known_profiles_complete_capture_preserves_native_state_and_resumes(
-    tmp_path,
-):
+def _capture_two_profiles(tmp_path):
     """Stage1: A is live, B is closed at capture; this is not restore qualification."""
     root = tmp_path.resolve()
     for name in ("home", "xdg-config", "xdg-data", "cache", "tmp", "shared"):
@@ -309,4 +307,116 @@ def test_two_known_profiles_complete_capture_preserves_native_state_and_resumes(
     (root / "resume.py").write_text(_RESUME, encoding="utf-8")
     assert "TWO_PROFILE_COMPLETE_CAPTURE_AND_RESUME" in _run_profile_child(
         root, "capture", _CAPTURE, environment
+    )
+    return root, environment
+
+
+def test_two_known_profiles_complete_capture_preserves_native_state_and_resumes(
+    tmp_path,
+):
+    _capture_two_profiles(tmp_path)
+
+
+_PLAN_ISOLATED = (
+    _PRIVATE
+    + r"""
+from tldw_chatbook.Backup_Recovery.archive_reader import acquire,verify_sealed
+from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
+from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
+assert 'tldw_chatbook.config' not in sys.modules
+archive=acquire(fixture/'two-profiles.tldw-backup.zip',fixture/'stage2-acquired',ArchiveLimits(),None,threading.Event())
+doc=verify_sealed(archive)
+assert doc.consistency=='coherent' and len(doc.profile_ids)==2
+destination=fixture/'restore-destinations'
+roots={row.logical_id:row for row in doc.directories if row.parent_id is None}
+producer={row.logical_id:row for row in doc.producer_inventory}
+profiles={profile:('first','second')[index] for index,profile in enumerate(doc.profile_ids)}
+names={profile:'recovered-'+label for profile,label in profiles.items()}
+mapping={}
+# Exact installed destinations for this finite captured cohort; new owners must
+# be reviewed explicitly instead of silently landing in a miscellaneous folder.
+custom={'db.chachanotes.primary','chat.attachments','notes.sync_bindings','quiz.local','study.local','db.media.primary','research.local'}
+ordinary={'db.evals','db.library_collections','db.library_ingest_jobs','db.scheduled_tasks','db.subscriptions','db.workspaces','kanban.local','mcp.targets','notifications.client','runtime.event_state','runtime.sync_state','writing.local'}
+trees={'chat.dictionaries':'chat_dicts','chatbooks.archives':'chatbooks','rag.definitions':'rag_profiles'}
+for key,row in roots.items():
+ owner=producer[key].owner_id
+ if row.synthetic:
+  members=[item for item in doc.files if item.root_id==key]
+  assert len(members)==1,(key,members)
+  member=members[0]
+  assert member.owner_id==owner and member.logical_id.startswith('profile:')
+  profile=member.logical_id.split(':')[1]
+ else:
+  assert key.startswith('profile:'),key
+  profile=key.split(':')[1]
+ home=destination/profiles[profile]
+ data=home/'data'/names[profile]
+ if row.synthetic:
+  if owner in {'config','config.history','runtime.source_state'}:target=home/'config'
+  elif owner in custom:target=home/'custom'
+  elif owner in {'db.prompts.primary','chatbooks.registry'}:target=destination/'shared-prompts'
+  elif owner=='eval.definitions':target=destination/'inactive-eval'
+  else:
+   assert owner in ordinary,(key,owner)
+   target=data
+ else:
+  if owner=='persona.visual_identity_builtin':target=destination/'inactive-builtin'
+  else:
+   assert owner in trees,(key,owner)
+   target=data/trees[owner]
+ mapping[key]=target
+for profile,label in profiles.items():mapping[f'profile:{profile}:paths.data_dir']=destination/label/'data'
+builtin=[key for key in roots if producer[key].owner_id=='persona.visual_identity_builtin']
+assert len(builtin)==2 and all(not roots[key].synthetic for key in builtin)
+assert producer[builtin[0]].shared_group and producer[builtin[0]].shared_group==producer[builtin[1]].shared_group
+assert mapping[builtin[0]]==mapping[builtin[1]] and not mapping[builtin[0]].exists()
+assert set(roots)<=mapping.keys()
+(fixture/'stage2-manifest.json').write_bytes(archive.manifest_bytes)
+evidence={'archive':str(archive.path),'archive_digest':archive.digest,'destinations':{key:str(value) for key,value in mapping.items()},'profile_names':names,'shared_builtin_roots':builtin,'shared_builtin_group':producer[builtin[0]].shared_group}
+(fixture/'stage2-mapping.json').write_text(json.dumps(evidence,sort_keys=True,indent=2))
+try:
+ plan=plan_restore(archive,mode='isolated',destinations=mapping,target=None,profile_names=names)
+except ValueError as error:
+ (fixture/'stage2-refusal.json').write_text(json.dumps({'type':type(error).__name__,'reason':str(error)}))
+ raise
+assert dict(plan.destinations)=={key:mapping[key] for key in roots}
+assert {row.logical_id for row in doc.files}<=set(dict(plan.restore))
+assert {row.logical_id for row in doc.directories if not row.synthetic}<=set(dict(plan.restore))
+assert {dict(plan.restore)[key] for key in builtin}=={destination/'inactive-builtin'}
+assert not any(path.exists() for path in mapping.values())
+assert not blocked_attempts(),blocked_attempts()
+print('TWO_PROFILE_ISOLATED_PLAN_VALIDATED',flush=True)
+"""
+)
+
+
+def test_two_captured_profiles_plan_shared_concrete_roots_for_isolated_restore(
+    tmp_path,
+):
+    """Stage2a plans every earned root; it does not publish or approve owners."""
+    root, environment = _capture_two_profiles(tmp_path)
+    for name in (
+        "restore-home",
+        "restore-config",
+        "restore-data",
+        "restore-cache",
+        "restore-tmp",
+        "restore-destinations",
+    ):
+        (root / name).mkdir(mode=0o700)
+    selector = root / "restore-config" / "config.toml"
+    selector.write_text('[general]\nusers_name="restore-parent"\n', encoding="utf-8")
+    selector.chmod(0o600)
+    environment = dict(
+        environment,
+        HOME=str(root / "restore-home"),
+        USERPROFILE=str(root / "restore-home"),
+        XDG_CONFIG_HOME=str(root / "restore-config"),
+        XDG_DATA_HOME=str(root / "restore-data"),
+        XDG_CACHE_HOME=str(root / "restore-cache"),
+        TMPDIR=str(root / "restore-tmp"),
+        TLDW_CONFIG_PATH=str(selector),
+    )
+    assert "TWO_PROFILE_ISOLATED_PLAN_VALIDATED" in _run_profile_child(
+        root, "stage2-plan", _PLAN_ISOLATED, environment
     )

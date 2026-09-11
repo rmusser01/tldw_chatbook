@@ -62,6 +62,42 @@ def _document(archive):
     return _manifest(archive.manifest_bytes, ArchiveLimits(), encrypted=True)
 
 
+def _shared_directory_aliases(doc):
+    """Match declared concrete roots only when their complete trees agree."""
+    producer = {row.logical_id: row for row in doc.producer_inventory}
+    directories = {row.logical_id: row for row in doc.directories}
+    trees = {
+        row.logical_id: []
+        for row in doc.directories
+        if row.parent_id is None
+        and not row.synthetic
+        and row.logical_id in producer
+        and producer[row.logical_id].shared_group
+    }
+    for row in (*doc.directories, *doc.files):
+        if row.root_id not in trees:
+            continue
+        owner = producer[row.logical_id]
+        directory = row.logical_id in directories
+        trees[row.root_id].append(
+            (
+                row.relative_path,
+                "directory" if directory else "file",
+                directories[row.parent_id].relative_path if row.parent_id else None,
+                owner.owner_id,
+                owner.shared_group,
+                row.metadata,
+                None if directory else (row.size, row.sha256),
+            )
+        )
+    representatives, aliases = {}, {}
+    for root, members in trees.items():
+        closure = tuple(sorted(members, key=lambda row: row[:2]))
+        group = (producer[root].shared_group, closure)
+        aliases[root] = representatives.setdefault(group, root)
+    return aliases
+
+
 def _ancestor(path):
     """Check existing path components without accepting a symlink spelling."""
     if not isinstance(path, Path) or not path.is_absolute() or ".." in path.parts:
@@ -287,6 +323,7 @@ def plan_restore(
     }
     directories = {row.logical_id: row for row in doc.directories}
     roots = {key: row for key, row in directories.items() if row.parent_id is None}
+    shared_roots = _shared_directory_aliases(doc)
     accepted = {
         f"profile:{profile}:{section}.{key}"
         for profile in doc.profile_ids
@@ -326,7 +363,11 @@ def plan_restore(
                     == unicodedata.normalize("NFC", str(other_path)).casefold()
                 ) and (
                     path != other_path
-                    or not (roots[key].synthetic and roots[other].synthetic)
+                    or not (
+                        roots[key].synthetic and roots[other].synthetic
+                        or key in shared_roots
+                        and shared_roots[key] == shared_roots.get(other)
+                    )
                 ):
                     raise ValueError("destination_collision")
     for key, left in destinations.items():
@@ -456,6 +497,21 @@ def plan_restore(
         norm = unicodedata.normalize("NFC", str(path)).casefold()
         if norm in seen_paths:
             previous = seen_paths[norm]
+            previous_directory = directories.get(previous)
+            if (
+                directory is not None
+                and previous_directory is not None
+                and key in producer
+                and previous in producer
+                and producer[key].shared_group
+                and producer[key].shared_group == producer[previous].shared_group
+                and directory.root_id in shared_roots
+                and shared_roots[directory.root_id]
+                == shared_roots.get(previous_directory.root_id)
+                and path == dict(restore)[previous]
+            ):
+                trimmed.append((key, path))
+                continue
             if (
                 key in payloads
                 and previous in payloads
@@ -499,7 +555,7 @@ def plan_restore(
     shared_destinations = {}
     for key in selected:
         item = producer.get(key)
-        if item and item.shared_group and key in payloads:
+        if item and item.shared_group and key in mapped:
             shared_destinations.setdefault(item.shared_group, set()).add(mapped[key])
     if any(len(paths) != 1 for paths in shared_destinations.values()):
         raise ValueError("shared_target_split")
