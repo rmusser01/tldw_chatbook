@@ -271,9 +271,8 @@ readable measure rather than stretched across the whole canvas.
   names the Escape chip for that surface (`esc leave field` where nothing
   else owns the key — a list canvas keeps its own `esc focus rail`), and
   carries the canvas verbs after `after esc:` — they are not live until you
-  leave the field. On a terminal under 64 columns the return chip
-  (`esc back to Library`) comes first instead, because that is the one
-  action the narrow footer must never drop.
+  leave the field. Under 64 columns there is room for a single chip, so the
+  footer names only what Escape does there and the verbs are not listed.
 
 One special case: selecting **Notes** adds a
 **Library notes | Folder files** strip above the workbench. **Folder files**
