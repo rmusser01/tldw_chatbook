@@ -249,7 +249,11 @@ The five decisions, with the scope line each one shows:
 | **Always** | Remembered for this tool. Change it under MCP ▸ Permissions. |
 | **Deny** | This call only; the model is told not to retry. |
 
-- Not every row offers all five. MCP tool rows do. A **local workspace tool**
+- Not every row offers all five. MCP tool rows do, except a high-risk tool
+  (tagged `mutates` or `process`), whose row does **not** offer **Always ·
+  these args** — the risk floor would make a stored exact-argument rule
+  inert, so the card never offers it; see [Exact-input allow
+  rules](../mcp.md#exact-input-allow-rules). A **local workspace tool**
   offers **Once**, **This session**, **Always** and **Deny** — no
   exact-argument rule, since nothing stores one for local tools. A
   **built-in** tool offers **Once**, **This session** and **Deny** only:
@@ -328,12 +332,16 @@ one generic word:
 - `· denied by you` — you pressed **Deny** on the card.
 - `· blocked (Off)` — the tool's permission is **Off**; no card was shown.
 - `· blocked (kill switch)` — the global kill switch refused it.
+- `· blocked` — a **Deny** you pressed on a **local workspace tool** (it
+  can't name its own authority), an approval timeout, or a round that ended
+  undecided.
 
 Expanding a refused row is labelled **Sent to the model** rather than "Full
 output": what it holds is the refusal text the model was given ("Do not retry
 this call…"), never a result the tool produced. The same vocabulary shows up
-in the MCP screen's [Audit mode](../mcp.md), so what you read in the
-transcript and what you read in the log are the same words.
+in the MCP screen's [Audit mode](../mcp.md#permission-continuity-for-built-in-tools),
+so what you read in the transcript and what you read in the log are the same
+words.
 
 Some short local database mutations have a definitive-after-start contract.
 Before approval, Stop still withdraws the request. After you approve and the
@@ -357,11 +365,6 @@ same tool with different arguments still asks — and is removed from the
 tool's row in [MCP ▸ Tools](../mcp.md#exact-input-allow-rules). A **This
 session** grant is listed there too, with a **Revoke** beside it.
 
-**Always · these args** is narrower: it remembers only the exact
-arguments shown on that card, not the whole tool — the same tool called
-again with different arguments still asks. See [Exact-input allow
-rules](../mcp.md#exact-input-allow-rules) for where to review or remove one.
-
 With sub-agents running in parallel (see below), more than one approval card
 can be pending at once — cards aren't merged across sub-agents: each is
 scoped to the one run that raised it, so deciding one card never resolves or
@@ -382,8 +385,8 @@ forces a separate per-call review even if ordinary Notes tools are allowed for
 the session. The row identifies create/update, title, classification, and a
 content digest without placing the full private note body on the card; the
 agent must first show the complete proposed title, content, organization,
-target, and versions in the conversation. The only decisions are **Approve
-once** and **Deny**.
+target, and versions in the conversation. The only decisions are **Once**
+and **Deny**.
 
 Only the foreground primary can submit that save. A subagent can search
 lessons, verify evidence, and return a structured draft, but a mutation returns
@@ -407,7 +410,7 @@ count makes a lesson authoritative. Subagents can return evidence, target hints,
 candidate wording, and verification ideas, but cannot present a promotion card
 or apply a change.
 
-For repository instructions, preparation is one **Approve once** / **Deny**
+For repository instructions, preparation is one **Once** / **Deny**
 card over an exact read-only preview. Application is a second card over the
 identical retained proposal. Only `AGENTS.md` or `AGENTS.override.md` inside the
 selected writable binding qualifies. A changed target, binding, applicable
@@ -1578,7 +1581,7 @@ appears above the transcript:
 
 ### MCP tools
 
-Servers you configure on the [MCP screen](../mcp.md) 🚧 surface in Console as
+Servers you configure on the [MCP screen](../mcp.md) surface in Console as
 extra tools the agent can call. The Inspector's **MCP** row (under Tools)
 shows their state: "N tools ready", or "N servers enabled, not connected" when
 servers are configured but unreachable. MCP tool calls go through the same
@@ -2049,7 +2052,7 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   switch.
 - [Library ▸ Skills](../library/skills.md) — create, import, review, and
   approve skills.
-- [MCP](../mcp.md) 🚧 — servers, tools, and permissions.
+- [MCP](../mcp.md) — servers, tools, and permissions.
 - [Console runs continue during navigation](../index.md#console-runs-continue-during-navigation)
   — what leaving Console does to runs and approvals.
 - [Console](../console.md) — the screen itself.
