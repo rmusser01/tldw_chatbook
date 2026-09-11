@@ -360,7 +360,14 @@ async def test_details_open_recomputes_db_sizes_and_patches_line():
                 f"(manager calls={app.db_status_manager.calls})."
             )
         assert app.db_status_manager.calls >= 1
-        rendered = str(screen.query_one("#library-details-db-sizes", Static).render())
+        # task-32230: the three sizes now take a row each (they wrapped
+        # mid-value when they shared one), so the refreshed reading is read
+        # across the rows the patcher owns, not out of a single line.
+        rendered = " ".join(
+            str(widget.render())
+            for widget in screen.query(".library-details-row")
+            if str(widget.id or "").startswith("library-details-db-sizes")
+        )
         assert "180.0KB" in rendered and "508.0KB" in rendered
 
 

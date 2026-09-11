@@ -342,3 +342,38 @@ def test_dispatcher_forwards_explicit_credential_decision_without_value(
     assert type(captured["api_key_resolved"]) is bool
     assert "api_key" not in captured
     assert "object at 0x" not in repr(captured)
+
+
+def test_unserializable_payload_is_an_app_error_not_a_provider_rejection() -> None:
+    """task-32273: a client-side serialisation failure in request preparation
+    must not be reported as an HTTP 400 the provider sent back."""
+
+    from types import MappingProxyType
+
+    from tldw_chatbook.Chat.console_provider_gateway import safe_provider_error_copy
+
+    frozen_tool_call = MappingProxyType(
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": MappingProxyType(
+                {"name": "find_tools", "arguments": '{"query": "x"}'}
+            ),
+        }
+    )
+
+    with pytest.raises(ChatConfigurationError) as caught:
+        LLM_API_Calls_Local._chat_with_openai_compatible_local_server(
+            api_base_url="http://127.0.0.1:9",
+            model_name="fake-model",
+            input_data=[
+                {"role": "assistant", "content": "", "tool_calls": [frozen_tool_call]}
+            ],
+            api_key=None,
+            streaming=False,
+        )
+
+    assert caught.value.status_code is None
+    copy = safe_provider_error_copy("custom", caught.value)
+    assert "Status:" not in copy
+    assert "rejected" not in copy

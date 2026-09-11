@@ -43,6 +43,15 @@ task...".
   Mic and Attach have their own page:
   [attachments, images & voice](attachments-images-voice.md).
 
+### Character portrait sizing
+
+The selected character's portrait scales up or down to fit the available
+Character image area, keeping the whole image visible without stretching or
+cropping. Space may remain beside or beneath the image when its proportions
+differ from the area. The Character section grows with the terminal height and reserves space
+for the name and controls. Resizing smaller fits the portrait back into the
+reduced area. Click the portrait to open the larger image viewer.
+
 ### What the next send will cost
 
 When there is something to send, Send reads **Send | $** (or **Queue | $**
@@ -307,6 +316,27 @@ to hidden chain-of-thought.
   Turning it off hides both displayable and unavailable rows immediately; it
   does not disable capture, saved history, compatible replay, or token
   accounting.
+
+For local models, **Settings > Console Behavior > Reasoning history** refines a
+conversation's **Auto** replay policy. **Automatic** is the default: reviewed
+server templates select either the current exchange (including its tool calls)
+or all available compatible thinking. An unrecognized or unavailable template
+uses the server default. You can choose **Current exchange**, **All available**,
+or **Off**, globally or for the active endpoint and model. A target override can
+be cleared with **Use default**. These choices never erase saved thinking. **All available** includes compatible
+fields in the request; the server template can still omit older reasoning. For
+example, Gemma 4 can preserve older tool-call thinking while omitting older final
+answer thinking.
+
+Conversation **Include** explicitly requests all compatible thinking; **Exclude**
+disables optional replay. Provider-required continuation remains **Required**.
+Settings shows the last detected template policy after a send. llama.cpp reports
+native tool support through its template capabilities; for vLLM or Ollama, enable
+the separate server native-tool option only when that endpoint is configured for
+native tool calls. The option is remembered for that endpoint and model. Gemma
+needs the native protocol to retain thinking across tool rounds: legacy fenced
+tool results appear to its template as new user messages and may discard even
+the active round's reasoning. The original trace remains available for review.
 
 If a persistent conversation backend cannot round-trip the adapter's resolved
 thinking format, Console refuses the send before contacting the provider and

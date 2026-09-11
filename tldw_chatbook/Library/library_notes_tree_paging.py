@@ -195,12 +195,38 @@ def placement_title_sort_key(item: NotesSliceItem) -> tuple[str, str, str]:
     return (title.casefold(), note_id, membership_id)
 
 
+def _resort_placement_pairs(
+    pairs: list[tuple[NotesSliceItem, str]], order: str
+) -> list[tuple[NotesSliceItem, str]]:
+    """Order one loaded window the way the repository pages it.
+
+    The tiebreakers (note id, then membership id) always run ascending,
+    including under ``newest``. That needs two stable passes rather than one
+    ``reverse=True``, which would flip the tiebreakers too.
+    """
+    if order == "title":
+        return sorted(pairs, key=lambda pair: placement_title_sort_key(pair[0]))
+
+    def modified(item: NotesSliceItem) -> str:
+        if not isinstance(item, NotePlacementRecord):
+            return ""
+        return str(item.note.get("last_modified", "") or "")
+
+    by_tiebreak = sorted(
+        pairs, key=lambda pair: placement_title_sort_key(pair[0])[1:]
+    )
+    return sorted(
+        by_tiebreak, key=lambda pair: modified(pair[0]), reverse=order == "newest"
+    )
+
+
 def patch_notes_tree_branches_title(
     branches: Mapping[NotesBranchKey, NotesBranchSliceState],
     *,
     note_id: str,
     title: str,
     modified_at: str | None = None,
+    order: str = "title",
 ) -> tuple[dict[NotesBranchKey, NotesBranchSliceState], bool]:
     """Retitle every cached placement of ``note_id`` and re-sort its slice.
 
@@ -216,10 +242,12 @@ def patch_notes_tree_branches_title(
     - Only ``placements`` slices are touched; ``folders`` slices and every
       non-matching item pass through unchanged, and an unchanged slice keeps
       its original object identity so callers can skip a needless rebuild.
-    - Because repository pages are ordered by title (Qodo #3), a rename can
-      change a note's collation position; the affected slice's ``items`` and
-      the parallel ``item_ids`` are therefore re-sorted together by
-      :func:`placement_title_sort_key` so the loaded page stays ordered.
+    - Because a repository page is ordered (Qodo #3), a save can change a
+      note's position -- its title moves it under ``title``, and its fresh
+      ``last_modified`` moves it under ``newest``/``oldest``; the affected
+      slice's ``items`` and the parallel ``item_ids`` are therefore
+      re-sorted together in the order the caller says the tree is paging in
+      (``order``, task-32172).
 
     Invariant NOT maintained (caller's responsibility): cross-page offset
     boundaries. Re-sorting only the loaded window cannot pull in an item that
@@ -247,11 +275,8 @@ def patch_notes_tree_branches_title(
             continue
         changed_any = True
         # Re-sort items and their parallel ids together so the loaded page
-        # matches the repository's title ordering after the rename.
-        reordered = sorted(
-            zip(items, state.item_ids),
-            key=lambda pair: placement_title_sort_key(pair[0]),
-        )
+        # matches the repository's ordering after the save.
+        reordered = _resort_placement_pairs(list(zip(items, state.item_ids)), order)
         patched[key] = replace(
             state,
             items=tuple(pair[0] for pair in reordered),

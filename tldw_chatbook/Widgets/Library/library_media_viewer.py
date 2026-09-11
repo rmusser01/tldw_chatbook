@@ -429,14 +429,17 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             # Horizontal because the four labels need ~60 cells and the
             # Reader is only ~46 wide at 100x30, where a Horizontal clips
             # the fourth action off the pane outright; the grid reflows it
-            # onto a second row instead. Column width is the longest label
-            # (13) plus two cells of gutter -- the toolbar rule zeroes these
-            # buttons' own padding, so the label is the whole button.
+            # onto a second row instead.
             with ItemGrid(
                 id="library-media-reader-more-actions",
                 classes="ds-toolbar",
-                min_column_width=15,
-                max_column_width=16,
+                # task-32237: the column has to hold the longest label (13),
+                # the Button's own two auto-width cells, and the danger
+                # action's 2-cell separation (`.library-media-action-danger`,
+                # task-31980) -- 16 cells cut "Move to trash" to "Move to"
+                # because that margin is taken out of the button's box.
+                min_column_width=17,
+                max_column_width=17,
             ):
                 if not self.external_detail:
                     yield Button("Edit metadata", id="library-media-edit", compact=True)
@@ -1041,6 +1044,10 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 id="library-media-viewer-analysis-text",
                 markup=False,
             )
+        # task-32217 reverses task-31237's `height: 1fr` fill for THIS tab
+        # (see the analysis-scoped rules in _agentic_terminal.tcss): the fill
+        # pinned this row to the pane floor, ~33 empty rows under a 2-line
+        # analysis; the box now hugs its text and these actions follow it.
         with Horizontal(classes="ds-toolbar"):
             yield Button(
                 "Edit analysis" if self.viewer.analysis else "Add analysis",

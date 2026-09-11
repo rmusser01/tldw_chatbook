@@ -1358,8 +1358,8 @@ def build_console_controllers(
             )
         ),
         refresh_effective_scope_and_sync=(
-            lambda session: screen._retrieval._refresh_console_effective_scope_and_sync(
-                session
+            lambda session, **kwargs: screen._retrieval._refresh_console_effective_scope_and_sync(
+                session, **kwargs
             )
         ),
         session_surface_accessor=lambda: screen.console_session_surface,
@@ -1852,6 +1852,11 @@ def build_console_controllers(
             lambda: screen._ensure_console_provider_gateway()
         ),
         console_provider_blocker_copy=(lambda: screen._console_provider_blocker_copy()),
+        # task-32276: Improve's own "a run is in flight" gate, split out of
+        # `console_provider_blocker_copy` (which stopped covering a merely-
+        # active run) so that behavior does not depend on blocker-copy
+        # internals.
+        console_run_active=(lambda: screen._console_run_active()),
         # A bare-attribute READ, not a call: the modal opener hands
         # this straight to `ConsolePromptsModal(configure_provider=...)`
         # without calling it, so the accessor must return the screen's

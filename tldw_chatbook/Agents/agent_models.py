@@ -10,10 +10,13 @@ import hashlib
 import json
 import math
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Callable, Literal, Mapping, TypeAlias
+from typing import TYPE_CHECKING, Literal, TypeAlias
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
 
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationResult,
@@ -465,8 +468,9 @@ class ModelTurn:
     ``assistant_message`` carries the provider-shaped assistant message for
     native tool-call turns (content plus the raw ``tool_calls`` array,
     echoed verbatim into history so the follow-up ``role="tool"`` results
-    pair with their calls by id). ``None`` for fence-protocol turns, whose
-    history keeps the plain-text convention.
+    pair with their calls by id). Either protocol may attach an ephemeral
+    canonical thinking envelope; final assistant echoes retain that ownership
+    for in-memory child continuation.
     """
 
     text: str = ""
@@ -754,6 +758,7 @@ class AgentConfig:
     allowed_tools: tuple[str, ...] = ()
     budget: RunBudget = field(default_factory=RunBudget)
     native_tools: bool = True
+    reasoning_replay: ReasoningReplayPolicy | None = None
     workspace_context_note: str = ""
     personal_context_block: str = ""
     response_reserve_tokens: int = 2048

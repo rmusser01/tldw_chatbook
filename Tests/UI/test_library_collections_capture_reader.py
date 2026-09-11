@@ -42,6 +42,9 @@ from tldw_chatbook.Library.collections_capture_models import (
 from tldw_chatbook.Library.collections_capture_service import (
     LocalCollectionsCaptureService,
 )
+from tldw_chatbook.UI.Library_Modules.screen_constants import (
+    LIBRARY_COLLECTIONS_READER_PROFILE,
+)
 from tldw_chatbook.UI.Library_Modules.library_collections_capture_controller import (
     CaptureArchiveReceipt,
     CollectionsCaptureControllerState,
@@ -466,12 +469,32 @@ async def test_real_library_route_mounts_contextual_three_pane_reader_and_both_g
         assert shell.work.is_mounted and shell.work.display
         assert shell.library_grip.display and shell.items_grip.display
 
-        shell.library_grip.press()
+        # The route recomposes, so every later read re-queries the shell --
+        # a captured reference goes detached (region 0x0) and turned this
+        # into a load-dependent flake.
+        def live_shell() -> LibraryAdaptiveReaderShell:
+            return screen.query_one(
+                "#library-collections-reader-shell", LibraryAdaptiveReaderShell
+            )
+
+        live_shell().library_grip.press()
+        # task-32217 (critique #9 row 14): the freed columns go to the ITEMS
+        # pane, not to a Reader showing "Select a capture to read it here."
+        # -- Collections joined Media and Notes on ``reader_has_item``. This
+        # used to pin the old comfort width (56) the empty Reader left behind.
         await _wait_for_condition(
             pilot,
             lambda: (
-                not shell.library.display
-                and shell.items.region.width == 56
+                not live_shell().library.display
+                # Exact, like the `== 56` it replaces: with the Library pane
+                # closed and nothing loaded, the Reader keeps its floor and
+                # the list takes every other cell the grips do not reserve.
+                and live_shell().items.region.width
+                == live_shell().effective_layout.items_width
+                and live_shell().items.region.width > 56
+                and live_shell().work.region.width == (
+                    LIBRARY_COLLECTIONS_READER_PROFILE.work_min_width
+                )
                 and screen._library_reader_durable_generations["library"] > 0
             ),
             message="Collections Library pane did not collapse",
@@ -480,11 +503,11 @@ async def test_real_library_route_mounts_contextual_three_pane_reader_and_both_g
         items_generation = screen._library_reader_persistence_generations[
             "collections_items"
         ]
-        shell.items_grip.press()
+        live_shell().items_grip.press()
         await _wait_for_condition(
             pilot,
             lambda: (
-                not shell.items.display
+                not live_shell().items.display
                 and screen._library_reader_durable_generations[
                     "collections_items"
                 ]
@@ -493,7 +516,7 @@ async def test_real_library_route_mounts_contextual_three_pane_reader_and_both_g
             message="Collections Items pane did not collapse",
         )
         assert app.app_config["library"]["collections_reader"]["items_open"] is False
-        assert shell.work.is_mounted and shell.work.display
+        assert live_shell().work.is_mounted and live_shell().work.display
 
 
 async def test_real_library_route_quick_capture_persists_and_selects_capture() -> None:

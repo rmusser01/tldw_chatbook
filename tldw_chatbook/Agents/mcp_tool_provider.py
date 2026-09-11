@@ -118,6 +118,37 @@ _NON_TEXT_CONTENT_TYPES = frozenset({"image", "blob"})
 _FAIL_CLOSED_STATE = EffectiveToolState(state="ask", origin="global_default")
 
 
+def approval_effects_for_tool(tool: Any) -> tuple[str, ...]:
+    """Return the card-facing effects implied by a tool's risk tags.
+
+    task-32278: the approval card's read-vs-mutation wording keys off
+    ``MCPPendingCall.effects``, and only the local-tool descriptors ever
+    populated it -- so a built-in ``write_file`` (``risk_tags ==
+    ("mutates",)``) rendered "this tool reads local data". Deriving the
+    effect from the SAME tag vocabulary the risk floor already uses
+    (``permission_store.HIGH_RISK_TAGS``) keeps the card's sentence and the
+    reason the row is asking from disagreeing, without adding a second
+    signal.
+
+    Args:
+        tool: A built-in ``Tool`` (``risk_tags``) or a ``HubTool`` (``tags``).
+            Anything else, ``None`` included, yields ``()``.
+
+    Returns:
+        ``("mutates_local",)`` for a mutating tool, else ``()`` -- a read
+        needs no effect, since the card's default sentence already says
+        "reads".
+    """
+    tags = getattr(tool, "risk_tags", None)
+    if tags is None:
+        tags = getattr(tool, "tags", ())
+    return (
+        ("mutates_local",)
+        if any(str(tag).lower() == "mutates" for tag in tags or ())
+        else ()
+    )
+
+
 @dataclass(frozen=True)
 class MCPPendingCall:
     """One tool call awaiting human approval, surfaced to the batch-approval UI."""
@@ -737,6 +768,7 @@ class MCPToolProvider:
             ],
             reason=_pending_reason(state),
             options=_options_for_tool(tool),
+            effects=approval_effects_for_tool(tool),
         )
 
     # -- invocation (WORKER THREAD) ----------------------------------------
@@ -899,6 +931,7 @@ class MCPToolProvider:
             arguments=call_args,
             reason=_pending_reason(state),
             options=_options_for_tool(tool),
+            effects=approval_effects_for_tool(tool),
         )
         try:
             decisions = self._approval_callback([pending])

@@ -11333,6 +11333,34 @@ async def test_tools_step_rows_are_described_and_do_not_overlap():
         assert "⚠" in write_desc
 
 
+def test_read_class_tool_copy_mentions_per_call_approval():
+    """task-32289 AC#2: Full setup's tools step described reads as safe with
+    no mention that they still ask every time -- append that fact to every
+    read-class tool's description instead of just the mutating ones' ⚠.
+
+    task-32284 moved the wizard's private `_TOOL_COPY` table onto
+    `_GATEABLE_BUILTINS` (see `test_tools_step_copy_comes_from_the_shared_
+    gate_table` below), so this reads the catalog blurbs instead.
+    """
+    from tldw_chatbook.Agents.tool_catalog import gateable_builtin_tools
+
+    blurbs = {t.tool_name: t.blurb for t in gateable_builtin_tools()}
+
+    for tool_name in (
+        "read_file",
+        "list_directory",
+        "glob_files",
+        "grep_files",
+        "expand_document",
+    ):
+        desc = blurbs[tool_name]
+        assert "asks you each time" in desc.lower(), (tool_name, desc)
+
+    for tool_name in ("write_file", "create_note", "update_note"):
+        desc = blurbs[tool_name]
+        assert "asks you each time" not in desc.lower(), (tool_name, desc)
+
+
 @pytest.mark.asyncio
 async def test_tools_step_copy_comes_from_the_shared_gate_table():
     """task-32284: ONE copy table, on `_GATEABLE_BUILTINS`.

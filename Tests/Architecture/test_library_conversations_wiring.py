@@ -147,7 +147,7 @@ def test_screen_delegates_reader_handlers() -> None:
 
 #: Every method Task 8 moved into `LibraryConversationsController` (the
 #: browse cluster: list/paging, row selection/multiselect, export, filter,
-#: empty/retry states, and the "Use in Console"/"Use as source" handoff),
+#: empty/retry states, and the "Use in Console" handoff),
 #: under its original `LibraryScreen` name. Same shape as
 #: `_READER_CLUSTER_METHOD_NAMES` above -- one full-cluster ownership test
 #: plus one full-cluster delegator test, both driven off this one
@@ -221,6 +221,7 @@ _BROWSE_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "_validate_library_conversation_locator",
     "_open_selected_conversation_handoff",
     "open_selected_conversation_in_console",
+    # Archive recovery gives source reuse a composed action distinct from Resume.
     "use_selected_conversation_as_source",
 )
 
@@ -272,7 +273,7 @@ def test_screen_delegates_browse_handlers() -> None:
     """Every one of the 40 browse-cluster names is a one-line screen delegator
     that forwards to the SAME-NAMED controller method.
 
-    Mirrors `test_screen_delegates_reader_handlers` above (61 delegators
+    Mirrors `test_screen_delegates_reader_handlers` above (60 delegators
     total across both clusters in this series: 21 reader + 40 browse). Five
     of the 40 names are `@staticmethod`/`@classmethod` on `LibraryScreen`
     (`_normalize_library_conversation_page`,

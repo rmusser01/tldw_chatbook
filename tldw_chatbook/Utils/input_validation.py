@@ -25,6 +25,7 @@ from pydantic import (
 )
 
 from ..Metrics.metrics_logger import log_counter, log_histogram
+from .reasoning_config import REASONING_HISTORY_MODES
 
 PROVIDER_API_KEY_MAX_LENGTH = 4096
 CONSOLE_DRAFT_MAX_LENGTH = 100_000
@@ -49,6 +50,150 @@ TERMINAL_SESSION_NAME_MIN_DISPLAY_CHARACTERS = 1
 TERMINAL_SESSION_NAME_MAX_DISPLAY_CHARACTERS = 64
 TERMINAL_SESSION_NAME_MAX_CODEPOINTS = 1_024
 _EXTENDED_GRAPHEME_PATTERN = regex.compile(r"\X", regex.VERSION1)
+
+
+class ReasoningHistorySelectorInput(BaseModel):
+    """Strict boundary for a Console reasoning-history selector event.
+
+    Attributes:
+        allow_inherit: Whether the per-target reset choice is accepted.
+        value: Exact selector value received from the UI event.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    allow_inherit: bool = False
+    value: str
+
+    @field_validator("value")
+    @classmethod
+    def _validate_value(cls, value: str, info: ValidationInfo) -> str:
+        allowed = set(REASONING_HISTORY_MODES)
+        if info.data.get("allow_inherit") is True:
+            allowed.add("inherit")
+        if value not in allowed:
+            raise ValueError("invalid reasoning history selector value")
+        return value
+
+
+def validate_reasoning_history_selector(
+    value: object,
+    *,
+    allow_inherit: bool = False,
+) -> str:
+    """Validate one reasoning-history selector value without coercion.
+
+    Args:
+        value: Candidate Textual selector value.
+        allow_inherit: Whether the per-target ``inherit`` choice is accepted.
+
+    Returns:
+        The exact validated selector value.
+
+    Raises:
+        ValueError: If the value has the wrong type or is not an allowed choice.
+    """
+
+    try:
+        return ReasoningHistorySelectorInput.model_validate(
+            {"value": value, "allow_inherit": allow_inherit}
+        ).value
+    except PydanticValidationError:
+        raise ValueError("reasoning history selector value is invalid") from None
+
+
+class ConversationResumeInput(BaseModel):
+    """Strict exact identity accepted by Console resume navigation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    conversation_id: str = Field(min_length=1, max_length=256)
+
+    @field_validator("conversation_id", mode="before")
+    @classmethod
+    def _exact_identity(cls, value: object) -> str:
+        if type(value) is not str or value != value.strip():
+            raise ValueError("Console conversation identity is invalid")
+        return value
+
+
+def validate_conversation_resume_id(value: object) -> str:
+    """Validate an exact persisted identity without normalizing its spelling.
+
+    Args:
+        value: Conversation identity received at a navigation boundary.
+
+    Returns:
+        The unchanged nonblank identity, at most 256 characters.
+
+    Raises:
+        ValueError: If the type, whitespace or length violates the contract.
+    """
+    try:
+        return ConversationResumeInput.model_validate(
+            {"conversation_id": value}
+        ).conversation_id
+    except PydanticValidationError:
+        raise ValueError("Console conversation identity is invalid") from None
+
+
+class ConversationArchiveScopeInput(BaseModel):
+    """Strict shared scope for local conversation lifecycle queries."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    scope: Literal["active", "archived", "all"]
+
+
+def validate_conversation_archive_scope(
+    value: object,
+) -> Literal["active", "archived", "all"]:
+    """Return an exact supported conversation archive scope without coercion.
+
+    Args:
+        value: Candidate scope from UI controls, saved navigation, or storage calls.
+
+    Returns:
+        The validated active, archived, or all scope.
+
+    Raises:
+        ValueError: If the value is not an exact supported scope string.
+    """
+    try:
+        return ConversationArchiveScopeInput.model_validate({"scope": value}).scope
+    except PydanticValidationError:
+        raise ValueError("archive_scope must be active, archived, or all.") from None
+
+
+class WorkspaceNameInput(BaseModel):
+    """WorkspaceRecord-compatible name: strict text, trimmed and nonblank.
+
+    Workspace names are display text, not filesystem paths. Existing workspace
+    policy does not impose a length limit or character blacklist.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, strict=True, str_strip_whitespace=True
+    )
+
+    name: str = Field(min_length=1)
+
+
+def validate_workspace_name(value: object) -> str:
+    """Validate a workspace display name without changing existing naming policy.
+
+    Args:
+        value: Candidate user-facing workspace name.
+
+    Returns:
+        The trimmed, nonblank name.
+
+    Raises:
+        ValueError: If the name is blank or is not text.
+    """
+    try:
+        return WorkspaceNameInput.model_validate({"name": value}).name
+    except PydanticValidationError:
+        raise ValueError("Workspace name must be non-blank text.") from None
 
 
 class VllmDraftInputEvent(BaseModel):

@@ -1756,18 +1756,20 @@ async def test_successful_actor_replacement_clears_old_actor_override(
 @pytest.mark.parametrize(
     ("source_size", "available_box", "expected_box"),
     (
-        ((8, 8), (40, 30), (8, 4)),
+        ((8, 8), (40, 30), (40, 20)),
+        ((8, 32), (40, 30), (15, 30)),
+        ((32, 8), (40, 30), (40, 5)),
         ((1200, 300), (30, 30), (30, 4)),
         ((300, 1200), (30, 30), (15, 30)),
         ((600, 600), (30, 30), (30, 15)),
     ),
 )
-def test_character_avatar_fit_is_scale_down_only_and_aspect_preserving(
+def test_character_avatar_fit_expands_or_shrinks_preserving_aspect(
     source_size,
     available_box,
     expected_box,
 ):
-    """Character art may shrink to contain, but never grows to fill 35 rows."""
+    """Character art uses the available box regardless of source resolution."""
 
     from tldw_chatbook.UI.Console_Modules.character_avatar_layout import (
         fit_character_avatar_cell_box,
@@ -1833,11 +1835,12 @@ def test_character_avatar_fit_omits_the_image_when_no_cell_box_remains():
         ((1200, 300), "graphics"),
         ((600, 600), "pixels"),
         ((8, 8), "graphics"),
+        ((8, 8), "pixels"),
         ((2400, 2400), "pixels"),
     ),
 )
 @pytest.mark.asyncio
-async def test_character_shapes_and_controls_settle_inside_35_rows(
+async def test_character_shapes_and_controls_settle_inside_current_budget(
     console_screen_with_db_and_pilot,
     source_size,
     mode,
@@ -1883,10 +1886,13 @@ async def test_character_shapes_and_controls_settle_inside_35_rows(
 
     assert left_rail.character_avatar_box is not None
     fitted_width, fitted_height = left_rail.character_avatar_box
-    assert fitted_width <= source_size[0]
-    assert fitted_height <= (source_size[1] + 1) // 2
-    assert body.virtual_region_with_margin.height <= 35
-    assert bounded.desired_content_lines <= 35
+    assert 0 < fitted_width <= body.content_region.width
+    assert 0 < fitted_height <= bounded.max_content_lines
+    if source_size == (8, 8):
+        assert fitted_width > source_size[0]
+        assert fitted_height > source_size[1] // 2
+    assert body.virtual_region_with_margin.height <= bounded.max_content_lines
+    assert bounded.desired_content_lines <= bounded.max_content_lines
     assert not bounded.hint.display
     assert reaction_button.virtual_region_with_margin.bottom <= (
         body.virtual_region_with_margin.bottom
@@ -1916,13 +1922,13 @@ async def test_character_shapes_and_controls_settle_inside_35_rows(
         left_rail.request_allocation_reconcile()
         await pilot.pause(0.05)
         if (
-            body.virtual_region_with_margin.height <= 35
-            and bounded.desired_content_lines <= 35
+            body.virtual_region_with_margin.height <= bounded.max_content_lines
+            and bounded.desired_content_lines <= bounded.max_content_lines
         ):
             break
     assert len(screen.query(".console-character-search-row")) == 8
-    assert body.virtual_region_with_margin.height <= 35
-    assert bounded.desired_content_lines <= 35
+    assert body.virtual_region_with_margin.height <= bounded.max_content_lines
+    assert bounded.desired_content_lines <= bounded.max_content_lines
     assert screen.query_one("#console-character-reaction-open") is reaction_button
 
 
@@ -1930,7 +1936,7 @@ async def test_character_shapes_and_controls_settle_inside_35_rows(
 async def test_oversized_character_controls_use_local_scroll_and_keep_offset(
     console_screen_with_db_and_pilot,
 ):
-    """Controls beyond 35 rows stay reachable and retain their local offset."""
+    """Controls beyond the current budget retain scrolling and their offset."""
 
     from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
     from tldw_chatbook.Widgets.Console.console_bounded_section import (
@@ -1953,14 +1959,14 @@ async def test_oversized_character_controls_use_local_scroll_and_keep_offset(
     # Navigation owns the visible identity; the legacy painter caption is hidden.
     name = screen.query_one("#console-character-identity", Static)
     reaction_button = screen.query_one("#console-character-reaction-open")
-    name.styles.height = 36
+    name.styles.height = bounded.max_content_lines + 1
     left_rail.apply_section_open("character", True)
     left_rail.request_allocation_reconcile()
     await pilot.pause()
     await pilot.pause()
 
     assert left_rail.character_avatar_box == (0, 0)
-    assert bounded.desired_content_lines > 35
+    assert bounded.desired_content_lines > bounded.max_content_lines
     assert bounded.hint.display
     assert bounded.viewport.max_scroll_y > 0
 
@@ -2521,10 +2527,10 @@ async def test_pixels_avatar_paints_nonzero_region_in_auto_holder():
 
 @pytest.mark.parametrize("initial_box", (None, (30, 30)))
 @pytest.mark.asyncio
-async def test_initial_tiny_avatar_uses_intrinsic_size_before_rail_reconciliation(
+async def test_initial_tiny_avatar_fills_box_before_rail_reconciliation(
     initial_box,
 ):
-    """Neither a missing nor a stale large box may upscale the first paint."""
+    """The first paint also enlarges small artwork to its current box."""
 
     screen = _bare_console_screen(ConsoleChatStore())
     spec = {
@@ -2538,8 +2544,8 @@ async def test_initial_tiny_avatar_uses_intrinsic_size_before_rail_reconciliatio
 
     async with app.run_test(size=(60, 30)):
         widget = app.query_one("#console-character-avatar-image", Static)
-        assert widget.styles.width.value == 8
-        assert widget.styles.height.value == 4
+        expected = (16, 8) if initial_box is None else (30, 15)
+        assert (widget.region.width, widget.region.height) == expected
 
 
 @pytest.mark.asyncio
@@ -2682,3 +2688,41 @@ async def test_animated_character_uses_mounted_playback_and_same_asset_mode_chan
         )
     assert db.get_character_card_by_id(character_id)["image"] == data
     assert await asyncio.to_thread(export_bytes) == original_export
+
+
+@pytest.mark.asyncio
+async def test_character_portrait_grows_and_shrinks_with_terminal(
+    console_screen_with_db_and_pilot,
+):
+    """A tall small portrait fills new rows, then returns to its original size."""
+    from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+    from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+
+    _app, screen, db, pilot = console_screen_with_db_and_pilot
+    _configure_native_ready_console(_app)
+    await screen._sync_native_console_chat_ui()
+    assert not screen._console_setup_modal_blocking()
+    output = BytesIO()
+    PILImage.new("RGB", (8, 64), (20, 100, 160)).save(output, format="PNG")
+    character_id = db.add_character_card(
+        {"name": "Tall portrait", "image": output.getvalue()}
+    )
+    _set_active_console_character(screen, character_id, "Tall portrait")
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+    rail = screen.query_one(ConsoleLeftRail)
+    sizes = []
+    for height in (72, 144, 72):
+        await pilot.resize_terminal(180, height)
+        for _ in range(12):
+            await pilot.pause()
+        portrait = screen.query_one("#console-character-avatar-image")
+        body = screen.query_one("#console-rail-section-body-character")
+        bounded = screen.query_one("#console-bounded-section-character")
+        sizes.append(portrait.region.size)
+        assert portrait.region.width > 0
+        assert body.virtual_region_with_margin.height <= bounded.max_content_lines
+        assert abs(portrait.region.width * 4 - portrait.region.height) <= 4
+        assert rail.character_avatar_box is not None
+    assert sizes[1].height > sizes[0].height
+    assert sizes[1].width > sizes[0].width
+    assert sizes[2] == sizes[0]

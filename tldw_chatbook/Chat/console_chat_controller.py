@@ -17,7 +17,7 @@ import contextlib
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import Enum
@@ -384,7 +384,11 @@ from tldw_chatbook.Agents.project_instruction_resolver import (
     ProjectInstructionResolver,
     StartupInstructionCandidate,
 )
-from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvider
+from tldw_chatbook.Agents.mcp_tool_provider import (
+    MCPPendingCall,
+    MCPToolProvider,
+    approval_effects_for_tool,
+)
 from tldw_chatbook.Agents.run_context import current_run_actor, current_run_id
 
 # NOTE (boot budget, ADR-097): `Agents.persona_policy` is imported lazily
@@ -458,6 +462,7 @@ from tldw_chatbook.Chat.console_thinking_history import (
     resolve_thinking_history,
 )
 from tldw_chatbook.Chat.thinking_blocks import (
+    THINKING_ENVELOPE_VERSION,
     ThinkingEnvelope,
     ThinkingHistoryPolicy,
     normalize_thinking_history_policy,
@@ -735,6 +740,34 @@ _DEFAULT_WORKTREE_MERGE_CONFIRM_TIMEOUT_SECONDS = 0.0
 _DEFAULT_ASK_USER_TIMEOUT_SECONDS = 0.0
 #: Env override for `[console] ask_user_timeout_seconds` (env -> config -> default).
 ASK_USER_TIMEOUT_ENV_VAR = "TLDW_CONSOLE_ASK_USER_TIMEOUT_SECONDS"
+#: task-32344: ceiling on the pre-provider setup a send will wait through
+#: before giving up on the optional part of it and calling the provider
+#: anyway. The one seam that needed a bound is the app-owned Personal
+#: Context service, which is bootstrapped lazily on the FIRST agent send of
+#: a process and whose constructor reads the OS credential store -- on
+#: macOS that can enter the Keychain authorization UI and block for as long
+#: as nobody answers it (traced live: a warm-restart first send sat in
+#: `SecItemAdd` -> `makeLoginAuthUI` for >6 minutes with the assistant row
+#: blank). Personalization is documented never to block chat; that promise
+#: was enforced against exceptions only, and a hang is not an exception.
+#: 10s is the budget because a healthy cold bootstrap measured 3.7s on the
+#: same machine -- generous enough never to fire on a slow-but-working
+#: profile, short enough that a wedged one degrades instead of hanging.
+CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS = 10.0
+#: Set while a Personal Context bootstrap attempt is still running in a
+#: worker thread, and cleared by that thread whichever way it ends.
+#: Expiring the budget above abandons the worker but cannot kill it, and
+#: `TldwCli.get_personal_context_service` holds a module-level lock for the
+#: WHOLE bootstrap -- so a wedged credential store means every later send
+#: would park another `to_thread` worker on that lock, permanently. The
+#: shared default executor has ~22 slots and also carries `run_reply` and
+#: ~1100 other `to_thread` calls, so ~22 sends against an unanswered
+#: keychain prompt would starve every offload in the app (and Python 3.12's
+#: `Runner.close()` then joins that executor for up to 300s on quit).
+#: While this is set the resolver returns `None` without submitting
+#: anything. Self-healing survives: the original worker clears the flag and
+#: caches the service if the OS ever answers.
+_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT = threading.Event()
 #: A9 bounce counters are keyed by run id; a run that only ever bounced has no
 #: end-of-run hook here, so the map is bounded by evicting the oldest run.
 _MAX_TRACKED_QUESTION_BOUNCE_RUNS = 64
@@ -1998,6 +2031,11 @@ def build_tool_review_hook(
                         :TOOL_DESCRIPTION_CAPTURE_CAP
                     ],
                     reason="risk_floored" if state.risk_floored else "ask",
+                    # task-32278: the card's high-risk sentence must say
+                    # "changes" for a mutating built-in, and `effects` is the
+                    # only signal it reads. Derived from the same tags the
+                    # floor above keys on, so the two cannot disagree.
+                    effects=approval_effects_for_tool(tool),
                     options=("approve_once", "approve_session", "deny"),
                     # TASK-1231/F3 AC2: pre-flight the roots check for the
                     # three file tools -- never gates or auto-denies, just
@@ -8950,12 +8988,17 @@ class ConsoleChatController:
                     or getattr(resolution, "api_mode", None)
                     or "chat_completions"
                 ),
-                disposition=getattr(
-                    resolution, "thinking_stream_disposition", "ignored"
+                disposition=(
+                    "displayable"
+                    if getattr(resolution, "local_structured_thinking", False)
+                    else getattr(resolution, "thinking_stream_disposition", "ignored")
                 ),
-                round_trip_version=getattr(
-                    resolution, "thinking_round_trip_version", None
+                round_trip_version=(
+                    THINKING_ENVELOPE_VERSION
+                    if getattr(resolution, "local_structured_thinking", False)
+                    else getattr(resolution, "thinking_round_trip_version", None)
                 ),
+                reasoning_replay=getattr(resolution, "reasoning_replay", None),
             ),
             policy=self.store.session_thinking_history_policy(preparation.session_id),
             sidecars=thinking_sidecars,
@@ -16852,17 +16895,89 @@ class ConsoleChatController:
             )
 
     async def _personal_context_service(self) -> PersonalContextService | None:
-        """Resolve the app-owned Personal Context service off the UI loop."""
+        """Resolve the app-owned Personal Context service off the UI loop.
+
+        Bounded by ``CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS`` (task-
+        32275). ``get_personal_context_service`` bootstraps the service on
+        first use, and that bootstrap talks to the OS credential store,
+        which can block indefinitely; without a bound the "personalization
+        never blocks chat" rule below held only against exceptions, and the
+        first send after a restart stalled with a blank assistant row.
+
+        Giving up yields ``None``, the same value every other failure here
+        yields: the turn runs without profile tools rather than not at all.
+        The worker thread is NOT killed (nothing can interrupt a blocking
+        syscall); it is abandoned, and will finish and cache its result for
+        a later send if the OS ever answers. Because it is abandoned rather
+        than finished, `_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT` keeps the
+        next send from parking a SECOND worker behind the first on the
+        app's bootstrap lock -- see that flag's comment for why a shared
+        executor makes that fatal rather than merely wasteful.
+
+        Returns:
+            The service, or ``None`` when the app owns none, an earlier
+            attempt is still running, the bootstrap raised, or it outran
+            its budget.
+        """
 
         getter = getattr(
             getattr(self, "app", None), "get_personal_context_service", None
         )
         if not callable(getter):
             return None
+        if _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.is_set():
+            return None
+        _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.set()
+
+        def _bootstrap():
+            try:
+                return getter()
+            finally:
+                _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.clear()
+
         try:
-            return await asyncio.to_thread(getter)
+            return await asyncio.wait_for(
+                asyncio.to_thread(_bootstrap),
+                CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS,
+            )
+        except (asyncio.TimeoutError, TimeoutError):
+            logger.warning(
+                "Console personal context bootstrap exceeded its "
+                "{budget_seconds}s budget; sending without profile tools",
+                budget_seconds=CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS,
+            )
+            return None
         except Exception:  # noqa: BLE001 - personalization never blocks chat
             return None
+
+    @contextlib.asynccontextmanager
+    async def _pre_provider_setup_phase(
+        self, conversation_id: str
+    ) -> AsyncIterator[None]:
+        """Name the pre-provider setup window on the assistant row.
+
+        task-32344: between "send accepted" and "provider called" the run
+        does not exist yet, so nothing publishes a step and the row renders
+        blank -- for however long the setup takes. The mark is cleared on
+        every exit, including a raise: a stale mark would keep the row
+        claiming setup into the next turn.
+
+        The window starts here rather than at tool-catalog composition
+        because that is where the time actually is: composition measured
+        20ms live, while the personal-context resolution below measured
+        3.7s cold and unbounded when the credential store wedged.
+        """
+
+        bridge = getattr(self, "_agent_bridge", None)
+        begin = getattr(bridge, "begin_setup_phase", None)
+        end = getattr(bridge, "end_setup_phase", None)
+        if callable(begin):
+            begin(conversation_id)
+        try:
+            yield
+        finally:
+            if callable(end):
+                end(conversation_id)
 
     async def _personal_context_builder(
         self,
@@ -22893,67 +23008,71 @@ class ConsoleChatController:
                 assistant_message_id,
                 generation_token=generation_token,
             )
-        personal_context_service = await self._personal_context_service()
-        profile_context_service = await self._personal_context_builder(
-            personal_context_service
-        )
-        trusted_profile_user_message = None
-        if trusted_profile_user_message_id is not None:
+        # task-32344: from here to the provider dispatch is the window
+        # the first send of a process pays in full (the lazy Personal
+        # Context bootstrap above all); the row says so while it runs.
+        async with self._pre_provider_setup_phase(conversation_id):
+            personal_context_service = await self._personal_context_service()
+            profile_context_service = await self._personal_context_builder(
+                personal_context_service
+            )
+            trusted_profile_user_message = None
+            if trusted_profile_user_message_id is not None:
+                try:
+                    candidate = self.store.get_message(trusted_profile_user_message_id)
+                    if (
+                        candidate.role is ConsoleMessageRole.USER
+                        and self.store.session_id_for_message(candidate.id) == session_id
+                    ):
+                        trusted_profile_user_message = candidate
+                except KeyError:
+                    pass
+            profile_provider = None
+            if personal_context_service is not None and session is not None:
+                profile_provider = await asyncio.to_thread(
+                    _compose_profile_tool_provider,
+                    personal_context_service,
+                    workspace_id=session.workspace_id,
+                    ephemeral=session.ephemeral,
+                    run_id=assistant_message_id,
+                    session_id=session_id,
+                    current_user_message=trusted_profile_user_message,
+                    kill_switch=(self._console_tool_kill_switch_reader() or (lambda: False)),
+                )
+            canvas_provider = None
+            canvas_authority = None
+            canvas_controller = getattr(self.store, "canvas_turn_controller", None)
             try:
-                candidate = self.store.get_message(trusted_profile_user_message_id)
-                if (
-                    candidate.role is ConsoleMessageRole.USER
-                    and self.store.session_id_for_message(candidate.id) == session_id
-                ):
-                    trusted_profile_user_message = candidate
-            except KeyError:
-                pass
-        profile_provider = None
-        if personal_context_service is not None and session is not None:
-            profile_provider = await asyncio.to_thread(
-                _compose_profile_tool_provider,
-                personal_context_service,
-                workspace_id=session.workspace_id,
-                ephemeral=session.ephemeral,
-                run_id=assistant_message_id,
-                session_id=session_id,
-                current_user_message=trusted_profile_user_message,
-                kill_switch=(self._console_tool_kill_switch_reader() or (lambda: False)),
-            )
-        canvas_provider = None
-        canvas_authority = None
-        canvas_controller = getattr(self.store, "canvas_turn_controller", None)
-        try:
-            canvas_enabled = self._canvas_enabled_reader() is True
-        except Exception:  # noqa: BLE001 - Canvas tool advertising fails closed
-            canvas_enabled = False
-        if canvas_enabled and canvas_controller is not None and session is not None:
-            from tldw_chatbook.Agents.canvas_tool_provider import CanvasToolProvider
-            from tldw_chatbook.Canvas.models import CanvasScope
+                canvas_enabled = self._canvas_enabled_reader() is True
+            except Exception:  # noqa: BLE001 - Canvas tool advertising fails closed
+                canvas_enabled = False
+            if canvas_enabled and canvas_controller is not None and session is not None:
+                from tldw_chatbook.Agents.canvas_tool_provider import CanvasToolProvider
+                from tldw_chatbook.Canvas.models import CanvasScope
 
-            canvas_run_id = str(uuid4())
-            canvas_scope = CanvasScope(
-                session_id=session_id,
-                conversation_id=conversation_id,
-                active_message_ids=self.store.canvas_active_path_message_ids(
-                    session_id
-                ),
-                selected_canvas_id=None,
-                selected_revision_id=None,
-                run_id=canvas_run_id,
-            )
-            canvas_scope = canvas_controller.capture_selected_scope(canvas_scope)
-            canvas_run = canvas_controller.register_run(
-                canvas_scope,
-                assistant_message_id=assistant_message_id,
-                temporary=session.ephemeral,
-            )
-            canvas_provider = CanvasToolProvider(
-                canvas_run,
-                scope=canvas_scope,
-                enabled_reader=self._canvas_enabled_reader,
-            )
-            canvas_authority = canvas_provider.issue_registration_authority()
+                canvas_run_id = str(uuid4())
+                canvas_scope = CanvasScope(
+                    session_id=session_id,
+                    conversation_id=conversation_id,
+                    active_message_ids=self.store.canvas_active_path_message_ids(
+                        session_id
+                    ),
+                    selected_canvas_id=None,
+                    selected_revision_id=None,
+                    run_id=canvas_run_id,
+                )
+                canvas_scope = canvas_controller.capture_selected_scope(canvas_scope)
+                canvas_run = canvas_controller.register_run(
+                    canvas_scope,
+                    assistant_message_id=assistant_message_id,
+                    temporary=session.ephemeral,
+                )
+                canvas_provider = CanvasToolProvider(
+                    canvas_run,
+                    scope=canvas_scope,
+                    enabled_reader=self._canvas_enabled_reader,
+                )
+                canvas_authority = canvas_provider.issue_registration_authority()
         try:
             # run_reply returns (run_id, outcome): run_id lets us write the
             # produced reply's PERSISTED id back onto the run after

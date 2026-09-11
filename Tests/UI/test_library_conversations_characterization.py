@@ -29,19 +29,15 @@ survive that second check as genuinely unreached:
   text, disabled-state) but never actually pressed.
 - ``handle_library_conversations_previous`` -- same: referenced only for
   ``.disabled`` assertions, never pressed.
-- ``use_selected_conversation_as_source`` -- see its test's docstring: the
-  button it is bound to (``#library-conversation-use-source``) has zero
-  compose sites anywhere in ``tldw_chatbook/``, a live finding recorded
-  here rather than fixed (out of this task's scope).
+- ``use_selected_conversation_as_source`` now has a composed source-reuse action
+  distinct from original-conversation Resume. Archive recovery workflow tests
+  exercise both paths; task-32101's removed alias is not the same behavior.
 
 Every test below drives the screen only through DOM queries/presses and
 public screen attributes, per the recipe's byte-for-byte move discipline,
 so it keeps working unmodified once Tasks 6-8 relocate the method bodies
 into their controllers.
 """
-
-from types import SimpleNamespace
-from unittest.mock import Mock
 
 import pytest
 from textual.containers import VerticalScroll
@@ -50,7 +46,6 @@ from textual.widgets import Button, Static
 from tldw_chatbook.UI.Library_Modules.screen_constants import (
     LIBRARY_SOURCE_PAGE_SIZES,
 )
-from Tests.UI.test_destination_shells import _link_library_items_to_active_workspace
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
@@ -193,56 +188,3 @@ async def test_previous_page_press_retreats_the_conversation_page() -> None:
             screen.query_one("#library-conversation-row-0").conversation_id
             == first_row_page_one
         )
-
-
-@pytest.mark.asyncio
-async def test_use_as_source_delegates_identically_to_open_in_console() -> None:
-    """Characterization (pre-extraction): pins use_selected_conversation_as_source.
-
-    LIVE FINDING, recorded rather than fixed (out of task-5 scope): a
-    repo-wide ``grep -rn "library-conversation-use-source" tldw_chatbook/``
-    turns up exactly one hit -- this handler's own ``@on`` decorator line.
-    The button it is bound to is never composed anywhere, so it cannot be
-    pressed through the DOM/Pilot today; this test calls the screen method
-    directly (the closest available "screen surface" invocation) to pin
-    what it currently does. Both this handler and its sibling
-    ``open_selected_conversation_in_console`` delegate, unconditionally and
-    without any per-button distinction, to the same private
-    ``_open_selected_conversation_handoff`` -- so today "Use as source"
-    reports the action label "Use in Console", byte-for-byte identical to
-    the Console button (see ``test_library_shell_open_in_console_triggers_
-    handoff`` in ``Tests/UI/test_library_shell.py`` for the sibling's own
-    pin).
-    """
-    app = _build_test_app()
-    _seed_conversations(app, _two_conversations())
-    app.open_chat_with_handoff = Mock()
-    _link_library_items_to_active_workspace(
-        app,
-        (("conversation", "chat-1", "Quarterly planning sync"),),
-    )
-    host = LibraryHarness(app)
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-conversations").press()
-        await _wait_for_selector(screen, pilot, "#library-conversation-open-console")
-        await _wait_for_condition(
-            pilot,
-            lambda: screen._conversations_state.reader_state.loaded_actions_eligible,
-            message="Selected conversation never became handoff-eligible.",
-        )
-
-        screen.use_selected_conversation_as_source(
-            SimpleNamespace(stop=lambda: None)
-        )
-        await pilot.pause()
-
-    app.open_chat_with_handoff.assert_called_once()
-    payload = app.open_chat_with_handoff.call_args.args[0]
-    kwargs = app.open_chat_with_handoff.call_args.kwargs
-    assert payload.source == "library"
-    assert payload.item_type == "conversation"
-    assert payload.source_id == "chat-1"
-    assert kwargs.get("action_label") == "Use in Console"

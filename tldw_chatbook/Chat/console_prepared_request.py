@@ -28,7 +28,7 @@ from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_thinking_history import (
     EffectiveThinkingHistoryPolicy,
     ThinkingOwnerGroup,
-    serialize_start_anchored_thinking,
+    serialize_thinking_message,
 )
 from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy
 from tldw_chatbook.Chat.console_trace_provenance import (
@@ -44,6 +44,13 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     TraceProvenanceSource,
     TraceTransformKind,
     frozen_policy_from_provenance,
+)
+from tldw_chatbook.Chat.local_reasoning import (
+    EXCHANGE_CONTINUATION_KEY,
+    LOCAL_TOOL_RESULT_KEY,
+    ReasoningReplayPolicy,
+    effective_replay_policy,
+    starts_reasoning_exchange,
 )
 from tldw_chatbook.Chat.provider_continuation import ContinuationOwnerGroup
 from tldw_chatbook.Chat.thinking_blocks import ThinkingHistoryPolicy
@@ -144,11 +151,7 @@ def _is_fenced_tool_result(row: Mapping[str, Any]) -> bool:
 
 def _starts_user_turn(row: Mapping[str, Any]) -> bool:
     """Keep automatic project context in the turn that requested it."""
-    return (
-        row.get("role") == "user"
-        and not _is_fenced_tool_result(row)
-        and row.get(EPHEMERAL_ORIGIN_KEY) != "project_instructions"
-    )
+    return starts_reasoning_exchange(row)
 
 
 def _is_tool_loop_row(row: Mapping[str, Any]) -> bool:
@@ -211,6 +214,7 @@ class PreparedConsoleRequest:
     active_continuation_groups: tuple[ContinuationOwnerGroup, ...] = field(
         default=(), repr=False
     )
+    reasoning_replay: ReasoningReplayPolicy | None = None
     thinking_policy: ThinkingHistoryPolicy = "auto"
     effective_thinking_policy: EffectiveThinkingHistoryPolicy = "auto"
     tools: tuple[Mapping[str, Any], ...] = field(default=(), repr=False)
@@ -287,7 +291,7 @@ class PreparedConsoleRequest:
             + self.active_request
         )
 
-    def without_oldest_units(self, count: int) -> "PreparedConsoleRequest":
+    def without_oldest_units(self, count: int) -> PreparedConsoleRequest:
         """Return a new request with ``count`` oldest compactable units removed."""
 
         return PreparedConsoleRequest(
@@ -299,6 +303,7 @@ class PreparedConsoleRequest:
             active_tool_loop=self.active_tool_loop,
             active_thinking_groups=self.active_thinking_groups,
             active_continuation_groups=self.active_continuation_groups,
+            reasoning_replay=self.reasoning_replay,
             thinking_policy=self.thinking_policy,
             effective_thinking_policy=self.effective_thinking_policy,
             tools=self.tools,
@@ -308,6 +313,53 @@ class PreparedConsoleRequest:
                 else None
             ),
         )
+
+
+def project_thinking_history(
+    request: PreparedConsoleRequest,
+    reasoning_replay: ReasoningReplayPolicy | None,
+) -> PreparedConsoleRequest:
+    """Filter complete optional owner groups and matching provenance together.
+
+    Args:
+        request: Immutable semantic request with canonical owner groups and
+            any aligned capture provenance.
+        reasoning_replay: Frozen local policy to refine conversation Auto.
+            Explicit Include and Exclude retain their authority.
+
+    Returns:
+        A new request with retained thinking groups, matching provenance, and
+        effective replay policy. Required continuation remains unchanged.
+
+    Raises:
+        TraceProvenanceAlignmentError: If reconstructed provenance does not
+            align with the projected semantic request.
+    """
+    policy = effective_replay_policy(reasoning_replay, request.thinking_policy)
+    mode = policy.mode if policy is not None else "all"
+    keep_old = mode not in {"current", "off"}
+    keep_active = mode != "off"
+    units = tuple(
+        replace(unit, thinking_groups=unit.thinking_groups if keep_old else ())
+        for unit in request.compactable
+    )
+    provenance = request.provenance
+    if provenance is not None:
+        provenance = replace(
+            provenance,
+            compactable=tuple(
+                replace(unit, thinking=unit.thinking if keep_old else ())
+                for unit in provenance.compactable
+            ),
+            active_thinking=provenance.active_thinking if keep_active else (),
+        )
+    return replace(
+        request,
+        compactable=units,
+        active_thinking_groups=request.active_thinking_groups if keep_active else (),
+        provenance=provenance,
+        reasoning_replay=policy,
+    )
 
 
 def attach_thinking_history(
@@ -1085,6 +1137,56 @@ def resolve_request_capacity(
     )
 
 
+def _project_runtime_guidance(
+    semantic: PreparedConsoleRequest,
+    serialized: tuple[Mapping[str, Any], ...] | None = None,
+) -> tuple[list[dict[str, Any]], list[tuple[tuple[int, ...], bool]]]:
+    """Return wire controls and their exact original-row causal index groups."""
+    originals = semantic.flattened_messages()
+    source = serialized if serialized is not None else originals
+    family = (
+        semantic.reasoning_replay.template_family if semantic.reasoning_replay else ""
+    )
+    rows: list[dict[str, Any]] = []
+    origins: list[tuple[tuple[int, ...], bool]] = []
+    for index, (original, value) in enumerate(zip(originals, source, strict=True)):
+        row = dict(value)
+        control = original.get("role") == "user" and (
+            original.get(EXCHANGE_CONTINUATION_KEY) is True
+            or EPHEMERAL_ORIGIN_KEY in original
+        )
+        if (
+            family == "Gemma 4"
+            and control
+            and rows
+            and rows[-1].get("role") == "tool"
+            and isinstance(rows[-1].get("content"), str)
+            and isinstance(row.get("content"), str)
+        ):
+            rows[-1]["content"] += "\n\n[Runtime guidance]\n" + row["content"]
+            indices, _ = origins[-1]
+            origins[-1] = ((*indices, index), True)
+            continue
+        wrap = (
+            family.startswith("Qwen")
+            and original.get("role") == "user"
+            and (
+                control
+                or _is_fenced_tool_result(original)
+                or original.get(LOCAL_TOOL_RESULT_KEY) is True
+            )
+        )
+        if wrap:
+            row["content"] = (
+                "<tool_response>\n"
+                + str(row.get("content") or "")
+                + "\n</tool_response>"
+            )
+        rows.append(row)
+        origins.append(((index,), wrap))
+    return rows, origins
+
+
 def _serialize_messages(
     semantic: PreparedConsoleRequest, wire_style: WireStyle
 ) -> tuple[str | None, tuple[Mapping[str, Any], ...], tuple[Mapping[str, Any], ...]]:
@@ -1111,12 +1213,12 @@ def _serialize_messages(
                 IDLE_REQUEST_OWNER_KEY,
                 PERSISTED_MESSAGE_ID_KEY,
                 PERSISTED_CONVERSATION_ID_KEY,
+                EXCHANGE_CONTINUATION_KEY,
+                LOCAL_TOOL_RESULT_KEY,
             }
         }
         if type(thinking_owner) is str and thinking_owner in thinking_groups:
-            row["content"] = serialize_start_anchored_thinking(
-                row.get("content"), thinking_groups[thinking_owner]
-            )
+            row = serialize_thinking_message(row, thinking_groups[thinking_owner])
         if message.get(MEMORY_OWNER_KEY) == MEMORY_OWNER_VALUE and isinstance(
             row.get("content"), tuple
         ):
@@ -1124,7 +1226,8 @@ def _serialize_messages(
             # Semantic ownership remains "memory" for accounting and safety.
             row["role"] = "user"
         serialized.append(row)
-    all_messages = tuple(serialized)
+    transformed, _origins = _project_runtime_guidance(semantic, tuple(serialized))
+    all_messages = tuple(transformed)
     if wire_style == "distinct_roles":
         return None, all_messages, all_messages
 
@@ -1250,13 +1353,9 @@ def _serialize_provenance(
                 if item is not None
             )
             thinking_group = thinking_groups_by_owner.get(thinking_owner)
-            content_changed = (
-                thinking_group is not None
-                and serialize_start_anchored_thinking(
-                    message.get("content"), thinking_group
-                )
-                != message.get("content")
-            )
+            content_changed = thinking_group is not None and serialize_thinking_message(
+                message, thinking_group
+            ) != dict(message)
             flattened.append(
                 DerivedTraceProvenance(
                     TraceTransformKind.MESSAGE_REWRITE,
@@ -1299,7 +1398,22 @@ def _serialize_provenance(
         continuations=provenance.active_continuations,
     )
     extend_unit(active_unit, active_provenance)
-    flattened_values = tuple(flattened)
+    _transformed, origins = _project_runtime_guidance(semantic)
+    original_tool_indices = set(tool_loop)
+    tool_loop = [
+        i
+        for i, (indices, _changed) in enumerate(origins)
+        if any(index in original_tool_indices for index in indices)
+    ]
+    flattened_values = tuple(
+        DerivedTraceProvenance(
+            TraceTransformKind.RUNTIME_GUIDANCE,
+            tuple(flattened[index] for index in indices),
+        )
+        if changed
+        else flattened[indices[0]]
+        for indices, changed in origins
+    )
     if wire_style == "distinct_roles":
         return ProviderRequestProvenance(
             messages=flattened_values,
@@ -1383,11 +1497,13 @@ def _account_categories(
         empty_active = ({"role": "user", "content": ""},)
         if owner == "system":
             return PreparedConsoleRequest(
+                reasoning_replay=semantic.reasoning_replay,
                 system=semantic.system,
                 active_request=empty_active,
             )
         if owner == "memory":
             return PreparedConsoleRequest(
+                reasoning_replay=semantic.reasoning_replay,
                 system=semantic.system,
                 memory=semantic.memory,
                 active_request=empty_active,
@@ -1397,6 +1513,7 @@ def _account_categories(
             # memory and mandatory, so the schema spend is its own delta
             # instead of masquerading inside mandatory_tokens.
             return PreparedConsoleRequest(
+                reasoning_replay=semantic.reasoning_replay,
                 system=semantic.system,
                 memory=semantic.memory,
                 active_request=empty_active,
@@ -1404,6 +1521,7 @@ def _account_categories(
             )
         if owner == "mandatory":
             return PreparedConsoleRequest(
+                reasoning_replay=semantic.reasoning_replay,
                 system=semantic.system,
                 memory=semantic.memory,
                 mandatory=semantic.mandatory,
@@ -1412,6 +1530,7 @@ def _account_categories(
             )
         if owner == "compactable":
             return PreparedConsoleRequest(
+                reasoning_replay=semantic.reasoning_replay,
                 system=semantic.system,
                 memory=semantic.memory,
                 mandatory=semantic.mandatory,
@@ -1454,9 +1573,7 @@ def _account_categories(
     mandatory = max(0, counts[3] - counts[2])
     compactable = max(0, counts[4] - counts[3])
     total = counts[5]
-    active = max(
-        0, total - system - memory - tool_schema - mandatory - compactable
-    )
+    active = max(0, total - system - memory - tool_schema - mandatory - compactable)
     # TASK-26019: RAG attribution inside mandatory, by the SAME cumulative
     # construction -- only when request provenance labels the rows (capture
     # on); without it the split is unknowable and stays explicitly
@@ -1472,13 +1589,13 @@ def _account_categories(
         rag_rows = tuple(
             row
             for row, descriptor in zip(semantic.mandatory, provenance.mandatory)
-            if getattr(descriptor, "source", None)
-            is TraceProvenanceSource.RAG_CONTEXT
+            if getattr(descriptor, "source", None) is TraceProvenanceSource.RAG_CONTEXT
         )
         rag_attributed = True
         if rag_rows and len(rag_rows) < len(semantic.mandatory):
             through_rag = _count_wire(
                 PreparedConsoleRequest(
+                    reasoning_replay=semantic.reasoning_replay,
                     system=semantic.system,
                     memory=semantic.memory,
                     mandatory=rag_rows,
@@ -1496,9 +1613,7 @@ def _account_categories(
     # TASK-26019: the per-image share of the conversation buckets --
     # deterministic (same rows, same per_image constant the counter
     # charges), bounded by the buckets it lives inside.
-    conversation_rows = [
-        row for unit in semantic.compactable for row in unit.messages
-    ]
+    conversation_rows = [row for unit in semantic.compactable for row in unit.messages]
     conversation_rows.extend(semantic.active_request)
     conversation_rows.extend(semantic.active_tool_loop)
     image_parts = sum(
@@ -1509,9 +1624,7 @@ def _account_categories(
         for part in row["content"]
         if isinstance(part, Mapping) and part.get("type") != "text"
     )
-    attachment_tokens = min(
-        per_image_tokens * image_parts, compactable + active
-    )
+    attachment_tokens = min(per_image_tokens * image_parts, compactable + active)
     return ConsoleRequestTokenAccounting(
         total_input_tokens=total,
         system_tokens=system,
@@ -1537,9 +1650,41 @@ def prepare_provider_request(
     count_fn: Callable[[list[dict[str, Any]], str], int] | None = None,
     apply_safety_window: bool = True,
     response_format: Mapping[str, Any] | None = None,
+    reasoning_replay: ReasoningReplayPolicy | None = None,
 ) -> PreparedProviderRequest:
-    """Window, serialize once, and account one exact provider request."""
+    """Window, serialize once, and account one exact provider request.
 
+    Args:
+        semantic: Immutable provider-neutral request with semantic ownership.
+        wire_style: Whether system messages remain separate or form a preamble.
+        model: Target model used for serialization and token accounting.
+        provider: Provider identity retained on the prepared artifact.
+        capacity: Resolved context and output limits for the request.
+        per_image_tokens: Token estimate charged for each image part.
+        count_fn: Optional message-token counter; defaults to the Console's
+            multimodal-aware counter.
+        apply_safety_window: Whether to evict complete oldest compactable units
+            when they exceed the effective input ceiling.
+        response_format: Optional structured-response configuration to freeze.
+        reasoning_replay: Frozen local policy applied before serialization and
+            counting; defaults to the policy already attached to ``semantic``.
+
+    Returns:
+        One immutable provider artifact whose serialized messages, ownership,
+        provenance, token totals, and overflow status describe the same request.
+
+    Raises:
+        ThinkingHistorySerializationError: If retained thinking cannot be
+            safely serialized with its visible owner.
+        TraceProvenanceAlignmentError: If provider rewrites do not preserve
+            exact message and sidecar ownership.
+        TypeError: If values to freeze are not JSON-compatible.
+        ValueError: If frozen numeric values are not finite.
+    """
+
+    semantic = project_thinking_history(
+        semantic, reasoning_replay or semantic.reasoning_replay
+    )
     counter = count_fn or (
         lambda messages, selected_model: count_console_messages_tokens(
             messages,

@@ -96,6 +96,11 @@ from ...Library.collections_capture_models import (
     CaptureIdentity,
     CapturePageRequest,
 )
+from ...Library.library_browse_location import (
+    claim_browse_directory,
+    remember_browse_directory,
+    validated_browse_directory,
+)
 from ...Library.library_content_evidence import (
     LibraryContentEvidence,
     LibraryEvidenceStatus,
@@ -235,7 +240,10 @@ from ...Library.library_notes_tree_paging import (
     fail_notes_slice_load,
     patch_notes_tree_branches_title,
 )
-from ...Notes.note_folder_repository import LocalNoteFolderRepository
+from ...Notes.note_folder_repository import (
+    PLACEMENT_ORDERS,
+    LocalNoteFolderRepository,
+)
 from ...Library.library_notes_session import (
     DatabaseNoteSessionCoordinator,
     DestructiveAdmission,
@@ -432,6 +440,7 @@ from ...Widgets.Library import (
     LibraryNotesCanvas,
     LibraryNavigationRailHandle,
     PaneToggleRequested,
+    LibraryPaneVisibilityChanged,
     LibraryPromptWorkPane,
     LibraryPromptsListCanvas,
     LibraryRail,
@@ -440,10 +449,12 @@ from ...Widgets.Library import (
     LibrarySkillsListCanvas,
     LibraryStudyHandoffCanvas,
     LibraryStudyHandoffCanvasState,
+    library_conversation_block_sentence,
     library_dim_label_text,
     library_rag_scope_shows_recovery,
     skill_editor_warning_lines,
 )
+from ...Widgets.Library.library_rail import library_db_size_rows
 from ...Widgets.Library.library_file_notes_events import (
     FileNotesEditableOpened,
     FileNotesIdentityCleared,
@@ -748,6 +759,8 @@ from ..Library_Modules.screen_constants import (
     LIBRARY_ONBOARDING_EVIDENCE_TIMEOUT_SECONDS,
     LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS,
     LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS,
+    LIBRARY_LIST_ENTRY_FOCUS_RETRY_SECONDS,
+    _LIBRARY_SLASH_CANVAS_FILTERS,
     LIBRARY_NOTES_AUTOSAVE_SECONDS,
     LIBRARY_NOTE_CONTENT_MAX_CHARS,
     LIBRARY_NOTE_BLANK_SEED_TITLE,
@@ -1011,6 +1024,15 @@ class LibraryScreen(BaseAppScreen):
         # ``_library_media_confirming_delete`` branch).
         ("escape", "library_media_bulk_delete_cancel", "Cancel delete confirmation"),
         ("escape", "library_emergency_return", "Return to Library rail"),
+        # task-32225: the adaptive-reader twin of the binding above. That one
+        # covers the ordinary (shell-less) routes; this one covers a route
+        # whose reader shell has CLOSED the Library pane, where the focus hop
+        # declared below would aim at a widget inside that closed pane and
+        # move nothing. Declared here, above ``library_blur_text_field`` and
+        # ``library_list_focus_rail``, because Textual resolves same-key
+        # bindings in DECLARATION ORDER and getting back to a rail that is off
+        # screen outranks both a blur and a hop that cannot land.
+        ("escape", "library_narrow_stage_return", "Back to Library"),
         # task-32051: the LAST resort before the focus-rail hop -- Escape in
         # a Library text box hands focus back to the canvas. Position is the
         # whole contract: every binding above owns Escape for its own
@@ -1089,7 +1111,7 @@ class LibraryScreen(BaseAppScreen):
         Binding(
             "c",
             "library_conversation_open_console",
-            "Open in Console",
+            "Resume conversation",
             show=False,
         ),
         Binding("t", "library_media_move_to_trash", "Move to trash", show=False),
@@ -1906,16 +1928,6 @@ class LibraryScreen(BaseAppScreen):
         overflow-x: hidden;
     }
 
-    #library-shell-grid.library-notes-compact #library-note-context-status {
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-        padding: 0 1;
-        text-wrap: nowrap;
-        text-overflow: ellipsis;
-    }
-
     #library-shell-grid.library-notes-compact #library-note-context-region {
         height: 1fr;
         min-height: 0;
@@ -2261,6 +2273,11 @@ class LibraryScreen(BaseAppScreen):
             "quizzes": None,
         }
         self._library_loaded = False
+        #: task-32245: a navigation context admitted BEFORE mount cannot arm
+        #: its destination's entry focus yet (no canvas exists). The row is
+        #: parked here and ``on_mount`` runs the same
+        #: ``_arm_library_row_entry_focus`` the mounted route runs inline.
+        self._pending_library_entry_focus_row: str | None = None
         # Combined Search+RAG canvas state; see LibraryRagSearchState's own
         # module docstring/field comments for the per-field detail that
         # used to live here. `history` has a genuinely computed default
@@ -3476,6 +3493,20 @@ class LibraryScreen(BaseAppScreen):
         # has ever been opened. ``None`` until the first prefetch lands, so
         # the row's ``count_pending`` placeholder rule still applies.
         self._library_collections_prefetched_total: int | None = None
+        #: task-32103: which authority the last count OUTCOME below belongs
+        #: to -- the total on success, the failure kind on failure. Both
+        #: outlive an authority switch
+        #: (``_activate_collections_capture_authority``), so without this the
+        #: rail painted the previous authority's total, or its "(—)", under
+        #: the new one's name -- the same defect the controller-state path is
+        #: fenced against (fix round 1, and Qodo #2).
+        self._library_collections_count_authority: str | None = None
+        #: task-32103: why the last count read produced no number --
+        #: ``"timeout"``, ``"error"``, or ``""`` for success and for "no
+        #: captures authority" (which is not a failure). The row says so
+        #: instead of dropping its number silently, and only the deadline
+        #: kind claims a wait (fix round 1).
+        self._library_collections_count_failure: str = ""
         self._collections_state.reader_layout = resolve_adaptive_reader_layout(
             0,
             self._collections_state.reader_preferences,
@@ -3813,6 +3844,9 @@ class LibraryScreen(BaseAppScreen):
         #: cancel the other's. The File Notes folder change keeps its own
         #: wait on the workspace, which also owns every way out of it.
         self._library_structural_waits: dict[str, StructuralWait] = {}
+        #: task-32102: each owner's armed patience repaint, so a wait that
+        #: settles (or restarts) inside the patience window can stop it.
+        self._library_structural_wait_timers: dict[str, Timer] = {}
         self._library_model_install_progress_label: str = ""
         self._library_model_install_progress_owner: str | None = None
         #: The 5s first-load failsafe armed in ``on_mount``; retained so
@@ -3891,6 +3925,9 @@ class LibraryScreen(BaseAppScreen):
         # prior timer before scheduling a new one -- see both methods.
         self._library_list_entry_focus_timer: Timer | None = None
         self._library_list_entry_focus_deadline: float | None = None
+        #: task-32228 (re-review N5): handle of the in-flight retry tick, so
+        #: only one chain runs per arm and a disarm can stop it early.
+        self._library_list_entry_focus_retry_timer: Timer | None = None
         # task-15459: seed from the app-scoped snapshot cache now, pre-mount,
         # so a warm revisit's FIRST ``compose_content`` already renders real
         # data instead of the loading placeholder -- see
@@ -4061,9 +4098,12 @@ class LibraryScreen(BaseAppScreen):
             if self._conversations_state.reader_layout.items_open:
                 shortcuts.append(("/", "focus filter"))
             # task-32056: advertise the hand-off key exactly while it works,
-            # the same honest-footer idiom Media's l/c/t follow.
-            if self.check_action("library_conversation_open_console", ()):
-                shortcuts.append(("c", "open in Console"))
+            # the same honest-footer idiom Media's l/c/t follow. (task-32101)
+            # Reads the readiness predicate directly now that the key's own
+            # gate is wider than it -- blocked, the key explains rather than
+            # opening, which is not what a footer chip promises.
+            if self._library_conversation_handoff_ready():
+                shortcuts.append(("c", "resume conversation"))
             shortcuts.append(("F6", "next pane"))
             escape_label = self._library_conversation_escape_label()
             if escape_label:
@@ -4398,6 +4438,29 @@ class LibraryScreen(BaseAppScreen):
             shortcuts = tuple(pair for pair in shortcuts if pair[0] != "esc") + (
                 ("esc", "rail"),
             )
+        elif self._library_narrow_stage_return_active():
+            # task-32225: the adaptive-reader twin of the swap above. Applied
+            # here rather than in each of the route function's eight branches
+            # so no destination can be left behind with the old chip, and the
+            # label matches the "‹ Library" control that is on screen with it.
+            #
+            # FIRST, not appended: this context exists only below 64 columns,
+            # exactly where AppFooterStatus keeps a PREFIX of the actions and
+            # drops the tail -- appended, the chip was registered and never
+            # painted (live capture at 60x24 showed "/ focus search | F6 next
+            # pane" and no return). Recovery outranks navigation here anyway,
+            # which is the order that ladder assumes.
+            shortcuts = (("esc", "back to Library"),) + tuple(
+                pair for pair in shortcuts if pair[0] != "esc"
+            )
+        # re-review N4: below 64 columns the box "/" jumps to can be inside a
+        # CLOSED pane -- mounted, so the handler finds it, but unfocusable, so
+        # the key moves nothing. Drop the chip rather than paint the same
+        # dead-key lie task-32225 closed for Escape one key over. Guarded by
+        # ``is_mounted`` for the same reason the narrow-stage gate is: this
+        # runs from ``compose_content`` on an unmounted screen too.
+        if self.is_mounted and not self._library_slash_would_land():
+            shortcuts = tuple(pair for pair in shortcuts if pair[0] != "/")
         if self._library_lifecycle not in (
             LibraryLifecycle.UNKNOWN,
             LibraryLifecycle.STARTER,
@@ -5043,6 +5106,7 @@ class LibraryScreen(BaseAppScreen):
         self._notes_state.pending_focus_waits_for_snapshot = False
         self._notes_state.pending_focus_generation = None
         self._notes_state.navigation_status = ""
+        self._notes_state.navigation_focus_intent = False
         branches = getattr(self._notes_state, "tree_branches", {})
         generations = getattr(self._notes_state, "tree_request_generations", {})
         navigation_requests = getattr(
@@ -6694,6 +6758,159 @@ class LibraryScreen(BaseAppScreen):
                 here so the canvas-action handlers do not also see it.
         """
         event.stop()
+        self.action_library_narrow_stage_return()
+
+    def _library_slash_would_land(self) -> bool:
+        """Whether "/" would actually move focus right now (re-review N4).
+
+        The chip promises a jump to a search or filter box. Below 64 columns
+        every one of those boxes can be inside a CLOSED pane -- mounted, so a
+        query finds it, but absent from the focus chain, so ``focus()`` is a
+        no-op. Measured in the Media Reader at 60x24: "/ focus search" was the
+        first painted chip, ``#library-media-filter`` was mounted inside the
+        collapsed Items pane, and the key moved nothing. That is the same
+        dead-chip lie task-32225 closed for Escape, one key over.
+
+        Mirrors ``on_key``'s order (Conversations' own gate, then the Notes
+        binding's ``check_action``, then the shared canvas-filter map, then
+        the rail's global search) and shares that map with it, so the two can
+        only disagree about a destination one of them stops modelling. The
+        handler stays the authority on what the key DOES; this only decides
+        whether the footer says so.
+
+        Returns:
+            Whether some reachable control would take the key.
+        """
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
+            selector = (
+                "#library-conversations-filter"
+                if self._conversations_state.reader_layout.items_open
+                else ""
+            )
+        elif self.check_action("library_notes_focus_filter", ()):
+            return True
+        else:
+            selector = (
+                _LIBRARY_SLASH_CANVAS_FILTERS.get(self._library_selected_row_id) or ""
+            )
+            if not self._library_focusable(selector):
+                rail = self._active_library_rail()
+                selector = (
+                    "#library-search-input"
+                    if rail is not None and rail.display
+                    else ""
+                )
+        return self._library_focusable(selector)
+
+    def _library_focusable(self, selector: str) -> bool:
+        """Whether ``selector`` names a control that can take focus now."""
+        if not selector:
+            return False
+        controls = self.query(selector)
+        if not controls:
+            return False
+        return controls.first(Widget) in self.focus_chain
+
+    def _library_narrow_stage_return_active(self) -> bool:
+        """Whether the Library pane is closed on the live adaptive route.
+
+        task-32225: while it is, the footer's "esc focus rail" chip was a lie
+        on every adaptive-reader destination -- the hop's destination
+        (``#library-search-input``) lives INSIDE the closed pane, so Escape
+        moved nothing at 60x24 and the "‹ Library" control that does work was
+        never named. This is the eighth honest Escape context; it is disjoint
+        from ``library_emergency_return`` by construction (that stage is only
+        ever set when NO reader shell is mounted, see
+        ``_apply_library_emergency_geometry``).
+
+        Fix round 1 (review finding 1): this is also the LAST of the Escape
+        contexts, not a width-only one. Every Escape binding declared above
+        ``library_narrow_stage_return`` -- viewer back, the three editor
+        backs, trash back, an armed delete confirm, ... -- and Textual gives
+        the key to the first gate that passes, so at 60x24 in the Media viewer
+        the footer read "back to Library" while Escape went to the media list
+        and the Library pane stayed shut. The gate now stands down whenever an
+        earlier Escape action is live, which is the same stand-down the
+        ``emergency.enabled`` branch beside it performs through its own
+        ``guarded`` projection ("an editor/viewer/confirm is open").
+
+        Returns:
+            Whether Escape should reopen the Library pane instead of hopping.
+        """
+        # Bounded to the single-stage band, the same floor task-32065 gave the
+        # "‹ Library" control. ABOVE it a closed Library pane is an ordinary
+        # collapsed pane one grip away, and Escape there is the pinned
+        # step-back through the visible roles ("focus Items", then "focus
+        # Library"); taking the key from that would break the contract
+        # test_conversations_escape_moves_to_nearest_visible_prior_role holds.
+        #
+        # ``Screen.size`` is ``self.app.size - gutter``, NOT ``Widget.size``:
+        # read without an active app it RAISES ``NoActiveAppError`` rather
+        # than returning ``Size(0, 0)``. This gate is reached from
+        # ``_register_footer_shortcuts`` <- ``apply_navigation_context``,
+        # which is driven on an unmounted screen, so the guard is the same
+        # ``is_mounted`` one ``_library_emergency_return_eligibility`` (two
+        # lines above this branch's caller) carries for its own ``self.app``
+        # read. The width check stays for the measured-but-zero case that
+        # ``ordinary_emergency_required`` refuses.
+        if not self.is_mounted:
+            return False
+        width = self.size.width
+        if width <= 0 or not ordinary_emergency_required(width):
+            return False
+        # Read off BINDINGS rather than a second hand-written list of their
+        # names: ``library_blur_text_field`` learned the same lesson
+        # (task-32051), and every hard-coded roster -- or COUNT -- of Escape
+        # bindings in this file has gone stale at least once, this docstring
+        # included (re-review N2: it said "eleven"; there are twelve).
+        if any(
+            self.check_action(earlier, ())
+            for earlier in self._library_escape_actions_before(
+                "library_narrow_stage_return"
+            )
+        ):
+            return False
+        shells = self.query(_LIBRARY_READER_SHELL_SELECTOR)
+        if not shells:
+            return False
+        # Queried, not read from ``_library_reader_shell_ref``: that cache is
+        # probed once per compose generation and stays False for the rest of
+        # it when the probe ran before the route mounted -- which is exactly
+        # the first frames of the visit this context has to be right about.
+        layout = getattr(shells.first(Widget), "effective_layout", None)
+        return layout is not None and not layout.library_open
+
+    @on(LibraryPaneVisibilityChanged)
+    def _library_pane_visibility_changed(
+        self, event: LibraryPaneVisibilityChanged
+    ) -> None:
+        """Re-register the footer when a pane's applied visibility settles.
+
+        task-32225 / task-32228: the footer is registered from
+        ``compose_content``, which runs BEFORE the shell has resolved its
+        allocation -- so several chips were decided against a pane state that
+        was not yet true and nothing revisited them. Live on the seeded
+        profile: at 60x24 the "back to Library" chip never appeared though
+        Escape worked, and at 100x30 the Conversations canvas advertised only
+        "F6 next pane" while its Filter box was on screen and "/" focused it.
+        Both chips read a pane-open flag, and this message fires exactly when
+        one of those flags changes, so one re-registration fixes both.
+
+        Unconditional because the message itself is the gate: the shell posts
+        it only when an APPLIED visibility genuinely flips (route entry, a
+        grip press, a breakpoint crossing), never per frame.
+        """
+        event.stop()
+        self._register_footer_shortcuts()
+
+    def action_library_narrow_stage_return(self) -> None:
+        """Reopen the closed Library pane (task-32225).
+
+        The one seam the "‹ Library" control, its keyboard binding and the
+        pane grips all reach: the shell's own ``PaneToggleRequested``, so the
+        preference write and the persistence generation are handled exactly
+        once, by ``_toggle_library_media_reader_pane``.
+        """
         self.post_message(PaneToggleRequested("library"))
 
     def _sync_library_media_reader_layout_from_shell(
@@ -7829,6 +8046,13 @@ class LibraryScreen(BaseAppScreen):
         re-derived here. One no-landing case is still knowingly left
         inside "owns": a pending Find focus whose input never mounts --
         narrow, and it ends at ``None`` rather than at a wrong widget.
+
+        task-32213: that empty page now keeps its toolbar, so the shared
+        helper always finds a target for Media and the ``is None`` leg
+        below no longer fires for a filter miss. It is kept because the
+        helper still answers ``None`` for the states that compose no
+        enabled control at all (an open type/sort chooser replaces the
+        toolbar row), and because both readers must keep agreeing.
         """
         if self._media_state.find_focus_pending:
             return True
@@ -8052,10 +8276,9 @@ class LibraryScreen(BaseAppScreen):
             # widget, e.g. the Media viewer sub-view where no list filter is
             # mounted -- falls through to the rail-search grab, the prior
             # behaviour.
-            canvas_filter = {
-                LIBRARY_ROW_BROWSE_MEDIA: "#library-media-filter",
-                LIBRARY_ROW_BROWSE_PROMPTS: "#library-prompts-filter",
-            }.get(self._library_selected_row_id)
+            canvas_filter = _LIBRARY_SLASH_CANVAS_FILTERS.get(
+                self._library_selected_row_id
+            )
             if canvas_filter is not None:
                 try:
                     self.query_one(canvas_filter, Input).focus()
@@ -8160,11 +8383,25 @@ class LibraryScreen(BaseAppScreen):
         left Library. Tab now cycles within ``#screen-content``; the nav bar
         keeps its own documented keys (Ctrl+digit / F-keys) and stays
         traversable once focus is genuinely in it (mirrors ``ChatScreen``).
+
+        task-32106 (PR #2571 re-review, NEW-1): the note editor's fields
+        carry a PRIORITY ``tab`` binding, and ``App._check_bindings``
+        consumes a priority key before ``on_key`` ever runs -- so for a
+        focused note field this action, not ``on_key``, is the whole Tab
+        path. ``on_key``'s preamble marks the keystroke as a Notes user
+        interaction, which is the only keyboard site that clears
+        ``resize_settling``; without it the first Tab after a terminal
+        resize was classified programmatic in ``on_descendant_focus``.
+        Marking it here covers both the field bindings and this screen's
+        own (``on_key`` marks it a second time for non-priority keys, and
+        marking twice is a no-op).
         """
+        self._mark_library_notes_user_interaction()
         self._move_library_screen_focus(1)
 
     def action_focus_previous(self) -> None:
         """Shift+Tab: the reverse of ``action_focus_next``."""
+        self._mark_library_notes_user_interaction()
         self._move_library_screen_focus(-1)
 
     def _move_library_screen_focus(self, direction: int) -> Widget | None:
@@ -8604,6 +8841,12 @@ class LibraryScreen(BaseAppScreen):
                 exclusive=True,
                 group="library_nav_character",
             )
+        pending_entry_focus_row = self._pending_library_entry_focus_row
+        self._pending_library_entry_focus_row = None
+        if pending_entry_focus_row:
+            # task-32245: a pre-mount navigation context selected this row
+            # but could not arm its entry focus; the canvas exists now.
+            self._arm_library_row_entry_focus(pending_entry_focus_row)
 
     async def on_unmount(self) -> None:
         """Unregister the ingest registry listener registered in ``on_mount``.
@@ -8857,6 +9100,7 @@ class LibraryScreen(BaseAppScreen):
         state["library_conversation_page"] = (
             self._conversations_state.page if conversation_applied else 1
         )
+        state["conversation_archive_scope"] = self._conversation_recovery().scope
         state["library_conversation_query"] = (
             self._conversations_state.query if conversation_applied else ""
         )
@@ -9280,6 +9524,15 @@ class LibraryScreen(BaseAppScreen):
         self._conversations_state.focus_after_apply = ""
         self._conversations_state.select_mode = False
         self._conversations_state.row_selection.clear()
+        from ...Utils.input_validation import validate_conversation_archive_scope
+
+        try:
+            archive_scope = validate_conversation_archive_scope(
+                state.get("conversation_archive_scope")
+            )
+        except ValueError:
+            archive_scope = "active"
+        self._conversation_recovery().scope = archive_scope
         conversation_query = state.get("library_conversation_query")
         self._conversations_state.requested_query = self._safe_text(
             conversation_query if isinstance(conversation_query, str) else "",
@@ -9374,44 +9627,6 @@ class LibraryScreen(BaseAppScreen):
         # is a no-op, and a hit is idempotent pre-mount attribute assignment
         # (see the method's own docstring).
         self._seed_local_source_snapshot_from_cache()
-
-    def _seed_local_source_snapshot_from_cache(self) -> None:
-        """Apply the app-scoped snapshot cache before this screen mounts.
-
-        Called from both ``__init__`` and ``restore_state`` (task-15459) --
-        the app calls both on a freshly constructed, not-yet-mounted
-        instance before ``switch_screen`` mounts it (see ``restore_state``'s
-        own docstring), so seeding here is what lets a warm revisit's FIRST
-        ``compose_content`` already render the previous visit's data instead
-        of the "Loading…" placeholder -- rather than composing once with
-        that placeholder and then being forced into an immediate second,
-        explicit ``refresh(recompose=True)`` from ``on_mount`` to correct it
-        (that fallback still exists there, for the cache-miss/expired case
-        this seed does not cover).
-
-        Mirrors ``on_mount``'s own freshness check
-        (``LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS``) so a stale cache is never
-        instant-applied here either.
-
-        Safe to call this early: ``_apply_local_source_snapshot`` only
-        touches the DOM (recompose / rail sync) when ``self.is_mounted`` is
-        True, which is never the case at either call site, so a hit is a
-        pure attribute assignment with no recompose or widget-query side
-        effects.
-        """
-        cached_snapshot = getattr(
-            self.app_instance, "_library_source_snapshot_cache", None
-        )
-        cached_stamp = getattr(
-            self.app_instance, "_library_source_snapshot_cache_stamp", None
-        )
-        if (
-            cached_snapshot is None
-            or cached_stamp is None
-            or time.monotonic() - cached_stamp >= LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS
-        ):
-            return
-        self._apply_local_source_snapshot(*cached_snapshot)
 
     def _file_notes_active(self) -> bool:
         """Return whether the retained File Notes workspace owns the canvas."""
@@ -9517,6 +9732,16 @@ class LibraryScreen(BaseAppScreen):
         live.
         """
         self._media_state.successful_focus_ownership = None
+        # Same reason PR #1410's review stopped the settle timer below: a
+        # retry tick left over from the PREVIOUS arm carries that arm's
+        # generation, so it no-ops when it fires -- while its stored handle
+        # blocks this arm from starting a chain of its own. Live effect after
+        # dev's conversations change added a second arm to the route entry:
+        # the rows mounted 0.44s in, with 1.75s of window left, and nothing
+        # re-requested focus.
+        if self._library_list_entry_focus_retry_timer is not None:
+            self._library_list_entry_focus_retry_timer.stop()
+            self._library_list_entry_focus_retry_timer = None
         if self._library_list_entry_focus_timer is not None:
             self._library_list_entry_focus_timer.stop()
             self._library_list_entry_focus_timer = None
@@ -9537,9 +9762,14 @@ class LibraryScreen(BaseAppScreen):
                 self._focus_library_list_entry_if_current,
                 self._library_list_entry_focus_generation,
             )
-        elif media_return is None:
-            self.call_after_refresh(self._focus_library_list_entry)
         else:
+            # One branch since Qodo #3 on PR #2585 guarded the ``media_return
+            # is None`` case: the plain call re-checked neither the pending
+            # flag nor the arm generation, so a user who took control between
+            # this schedule and the callback had focus pulled back into the
+            # list -- the yank task-2856's review round 2 added the immediate
+            # disarm for. Both remaining cases now want the identical guarded
+            # continuation, so they say so once.
             self.call_after_refresh(
                 self._focus_library_list_entry_if_current,
                 self._library_list_entry_focus_generation,
@@ -9549,6 +9779,55 @@ class LibraryScreen(BaseAppScreen):
                 LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS,
                 self._disarm_library_list_entry_focus,
             )
+
+    def _retry_library_list_entry_focus_while_armed(self) -> None:
+        """Re-attempt entry focus once the list's rows have actually mounted.
+
+        task-32228: the arm schedules ONE ``call_after_refresh`` attempt and
+        then relies on ``compose_content`` re-requesting while the flag stays
+        armed. That covers a canvas whose rows arrive on a SCREEN recompose;
+        it does not cover one whose rows arrive on a canvas-level recompose,
+        which is why Conversations landed on nothing (measured: the single
+        attempt ran with zero ``.library-conversation-row`` widgets mounted,
+        the flag was still armed when they appeared, and nothing re-fired).
+
+        Bounded by the arm's own settle window on both axes: the deadline
+        stops the polling, and ``_focus_library_list_entry_if_current`` drops
+        any tick whose generation a disarm has already superseded. So this
+        cannot outlive a user taking control, and on a genuinely empty list it
+        stops at the deadline rather than spinning. One chain at a time, and
+        the handle is stored so a disarm can stop it early -- the same shape
+        ``_arm_library_list_entry_focus`` uses for its own settle timer
+        (re-review N5: every no-rows attempt used to start its own chain, and
+        ``compose_content`` re-requests on each recompose while armed, so
+        several ran concurrently for one arm).
+        """
+        # ponytail: bounded by LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS (2s), so
+        # a list that takes longer than that to arrive still lands nowhere --
+        # measured live on the seeded profile, where the FIRST visit to
+        # Conversations (cold DB) misses the window and a warm re-entry hits
+        # it. The other list canvases share that ceiling (a cold Prompts visit
+        # lands in its filter rather than row 0), and task-32260 measured
+        # Library at 12.6s to open, so the miss is routine rather than rare.
+        # Upgrade path filed as task-32301: re-arm from each destination's own
+        # "list arrived" seam instead of a fixed window.
+        deadline = self._library_list_entry_focus_deadline
+        if (
+            self._library_list_entry_focus_retry_timer is not None
+            or not self._library_pending_list_entry_focus
+            or deadline is None
+            or time.monotonic() >= deadline
+        ):
+            return
+        generation = self._library_list_entry_focus_generation
+
+        def _tick() -> None:
+            self._library_list_entry_focus_retry_timer = None
+            self._focus_library_list_entry_if_current(generation)
+
+        self._library_list_entry_focus_retry_timer = self.set_timer(
+            LIBRARY_LIST_ENTRY_FOCUS_RETRY_SECONDS, _tick
+        )
 
     def _disarm_library_list_entry_focus(self) -> None:
         """End an entry-focus request's settle window (task-2856 AC1).
@@ -9565,6 +9844,11 @@ class LibraryScreen(BaseAppScreen):
         timer dangling behind it.
         """
         self._library_list_entry_focus_generation += 1
+        # re-review N5: the retry chain gets the same early stop the settle
+        # timer has, instead of ticking on to its deadline after a disarm.
+        if self._library_list_entry_focus_retry_timer is not None:
+            self._library_list_entry_focus_retry_timer.stop()
+            self._library_list_entry_focus_retry_timer = None
         self._library_pending_list_entry_focus = False
         self._library_pending_list_entry_media_return = None
         self._library_pending_list_entry_focus_anchor = None
@@ -9600,6 +9884,15 @@ class LibraryScreen(BaseAppScreen):
         them. Complements the unconditional disarm at the top of
         ``on_key`` -- this hook is what also covers mouse clicks, which
         never reach ``on_key`` at all.
+
+        Args:
+            event: The queued descendant-focus event. Its ``widget`` is the
+                newly focused node, evaluated for user focus intent: a
+                genuine one vetoes deferred restores and supersedes a
+                running locator that wants focus (task-32100).
+
+        Returns:
+            None.
         """
         focused = event.widget
         if focused is not self.focused:
@@ -9674,7 +9967,34 @@ class LibraryScreen(BaseAppScreen):
                 # Veto every older deferred restore before its next turn can
                 # steal the control the user just chose.
                 self._notes_state.focus_intent_generation += 1
-                if self._notes_state.navigation_status:
+                # PR #2571 review, finding 4: the supersede below does four
+                # more things -- it clears the pending focus handoff, the
+                # navigation status and the branch navigation requests. None
+                # of those run now while a focus=False locator is in flight.
+                # The status and the in-flight branch requests are that
+                # locator's own and MUST survive. The pending focus handoff
+                # is the one that could in principle go stale, and the
+                # invariant that makes this safe is: nothing arms a pending
+                # handoff while a focus=False locator runs -- the only
+                # arming site (`_exit_library_note_editor_guarded`)
+                # supersedes navigation itself and arms with the generation
+                # that supersede returns. Hoisting the handoff clear out of
+                # the supersede was TRIED and reverted: it reds the notes
+                # focus/footer pins in `test_library_canvas_sync_defects.py`,
+                # because `_rehydrate_library_notes_after_recompose` reads
+                # that same pending identity to decide it MAY restore focus
+                # at all.
+                # task-32100: a running locator that would take focus is the
+                # one this focus change overrules. A ``focus=False`` locator
+                # only reveals a row, and the row click that started it lands
+                # here ~20 ms later -- superseding it abandoned every open.
+                # Its status and its in-flight branch requests are its own and
+                # must survive, which is why the rest of the supersede does
+                # not run for it.
+                if (
+                    self._notes_state.navigation_status
+                    and self._notes_state.navigation_focus_intent
+                ):
                     LibraryScreen._supersede_library_notes_navigation(self)
             self.call_after_refresh(
                 self._record_library_notes_focus_interaction,
@@ -9742,25 +10062,42 @@ class LibraryScreen(BaseAppScreen):
     def _library_media_empty_list_fallback_target(self) -> Widget | None:
         """The control an EMPTY Media list can hand keyboard focus to.
 
-        The first of Media's four recovery controls that is both present
-        and enabled, or ``None`` when the page offers none. One owner for
-        both readers: ``_focus_library_list_entry`` lands on it, and
+        The first of the candidates below that is both present and
+        enabled, or ``None`` when the page offers none. One owner for both
+        readers: ``_focus_library_list_entry`` lands on it, and
         ``_library_focus_channel_owns_this_window`` asks whether there is
-        anything to land on at all -- a filter MISS composes none of these
-        four (the canvas returns right after its query-echoing status
-        line), so the answer has to be the same in both places or the seam
-        stands down for a channel that never arrives. The miss page's own
-        ``#library-media-filter-clear`` is deliberately NOT a fifth entry:
-        with nothing here the shared seam restores the filter ``Input``
-        (the right place to retype), and listing Clear would put the
-        predicate back into "owns" and re-open the gap.
+        anything to land on at all, so the answer has to be the same in
+        both places or the seam stands down for a channel that never
+        arrives (Qodo #2483).
+
+        task-32213 changed the shape of this question. The empty page used
+        to compose NONE of the four recovery controls on a filter MISS --
+        the canvas returned right after its query-echoing status line --
+        and the whole point of the shared owner was to say "nothing to
+        land on" there. The toolbar now survives that page, so
+        ``#library-media-type-filter`` is always present and enabled on it
+        (``fresh_zero`` excludes ``mutation_action_reason``, so
+        ``_gate_mutation_action`` never disables it) and this helper no
+        longer returns ``None`` for a Media miss.
+
+        That would have landed entry focus on ``type:`` -- the facet the
+        user did NOT type into, and the same symptom task-32214 was filed
+        for. The intent recorded here still stands: with a query in force
+        the filter ``Input`` is the right place to retype, so it LEADS the
+        list rather than being left to the shared seam. ``#library-media-
+        filter-clear`` is still deliberately not a candidate: Clear
+        discards the query rather than letting the user fix it.
         """
-        for selector in (
+        selectors = (
             "#library-media-type-filter",
             "#library-media-empty-clear-type",
             "#library-media-empty-import",
             "#library-media-retry",
-        ):
+        )
+        applied = self._library_media_browse_controller.applied_scope
+        if applied is not None and applied.query:
+            selectors = ("#library-media-filter", *selectors)
+        for selector in selectors:
             try:
                 control = self.query_one(selector, Widget)
             except (NoMatches, QueryError):
@@ -9807,6 +10144,8 @@ class LibraryScreen(BaseAppScreen):
                 # ended with nothing focused at all. Same filter-input
                 # answer the two rows above already give.
                 "library-notes-row": "#library-notes-filter",
+                # task-32228: same answer for an empty conversation list.
+                "library-conversation-row": "#library-conversations-filter",
             }.get(row_class)
             if fallback_selector is not None:
                 try:
@@ -9815,13 +10154,22 @@ class LibraryScreen(BaseAppScreen):
                     pass
                 else:
                     self.set_focus(control)
-                    return
+                    # task-32228: only a landing counts as done. A control
+                    # that is mounted but not yet focusable (a canvas still
+                    # composing) leaves focus on None, and returning here made
+                    # that indistinguishable from success -- which is how
+                    # Conversations ended up with nothing focused while its
+                    # rows were mounting.
+                    if self.focused is control:
+                        return
             if row_class == "library-media-row":
                 control = self._library_media_empty_list_fallback_target()
                 if control is not None:
                     self._library_notes_programmatic_focus_target = control
                     self.set_focus(control)
-                    return
+                    if self.focused is control:
+                        return
+            self._retry_library_list_entry_focus_while_armed()
             return
         if (
             row_class == "library-media-row"
@@ -9894,10 +10242,25 @@ class LibraryScreen(BaseAppScreen):
             owner=owner,
         )
         self._library_structural_waits[owner] = wait
+        # task-32102: whatever this owner had armed is gone the moment its
+        # wait is replaced -- a second folder change must not inherit the
+        # first one's patience clock.
+        self._stop_library_structural_wait_timer(owner)
         if repaint is not None:
             # One shot: the line only changes once, when patience runs out.
-            self.set_timer(STRUCTURAL_WAIT_PATIENCE_SECONDS, repaint)
+            # Retained so a wait that settles inside the patience window can
+            # stop it; unretained, the repaint fired into whatever the
+            # surface had become three seconds later (task-32102).
+            self._library_structural_wait_timers[owner] = self.set_timer(
+                STRUCTURAL_WAIT_PATIENCE_SECONDS, repaint
+            )
         return wait
+
+    def _stop_library_structural_wait_timer(self, owner: str) -> None:
+        """Stop and forget ``owner``'s armed patience repaint, if any."""
+        timer = self._library_structural_wait_timers.pop(owner, None)
+        if timer is not None:
+            timer.stop()
 
     def _library_structural_wait_for(self, owner: str) -> StructuralWait | None:
         """Return ``owner``'s in-flight wait, if it has one."""
@@ -9906,6 +10269,7 @@ class LibraryScreen(BaseAppScreen):
     def _end_library_structural_wait(self, owner: str) -> None:
         """Clear the wait once ``owner``'s operation has settled."""
         self._library_structural_waits.pop(owner, None)
+        self._stop_library_structural_wait_timer(owner)
 
     @on(Button.Pressed, "#library-structural-wait-cancel")
     def _library_structural_wait_cancel_pressed(self, event: Button.Pressed) -> None:
@@ -9936,7 +10300,10 @@ class LibraryScreen(BaseAppScreen):
         if not self._file_notes_active():
             return True
         assert self._notes_state.file_notes_workspace is not None
-        self._notes_state.file_notes_workspace.cancel_structural_wait()
+        # task-32102: this seam is only ever reached on the way out, so the
+        # outcome is announced -- the root row it used to be written to is
+        # part of the canvas being torn down.
+        self._notes_state.file_notes_workspace.cancel_structural_wait(leaving=True)
         return await self._notes_state.file_notes_workspace.flush_pending_work()
 
     def _acquire_file_notes_transition(
@@ -10174,6 +10541,9 @@ class LibraryScreen(BaseAppScreen):
             if not self._unavailable_navigation._library_character_admission_is_current(self, character_admission):
                 self._unavailable_navigation._discard_library_character_admission(self, character_admission)
                 return
+        # task-32245: a deep link owes its destination the same entry focus a
+        # rail-row press does.
+        self._arm_library_row_entry_focus(target_row_id)
         if character_admission is not None:
             await self._unavailable_navigation._open_pending_library_character_navigation(self, )
 
@@ -10366,10 +10736,16 @@ class LibraryScreen(BaseAppScreen):
         authority = getattr(scope_service, "active_authority", None)
         if authority is None:
             self._library_collections_prefetched_total = None
+            self._library_collections_count_authority = None
+            self._library_collections_count_failure = ""
             return
+        started_at = time.monotonic()
         try:
+            # (task-32103) The shared unfiltered page-1 read: the
+            # onboarding evidence seam asks the same question in the same
+            # pass, and one read now answers both.
             page = await asyncio.wait_for(
-                scope_service.list_page(CapturePageRequest(authority.key)),
+                scope_service.read_unfiltered_first_page(),
                 timeout=LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,
             )
         except Exception as exc:
@@ -10385,8 +10761,27 @@ class LibraryScreen(BaseAppScreen):
                 _retry_failure_reason(exc),
             )
             self._library_collections_prefetched_total = None
+            self._library_collections_count_authority = authority.key
+            # (fix round 1) A read that failed in 20 ms must not tell the
+            # user it waited five seconds, so the KIND is recorded, not just
+            # the fact. (fix round 2) By the CLOCK, not by the exception
+            # type: since 3.10 ``socket.timeout is TimeoutError`` and the
+            # OSError family raises it for ETIMEDOUT, so an isinstance check
+            # let a transport timeout that fired instantly claim the
+            # deadline's copy -- and ``wait_for`` propagates an inner
+            # TimeoutError unchanged, so catching at that line cannot tell
+            # them apart either. The sentence claims elapsed time, so
+            # elapsed time is what decides it.
+            self._library_collections_count_failure = (
+                "timeout"
+                if time.monotonic() - started_at
+                >= LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS
+                else "error"
+            )
             return
         self._library_collections_prefetched_total = page.total
+        self._library_collections_count_authority = authority.key
+        self._library_collections_count_failure = ""
 
     def _carry_selected_conversation_into_snapshot(self, records: dict[str, tuple[Mapping[str, Any], ...]]) -> dict[str, tuple[Mapping[str, Any], ...]]:
         return self._conversations_controller._carry_selected_conversation_into_snapshot(records)
@@ -11389,20 +11784,32 @@ class LibraryScreen(BaseAppScreen):
         if shell.canvas_kind == "conversations":
             local_list_surface = True
             expected_selector = "#library-conversations-canvas"
-            if self._library_lookup_error is None:
-                conversations_state = self._build_library_conversations_state()
-                self._adopt_library_conversation_state_selection(
-                    conversations_state.selected_id
-                )
-                sync_kind = "conversations"
-                replacement = LibraryConversationsCanvas(
-                    conversations_state,
-                    id="library-conversations-canvas",
-                )
+            # Conversation paging has its own failure and retry state. A broad
+            # source outage must not replace a successful independent page.
+            conversations_state = self._build_library_conversations_state()
+            self._adopt_library_conversation_state_selection(
+                conversations_state.selected_id
+            )
+            sync_kind = "conversations"
+            replacement = LibraryConversationsCanvas(
+                conversations_state,
+                id="library-conversations-canvas",
+            )
         elif (
-            shell.canvas_kind == LIBRARY_CANVAS_KIND_NOTES
+            shell.canvas_kind
+            in (LIBRARY_CANVAS_KIND_NOTES, LIBRARY_CANVAS_KIND_NOTES_CREATE)
             and self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
         ):
+            # task-32245: NOTES_CREATE belongs here too. ``compose_content``
+            # mounts the shared "Loading local Library sources…" placeholder
+            # for BOTH kinds (they share one retained Items pane), but this
+            # reconciler only knew ``notes`` -- so a first entry that landed
+            # on New note before the snapshot resolved (the wizard's "Write
+            # your first note" hand-off, the Console setup card's notes
+            # action, a cold command-palette "new_note") kept that
+            # placeholder for the life of the visit. ``_build_library_entry_
+            # active_child`` and ``_LIBRARY_RESIDENT_CANVAS_OWNER_ROWS``
+            # already pair the two kinds; this site was the odd one out.
             local_list_surface = True
             expected_selector = "#library-notes-canvas"
             if self._library_lookup_error is None:
@@ -11443,7 +11850,7 @@ class LibraryScreen(BaseAppScreen):
 
         if (
             local_list_surface
-            and shell.canvas_kind != "skills"
+            and shell.canvas_kind not in {"skills", "conversations"}
             and self._library_lookup_error is not None
         ):
             expected_selector = "#library-canvas-error"
@@ -11754,7 +12161,25 @@ class LibraryScreen(BaseAppScreen):
     def _seed_local_source_snapshot_from_cache(
         self, *, now: float | None = None
     ) -> bool:
-        """Apply a recent detached cache snapshot before first composition."""
+        """Apply a recent detached cache snapshot before first composition.
+
+        Called from both ``__init__`` and ``restore_state`` (task-15459) on a
+        freshly constructed, not-yet-mounted instance, so a warm revisit's
+        FIRST ``compose_content`` already renders the previous visit's data
+        instead of the "Loading…" placeholder. Safe to call this early, and
+        twice: ``_apply_local_source_snapshot`` only touches the DOM when
+        ``self.is_mounted``, which neither call site is, so a hit is a pure
+        attribute assignment and a miss is a no-op. ``on_mount`` still owns
+        the cache-miss/expired case and the mount-time reconciliation.
+
+        Args:
+            now: Monotonic reading to age the cache against, for tests;
+                defaults to ``time.monotonic()``.
+
+        Returns:
+            True when a fresh snapshot was applied, False on a miss or on a
+            cache older than ``LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS``.
+        """
         stamp = getattr(self.app_instance, "_library_source_snapshot_cache_stamp", None)
         if not isinstance(stamp, (int, float)) or not math.isfinite(float(stamp)):
             return False
@@ -12480,18 +12905,8 @@ class LibraryScreen(BaseAppScreen):
         return LIBRARY_GENERIC_WORKSPACE_BLOCK, False, detail
 
     def _library_conversation_handoff_ready(self) -> bool:
-        """Whether the Conversations Console hand-off may run right now.
-
-        The ONE predicate behind the header action's enabled state, the
-        ``c`` accelerator's ``check_action`` gate, and that key's footer
-        entry (fix round 1: ``c`` consulted only the load fence, so it
-        reached the press -- and its toast -- on a conversation whose own
-        button was disabled and said why).
-        """
-        return (
-            self._conversations_state.reader_state.loaded_actions_eligible
-            and not self._library_conversation_workspace_block()[0]
-        )
+        """Use the same retained-identity load fence as the Resume button."""
+        return self._conversations_state.reader_state.loaded_actions_eligible
 
     def _link_selected_conversation_to_workspace(self) -> None:
         """Link the open conversation into the active workspace (task-32056).
@@ -12929,10 +13344,20 @@ class LibraryScreen(BaseAppScreen):
         }
 
     def _workspace_source_records(self) -> Mapping[str, tuple[Mapping[str, Any], ...]]:
-        return {
+        records = {
             source_type: tuple(self._local_source_records[source_type])
             for source_type in ("notes", "media", "conversations")
         }
+        # Archive pages are outside the active-only startup snapshot. Include
+        # their fetched rows in the same per-item workspace eligibility rules.
+        conversations = {
+            str(row.get("id") or row.get("conversation_id")): row
+            for row in records["conversations"]
+        }
+        for row in self._conversations_state.page_records:
+            conversations[str(row.get("id") or row.get("conversation_id"))] = row
+        records["conversations"] = tuple(conversations.values())
+        return records
 
     def _invalidate_library_workspace_depth_state(self) -> None:
         self._library_workspace_depth_state_cache = None
@@ -13178,18 +13603,64 @@ class LibraryScreen(BaseAppScreen):
         """Shorten ``state.handoff_label`` for the Workspace group's Handoff row.
 
         Drops the redundant "Console/RAG handoff: " prefix (the "Handoff"
-        row label already says as much) and prefixes a "●" glyph directly
-        before a nonzero blocked count, so this single line carries the
-        signal the retired blocked-state callouts used to repeat three
-        times.
+        row label already says as much). task-32230 AC#2 (critique #9 row
+        29): a nonzero blocked count used to be flagged with a "●" glyph
+        and nothing else -- a colour dot beside a number, naming neither
+        what was blocked nor how to unblock it. The count now carries the
+        rule's own reason and its next step in the house
+        ``reason · next step`` grammar, read off the eligibility decision
+        the state already holds (``LibraryWorkspaceSourceRow.reason_code``).
+        The unblocked case is unchanged and grows no dot.
         """
         label = state.handoff_label
         if label.startswith(LIBRARY_HANDOFF_LABEL_PREFIX):
             label = label[len(LIBRARY_HANDOFF_LABEL_PREFIX) :]
         match = re.search(r"(\d+) blocked", label)
-        if match and int(match.group(1)) > 0:
-            label = f"{label[: match.start()]}● {match.group(0)}{label[match.end() :]}"
-        return label
+        if not match or int(match.group(1)) == 0:
+            return label
+        blocked = tuple(
+            row for row in state.source_rows if not row.active_context_eligible
+        )
+        if not blocked:
+            return label
+        # The reason and the remedy answer different questions, so they are
+        # decided separately (PR #2581 review): one shared reason code does
+        # not imply one shared item type, and neither implies that the
+        # control the remedy names exists.
+        labels = {
+            linkable_ineligibility_label(row.reason_code) for row in blocked
+        }
+        every_block_is_linkable = "" not in labels
+        # A set whose rows disagree cannot borrow one row's label for all of
+        # them -- `not_in_active_workspace` and `cross_workspace` are both
+        # link-resolvable but say different things -- so it falls back to
+        # the aggregate rather than mis-describing the others.
+        reason = (
+            labels.pop() if len(labels) == 1 else ""
+        ) or LIBRARY_GENERIC_WORKSPACE_BLOCK
+        item_types = {row.item_type for row in blocked}
+        pronoun = "it" if len(blocked) == 1 else "them"
+        if not every_block_is_linkable:
+            # Linking cannot resolve at least one of these; the rule wrote
+            # its own recovery sentence, which is already a next step.
+            remedy = blocked[0].recovery_copy.strip().rstrip(".") or (
+                "Open the item to see why"
+            )
+        elif item_types == {"conversation"}:
+            # "Link to workspace" is a real button, and task-32056 put it on
+            # the conversation reader's header -- the ONLY reader in the repo
+            # that builds one. Naming a header for a blocked note or media
+            # item sent the reader to press something that is not there.
+            remedy = f"Link {pronoun} from the conversation's header"
+        else:
+            # Linkable, but no single control to name: the house wording for
+            # this state, the same one `#library-use-in-console`'s tooltip
+            # carries ("Copy or link blocked Library sources into the active
+            # workspace"), minus the workspace id the per-row recovery
+            # sentence would drag into a 34-cell rail row.
+            remedy = f"Copy or link {pronoun} into this workspace"
+        head = label[: match.start()].rstrip().rstrip(",")
+        return f"{head} · {match.group(0)} · {reason} · {remedy}"
 
     def _workspaces_detail_rows(
         self,
@@ -13447,9 +13918,12 @@ class LibraryScreen(BaseAppScreen):
                     # replacement-owner geometry can settle exact scroll.
                     self.set_focus(None)
                 self._media_state.return_settlement = None
-            elif pending_media_return is None:
-                self.call_after_refresh(self._focus_library_list_entry)
             else:
+                # Qodo #3 on PR #2585: the recompose re-request carries the arm
+                # generation too, so a disarm between this compose and the
+                # callback stands it down instead of re-focusing the list.
+                # Same continuation with or without a pending media return,
+                # so it is written once.
                 self.call_after_refresh(
                     self._focus_library_list_entry_if_current,
                     self._library_list_entry_focus_generation,
@@ -14198,6 +14672,74 @@ class LibraryScreen(BaseAppScreen):
                             id="library-landing-canvas",
                         )
 
+    def _library_collections_rail_count(self) -> int | None:
+        """Return the Collections rail count, or None when there is none to show.
+
+        task-32057 AC#2: until the canvas has loaded a page at least once,
+        the rail reads the unfiltered prefetched total so the row never
+        paints a countless "Collections" beside its counted siblings.
+
+        Fix round 1, finding 1: the fallback gate is "has NEVER loaded a
+        page", not "has no total right now". ``exact_total`` is also None
+        while a page is loading or stale, so gating on it substituted the
+        UNFILTERED total on every page turn and scope switch -- "Favorites
+        (2)" flashed the whole-library count mid-load -- and gave a stale
+        page a number the canvas deliberately withholds.
+
+        task-32103 closes the two remaining ways a wrong number reached the
+        row:
+
+        * The unfiltered prefetch only answers while the canvas's own scope
+          is unfiltered. ``unmount()`` resets ``page`` but the screen-owned
+          ``active_scope`` persists, so re-entering a scoped canvas landed
+          back on the never-loaded branch and flashed the whole-library
+          total for one load window.
+        * A retained page whose authority is gone is the PREVIOUS
+          authority's total. ``deactivate()`` nulls the active authority
+          without touching this controller, so the number outlived what it
+          counted.
+        """
+        controller = self._library_collections_capture_controller
+        state = controller.state if controller is not None else None
+        authority = getattr(
+            getattr(controller, "scope_service", None), "active_authority", None
+        )
+        if state is not None and state.page is not None:
+            if authority is None or state.authority_key != authority.key:
+                return None
+            return state.exact_total
+        # "all" is ``LibraryCollectionsState.active_scope``'s unfiltered
+        # default -- the only scope the unfiltered prefetch answers for.
+        if self._collections_state.active_scope != "all":
+            return None
+        # (fix round 1) ...and the prefetch is fenced to the authority it
+        # was READ from, exactly like the controller-state branch above.
+        # ``_activate_collections_capture_authority`` swaps the authority on
+        # every committed source switch while this number survives, and the
+        # Collections row is deliberately excluded from ``counts_loading``,
+        # so the gap between the switch and the next read painted the old
+        # authority's total under the new one's name.
+        if not self._library_collections_count_is_current():
+            return None
+        return self._library_collections_prefetched_total
+
+    def _library_collections_count_is_current(self) -> bool:
+        """Whether the last count outcome belongs to the ACTIVE authority.
+
+        (fix round 1) Fences both halves of that outcome -- the prefetched
+        total and the failure kind behind the row's "(—)". A failure carried
+        over from the previous authority would otherwise mark the new one
+        unavailable until its own read landed (Qodo #2).
+        """
+        controller = self._library_collections_capture_controller
+        authority = getattr(
+            getattr(controller, "scope_service", None), "active_authority", None
+        )
+        return (
+            authority is not None
+            and self._library_collections_count_authority == authority.key
+        )
+
     def _build_library_shell_input(self) -> LibraryShellInput:
         """Build the pure shell input from live counts and runtime state.
 
@@ -14225,26 +14767,17 @@ class LibraryScreen(BaseAppScreen):
             server_label = getattr(
                 runtime_state, "last_known_server_label", None
             ) or getattr(runtime_state, "active_server_id", None)
-        collections_controller = self._library_collections_capture_controller
-        collections_state = (
-            collections_controller.state if collections_controller is not None else None
+        collections_count = self._library_collections_rail_count()
+        # (fix round 1) ONE gated value behind both the row's "(—)" and the
+        # Details sentence: read separately, the Details line went on telling
+        # the user to open Collections while the row beside it already showed
+        # the count that opening it had produced.
+        collections_count_failure = (
+            self._library_collections_count_failure
+            if collections_count is None
+            and self._library_collections_count_is_current()
+            else ""
         )
-        if collections_state is None or collections_state.page is None:
-            # task-32057 AC#2: until the canvas has loaded a page at least
-            # once, the rail reads the unfiltered prefetched total so the
-            # row never paints a countless "Collections" beside its counted
-            # siblings.
-            #
-            # Fix round 1, finding 1: the gate is "has NEVER loaded a page",
-            # not "has no total right now". ``exact_total`` is also None
-            # while a page is loading or stale, so gating on it substituted
-            # the UNFILTERED total on every page turn and scope switch --
-            # "Favorites (2)" flashed the whole-library count mid-load --
-            # and gave a stale page a number the canvas deliberately
-            # withholds.
-            collections_count = self._library_collections_prefetched_total
-        else:
-            collections_count = collections_state.exact_total
         counts = self._local_source_counts
         known = self._local_source_total_known
         counts_loading = not self._library_loaded and not self._library_lookup_error
@@ -14281,9 +14814,14 @@ class LibraryScreen(BaseAppScreen):
             skills_count=skills_count if counts_available else None,
             skills_known=True,
             collections_count=collections_count,
+            collections_count_unavailable=bool(collections_count_failure),
             runtime_source=active_source,
             server_label=str(server_label) if server_label else None,
-            details_lines=self._library_details_lines(active_source, server_label),
+            details_lines=self._library_details_lines(
+                active_source,
+                server_label,
+                collections_count_failure=collections_count_failure,
+            ),
             study_decks_count=(
                 self._library_study_counts.get("study_decks")
                 if counts_available
@@ -14301,16 +14839,21 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def _library_details_lines(
-        self, active_source: str, server_label: Any
+        self,
+        active_source: str,
+        server_label: Any,
+        *,
+        collections_count_failure: str = "",
     ) -> tuple[str, ...]:
         """Build the Status group's Details disclosure lines for the rail.
 
-        Returns up to three plain-text values: the source value (rendered
+        Returns two plain-text values, or five: the source value (rendered
         by the rail with a dimmed "Source" label), the local source counts
         (or a lookup-error/recovery block in place of the counts when the
-        local source snapshot failed to load), and -- only when the
-        DBStatusManager has cached them on the app -- the local DB file
-        sizes (F-014: telemetry relocated out of the app footer; omitted
+        local source snapshot failed to load), and then -- only when the
+        DBStatusManager has cached them on the app -- ONE VALUE PER local DB
+        file (task-32230: the rail gives each its own row so none wraps
+        mid-value; F-014: telemetry relocated out of the app footer, omitted
         entirely until first computed, never an "N/A" triplet).
         """
         runtime_value = (
@@ -14327,35 +14870,56 @@ class LibraryScreen(BaseAppScreen):
                 f"Media {counts.get('media', 0)} · "
                 f"Conversations {counts.get('conversations', 0)}"
             )
-        sizes_line = self._library_db_sizes_line()
-        if sizes_line is not None:
-            return (runtime_value, counts_or_error, sizes_line)
-        return (runtime_value, counts_or_error)
+        if collections_count_failure:
+            # task-32103: a count read that failed or ran out of deadline is
+            # said out loud -- a silently absent number reads exactly like a
+            # source whose count is off by design. The caller passes the same
+            # gated value the row's "(—)" uses, so the two can never
+            # disagree, and only a genuine deadline claims a wait.
+            #
+            # (fix round 2) It joins the COUNTS value rather than becoming a
+            # line of its own, and task-32230 makes that MORE load-bearing,
+            # not less: everything from index 2 onward is now a DB size (one
+            # row per source), so an extra entry appended here would not
+            # merely evict the sizes line -- it would be rendered AS a size.
+            # Both properties therefore hold together: the failure sentence
+            # never displaces a size, and each size keeps its own row.
+            waited = (
+                f" (waited {LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS:g} s)"
+                if collections_count_failure == "timeout"
+                else ""
+            )
+            counts_or_error = (
+                f"{counts_or_error} · Collections count unavailable{waited} — "
+                "open Collections to load it."
+            )
+        return (runtime_value, counts_or_error, *self._library_db_sizes_lines())
 
-    def _library_db_sizes_line(self) -> str | None:
-        """Format the Details DB-sizes value from the app-level cache.
+    def _library_db_sizes_lines(self) -> tuple[str, ...]:
+        """Format the Details DB-size values from the app-level cache.
 
-        Single source for the sizes line's format, shared by the rail's
-        compose path (via ``_library_details_lines``) and the
-        Details-open refresh patcher
-        (``_refresh_library_details_db_sizes``) -- the recompose-
+        Single source for the sizes' format, shared by the rail's compose
+        path (via ``_library_details_lines``) and the Details-open refresh
+        patcher (``_refresh_library_details_db_sizes``) -- the recompose-
         discipline rule: the in-place updater owns the same conditional
         the compose branch owns.
 
         Returns:
-            The formatted line, or ``None`` while the DBStatusManager has
-            never cached a reading (F-014: never an "N/A" triplet).
+            One ``"<Source> <size>"`` value per database, in render order
+            (task-32230 AC#1: the rail gives each its own row, so none can
+            wrap mid-value); empty while the DBStatusManager has never
+            cached a reading (F-014: never an "N/A" triplet).
         """
         db_sizes = getattr(self.app_instance, "db_sizes_status", None)
         if not isinstance(db_sizes, dict) or not db_sizes:
-            return None
+            return ()
         prompts_size = _unbreakable_size_text(str(db_sizes.get("prompts", "?")))
         chachanotes_size = _unbreakable_size_text(str(db_sizes.get("chachanotes", "?")))
         media_size = _unbreakable_size_text(str(db_sizes.get("media", "?")))
         return (
-            f"Prompts {prompts_size} · "
-            f"Chats/Notes {chachanotes_size} · "
-            f"Media {media_size}"
+            f"Prompts {prompts_size}",
+            f"Chats/Notes {chachanotes_size}",
+            f"Media {media_size}",
         )
 
     async def _refresh_library_details_db_sizes(self) -> None:
@@ -14383,31 +14947,29 @@ class LibraryScreen(BaseAppScreen):
                     "Details-open DB size recompute failed; the disclosure "
                     "keeps its cached reading."
                 )
-        sizes_line = self._library_db_sizes_line()
-        if sizes_line is None:
-            return
-        rendered = library_dim_label_text("DB sizes", sizes_line)
-        existing = list(self.query("#library-details-db-sizes"))
-        if existing:
-            existing[0].update(rendered)
-            return
         anchors = list(self.query("#library-details-body"))
         if not anchors:
             return
-        try:
-            await anchors[0].parent.mount(
-                Static(
-                    rendered,
-                    id="library-details-db-sizes",
-                    classes="library-details-row",
-                ),
-                after=anchors[0],
-            )
-        except Exception:
-            loguru_logger.debug(
-                "Mounting the freshly computed DB-sizes line failed; the "
-                "next rail recompose renders it from the updated cache."
-            )
+        # task-32230: one row per source, so the patcher walks the same row
+        # list ``LibraryRail`` composes -- updating the rows that are there
+        # and mounting the ones that are not, each after its predecessor.
+        previous = anchors[0]
+        for row_id, rendered in library_db_size_rows(self._library_db_sizes_lines()):
+            existing = list(self.query(f"#{row_id}"))
+            if existing:
+                existing[0].update(rendered)
+                previous = existing[0]
+                continue
+            row = Static(rendered, id=row_id, classes="library-details-row")
+            try:
+                await previous.parent.mount(row, after=previous)
+            except Exception:
+                loguru_logger.debug(
+                    "Mounting the freshly computed DB-sizes rows failed; the "
+                    "next rail recompose renders them from the updated cache."
+                )
+                return
+            previous = row
 
     def _conversation_reader_list_summary(self) -> str:
         return self._conversation_reader_controller._conversation_reader_list_summary()
@@ -14443,6 +15005,56 @@ class LibraryScreen(BaseAppScreen):
         return self._conversation_reader_controller._start_library_conversation_reader_selection(
             conversation_id
         )
+
+    @on(Button.Pressed, ".library-conversation-scope")
+    def handle_library_conversation_scope(self, event: Button.Pressed) -> None:
+        """Select a validated archive scope and reload the first result page.
+
+        Args:
+            event: Scope button press consumed before starting the page request.
+        """
+        return self._conversations_controller.handle_library_conversation_scope(event)
+
+    @on(Button.Pressed, "#library-conversations-view-archived")
+    def handle_library_conversation_view_archive(self, event: Button.Pressed) -> None:
+        """Show archived conversations while retaining the current search query.
+
+        Args:
+            event: Receipt action press consumed before switching to Archived.
+        """
+        return self._conversations_controller.handle_library_conversation_view_archive(event)
+
+    @on(Button.Pressed, "#library-conversations-undo")
+    def handle_library_conversation_undo(self, event: Button.Pressed) -> None:
+        """Schedule reversal of successful versioned archive changes.
+
+        Args:
+            event: Undo press consumed before starting the exclusive recovery worker.
+        """
+        return self._conversations_controller.handle_library_conversation_undo(event)
+
+    @on(Button.Pressed, "#library-conversation-archive")
+    @on(Button.Pressed, "#library-conversation-restore")
+    @on(Button.Pressed, "#library-conversations-archive-selected")
+    @on(Button.Pressed, "#library-conversations-restore-selected")
+    def handle_library_conversation_archive_action(self, event: Button.Pressed) -> None:
+        """Confirm archive or restore for captured identities and versions.
+
+        Args:
+            event: Single or bulk archive/restore press consumed by this handler.
+        """
+        return self._conversations_controller.handle_library_conversation_archive_action(event)
+
+    def _conversation_recovery(self):
+        from ..Library_Modules.library_conversation_recovery import (
+            LibraryConversationRecovery,
+        )
+
+        recovery = self.__dict__.get("_library_conversation_recovery")
+        if recovery is None:
+            recovery = LibraryConversationRecovery(self._conversations_controller)
+            self._library_conversation_recovery = recovery
+        return recovery
 
     def _build_library_conversations_state(self):
         return self._conversations_controller._build_library_conversations_state()
@@ -15452,16 +16064,35 @@ class LibraryScreen(BaseAppScreen):
         self._notes_state.tree_inactive_managed_folder_ids = frozenset()
         self._notes_state.filter_browse_receipt = None
 
+    def _library_notes_placement_order(self) -> str:
+        """Return the repository placement order the Sort value asks for.
+
+        task-32172: the Sort control's value is the tree's ORDER BY now, and
+        it reaches both the pager and the deep-link locator's rank through
+        this one read so the two can never diverge.
+        """
+        order = getattr(self._notes_state, "sort", "title")
+        return order if order in PLACEMENT_ORDERS else "title"
+
     def _request_library_notes_tree_initial_load(self) -> None:
-        """Start one fresh visit by requesting only the two root slices."""
+        """Start one fresh visit by requesting the root and open branches.
+
+        task-32172: a folder's placements only exist while it is expanded,
+        so reloading the roots alone left every open folder rendered with no
+        children until the user collapsed and re-opened it. Under a changed
+        sort that is the whole point of the reload, and the same emptiness
+        was already reachable from the import/editor-return refreshes.
+        """
+        expanded = sorted(getattr(self._notes_state, "tree_expanded_ids", set()))
         LibraryScreen._begin_library_notes_tree_visit(self)
         # task-32144: and the tombstones behind them, so the "Recently
         # deleted (N)" row is truthful on the visit's first paint.
         self._refresh_library_notes_trash()
-        for kind in ("folders", "placements"):
-            LibraryScreen._request_library_notes_tree_slice(
-                self, NotesBranchKey(None, kind)
-            )
+        for parent_id in (None, *expanded):
+            for kind in ("folders", "placements"):
+                LibraryScreen._request_library_notes_tree_slice(
+                    self, NotesBranchKey(parent_id, kind)
+                )
 
     def _sync_library_notes_tree_canvas_if_present(
         self,
@@ -15706,6 +16337,13 @@ class LibraryScreen(BaseAppScreen):
                 limit=LIBRARY_NOTES_TREE_PAGE_SIZE,
                 offset=offset,
                 user_id=self._library_notes_user_id(),
+                # task-32172: folders have no date to order by, so only the
+                # placement slice carries the Sort value.
+                **(
+                    {}
+                    if key.slice_kind == "folders"
+                    else {"order": LibraryScreen._library_notes_placement_order(self)}
+                ),
             )
         except Exception as exc:  # noqa: BLE001 - normalized service boundary
             event = (
@@ -16055,10 +16693,17 @@ class LibraryScreen(BaseAppScreen):
             self._notes_state.navigation_generation = navigation_generation
         topology_epoch = self._notes_state.tree_topology_epoch
         lifecycle_generation = self._notes_state.tree_lifecycle_generation
-        focus_generation = getattr(self._notes_state, "focus_intent_generation", 0)
+        # task-32100: only a locator that will take focus has a stake in the
+        # focus intent. The one every note open starts (``focus=False``) just
+        # reveals and marks a row, and fencing it on focus meant the row
+        # click's own focus event abandoned it before it could land.
+        focus_generation = (
+            getattr(self._notes_state, "focus_intent_generation", 0) if focus else None
+        )
         self._notes_state.navigation_status = (
             "Locating note…" if note_id else "Locating folder…"
         )
+        self._notes_state.navigation_focus_intent = focus
         LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
 
         def current() -> bool:
@@ -16068,8 +16713,11 @@ class LibraryScreen(BaseAppScreen):
                 and topology_epoch == self._notes_state.tree_topology_epoch
                 and lifecycle_generation
                 == self._notes_state.tree_lifecycle_generation
-                and focus_generation
-                == getattr(self._notes_state, "focus_intent_generation", 0)
+                and (
+                    focus_generation is None
+                    or focus_generation
+                    == getattr(self._notes_state, "focus_intent_generation", 0)
+                )
                 and LibraryScreen._library_notes_restore_guard_is_current(
                     self, restore_guard
                 )
@@ -16095,6 +16743,9 @@ class LibraryScreen(BaseAppScreen):
                     note_id=note_id,
                     preferred_folder_id=preferred_folder_id,
                     preferred_membership_id=preferred_membership_id,
+                    # task-32172: the returned offset is a rank, so it has
+                    # to be counted in the order the tree will page in.
+                    order=LibraryScreen._library_notes_placement_order(self),
                 )
             else:
                 location = await method(**common, folder_id=folder_id)
@@ -18850,15 +19501,18 @@ class LibraryScreen(BaseAppScreen):
         # cached branch slices (and, while filtering, an FTS filter window) --
         # NOT the flat records patched above. Retitle the matching placement in
         # the branch slices AND re-sort the affected slice, because repository
-        # pages are ordered by title so a rename changes collation position
-        # (Qodo #3). Cross-page offset boundaries are reconciled on the next
-        # slice reload/visit; see patch_notes_tree_branches_title's contract.
+        # pages are ordered so a save changes the row's position (Qodo #3) --
+        # by title under Title, and by the fresh modified stamp under
+        # Newest/Oldest (task-32172). Cross-page offset boundaries are
+        # reconciled on the next slice reload/visit; see
+        # patch_notes_tree_branches_title's contract.
         self._notes_state.tree_branches, _tree_retitled = (
             patch_notes_tree_branches_title(
                 self._notes_state.tree_branches,
                 note_id=baseline.note_id,
                 title=persisted_title,
                 modified_at=baseline.modified_at,
+                order=LibraryScreen._library_notes_placement_order(self),
             )
         )
         # Qodo #4: the notes filter is an FTS MATCH over title+body+keywords
@@ -20564,10 +21218,34 @@ class LibraryScreen(BaseAppScreen):
             LIBRARY_ROW_BROWSE_NOTES,
             LIBRARY_ROW_BROWSE_PROMPTS,
             LIBRARY_ROW_BROWSE_SKILLS,
+            # task-32228 (critique #9 fix round 1): Conversations is the fifth.
+            # It was left out, so arriving here put focus outside the reader
+            # shell -- which is why its Escape hop had nowhere to start from
+            # and its footer (correctly) withheld the chip. The keys were never
+            # missing; the state that makes them live was.
+            LIBRARY_ROW_BROWSE_CONVERSATIONS,
         ):
             self._arm_library_list_entry_focus()
         if self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT:
             self._start_library_export_counts_worker()
+        self._arm_library_row_entry_focus(row_id)
+
+    def _arm_library_row_entry_focus(self, row_id: str) -> None:
+        """Park entry focus for one destination row once its canvas exists.
+
+        task-32245: this was inline in the rail-row switch, so it ran only
+        on that route. The navigation-context deep links
+        (``apply_navigation_context``) apply the SAME row selection and
+        recompose from it, but skipped every arm here -- so the wizard's
+        "Write your first note" hand-off landed on the New-note canvas with
+        nothing focused: its advertised "enter create note" was dead (the
+        footer fell back to the bare "esc back to notes" tier) and the first
+        Enter fell through to the app's own binding and left Library for
+        Home. Both routes now share this one arm.
+
+        Args:
+            row_id: The destination rail row the route is landing on.
+        """
         if row_id == LIBRARY_ROW_INGEST_MEDIA and self.is_mounted:
             # task-3302 AC#1 (MI-03): entering Ingest parks the caret in
             # the path field -- the first action on this canvas is always
@@ -20669,6 +21347,9 @@ class LibraryScreen(BaseAppScreen):
                 loaded_preview_selected=self._library_conversation_loaded_preview_selected(),
             )
             self._sync_library_conversation_reader()
+            for action in ("archive-selected", "restore-selected"):
+                for button in self.query(f"#library-conversations-{action}"):
+                    button.disabled = not self._conversations_state.row_selection.count
             return
         if conversation_id:
             self._acknowledge_library_destination_change()
@@ -23213,6 +23894,21 @@ class LibraryScreen(BaseAppScreen):
             ``True`` to force-activate it, or ``None`` to defer to Textual's
             default resolution.
         """
+        if action in {"focus_next", "focus_previous"}:
+            # task-32106 (PR #2571 re-review, NEW-1). These stay universal
+            # everywhere except the canvas-only emergency stage, where
+            # ``on_key``'s ``emergency_tab`` branch OWNS Tab: it advances the
+            # emergency interaction and gives Shift+Tab its hop to
+            # ``#library-emergency-return``. A note field's PRIORITY tab
+            # binding would be consumed by ``App._check_bindings`` before
+            # ``on_key`` runs, so deactivating the action there hands the key
+            # back to the normal path and that branch keeps working. The
+            # screen's own non-priority binding never ran there either --
+            # ``on_key`` stops the event first -- so nothing else changes.
+            return not (
+                self._library_emergency_stage == "canvas-only"
+                and self._library_emergency_restore_receipt is not None
+            )
         if action in {
             "library_notes_new",
             "library_notes_focus_filter",
@@ -23343,15 +24039,25 @@ class LibraryScreen(BaseAppScreen):
                 and not self._media_state.bulk_delete_in_flight
             )
         if action == "library_conversation_open_console":
-            # task-32056: the Conversations half of the shared "c" key. Same
-            # predicate the header action's own enabled state uses, so the
-            # key can never do what the button refuses.
-            return (
-                self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
-                and self._library_conversation_handoff_ready()
-            )
+            # task-32056: the Conversations half of the shared "c" key.
+            # task-32101: live wherever a conversation is OPEN, not only
+            # where the hand-off is ready -- the action itself refuses with
+            # the sentence the disabled control shows. Gating the key on
+            # readiness (fix round 1) made it silent on exactly the state
+            # the user needs explained. The footer chip still tracks
+            # readiness (see ``_library_route_shortcuts_for_current_state``),
+            # so nothing is advertised as working while it is blocked.
+            reader_state = self._conversations_state.reader_state
+            return self._library_selected_row_id == (
+                LIBRARY_ROW_BROWSE_CONVERSATIONS
+            ) and bool(reader_state.selected_id or reader_state.loaded_id)
         if action == "library_emergency_return":
             return self._library_emergency_return_eligibility().enabled
+        if action == "library_narrow_stage_return":
+            # task-32225: exactly while the Library pane is closed on the live
+            # adaptive route -- the same predicate the footer chip reads, so
+            # the chip and the key can never disagree.
+            return self._library_narrow_stage_return_active()
         if action == "library_ingest_retry_last":
             # task-3313: only on the Ingest canvas AND while the affordance
             # itself is offered. THE SAME predicate the state builder uses
@@ -25350,6 +26056,7 @@ class LibraryScreen(BaseAppScreen):
         async def import_callback(selected_path: Path | None) -> None:
             if selected_path is None:
                 return
+            self._persist_library_note_import_location(selected_path)
             try:
                 self._library_note_import_controller.accept_selected_path(
                     selected_path,
@@ -25363,8 +26070,34 @@ class LibraryScreen(BaseAppScreen):
             FileOpen(
                 title="Import once (files or one folder)",
                 offer_select_folder=True,
+                location=self._library_note_import_browse_location(),
             ),
             import_callback,
+        )
+
+    def _library_note_import_browse_location(self) -> str:
+        """Return where Import once's picker should open (task-32174 AC#1).
+
+        Mirrors ``_library_ingest_browse_location``: prefer the directory a
+        prior Import once selection came from, else home. Keyed
+        independently (``library.notes_import``) from the ingest browser and
+        from the other two Notes pickers -- each context remembers its own
+        last-used directory. The stored value is persisted user state, so it
+        is validated in ``library_browse_location`` before it is used.
+        """
+        remembered = validated_browse_directory(
+            get_cli_setting("library.notes_import", "last_directory", None)
+        )
+        return str(remembered) if remembered is not None else str(Path.home())
+
+    def _persist_library_note_import_location(self, selected_path: Path) -> None:
+        """Off the event loop: remember the picked Import once directory."""
+        generation = claim_browse_directory("library.notes_import", "last_directory")
+        self.run_worker(
+            lambda: remember_browse_directory(
+                "library.notes_import", "last_directory", selected_path, generation
+            ),
+            thread=True,
         )
 
     @on(Button.Pressed, '#library-notes-add-from-files')
@@ -27282,6 +28015,18 @@ class LibraryScreen(BaseAppScreen):
     @on(Button.Pressed, ".library-ingest-details")
     def _on_ingest_job_details(self, event: Button.Pressed) -> None:
         return self._ingest_controller._on_ingest_job_details(event)
+
+    @on(Button.Pressed, ".library-ingest-group-expand")
+    def handle_library_ingest_group_expand(self, event: Button.Pressed) -> None:
+        return self._ingest_controller.handle_library_ingest_group_expand(event)
+
+    @on(Button.Pressed, ".library-ingest-group-retry")
+    def handle_library_ingest_group_retry(self, event: Button.Pressed) -> None:
+        return self._ingest_controller.handle_library_ingest_group_retry(event)
+
+    @on(Button.Pressed, ".library-ingest-group-dismiss")
+    def handle_library_ingest_group_dismiss(self, event: Button.Pressed) -> None:
+        return self._ingest_controller.handle_library_ingest_group_dismiss(event)
 
     @on(Button.Pressed, "#library-ingest-analyze-skipped")
     def handle_library_ingest_analyze_skipped(self, event: Button.Pressed) -> None:
@@ -29917,7 +30662,19 @@ class LibraryScreen(BaseAppScreen):
         eight distinct ``esc …`` chips live.
         """
         session = self._media_state.reader_session
-        if self._media_state.confirming_delete:
+        # Qodo on PR #2583 (task-32222): mirror the FIRST THREE branches of
+        # ``action_library_media_viewer_back`` -- it closes the metadata-edit
+        # and analysis-edit forms exactly as it closes a delete confirm, but
+        # this label checked only the delete, so the footer advertised "focus
+        # Items" over a form Escape would merely close. That is the same
+        # chip-vs-key drift task-31272 closed at four other seams, and
+        # LIBRARY_MEDIA_SUBSTATE_BACK_SHORTCUTS already promised all three
+        # sub-states this one word.
+        if (
+            self._media_state.editing
+            or self._media_state.confirming_delete
+            or self._media_state.editing_analysis
+        ):
             return "close"
         if session.more_open:
             return "close"
@@ -32557,6 +33314,7 @@ class LibraryScreen(BaseAppScreen):
                 record_id,
                 mode="local",
                 scope_type="all",
+                archive_scope=self._conversation_recovery().scope,
                 limit=LIBRARY_CONVERSATION_PAGE_SIZE,
             )
         except Exception:
@@ -33029,11 +33787,21 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-conversation-open-console")
     def open_selected_conversation_in_console(self, event: Button.Pressed) -> None:
+        """Resume the fully loaded original conversation in Console.
+
+        Args:
+            event: Resume press consumed before checking the retained identity fence.
+        """
         return self._conversations_controller.open_selected_conversation_in_console(event)
 
 
     @on(Button.Pressed, "#library-conversation-use-source")
     def use_selected_conversation_as_source(self, event: Button.Pressed) -> None:
+        """Stage the loaded transcript under the existing workspace source rules.
+
+        Args:
+            event: Source action press forwarded to the browse controller.
+        """
         return self._conversations_controller.use_selected_conversation_as_source(event)
 
     @on(Button.Pressed, "#library-conversation-link-workspace")
@@ -33048,14 +33816,25 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._link_selected_conversation_to_workspace()
 
-    def action_library_conversation_open_console(self) -> None:
-        """Keyboard 'c': hand the open conversation to Console (task-32056).
+    def _library_conversation_block_sentence(self) -> str | None:
+        """Explain the Resume load/identity fence using the Reader's shared copy."""
+        return library_conversation_block_sentence(
+            self._conversations_state.reader_state, blocked=""
+        )
 
-        Mirrors ``action_library_media_use_in_console``; the two share the
-        key and are separated by ``check_action``'s selected-row gate, since
-        only one Library canvas is open at a time.
+    def action_library_conversation_open_console(self) -> None:
+        """Resume the loaded original, or explain the same fence as its button.
+
+        The key remains live while a conversation is open, including when
+        loading blocks Resume. Workspace membership gates Use as source only.
         """
-        self._open_selected_conversation_handoff()
+        if not self._library_conversation_handoff_ready():
+            sentence = self._library_conversation_block_sentence()
+            notify = getattr(self.app_instance, "notify", None)
+            if sentence and callable(notify):
+                notify(sentence, severity="warning")
+            return
+        self._conversations_controller.resume_selected_conversation()
 
     def open_chunking_lab(self, *, use_selected: bool = False) -> None:
         """Open the local tool directly, with only a local media ID as context."""
