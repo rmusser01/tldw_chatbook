@@ -1,11 +1,13 @@
 ---
 id: TASK-32243
 title: >-
-  Library Notes lasting sync: a failed Check crashes over its own named
-  refusal, leaks the root for the session, and blames the user with no log
-status: To Do
-assignee: []
+  Library Notes lasting sync: a failed Check crashes over its own named refusal,
+  leaks the root for the session, and blames the user with no log
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-10 18:05'
+updated_date: '2026-09-11 15:06'
 labels:
   - library
   - notes
@@ -49,3 +51,13 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 - [ ] #6 Covered by a test that a second Check on the same folder is not rejected with `lasting_root_overlap` because of the first
 - [ ] #7 Covered by a test that the controller renders a distinct named reason per admission state
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce headlessly: review_setup() against a vault inside the profile dir and one under /private/tmp; capture the NotesDeviceStateError traceback and the leaked _root_paths entry.
+2. Write RED tests: (a) rejected admission on the setup path raises a reason-carrying error, not NotesDeviceStateError; (b) a failed Check leaves _root_paths empty and the folder is admissible on retry; (c) the controller renders distinct copy per reason and logs a metadata-only warning.
+3. Fix: _ensure_lease(..., persist: bool) with persist=False on the unpersisted setup/activation paths; release the setup authority (which pops _root_paths) on any failure, not only on observation failure; carry admission.reason_code on the raised error; reason-mapped controller copy plus a path-free logger.warning; keep the bare except.
+4. Re-pin the diagnostic inventory, run the touched suites against a dev baseline.
+5. Live verification at 235x52: refusal copy on an in-profile vault, then a successful Check on a $HOME vault in the same session.
+<!-- SECTION:PLAN:END -->

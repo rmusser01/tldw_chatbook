@@ -1,11 +1,13 @@
 ---
 id: TASK-32269
 title: >-
-  Library Notes user guide documents an entire lasting-sync chapter that
-  cannot be entered
-status: To Do
-assignee: []
+  Library Notes user guide documents an entire lasting-sync chapter that cannot
+  be entered
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-10 18:05'
+updated_date: '2026-09-11 15:07'
 labels:
   - library
   - notes
@@ -33,3 +35,11 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 - [ ] #2 Every step in the chapter has been walked against a real admitted root before its 'Verified against' stamp is refreshed
 - [ ] #3 Nothing in the chapter describes a surface that cannot be reached from the shipped build
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Land the task-32243 fix first.
+2. Walk the lasting-sync chapter live against a real admitted $HOME vault.
+3. Rewrite the chapter: state the admission precondition in the user's terms, list the refusal reasons and their copy, remove or supersede claims that cannot run; refresh the stamp.
+<!-- SECTION:PLAN:END -->

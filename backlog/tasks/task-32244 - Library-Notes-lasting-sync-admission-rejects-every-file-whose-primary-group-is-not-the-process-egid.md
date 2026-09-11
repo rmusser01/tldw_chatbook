@@ -1,11 +1,13 @@
 ---
 id: TASK-32244
 title: >-
-  Library Notes lasting sync admission rejects every file whose primary group
-  is not the process egid
-status: To Do
-assignee: []
+  Library Notes lasting sync admission rejects every file whose primary group is
+  not the process egid
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-10 18:05'
+updated_date: '2026-09-11 15:07'
 labels:
   - library
   - notes
@@ -33,3 +35,12 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 - [ ] #3 `root_discovery_incomplete` names how many files were rejected and the dominant reason, not only that discovery was incomplete
 - [ ] #4 Covered by a test over a file whose group is not the caller's egid but which the caller can write
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Confirm the group check rejects a writable file (own uid, group wheel) under /private/tmp.
+2. RED test over a snapshot whose owner_group is not the caller egid but whose owner/mode make it writable.
+3. Replace the egid equality with an honest writability test from the snapshot's own owner/group/mode bits (owner match, supplementary-group membership, other bits).
+4. Aggregate the per-file refusals so root_discovery_incomplete names the count and the dominant reason instead of raising on the first refusal.
+<!-- SECTION:PLAN:END -->
