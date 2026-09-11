@@ -60,11 +60,18 @@ finish or interrupt it." Runs continue when you switch screens — see
 a long tool call never looks frozen: `⚙ read_file · 4s` names the tool that
 is running and how long it has been running, `Thinking… · 6s` means the
 tool finished and the model is composing the next round, and `Generating…`
-is the wait for the model's first response of the turn. The elapsed figure
-advances while you watch. The line is live-only — it vanishes the moment
-the reply's own text arrives, and a conversation you reopen later shows the
-completed `Tool` rows below instead. During a fleet turn, while the primary
-waits on its children, the line reads `2 sub-agents · ⚙ grep_files · 12s`
+is the wait for the model's first response of the turn. Once an approval
+or confirm card is up and waiting on you, the line reads `Waiting for your
+approval · 12s` instead of `Thinking…` — a decision only you can make
+outranks whatever the model's last step happened to be — and the same
+applies to the "Run:" status chip above the composer and the Inspector's
+`Live work`/`Run` rows, which read "Waiting for your approval"/"Waiting
+for approval" rather than the generic run-in-progress copy while a card is
+pending. The elapsed figure advances while you watch. The line is
+live-only — it vanishes the moment the reply's own text arrives, and a
+conversation you reopen later shows the completed `Tool` rows below
+instead. During a fleet turn, while the primary waits on its children, the
+line reads `2 sub-agents · ⚙ grep_files · 12s`
 (the count of running sub-agents and their longest-running tool) instead of
 `Thinking…`; the running sub-agent list itself lives in the **Agents**
 section of the Inspect rail (**Alt+I**), and each child's full step list

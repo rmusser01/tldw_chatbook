@@ -14548,9 +14548,25 @@ class ChatScreen(BaseAppScreen):
         )
 
     def _console_provider_blocker_copy(self) -> str:
-        """Return concise Console recovery copy for provider/model setup gaps."""
+        """Return concise Console recovery copy for provider/model setup gaps.
+
+        task-32276: ``wait_for_active_run`` means "a turn is already in
+        flight", not a provider/model misconfiguration -- the same
+        distinction ``_console_setup_blocked_reason``/``_console_send_
+        blocked_reason`` already carve out below. Left in, an otherwise
+        fully-configured provider read "Setup: Provider configuration
+        required" (this copy feeds the Setup/Blocked-impact/Next-action
+        Inspector rows in ``_build_console_inspector_state``) for the
+        entire duration of EVERY active run, including one parked on a
+        healthy pending approval -- which then made the pinned authority
+        line's ``recovery_required`` check (any "Next action" row present)
+        read "Recovery required" over "Waiting for approval".
+        """
         _settings, readiness = self._active_console_settings_readiness()
-        if readiness.operability == "ready_to_send":
+        if (
+            readiness.operability == "ready_to_send"
+            or readiness.recovery_action == "wait_for_active_run"
+        ):
             return ""
         return build_console_readiness_presentation(readiness).detail
 
@@ -17664,6 +17680,13 @@ class ChatScreen(BaseAppScreen):
         this is gated on ``CONSOLE_ACTIVE_RUN_STATUSES``, the run chip's
         visibility contract. Falls back to the status value when a
         transition set no visible copy.
+
+        task-32276: ``run_state.visible_copy`` is a snapshot taken once at
+        dispatch start ("Agent running.") and never updated mid-turn -- an
+        approval round parking partway through leaves it stale. Checked
+        here, on every read, instead: the controller's own round registry
+        (``has_pending_approval_round``), not the run state, is the live
+        truth for "is a card waiting on the user right now".
         """
         store = self._console_chat_store
         session_id = store.active_session_id if store is not None else None
@@ -17682,6 +17705,8 @@ class ChatScreen(BaseAppScreen):
         run_state = controller.run_state if controller is not None else None
         if run_state is None or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES:
             return ""
+        if controller.has_pending_approval_round(session_id or ""):
+            return "Waiting for your approval."
         return run_state.visible_copy or run_state.status.value
 
     def _sync_console_mode_bar(self) -> None:

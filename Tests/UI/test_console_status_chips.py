@@ -368,3 +368,60 @@ async def test_run_chip_tracks_active_run_state_via_mode_bar_sync():
         console._sync_console_mode_bar()
         await pilot.pause()
         assert chip.display is False
+
+
+@pytest.mark.asyncio
+async def test_run_chip_reads_waiting_for_approval_while_a_round_is_pending():
+    """task-32276: a card waiting on the user overrides the streaming copy.
+
+    ``run_state.visible_copy`` ("Agent running.") is set once at dispatch
+    start and never updated when an approval round parks mid-turn -- the
+    chip must read the controller's live round registry instead, not the
+    stale run-state copy.
+    """
+    from Tests.UI.test_console_native_chat_flow import (
+        _configure_native_ready_console,
+    )
+    from Tests.UI.test_destination_shells import (
+        _build_test_app,
+        _wait_for_selector,
+    )
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleRunState,
+        ConsoleRunStatus,
+    )
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-status-chips")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        chip = console.query_one("#console-run-chip")
+
+        controller = console._ensure_console_chat_controller()
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running.")
+        )
+        console._sync_console_mode_bar()
+        await pilot.pause()
+        assert str(chip.render()) == "Run: Agent running."
+
+        controller.add_pending_round(session.id, "round-1")
+        console._sync_console_mode_bar()
+        await pilot.pause()
+        assert chip.display is True
+        assert str(chip.render()) == "Run: Waiting for your approval."
+
+        # Discarding the round returns the chip to the plain run copy --
+        # the override is live, not sticky.
+        controller.discard_pending_round(session.id, "round-1")
+        console._sync_console_mode_bar()
+        await pilot.pause()
+        assert str(chip.render()) == "Run: Agent running."
