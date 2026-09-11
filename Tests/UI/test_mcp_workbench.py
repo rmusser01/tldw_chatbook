@@ -11846,12 +11846,12 @@ async def test_every_mode_renders_usably_at_100x30():
         assert app.query_one("#mcp-hub-inspector").region.height <= 12
 
 
-# -- Wave F (2026-09-11 MCP Hub UX program, ADR-149): bulk actions --------
+# -- Wave F (2026-09-11 MCP Hub UX program, ADR-150): bulk actions --------
 
 
 @pytest.mark.asyncio
 async def test_shift_space_bulk_sets_visible_tools_of_one_server(tmp_path):
-    """ADR-149: shift+space applies the cursor row's next state to the
+    """ADR-150: shift+space applies the cursor row's next state to the
     server's VISIBLE tool rows only (Wave B order: first press from
     Inherit = Ask), with one echo and the store holding ordinary
     per-tool entries -- exactly what N single presses would write."""
@@ -11879,7 +11879,7 @@ async def test_shift_space_bulk_sets_visible_tools_of_one_server(tmp_path):
 
 @pytest.mark.asyncio
 async def test_bulk_clear_reverts_only_overridden_rows(tmp_path):
-    """ADR-149: C writes None only for rows that HELD an override; a
+    """ADR-150: C writes None only for rows that HELD an override; a
     never-overridden sibling gains no entry at all."""
     store_path = tmp_path / "mcp_permissions.json"
     MCPPermissionStore(store_path).set_tool_state("local:docs", "search", "ask")

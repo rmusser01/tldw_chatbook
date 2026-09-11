@@ -529,7 +529,7 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
             self.profile_id = profile_id
 
     class BulkStateRequested(Message, namespace="mcp_permissions_mode"):
-        """ADR-149 Wave F: `shift+space` on the matrix -- apply the cursor
+        """ADR-150 Wave F: `shift+space` on the matrix -- apply the cursor
         row's next cycled state to the server's VISIBLE tool rows. The
         canvas (which alone knows visibility) computed the scope and the
         state; the workbench remains the single writer and executes this
@@ -549,7 +549,7 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
             self.profile_context = profile_context
 
     class BulkClearRequested(Message, namespace="mcp_permissions_mode"):
-        """ADR-149 Wave F: `C` on the matrix -- clear the server's VISIBLE
+        """ADR-150 Wave F: `C` on the matrix -- clear the server's VISIBLE
         tool overrides (back to Inherit). Only rows that currently hold an
         override are sent; the full-clear recipe is to clear the filter
         first (the filter is the bulk's scope selector)."""
@@ -641,7 +641,7 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         self._kill_switch: bool = False
         self._profile_context: PermissionProfileContext | None = None
         self._profile_select_sync = False
-        # ADR-149 Wave F: the extra hint lines currently rendered under the
+        # ADR-150 Wave F: the extra hint lines currently rendered under the
         # fixed legend (gate breadcrumb / discovery hint from the last
         # update_matrix) -- flash_hint() appends to these until the next
         # update_matrix rebuilds them.
@@ -1138,7 +1138,7 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         self.query_one("#mcp-perm-legend", Static).update(text)
 
     def flash_hint(self, text: str) -> None:
-        """ADR-149 Wave F: one transient hint line under the legend (the
+        """ADR-150 Wave F: one transient hint line under the legend (the
         spec's 'existing hint Static' -- not a toast). Lives until the
         next `update_matrix` rebuilds `_legend_extras`, the same
         next-ordinary-render-clears contract the mutation echo uses."""
@@ -1187,7 +1187,7 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         return row, tuple(r.tool_name or "" for r in tool_rows)
 
     def action_bulk_set(self) -> None:
-        """ADR-149 Wave F: `shift+space` -- the cursor row's next cycled
+        """ADR-150 Wave F: `shift+space` -- the cursor row's next cycled
         state (the SAME cycle_ui_state a plain press computes, so Wave B's
         safety ordering carries over: the first press from Inherit applies
         Ask, never Allow) for the server's visible tool rows."""
@@ -1207,7 +1207,7 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         )
 
     def action_bulk_clear(self) -> None:
-        """ADR-149 Wave F: `C` -- clear the server's VISIBLE overrides."""
+        """ADR-150 Wave F: `C` -- clear the server's VISIBLE overrides."""
         scope = self._bulk_scope(overrides_only=True)
         if scope is None:
             return

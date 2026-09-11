@@ -3382,7 +3382,7 @@ class MCPWorkbench(Container):
     def on_mcp_permissions_mode_bulk_state_requested(
         self, event: MCPPermissionsMode.BulkStateRequested
     ) -> None:
-        """ADR-149 Wave F: dispatch one bulk-set (shift+space) in the
+        """ADR-150 Wave F: dispatch one bulk-set (shift+space) in the
         background -- the canvas computed the visible scope and the next
         state; this executes it as N ordinary single writes."""
         event.stop()
@@ -3400,7 +3400,7 @@ class MCPWorkbench(Container):
     def on_mcp_permissions_mode_bulk_clear_requested(
         self, event: MCPPermissionsMode.BulkClearRequested
     ) -> None:
-        """ADR-149 Wave F: dispatch one bulk-clear (C) -- same worker path
+        """ADR-150 Wave F: dispatch one bulk-clear (C) -- same worker path
         with a None state; the canvas sent only rows that hold an
         override."""
         event.stop()
@@ -3422,9 +3422,9 @@ class MCPWorkbench(Container):
         new_state: str | None,
         context: PermissionProfileContext | None,
     ) -> None:
-        """ADR-149 Wave F: apply one state (None = clear) to a server's
+        """ADR-150 Wave F: apply one state (None = clear) to a server's
         tool rows as N ordinary, individually profile-scoped
-        `set_tool_state` calls -- no batch store API (ADR-149), per-row
+        `set_tool_state` calls -- no batch store API (ADR-150), per-row
         audit logging unchanged. Raw-shell rows are skipped (their
         two-state projection makes a generic write a lie) and the skip is
         named in the echo. First failure stops the batch with the
