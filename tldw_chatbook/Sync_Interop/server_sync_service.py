@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
+from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
+from functools import partial, wraps
+from pathlib import Path
+from threading import get_ident
 from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from tldw_chatbook.Sync_Interop.sync_state import SyncV2ProfileMode
@@ -17,6 +24,68 @@ from ..runtime_policy.types import PolicyDeniedError
 
 if TYPE_CHECKING:
     from ..tldw_api import ClientChangesPayload, SyncV2Envelope, TLDWAPIClient
+
+
+_SYNC_EXECUTION = ContextVar("sync_execution", default=None)
+
+
+@contextmanager
+def _sync_execution_scope(service, *, delegate=False, local=False):
+    """Hold observed sync sources; only this same-task call chain may borrow."""
+    from tldw_chatbook.Backup_Recovery.activation import execution_scope
+    from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
+    services = [service]
+    if delegate and service.server_service is not None:
+        services.append(service.server_service)
+    sources = [getattr(item, "state_repository", None) for item in services]
+    if local:
+        sources.append(service.local_store)
+    paths = {None}
+    for source in sources:
+        value = getattr(source, "db_path", None)
+        if value is not None and str(value) != ":memory:":
+            paths.add(Path(value))
+    identity = (os.getpid(), get_ident(), asyncio.current_task())
+    previous = _SYNC_EXECUTION.get()
+    inherited = (
+        previous is not None
+        and previous[0] == identity
+        and any(item is service for item in previous[1])
+    )
+    with ExitStack() as scope:
+        leases = {}
+        for path in sorted(
+            paths, key=lambda value: "" if value is None else str(value)
+        ):
+            if inherited:
+                if path not in previous[2]:
+                    raise PermissionError("sync_execution_source_changed")
+                lease = previous[2][path]
+            else:
+                lease = scope.enter_context(acquire_storage(path))
+            if not scope.enter_context(
+                execution_scope(("config", "runtime.sync_state"), path, retained=lease)
+            ):
+                raise PermissionError("sync_activation_required")
+            leases[path] = lease
+        token = _SYNC_EXECUTION.set((identity, tuple(services), leases))
+        try:
+            yield
+        finally:
+            _SYNC_EXECUTION.reset(token)
+
+
+def _sync_call(method=None, *, delegate=False, local=False):
+    if method is None:
+        return partial(_sync_call, delegate=delegate, local=local)
+
+    @wraps(method)
+    async def call(self, *args, **kwargs):
+        with _sync_execution_scope(self, delegate=delegate, local=local):
+            return await method(self, *args, **kwargs)
+
+    return call
 
 
 class ServerSyncService:
@@ -151,6 +220,7 @@ class ServerSyncService:
             return request_data
         return ClientChangesPayload.model_validate(request_data)
 
+    @_sync_call
     async def send_changes(
         self,
         request_data: ClientChangesPayload | Mapping[str, Any],
@@ -159,6 +229,7 @@ class ServerSyncService:
         payload = self._coerce_payload(request_data)
         return self._dump(await self._require_client().send_sync_changes(payload))
 
+    @_sync_call
     async def get_changes(
         self,
         *,
@@ -173,6 +244,7 @@ class ServerSyncService:
             )
         )
 
+    @_sync_call
     async def run_v2_dry_run(
         self,
         *,
@@ -374,6 +446,7 @@ class ServerSyncService:
         )
         return result
 
+    @_sync_call
     async def store_v2_recovery_bundle(
         self,
         *,
@@ -403,6 +476,7 @@ class ServerSyncService:
             await self._require_client().store_sync_v2_key_recovery_bundle(request)
         )
 
+    @_sync_call
     async def list_v2_recovery_bundles(
         self,
         *,
@@ -421,6 +495,7 @@ class ServerSyncService:
             )
         )
 
+    @_sync_call
     async def get_v2_restore_manifest(
         self,
         *,
@@ -437,6 +512,7 @@ class ServerSyncService:
             )
         )
 
+    @_sync_call
     async def push_v2_envelopes(
         self,
         *,
@@ -506,6 +582,7 @@ class ServerSyncService:
         )
         return response
 
+    @_sync_call
     async def pull_v2_envelopes(
         self,
         *,
@@ -565,6 +642,7 @@ class ServerSyncService:
         )
         return response
 
+    @_sync_call
     async def list_v2_conflicts(
         self,
         *,
@@ -581,6 +659,7 @@ class ServerSyncService:
             )
         )
 
+    @_sync_call
     async def resolve_v2_conflict(
         self,
         *,

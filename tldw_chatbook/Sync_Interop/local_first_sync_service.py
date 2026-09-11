@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Mapping, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Mapping
 
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
 from tldw_chatbook.Sync_Interop.sync_state import is_local_first_sync_profile_mode
 from tldw_chatbook.Sync_Interop.validation import (
-    validate_pull_pagination_state,
-    validate_push_response_scope,
     validate_outgoing_envelope_scope,
+    validate_pull_pagination_state,
     validate_pulled_response_scope,
+    validate_push_response_scope,
 )
+
+from .server_sync_service import _sync_call
 
 if TYPE_CHECKING:
     from tldw_chatbook.tldw_api import SyncV2Envelope
@@ -35,6 +37,7 @@ class LocalFirstSyncService:
         self.local_store = local_store
         self.dataset_keys = dataset_keys if dataset_keys is not None else {}
 
+    @_sync_call(delegate=True, local=True)
     async def sync_once(
         self,
         *,

@@ -8,7 +8,7 @@ from typing import Any
 
 from tldw_chatbook.runtime_policy.server_parity_models import SyncIdentityMapEntry
 
-from .sync_state import SyncV2ProfileMode, is_local_first_sync_profile_mode
+from .server_sync_service import _sync_call, _sync_execution_scope
 from .sync_mirror_report import build_sync_mirror_report
 from .sync_promotion_state import SyncPromotionState, build_sync_promotion_state
 from .sync_readiness import (
@@ -16,6 +16,7 @@ from .sync_readiness import (
     SyncEligibilityRegistry,
     build_sync_readiness_report,
 )
+from .sync_state import SyncV2ProfileMode, is_local_first_sync_profile_mode
 
 
 class SyncBackend(str, Enum):
@@ -298,6 +299,7 @@ class SyncScopeService:
             )
         return states
 
+    @_sync_call(delegate=True)
     async def send_changes(
         self,
         *,
@@ -310,6 +312,7 @@ class SyncScopeService:
         result = await self._maybe_await(service.send_changes(request_data))
         return self._normalize_send_result(normalized_mode, request_data, result)
 
+    @_sync_call(delegate=True)
     async def get_changes(
         self,
         *,
@@ -369,19 +372,20 @@ class SyncScopeService:
         if not is_local_first_sync_profile_mode(normalized_mode):
             raise ValueError(f"Invalid Sync v2 profile mode: {profile_mode}")
         service = self._require_server_service(SyncBackend.SERVER)
-        result = await self._maybe_await(
-            service.run_v2_dry_run(
-                server_profile_id=server_profile_id,
-                authenticated_principal_id=authenticated_principal_id,
-                workspace_scope=workspace_scope,
-                display_name=display_name,
-                domains=domains,
-                client_version=client_version,
-                scope_type=scope_type,
-                encryption_policy=encryption_policy,
-                profile_mode=normalized_mode.value,
+        with _sync_execution_scope(self, delegate=True):
+            result = await self._maybe_await(
+                service.run_v2_dry_run(
+                    server_profile_id=server_profile_id,
+                    authenticated_principal_id=authenticated_principal_id,
+                    workspace_scope=workspace_scope,
+                    display_name=display_name,
+                    domains=domains,
+                    client_version=client_version,
+                    scope_type=scope_type,
+                    encryption_policy=encryption_policy,
+                    profile_mode=normalized_mode.value,
+                )
             )
-        )
         if not isinstance(result, dict):
             result = {"result": result}
         record = dict(result)
