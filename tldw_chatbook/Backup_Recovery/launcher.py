@@ -74,7 +74,7 @@ def startup_preflight() -> tuple[str | None, str | None]:
         return reason, None
 
 
-def recovery_app(reason: str):
+def recovery_app(reason: str, *, restart_request=None):
     """Build only a minimal host for the same service and recovery view."""
     import asyncio
 
@@ -105,7 +105,11 @@ def recovery_app(reason: str):
             self.recovery_service = RecoveryService(default_control_root())
 
         def compose(self):
-            yield Static("Recovery required: " + reason, markup=False)
+            yield Static(
+                "Recovery mode — review replacement" if reason == "replacement_requested"
+                else "Recovery required: " + reason,
+                markup=False,
+            )
             yield Button("Open Backup & Restore", id="minimal-recovery-open")
             yield Button("Exit", id="minimal-recovery-exit")
 
@@ -115,7 +119,10 @@ def recovery_app(reason: str):
         @on(Button.Pressed, "#minimal-recovery-open")
         def action_backup_restore(self):
             self.push_screen(
-                BackupRestoreScreen(self.recovery_service, include_known_profiles=True)
+                BackupRestoreScreen(
+                    self.recovery_service, include_known_profiles=True,
+                    restart_request=restart_request,
+                )
             )
 
         @on(Button.Pressed, "#minimal-recovery-exit")
@@ -140,9 +147,9 @@ def recovery_app(reason: str):
     return RecoveryApp()
 
 
-def minimal_recovery(reason: str) -> int:
+def minimal_recovery(reason: str, *, restart_request=None) -> int:
     """Run a recovery-only UI when ordinary startup cannot safely proceed."""
-    recovery_app(reason).run()
+    recovery_app(reason, restart_request=restart_request).run()
     return 0
 
 

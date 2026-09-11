@@ -39,11 +39,12 @@ class BackupRestoreScreen(Screen):
     BackupRestoreScreen #backup-footer-actions Button { min-width: 10; width: 1fr; }
     """
 
-    def __init__(self, service, *, config_paths=(), include_known_profiles=False):
+    def __init__(self, service, *, config_paths=(), include_known_profiles=False, restart_request=None):
         super().__init__()
         self.service = service
         self.config_paths = tuple(Path(path) for path in config_paths)
         self.include_known_profiles = include_known_profiles
+        self._restart_request = restart_request
         self.external_roots = ()
         self._mode = "home"
         self._revision = 0
@@ -142,6 +143,11 @@ class BackupRestoreScreen(Screen):
                         allow_blank=False,
                         id="backup-restore-mode",
                     )
+                    yield Static(
+                        "Replacement continues after Chatbook closes. Review the archive and destinations again in recovery mode.",
+                        id="backup-restart-note",
+                    )
+                    yield Button("Continue in recovery mode", id="backup-restart")
                     yield Static(
                         "Choose local destination roots. Archived paths are never defaults."
                     )
@@ -272,6 +278,13 @@ class BackupRestoreScreen(Screen):
 
     def on_mount(self):
         self._show_mode("home")
+        if self._restart_request is not None:
+            self._show_mode("inspect")
+            if self._restart_request.archive is not None:
+                self.query_one("#backup-source", Input).value = str(self._restart_request.archive)
+            self.query_one("#backup-target-config", Input).value = str(self._restart_request.target_config)
+            self.query_one("#backup-restore-mode", Select).value = "replace"
+        self._sync_replacement_host()
         self._poller = self.set_interval(0.2, self._refresh_status)
         self._refresh_status()
 
@@ -708,6 +721,7 @@ class BackupRestoreScreen(Screen):
             }:
                 return
             self._invalidate()
+            self._sync_replacement_host()
             if event.control.id == "backup-source":
                 self._clear_inspection(dismiss_current=True)
             control = event.control
@@ -897,7 +911,7 @@ class BackupRestoreScreen(Screen):
         label = result_label(
             archive_verified=bool(result.get("archive_verified")),
             restoration_validated=bool(result.get("restoration_validated")),
-            opened=bool(result.get("opened")),
+            opened=bool(result.get("opened_successfully")),
             needs_setup=bool(result.get("needs_setup")),
         )
         phase = current["phase"].replace("_", " ")
@@ -1109,6 +1123,11 @@ class BackupRestoreScreen(Screen):
         if self._inspection_id is None:
             return
         mode = self.query_one("#backup-restore-mode", Select).value
+        if mode == "replace" and self._requires_recovery_restart():
+            self.query_one("#backup-message", Static).update(
+                "Continue in recovery mode before reviewing replacement."
+            )
+            return
         destinations = {}
         for index, slot in enumerate(self._inspection_summary["destination_slots"]):
             path = Path(self._input(f"backup-root-{index}")).expanduser()
@@ -1199,6 +1218,8 @@ class BackupRestoreScreen(Screen):
         if self._restore_plan is None:
             return
         plan = self._restore_plan
+        if plan.mode == "replace" and self._requires_recovery_restart():
+            return
         password = None
         if plan.mode == "replace":
             password = self._input("backup-rollback-password")
@@ -1220,6 +1241,36 @@ class BackupRestoreScreen(Screen):
             self._clear_passwords()
         self._invalidate()
         self._refresh_status()
+
+    def _requires_recovery_restart(self):
+        return callable(getattr(self.app, "request_recovery_restart", None))
+
+    def _sync_replacement_host(self):
+        required = (
+            self.query_one("#backup-restore-mode", Select).value == "replace"
+            and self._requires_recovery_restart()
+        )
+        self.query_one("#backup-restart-note").display = required
+        self.query_one("#backup-restart").display = required
+        self.query_one("#backup-review-restore", Button).disabled = required
+
+    @on(Button.Pressed, "#backup-restart")
+    def _restart_for_replacement(self):
+        if not self._requires_recovery_restart():
+            return
+        target = self._input("backup-target-config").strip()
+        if not target and self.config_paths:
+            target = str(self.config_paths[0])
+        target = Path(target).expanduser()
+        if not target.is_absolute():
+            self.query_one("#backup-message", Static).update(
+                "Choose the existing local configuration before continuing."
+            )
+            return
+        source = self._input("backup-source").strip()
+        archive = Path(source).expanduser() if source else None
+        self._clear_passwords()
+        self.app.request_recovery_restart(archive, target)
 
     @on(Button.Pressed, "#backup-cancel")
     def _cancel(self):

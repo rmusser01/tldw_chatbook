@@ -60,4 +60,9 @@ def main_cli_runner() -> Any:
 
     from tldw_chatbook.app import main_cli_runner as app_main_cli_runner
 
-    return app_main_cli_runner()
+    result = app_main_cli_runner()
+    from tldw_chatbook.Backup_Recovery.recovery_restart import RecoveryRestart, restart
+
+    if type(result) is RecoveryRestart:
+        return restart(result)
+    return result

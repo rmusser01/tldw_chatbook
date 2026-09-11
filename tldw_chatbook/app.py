@@ -11700,6 +11700,54 @@ class TldwCli(
             )
         )
 
+    def request_recovery_restart(
+        self, archive: Path | None, target: Path
+    ) -> Worker[None] | None:
+        """Use ordinary guarded shutdown before the CLI starts recovery alone."""
+        from .Backup_Recovery.recovery_restart import RecoveryRestart
+        from .Backup_Recovery.runtime_maintenance import RuntimeMaintenance
+
+        if not getattr(self, "_recovery_restart_available", False) or self._quit_in_progress:
+            self.notify("Open Chatbook from its CLI to continue in recovery mode.", severity="warning")
+            return
+        try:
+            current = self.recovery_service.current()
+            if current is not None and current["state"] == "running":
+                raise ValueError("recovery_operation_running")
+            if RuntimeMaintenance(self).unsaved_editors():
+                self.notify("Save or discard unsaved work before continuing in recovery mode.", severity="warning")
+                return
+            request = RecoveryRestart(archive, target)
+        except (OSError, ValueError, RuntimeError):
+            self.notify("Recovery mode is unavailable while current work is unsettled.", severity="warning")
+            return
+        self._quit_in_progress = True
+
+        async def quit_for_recovery() -> None:
+            try:
+                await self._confirm_and_quit()
+                if self._shutting_down:
+                    self._recovery_restart_request = request
+            finally:
+                if not self._shutting_down:
+                    self._quit_in_progress = False
+
+        quit_flow = quit_for_recovery()
+        try:
+            return self.run_worker(
+                quit_flow,
+                group="application-quit",
+                exclusive=True,
+                exit_on_error=False,
+            )
+        except RuntimeError:
+            quit_flow.close()
+            self._quit_in_progress = False
+            loguru_logger.warning(
+                "Recovery quit worker could not start; staying in the app"
+            )
+            return None
+
     async def _shutdown_recovery_service(self) -> asyncio.CancelledError | None:
         """Settle native recovery while the app maintenance monitor is available."""
         service = getattr(self, "_recovery_service", None)
@@ -13821,10 +13869,13 @@ def main_cli_runner():
     # Create instance with early logging flag
     app_instance = TldwCli()
     app_instance._cli_focus_override = bool(args.focus)
+    app_instance._recovery_restart_available = True
     # Set the early logging flag so _setup_logging knows logging was already initialized
     app_instance._early_logging_initialized = True
+    recovery_restart_request = None
     try:
         app_instance.run()
+        recovery_restart_request = getattr(app_instance, "_recovery_restart_request", None)
     except KeyboardInterrupt:
         loguru_logger.info("--- KeyboardInterrupt received ---")
         # Force cleanup inline
@@ -13849,6 +13900,7 @@ def main_cli_runner():
         loguru_logger.info("--- FINALLY block after app.run() ---")
 
     loguru_logger.info("--- AFTER app.run() call (if not crashed hard) ---")
+    return recovery_restart_request
 
 
 #
