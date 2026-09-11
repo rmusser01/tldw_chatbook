@@ -450,6 +450,7 @@ from ...Widgets.Library import (
     LibraryStudyHandoffCanvas,
     LibraryStudyHandoffCanvasState,
     library_conversation_block_sentence,
+    library_conversation_link_would_unblock,
     library_dim_label_text,
     library_rag_scope_shows_recovery,
     skill_editor_warning_lines,
@@ -12916,19 +12917,104 @@ class LibraryScreen(BaseAppScreen):
         """Use the same retained-identity load fence as the Resume button."""
         return self._conversations_state.reader_state.loaded_actions_eligible
 
-    def _link_selected_conversation_to_workspace(self) -> None:
+    def _library_conversation_link_would_unblock(self) -> bool:
+        """Return whether a workspace link is what blocks the hand-off.
+
+        (task-32107) Asks the reader's OWN predicate, over the same three
+        inputs, so the enabled state of "Use as source" and this handler's
+        decision to link before staging cannot disagree.
+
+        Returns:
+            True when linking into the active workspace resolves the only
+            block.
+        """
+        blocked, linkable, _detail = self._library_conversation_workspace_block()
+        return library_conversation_link_would_unblock(
+            self._conversations_state.reader_state,
+            {
+                "_workspace_block": blocked,
+                "_workspace_block_linkable": linkable,
+            },
+        )
+
+    def _set_library_conversation_link_receipt(self, workspace_name: str) -> None:
+        """Record (or clear) the workspace the last press linked into.
+
+        A fresh mapping rather than a mutation: ``reader_loaded_metadata`` is
+        typed as a ``Mapping`` and is replaced wholesale by each load, which
+        is what clears the receipt when a different conversation opens.
+
+        Args:
+            workspace_name: The linked workspace's display name, or ``""``.
+        """
+        self._conversations_state.reader_loaded_metadata = {
+            **self._conversations_state.reader_loaded_metadata,
+            "_workspace_link_receipt": workspace_name,
+        }
+
+    def _undo_selected_conversation_workspace_link(self) -> None:
+        """Remove the membership the last "Use as source" press added.
+
+        The exact inverse of ``_link_selected_conversation_to_workspace``:
+        same load fence, same registry, same refresh -- ``unlink_membership``
+        instead of ``link_membership``, and the receipt cleared.
+        """
+        if not self._conversations_state.reader_state.loaded_actions_eligible:
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        notify = getattr(self.app_instance, "notify", None)
+        conversation_id = str(
+            self._conversations_state.reader_state.loaded_id or ""
+        ).strip()
+        if registry is None or not conversation_id:
+            if callable(notify):
+                notify(
+                    "Workspaces are unavailable, so this link cannot be "
+                    "undone.",
+                    severity="warning",
+                )
+            return
+        try:
+            active = registry.get_active_workspace()
+            if active is None:
+                raise ValueError("no active workspace")
+            registry.unlink_membership(
+                active.workspace_id,
+                item_type="conversation",
+                item_id=conversation_id,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Library conversation workspace link could not be undone."
+            )
+            if callable(notify):
+                notify(
+                    "This link could not be undone. Try again.",
+                    severity="warning",
+                )
+            return
+        self._set_library_conversation_link_receipt("")
+        self._invalidate_library_workspace_depth_state()
+        self._sync_library_conversation_reader()
+
+    def _link_selected_conversation_to_workspace(self) -> str:
         """Link the open conversation into the active workspace (task-32056).
 
         The remedy the refusal used to name without offering. A no-op when
         the registry, the active workspace, or the loaded conversation is
         missing -- each of those already blocks the action's own affordance.
+
+        Returns:
+            The linked workspace's display name, or ``""`` when nothing was
+            linked (task-32107: "Use as source" links first and only
+            proceeds on a real name, so a failed link stages nothing).
         """
         # (review round 2) This writes membership for the RETAINED
         # ``loaded_id``. The same fence that hides the button re-checks here,
         # so no sync window can persist the conversation the user already
         # navigated away from.
         if not self._conversations_state.reader_state.loaded_actions_eligible:
-            return
+            return ""
         registry = getattr(self.app_instance, "workspace_registry_service", None)
         notify = getattr(self.app_instance, "notify", None)
         conversation_id = str(
@@ -12941,7 +13027,7 @@ class LibraryScreen(BaseAppScreen):
                     "be linked.",
                     severity="warning",
                 )
-            return
+            return ""
         try:
             active = registry.get_active_workspace()
             if active is None:
@@ -12965,9 +13051,12 @@ class LibraryScreen(BaseAppScreen):
                     "workspace. Try again.",
                     severity="warning",
                 )
-            return
+            return ""
+        workspace_name = str(getattr(active, "name", "") or active.workspace_id)
+        self._set_library_conversation_link_receipt(workspace_name)
         self._invalidate_library_workspace_depth_state()
         self._sync_library_conversation_reader()
+        return workspace_name
 
     def _selected_media_handoff_payload(self) -> ChatHandoffPayload | None:
         return self._media_controller._selected_media_handoff_payload()
@@ -33805,12 +33894,28 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-conversation-use-source")
     def use_selected_conversation_as_source(self, event: Button.Pressed) -> None:
-        """Stage the loaded transcript under the existing workspace source rules.
+        """Stage the loaded transcript, linking it first when that is the block.
 
         Args:
             event: Source action press forwarded to the browse controller.
         """
+        if self._library_conversation_link_would_unblock():
+            # task-32107: one gesture, not two. A failed link leaves the
+            # refusal exactly as it was and does not stage anything.
+            if not self._link_selected_conversation_to_workspace():
+                event.stop()
+                return
         return self._conversations_controller.use_selected_conversation_as_source(event)
+
+    @on(Button.Pressed, "#library-conversation-link-undo")
+    def undo_selected_conversation_workspace_link(self, event: Button.Pressed) -> None:
+        """Remove the membership the last "Use as source" press added.
+
+        Args:
+            event: The Undo press, stopped here like its sibling handlers.
+        """
+        event.stop()
+        self._undo_selected_conversation_workspace_link()
 
     @on(Button.Pressed, "#library-conversation-link-workspace")
     def link_selected_conversation_to_workspace(self, event: Button.Pressed) -> None:

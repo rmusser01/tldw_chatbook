@@ -17,6 +17,9 @@ from tldw_chatbook.Library.library_conversation_reader_state import (
     ConversationReaderState,
 )
 from tldw_chatbook.Library.library_shell_state import library_disabled_action_label
+from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
+    AdaptiveReaderShellResized,
+)
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     format_console_relative_age,
 )
@@ -41,6 +44,37 @@ def _open_console_disabled_tooltip(state: ConversationReaderState) -> str | None
     ):
         return "The selected conversation does not match the retained transcript."
     return "Wait for the complete selected transcript before opening it in Console."
+
+
+def library_conversation_link_would_unblock(
+    state: ConversationReaderState,
+    loaded_metadata: Mapping[str, Any],
+) -> bool:
+    """Return whether a workspace link is what would unblock this hand-off.
+
+    (task-32107) The ONE rule behind both the reader's link affordance and
+    the screen handler's decision to link before staging: the button's
+    enabled state and the press's behaviour cannot disagree because they ask
+    the same question of the same three inputs.
+
+    Fenced by ``loaded_actions_eligible`` (review round 2 of task-32056): the
+    link writes membership for the RETAINED ``loaded_id``, so while a newly
+    selected conversation is still loading, the visible-but-stale transcript
+    would otherwise be the one linked.
+
+    Args:
+        state: The reader state, whose load fence answers first.
+        loaded_metadata: The controller-injected metadata carrying
+            ``_workspace_block`` and ``_workspace_block_linkable``.
+
+    Returns:
+        True when a link into the active workspace resolves the only block.
+    """
+    return (
+        state.loaded_actions_eligible
+        and bool(str(loaded_metadata.get("_workspace_block") or "").strip())
+        and bool(loaded_metadata.get("_workspace_block_linkable"))
+    )
 
 
 def library_conversation_block_sentence(
@@ -79,9 +113,16 @@ def library_conversation_block_sentence(
     if not blocked:
         return None
     if link_offered:
+        # task-32107 (user decision, critique #10): the primary action no
+        # longer refuses a block a link can resolve -- it links and proceeds
+        # -- so the line says what the press will DO rather than sending the
+        # reader to a second button. Membership decides what a Console turn
+        # may read, so the widening is still stated before it happens. The
+        # action's NAME stays on the action (task-32101 AC#4): this line
+        # points at the control above it, it does not re-label it.
         return (
-            f"This conversation is {blocked}. Press 'Link to workspace' "
-            "to add it to the active workspace."
+            f"This conversation is {blocked}. Pressing this adds it to the "
+            "active workspace first, and you can undo that."
         )
     return detail or f"This conversation is {blocked}."
 
@@ -129,33 +170,40 @@ class LibraryConversationReader(Vertical):
         return str(self.loaded_metadata.get("_workspace_block_detail") or "").strip()
 
     def _workspace_link_offered(self) -> bool:
-        """Whether "Link to workspace" would actually resolve the block.
-
-        (review round 2) Fenced by ``loaded_actions_eligible`` like every
-        other action here: the remedy writes membership for the RETAINED
-        ``loaded_id``, so while a newly selected conversation is still
-        loading the visible-but-stale transcript would otherwise be the one
-        linked.
-        """
-        return (
-            self.state.loaded_actions_eligible
-            and bool(self._workspace_block())
-            and bool(self.loaded_metadata.get("_workspace_block_linkable"))
+        """Whether a workspace link would actually resolve the block."""
+        return library_conversation_link_would_unblock(
+            self.state, self.loaded_metadata
         )
 
     def _actions_enabled(self) -> bool:
-        """Whether the Console hand-off may run right now."""
+        """Whether the Console hand-off may run with nothing else happening."""
         return self.state.loaded_actions_eligible and not self._workspace_block()
+
+    def _source_press_enabled(self) -> bool:
+        """Whether "Use as source" may be pressed at all.
+
+        (task-32107, user decision) A block a LINK can resolve no longer
+        disables the hand-off -- pressing it links the conversation into the
+        active workspace and proceeds, in one undoable step. The load fence
+        and the blocks a link cannot resolve still disable it.
+        """
+        return self._actions_enabled() or self._workspace_link_offered()
+
+    def _workspace_link_receipt(self) -> str:
+        """Return the workspace the last press linked into, or empty."""
+        return str(self.loaded_metadata.get("_workspace_link_receipt") or "").strip()
 
     def _source_label(self) -> str:
         """Return the hand-off button label, marked when it is refused.
 
         (task-32101) The non-colour disabled marker belongs on the control
         that carries the action name, so the reason line beneath it need not
-        repeat that name to carry the marker.
+        repeat that name to carry the marker. It follows the button's real
+        ``disabled`` state (task-32107): a pressable action never wears the
+        "○" the glyph legend reserves for a blocked one.
         """
         return library_disabled_action_label(
-            "Use as source", not self._actions_enabled()
+            "Use as source", not self._source_press_enabled()
         )
 
     def _blocked_reason_line(self) -> str:
@@ -241,7 +289,7 @@ class LibraryConversationReader(Vertical):
                 classes="library-canvas-action",
                 compact=True,
             )
-            source.disabled = not self._actions_enabled()
+            source.disabled = not self._source_press_enabled()
             source.tooltip = self._open_console_tooltip()
             yield source
             for action, label in (
@@ -280,6 +328,28 @@ class LibraryConversationReader(Vertical):
             )
             link.display = self._workspace_link_offered()
             yield link
+            # (task-32107) The receipt for the membership "Use as source"
+            # just wrote, and its inverse. Workspace membership decides what
+            # a Console turn may read, so the widening is a visible,
+            # reversible act rather than a silent side effect.
+            receipt_workspace = self._workspace_link_receipt()
+            receipt = Static(
+                f"✓ linked · {receipt_workspace} · this conversation can now "
+                "be used in Console",
+                id="library-conversation-link-receipt",
+                classes="library-conversation-reader-block-reason",
+                markup=False,
+            )
+            receipt.display = bool(receipt_workspace)
+            yield receipt
+            undo = Button(
+                "Undo link",
+                id="library-conversation-link-undo",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            undo.display = bool(receipt_workspace)
+            yield undo
             retry = Button(
                 "Try again",
                 id="library-conversation-reader-retry",
@@ -486,7 +556,19 @@ class LibraryConversationReader(Vertical):
         selected_metadata: Mapping[str, Any] | None = None,
     ) -> None:
         """Patch state, labels, and progressive message rows in place."""
+        # task-32361 (critique #10, B D11): the adaptive layout asks
+        # ``reader_has_item`` -- ``selected_id is not None`` -- but it is only
+        # resolved from ``AdaptiveReaderShellResized``, and the Conversations
+        # selection settles one refresh AFTER the shell mounts. Measured at
+        # 235x52 with a conversation open: list 137, Reader 44, because the
+        # empty-Reader rule (task-31979) had already given the list the
+        # Reader's columns and nothing re-asked. Announce the flip from the
+        # one place every selection change reaches this pane; the screen's
+        # existing ``@on(AdaptiveReaderShellResized)`` re-resolves.
+        had_item = self.state.selected_id is not None
         self.state = state
+        if self.is_mounted and (state.selected_id is not None) != had_item:
+            self.post_message(AdaptiveReaderShellResized())
         if loaded_metadata is not None or metadata is not None:
             self.loaded_metadata = dict(loaded_metadata or metadata or {})
         if selected_metadata is not None:
@@ -508,6 +590,8 @@ class LibraryConversationReader(Vertical):
                 "#library-conversation-open-console-blocked", Static
             )
             link = self.query_one("#library-conversation-link-workspace", Button)
+            receipt = self.query_one("#library-conversation-link-receipt", Static)
+            undo = self.query_one("#library-conversation-link-undo", Button)
             retry = self.query_one("#library-conversation-reader-retry", Button)
             find_position = self.query_one(
                 "#library-conversation-find-position", Static
@@ -562,7 +646,7 @@ class LibraryConversationReader(Vertical):
         open_console.disabled = not state.loaded_actions_eligible
         open_console.tooltip = _open_console_disabled_tooltip(state)
         source.label = self._source_label()
-        source.disabled = not self._actions_enabled()
+        source.disabled = not self._source_press_enabled()
         source.tooltip = self._open_console_tooltip()
         for action, button in archive_buttons.items():
             button.display = bool(self.loaded_metadata.get("archived")) == (
@@ -572,6 +656,13 @@ class LibraryConversationReader(Vertical):
         blocked_reason.update(self._blocked_reason_line())
         blocked_reason.display = bool(self._blocked_reason_line())
         link.display = self._workspace_link_offered()
+        receipt_workspace = self._workspace_link_receipt()
+        receipt.update(
+            f"✓ linked · {receipt_workspace} · this conversation can now "
+            "be used in Console"
+        )
+        receipt.display = bool(receipt_workspace)
+        undo.display = bool(receipt_workspace)
         retry.display = bool(state.error or state.unavailable)
 
         self._message_sync_generation += 1
