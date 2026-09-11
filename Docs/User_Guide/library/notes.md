@@ -83,7 +83,12 @@ editor's own Back control returns to its list.
   the folder tree, and one row per note showing its title and how long ago
   it changed
   ("3m", "1d"). When two notes in the same folder share a title, each row
-  also names its folder — "Reading list · Unfiled · 2h". While no note is
+  also names its folder — "Reading list · Unfiled · 2h". When they share
+  the age as well, the row adds a third part that is not shared: the time
+  of day it was last changed ("Reading list · Unfiled · 2m · 09:14"), or,
+  for two notes written inside the same minute, a short id
+  ("Reading list · Unfiled · 2m · #0f3a"). Only the rows that would
+  otherwise be identical carry it. While no note is
   open the list takes the width the empty work area would otherwise waste,
   so long titles are not truncated on a wide terminal; opening a note hands
   that width back. Its own grip collapses or restores the list without
@@ -343,7 +348,7 @@ both stay closed until you choose to reopen one.
 | "Manage sync folders" | Appears only when roots or paused migration candidates exist; opens root status and contextual controls. |
 | "Last import" | Reopens the latest import receipt from this app session after you return to the Notes list. |
 | "Export…" | Opens the "Export bundle (.zip)" canvas scoped to notes — bundle notes into a .zip. |
-| "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". "Export…" hides while selecting. |
+| "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". The count is also repeated on its own line below the row, and the two always read the same number. "Export…" hides while selecting. |
 
 With no notes at all, the list reads "No notes yet. Create your first note."
 above the tree — even when the seeded **Agent_Lessons** folder (see "Reuse
@@ -429,7 +434,10 @@ dismisses a still-open receipt, since it is scoped to this list session. Its
 them, so **Undo** and **Dismiss** stay reachable however narrow the list is.
 **Undo** restores that exact database note and immediately returns its row —
 in its folder, or under Unfiled — along with the Notes rail count, and moves
-the selection to the restored row. **Dismiss** removes only the receipt; the
+the selection to the restored row. If that folder is collapsed, Undo opens
+it, so the row you were promised back is one you can see; a folder whose
+contents fail to reload still opens, with its own retry row inside, rather
+than staying shut over a note that is already restored. **Dismiss** removes only the receipt; the
 note remains deleted. *(This page previously said Notes expose no separate
 Trash browser, so the receipt was the only in-Library recovery action —
 superseded by task-32144: see "Recently deleted" below, which recovers a note
@@ -438,6 +446,11 @@ whose receipt was dismissed.)*
 *Verified against fix/library-notes-list — 2026-09-09 (task-32123: the
 receipt's actions are no longer composed off the pane; task-32124: Undo
 returns the row to the folder tree, not only the count).*
+
+*Verified against fix/library-notes-w3-list-tree — 2026-09-11 (task-32255:
+Undo opens the restored note's folder, including when a branch reload
+fails; task-32254: a third part tells apart two rows that share title,
+folder and age; task-32272: one selection count, not two that disagree).*
 
 ### New note view
 
