@@ -849,6 +849,7 @@ class ConsolePromptsController:
         build_console_provider_selection: Callable[[], Any],
         ensure_console_provider_gateway: Callable[[], Any],
         console_provider_blocker_copy: Callable[[], str],
+        console_run_active: Callable[[], bool],
         open_console_provider_recovery_accessor: Callable[[], Any],
         console_setup_blocked_reason: Callable[[], str],
         focus_console_composer_if_needed: Callable[..., None],
@@ -871,12 +872,16 @@ class ConsolePromptsController:
         `_open_console_prompts_modal`, whose closures task 2766 moved into
         `_ConsolePromptSource` and `_ConsolePromptImprovementFlow`.
 
-        Seventeen named dependencies is squarely in the band waves 1-3 have
-        established (dictation: 12; message: 19). Thirteen of the seventeen
+        Eighteen named dependencies is squarely in the band waves 1-3 have
+        established (dictation: 12; message: 19). Fourteen of the eighteen
         are needed by `_open_console_prompts_modal` alone -- it is the
         cluster's whole fan-in, not a sprawl across many methods. The count
         was eighteen until task 2766 collapsed the post-apply re-sync trio
-        (see `sync_console_system_prompt_surfaces` below).
+        (see `sync_console_system_prompt_surfaces` below) down to seventeen,
+        then back to eighteen when task-32345 added `console_run_active` --
+        Improve's own "a run is in flight" gate, split out of
+        `console_provider_blocker_copy` once that copy stopped covering a
+        merely-active run.
 
         Args:
             screen: The Console screen. Used ONLY for the framework
@@ -921,7 +926,17 @@ class ConsolePromptsController:
                 improvement service runs against.
             console_provider_blocker_copy: `ChatScreen._console_provider_
                 blocker_copy`, the "why Improve is unavailable" copy; a
-                CALL, evaluated at modal-build time.
+                CALL, evaluated at modal-build time. task-32345: this copy
+                is empty during a merely-active run (a turn in flight is
+                not a provider misconfiguration) -- `console_run_active`
+                below is the dedicated seam for "block Improve while a run
+                is active" instead, so that behavior does not depend on
+                blocker-copy internals.
+            console_run_active: `ChatScreen._console_run_active` --
+                task-32345: Improve calls the provider gateway independently
+                of the main turn, so it stays unavailable while a run is in
+                flight; checked directly rather than inferred from
+                `console_provider_blocker_copy`.
             open_console_provider_recovery_accessor: The one
                 bare-attribute-read shape here. `ChatScreen._open_console_
                 provider_recovery` is passed to the modal as a CALLABLE
@@ -978,6 +993,7 @@ class ConsolePromptsController:
         self._build_console_provider_selection_fn = build_console_provider_selection
         self._ensure_console_provider_gateway_fn = ensure_console_provider_gateway
         self._console_provider_blocker_copy_fn = console_provider_blocker_copy
+        self._console_run_active_fn = console_run_active
         self._open_console_provider_recovery_accessor = (
             open_console_provider_recovery_accessor
         )
@@ -1063,6 +1079,10 @@ class ConsolePromptsController:
     @property
     def _console_provider_blocker_copy(self) -> Any:
         return self._console_provider_blocker_copy_fn
+
+    @property
+    def _console_run_active(self) -> Any:
+        return self._console_run_active_fn
 
     @property
     def _open_console_provider_recovery(self) -> Any:
@@ -1185,8 +1205,20 @@ class ConsolePromptsController:
                 "reserved protected-placeholder text. Remove or rename that "
                 "literal token, then reopen Improve."
             )
+        # task-32345: Improve dispatches to the provider gateway independently
+        # of the main turn, so it stays unavailable while a run is active --
+        # checked directly here (not inferred from `console_provider_blocker_
+        # copy`, which no longer covers a merely-active, otherwise-healthy
+        # provider). Same "provider" recovery bucket a blocked provider used
+        # -- unchanged from before this task, when an active run's non-empty
+        # blocker copy already fell into that bucket by default.
+        run_active_blocker = (
+            "Model improvement is unavailable while a run is in progress."
+            if self._console_run_active()
+            else ""
+        )
         provider_blocker = self._console_provider_blocker_copy()
-        unavailable_reason = projection_blocker or provider_blocker
+        unavailable_reason = projection_blocker or run_active_blocker or provider_blocker
         improvement_context = ConsolePromptImprovementContext(
             session_id=session_id,
             composer_snapshot=composer_snapshot,

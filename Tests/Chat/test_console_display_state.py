@@ -255,6 +255,29 @@ def test_console_inspector_state_combines_readiness_artifact_and_recovery_rows()
     assert rows_by_label["Approvals"].status == "ready"
 
 
+def test_console_inspector_state_live_work_shows_waiting_for_approval():
+    """task-32345: a pending approval outranks the run/live-work title.
+
+    Unlike ``run_active``'s "Generating…", which is a fact about the model
+    (a generation is in flight), a pending approval is a fact about the
+    USER (a card is waiting on them) -- and it is the more current one.
+    """
+    state = ConsoleInspectorState.from_values(
+        live_work_title="Daily papers", run_active=True, approval_count=1
+    )
+
+    rows_by_label = {row.label: row for row in state.rows}
+    assert rows_by_label["Live work"].value == "Waiting for your approval"
+    assert "Generating" not in rows_by_label["Live work"].value
+
+    # The ordinary run_active case (no pending approval) is unchanged.
+    running = ConsoleInspectorState.from_values(
+        live_work_title="Daily papers", run_active=True, approval_count=0
+    )
+    assert running.rows[1].label == "Live work"
+    assert running.rows[1].value == "Generating…"
+
+
 def test_console_inspector_state_omits_mcp_row_by_default():
     """`mcp_tool_count=None` (the default) means "no MCP service / kill
     switch on" -- the inspector must not show an "MCP" row at all."""

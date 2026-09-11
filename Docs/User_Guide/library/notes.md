@@ -83,7 +83,12 @@ editor's own Back control returns to its list.
   the folder tree, and one row per note showing its title and how long ago
   it changed
   ("3m", "1d"). When two notes in the same folder share a title, each row
-  also names its folder — "Reading list · Unfiled · 2h". While no note is
+  also names its folder — "Reading list · Unfiled · 2h". When they share
+  the age as well, the row adds a third part that is not shared: the time
+  of day it was last changed ("Reading list · Unfiled · 2m · 09:14"), or,
+  for two notes written inside the same minute, a short id
+  ("Reading list · Unfiled · 2m · #0f3a"). Only the rows that would
+  otherwise be identical carry it. While no note is
   open the list takes the width the empty work area would otherwise waste,
   so long titles are not truncated on a wide terminal; opening a note hands
   that width back. Its own grip collapses or restores the list without
@@ -343,7 +348,7 @@ both stay closed until you choose to reopen one.
 | "Manage sync folders" | Appears only when roots or paused migration candidates exist; opens root status and contextual controls. |
 | "Last import" | Reopens the latest import receipt from this app session after you return to the Notes list. |
 | "Export…" | Opens the "Export bundle (.zip)" canvas scoped to notes — bundle notes into a .zip. |
-| "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". "Export…" hides while selecting. |
+| "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". The count is also repeated on its own line below the row, and the two always read the same number. "Export…" hides while selecting. |
 
 With no notes at all, the list reads "No notes yet. Create your first note."
 above the tree — even when the seeded **Agent_Lessons** folder (see "Reuse
@@ -370,7 +375,7 @@ own. Nothing is ever painted as half a word.
 | **Edit** | Shows the editable title and body. This is the default view when you open a note. |
 | **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. |
 | **Info** | Shows Properties (including comma-separated keywords, note dates/version, and **Linked from**), Reuse & Export, and Danger sections. |
-| **Linked from (N)** (Info → Properties) | Lists the notes whose bodies link to this one, newest import or not — the `[title](note://…)` links Import once writes for an Obsidian vault's `[[wikilinks]]` (see "Obsidian vaults"). Click an entry to open that note. While the lookup runs the line reads "Linked from — checking…", and "Linked from — couldn't check" if it failed, so a count is only claimed once the answer is in. When nothing points here the line reads "Linked from (0) — no notes link here yet". The list is capped at 50 entries; past that the count reads "50+". Links you type by hand in the body count too, as long as they use the same `note://` form. The answer is looked up rather than searched for: each note records the links its body carries when it is saved or imported, so the lookup costs what a note's own inbound links cost rather than growing with the size of your vault. An existing library picks its links up the first time this version opens it — nothing to re-import. |
+| **Linked from (N)** (Info → Properties) | Lists the notes whose bodies link to this one, newest import or not — the `[[target\|title]](note://…)` links Import once writes for an Obsidian vault's `[[wikilinks]]` (see "Obsidian vaults"). Click an entry to open that note. While the lookup runs the line reads "Linked from — checking…", and "Linked from — couldn't check" if it failed, so a count is only claimed once the answer is in. When nothing points here the line reads "Linked from (0) — no notes link here yet". The list is capped at 50 entries; past that the count reads "50+". Links you type by hand in the body count too, as long as they use the same `note://` form. The answer is looked up rather than searched for: each note records the links its body carries when it is saved or imported, so the lookup costs what a note's own inbound links cost rather than growing with the size of your vault. An existing library picks its links up the first time this version opens it — nothing to re-import. |
 | Status line | Shows the autosave state: "Saved", "Saving…", "Unsaved changes", "Conflict — …", "Save failed — …", or "Unavailable — …". It does not carry a word count. Created/Modified/version details are under Info → Properties, each with an absolute local timestamp beside its relative age and the word count (e.g. "Created 2026-09-08 21:14 · 3m ago · Modified … · v1 · 6 words"). "Saved" appears once per view, not repeated in Info. |
 | **Save** | Saves immediately, without waiting for autosave. It remains visible beside the mode controls. |
 | **Use in Console** | Hands the note to the Console as staged context, with the suggested prompt "Use this note as context and help me work with it." It remains visible beside **Save**. |
@@ -429,7 +434,10 @@ dismisses a still-open receipt, since it is scoped to this list session. Its
 them, so **Undo** and **Dismiss** stay reachable however narrow the list is.
 **Undo** restores that exact database note and immediately returns its row —
 in its folder, or under Unfiled — along with the Notes rail count, and moves
-the selection to the restored row. **Dismiss** removes only the receipt; the
+the selection to the restored row. If that folder is collapsed, Undo opens
+it, so the row you were promised back is one you can see; a folder whose
+contents fail to reload still opens, with its own retry row inside, rather
+than staying shut over a note that is already restored. **Dismiss** removes only the receipt; the
 note remains deleted. *(This page previously said Notes expose no separate
 Trash browser, so the receipt was the only in-Library recovery action —
 superseded by task-32144: see "Recently deleted" below, which recovers a note
@@ -438,6 +446,11 @@ whose receipt was dismissed.)*
 *Verified against fix/library-notes-list — 2026-09-09 (task-32123: the
 receipt's actions are no longer composed off the pane; task-32124: Undo
 returns the row to the folder tree, not only the count).*
+
+*Verified against fix/library-notes-w3-list-tree — 2026-09-11 (task-32255:
+Undo opens the restored note's folder, including when a branch reload
+fails; task-32254: a third part tells apart two rows that share title,
+folder and age; task-32272: one selection count, not two that disagree).*
 
 ### New note view
 
@@ -493,6 +506,25 @@ each other's starting point, and neither borrows the Library ingest browser's.
 The first use of either — or a remembered folder that has since been moved or
 deleted — opens at your home directory instead. **Folder files** keeps its own
 separate memory, see [File notes](file-notes.md).
+
+**What a folder has to be before it can be checked.** The folder itself must be
+a real folder (not a link to one) on a local disk, outside Chatbook's own data
+directory, not already connected as a sync folder, and not the Folder files
+root. Every `.md` file inside it must also pass, and one bad file stops the
+whole folder: each must be one you own or share a group with and can write,
+UTF-8 text, 10 MB or smaller, an ordinary file with a single name on disk, and
+consistent in its line endings — all Unix or all Windows, not a mix, and not
+the carriage-return-only style old Mac editors wrote.
+
+**Check changes** refuses anything else and names which rule it was, in the
+setup pane's status line, with the next action — for example "That folder is
+inside Chatbook's own data directory. Pick a folder outside it, then Check
+again", "Another Chatbook window is using that folder", "That folder is
+already connected", "Some files there use a mix of line endings. Save them
+with one style, then Check again", or "Some files there are larger than 10 MB".
+When several files fail for different reasons, the message names the most
+common one. A refusal changes nothing: pick a different folder, or fix the
+cause, and **Check changes** again in the same session.
 
 If files or notes change after checking, activation is refused as stale and the
 nearest valid action is **Check again**. Conflicts and deletion choices are not
@@ -564,14 +596,46 @@ dialog open. Once a folder is picked, the confirmation line shows its full path
 (elided in the middle for long paths, keeping the folder name itself visible),
 not just its name.
 
-Choose **Check selection** to build a read-only review. Each source is one
-line — path · what will happen · where it lands — with its **Skip** and
-**Create new** controls beside the path. Rows are grouped by outcome (**New**,
-**Unchanged repeat**, **Changed repeat**, **Uncertain match**, **Unsupported**,
-**Skipped**, **Empty**, **Failed**) and each group header carries **Skip all
-on this page** and, where the group can create notes, **Create all on this
-page** — both act on exactly the rows that page's heading counts, so a later
-page keeps its own choices.
+Choose **Check selection** to build a read-only review. The review takes the
+pane while it is open — the Notes list steps aside and comes back when you
+leave. The status line above it states the total ("Review 66 sources before
+import.") before you approve anything.
+
+Each source is one line — path · what will happen · where it lands — with its
+**Skip** and **Create new** controls beside the path. The path gives way
+first if the line is too long (elided in the middle), because the half that
+decides anything is the outcome: the resulting title, its keywords and its
+link count.
+
+Rows are grouped by outcome (**New**, **Unchanged repeat**, **Changed
+repeat**, **Uncertain match**, **Unsupported**, **Skipped**, **Empty**,
+**Failed**) and each group header carries **Skip all on this page** and, where
+the group can create notes, **Create all on this page** — both act on exactly
+the rows that page's heading counts, so a later page keeps its own choices.
+A group's header states its whole size ("New (58)"); only when the group is
+too big for one page does it read "New (25 of 58 on this page)", so the count
+on a page always says which number it means.
+
+A run of interchangeable rows — forty-five archived notes in one folder, all
+headed for the same place — collapses to one summary row with a disclosure
+("▶ vault/Archive · 45 files · Create all · Create in vault / Archive").
+Open it to reach every individual **Skip** / **Create new**; the group's own
+bulk actions settle the whole run without opening it. Pages are filled by the
+rows they *show*, so a collapsed run costs a page one line and never has a
+page break through the middle of it. When there is more than one page,
+**Previous page** and **Next page** say which end you are at rather than
+merely greying out.
+A `.git` folder is never walked, whatever the source and whatever the Obsidian
+toggle says: it is listed once under **Skipped** as "Git repository data —
+skipped. Nothing in it becomes a note." A git-backed vault would otherwise
+review its own repository internals — several hundred sources that can never
+be notes.
+
+A file type that cannot become a note is named rather than dismissed: an
+Obsidian canvas reads "Obsidian canvas — not a note.", and an image, document
+or media file points at where it does belong ("Image — not a note. Add it in
+Library ▸ Media."). Anything else keeps the plain "This file type is not
+supported."
 An empty or whitespace-only file is reported as "Empty file — nothing to
 import." and an application configuration file (a JSON or YAML document with no
 note body) as "Not a note file (app configuration)." A well-formed document
@@ -590,16 +654,33 @@ content and/or add its folder placement; **Confirm this match**, **Replace note
 content** and **Add folder placement** sit on their own line under the row, so
 they stay reachable in a narrow pane. **Update existing** works on an unchanged
 repeat too — it replaces the note's content and leaves its folder placement
-alone. Uncertain matches must be confirmed. If
-the imported top-level folder already exists, choose whether to use it, create
-a unique sibling, or enter another name.
+alone. The difference between the stored note and the file is shown on the one
+row that would write it: choose **Update existing** with **Replace note
+content** to see it. A row that says "Content: no change." never carries a
+diff, because the two answer different questions — whether this *file* changed
+since it was last imported, and whether the *note* now differs from it. Uncertain matches must be confirmed. If
+the imported top-level folder already exists, the review opens with the
+non-destructive default already chosen — a unique sibling — and says where the
+notes will go ("A folder with this name already exists. These notes will go
+into Imported (2) instead — choose another option to change that."). Choose
+**Use existing folder** or **Use another name** to change it; the name field
+starts empty, with no error painted against a name you have not typed.
 
 Only **Import selected items** approves and executes the exact choices shown.
+While it is unavailable it carries its reason as its own text ("Import
+selected items unavailable — Choose how to handle the folder name
+collision."), as **Check selection** does before a source is chosen.
+
 Progress remains visible and **Cancel import** stops cooperatively after the
-current item; completed items are not rolled back. The receipt states what
-happened in plain words — "Import finished · 61 notes created · 11 files
-skipped" — and a **Skipped (N)** disclosure lists each skipped path with its
-reason. A file the app skipped for you — an unchanged repeat, an empty or
+current item; completed items are not rolled back. Progress counts *planned
+changes* — one per note a source creates, one per source otherwise — so a
+two-note CSV is two of them; the line says so ("67 of 67 planned changes
+complete").
+
+The receipt states what happened once, in plain words — "59 notes created ·
+8 files skipped · 54 links resolved" — with the two counts reconciled in the
+line beneath it ("67 planned changes from 66 reviewed sources."), and a
+**Skipped (N)** disclosure lists each skipped path with its reason. A file the app skipped for you — an unchanged repeat, an empty or
 unsupported source — keeps its own reason there; only a row you set to Skip
 yourself reads "Skipped by you." A partial receipt states what finished. Retryable failures show
 **Retry N failures**; a cancelled batch with unfinished items shows **Retry
@@ -627,10 +708,17 @@ With it on:
   Info you can tell the two apart, and searching for the name still finds the
   note. The frontmatter block is removed from the note body — unless it is the
   whole file, in which case the note keeps it and still takes its title and
-  keywords from it.
+  keywords from it. Any other property in that block (`mood`, `status`,
+  `rating`) is not imported, and the review row says which ones ("… · not
+  imported: status"), so nothing disappears silently.
 - `[[wikilinks]]` and `[[link|alias]]` whose target is imported in the same
   batch become note links; a link to anything else stays as plain text, and a
-  `[[link]]` written inside a code block or backticks is left alone.
+  `[[link]]` written inside a code block or backticks is left alone. A linked
+  note keeps its wikilink and shows the linked note's title, with the
+  identifier behind it — `[[Reading/Zettelkasten|Zettelkasten — overview]]`
+  followed by `(note://…)`. Preview renders it as the title alone, an exported
+  file is still a working Obsidian link, and importing that file again
+  recovers the same link rather than stacking a second identifier on it.
 
 Turn the toggle off to import the vault exactly as any other folder — every
 directory walked, frontmatter left in the body, links left as text. The config
@@ -645,8 +733,8 @@ so any per-item Skip/Create choices you had already made are reset.
 Review rows for new notes state what will be created — the resulting title, its
 keywords, and how many links it carries — before you approve anything. When the
 import finishes, the receipt adds how many of those links actually resolved
-("Import finished · 59 notes created · 12 links resolved"); links to notes
-outside the batch stayed as text and are not counted.
+("59 notes created · 12 links resolved"); links to notes outside the batch
+stayed as text and are not counted.
 
 ## Common tasks
 
@@ -680,9 +768,12 @@ outside the batch stayed as text and are not counted.
    away). Choose a direction and local destination. Server sync remains
    unavailable until its separate capability is installed.
 4. Choose **Check changes** and review the exact safe, attention, skipped, and
-   deletion-like effects.
+   deletion-like effects. If the folder cannot be used, the status line under
+   the pane's "Add files to Library notes" heading says which rule it broke
+   and what to do; choose **Choose folder…** again and check the new one.
 5. Choose **Activate reviewed root**. If the review is stale, choose **Check
-   again** instead.
+   again** instead. **Manage sync folders** appears in the notes toolbar once
+   a root is active.
 
 Existing legacy evidence appears as a paused candidate. Open **Manage sync
 folders**, choose **Review migration**, inspect the current dry-run, and
@@ -1107,6 +1198,54 @@ critique-10 claims reconciled; surface fixes in task-32346, 32348, 32349,
 32354, 32355). This page needed no correction — the note editor's autosave
 story and its guarded return were already stated here; the Library overview is
 what had drifted.*
+
+*Verified against fix/library-notes-w3-sync — 2026-09-11 (task-32269, and the
+task-32243 fix it waited on): the lasting-sync chapter was written from the
+design and had never been walked, because no folder could be admitted — a
+refused **Check changes** crashed over its own refusal and then poisoned the
+folder for the whole session. Every step in this chapter has now been walked
+on this branch at 235x52, in two sessions.
+
+Session one, a 179-file vault under `$HOME`: refusal copy on a folder inside
+the profile → **Choose folder…** → the `$HOME` vault → 60 safe · 0 attention →
+**Activate reviewed root** → "Sync root activated. 60 applied · durable
+receipt recorded" → the notes appear under a **⇄ Sync managed** folder →
+**Manage sync folders** (which only exists once a root is active) → **Check
+changes** → "Manual check finished."
+
+Session two made a real conflict — edit the note in Chatbook, edit the same
+file on disk — and walked the half no earlier run could reach: **Check
+changes** → "⚠ Needs attention · Next: Review changes" → **Review** →
+**View comparison** (a real `--- Note / +++ File` diff with both sides' line
+and character counts) → **Keep file** → **Apply reviewed** → an at-action
+receipt with **Undo** and **Dismiss** → **Undo** → **Resolution history**,
+where the entry is recorded "undone" → **Pause** (the action becomes Resume)
+→ **Resume**. **Retarget** and **Disconnect** stay visibly disabled
+throughout, as this chapter says.
+
+Added in this pass: what a folder and its files have to be before they can be
+checked, and the named refusals. Known gap, not fixed here: the root row in
+**Manage sync folders** reads "Sync folder (name unavailable before cutover)"
+rather than the display name you typed — task-32451.)*
+
+*Verified against fix/library-notes-w3-import-review — 2026-09-11 (fix round 1):
+`.git` is skipped at the walker for every source and both platform adapters;
+the update diff reduces both sides to one link spelling before comparing, so
+an unchanged source shows no diff; a collapsed run's summary names the whole
+run's size when a page shows only part of it; and a collapsed run's title is
+no longer parsed as Textual markup, so a vault folder named `[bold]Archive`
+renders as itself.*
+
+*Verified against fix/library-notes-w3-import-review — 2026-09-11 (task-32250,
+task-32256, task-32257, task-32258, task-32262, task-32263): the Import once
+review pages by rendered rows so no group or run is cut in two, collapses an
+interchangeable run to one summary row with a disclosure, spends the path
+budget last so the outcome survives, and takes the pane while it is open; a
+disabled primary carries its reason as text; the receipt states its outcome
+once and reconciles the two denominators; dropped frontmatter properties, the
+no-change/diff basis, the pre-selected collision default and vault-aware
+unsupported copy are all stated on the surface; and a resolved wikilink is
+stored as `[[target|title]](note://<id>)`.*
 
 *Verified against fix/library-notes-w3-backlinks-table — 2026-09-11
 (task-32186: "Linked from" now reads a persisted link relation instead of

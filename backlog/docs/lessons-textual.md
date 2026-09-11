@@ -391,7 +391,6 @@ space changing around a capped child.
 
 ---
 
-
 ## A screen-owned worker must check the active category before updating shared chrome
 
 **TASK-32189 review, 2026-09-09.** The Web Search controller kept an explicit
@@ -914,3 +913,58 @@ screen through `self._screen` (`self._screen.query_one(...)`), never `self.` —
 module's own header says "never a back-door through `self.screen`". When probing
 message delivery in tests, replace the handler on a subclass or count side effects
 (posted modals, store writes), not via instance attributes.
+
+## A toast belongs to the screen that is current when it FIRES, and it docks over that screen's bottom chrome (task-32266, 2026-09-11)
+
+`App.notify()` hands the notification to `self.screen`, and Textual's
+`ToastRack` is `dock: bottom; align: right bottom; layer: _toastrack`. So a
+toast raised from an ASYNC completion does not land on the surface that asked
+for it — it lands on whatever is current a second or two later, on top of that
+surface's docked footer.
+
+The incident: the first-run wizard's Voice step saves TTS settings by posting
+`STTSSettingsSaveEvent` to the app while the user presses Next. The shared
+handler announced the publication with "Settings saved successfully!". By the
+time the write settled the wizard had advanced one or two steps, so the toast
+painted over the Protect step's buttons, and — walking at normal speed — over
+the Summary's docked exit actions, "Write your first note" included. Nobody
+who read `FirstRunSetupWizard.py` would find it: the emitter is
+`Event_Handlers/STTS_Events/stts_events.py`, three modules away, and the
+wizard's own `notify()` calls are all unrelated. Three reviewers filed it as
+"the wizard's completion toast" — the wizard never raised one.
+
+**The rule:** a component that posts a work request to an app-level handler and
+then AWAITS the result renders its own outcome; the handler's toast is
+duplication that will land somewhere else. Give such requests an explicit
+opt-out (`notify_outcome=False` here) rather than repositioning the rack —
+scoped CSS only relocates a message that should not exist on that screen.
+
+**Reproduction note:** the default toast timeout is 5 s, so a scripted walk
+with 2.5 s between steps can easily capture the toast on one step and miss it
+on the next. Reproducing the Summary case needed the step advances tightened to
+~1.3 s. A single clean capture is not evidence the toast cannot reach a later
+screen.
+
+## A widget's BUNDLED_CSS cannot override an app-tier rule, and build_css.py will not put it in the screen sheet for you (task-32250, 2026-09-11)
+
+**What happened.** The Import once review collapses a run of interchangeable
+rows into one `Collapsible`, and the pager budgets a page by RENDERED rows, so
+that disclosure has to be one line. `tldw_cli_modular.tcss` styles every
+`Collapsible` app-wide (`min-height: 3`, a round border, a 3-row
+`CollapsibleTitle`, a bottom margin) — five lines of chrome for one summary.
+A `LibraryNoteImportCanvas .note-import-run { ... }` rule in the canvas's own
+`BUNDLED_CSS` changed nothing, despite far higher specificity: widget-tier CSS
+loses to app-tier CSS in Textual regardless of the selector.
+
+The obvious next move — "Library rules go in the screen-owned sheet" — does
+not work by hand either: `screen_agentic_library.tcss` is GENERATED, and
+`check_bundle_sync.py` fails the moment you edit it. Running `build_css.py`
+after adding the rule to a WIDGET's `BUNDLED_CSS` routes it to
+`widget_defaults_self.tcss`, i.e. straight back to the tier that already lost.
+Only a rule in the SCREEN's own `BUNDLED_CSS` reaches the screen sheet.
+
+**What to do.** To beat an app-wide type rule from inside a widget, either move
+the rule into the owning screen's `BUNDLED_CSS` and regenerate, or set the
+properties as inline styles on the instance (`widget.styles.min_height = 1`),
+which is the one tier above app CSS. Verify by rendering, not by reading the
+selector: the first attempt here looked correct and did nothing.

@@ -1393,7 +1393,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 yield Static(
                     f"{self.canvas.selected_count} selected",
                     id="library-media-selected-count",
-                    classes="library-toolbar-count",
+                    classes="library-toolbar-count library-media-selection-count",
                     markup=False,
                 )
                 if confirming_bulk_delete:

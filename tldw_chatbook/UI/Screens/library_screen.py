@@ -17178,6 +17178,21 @@ class LibraryScreen(BaseAppScreen):
             return False
 
         located_folder_ids: list[str] = []
+
+        def reveal_resolved_ancestors() -> None:
+            """Open every ancestor this locate has already confirmed.
+
+            task-32255: the locate used to bank all expansion until the
+            whole path AND the placement under it had answered, so a
+            branch that failed to re-page left the folder SHUT. Undo
+            restores through here: the row came back to the tree,
+            invisible, with nothing on screen saying so. Only called from
+            the two bail-outs that run while this navigation is still
+            current -- a SUPERSEDED locate still leaves no trace, which
+            the abandoned-locator pins require.
+            """
+            self._notes_state.tree_expanded_ids.update(located_folder_ids)
+
         for step in location.path:
             key = NotesBranchKey(step.parent_id, "folders")
             folder_state = self._notes_state.tree_branches.get(key)
@@ -17205,6 +17220,7 @@ class LibraryScreen(BaseAppScreen):
                 or folder_state.error
                 or placement_id not in folder_state.item_ids
             ):
+                reveal_resolved_ancestors()
                 self._notes_state.navigation_status = ""
                 LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
                 return False
@@ -17236,11 +17252,12 @@ class LibraryScreen(BaseAppScreen):
                 or placement_state.error
                 or location.placement_id not in placement_state.item_ids
             ):
+                reveal_resolved_ancestors()
                 self._notes_state.navigation_status = ""
                 LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
                 return False
 
-        self._notes_state.tree_expanded_ids.update(located_folder_ids)
+        reveal_resolved_ancestors()
         self._notes_state.navigation_status = ""
         self._notes_state.tree_selected_placement_id = location.placement_id
         if not focus:

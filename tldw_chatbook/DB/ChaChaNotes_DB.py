@@ -175,14 +175,14 @@ CONVERSATION_SCOPE_ALL = "all"
 # link the Obsidian importer writes for a resolvable `[[wikilink]]`
 # (`note_import_plan_models.rewrite_wikilinks`), and the form a hand-typed link
 # uses too. Only the tail is matched: task-32129 changed the visible half of an
-# imported link to `[[target|title]]`, and the tail is what survived that and
+# imported link to `[[target|title]]` (task-32263 the spelling it ships), and
 # what any further link-text change must keep.
 #
-# Ceiling: a note id containing `)` is not representable here (the match stops
-# at the first one). Ids are UUIDs from `_generate_uuid()` or validated opaque
-# import ids, so this is unreachable in practice; the old containment query
-# could match such an id and this cannot.
-_NOTE_LINK_TARGET_RE = re.compile(r"\(note://([^)]+)\)")
+# The target character class matches the importer's own link grammar
+# (`note_import_plan_models._NOTE_LINK_TAIL`: `note://[^()\s]*`), so what this
+# extracts and what the importer writes cannot drift apart. Ids are UUIDs or
+# validated opaque import ids, so the excluded characters never appear in one.
+_NOTE_LINK_TARGET_RE = re.compile(r"\(note://([^()\s]+)\)")
 
 
 def extract_note_link_targets(content: str, *, source_note_id: str) -> list[str]:

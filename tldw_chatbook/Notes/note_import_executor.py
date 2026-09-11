@@ -1011,6 +1011,7 @@ class NoteImportExecutor:
             membership_effects_by_item.setdefault(effect.item_id, []).append(effect)
         items_by_id = {item.item_id: item for item in snapshot.items}
         note_ids_by_wikilink = _wikilink_note_ids(approved)
+        note_titles_by_wikilink = _wikilink_note_titles(approved)
         items = approved.plan.items
         for batch_start in range(0, len(items), self._batch_size):
             if cancel_event is not None and cancel_event.is_set():
@@ -1027,6 +1028,7 @@ class NoteImportExecutor:
                     approved,
                     item=item,
                     note_ids_by_wikilink=note_ids_by_wikilink,
+                    note_titles_by_wikilink=note_titles_by_wikilink,
                     payload_effects=payload_effects_by_item.get(item.item_id, {}),
                     membership_effects=tuple(
                         membership_effects_by_item.get(item.item_id, ())
@@ -1271,6 +1273,7 @@ class NoteImportExecutor:
         folder_failures: dict[tuple[str, ...], _ExecutionFailure],
         recovering_interruption: bool,
         note_ids_by_wikilink: dict[str, str] | None = None,
+        note_titles_by_wikilink: dict[str, str] | None = None,
     ) -> None:
         if item.selected_action is ImportAction.SKIP:
             self._receipts.transition_item(
@@ -1306,7 +1309,11 @@ class NoteImportExecutor:
             for payload_index, payload in enumerate(item.payloads):
                 # Obsidian links resolve to the ids this same batch will mint, so
                 # the note is written linked once instead of rewritten later.
-                payload = rewrite_wikilinks(payload, note_ids_by_wikilink or {})
+                payload = rewrite_wikilinks(
+                    payload,
+                    note_ids_by_wikilink or {},
+                    titles=note_titles_by_wikilink,
+                )
                 effect = payload_effects.get(payload_index)
                 if effect is None:
                     raise ImportReceiptTransitionError(
@@ -1787,6 +1794,21 @@ def _wikilink_note_ids(approved: ApprovedNoteImportPlan) -> dict[str, str]:
         key: _deterministic_note_id(approved.approval_id, item_id, 0)
         for key, item_id in creatable_wikilink_keys(approved.plan).items()
     }
+
+
+def _wikilink_note_titles(approved: ApprovedNoteImportPlan) -> dict[str, str]:
+    """Map the batch's link keys to the title each created note will carry.
+
+    task-32263: the stored link shows the linked note's title, so the title
+    has to travel with the id the same key resolves to.
+    """
+    items = {item.item_id: item for item in approved.plan.items}
+    titles: dict[str, str] = {}
+    for key, item_id in creatable_wikilink_keys(approved.plan).items():
+        item = items.get(item_id)
+        if item is not None and item.payloads:
+            titles[key] = item.payloads[0].title
+    return titles
 
 
 def _allows_existing_root(

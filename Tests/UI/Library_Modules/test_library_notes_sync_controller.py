@@ -3043,3 +3043,131 @@ async def test_activation_rejects_malformed_control_results(malformed: object) -
     assert controller.snapshot.phase == "review"
     assert controller.snapshot.receipt_line == ""
     assert "invalid" in controller.snapshot.status_line.casefold()
+
+
+@pytest.mark.parametrize(
+    ("reason", "expected"),
+    [
+        ("private_path_overlap", "inside Chatbook's own data directory"),
+        ("passive_process", "Another Chatbook window is using that folder"),
+        ("lasting_root_overlap", "already connected"),
+        ("unsupported_metadata", "permission model this sync can't track"),
+        # TASK-32244: every per-file gate arrives as `root_discovery_incomplete`
+        # carrying the dominant gate as its reason. Permission advice is right
+        # for exactly one of them, so each must reach its own sentence.
+        ("root_discovery_incomplete", "couldn't be read"),
+        ("mixed_newlines", "mix of line endings"),
+        ("unsupported_newline", "older Mac line endings"),
+        ("unsupported_encoding", "not UTF-8 text"),
+        ("max_file_bytes_exceeded", "larger than 10 MB"),
+        ("non_regular", "aren't ordinary files"),
+        ("multiple_links", "more than one name on disk"),
+        (
+            "notes_sync_cutover_not_admitted",
+            "another Chatbook instance owns this profile",
+        ),
+    ],
+)
+async def test_refused_check_setup_names_its_reason_and_logs_it(
+    reason: str, expected: str
+) -> None:
+    """TASK-32243: each refusal reason gets its own copy and one warning."""
+
+    from loguru import logger
+
+    from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRootRefused
+
+    runtime = _Runtime()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    async def refuse(*args: object, **kwargs: object) -> object:
+        raise NotesSyncRootRefused("root_lease_unavailable", reason_code=reason)
+
+    runtime.review_setup = refuse
+    controller.set_setup("display_name", "Notes")
+    controller.set_setup("folder", "/zqleakcanary/root")
+    messages: list[str] = []
+    sink_id = logger.add(
+        lambda message: messages.append(message.record["message"]), level="WARNING"
+    )
+    try:
+        await controller.check_setup()
+    finally:
+        logger.remove(sink_id)
+
+    status_line = controller.snapshot.status_line
+    assert expected in status_line
+    assert status_line != "Check failed. Review the folder and settings, then try again."
+    assert controller.snapshot.phase == "configure"
+    joined = "\n".join(messages)
+    assert reason in joined
+    assert "/zqleakcanary/root" not in joined
+
+
+async def test_refused_check_root_names_its_reason_and_logs_it() -> None:
+    """TASK-32243: the persisted-root Check refuses with the same grammar."""
+
+    from loguru import logger
+
+    from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRootRefused
+
+    runtime = _Runtime()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    async def refuse(*args: object, **kwargs: object) -> object:
+        raise NotesSyncRootRefused(
+            "root_lease_unavailable", reason_code="passive_process"
+        )
+
+    runtime.check_root = refuse
+    messages: list[str] = []
+    sink_id = logger.add(
+        lambda message: messages.append(message.record["message"]), level="WARNING"
+    )
+    try:
+        await controller.check_root("root-1")
+    finally:
+        logger.remove(sink_id)
+
+    assert "Another Chatbook window is using that folder" in (
+        controller.snapshot.status_line
+    )
+    assert "passive_process" in "\n".join(messages)
+
+
+async def test_unclassified_check_failure_keeps_the_generic_line_and_logs_a_type() -> (
+    None
+):
+    """TASK-32243: an unnamed failure still leaves a trace to debug from."""
+
+    from loguru import logger
+
+    runtime = _Runtime()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    async def fail(*args: object, **kwargs: object) -> object:
+        raise ZeroDivisionError("/zqleakcanary/secret/path")
+
+    runtime.check_root = fail
+    messages: list[str] = []
+    sink_id = logger.add(
+        lambda message: messages.append(message.record["message"]), level="WARNING"
+    )
+    try:
+        await controller.check_root("root-1")
+    finally:
+        logger.remove(sink_id)
+
+    joined = "\n".join(messages)
+    assert "ZeroDivisionError" in joined
+    assert "/zqleakcanary/secret/path" not in joined
+    assert "Check failed" in controller.snapshot.status_line
