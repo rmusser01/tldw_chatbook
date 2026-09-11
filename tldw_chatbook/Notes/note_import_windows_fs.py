@@ -20,12 +20,14 @@ from tldw_chatbook.Notes.note_folder_models import (
     normalize_folder_name,
 )
 from tldw_chatbook.Notes.note_import_discovery import (
+    OBSIDIAN_MARKER_DIRECTORY,
     DiscoveredImportSource,
     ImportDiscovery,
     ImportDiscoveryFailure,
     ImportSelectionError,
     SourceIdentity,
     VerifiedSourceReadError,
+    _add_skip,
     _bounded_message,
     _copy_bounded_selection,
     _disambiguate_failure_paths,
@@ -34,6 +36,7 @@ from tldw_chatbook.Notes.note_import_discovery import (
     _display_sort_key,
     _is_safe_display_path,
     _is_safe_display_segment,
+    _obsidian_skip_reason,
     _reject,
     _selection_error,
     _unsafe_failure_display_path,
@@ -247,6 +250,11 @@ class _DiscoveryState:
     failures: list[ImportDiscoveryFailure] = field(default_factory=list)
     total_bytes: int = 0
     entry_count: int = 0
+    # task-32178: the same three fields the POSIX walker carries, so the shared
+    # _obsidian_skip_reason and _add_skip work here unchanged.
+    obsidian_mode: bool = False
+    vault_detected: bool = False
+    skips: list[ImportDiscoveryFailure] = field(default_factory=list)
 
 
 class _DirectoryChanged(RuntimeError):
@@ -257,6 +265,7 @@ def discover_import_sources(
     paths: Iterable[Path],
     bounds: ImportBounds,
     *,
+    obsidian_mode: bool = False,
     filesystem: WindowsReadOnlyFilesystem = OS_WINDOWS_FILESYSTEM,
 ) -> ImportDiscovery:
     """Discover sources through bounded, non-following Windows path checks.
@@ -264,6 +273,9 @@ def discover_import_sources(
     Args:
         paths: User-selected files or one directory to discover.
         bounds: Resource and diagnostic limits for discovery.
+        obsidian_mode: Whether a detected Obsidian vault's own root folders
+            (``.obsidian/``, ``.trash/`` and ``Templates/``) are skipped with a
+            reason instead of walked.
         filesystem: Read-only Windows filesystem capability provider.
 
     Returns:
@@ -295,7 +307,7 @@ def discover_import_sources(
         )
         _reject(bounds, reason_code)
 
-    state = _DiscoveryState(bounds=bounds)
+    state = _DiscoveryState(bounds=bounds, obsidian_mode=obsidian_mode)
     if directory_count:
         selected_root = selected[0]
         root_label = selected_root.path.name
@@ -344,6 +356,10 @@ def discover_import_sources(
         root_label=root_label,
         total_bytes=state.total_bytes,
         entry_count=state.entry_count,
+        skips=tuple(
+            sorted(state.skips, key=lambda item: _display_sort_key(item.display_path))
+        ),
+        vault_detected=state.vault_detected,
     )
 
 
@@ -610,6 +626,8 @@ def _scan_directory(
                         pass
                 scanned_entries.append(_ScannedEntry(entry.name, metadata))
         _require_directory_chain(directory_path, directory_identities, filesystem)
+        if not relative_parts:
+            state.vault_detected = _carries_obsidian_marker(scanned_entries)
         _validate_sibling_namespace(scanned_entries, state.bounds)
 
         for scanned_entry in scanned_entries:
@@ -624,6 +642,17 @@ def _scan_directory(
                 filesystem=filesystem,
             )
         _require_directory_chain(directory_path, directory_identities, filesystem)
+
+
+def _carries_obsidian_marker(entries: Iterable[_ScannedEntry]) -> bool:
+    """Return whether the selected root holds Obsidian's own config directory."""
+    return any(
+        entry.name.casefold() == OBSIDIAN_MARKER_DIRECTORY
+        and entry.metadata is not None
+        and not _is_reparse(entry.metadata)
+        and stat.S_ISDIR(entry.metadata.st_mode)
+        for entry in entries
+    )
 
 
 def _validate_sibling_namespace(
@@ -692,6 +721,10 @@ def _scan_entry(
         )
         return
 
+    skip_reason = _obsidian_skip_reason(scanned_entry.name, relative_parts, state)
+    if skip_reason is not None:
+        _add_skip(state, entry_path, display_path, skip_reason)
+        return
     try:
         normalize_folder_name(scanned_entry.name)
     except FolderValidationError:

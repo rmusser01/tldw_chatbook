@@ -33,6 +33,7 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     MAX_IMPORT_REASON_LENGTH,
     MAX_IMPORT_TEMPLATE_NAME_LENGTH,
     MAX_IMPORT_TITLE_LENGTH,
+    NON_IMPORTABLE_CLASSIFICATIONS,
     WIKILINK_SCAN,
     ImportBounds,
     ImportClassification,
@@ -54,6 +55,8 @@ _CSV_RESERVED_HEADERS = frozenset(
 )
 _MARKDOWN_EXTENSIONS = frozenset({".md", ".markdown"})
 _FRONTMATTER_KEYS = ("tags", "aliases")
+_ALIAS_KEYWORD_PREFIX = "alias: "
+"""Marks a keyword that came from `aliases:` rather than from `tags:`."""
 _MAX_FRONTMATTER_LINES = 200
 _MAX_WIKILINKS_PER_NOTE = 200
 _TEMPLATE_PLACEHOLDER = re.compile(r"\{\{.*?\}\}")
@@ -96,8 +99,12 @@ _FAILURE_CLASSIFICATIONS = {
 
 
 class _ParseFailure(ValueError):
-    def __init__(self, reason_code: str) -> None:
+    def __init__(self, reason_code: str, detail: str = "") -> None:
+        # task-32176: `detail` names the record that failed inside an otherwise
+        # valid structured document, so a 200-note export does not report one
+        # bad row as one unreadable file.
         self.reason_code = reason_code
+        self.detail = detail
         super().__init__(reason_code)
 
 
@@ -186,14 +193,9 @@ class ImportParseIssue:
             raise ValueError("display_path must be a safe relative path.")
         if not isinstance(self.source_path, Path):
             raise TypeError("source_path must be a Path.")
-        if not isinstance(self.classification, ImportClassification) or (
-            self.classification
-            not in {
-                ImportClassification.UNSUPPORTED,
-                ImportClassification.SKIPPED,
-                ImportClassification.EMPTY,
-                ImportClassification.FAILED,
-            }
+        if (
+            not isinstance(self.classification, ImportClassification)
+            or self.classification not in NON_IMPORTABLE_CLASSIFICATIONS
         ):
             raise ValueError("classification must be a non-importable outcome.")
         if (
@@ -390,6 +392,7 @@ def parse_import_sources(
                         error.reason_code, ImportClassification.FAILED
                     ),
                     error.reason_code,
+                    detail=error.detail,
                 )
             )
         except (
@@ -557,8 +560,10 @@ def _frontmatter_keywords(
 
     Aliases are alternate titles in Obsidian and there is no separate note
     metadata store here, so they are kept as keywords: the note stays findable by
-    them and they are visible in Info. Unusable metadata yields no keywords
-    rather than failing the whole note.
+    them and they are visible in Info. They carry an ``alias:`` prefix so a
+    reader can still tell an alternate name from a tag the author chose
+    (task-32178). Unusable metadata yields no keywords rather than failing the
+    whole note.
     """
     if metadata is None:
         return ()
@@ -569,7 +574,13 @@ def _frontmatter_keywords(
             values = _keywords(metadata.get(key), bounds)
         except _ParseFailure:
             continue
-        for keyword in values:
+        for value in values:
+            keyword = value if key == "tags" else f"{_ALIAS_KEYWORD_PREFIX}{value}"
+            if len(keyword) > MAX_IMPORT_KEYWORD_LENGTH:
+                # `_keywords` already bounded `value`, so only our display
+                # prefix pushed it over. Keep the alternate name findable
+                # un-prefixed rather than dropping it (PR #2556 review).
+                keyword = value
             if keyword.casefold() in seen:
                 continue
             seen.add(keyword.casefold())
@@ -620,8 +631,23 @@ def _structured_payloads(
         raise _ParseFailure("not_a_note")
     if not all(note_shaped):
         # Part note, part something else: a damaged export, not configuration.
-        raise _ParseFailure("invalid_content")
-    return tuple(_payload_from_mapping(record, bounds) for record in records)
+        raise _ParseFailure(
+            "invalid_content",
+            f"Record {note_shaped.index(False) + 1} of {len(records)} "
+            "has no note content.",
+        )
+    payloads: list[ParsedNotePayload] = []
+    for position, record in enumerate(records, start=1):
+        try:
+            payloads.append(_payload_from_mapping(record, bounds))
+        except _ParseFailure as error:
+            if error.reason_code != "invalid_content":
+                raise
+            raise _ParseFailure(
+                "invalid_content",
+                f"Record {position} of {len(records)} could not be read as a note.",
+            ) from error
+    return tuple(payloads)
 
 
 def _is_note_record(record: Any) -> bool:
@@ -747,7 +773,15 @@ def _csv_payloads(text: str, bounds: ImportBounds) -> tuple[ParsedNotePayload, .
                 mapping["keywords"] = row[keyword_index]
             if template_index is not None:
                 mapping["template"] = row[template_index] or None
-            payloads.append(_payload_from_mapping(mapping, bounds))
+            try:
+                payloads.append(_payload_from_mapping(mapping, bounds))
+            except _ParseFailure as error:
+                if error.reason_code != "invalid_content":
+                    raise
+                raise _ParseFailure(
+                    "invalid_content",
+                    f"Row {reader.line_num} could not be read as a note.",
+                ) from error
         if not payloads:
             raise _ParseFailure("empty_structured_source")
         return tuple(payloads)
@@ -822,20 +856,24 @@ def _issue(
     bounds: ImportBounds,
     classification: ImportClassification,
     reason_code: str,
+    *,
+    detail: str = "",
 ) -> ImportParseIssue:
     return ImportParseIssue(
         display_path=candidate.source.display_path,
         source_path=candidate.source.source_path,
         classification=classification,
         reason_code=reason_code,
-        user_message=_message(bounds, reason_code),
+        user_message=_message(bounds, reason_code, detail=detail),
     )
 
 
-def _message(bounds: ImportBounds, reason_code: str) -> str:
-    return _MESSAGES.get(reason_code, _MESSAGES["source_unavailable"])[
-        : bounds.max_reason_length
-    ]
+def _message(bounds: ImportBounds, reason_code: str, *, detail: str = "") -> str:
+    """Return one bounded reason, followed by any record-level detail."""
+    message = _MESSAGES.get(reason_code, _MESSAGES["source_unavailable"])
+    if detail:
+        message = f"{message} {detail}"
+    return message[: bounds.max_reason_length]
 
 
 def _reject_selection(bounds: ImportBounds, reason_code: str) -> None:

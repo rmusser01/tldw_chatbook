@@ -688,8 +688,10 @@ Keywords: test, sample"""
         mock_db_instance.add_message.return_value = True
         mock_db_instance.add_note.return_value = 1
         mock_db_instance.create_character.return_value = 1
-        mock_db_instance.get_conversation_by_name.side_effect = lambda name: (
-            [{"id": 99, "title": name}] if name == "Test Conversation" else []
+        mock_db_instance.get_conversation_by_name.side_effect = (
+            lambda name, *, archive_scope: (
+                [{"id": 99, "title": name}] if name == "Test Conversation" else []
+            )
         )
         mock_db_instance.get_note_by_title.side_effect = lambda title: (
             {"id": 88, "title": title} if title == "Test Note" else None
@@ -710,8 +712,14 @@ Keywords: test, sample"""
         assert success is True
         assert status.successful_items > 0
 
-        # Since we're mocking, just verify that the import was successful
-        # In real implementation, it would rename the note
+        mock_db_instance.add_conversation.assert_called_once()
+        assert mock_db_instance.add_conversation.call_args.args[0]["title"] == (
+            "Test Conversation (1)"
+        )
+        assert all(
+            call.kwargs == {"archive_scope": "all"}
+            for call in mock_db_instance.get_conversation_by_name.call_args_list
+        )
 
     @patch("tldw_chatbook.Chatbooks.chatbook_importer.CharactersRAGDB")
     def test_import_status_tracking(

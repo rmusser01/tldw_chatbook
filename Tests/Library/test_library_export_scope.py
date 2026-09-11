@@ -316,7 +316,7 @@ def test_export_scope_label_everything_lists_all_four_counts():
         scope, {"media": 128, "conversations": 542, "notes": 87, "prompts": 13}
     )
     assert label == (
-        "Everything: 128 media · 542 conversations · 87 notes · 13 prompts"
+        "Everything: 128 media items · 542 conversations · 87 notes · 13 prompts"
     )
 
 
@@ -325,7 +325,9 @@ def test_export_scope_label_everything_includes_zero_count_sources():
     label = export_scope_label(
         scope, {"media": 0, "conversations": 542, "notes": 0, "prompts": 0}
     )
-    assert label == "Everything: 0 media · 542 conversations · 0 notes · 0 prompts"
+    assert label == (
+        "Everything: 0 media items · 542 conversations · 0 notes · 0 prompts"
+    )
 
 
 def test_export_scope_label_media_with_type_filter():
@@ -363,3 +365,46 @@ def test_export_scope_label_prompts_is_truthful_for_zero_one_and_many(count, exp
     assert (
         export_scope_label(ExportScope(kind="prompts"), {"prompts": count}) == expected
     )
+
+
+# --- task-32221: every noun pluralises ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("counts", "expected"),
+    [
+        (
+            {"media": 1, "conversations": 1, "notes": 1, "prompts": 1},
+            "Everything: 1 media item · 1 conversation · 1 note · 1 prompt",
+        ),
+        (
+            {"media": 0, "conversations": 2, "notes": 1, "prompts": 13},
+            "Everything: 0 media items · 2 conversations · 1 note · 13 prompts",
+        ),
+    ],
+)
+def test_export_scope_summary_pluralises_every_noun(counts, expected):
+    assert export_scope_label(ExportScope(kind="everything"), counts) == expected
+
+
+@pytest.mark.parametrize(
+    ("kind", "counts", "expected"),
+    [
+        ("media", {"media": 1}, "Media · 1 item"),
+        ("conversations", {"conversations": 1}, "Conversations · 1 item"),
+        ("notes", {"notes": 1}, "Notes · 1 item"),
+        ("prompts", {"prompts": 1}, "Prompts · 1 item"),
+    ],
+)
+def test_export_scope_label_per_kind_says_one_item_not_one_items(kind, counts, expected):
+    assert export_scope_label(ExportScope(kind=kind), counts) == expected
+
+
+def test_export_scope_label_media_type_filter_pluralises_too():
+    scope = ExportScope(kind="media", media_type="video")
+    assert export_scope_label(scope, {"media": 1}) == "Media (type: video) · 1 item"
+
+
+def test_export_scope_label_explicit_selection_pluralises():
+    scope = ExportScope(kind="notes", ids=("note-1",))
+    assert export_scope_label(scope, {"notes": 1}) == "Selected notes · 1 item"

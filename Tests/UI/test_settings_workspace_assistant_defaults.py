@@ -23,6 +23,7 @@ from Tests.UI.test_settings_configuration_hub import (
     _build_test_app,
     _open_settings_category,
     _visible_text,
+    _wait_for_selector,
 )
 from tldw_chatbook.Workspaces.assistant_defaults import compose_posture_preview
 from tldw_chatbook.Workspaces.models import WorkspaceAssistantDefaults
@@ -279,7 +280,12 @@ async def _open_workspace_card(pilot, app, workspace_id: str):
     screen = _active_destination_screen(app)
     await _open_settings_category(pilot, "#settings-category-workspaces")
     screen.query_one(f"#settings-workspace-row-{workspace_id}", Button).press()
-    await pilot.pause(0.2)
+    selector = (
+        "#settings-workspace-card"
+        if workspace_id == "workspace-default"
+        else "#settings-workspace-posture-preview"
+    )
+    await _wait_for_selector(screen, pilot, selector)
     return screen
 
 

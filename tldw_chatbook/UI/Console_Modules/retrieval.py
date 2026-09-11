@@ -265,10 +265,19 @@ class ConsoleRetrievalController:
         return state
 
     async def _refresh_console_effective_scope_and_sync(
-        self, session: ConsoleChatSession
+        self, session: ConsoleChatSession, *, refresh_if: Callable[[], bool] | None = None
     ) -> None:
-        """Resolve effective scope, then refresh mounted screen projections."""
+        """Resolve scope, then paint only while the optional owner guard holds.
+
+        Args:
+            session: Session whose retrieval scope is being refreshed.
+            refresh_if: Optional current-claim/screen authority for the refresh.
+        """
+        if refresh_if is not None and not refresh_if():
+            return
         await self._resolve_console_effective_scope_state(session)
+        if refresh_if is not None and not refresh_if():
+            return
         if self._is_mounted():
             self._sync_retrieval_scope_row()
             self._sync_control_bar()
