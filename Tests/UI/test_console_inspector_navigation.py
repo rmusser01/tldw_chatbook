@@ -2139,15 +2139,19 @@ async def test_rail_focus_prepends_escape_hint(monkeypatch) -> None:
         def _refresh_hint() -> None:
             screen._register_console_footer_shortcuts()
 
-        # Focus the LEFT rail: escape hint appears.
-        left_terminal = screen.query_one("#console-terminal-open", Button)
-        left_terminal.focus()
+        # TASK-32322 live-smoke hardening: the flow-driven path must
+        # produce the hint with NO manual refresh — widget.focus() alone
+        # fired on_focus-adjacent handlers, but the real entry (Alt+C)
+        # lands on a DESCENDANT, which needs on_descendant_focus (caught
+        # in live smoke after the manual-refresh version passed tests).
+        await pilot.press("alt+c")  # close
+        await pilot.pause()
+        await pilot.press("alt+c")  # reopen -> focus lands on Terminal
         for _ in range(40):
-            _refresh_hint()
             if _has_hint():
                 break
             await asyncio.sleep(0.05)
-        assert _has_hint(), "left rail focus must prepend the escape hint"
+        assert _has_hint(), "Alt+C reopen must surface the escape hint"
 
         # Focus the RIGHT rail: hint stays, alongside n/p Sections.
         collapse = rail.query_one("#console-inspector-rail-collapse", Button)

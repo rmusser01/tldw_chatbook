@@ -1104,6 +1104,16 @@ class ConsoleLeftRail(Vertical):
     def on_descendant_focus(self, event: DescendantFocus) -> None:
         """Activate owned keyboard targets and paint the current scroll owner."""
 
+        # TASK-32322: descendant focus is the rail's common entry (Alt+C,
+        # F6 land on a content control, not the rail root), so the footer
+        # escape-hint refresh rides here too. A second on_descendant_focus
+        # would be shadowed by this one — a live-smoke catch.
+        refresh_footer = getattr(
+            self.screen, "_register_console_footer_shortcuts", None
+        )
+        if callable(refresh_footer):
+            refresh_footer()
+
         target = event.widget
         section_id = self._section_for_owned_target(target)
         if section_id is not None:
@@ -1166,7 +1176,11 @@ class ConsoleLeftRail(Vertical):
     def on_descendant_blur(self, _event: DescendantBlur) -> None:
         """Clear transient underlines when keyboard focus leaves this rail."""
 
+        # TASK-32322: same moment, second job — the footer's escape hint
+        # must leave with the focus that brought it (deferred until the
+        # replacement focus is committed, mirroring _clear_focus_owner).
         self.call_after_refresh(self._clear_focus_owner_if_focus_left)
+        self.call_after_refresh(self._refresh_footer_if_rail_not_focused)
 
     def _clear_focus_owner_if_focus_left(self) -> None:
         """Clear cues only after Textual has committed the replacement focus."""
