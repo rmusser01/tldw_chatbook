@@ -50,6 +50,28 @@ All three ACs, implementing the user's task-32057 AC#1 decision (recorded under 
 - no filter: "No saved captures yet · press Quick Capture above to save a page by URL."
 - a filter: "No captures match these filters · clear them to see everything saved."
 
+## Fix round 1 (task review, 2026-09-11)
+
+**P2 — the first cut's empty state was false for a rail scope.** `filtered`
+tested only the filter-form fields, but the rail's scope rows set `statuses`
+/ `favorite` (`library_collections_controller.py:491-508`), so an empty
+**Favorites** beside a rail reading `Collections (57)` claimed nothing had
+ever been saved and pointed at an action that does not leave the scope — the
+same class of defect AC#2 exists to fix. The empty state is now three
+branches, narrowest first, because the two narrowings come from different
+controls and have different ways out: a filter is undone by **Clear**, a
+scope by choosing **All Captures**. A filter set inside a scope takes the
+filter sentence. Pinned red-first by
+`test_collections_empty_state_names_an_empty_rail_scope[favorites|archived]`
+and `test_collections_empty_state_prefers_the_filter_copy_inside_a_scope`.
+
+**P3 — the Collections/Trash boundary-reason asymmetry is a decision, not an
+accident.** Collections gained a `#library-collections-page-reason` line (the
+brief's Step 3 asks for it, and it matches Media/Conversations/Prompts);
+Trash did not, because its pager is a pinned fixed-height container and the
+line would cost a row at exactly the width task-32354's finding is about.
+Collections' pager has no fixed height, so it can afford one.
+
 **AC#3 — the pager is disabled at 0 of 0.** Previous/Next were plain `disabled=` Buttons with no `○` marker, so at `0–0 of 0` they read as enabled where the structurally identical Trash pager read as disabled. The canvas now goes through `simple_library_pager_display` + `library_pager_layout` (task-32354), which at one page drops the page copy, the boundary reasons and both controls; on two pages the controls come back with `library_disabled_action_label`'s `○` and the shared reasons.
 
 Live at 235x52, 100x30 and 60x24 on the seeded profile: heading `Collections`, the never-captured sentence, `0–0 of 0` with no controls (`crit10/wave/pagers/caps/02`, `07`, `08`).

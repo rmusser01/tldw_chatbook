@@ -77,11 +77,20 @@ right.
   The row you have loaded in the reader is prefixed `Loaded in Reader`; a
   row you just clicked whose detail is still arriving reads `Selected ·
   loading`.
-- **Empty state**, one of two sentences — never both, and never the wrong
-  one. With no filter set: "No saved captures yet · press Quick Capture
-  above to save a page by URL." With a filter (search text, domain, tags or
-  a date bound): "No captures match these filters · clear them to see
-  everything saved."
+- **Empty state**, one of three sentences — never more than one, and never
+  the wrong one. Each names the control that narrowed the list and the way
+  back out of it.
+  - A filter is set (search text, domain, tags or a date bound — the things
+    **Clear** undoes): "No captures match these filters · clear them to see
+    everything saved."
+  - A rail scope is selected (Saved, Reading, Read, Archived, Favorites):
+    "Nothing in this scope yet · choose All Captures in the rail to see
+    everything saved."
+  - Neither: "No saved captures yet · press Quick Capture above to save a
+    page by URL."
+
+  A filter set *inside* a scope takes the filter sentence: it is the
+  narrowing the reader can undo from the canvas.
 - **Range line** — `1–20 of 57 · Page 1 of 3`, or `0–0 of 0` when the scope
   is empty, or `Page N · total unavailable` when a refresh failed.
 - **Previous** / **Next** — 20 captures per page. They are drawn **only
@@ -259,4 +268,6 @@ decided and task-32352: one name — the canvas heading is "Collections" and
 "Quick Capture" is only the save-a-URL button; the empty state no longer
 tells a profile that never captured anything to clear filters it never set;
 the pager at `0–0 of 0` draws no controls at all, per task-32354's shared
-single-page rule. Live at 235x52, 100x30 and 60x24 on a seeded profile.)*
+single-page rule. Live at 235x52, 100x30 and 60x24 on a seeded profile. Fix
+round 1: the empty state gained a third sentence for an empty rail scope,
+which the first cut mis-read as a never-used profile.)*

@@ -439,6 +439,15 @@ class LibraryCollectionsItemsPane(Vertical):
             # that had never saved anything was told to clear filters it had
             # never set, and pointed at an action ("Quick Capture") as if it
             # were somewhere else on the screen.
+            #
+            # Three cases, narrowest first. The two narrowings come from
+            # different controls and have different ways out, so they cannot
+            # share a sentence: the filter form and the search box set
+            # ``search``/``tags``/``domain``/``date_from``/``date_to`` and are
+            # undone by Clear, while the rail's scope rows set
+            # ``statuses``/``favorite`` and are undone by choosing All
+            # Captures. Only when neither is set has the profile really
+            # never saved anything.
             scope = state.requested_scope
             filtered = scope is not None and bool(
                 scope.search
@@ -447,11 +456,22 @@ class LibraryCollectionsItemsPane(Vertical):
                 or scope.date_from
                 or scope.date_to
             )
-            empty_copy = (
-                "No captures match these filters · clear them to see everything saved."
-                if filtered
-                else "No saved captures yet · press Quick Capture above to save a page by URL."
-            )
+            scoped = scope is not None and bool(scope.statuses or scope.favorite)
+            if filtered:
+                empty_copy = (
+                    "No captures match these filters · clear them to see "
+                    "everything saved."
+                )
+            elif scoped:
+                empty_copy = (
+                    "Nothing in this scope yet · choose All Captures in the rail "
+                    "to see everything saved."
+                )
+            else:
+                empty_copy = (
+                    "No saved captures yet · press Quick Capture above to save "
+                    "a page by URL."
+                )
             yield Static(
                 empty_copy,
                 id="library-collections-items-empty",

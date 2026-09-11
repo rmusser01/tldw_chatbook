@@ -321,6 +321,12 @@ async def test_skills_canvas_renders_the_full_pager_when_a_second_page_exists():
     state = dataclasses.replace(_two_row_state(), pager=pager)
     app = _CanvasHost(state, trust_posture="ready")
     async with app.run_test() as pilot:
+        # The header counts the SOURCE (``state.pager.title_count``), not the
+        # rows mounted on this page -- 21 against 2 mounted rows is what makes
+        # the two distinguishable, and the single-page companion cannot say so.
+        assert str(pilot.app.query_one("#library-skills-header").renderable) == (
+            f"Skills ({DEFAULT_SKILL_BROWSE_PAGE_SIZE + 1})"
+        )
         status = str(pilot.app.query_one("#library-skills-range").renderable)
         assert status.endswith("· Page 1 of 2"), status
         assert pilot.app.query(f"#{LIBRARY_SKILLS_PAGE_PREVIOUS_ID}")

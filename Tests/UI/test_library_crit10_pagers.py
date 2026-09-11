@@ -18,6 +18,11 @@ from Tests.UI.test_library_collections_capture_reader import (
     AUTHORITY,
     _capabilities,
 )
+from Tests.UI.test_library_media_trash import (
+    _TrashCanvasApp,
+    _fresh_trash_pager,
+    _trash_state,
+)
 from tldw_chatbook.Library.collections_capture_models import (
     CAPTURE_PAGE_SIZE,
     CaptureIdentity,
@@ -31,11 +36,6 @@ from tldw_chatbook.UI.Library_Modules.library_collections_capture_controller imp
 from tldw_chatbook.Widgets.Library.library_collections_capture_reader import (
     CollectionsCaptureReaderPresentation,
     LibraryCollectionsItemsPane,
-)
-from Tests.UI.test_library_media_trash import (
-    _TrashCanvasApp,
-    _fresh_trash_pager,
-    _trash_state,
 )
 
 
@@ -139,6 +139,42 @@ async def test_collections_empty_state_never_blames_an_unset_filter():
 async def test_collections_empty_state_names_filters_only_when_one_is_set():
     """task-32352 AC#2, the other half: a filter IS set, so say so."""
     app = _collections_app(total=0, search="nothing matches this")
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        empty = app.query_one("#library-collections-items-empty", Static)
+        assert str(empty.renderable) == (
+            "No captures match these filters · clear them to see everything saved."
+        )
+
+
+@pytest.mark.parametrize(
+    "scope",
+    ({"favorite": True}, {"statuses": ("archived",)}),
+    ids=("favorites", "archived"),
+)
+@pytest.mark.asyncio
+async def test_collections_empty_state_names_an_empty_rail_scope(scope):
+    """task-32352 AC#2, the third case: the rail's own scope narrowed it.
+
+    The rail's scope rows set ``statuses``/``favorite`` rather than any of
+    the filter-form fields, so an empty Favorites beside a rail reading
+    "Collections (57)" would otherwise claim nothing was ever saved and
+    point at an action that does not leave the scope.
+    """
+    app = _collections_app(total=0, **scope)
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        empty = app.query_one("#library-collections-items-empty", Static)
+        assert str(empty.renderable) == (
+            "Nothing in this scope yet · choose All Captures in the rail to see "
+            "everything saved."
+        )
+
+
+@pytest.mark.asyncio
+async def test_collections_empty_state_prefers_the_filter_copy_inside_a_scope():
+    """A filter set inside a scope is the thing the reader can clear."""
+    app = _collections_app(total=0, favorite=True, search="nothing matches this")
     async with app.run_test(size=(235, 52)) as pilot:
         await pilot.pause()
         empty = app.query_one("#library-collections-items-empty", Static)

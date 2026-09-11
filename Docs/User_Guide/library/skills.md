@@ -72,7 +72,7 @@ the canvas scrolls, so the trust panel may sit below the fold.
 
 | Line | Action button |
 |---|---|
-| "Skill trust isn't set up, so every skill reads \"needs review\" — set it up to review and use skills." | **Set up skill trust** |
+| "Skill trust isn't set up, so every skill reads “needs review” — set it up to review and use skills." | **Set up skill trust** |
 | "Skill trust needs to be set up again after an update." | **Set up skill trust** |
 | "Skill trust is temporarily unavailable — try again." | **Retry** |
 | "Skill trust is locked for this session." | **Unlock** |

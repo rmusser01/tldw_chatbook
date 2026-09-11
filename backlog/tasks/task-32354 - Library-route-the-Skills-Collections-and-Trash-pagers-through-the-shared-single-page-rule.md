@@ -57,6 +57,20 @@ Skills, Collections and the media Trash now render their pagers through `library
 1. **Collections suppresses only when `bounded`** (paging enabled AND an exact total). Neither direction moving because paging is PAUSED — a stale page withholds totals — is not "this is the only page", and `test_items_keep_capture_controls_rows_and_stale_recovery_reachable` pins the paused controls. They stay, disabled, with their old reason. Pinned from this side too by `test_collections_keeps_paused_controls_when_the_page_is_stale`.
 2. **Trash keeps `#library-media-trash-page` (empty) whenever the controls render**, because the initial-error posture pins an empty page Static in `test_media_trash_geometry_four_sizes_paints_all_fixed_controls`. No new boundary-reason row was added to Trash either: that would ADD a line at 60x24, the opposite of the finding, and no AC asks for it.
 
+## Fix round 1 (task review, 2026-09-11)
+
+- The pin split had lost the assertion that the Skills header counts the
+  SOURCE (`state.pager.title_count`) rather than the mounted rows: the
+  single-page test's `total` and row count are both 2, so a regression to
+  `len(rows)` would have passed. The two-page test (21 total, 2 mounted
+  rows) now asserts `"Skills (21)"`, which only `title_count` can produce.
+- `Docs/User_Guide/library/media-and-conversations.md` — the Trash's own
+  page — now documents the single-page pager too, not just `library.md`.
+- `Docs/User_Guide/library/skills.md`'s trust-header row had the Python
+  string's `\"` escapes copied into the Markdown table, where they render as
+  visible backslashes; it now uses curly quotes. The product string is
+  unchanged.
+
 ## Files
 
 - `tldw_chatbook/Library/library_pager_state.py` — `simple_library_pager_display`.
