@@ -11,6 +11,7 @@ from typing import Any, Callable, Literal
 from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Markdown, Static, TextArea
 
@@ -220,6 +221,59 @@ _NOTE_EDITOR_INPUT_IDS = frozenset(
         "library-note-context-keywords",
     }
 )
+
+
+#: task-32106 AC#1: shared by every field of the note editor -- see
+#: ``NoteEditorInput`` below for the mechanism and the measurement.
+_NOTE_FIELD_TAB_BINDINGS = [
+    Binding("tab", "screen.focus_next", show=False, priority=True),
+    Binding("shift+tab", "screen.focus_previous", show=False, priority=True),
+]
+
+
+class NoteEditorInput(Input):
+    """A note field whose Tab moves focus BEFORE the next key is forwarded.
+
+    task-32106 AC#1: ``Screen.BINDINGS``' ``Binding("tab", "app.focus_next")``
+    is not ``priority=True``, so ``Key(tab)`` is posted to the focused
+    ``Input`` and has to bubble one message-queue hop per ancestor up to the
+    Screen -- while the App keeps dequeuing the following keys and forwarding
+    each to ``self.focused``, which is still this field. Typed fast enough
+    (one terminal read, or a message queue backed up behind a busy Library
+    screen) the body lands in the title. Reproduced in stock Textual 8 with
+    nothing from this repo in it:
+
+        pilot  elapsed=1268.9ms  title='My first note'      body='hello'
+        burst  elapsed=   0.2ms  title='My first notehello' body=''
+
+    A priority binding makes the App resolve the focus move before it
+    forwards the next key. The action is namespaced to the SCREEN so it
+    resolves to ``LibraryScreen.action_focus_next``, which cycles inside
+    ``#screen-content`` (task-32052 AC#3) -- ``app.focus_next`` would walk
+    the nav bar instead, and a bare ``focus_next`` resolves against this
+    ``Input``, which has no such action, so the binding never fires.
+    """
+
+    BINDINGS = _NOTE_FIELD_TAB_BINDINGS
+
+
+class NoteEditorTextArea(TextArea):
+    """The note body, with the same synchronous Tab as the fields around it.
+
+    The body has the identical defect one widget over (coordinator addendum
+    from a peer session): bursting ``hello`` + Tab + ``world`` into it left
+    BOTH words in the body -- measured here as
+    ``'helloworldalpha budget line'`` -- because Tab's focus move landed
+    after the burst.
+
+    Safe only while ``tab_behavior`` is ``"focus"`` -- Textual's default,
+    and what this editor wants: the body is prose, not code, and Tab is how
+    a reader leaves it. Under ``"indent"`` this binding would steal the key
+    the ``TextArea`` needs, so the pin asserts that behaviour rather than
+    trusting the default.
+    """
+
+    BINDINGS = _NOTE_FIELD_TAB_BINDINGS
 
 
 @dataclass(frozen=True)
@@ -1824,13 +1878,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         with Vertical(id="library-note-editor-region"):
             with Horizontal(id="library-note-title-row"):
                 yield Static("Title", id="library-note-title-label", markup=False)
-                yield Input(
+                yield NoteEditorInput(
                     value="" if self.title_placeholder_only else title,
                     placeholder="Untitled" if self.title_placeholder_only else "",
                     id="library-note-title",
                 )
             yield Static("Body", id="library-note-body-label", markup=False)
-            yield TextArea(content, id="library-note-body")
+            yield NoteEditorTextArea(content, id="library-note-body")
 
         with VerticalScroll(id="library-note-preview-region", can_focus=True):
             # task-32142 AC#1: the shared heading row's title Static (above)
@@ -1856,7 +1910,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 yield Static(
                     "Keywords", id="library-note-context-keywords-label", markup=False
                 )
-                yield Input(
+                yield NoteEditorInput(
                     value=keywords_text,
                     placeholder="Comma-separated keywords",
                     id="library-note-context-keywords",
@@ -1933,7 +1987,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
         with Vertical(id="library-note-wide-utilities"):
             yield Static("Keywords", id="library-note-keywords-label", markup=False)
-            yield Input(
+            yield NoteEditorInput(
                 value=keywords_text,
                 placeholder="Comma-separated keywords",
                 id="library-note-keywords",
@@ -2352,6 +2406,17 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.query_one("#library-note-delete-confirmation").display = confirming_delete
 
         locked = confirming_delete or state.destructive_running or bulk_read_only
+        # task-32106 (PR #2571 re-review, NEW-2): DISABLED, not read-only,
+        # is load-bearing while ``confirming_delete``. These four fields
+        # carry a PRIORITY tab binding (``NoteEditorInput`` /
+        # ``NoteEditorTextArea``), which ``App._check_bindings`` resolves
+        # before ``LibraryScreen.on_key`` -- and ``on_key`` is where the
+        # delete prompt's Tab trap lives. Textual blurs a widget when it
+        # becomes disabled and drops it from ``focusable``, so no note field
+        # can be in the binding chain while the prompt is open and the trap
+        # holds. Keep one of these live behind the prompt and Tab would walk
+        # straight out of it; ``test_delete_confirmation_traps_tab_between_
+        # cancel_and_delete`` asserts the disabled state for that reason.
         title_input.disabled = not show_editor or locked
         body_input.disabled = not show_editor or locked
         wide_keywords.disabled = state.compact or show_context or locked

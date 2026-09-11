@@ -26,9 +26,15 @@ selector-bound handlers** carry press evidence by that automatic pass, and
 
 - ``handle_library_notes_sort_choice`` is bound on the CLASS
   ``.library-notes-sort-choice`` but pressed by the derived id
-  ``#library-notes-sort-oldest`` in ``test_library_shell.py`` (the same
-  bound-by-class/pressed-by-id shape the prompts and media series each
-  recorded).
+  ``#library-notes-sort-oldest`` (the same bound-by-class/pressed-by-id
+  shape the prompts and media series each recorded). That press lived in
+  ``test_library_shell.py`` when this file was written; task-32128 briefly
+  took Sort off the folder tree and task-32172 put it back, so the shell
+  press is live again -- and it is now pinned in two more places besides:
+  ``test_library_notes_wave_list.py`` --
+  ``test_sort_is_operable_by_keyboard_on_the_flat_list`` (Tab + Enter
+  through the real Button) and
+  ``test_pressing_a_sort_option_applies_that_sort`` (task-32175).
 - ``handle_library_notes_select_clear`` is activated by KEYBOARD, through
   ``_task10_activate_with_keyboard(screen, pilot,
   "#library-notes-select-clear")``, with the selection count asserted either

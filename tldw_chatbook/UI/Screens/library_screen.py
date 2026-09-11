@@ -5068,6 +5068,7 @@ class LibraryScreen(BaseAppScreen):
         self._notes_state.pending_focus_waits_for_snapshot = False
         self._notes_state.pending_focus_generation = None
         self._notes_state.navigation_status = ""
+        self._notes_state.navigation_focus_intent = False
         branches = getattr(self._notes_state, "tree_branches", {})
         generations = getattr(self._notes_state, "tree_request_generations", {})
         navigation_requests = getattr(
@@ -7854,6 +7855,13 @@ class LibraryScreen(BaseAppScreen):
         re-derived here. One no-landing case is still knowingly left
         inside "owns": a pending Find focus whose input never mounts --
         narrow, and it ends at ``None`` rather than at a wrong widget.
+
+        task-32213: that empty page now keeps its toolbar, so the shared
+        helper always finds a target for Media and the ``is None`` leg
+        below no longer fires for a filter miss. It is kept because the
+        helper still answers ``None`` for the states that compose no
+        enabled control at all (an open type/sort chooser replaces the
+        toolbar row), and because both readers must keep agreeing.
         """
         if self._media_state.find_focus_pending:
             return True
@@ -8185,11 +8193,25 @@ class LibraryScreen(BaseAppScreen):
         left Library. Tab now cycles within ``#screen-content``; the nav bar
         keeps its own documented keys (Ctrl+digit / F-keys) and stays
         traversable once focus is genuinely in it (mirrors ``ChatScreen``).
+
+        task-32106 (PR #2571 re-review, NEW-1): the note editor's fields
+        carry a PRIORITY ``tab`` binding, and ``App._check_bindings``
+        consumes a priority key before ``on_key`` ever runs -- so for a
+        focused note field this action, not ``on_key``, is the whole Tab
+        path. ``on_key``'s preamble marks the keystroke as a Notes user
+        interaction, which is the only keyboard site that clears
+        ``resize_settling``; without it the first Tab after a terminal
+        resize was classified programmatic in ``on_descendant_focus``.
+        Marking it here covers both the field bindings and this screen's
+        own (``on_key`` marks it a second time for non-priority keys, and
+        marking twice is a no-op).
         """
+        self._mark_library_notes_user_interaction()
         self._move_library_screen_focus(1)
 
     def action_focus_previous(self) -> None:
         """Shift+Tab: the reverse of ``action_focus_next``."""
+        self._mark_library_notes_user_interaction()
         self._move_library_screen_focus(-1)
 
     def _move_library_screen_focus(self, direction: int) -> Widget | None:
@@ -9603,6 +9625,15 @@ class LibraryScreen(BaseAppScreen):
         them. Complements the unconditional disarm at the top of
         ``on_key`` -- this hook is what also covers mouse clicks, which
         never reach ``on_key`` at all.
+
+        Args:
+            event: The queued descendant-focus event. Its ``widget`` is the
+                newly focused node, evaluated for user focus intent: a
+                genuine one vetoes deferred restores and supersedes a
+                running locator that wants focus (task-32100).
+
+        Returns:
+            None.
         """
         focused = event.widget
         if focused is not self.focused:
@@ -9677,7 +9708,34 @@ class LibraryScreen(BaseAppScreen):
                 # Veto every older deferred restore before its next turn can
                 # steal the control the user just chose.
                 self._notes_state.focus_intent_generation += 1
-                if self._notes_state.navigation_status:
+                # PR #2571 review, finding 4: the supersede below does four
+                # more things -- it clears the pending focus handoff, the
+                # navigation status and the branch navigation requests. None
+                # of those run now while a focus=False locator is in flight.
+                # The status and the in-flight branch requests are that
+                # locator's own and MUST survive. The pending focus handoff
+                # is the one that could in principle go stale, and the
+                # invariant that makes this safe is: nothing arms a pending
+                # handoff while a focus=False locator runs -- the only
+                # arming site (`_exit_library_note_editor_guarded`)
+                # supersedes navigation itself and arms with the generation
+                # that supersede returns. Hoisting the handoff clear out of
+                # the supersede was TRIED and reverted: it reds the notes
+                # focus/footer pins in `test_library_canvas_sync_defects.py`,
+                # because `_rehydrate_library_notes_after_recompose` reads
+                # that same pending identity to decide it MAY restore focus
+                # at all.
+                # task-32100: a running locator that would take focus is the
+                # one this focus change overrules. A ``focus=False`` locator
+                # only reveals a row, and the row click that started it lands
+                # here ~20 ms later -- superseding it abandoned every open.
+                # Its status and its in-flight branch requests are its own and
+                # must survive, which is why the rest of the supersede does
+                # not run for it.
+                if (
+                    self._notes_state.navigation_status
+                    and self._notes_state.navigation_focus_intent
+                ):
                     LibraryScreen._supersede_library_notes_navigation(self)
             self.call_after_refresh(
                 self._record_library_notes_focus_interaction,
@@ -9745,25 +9803,42 @@ class LibraryScreen(BaseAppScreen):
     def _library_media_empty_list_fallback_target(self) -> Widget | None:
         """The control an EMPTY Media list can hand keyboard focus to.
 
-        The first of Media's four recovery controls that is both present
-        and enabled, or ``None`` when the page offers none. One owner for
-        both readers: ``_focus_library_list_entry`` lands on it, and
+        The first of the candidates below that is both present and
+        enabled, or ``None`` when the page offers none. One owner for both
+        readers: ``_focus_library_list_entry`` lands on it, and
         ``_library_focus_channel_owns_this_window`` asks whether there is
-        anything to land on at all -- a filter MISS composes none of these
-        four (the canvas returns right after its query-echoing status
-        line), so the answer has to be the same in both places or the seam
-        stands down for a channel that never arrives. The miss page's own
-        ``#library-media-filter-clear`` is deliberately NOT a fifth entry:
-        with nothing here the shared seam restores the filter ``Input``
-        (the right place to retype), and listing Clear would put the
-        predicate back into "owns" and re-open the gap.
+        anything to land on at all, so the answer has to be the same in
+        both places or the seam stands down for a channel that never
+        arrives (Qodo #2483).
+
+        task-32213 changed the shape of this question. The empty page used
+        to compose NONE of the four recovery controls on a filter MISS --
+        the canvas returned right after its query-echoing status line --
+        and the whole point of the shared owner was to say "nothing to
+        land on" there. The toolbar now survives that page, so
+        ``#library-media-type-filter`` is always present and enabled on it
+        (``fresh_zero`` excludes ``mutation_action_reason``, so
+        ``_gate_mutation_action`` never disables it) and this helper no
+        longer returns ``None`` for a Media miss.
+
+        That would have landed entry focus on ``type:`` -- the facet the
+        user did NOT type into, and the same symptom task-32214 was filed
+        for. The intent recorded here still stands: with a query in force
+        the filter ``Input`` is the right place to retype, so it LEADS the
+        list rather than being left to the shared seam. ``#library-media-
+        filter-clear`` is still deliberately not a candidate: Clear
+        discards the query rather than letting the user fix it.
         """
-        for selector in (
+        selectors = (
             "#library-media-type-filter",
             "#library-media-empty-clear-type",
             "#library-media-empty-import",
             "#library-media-retry",
-        ):
+        )
+        applied = self._library_media_browse_controller.applied_scope
+        if applied is not None and applied.query:
+            selectors = ("#library-media-filter", *selectors)
+        for selector in selectors:
             try:
                 control = self.query_one(selector, Widget)
             except (NoMatches, QueryError):
@@ -16345,10 +16420,17 @@ class LibraryScreen(BaseAppScreen):
             self._notes_state.navigation_generation = navigation_generation
         topology_epoch = self._notes_state.tree_topology_epoch
         lifecycle_generation = self._notes_state.tree_lifecycle_generation
-        focus_generation = getattr(self._notes_state, "focus_intent_generation", 0)
+        # task-32100: only a locator that will take focus has a stake in the
+        # focus intent. The one every note open starts (``focus=False``) just
+        # reveals and marks a row, and fencing it on focus meant the row
+        # click's own focus event abandoned it before it could land.
+        focus_generation = (
+            getattr(self._notes_state, "focus_intent_generation", 0) if focus else None
+        )
         self._notes_state.navigation_status = (
             "Locating note…" if note_id else "Locating folder…"
         )
+        self._notes_state.navigation_focus_intent = focus
         LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
 
         def current() -> bool:
@@ -16358,8 +16440,11 @@ class LibraryScreen(BaseAppScreen):
                 and topology_epoch == self._notes_state.tree_topology_epoch
                 and lifecycle_generation
                 == self._notes_state.tree_lifecycle_generation
-                and focus_generation
-                == getattr(self._notes_state, "focus_intent_generation", 0)
+                and (
+                    focus_generation is None
+                    or focus_generation
+                    == getattr(self._notes_state, "focus_intent_generation", 0)
+                )
                 and LibraryScreen._library_notes_restore_guard_is_current(
                     self, restore_guard
                 )
@@ -23530,6 +23615,21 @@ class LibraryScreen(BaseAppScreen):
             ``True`` to force-activate it, or ``None`` to defer to Textual's
             default resolution.
         """
+        if action in {"focus_next", "focus_previous"}:
+            # task-32106 (PR #2571 re-review, NEW-1). These stay universal
+            # everywhere except the canvas-only emergency stage, where
+            # ``on_key``'s ``emergency_tab`` branch OWNS Tab: it advances the
+            # emergency interaction and gives Shift+Tab its hop to
+            # ``#library-emergency-return``. A note field's PRIORITY tab
+            # binding would be consumed by ``App._check_bindings`` before
+            # ``on_key`` runs, so deactivating the action there hands the key
+            # back to the normal path and that branch keeps working. The
+            # screen's own non-priority binding never ran there either --
+            # ``on_key`` stops the event first -- so nothing else changes.
+            return not (
+                self._library_emergency_stage == "canvas-only"
+                and self._library_emergency_restore_receipt is not None
+            )
         if action in {
             "library_notes_new",
             "library_notes_focus_filter",

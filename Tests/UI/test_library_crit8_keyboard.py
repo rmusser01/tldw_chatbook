@@ -613,3 +613,92 @@ async def test_pane_grip_focus_is_visible_against_its_blurred_sibling():
             f"expected a reverse (block-inverting) focus style, got "
             f"{grip_a.styles.text_style!r}"
         )
+
+
+@pytest.mark.asyncio
+async def test_emergency_tab_from_a_note_field_still_reaches_on_key():
+    """task-32106 (PR #2571 re-review, NEW-1): the priority Tab must yield here.
+
+    The note editor's fields carry a PRIORITY ``tab`` binding so Tab beats the
+    next keystroke in a fast burst. ``App._check_bindings`` consumes a
+    priority key before ``LibraryScreen.on_key`` ever runs -- and in the
+    canvas-only emergency stage ``on_key`` OWNS Tab: its ``emergency_tab``
+    branch advances the emergency interaction and gives Shift+Tab its hop to
+    ``#library-emergency-return``. ``check_action`` deactivates
+    ``focus_next``/``focus_previous`` in that stage so the key falls back to
+    the normal path.
+    """
+    host = _build_library_host()
+    async with host.run_test(size=(60, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, ".library-notes-tree-note-row")
+        screen.query_one(".library-notes-tree-note-row", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+        await pilot.pause()
+
+        title = screen.query_one("#library-note-title", Input)
+        title.focus()
+        await pilot.pause()
+        assert screen.focused is title
+
+        screen._library_emergency_stage = "canvas-only"
+        screen._library_emergency_restore_receipt = (
+            screen._capture_library_emergency_restore_receipt(
+                screen.query_one("#library-rail"),
+                screen.query_one("#library-canvas"),
+            )
+        )
+        await pilot.pause()
+        assert screen.check_action("focus_next", ()) is False
+        assert screen.check_action("focus_previous", ()) is False
+
+        advanced: list[object] = []
+        original = screen._advance_library_ordinary_emergency_user_interaction
+        screen._advance_library_ordinary_emergency_user_interaction = (
+            lambda widget: advanced.append(widget) or original(widget)
+        )
+        await pilot.press("tab")
+        await pilot.pause()
+
+        assert advanced, (
+            "the priority tab binding swallowed the key; on_key's emergency "
+            "branch never ran"
+        )
+
+
+@pytest.mark.asyncio
+async def test_tab_from_a_note_field_still_counts_as_a_user_interaction():
+    """task-32106 (PR #2571 re-review, NEW-1): the resize_settling clear.
+
+    ``on_key``'s preamble calls ``_mark_library_notes_user_interaction`` --
+    the only keyboard site that clears ``resize_settling`` -- and a priority
+    tab binding skips ``on_key`` entirely. ``on_descendant_focus`` folds
+    ``resize_settling`` into ``programmatic``, so without this the first Tab
+    after a terminal resize was classified as not-the-user: no focus-intent
+    bump, no locator supersede.
+    """
+    host = _build_library_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, ".library-notes-tree-note-row")
+        screen.query_one(".library-notes-tree-note-row", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+        await pilot.pause()
+
+        title = screen.query_one("#library-note-title", Input)
+        title.focus()
+        await pilot.pause()
+        assert screen.focused is title
+
+        screen._notes_state.resize_settling = True
+        await pilot.press("tab")
+        await pilot.pause()
+
+        assert screen._notes_state.resize_settling is False, (
+            "Tab out of a note field no longer reaches the user-interaction "
+            "mark, so a resize keeps classifying the reader as programmatic"
+        )
