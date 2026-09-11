@@ -1116,6 +1116,12 @@ class LibraryScreen(BaseAppScreen):
             show=False,
         ),
         Binding("t", "library_media_move_to_trash", "Move to trash", show=False),
+        # task-32348 (critique #10, B K20): Find had no key at all -- it was
+        # a Button and nothing else, so a keyboard-only reader could not open
+        # the search bar the guide promises. ``ctrl+f`` is free on this screen
+        # (grep the BINDINGS above) and is not a printable key, so it works
+        # from inside the Reader's own text controls too.
+        Binding("ctrl+f", "library_media_reader_find", "Find", show=False),
         # task-28241: review-set keys, gated in check_action to a plain Reader
         # with a set active. "R" exits (the set stays resumable); "m" toggles
         # the current item's done mark (the manual counterpart to ]'s auto-mark).
@@ -4212,6 +4218,17 @@ class LibraryScreen(BaseAppScreen):
                 # refuse (external/server detail hides l and t). Short
                 # labels: the footer compacts at 100 columns.
                 for key, gated_action, label in (
+                    # task-32348: a multi-char key, so it survives the
+                    # focused-Input transformation above and stays useful
+                    # while the Find field itself has focus. The label
+                    # follows the toggle -- with the bar open the key
+                    # closes it, and "find" there would name the wrong half
+                    # of a two-way key.
+                    (
+                        "ctrl+f",
+                        "library_media_reader_find",
+                        "close find" if self._media_state.find_open else "find",
+                    ),
                     ("l", "library_media_read_later", "read later"),
                     ("c", "library_media_use_in_console", "use in Console"),
                     ("t", "library_media_move_to_trash", "trash"),
@@ -4441,11 +4458,95 @@ class LibraryScreen(BaseAppScreen):
         # swallowed keys, keep the ones that still work (esc / enter /
         # F-keys) and the informational chips, and announce the swap.
         focused = self.focused
-        if isinstance(focused, (Input, TextArea)):
-            shortcuts = (("", "typing in field"),) + tuple(
+        # task-32346, coordinator ruling: BELOW 64 COLUMNS this transform
+        # stands down entirely. Task 6 measured that the narrow stage paints
+        # exactly one ~24-character context chip, and that on that stage
+        # Escape genuinely RETURNS TO LIBRARY (``library_narrow_stage_return``
+        # passes, ``library_blur_text_field`` does not) -- so its single chip
+        # is the whole truth there, and adding "typing in field · after esc:
+        # …" only makes AppFooterStatus elide the context to "…". The wide
+        # form below is unchanged at >= 64 columns.
+        if isinstance(focused, (Input, TextArea)) and not (
+            self._library_narrow_stage_return_active()
+        ):
+            swallowed = tuple(
+                pair
+                for pair in shortcuts
+                if len(pair[0]) == 1 and pair[0].isprintable()
+            )
+            kept = tuple(
                 pair
                 for pair in shortcuts
                 if not (len(pair[0]) == 1 and pair[0].isprintable())
+            )
+            # task-32346 (critique #10 P1): the keys really are swallowed --
+            # every one of them is a non-priority Binding and the Input eats
+            # the keypress first (see the binding comments at 1099/1114/1123),
+            # so re-advertising them as live would be the dead-key lie
+            # task-31272 removed. What was missing is the way back: the field
+            # state now names the gesture that re-arms the canvas, and the
+            # verbs stay on screen behind it instead of vanishing.
+            #
+            # The verbs are baked into a TEXT chip whose key is "", so the two
+            # "/" suppressions further down this function can no longer reach
+            # them -- both are mirrored here or the chip would name a key the
+            # screen refuses (review finding 4). Dead-key predicate first, then
+            # the starter-lifecycle one, which drops only the search label.
+            if self.is_mounted and not self._library_slash_would_land():
+                swallowed = tuple(pair for pair in swallowed if pair[0] != "/")
+            if self._library_lifecycle in (
+                LibraryLifecycle.UNKNOWN,
+                LibraryLifecycle.STARTER,
+            ):
+                swallowed = tuple(
+                    pair
+                    for pair in swallowed
+                    if not (
+                        pair[0] == "/"
+                        and pair[1].casefold() in {"focus search", "search"}
+                    )
+                )
+            esc_pairs = tuple(pair for pair in kept if pair[0] == "esc")
+            if not esc_pairs and self.check_action("library_blur_text_field", ()):
+                esc_pairs = (("esc", "leave field"),)
+            verbs = (
+                (
+                    (
+                        "",
+                        "after esc: "
+                        + " · ".join(f"{key} {label}" for key, label in swallowed),
+                    ),
+                )
+                if swallowed
+                else ()
+            )
+            # AC#2: "F6 next pane" goes LAST so AppFooterStatus's
+            # retain-the-prefix degradation drops it before any canvas verb.
+            f6_pairs = tuple(pair for pair in kept if pair[0] == "F6")
+            rest = tuple(
+                pair for pair in kept if pair[0] not in ("F6", "esc")
+            )
+            # ...and on a surface the narrow-stage stand-down above does NOT
+            # cover -- ``_library_narrow_stage_return_active`` yields whenever
+            # an earlier Escape action owns the key, and its docstring names
+            # the 60x24 Media viewer as exactly that case -- the single
+            # painted chip must still be a KEY, not a status word. Leading
+            # with "typing in field" there paints that and nothing else
+            # (measured live at 60x24 with the Find bar open), which is less
+            # than the blurred footer said. Escape leads instead: it is the
+            # one key that works from inside the field, which is the same
+            # "recovery outranks navigation below 64 columns" order Task 6's
+            # block uses, so the two read as one grammar at that width.
+            narrow = (
+                self.is_mounted
+                and self.size.width > 0
+                and ordinary_emergency_required(self.size.width)
+            )
+            status = (("", "typing in field"),)
+            shortcuts = (
+                (esc_pairs + status + verbs + rest + f6_pairs)
+                if narrow
+                else (status + esc_pairs + verbs + rest + f6_pairs)
             )
         emergency = self._library_emergency_return_eligibility()
         if emergency.enabled:
@@ -24461,6 +24562,7 @@ class LibraryScreen(BaseAppScreen):
             "library_media_read_later",
             "library_media_use_in_console",
             "library_media_move_to_trash",
+            "library_media_reader_find",
         ):
             # task-28027: Reader action-row accelerators. Only in a plain
             # media Reader (no edit/confirm/analysis-edit sub-state). Read-
@@ -24482,6 +24584,26 @@ class LibraryScreen(BaseAppScreen):
                 session.pending_request is not None
                 or session.loaded_id != self._media_state.selected_media_id
             ):
+                return False
+            if action == "library_media_reader_find":
+                # task-32348: live only where the button is enabled AND the
+                # Reader is settled -- the fences above (this row, the
+                # viewer view, no sub-state, no pending detail) make the key
+                # strictly narrower than the button, which consults only
+                # ``analysis_find_unavailable_reason``. The footer chip is
+                # gated on this same call, so it can never advertise a
+                # refusal either way.
+                return not self._library_media_find_unavailable_reason()
+            if (
+                action == "library_media_move_to_trash"
+                and self._media_state.find_open
+            ):
+                # task-32348 AC#2 (B D4a): with the Find bar open the user is
+                # typing a query. The bar takes focus on mount, so this is
+                # belt-and-braces -- but the one path where it did NOT (a
+                # tab with no bar, now refused outright) armed "Delete this
+                # media?" from the "t" of "token". The footer chip drops
+                # with the gate.
                 return False
             if action == "library_media_use_in_console":
                 return True
@@ -31742,6 +31864,7 @@ class LibraryScreen(BaseAppScreen):
             analysis=analysis,
             generating=self._media_state.generating_analysis,
             editing=self._media_state.editing_analysis,
+            external=self._media_state.reader_session.external_detail,
         )
 
     def _library_media_analysis_provider_reason(self) -> str:
@@ -31767,6 +31890,20 @@ class LibraryScreen(BaseAppScreen):
             event: The Find button press.
         """
         event.stop()
+        self._toggle_library_media_find()
+
+    def action_library_media_reader_find(self) -> None:
+        """Open (or close) the Reader's Find bar from the keyboard (task-32348).
+
+        The same gesture the Find button performs -- one implementation, so
+        the key can never diverge from the control (the ``check_action``
+        gate is the same reason string the button's own disabled state
+        reads).
+        """
+        self._toggle_library_media_find()
+
+    def _toggle_library_media_find(self) -> None:
+        """Open the Find bar for the tab being read, or close an open one."""
         if self._media_state.find_open:
             # task-31269 AC4: Find is a toggle -- a second press closes the
             # bar (live: it did nothing while the bar was open).
