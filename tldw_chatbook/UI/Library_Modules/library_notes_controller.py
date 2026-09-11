@@ -1629,15 +1629,6 @@ class LibraryNotesController:
             canvas = self.query_one("#library-note-work-pane", LibraryNoteWorkPane)
         except (NoMatches, QueryError):
             return
-        if not canvas.query("#library-note-title"):
-            # task-32185: the pane can exist with the PREVIOUS mode's children
-            # still mounted -- `sync_state` only schedules the rebuild -- and
-            # `apply_session_state` queries the editor's own widgets. An async
-            # caller landing in that window (the backlinks load is the one that
-            # caught this) raised NoMatches out of its worker. Same guard, same
-            # reason as `LibraryNotesCanvas._apply_post_compose_state`: the
-            # newer state's own recompose applies it a moment later.
-            return
         canvas.title_placeholder_only = self._library_note_is_pending_blank()
         self._library_note_presentation_syncing = True
         try:
