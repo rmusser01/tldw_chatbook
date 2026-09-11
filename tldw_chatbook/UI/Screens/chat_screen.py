@@ -1217,6 +1217,10 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
             # precisely where the rail's edge handle is hidden and Alt+I is
             # the only route in. F1 is the surface that never truncates.
             ("Alt+I", "open and focus the Inspect rail"),
+            # task-32277 review (Minor, promoted): same TASK-24704 gap class
+            # -- the footer advertises Alt+A but this never-truncating
+            # reference didn't.
+            ("Alt+A", "Review pending approval"),
             ("Escape", "return to the composer"),
         ),
     ),
