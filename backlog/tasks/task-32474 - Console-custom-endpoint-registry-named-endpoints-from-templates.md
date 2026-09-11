@@ -1,5 +1,5 @@
 ---
-id: TASK-32308
+id: TASK-32474
 title: Console custom endpoint registry (named endpoints from templates)
 status: To Do
 assignee: []
@@ -7,6 +7,13 @@ created_date: '2026-09-11 03:43'
 labels: []
 dependencies: []
 ---
+
+## Renumbering provenance
+
+Renumbered from TASK-32474 on 2026-09-11: the id collided with a task that
+arrived on dev while this branch was in review (owner rule TASK-19601 — the
+older arrival keeps the id). No dependencies referenced the old id.
+
 
 ## Description
 

@@ -1,5 +1,5 @@
 ---
-id: TASK-31978
+id: TASK-32471
 title: Design complete local backup and restore
 status: Done
 assignee:
@@ -9,6 +9,13 @@ updated_date: '2026-09-08 00:05'
 labels: []
 dependencies: []
 ---
+
+## Renumbering provenance
+
+Renumbered from TASK-32471 on 2026-09-11: the id collided with a task that
+arrived on dev while this branch was in review (owner rule TASK-19601 — the
+older arrival keeps the id). No dependencies referenced the old id.
+
 
 ## Description
 

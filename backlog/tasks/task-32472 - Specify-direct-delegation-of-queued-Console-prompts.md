@@ -1,5 +1,5 @@
 ---
-id: TASK-32050
+id: TASK-32472
 title: Specify direct delegation of queued Console prompts
 status: Done
 assignee:
@@ -16,6 +16,13 @@ references:
   - >-
     Docs/superpowers/specs/2026-09-08-task-32050-queued-agent-delegation-design.md
 ---
+
+## Renumbering provenance
+
+Renumbered from TASK-32472 on 2026-09-11: the id collided with a task that
+arrived on dev while this branch was in review (owner rule TASK-19601 — the
+older arrival keeps the id). No dependencies referenced the old id.
+
 
 ## Description
 

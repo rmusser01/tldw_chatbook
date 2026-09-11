@@ -28,7 +28,7 @@
 
 **Files:**
 - Create: `backlog/decisions/146-console-custom-endpoint-registry.md`
-- Modify: `backlog/tasks/task-32308 - Console-custom-endpoint-registry-named-endpoints-from-templates.md`
+- Modify: `backlog/tasks/task-32474 - Console-custom-endpoint-registry-named-endpoints-from-templates.md`
 
 **Interfaces:**
 - Consumes: the approved spec's Decisions table.
@@ -36,16 +36,16 @@
 
 - [ ] **Step 1: Write the ADR**
 
-Use the repo's ADR shape (see `backlog/decisions/145-console-live-thinking-presentation.md` for tone/sections: Context, Decision, Alternatives, Consequences). Record: top-level `[custom_endpoints.<slug>]` storage outside `api_settings`; `custom-ep:<slug>` ids resolving onto family execution keys with the session `base_url` as endpoint carrier; credential precedence `api_key_env` over stored `api_key`; template scope limited to family + endpoint + model list; built-in slots retained with optional one-way conversion; unresolvable-prefix fallback to family `custom`. Link the spec and TASK-32308.
+Use the repo's ADR shape (see `backlog/decisions/145-console-live-thinking-presentation.md` for tone/sections: Context, Decision, Alternatives, Consequences). Record: top-level `[custom_endpoints.<slug>]` storage outside `api_settings`; `custom-ep:<slug>` ids resolving onto family execution keys with the session `base_url` as endpoint carrier; credential precedence `api_key_env` over stored `api_key`; template scope limited to family + endpoint + model list; built-in slots retained with optional one-way conversion; unresolvable-prefix fallback to family `custom`. Link the spec and TASK-32474.
 
 - [ ] **Step 2: Link it from the task and spec**
 
-Append to TASK-32308's Implementation Plan section: `ADR: backlog/decisions/146-console-custom-endpoint-registry.md`. Append the same link to the spec's "ADR required" bullet.
+Append to TASK-32474's Implementation Plan section: `ADR: backlog/decisions/146-console-custom-endpoint-registry.md`. Append the same link to the spec's "ADR required" bullet.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add backlog/decisions/146-console-custom-endpoint-registry.md "backlog/tasks/task-32308 - Console-custom-endpoint-registry-named-endpoints-from-templates.md" Docs/superpowers/specs/2026-09-10-console-custom-endpoint-registry-design.md
+git add backlog/decisions/146-console-custom-endpoint-registry.md "backlog/tasks/task-32474 - Console-custom-endpoint-registry-named-endpoints-from-templates.md" Docs/superpowers/specs/2026-09-10-console-custom-endpoint-registry-design.md
 git commit -m "docs: ADR-146 custom endpoint registry"
 ```
 
@@ -690,10 +690,10 @@ git commit -m "feat: manage custom endpoints in F9 Settings with reference guard
 **Files:**
 - Modify: `Docs/User_Guide/settings.md` (Custom endpoints section under Providers & Models)
 - Modify: `Docs/User_Guide/console.md` (Conversation Settings: endpoint creation paragraph)
-- Modify: `backlog/tasks/task-32308 - Console-custom-endpoint-registry-named-endpoints-from-templates.md`
+- Modify: `backlog/tasks/task-32474 - Console-custom-endpoint-registry-named-endpoints-from-templates.md`
 
 - [ ] **Step 1: Write user-facing docs** — two short sections: what a custom endpoint is, creating one from a template in Conversation Settings, managing in F9, the convert action, and the delete/detach rule. Match the existing tables/voice in those files.
-- [ ] **Step 2: Close TASK-32308** — tick all ACs, add Implementation Notes (approach, files, decisions, verification runs, ADR-146 link), `backlog task edit 32308 -s Done`.
+- [ ] **Step 2: Close TASK-32474** — tick all ACs, add Implementation Notes (approach, files, decisions, verification runs, ADR-146 link), `backlog task edit 32308 -s Done`.
 - [ ] **Step 3: Final targeted sweep**
 
 Run: `pytest Tests/Chat/test_custom_endpoint_registry.py Tests/Chat/test_console_session_settings.py Tests/Chat/test_console_provider_gateway.py Tests/Widgets/test_console_endpoint_template_modal.py Tests/UI/test_settings_custom_endpoints.py Tests/UI/test_console_session_settings.py -q`
@@ -702,6 +702,6 @@ Expected: PASS except the 2 documented pre-existing failures in `test_console_se
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Docs/User_Guide/settings.md Docs/User_Guide/console.md "backlog/tasks/task-32308 - Console-custom-endpoint-registry-named-endpoints-from-templates.md"
+git add Docs/User_Guide/settings.md Docs/User_Guide/console.md "backlog/tasks/task-32474 - Console-custom-endpoint-registry-named-endpoints-from-templates.md"
 git commit -m "docs: custom endpoint registry user guide and task closeout"
 ```
