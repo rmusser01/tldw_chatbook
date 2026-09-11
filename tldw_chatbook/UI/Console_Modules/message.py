@@ -1502,6 +1502,18 @@ class ConsoleMessageController:
             return True
 
         if action_id == "capture-note":
+            # task-32146 fix round 1: the registry decides at row-build
+            # time whether this row is offered; check it again here, as
+            # the regenerate image/video branches do, so a temporary
+            # chat never reaches the note write whatever built the
+            # button.
+            note_blocked = blocked_reason(
+                "capture-note",
+                ephemeral=self._console_active_session_is_ephemeral(),
+            )
+            if note_blocked is not None:
+                self.app_instance.notify(note_blocked, severity="warning")
+                return True
             self.run_worker(
                 self._capture_console_answer_as_note(message_id),
                 exclusive=True,

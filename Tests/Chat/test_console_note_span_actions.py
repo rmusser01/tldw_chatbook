@@ -541,3 +541,44 @@ async def test_console_note_writes_use_the_configured_notes_identity():
     await screen._message._save_console_message_as_note(message.id)
 
     assert saved and saved[0]["user_id"] == "notes-owner-1"
+
+
+@pytest.mark.asyncio
+async def test_capture_note_dispatch_refuses_a_temporary_chat_before_any_worker():
+    """task-32146 fix round 1 (review finding 3): the ephemeral registry is
+    consulted again at dispatch -- the same defence the regenerate
+    image/video branches carry -- so a temporary chat gets the registry's
+    reason and no note worker is started, whatever built the button."""
+    from tldw_chatbook.Chat.console_ephemeral import EPHEMERAL_BLOCKED_ACTIONS
+
+    app, screen = _build_screen()
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    session.ephemeral = True
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="q")
+    completed = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="the answer"
+    )
+    assert screen._message._console_active_session_is_ephemeral() is True
+
+    spawned = []
+
+    def fake_run_worker(work, **kwargs):
+        spawned.append(kwargs)
+        if asyncio.iscoroutine(work):
+            work.close()
+        return SimpleNamespace(cancel=lambda: None)
+
+    screen.run_worker = fake_run_worker
+    notices: list[tuple[str, str | None]] = []
+    app.notify = lambda message, **kwargs: notices.append(
+        (message, kwargs.get("severity"))
+    )
+
+    handled = await screen.handle_console_message_action(
+        _dispatch_event("capture-note", completed.id)
+    )
+
+    assert handled is True
+    assert spawned == []
+    assert notices == [(EPHEMERAL_BLOCKED_ACTIONS["capture-note"], "warning")]
