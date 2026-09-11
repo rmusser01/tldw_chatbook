@@ -14603,7 +14603,7 @@ class ChatScreen(BaseAppScreen):
     def _console_provider_blocker_copy(self) -> str:
         """Return concise Console recovery copy for provider/model setup gaps.
 
-        task-32276: ``wait_for_active_run`` means "a turn is already in
+        task-32345: ``wait_for_active_run`` means "a turn is already in
         flight", not a provider/model misconfiguration -- the same
         distinction ``_console_setup_blocked_reason``/``_console_send_
         blocked_reason`` already carve out below. Left in, an otherwise
@@ -17874,7 +17874,7 @@ class ChatScreen(BaseAppScreen):
     def _native_run_status_copy(self) -> str:
         """Return the viewed session's run-status copy for the hidden compat mode bar.
 
-        task-32276: kept in agreement with ``_console_active_run_copy``'s
+        task-32345: kept in agreement with ``_console_active_run_copy``'s
         (the VISIBLE run chip's) pending-approval override -- two copies of
         the same fact must never disagree, even though only one of them is
         ever seen.
@@ -17911,7 +17911,7 @@ class ChatScreen(BaseAppScreen):
         visibility contract. Falls back to the status value when a
         transition set no visible copy.
 
-        task-32276: ``run_state.visible_copy`` is a snapshot taken once at
+        task-32345: ``run_state.visible_copy`` is a snapshot taken once at
         dispatch start ("Agent running.") and never updated mid-turn -- an
         approval round parking partway through leaves it stale. Checked
         here, on every read, instead: the controller's own round registry

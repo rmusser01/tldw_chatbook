@@ -257,7 +257,7 @@ CONSOLE_TURN_ACTIVITY_THINKING = "Thinking…"
 #: There is no step to name -- there is no run yet -- so this state comes
 #: from the bridge's own setup mark, not from ``steps``.
 CONSOLE_TURN_ACTIVITY_SETUP = "Connecting tools…"
-#: task-32276: a primary tool call is parked awaiting the user's approval
+#: task-32345: a primary tool call is parked awaiting the user's approval
 #: decision (an MCP/skill approval round is outstanding for the viewed
 #: session -- ``ConsoleChatController.has_pending_approval_round``). Takes
 #: priority over every other state: a card waiting on the user is the most
@@ -425,7 +425,7 @@ def console_turn_activity_text(
     (tool catalogs plus the lazy Personal Context bootstrap) and which
     used to render as a blank assistant row for its whole duration.
 
-    task-32276: the approval-pending state is a LEADING branch, checked
+    task-32345: the approval-pending state is a LEADING branch, checked
     right after the running-status gate and before the tool/thinking
     derivation below -- a card waiting on the user outranks whatever the
     primary's last step happened to be (a stale tool name, or a fleet of
@@ -929,7 +929,7 @@ class ConsoleAgentController:
             for summary in (getattr(snapshot, "subagents", ()) or ())
             if getattr(summary, "status", "") == "running"
         ]
-        # task-32276: the pending flag comes ONLY from the controller's own
+        # task-32345: the pending flag comes ONLY from the controller's own
         # round registry, never inferred from a tool name -- `getattr`
         # because `_GateController` (and other partial doubles) expose a
         # bare `SimpleNamespace(run_state=...)`, not the real controller.

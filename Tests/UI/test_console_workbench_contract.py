@@ -1601,7 +1601,7 @@ async def test_console_workbench_send_action_disables_during_active_run():
 
 @pytest.mark.asyncio
 async def test_console_workbench_state_provider_ready_but_send_still_blocked_mid_run():
-    """task-32276: `_console_provider_blocker_copy`'s active-run narrowing
+    """task-32345: `_console_provider_blocker_copy`'s active-run narrowing
     changes `provider_status` (now "ready" for a healthy active run, not a
     misleading "blocked") but must NOT change `send_available` -- that stays
     gated by `run_allows_send` (`run_state.is_send_allowed`), independent of
@@ -1640,7 +1640,7 @@ async def test_console_workbench_state_provider_ready_but_send_still_blocked_mid
 
 @pytest.mark.asyncio
 async def test_setup_modal_stays_non_blocking_mid_run_regardless_of_blocker_copy():
-    """task-32276: `_sync_console_transcript_guidance`'s use of the blocker
+    """task-32345: `_sync_console_transcript_guidance`'s use of the blocker
     copy is confirmed a non-issue mid-run -- `ConsoleSetupModal.is_blocking`
     reads only `card_state.mode`, which `build_console_setup_card_state`
     forces to "quiet" once the transcript has a message (`has_messages`),

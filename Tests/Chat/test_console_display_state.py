@@ -256,7 +256,7 @@ def test_console_inspector_state_combines_readiness_artifact_and_recovery_rows()
 
 
 def test_console_inspector_state_live_work_shows_waiting_for_approval():
-    """task-32276: a pending approval outranks the run/live-work title.
+    """task-32345: a pending approval outranks the run/live-work title.
 
     Unlike ``run_active``'s "Generating…", which is a fact about the model
     (a generation is in flight), a pending approval is a fact about the

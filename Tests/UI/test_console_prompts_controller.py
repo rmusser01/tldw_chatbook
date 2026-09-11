@@ -281,9 +281,9 @@ async def test_prompts_modal_reads_provider_recovery_off_the_screen_at_open() ->
 
 @pytest.mark.asyncio
 async def test_improve_stays_unavailable_during_an_active_run_even_with_a_healthy_provider() -> None:
-    """task-32276: Improve's active-run gate is independent of the provider
+    """task-32345: Improve's active-run gate is independent of the provider
     blocker copy -- a healthy, unblocked provider (empty blocker copy, the
-    correct state during a mere active run since task-32276's fix to
+    correct state during a mere active run since task-32345's fix to
     `_console_provider_blocker_copy`) must still disable Improve while a run
     is in flight, because Improve dispatches to the provider gateway on its
     own, outside the main turn.
