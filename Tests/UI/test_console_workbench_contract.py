@@ -1764,8 +1764,10 @@ async def test_console_registers_footer_workbench_shortcuts():
             # rail ships CLOSED and F6 could not reach it, so the footer is
             # where its accelerator has to be taught -- an accelerator only
             # the source mentions is not a discoverable one.
+            # task-32277: Alt+A follows immediately after, same reasoning --
+            # the approval card had no key binding at all before this.
             "Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new "
-            "tab | Alt+I inspect | Ctrl+P palette | Ctrl+Q quit"
+            "tab | Alt+I inspect | Alt+A approval | Ctrl+P palette | Ctrl+Q quit"
         )
 
         await console.remove()

@@ -317,6 +317,7 @@ from ...Chat.console_chat_models import (
     ConsoleContextSnapshot,
     ConsoleMessageRole,
     ConsoleProviderSelection,
+    ConsoleRunMarker,
     ConsoleRunStatus,
     FEEDBACK_ACTIVE_RUN_STATUSES,
     MessageAttachment,
@@ -1158,6 +1159,10 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     # is only discoverable by reading the source. This is the footer/F1
     # vocabulary the Console teaches from.
     ("Alt+I", "inspect"),
+    # task-32277: same reasoning as Alt+I directly above -- the approval
+    # card had no key binding at all before this, so its accelerator is
+    # only discoverable if the footer teaches it.
+    ("Alt+A", "approval"),
     ("Ctrl+P", "palette"),
 )
 
@@ -1879,6 +1884,13 @@ class ChatScreen(BaseAppScreen):
         # this binding is the way back, and it is why it must not itself be
         # gated on the rail being displayed.
         Binding("alt+i", "toggle_console_inspector_rail", "Inspect", show=True),
+        # task-32277: Tab never reached the approval card from the composer
+        # (12 presses cycled the header action bar instead), and the only
+        # other entry points -- the "Approvals: N pending" status chip and
+        # the inspector's below-the-fold Review button -- both disappear at
+        # common widths. This routes through the same seam as the
+        # inspector's button (`_route_console_pending_approval_focus`).
+        Binding("alt+a", "review_pending_approval", "Approval", show=True),
         Binding("alt+v", "paste_clipboard_image", "Paste image", show=True),
         # ctrl+shift+h, not alt+h: on macOS terminals "alt" is the Option
         # key, which types a composed character (˙) unless the profile
@@ -20198,10 +20210,16 @@ class ChatScreen(BaseAppScreen):
         if card.is_mounted:
             card.finish_undo_all(success=success)
 
-    @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}")
-    def handle_console_inspector_review_approval(self, event: Button.Pressed) -> None:
-        """Focus the pending approval card from the Console inspector seam."""
-        event.stop()
+    def _route_console_pending_approval_focus(self) -> None:
+        """Focus the pending approval card, or notify none is pending.
+
+        task-32277: the single seam every approval-review entry point
+        routes through -- the inspector's Review approval button, the
+        Alt+A binding, and a tab-strip click on a session wearing the
+        NEEDS_APPROVAL (``◆``) marker. Moved out of
+        ``handle_console_inspector_review_approval`` verbatim so a third
+        (or fourth) caller cannot drift from it.
+        """
         if self._console_pending_approval_count() <= 0:
             # PRD A4: the chip's focus action is how keyboard-only users
             # reach a question card that deliberately never steals focus.
@@ -20245,6 +20263,22 @@ class ChatScreen(BaseAppScreen):
             card.focus_first_decision()
         except Exception:
             pass
+
+    @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}")
+    def handle_console_inspector_review_approval(self, event: Button.Pressed) -> None:
+        """Focus the pending approval card from the Console inspector seam."""
+        event.stop()
+        self._route_console_pending_approval_focus()
+
+    def action_review_pending_approval(self) -> None:
+        """Alt+A: same route as the inspector's Review approval button.
+
+        task-32277: Tab never reached the approval card from the composer,
+        and the two prior entry points (the status chip, the inspector
+        button) both disappear at common widths -- see the ``alt+a``
+        `Binding`'s own comment in ``BINDINGS`` for the live-UX evidence.
+        """
+        self._route_console_pending_approval_focus()
 
     @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID}")
     def handle_console_inspector_save_chatbook(self, event: Button.Pressed) -> None:
@@ -23692,9 +23726,21 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id and button_id.startswith("console-session-tab-"):
             event.stop()
-            await self._session._handle_console_session_tab_press(
-                button_id.removeprefix("console-session-tab-")
-            )
+            session_id = button_id.removeprefix("console-session-tab-")
+            controller = self._ensure_console_chat_controller()
+            if controller.run_marker_for(session_id) is ConsoleRunMarker.NEEDS_APPROVAL:
+                # task-32277: a tab wearing the ◆ marker routes straight to
+                # the approval card instead of the normal activate/rename
+                # tab press. A non-viewed session's round is PARKED (see
+                # `run_marker_for`'s NEEDS_APPROVAL precedence and
+                # `ConsoleChatController.switch_session`'s park/re-mount
+                # behaviour), so it has to be activated first for its card
+                # to be the one that mounts.
+                if controller.store.active_session_id != session_id:
+                    await self._session._activate_native_console_session(session_id)
+                self._route_console_pending_approval_focus()
+                return
+            await self._session._handle_console_session_tab_press(session_id)
             return
         if button_id and button_id.startswith("console-message-action-"):
             handled = await self.handle_console_message_action(event)

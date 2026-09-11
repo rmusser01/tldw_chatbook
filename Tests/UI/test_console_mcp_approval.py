@@ -35,8 +35,9 @@ from tldw_chatbook.Agents.run_context import current_run_id, use_run_id
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_display_state import CONSOLE_INSPECTOR_NO_APPROVAL_REASON
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.chat_screen import CONSOLE_WORKBENCH_SHORTCUTS, ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
     NEEDS_DECISION_PREFIX,
@@ -1781,6 +1782,137 @@ async def test_finishing_card_is_not_counted_and_keyboard_focuses_the_card():
 
             assert card.can_focus is True
             assert app.focused is card
+
+
+# ---------------------------------------------------------------------------
+# task-32277: Alt+A keyboard route to the approval card.
+# ---------------------------------------------------------------------------
+
+
+def test_console_binds_alt_a_to_review_pending_approval():
+    """The binding exists, is advertised, and its action is implemented.
+
+    Mirrors the equivalent binding-registration check for the trajectory
+    launch key, `test_console_binds_single_letter_trajectory_launch`
+    (`Tests/UI/test_trajectory_live.py`).
+    """
+    bindings = {binding.key: binding for binding in ChatScreen.BINDINGS}
+    binding = bindings.get("alt+a")
+    assert binding is not None
+    assert binding.action == "review_pending_approval"
+    assert binding.show is True
+    assert hasattr(ChatScreen, "action_review_pending_approval")
+    # TASK-24604's precedent: the footer legend is the only place an
+    # accelerator with no menu/button equivalent is discoverable at all.
+    assert ("Alt+A", "approval") in CONSOLE_WORKBENCH_SHORTCUTS
+
+
+@pytest.mark.asyncio
+async def test_alt_a_focuses_the_pending_approval_decision_select():
+    """With a batch pending, Alt+A lands focus on the row's decision
+    Select -- never Submit (`ChatApprovalCard.focus_first_decision`'s own
+    contract)."""
+    app = _build_test_app()
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
+        async with app.run_test(size=(200, 40)) as pilot:
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                screen = app.screen
+                if isinstance(screen, ChatScreen) and screen.is_mounted:
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Production Console did not finish mounting")
+
+            screen.set_task_resume_state(
+                TaskResumeState(
+                    pending_approval={
+                        "calls": _single_call(),
+                        "timeout_seconds": 45.0,
+                        "round_id": "round-alt-a-focus",
+                    }
+                )
+            )
+            await pilot.pause()
+
+            await pilot.press("alt+a")
+            await pilot.pause()
+
+            assert isinstance(app.focused, Select)
+            assert "approval-row-decision" in app.focused.classes
+
+
+@pytest.mark.asyncio
+async def test_alt_a_notifies_when_nothing_is_pending():
+    """With nothing pending, Alt+A notifies rather than focusing anything --
+    same fallback message as the inspector's Review approval button
+    (`CONSOLE_INSPECTOR_NO_APPROVAL_REASON`)."""
+    app = _build_test_app()
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
+        async with app.run_test(size=(200, 40)) as pilot:
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                screen = app.screen
+                if isinstance(screen, ChatScreen) and screen.is_mounted:
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Production Console did not finish mounting")
+
+            notifications: list[tuple[str, str | None]] = []
+            app.notify = lambda message, **kwargs: notifications.append(
+                (str(message), kwargs.get("severity"))
+            )
+
+            await pilot.press("alt+a")
+            await pilot.pause()
+
+            assert (CONSOLE_INSPECTOR_NO_APPROVAL_REASON, "warning") in notifications
+
+
+@pytest.mark.asyncio
+async def test_alt_a_reaches_the_card_at_80_columns_with_inspector_closed():
+    """AC#3: the route works at 80 columns with the inspector closed."""
+    app = _build_test_app()
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
+        async with app.run_test(size=(80, 24)) as pilot:
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                screen = app.screen
+                if isinstance(screen, ChatScreen) and screen.is_mounted:
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Production Console did not finish mounting")
+
+            # TASK-24604's own docstring: the Inspect rail ships CLOSED.
+            # Same accessor `action_toggle_console_inspector_rail` itself
+            # checks -- a hidden ancestor doesn't necessarily flip a
+            # descendant's own `.display` attribute.
+            assert not screen._is_console_widget_displayed("console-right-rail")
+
+            screen.set_task_resume_state(
+                TaskResumeState(
+                    pending_approval={
+                        "calls": _single_call(),
+                        "timeout_seconds": 45.0,
+                        "round_id": "round-alt-a-80col",
+                    }
+                )
+            )
+            await pilot.pause()
+
+            await pilot.press("alt+a")
+            await pilot.pause()
+
+            assert isinstance(app.focused, Select)
+            assert "approval-row-decision" in app.focused.classes
 
 
 @pytest.mark.asyncio
