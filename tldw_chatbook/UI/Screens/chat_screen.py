@@ -20295,7 +20295,13 @@ class ChatScreen(BaseAppScreen):
 
     @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}")
     def handle_console_inspector_review_approval(self, event: Button.Pressed) -> None:
-        """Focus the pending approval card from the Console inspector seam."""
+        """Focus the pending approval card from the Console inspector seam.
+
+        Args:
+            event: The inspector's "Review approval" button press. Stopped
+                here so it never reaches the screen's generic
+                ``on_button_pressed`` fallback.
+        """
         event.stop()
         self._route_console_pending_approval_focus()
 
