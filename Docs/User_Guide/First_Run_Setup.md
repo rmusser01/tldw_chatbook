@@ -50,10 +50,11 @@ so up front: "Everything is off by default. Tools that read or change your
 files still show an approval card every time they run." Each row carries the
 tool's plain-language name and one line about what it does — the read-class
 ones (Read file, List directory, Find files, Search in files, Expand
-document) add that they ask you each time before running, and the ones that
-write are marked with ⚠. Leaving every switch off is a supported outcome: the
-summary then reads "all off; turn them on under MCP ▸ Servers ▸ Tool gates",
-which is where the same switches live after setup.
+document) add that they ask before running unless you approve a longer
+scope, and the ones that write are marked with ⚠. Leaving every switch off
+is a supported outcome: the summary then reads "all off; turn them on under
+MCP ▸ Servers ▸ Tool gates", which is where the same switches live after
+setup.
 
 The Voice step leads with a sample text and **Test and Hear**; the endpoint,
 model, and output settings sit under its "Advanced" section. Advancing saves
@@ -101,10 +102,15 @@ stays available for the whole time the card blocks the composer.)*
 
 *Tools step verified against `fix/approval-wave-b-card` @ e7409210cc and
 `fix/approval-wave-c-hub` @ a999fcf6e6 — 2026-09-10 (task-32290, against code
-and tests, not a live screen): the step's own copy, the read-class "Asks you
-each time before running." descriptions, and the summary's "all off; turn them
-on under MCP ▸ Servers ▸ Tool gates" destination, which replaces this page's
-older "there is no Tools category" pointer.*
+and tests, not a live screen): the step's own copy, the read-class "Asks
+before running unless you approve a longer scope." descriptions, and the
+summary's "all off; turn them on under MCP ▸ Servers ▸ Tool gates"
+destination, which replaces this page's older "there is no Tools category"
+pointer. Read-class wording updated 2026-09-11 (task-32290 part 2, Qodo
+follow-up to task-32284/32289): the blurb's old closing sentence is gone,
+replaced by the "approve a longer scope" wording quoted above, once the
+wizard's copy moved onto `GateableTool.blurb` alongside the rest of the
+tool row.*
 
 *Verified against fix/library-notes-w3-wizard-toast — 2026-09-11 (task-32266:
 the Voice step's save raised the global "Settings saved successfully!" toast,

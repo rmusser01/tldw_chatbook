@@ -65,14 +65,19 @@ means the tool finished and the model is composing the next round, and
 `Generating…` is the wait for the model's first response of the turn. That
 setup step is capped at ten seconds: if something it needs — an OS
 keychain prompt, for instance — does not answer in time, the send goes
-ahead without profile tools rather than waiting. Once an approval or
-confirm card is up and waiting on you, the line reads `Waiting for your
-approval · 12s` instead of `Thinking…` — a decision only you can make
-outranks whatever the model's last step happened to be — and the same
-applies to the "Run:" status chip above the composer and the Inspector's
-`Live work`/`Run` rows, which read "Waiting for your approval"/"Waiting
-for approval" rather than the generic run-in-progress copy while a card is
-pending. The elapsed figure
+ahead without profile tools rather than waiting. Once an approval, a skill
+or worktree confirm, or a question is up and waiting on you, the line reads
+`Waiting for your approval · 12s` for an approval, `Waiting for your
+answer · 12s` for a question, or `Waiting for your confirmation · 12s` for
+a skill/worktree confirm — instead of `Thinking…`, since a decision only
+you can make outranks whatever the model's last step happened to be — and
+the "Run:" status chip above the composer reads the same kind-aware line.
+The Inspector's `Live work` row and the pinned authority summary's `Run`
+fact stay approval-specific, though: they read "Waiting for your approval"
+only while an actual approval card (not a question or confirm) is mounted,
+and otherwise show their ordinary copy — `Generating…`, or no active work —
+even while a question or confirm card is the one genuinely pending. The
+elapsed figure
 advances while you watch. The line is live-only — it vanishes the moment
 the reply's own text arrives, and a conversation you reopen later shows the
 completed `Tool` rows below instead. During a fleet turn, while the primary
@@ -314,16 +319,23 @@ composer included, where Tab alone never reached it. The footer advertises it
 as **Approval**, and F1's Navigation list carries it as "Review pending
 approval"; the inspector's **Review approval** button is the same route. A
 session tab wearing the **◆** marker (the status legend reads "● running · ◆
-needs approval · ✓ finished · ✗ failed") routes straight to that session's
-card when you press it: the session is activated first — a parked round only
-mounts its card once its session is the one you are viewing — and the usual
-"press the active tab to rename it" gesture is pre-empted for that press
-(rename stays available from the session switcher).
+needs approval · ✓ finished · ✗ failed") routes straight to whichever
+decision card is actually pending — approval, question, skill-install, or
+skill-script confirm, checked in that precedence (a worktree-merge confirm
+has no card wired on this screen) — when you press it: the session is
+activated first — a parked round only mounts its card once its session is
+the one you are viewing — and the usual "press the active tab to rename it"
+gesture is pre-empted only when a card is actually found. When none is (a
+stale marker, or a pending worktree-merge confirm), the press falls back to
+the ordinary tab press instead of warning "No approval is pending." (rename
+stays available from the session switcher either way).
 
-While a card is up, the assistant's live activity line reads **Waiting for
-your approval · 12s**. That state outranks every other one — a stale tool
-name, or a fleet of sub-agents still nominally working — because a card
-waiting on you is the most important thing on screen. See [the activity
+While a card is up, the assistant's live activity line names the kind
+that's waiting — **Waiting for your approval · 12s**, **Waiting for your
+answer · 12s**, or **Waiting for your confirmation · 12s**. That state
+outranks every other one — a stale tool name, or a fleet of sub-agents
+still nominally working — because a card waiting on you is the most
+important thing on screen. See [the activity
 line](#layout-tour--what-you-see-during-a-run) for the other states,
 including `Connecting tools…`.
 
@@ -332,13 +344,12 @@ including `Connecting tools…`.
 A refused call leaves a row in the transcript naming **who** refused it, not
 one generic word:
 
-- `· denied by you` — you pressed **Deny** on the card.
+- `· denied by you` — you pressed **Deny** on the card. Covers MCP tools
+  and **local workspace tools** alike.
 - `· blocked (Off)` — the tool's permission is **Off**; no card was shown.
+  Covers MCP, local workspace, and raw-shell tools alike.
 - `· blocked (kill switch)` — the global kill switch refused it.
-- `· blocked` — a **Deny** you pressed on a **local workspace tool**, or a
-  local workspace tool whose permission is **Off** (that provider's refusal
-  can't name its own authority, so it never reads `denied by you` or
-  `blocked (Off)`), an approval timeout, or a round that ended undecided.
+- `· blocked` — an approval timeout, or a round that ended undecided.
 
 Expanding a refused row is labelled **Sent to the model** rather than "Full
 output": what it holds is the refusal text the model was given ("Do not retry
@@ -2429,3 +2440,17 @@ provider's verdict path silently dropped or denied it; both gaps are now
 closed (see [Exact-input allow rules](../mcp.md#exact-input-allow-rules) for
 the review/remove surface). The rest of this page is unchanged from the
 prior stamp.*
+
+*Docs pass 2026-09-11 (Qodo follow-ups: task-32277/32278/32279/32280/32281/
+32284/32286/32289/32291/32345, against code and tests, not a live screen):
+the ◆-tab route is now documented as landing on whichever decision card is
+actually pending — approval, question, skill-install, or skill-script,
+checked in that precedence — and falling back to the ordinary tab press
+when none is mounted (a worktree-merge confirm has no card wired on this
+screen); the refusal vocabulary's bare `· blocked` bullet dropped its
+local-workspace-tool carve-out now that a local Deny reads `denied by you`
+and a local or raw-shell Off reads `blocked (Off)` just like MCP's; and the
+kind-aware `Waiting for your approval`/`answer`/`confirmation` copy is now
+scoped correctly — it covers the "Run:" chip and the reply row's activity
+line, but the Inspector's `Live work` row and the pinned authority
+summary's `Run` fact remain approval-specific.*

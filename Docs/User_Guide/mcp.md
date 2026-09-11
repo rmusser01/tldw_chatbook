@@ -99,9 +99,11 @@ an existing directory.
 Both changes are used by the next Console agent run. They do not grant tool
 permission: fresh permission state is still **Ask**, explicit Allow/Ask/Off
 overrides still win, mutating tools retain their risk floor, and the global
-kill switch remains authoritative. The controls read back persisted config
-truth after saving, and a failed save restores the persisted value instead of
-leaving an optimistic toggle on screen.
+kill switch remains authoritative. The master switch's label flips
+immediately on press, before the save round-trip completes, and reverts to
+the persisted value if the save is rejected — so a fast second press can
+reverse the first before it lands, rather than sending the same value
+twice. The Servers-mode Tool gates rows below do the same.
 
 Tools mode also lists a distinct **Virtual CLI (read-only)** local group. The
 model sees one structured `virtual_cli` tool, while this group exposes separate
@@ -124,7 +126,8 @@ decide MCP availability independently.
 Select the built-in server's row in Servers mode; its detail pane has a
 **Tool gates** group under the existing enable/expose checkboxes. Each gate
 is a button that spells its own state out in text — `Read file: off ▸`,
-`Read file: on ▸` — and presses toggle it; the tool's plain-language name
+`Read file: on ▸` — and presses toggle it the same optimistic-then-revert
+way the local master switch above does; the tool's plain-language name
 and one-line description are the same copy the first-run setup wizard
 shows. The group is split into two subheadings:
 
@@ -532,6 +535,14 @@ its filter can answer "what did I refuse?":
 A Deny you press in Console lands here as its own row, exactly as each
 approval does.
 
+Pressing **Stop** mid-approval and a headless round with no app wired both
+leave the call unanswered, and neither is recorded as **Denied by you**:
+Stop's cancelled round is the "cancelled approval" case above and writes
+the same **Denied (no decision)** row every other unresolved round does. A
+headless round writes no audit row at all — not even that one — since the
+log is reached through the app, and this path exists precisely because
+there is no app to reach it through.
+
 ### Session approvals
 
 The approval card's **This session** decision ("Every call to this tool until
@@ -567,6 +578,16 @@ matrix). Selecting that tool's row lists each stored rule in the
 inspector — its (capped) argument summary and a **Remove** button — right
 below the permission explanation. Removing a rule takes effect
 immediately: the next call with those exact arguments asks again.
+
+The inspector's rule list walks the profile you're reviewing's inheritance
+chain too (only the `default` profile can be an ancestor), since an
+inherited rule already quiets calls made under the profile you're looking
+at. A rule owned by an ancestor reads `Exact-input allow · <args> · from
+<profile>`, naming the profile that actually stores it; the `≡` marker
+marks an inherited rule the same way it marks one owned outright. **Remove**
+on an inherited row deletes it from the profile that owns it, not the one
+under review — so the blast radius (every profile that inherits it) is
+visible before you press it.
 
 ## Advanced (legacy control plane)
 
@@ -682,3 +703,16 @@ Space cycle and the legend line verbatim (`_LEGEND_TEXT`,
 tool-level Allow is never floored (`permission_store.resolve`), and the kill
 switch's real label and blast-radius line. Corrected the leftover
 "checkboxes" reading of the Tool gates rows, which are buttons.*
+
+*Docs pass 2026-09-11 (Qodo follow-ups: task-32277/32278/32279/32280/32281/
+32284/32286/32289/32291/32345, against code and tests, not a live screen):
+"Exact-input allow rules" now documents an inherited rule's `· from
+<profile>` row, the `≡` marker covering it too, and **Remove** deleting
+from the owning profile rather than the one under review; the Tools-mode
+master switch and the Servers-mode Tool gates rows now say their label
+flips immediately on press and reverts if the save is rejected, correcting
+this page's stale claim that the toggle only updated after a successful
+save; and "Permission continuity for built-in tools" now distinguishes a
+Stop-cancelled round (`Denied (no decision)`, same as any other unresolved
+round) from a headless round with no app wired, which writes no audit row
+at all.*
