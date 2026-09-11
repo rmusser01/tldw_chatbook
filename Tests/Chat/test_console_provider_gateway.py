@@ -706,7 +706,7 @@ async def test_resolve_for_send_normalizes_scheme_less_llamacpp_base_url_before_
 
     assert resolved.ready is True
     assert resolved.base_url == "http://127.0.0.1:9099"
-    assert seen_urls == ["http://127.0.0.1:9099/v1/models"]
+    assert seen_urls == ["http://127.0.0.1:9099/v1/models", "http://127.0.0.1:9099/props"]
 
 
 @pytest.mark.asyncio
@@ -745,7 +745,7 @@ async def test_gateway_resolves_direct_llamacpp_without_importing_chat_functions
         return real_import(name, *args, **kwargs)
 
     async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/health"
+        assert request.url.path in {"/health", "/props"}
         return httpx.Response(200, json={"status": "ok"})
 
     monkeypatch.setattr(builtins, "__import__", fail_chat_functions_import)
@@ -925,7 +925,7 @@ async def test_resolve_for_send_blocks_generic_base_url_override_that_differs_fr
     )
 
     assert resolved.ready is False
-    assert "save the endpoint in Settings" in resolved.visible_copy
+    assert "Save model defaults" in resolved.visible_copy
     assert "Selected endpoint: http://127.0.0.1:9999/v1" in resolved.visible_copy
     assert "Saved endpoint: http://127.0.0.1:11434" in resolved.visible_copy
     assert "user" not in resolved.visible_copy
@@ -957,7 +957,7 @@ async def test_resolve_for_send_preserves_explicit_cloud_url_without_configured_
     assert resolved.readiness_key == "openai"
     assert resolved.execution_key == "openai"
     assert resolved.base_url == "http://127.0.0.1:9999/v1"
-    assert "save the endpoint in Settings" not in resolved.visible_copy
+    assert "Save model defaults" not in resolved.visible_copy
 
 
 @pytest.mark.asyncio
@@ -1130,7 +1130,7 @@ async def test_resolve_for_send_blocks_malformed_generic_base_url_without_crashi
     )
 
     assert resolved.ready is False
-    assert "save the endpoint in Settings" in resolved.visible_copy
+    assert "Save model defaults" in resolved.visible_copy
 
 
 @pytest.mark.asyncio
@@ -2107,6 +2107,9 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
 
     signal_fields = dataclasses.fields(signals)
     assert [item.name for item in signal_fields] == [
+        "thinking_callback",
+        "local_reasoning_replay",
+        "automatic_work_chain_id",
         "_synthetic_fallback",
         "usage_payload",
         "completed_usage_payloads",
@@ -2115,6 +2118,9 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
     ]
     assert isinstance(signals._synthetic_fallback, threading.Event)
     assert signals.__class__.__slots__ == (
+        "thinking_callback",
+        "local_reasoning_replay",
+        "automatic_work_chain_id",
         "_synthetic_fallback",
         "usage_payload",
         "completed_usage_payloads",
@@ -2134,6 +2140,8 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
     # business landing in a log line, so every field stays repr=False.
     rendered = repr(signals)
     assert rendered == "ConsoleProviderStreamSignals()"
+    signals.automatic_work_chain_id = "private-chain-identity"
+    assert repr(signals) == "ConsoleProviderStreamSignals()"
     signals.record_usage_payload({"prompt_tokens": 4242})
     assert repr(signals) == "ConsoleProviderStreamSignals()"
     for governed_text in (
@@ -4949,7 +4957,7 @@ async def test_console_persisted_explicit_keyless_llamacpp_sends_no_authorizatio
     assert resolution.ready is True
     assert resolution.api_key is None
     assert chunks == ["ok"]
-    assert [request.method for request in requests] == ["GET", "POST"]
+    assert [request.method for request in requests] == ["GET", "GET", "POST"]
     assert all("Authorization" not in request.headers for request in requests)
 
 
@@ -5006,6 +5014,7 @@ async def test_console_llamacpp_explicit_stored_source_reaches_probe_and_chat():
     assert resolution.api_key_source == "config:api_settings.llama_cpp.api_key"
     assert chunks == ["ok"]
     assert [request.headers.get("Authorization") for request in requests] == [
+        "Bearer stored-llama-request-canary",
         "Bearer stored-llama-request-canary",
         "Bearer stored-llama-request-canary",
     ]

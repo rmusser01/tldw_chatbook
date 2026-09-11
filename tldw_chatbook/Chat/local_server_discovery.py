@@ -25,7 +25,10 @@ from urllib.parse import urlparse
 
 import httpx
 
-from tldw_chatbook.Chat.console_provider_endpoints import safe_endpoint_display
+from tldw_chatbook.Chat.console_provider_endpoints import (
+    DEFAULT_LLAMACPP_BASE_URL,
+    safe_endpoint_display,
+)
 from tldw_chatbook.Chat.provider_endpoint_contract import (
     normalize_provider_key_for_contract,
     resolve_provider_endpoint,
@@ -227,7 +230,12 @@ def build_local_server_candidates(
             LocalServerCandidate(provider_key=provider_key, base_url=normalized)
         )
 
+    # Two well-known llama.cpp candidates when nothing is configured: the
+    # stock `llama-server` default port (8080), then the port Chatbook's docs
+    # and defaults teach (9099). Configured endpoints are appended below and
+    # deduped, so a user running either convention is found on first run.
     _add("llama_cpp", DEFAULT_LLAMACPP_DISCOVERY_URL)
+    _add("llama_cpp", DEFAULT_LLAMACPP_BASE_URL)
     _add("ollama", DEFAULT_OLLAMA_DISCOVERY_URL)
 
     api_settings = (

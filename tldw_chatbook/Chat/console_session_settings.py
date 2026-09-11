@@ -17,6 +17,8 @@ from tldw_chatbook.Chat.console_provider_support import (
     supported_console_provider_readiness_keys,
 )
 from tldw_chatbook.Chat.console_provider_endpoints import (
+    DEFAULT_LLAMACPP_BASE_URL,  # noqa: F401  (re-exported; console_settings_modal imports it from here)
+    INVALID_LLAMACPP_BASE_URL_COPY,
     URL_BASED_PROVIDER_KEYS,  # noqa: F401  (re-exported; console_settings_modal imports it from here)
     first_configured_endpoint,
     generic_endpoint_differs,
@@ -24,6 +26,10 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
     provider_uses_endpoint,
     safe_endpoint_display,
     unsaved_endpoint_copy,
+)
+from tldw_chatbook.Chat.provider_catalog import (
+    PROVIDER_CUSTOM_GROUP_KEYS,
+    provider_display_name,
 )
 from tldw_chatbook.Chat.provider_readiness import (
     get_provider_readiness,
@@ -69,11 +75,6 @@ CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS = frozenset(
         "vllm",
         "zai",
     }
-)
-DEFAULT_LLAMACPP_BASE_URL = "http://127.0.0.1:9099"
-INVALID_LLAMACPP_BASE_URL_COPY = (
-    "Provider blocked: invalid llama.cpp base URL. "
-    "Use an http(s) URL such as http://127.0.0.1:9099."
 )
 MODEL_OPTION_PLACEHOLDER_VALUES = frozenset({"none", "null"})
 TokenCounter = Callable[[Sequence[Mapping[str, str]], str, str], int]
@@ -351,30 +352,71 @@ def build_console_rail_system_line(system_prompt: str | None) -> str:
     return f"System: {preview}"
 
 
+_CUSTOM_AND_LEGACY_GROUP_KEYS = frozenset(
+    provider_config_key(key) for key in PROVIDER_CUSTOM_GROUP_KEYS
+)
+
+
+def _provider_option_group_rank(
+    provider_key: str,
+    requires_api_key_by_provider: Mapping[str, bool],
+) -> int:
+    """Return the Settings/Wizard provider-group rank for an option key.
+
+    Mirrors the F4 Settings and First-Run Wizard taxonomy (task-180): cloud
+    providers first, then local ones, then custom slots and legacy aliases
+    together. Off-catalog keys (e.g. configured WIP providers) sort with the
+    custom-and-legacy group rather than interleaving into cloud/local.
+    """
+    if provider_key in _CUSTOM_AND_LEGACY_GROUP_KEYS:
+        return 2
+    if provider_key not in requires_api_key_by_provider:
+        return 2
+    return 0 if requires_api_key_by_provider[provider_key] else 1
+
+
 def build_console_provider_options(
     providers_models: Mapping[str, Sequence[str]],
 ) -> list[ConsoleSettingsOption]:
-    """Return sorted Console-sendable provider options plus configured providers."""
-    provider_keys = sorted(
-        {
-            key
-            for key in (provider_config_key(provider) for provider in providers_models)
-            if key
-        }
-    )
+    """Return grouped, display-ordered Console provider options.
+
+    Options are ordered by the shared provider-group taxonomy (Cloud, Local,
+    Custom & legacy) and then by display name, so consumers that render
+    ``provider_display_name`` labels (the Console settings modal) present the
+    same visible order the Settings screen and First-Run Wizard teach, instead
+    of an alphabetical-by-config-key order that shuffles the display labels.
+    Option values stay raw provider config keys (task-191).
+    """
     supported_provider_keys = supported_console_provider_readiness_keys(
         CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
     )
+    catalog_entries = supported_console_provider_catalog(
+        CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
+    )
+    requires_api_key_by_provider = {
+        entry.readiness_key: entry.requires_api_key for entry in catalog_entries
+    }
+
+    def _option_sort_key(provider_key: str) -> tuple[int, str, str]:
+        group_rank = _provider_option_group_rank(
+            provider_key, requires_api_key_by_provider
+        )
+        return (
+            group_rank,
+            provider_display_name(provider_key).casefold(),
+            provider_key,
+        )
+
     provider_keys = sorted(
         {
-            *provider_keys,
             *(
-                entry.readiness_key
-                for entry in supported_console_provider_catalog(
-                    CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
-                )
+                key
+                for key in (provider_config_key(provider) for provider in providers_models)
+                if key
             ),
-        }
+            *(entry.readiness_key for entry in catalog_entries),
+        },
+        key=_option_sort_key,
     )
     return [
         ConsoleSettingsOption(

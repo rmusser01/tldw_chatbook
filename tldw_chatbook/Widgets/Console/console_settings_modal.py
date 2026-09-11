@@ -162,11 +162,12 @@ STREAMING_ON_LABEL = "On"
 STREAMING_OFF_LABEL = "Off"
 CONSOLE_SETTINGS_MODEL_SCOPE_COPY = (
     "Save applies to this conversation. Save model defaults also writes the "
-    "provider, model, generation, and streaming defaults used by new conversations."
+    "provider, model, base URL for URL-based providers, generation, and "
+    "streaming defaults used by new conversations."
 )
 CONSOLE_SETTINGS_CONTEXT_SCOPE_COPY = (
     "Save applies to this conversation. Global context defaults are in "
-    "F9 Settings > Console behavior."
+    "F4 Settings > Console behavior."
 )
 CONSOLE_SETTINGS_SCOPE_COPY = CONSOLE_SETTINGS_MODEL_SCOPE_COPY
 CONSOLE_SETTINGS_SAVE_DEFAULT_FAILED_COPY = (
@@ -1106,8 +1107,9 @@ class ConsoleSettingsModal(
                     disabled=not self._can_save,
                 )
                 save_default.tooltip = (
-                    "Apply to this conversation and write provider, model, generation, "
-                    "and streaming defaults for new conversations."
+                    "Apply to this conversation and write provider, model, base URL "
+                    "for URL-based providers, generation, and streaming defaults "
+                    "for new conversations."
                 )
                 # Match the 1-row Cancel/Save action styling (their sizes come
                 # from id-scoped app CSS this button's id does not inherit).
@@ -2704,11 +2706,11 @@ class ConsoleSettingsModal(
         if self._context_state.model_window_tokens is not None:
             return (
                 "Estimated fallback only; model capacity is unverified. "
-                "Set the actual context window in F9 Settings > Providers & Models."
+                "Set the actual context window in F4 Settings > Providers & Models."
             )
         return (
             "Model limit unknown; automatic safety cannot be verified. "
-            "Set the context window in F9 Settings > Providers & Models."
+            "Set the context window in F4 Settings > Providers & Models."
         )
 
     def _model_window_label(self) -> str:

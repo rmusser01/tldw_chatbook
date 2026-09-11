@@ -3648,7 +3648,16 @@ async def test_console_settings_modal_keyboard_selects_provider_and_refreshes_mo
         await pilot.press("enter")
         assert provider_select.expanded is True
 
-        await pilot.press("down")
+        # Provider options are group- and display-name ordered (not
+        # key-sorted), so compute the arrow distance to the target option
+        # instead of assuming it is one press away.
+        option_values = [value for _label, value in provider_select._options]
+        downs_needed = option_values.index("local_llamacpp") - option_values.index(
+            provider_select.value
+        )
+        assert downs_needed > 0
+        for _ in range(downs_needed):
+            await pilot.press("down")
         await pilot.press("enter")
         assert provider_select.expanded is False
         assert provider_select.value == "local_llamacpp"
@@ -6605,7 +6614,7 @@ def test_console_unsaved_generic_endpoint_blocks_inspector_with_endpoint_details
     assert provider_row.value == "blocked"
     assert "Selected endpoint: http://127.0.0.1:9999/v1" in provider_row.recovery
     assert "Saved endpoint: http://127.0.0.1:11434" in provider_row.recovery
-    assert "save the endpoint in Settings" in screen._console_provider_blocker_copy()
+    assert "Save model defaults" in screen._console_provider_blocker_copy()
     assert label == "Configure endpoint"
     assert target == "settings"
     assert tooltip == "Save the Ollama endpoint in Settings"
@@ -6747,7 +6756,7 @@ def test_console_unsaved_endpoint_no_model_recovery_action_is_configure_endpoint
     label, target, _tooltip = screen._console_provider_recovery_action()
     card_state = screen._build_console_setup_card_state()
 
-    assert "save the endpoint in Settings" in screen._console_provider_blocker_copy()
+    assert "Save model defaults" in screen._console_provider_blocker_copy()
     assert label == "Configure endpoint"
     assert target == "settings"
     assert screen._console_provider_recovery_field() == "endpoint"

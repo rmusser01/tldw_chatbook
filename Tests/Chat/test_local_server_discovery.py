@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 import tldw_chatbook.Chat.local_server_discovery as local_discovery_module
+from tldw_chatbook.Chat.console_provider_endpoints import DEFAULT_LLAMACPP_BASE_URL
 from tldw_chatbook.Chat.local_server_discovery import (
     DEFAULT_LLAMACPP_DISCOVERY_URL,
     DEFAULT_OLLAMA_DISCOVERY_URL,
@@ -79,11 +80,15 @@ def test_model_ids_require_a_usable_sanitized_identifier(
 def test_candidates_include_wellknown_defaults_first() -> None:
     candidates = build_local_server_candidates({})
 
+    # Stock `llama-server` port (8080) first, then Chatbook's documented
+    # convention (9099), then the stock Ollama port.
     assert [candidate.base_url for candidate in candidates] == [
         DEFAULT_LLAMACPP_DISCOVERY_URL,
+        DEFAULT_LLAMACPP_BASE_URL,
         DEFAULT_OLLAMA_DISCOVERY_URL,
     ]
     assert [candidate.provider_key for candidate in candidates] == [
+        "llama_cpp",
         "llama_cpp",
         "ollama",
     ]
