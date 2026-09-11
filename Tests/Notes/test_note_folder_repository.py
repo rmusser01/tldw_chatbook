@@ -88,7 +88,16 @@ def _insert_note(
     note_id: str,
     title: str,
     content: str = "",
+    last_modified: str | None = None,
 ) -> None:
+    if last_modified is not None:
+        with repository.db.transaction() as cursor:
+            cursor.execute(
+                "INSERT INTO notes(id, title, content, client_id, last_modified) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (note_id, title, content, "folder-paging-test", last_modified),
+            )
+        return
     with repository.db.transaction() as cursor:
         cursor.execute(
             "INSERT INTO notes(id, title, content, client_id) VALUES (?, ?, ?, ?)",
@@ -1044,6 +1053,175 @@ def test_unfiled_placement_page_is_exact_ordered_and_synthetic(
         )
 
     assert observed == expected
+
+
+# --- task-32172: date ordering through paging AND the locator --------------
+
+
+def _seed_dated_folder(
+    repository: LocalNoteFolderRepository,
+) -> tuple[str, dict[str, list[str]]]:
+    """Fill one folder where NO date order coincides with the title order.
+
+    The stamps walk 25 distinct January days in a stride of 7, which is a
+    permutation because 7 and 25 are coprime -- so neither ``newest`` nor
+    ``oldest`` can be satisfied by a pager that quietly kept ordering by
+    title, and the assertions below really discriminate.
+    """
+    folder = repository.create_folder(name="Dated", parent_id=None)
+    dated: list[tuple[str, str]] = []
+    for index in range(25):
+        note_id = f"dated-note-{index:02d}"
+        stamp = f"2026-01-{(index * 7) % 25 + 1:02d}T00:00:00Z"
+        _insert_note(
+            repository,
+            note_id=note_id,
+            title=f"Note {index:02d}",
+            last_modified=stamp,
+        )
+        _attach_membership(
+            repository,
+            folder_id=folder.folder_id,
+            note_id=note_id,
+            membership_id=f"m-{index:02d}",
+        )
+        dated.append((stamp, note_id))
+    expected = {
+        "title": [f"dated-note-{index:02d}" for index in range(25)],
+        "oldest": [note_id for _, note_id in sorted(dated)],
+        "newest": [note_id for _, note_id in sorted(dated, reverse=True)],
+    }
+    assert expected["newest"] != expected["title"]
+    assert expected["oldest"] != expected["title"]
+    return folder.folder_id, expected
+
+
+@pytest.mark.parametrize("order", ["newest", "oldest"])
+def test_dated_placement_pages_and_locator_share_one_order(
+    repository: LocalNoteFolderRepository, order: str
+) -> None:
+    """task-32172 AC#1/#2: paging and the deep-link locator agree by date.
+
+    The locator's ``placement_offset`` is a rank counted with SQL that has
+    to mirror the pager's ORDER BY exactly; a rank still counted by title
+    would send the deep link to the wrong page as soon as the two orders
+    disagree, which is why both halves are asserted in one test.
+    """
+    folder_id, orders = _seed_dated_folder(repository)
+    expected = orders[order]
+
+    observed: list[str] = []
+    for offset in (0, 10, 20):
+        page = repository.page_note_placements(
+            parent_id=folder_id, limit=10, offset=offset, order=order
+        )
+        assert page.total_placements == 25
+        assert page.start_offset == offset
+        observed.extend(str(placement.note["id"]) for placement in page.placements)
+    assert observed == expected
+
+    # A note on page 2 (offsets 10-19) must locate to page 2, not page 1.
+    target = expected[15]
+    location = repository.locate_note_tree_placement(
+        note_id=target, page_size=10, order=order
+    )
+    assert location is not None
+    assert location.placement_offset == 10
+
+
+def test_placement_pages_still_default_to_title_order(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    """task-32172: an unspecified order keeps the pre-existing contract."""
+    folder_id, orders = _seed_dated_folder(repository)
+
+    page = repository.page_note_placements(parent_id=folder_id, limit=25, offset=0)
+
+    assert [
+        str(placement.note["id"]) for placement in page.placements
+    ] == orders["title"]
+
+
+def test_unfiled_date_order_breaks_ties_by_note_id_for_page_and_locator(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    """task-32172 AC#1/#2: equal timestamps still page deterministically."""
+    shared = "2026-02-02T00:00:00Z"
+    for note_id in ("u-c", "u-a", "u-b"):
+        _insert_note(
+            repository, note_id=note_id, title=f"T {note_id}", last_modified=shared
+        )
+    _insert_note(
+        repository,
+        note_id="u-newer",
+        title="A newer",
+        last_modified="2026-03-03T00:00:00Z",
+    )
+    expected = ["u-newer", "u-a", "u-b", "u-c"]
+
+    page = repository.page_note_placements(
+        parent_id=None, limit=10, offset=0, order="newest"
+    )
+
+    assert [str(placement.note["id"]) for placement in page.placements] == expected
+    for rank, note_id in enumerate(expected):
+        location = repository.locate_note_tree_placement(
+            note_id=note_id, page_size=1, order="newest"
+        )
+        assert location is not None
+        assert location.placement_offset == rank
+
+
+def test_mixed_timestamp_shapes_still_order_chronologically(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    """Qodo follow-up on task-32172: schema-default vs. app timestamp shapes
+    must not misorder same-day notes.
+
+    ``last_modified`` is ``DATETIME DEFAULT CURRENT_TIMESTAMP`` (space
+    separator), while every application writer stamps ISO
+    ``YYYY-MM-DDTHH:MM:SS.sssZ`` (``T`` separator). Comparing the raw text
+    sorts by that separator character, not by time -- a noon space-shaped
+    stamp reads as "before" a chronologically earlier morning ISO stamp
+    because ``' ' (0x20) < 'T' (0x54)``. Both the pager and the locator have
+    to normalize before comparing or they'll agree with each other on the
+    wrong order.
+    """
+    morning = "2026-01-15T06:00:00.000Z"  # chronologically first
+    noon = "2026-01-15 12:00:00"  # schema-default shape; chronologically second
+    assert noon < morning  # the raw-text trap this test pins against
+
+    _insert_note(repository, note_id="mixed-morning", title="Morning", last_modified=morning)
+    _insert_note(repository, note_id="mixed-noon", title="Noon", last_modified=noon)
+
+    page = repository.page_note_placements(
+        parent_id=None, limit=10, offset=0, order="oldest"
+    )
+    ids = [str(placement.note["id"]) for placement in page.placements]
+    assert ids.index("mixed-morning") < ids.index("mixed-noon")
+
+    location = repository.locate_note_tree_placement(
+        note_id="mixed-noon", page_size=1, order="oldest"
+    )
+    assert location is not None
+    assert location.placement_offset == 1
+
+
+@pytest.mark.parametrize(
+    "method_name", ["page_note_placements", "locate_note_tree_placement"]
+)
+def test_unknown_placement_order_is_rejected(
+    repository: LocalNoteFolderRepository, method_name: str
+) -> None:
+    """task-32172: the order reaches an ORDER BY, so it is validated closed."""
+    kwargs: dict[str, object] = (
+        {"parent_id": None, "limit": 10, "offset": 0}
+        if method_name == "page_note_placements"
+        else {"note_id": "missing-note", "page_size": 10}
+    )
+
+    with pytest.raises(FolderValidationError):
+        getattr(repository, method_name)(**kwargs, order="last_modified DESC")
 
 
 def test_branch_pages_report_authoritative_managed_folder_status(
