@@ -47,6 +47,14 @@ Where this page's controls live:
   close. That shortcut works at every terminal width, including narrow ones
   where the rail's edge handle is hidden.
 
+  The **Environment**, **Tasks**, and **Agents** sections each collapse by
+  their own header (Enter on the header, or click it) and remember their
+  open/closed state per workspace. The blocks between them are bounded
+  instead: the Sources tray scrolls inside its own frame, the run groups
+  fold behind the run block's **More** disclosure, and the remaining rows
+  are one line each — so a deep Environment expansion never pushes the
+  Scope row off the rail.
+
   In "Live work sources", the status word tells you what kind of claim it
   is. **Connected** means a runtime connection was actually probed (ACP,
   MCP). **Ready** / **Unavailable** report a local capability that depends
