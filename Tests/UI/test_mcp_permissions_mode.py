@@ -348,14 +348,23 @@ async def test_kill_switch_button_default_label_reads_off():
 
 @pytest.mark.asyncio
 async def test_kill_switch_scope_hint_states_built_in_blast_radius():
-    """task-2242: the kill switch's blast radius (it also disables the
-    built-in tools, not just MCP-sourced ones) is stated persistently on a
-    hint line under the toggle -- not hidden in a tooltip."""
+    """task-2242/task-32285: the kill switch's blast radius (it also
+    disables the built-in tools, not just MCP-sourced ones) is stated
+    persistently on a hint line under the toggle -- not hidden in a
+    tooltip. Pinned exactly (task-32285): the old copy named only
+    "calculator, date/time" -- the switch's real reach is every chat tool
+    call, including the file/note built-ins and local workspace tools
+    (`BuiltinToolGate._kill_switch()` and `LocalToolProvider`'s own kill-
+    switch check share the same `service.get_kill_switch()` read this
+    button drives), so the hint now names that too."""
     app = PermissionsModeApp()
     async with app.run_test():
         hint = app.query_one("#mcp-perm-kill-switch-hint", Static)
         text = str(hint.renderable)
-        assert "built-in tools" in text
+        assert text == (
+            "Also blocks the app's own built-in tools (calculator, "
+            "date/time, file and note tools)."
+        )
 
 
 @pytest.mark.asyncio
@@ -740,6 +749,49 @@ async def test_update_matrix_with_no_gate_breadcrumb_shows_bare_legend():
             "≡ exact-input allows · "
             "(session) approved until Chatbook exits · "
             "Space cycles Inherit → Allow → Ask → Off"
+        )
+
+
+@pytest.mark.asyncio
+async def test_legend_and_breadcrumb_are_fully_readable_at_100_columns():
+    """task-32285: live evidence at 250x50 showed the legend + gate
+    breadcrumb clipping mid-sentence ("... in Tools mode; other" then the
+    pane border). Both `#mcp-perm-legend` and `#mcp-perm-kill-switch-hint`
+    are `height: auto` (mcp_permissions_mode.py's own `BUNDLED_CSS`) --
+    this exercises that under the REAL bundled stylesheet
+    (`PermissionsModeAppWithBundledCSS`, mirrors
+    `test_matrix_and_kill_switch_have_nonzero_geometry_with_bundled_css`
+    just above), so a bundle-tier rule that outranks the widget's own
+    DEFAULT_CSS regardless of specificity (see that test's own docstring
+    for why the two tiers must both be checked) cannot silently re-cap
+    either Static back to one line."""
+    app = PermissionsModeAppWithBundledCSS()
+    async with app.run_test(size=(100, 50)) as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        breadcrumb = (
+            "3 tool gate(s) are off. Configure the workspace, web, and "
+            "Watchlists master switch in Tools mode; other registration "
+            "gates are under MCP ▸ Servers ▸ built-in row ▸ Tool gates."
+        )
+        await canvas.update_matrix(
+            [_global_row()],
+            kill_switch=False,
+            preview="global default: ask",
+            gate_breadcrumb=breadcrumb,
+        )
+        await pilot.pause()
+
+        legend = app.query_one("#mcp-perm-legend", Static)
+        # At 100 columns each line (161 and 175 chars) needs its own wrap,
+        # so a correctly-sized Static is at least 2 lines tall -- a
+        # height-1 cap would silently truncate mid-sentence instead.
+        assert legend.size.height >= 2, (
+            f"legend collapsed to height {legend.size.height} at 100 columns "
+            "-- text is being clipped, not wrapped"
+        )
+        rendered = str(legend.renderable)
+        assert rendered.endswith(
+            "are under MCP ▸ Servers ▸ built-in row ▸ Tool gates."
         )
 
 

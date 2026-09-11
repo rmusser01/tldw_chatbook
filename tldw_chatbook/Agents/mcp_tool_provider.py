@@ -97,7 +97,9 @@ USER_DENY_REFUSAL = f"tool call denied by the user. {DENIAL_POLICY}"
 #: decided, and the permissions were not Off.
 UNRESOLVED_REFUSAL = "tool call not approved (no decision recorded)"
 TIMEOUT_REFUSAL = "user did not approve within the time limit; do not retry"
-KILL_SWITCH_REFUSAL = "blocked — MCP tools are switched off"
+#: task-32285: wording unified with `console_chat_controller.
+#: KILL_SWITCH_REFUSAL` -- see that constant's docstring.
+KILL_SWITCH_REFUSAL = "tool call blocked: the chat tool kill switch is on"
 NON_TEXT_PLACEHOLDER = "[image result — not yet supported]"
 
 # `.result(timeout=...)` slack added on top of the configured per-call tool

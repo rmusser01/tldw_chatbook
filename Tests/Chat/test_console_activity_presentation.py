@@ -252,7 +252,7 @@ def test_direct_controller_review_results_are_blocked(verdict: str) -> None:
     [
         # Builtin gate copy: exact kill-switch text, plus pinned prefixes
         # whose provider-owned suffix is the runtime tool name.
-        "tool execution is disabled by the kill switch",
+        bridge_module._BUILTIN_KILL_SWITCH_REFUSAL,
         "tool is set to Off: calculator",
         user_denial_refusal("calculator"),
         "tool requires approval and none was granted: calculator",

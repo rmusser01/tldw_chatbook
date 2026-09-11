@@ -1269,7 +1269,15 @@ AGENT_LESSON_DENIED = "foreground approval denied for Agent Lesson save"
 #: find_tools, load_tools) that previously ran normally with the switch on.
 #: Deliberately names the switch so the model (and a user reading the
 #: transcript) can tell this from a per-call denial.
-KILL_SWITCH_REFUSAL = "tool call blocked: chat tool calls are disabled (kill switch)"
+#: task-32285: wording unified across every kill-switch refusal path
+#: (this controller, `Agents.mcp_tool_provider`, `Agents.
+#: local_tool_provider`, and the builtin gate's own copy hand-duplicated
+#: in `Chat.console_agent_bridge` -- see that module's
+#: `_BUILTIN_KILL_SWITCH_REFUSAL` docstring) -- four differently worded
+#: strings used to exist for the same event, and a downstream classifier
+#: (lane B's transcript status table, `console_agent_bridge.py`'s own
+#: `_refusal_statuses()`-style tables) keys on these by identity/prefix.
+KILL_SWITCH_REFUSAL = "tool call blocked: the chat tool kill switch is on"
 
 #: TASK-1861: how broad each approval scope is. A session/always grant is
 #: recorded against a tool NAME, so when per-call rows of one tool are

@@ -122,7 +122,9 @@ AskUserCallback = Callable[[list[dict[str, Any]]], dict[str, Any]]
 # Pinned refusal strings (spec §3.3) — tests assert on these verbatim.
 LOCAL_DENY_REFUSAL = "blocked by local tool permissions (set to Off)"
 LOCAL_TIMEOUT_REFUSAL = "user did not approve within the time limit; do not retry"
-LOCAL_KILL_SWITCH_REFUSAL = "blocked — local tools are switched off"
+#: task-32285: wording unified with `console_chat_controller.
+#: KILL_SWITCH_REFUSAL` -- see that constant's docstring.
+LOCAL_KILL_SWITCH_REFUSAL = "tool call blocked: the chat tool kill switch is on"
 # Fix Round H (PR-T3 review), Item 1. `_verdict_for()`'s permission-resolver
 # `except` used to collapse a RAISE into the SAME "deny" verdict as a
 # genuine configured Off -- which then rendered `LOCAL_DENY_REFUSAL`, a

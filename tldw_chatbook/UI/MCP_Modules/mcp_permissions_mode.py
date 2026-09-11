@@ -552,12 +552,18 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
                 "the chat bridge. Does not affect Hub tool tests."
             ),
         )
-        # task-2242: the kill switch's blast radius is stated persistently,
-        # not just in the tooltip -- it gates BUILT-IN tools too (see
-        # `_kill_switch_label()`), which "tool calls in chat" alone does
-        # not tell the user.
+        # task-2242/task-32285: the kill switch's blast radius is stated
+        # persistently, not just in the tooltip -- it gates BUILT-IN tools
+        # too (see `_kill_switch_label()`), which "tool calls in chat"
+        # alone does not tell the user. The old copy named only
+        # calculator/date-time; the switch's real reach is every chat
+        # tool call, including the file/note built-ins
+        # (`_GATEABLE_BUILTINS`, `Agents/tool_catalog.py`) and local
+        # workspace tools (`LocalToolProvider`'s own kill-switch check
+        # reads the same `service.get_kill_switch()` this button drives).
         yield Static(
-            "Also disables built-in tools (calculator, date/time).",
+            "Also blocks the app's own built-in tools (calculator, "
+            "date/time, file and note tools).",
             id="mcp-perm-kill-switch-hint",
             markup=False,
         )

@@ -7693,6 +7693,66 @@ async def test_preview_scoped_to_rail_selection(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_preview_counts_recompute_on_every_cycle_not_cached(tmp_path):
+    """task-32285: live evidence on dev showed that after Space set a tool
+    to Allow, the scoped preview kept reading "0 allow · 30 ask · 0 off"
+    -- only the mutation echo prefix updated, the counts underneath it did
+    not. `_build_permission_preview()` derives its counts from the SAME
+    `effective` dict `_sync_permissions_mode()` freshly resolves on every
+    standalone resync (Space-cycle/kill-switch/re-allow always pass
+    `effective=None`, forcing `_capture_permission_render_state()` to
+    re-read the store), so this pins that the counts are recomputed --
+    not a snapshot taken before the cycle -- on a 30-tool server matching
+    the live evidence's own scale."""
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        thirty_tools = [
+            HubTool(
+                server_key="local:many",
+                server_label="many",
+                source="local",
+                name=f"tool_{i:02d}",
+                description="d",
+                input_schema=None,
+                tags=(),
+                stale=False,
+                executable=True,
+            )
+            for i in range(30)
+        ]
+        workbench._last_hub_tools = thirty_tools
+        workbench._selected_server_key = "local:many"
+        await workbench._sync_permissions_mode()
+        await pilot.pause()
+
+        preview = app.query_one("#mcp-perm-preview", Static)
+        assert str(preview.renderable) == (
+            "many: 0 allow · 30 ask · 0 off — global default: ask"
+        )
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        # task-32283: the selected server's group leads the matrix, so row
+        # 0 is Global default, row 1 is many's own server-default row, and
+        # row 2 is `tool_00` -- the FIRST of the 30 tools this test just
+        # injected.
+        table.move_cursor(row=2)
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert str(preview.renderable) == (
+            "tool_00 → Allow · many: 1 allow · 29 ask · 0 off — global default: ask"
+        )
+
+
+@pytest.mark.asyncio
 async def test_preview_shows_override_count_when_no_server_selected(tmp_path):
     """UX batch item 9: with no rail selection, the preview is just the
     global default -- plus an override-count suffix once at least one

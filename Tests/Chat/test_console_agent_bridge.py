@@ -150,7 +150,11 @@ from tldw_chatbook.Agents.tool_catalog import (
     ToolCatalogRegistry,
 )
 from tldw_chatbook.Canvas.models import CanvasScope
-from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider, _default_specs
+from tldw_chatbook.Agents.local_tool_provider import (
+    LOCAL_KILL_SWITCH_REFUSAL,
+    LocalToolProvider,
+    _default_specs,
+)
 from tldw_chatbook.Agents.project_instruction_resolver import ProjectInstructionResolver
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools.workspace_tool_executor import (
@@ -9908,3 +9912,41 @@ def test_content_stall_surfaces_through_chat_call(tmp_path, monkeypatch):
     assert recorded, "expected the stall boundary handler to fire through chat_call"
     assert recorded[0][1] == "TestProvider"
     wd._SESSION_TRACKERS.clear()
+
+
+def test_kill_switch_refusal_wording_is_unified_everywhere():
+    """task-32285: four differently worded kill-switch refusals used to
+    exist (the controller's pre-dispatch review block, the MCP provider,
+    the local-tool provider, and the built-in gate's own copy hand-
+    duplicated here as `_BUILTIN_KILL_SWITCH_REFUSAL` to avoid dragging
+    `Agents.builtin_tool_gate` across this module's lazy-import boundary,
+    see `_blocked_provider_refusals()`'s docstring) -- lane B's transcript
+    classifier and this module's own `_refusal_statuses()`-style tables key
+    on these constants by identity/prefix, so the fix unifies the WORDING
+    (the constants' VALUES) while every constant NAME and import path stays
+    exactly where it was.
+
+    The builtin gate's own string (returned by `BuiltinToolGate.check()`
+    when the kill switch is on) is the single source of truth the hand
+    copy here must equal -- asserted by actually triggering `check()`
+    rather than importing the gate module at collection time, matching
+    what the brief asked for over reaching across the lazy-import
+    boundary.
+    """
+    shared = "tool call blocked: the chat tool kill switch is on"
+
+    assert bridge_module.CONTROLLER_KILL_SWITCH_REFUSAL == shared
+    assert bridge_module.MCP_KILL_SWITCH_REFUSAL == shared
+    assert LOCAL_KILL_SWITCH_REFUSAL == shared
+    assert bridge_module._BUILTIN_KILL_SWITCH_REFUSAL == shared
+
+    from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
+    from tldw_chatbook.Tools.tool_executor import CalculatorTool
+
+    class _KillSwitchOnService:
+        def get_kill_switch(self) -> bool:
+            return True
+
+    gate = BuiltinToolGate(_KillSwitchOnService())
+    reason = gate.check(CalculatorTool(), "run-1")
+    assert reason == bridge_module._BUILTIN_KILL_SWITCH_REFUSAL

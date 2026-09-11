@@ -422,7 +422,13 @@ class BuiltinToolGate:
             ``BuiltinToolProvider.invoke``).
         """
         if self._kill_switch():
-            return "tool execution is disabled by the kill switch"
+            # task-32285: wording unified with `console_chat_controller.
+            # KILL_SWITCH_REFUSAL` (and the other two dispatched-provider
+            # copies) -- `Chat.console_agent_bridge._BUILTIN_KILL_SWITCH_
+            # REFUSAL` hand-duplicates this exact string across the
+            # module's lazy-import boundary; a test asserts the two stay
+            # equal.
+            return "tool call blocked: the chat tool kill switch is on"
 
         # An effective `deny` (the user set the tool -- or its server
         # default -- to "Off") is absolute: it must be consulted BEFORE
