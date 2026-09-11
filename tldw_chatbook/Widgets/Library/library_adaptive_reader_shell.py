@@ -29,6 +29,13 @@ LIBRARY_ARROW_UPPER_POSITION_RATIO = 0.35
 #: recompose hands them focus unless someone puts it back).
 LIBRARY_ADAPTIVE_READER_GRIP_CLASS = "library-adaptive-reader-pane-grip"
 
+#: (task-32355) What a grip PAINTS where its pane's spoken name would not fit
+#: or would not be the name the guide uses. The Library pane's tooltip says
+#: "Expand Library pane"; the handle itself is the "Nav" handle
+#: (``Docs/User_Guide/library.md``), which is also the only form that reads in
+#: a five-cell column.
+LIBRARY_PANE_GRIP_NAMES = {"Library": "Nav"}
+
 
 class PaneToggleRequested(Message):
     """Request a manual toggle of one optional pane."""
@@ -161,23 +168,56 @@ class LibraryAdaptiveReaderPaneGrip(Button):
         if self.tooltip != copy:
             self.tooltip = copy
 
-    def render(self) -> Content:
-        """Paint the Library pair around the single centered Items arrow.
+    def painted_name(self) -> str:
+        """Return the name this grip paints down its own column.
+
+        (task-32355, critique #10 A cap 11 / B D10) The handle used to carry
+        its name only in ``_name`` and ``tooltip`` -- neither of which a
+        terminal paints -- so every collapsed pane was an unexplained
+        ``--->``. The column is five cells wide and twenty to forty-five rows
+        tall, so the name goes DOWN it; a horizontal label cannot hold
+        "Prompts" or "Folder files" at any Library width.
 
         Returns:
-            Content: Full-height grip content with arrows at the approved rows.
+            The letters to paint, one per row, already trimmed to the rows
+            above the first arrow. Empty when there is no room at all.
         """
+        name = LIBRARY_PANE_GRIP_NAMES.get(self.pane_label, self.pane_label)
+        return "".join(name.split())[: max(self._first_arrow_row(), 0)]
+
+    def _first_arrow_row(self) -> int:
+        """Return the topmost row ``render`` paints an arrow on."""
+        return min(self._arrow_rows())
+
+    def _arrow_rows(self) -> set[int]:
+        """Return the rows the collapse arrow is painted on."""
         height = max(self.content_region.height, 1)
         last_row = height - 1
         if self.pane == "library" and height > 1:
             upper_row = round(last_row * LIBRARY_ARROW_UPPER_POSITION_RATIO)
-            arrow_rows = {upper_row, last_row - upper_row}
-        else:
-            arrow_rows = {last_row // 2}
+            return {upper_row, last_row - upper_row}
+        return {last_row // 2}
+
+    def render(self) -> Content:
+        """Paint the pane's name above the arrows it already carries.
+
+        Returns:
+            Content: Full-height grip content -- the name one letter per row
+            from the top, then the arrows at the approved rows.
+        """
+        height = max(self.content_region.height, 1)
+        arrow_rows = self._arrow_rows()
         arrow = self.label.plain
-        return Content.from_text(
-            "\n".join(arrow if row in arrow_rows else " " for row in range(height))
-        )
+        name = self.painted_name()
+        lines = [
+            name[row]
+            if row < len(name)
+            else arrow
+            if row in arrow_rows
+            else " "
+            for row in range(height)
+        ]
+        return Content.from_text("\n".join(lines))
 
     @on(Button.Pressed)
     def request_toggle(self, event: Button.Pressed) -> None:
