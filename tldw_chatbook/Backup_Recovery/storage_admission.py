@@ -1524,6 +1524,37 @@ class MaintenanceSession:
             if not bound and not discovered:
                 raise bootstrap.RecoveryRequired("capture_source_binding_unverified")
             selected.append((source.resolve(strict=True), info.st_dev, info.st_ino))
+        with self._capture_bound_sources(tuple(selected), staging, limits, byte_budget):
+            yield
+
+    @contextmanager
+    def _replacement_capture_scope(self, plan, journal, staging, *, limits, byte_budget):
+        """Bind only rechecked prepared local originals, including damaged config."""
+        from .limits import ArchiveLimits
+        from .replacement import _checked_originals
+
+        self._check()
+        if (
+            type(limits) is not ArchiveLimits
+            or type(byte_budget) is not int
+            or not 0 < byte_budget <= limits.expanded_bytes
+        ):
+            raise ValueError("invalid_capture_budget")
+        if getattr(_local, "capture_scope", None) is not None:
+            raise bootstrap.RecoveryRequired("nested_capture_scope")
+        _, inventory = _checked_originals(plan, journal, self)
+        selected = []
+        for item in inventory.items:
+            if item.path is not None and item.path.is_file():
+                info = item.path.stat()
+                selected.append((item.path.resolve(strict=True), info.st_dev, info.st_ino))
+        if not selected:
+            raise bootstrap.RecoveryRequired("capture_sources_required")
+        with self._capture_bound_sources(tuple(selected), staging, limits, byte_budget):
+            yield
+
+    @contextmanager
+    def _capture_bound_sources(self, selected, staging, limits, byte_budget):
         staging = lexical_path(staging)
         with bootstrap.pinned_directory(staging) as fd:
             info = os.fstat(fd)

@@ -2884,6 +2884,10 @@ private staged copies. Model lease rows retain their existing cohort status.
 | sqlite:recovery.validation_schema | tldw_chatbook/Backup_Recovery/sqlite_validation | _MEMORY | installed schema reference |
 | sqlite:recovery.rag_projection_validation | tldw_chatbook/Backup_Recovery/rag_projection_validation | _READ_ONLY_URI | disposable Chroma candidate validation |
 
+| tldw_chatbook/Backup_Recovery/replacement.py | _copy_verified_payload | ZipFile | 1 | generic_boundary | private rollback verification |
+| tldw_chatbook/Backup_Recovery/replacement.py | _copy_verified_payload | open | 1 | generic_boundary | private rollback verification |
+| tldw_chatbook/Backup_Recovery/replacement.py | _copy_verified_payload | create_private_file | 1 | disposable | private rollback verification |
+| tldw_chatbook/Backup_Recovery/replacement.py | _copy_verified_payload | write | 1 | disposable | private rollback verification |
 | tldw_chatbook/Backup_Recovery/archive_reader.py | _inspect | ZipFile | 1 | generic_boundary | reviewed archive input |
 | tldw_chatbook/Backup_Recovery/archive_reader.py | _regular | open | 1 | generic_boundary | reviewed archive input |
 | tldw_chatbook/Backup_Recovery/archive_reader.py | acquire | create_private_file | 1 | disposable | private archive staging |

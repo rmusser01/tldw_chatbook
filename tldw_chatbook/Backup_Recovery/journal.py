@@ -112,11 +112,29 @@ class _CandidateReceipt(_Evidence):
     plan_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+class _RollbackSource(_Evidence):
+    logical_id: str = Field(min_length=1, max_length=1024)
+    owner_id: str = Field(min_length=1, max_length=256)
+    source: _Object
+    sidecars: dict[str, _Object] = Field(max_length=2)
+    artifacts: list[str] = Field(min_length=1, max_length=MAX_EVENTS)
+
+
+class _SqliteRollback(_RollbackSource):
+    schema_version: int = Field(ge=0)
+    payload_size: int = Field(ge=0, le=1024**4)
+    payload_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class _Rollback(_Evidence):
     ciphertext: _Object
     sealed_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     coverage: dict[str, str]
+    sqlite_groups: list[_SqliteRollback] = Field(
+        default_factory=list, max_length=MAX_EVENTS
+    )
+    credential_issues: list[str] = Field(default_factory=list, max_length=4096)
 
 
 class _Progress(_Evidence):
@@ -131,6 +149,9 @@ class _Prepared(_Evidence):
     generation: str = Field(min_length=1, max_length=256)
     mode: Literal["isolated", "replace"]
     artifacts: list[_Artifact] = Field(default_factory=list, max_length=MAX_EVENTS)
+    rollback_sources: list[_RollbackSource] = Field(
+        default_factory=list, max_length=MAX_EVENTS
+    )
     publication: _PublicationContext | None = None
     directory_metadata: list[_DirectoryRestore] = Field(
         default_factory=list, max_length=MAX_EVENTS
@@ -453,7 +474,39 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
     }.get(event, _Evidence)
     try:
         validated = model.model_validate(dict(evidence))
-        if isinstance(validated, _ActivationRecorded):
+        if isinstance(validated, _Rollback):
+            prepared = _Prepared.model_validate(prepared_record.evidence)
+            if validated.sqlite_groups:
+                coverage = {
+                    row.logical_id
+                    for row in prepared.artifacts
+                    if row.previous is not None
+                } | {row.logical_id for row in prepared.directory_metadata}
+                if set(validated.coverage) != coverage or not prepared.rollback_sources:
+                    raise ValueError("rollback_sqlite_coverage_mismatch")
+                expected = {row.logical_id: row for row in prepared.rollback_sources}
+                observed = {
+                    row.logical_id: _RollbackSource.model_validate(
+                        {
+                            key: value
+                            for key, value in row.model_dump().items()
+                            if key in _RollbackSource.model_fields
+                        }
+                    )
+                    for row in validated.sqlite_groups
+                }
+                if (
+                    len(observed) != len(validated.sqlite_groups)
+                    or observed != expected
+                ):
+                    raise ValueError("rollback_sqlite_coverage_mismatch")
+            elif prepared.rollback_sources or any(
+                row.rollback_requires_owner for row in prepared.artifacts
+            ):
+                raise ValueError("rollback_sqlite_owner_receipt_required")
+            if validated.credential_issues != sorted(set(validated.credential_issues)):
+                raise ValueError("rollback_credential_issues_invalid")
+        elif isinstance(validated, _ActivationRecorded):
             prepared = _Prepared.model_validate(prepared_record.evidence)
             if (
                 prepared.publication is None
@@ -737,6 +790,8 @@ class Journal:
 
     def record(self, event: str, evidence: Mapping[str, object]) -> None:
         """Flush one strictly typed exclusive record; failed writes remain evidence."""
+        if event == "rollback_verified" and evidence.get("sqlite_groups"):
+            raise ValueError("rollback_held_capture_required")
         with self._locked(exclusive=True) as parent:
             self._append(parent, event, evidence)
 

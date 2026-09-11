@@ -12,6 +12,7 @@ from threading import Event
 from . import archive_reader as reader
 from .admission import Admission, fcntl
 from .bootstrap import _key, _overlap, _read, _records, _registry
+from .capture import _item_validator
 from .journal import (
     _CandidateReceipt,
     _DirectoryState,
@@ -580,6 +581,105 @@ def _publication_targets(prepared):
     ]
 
 
+def _sidecar_main(item, items, owners):
+    """Resolve only the exact locally classified transient main/WAL/SHM relation."""
+    if item.owner != "sqlite.transient":
+        return item
+    main = next(
+        (
+            row
+            for row in items
+            if len(item.dependencies) == 1 and row.logical_id == item.dependencies[0]
+        ),
+        None,
+    )
+    adapter = owners.get(main.owner) if main else None
+    policy = (
+        _item_validator(adapter, main).schema_policy()
+        if adapter and main.path
+        else None
+    )
+    if (
+        main is None
+        or main.path is None
+        or policy is None
+        or not policy.schema_sql
+        or item.status != "intentionally_excluded"
+        or item.path
+        not in {Path(str(main.path) + suffix) for suffix in ("-wal", "-shm")}
+    ):
+        raise ValueError("rollback_sidecar_unclassified")
+    return main
+
+
+def _rollback_sources(plan, artifacts, owners):
+    """Bind installed SQLite ownership and physical groups before safety capture."""
+    if plan.target is None:
+        return []
+    groups = []
+    for item in plan.target.items:
+        if item.path is None or item.owner not in owners:
+            continue
+        policy = _item_validator(owners[item.owner], item).schema_policy()
+        if item.status != "included" or policy is None or not policy.schema_sql:
+            continue
+        sidecars = {}
+        for row in plan.target.items:
+            if row.owner != "sqlite.transient":
+                continue
+            main = _sidecar_main(row, plan.target.items, owners)
+            # Semantic aliases at one declared path share the same live WAL/SHM.
+            # A hardlink or another pathname never borrows that path's sidecars.
+            if row.path.exists() and (
+                main.logical_id == item.logical_id
+                or item.shared_group
+                and main.shared_group == item.shared_group
+                and main.path == item.path
+            ):
+                sidecars[row.logical_id] = row
+        paths = [item.path, *(row.path for row in sidecars.values())]
+        affected = sorted(
+            row["logical_id"]
+            for row in artifacts
+            if row["previous"] is not None
+            and any(
+                path == Path(row["target"]) or Path(row["target"]) in path.parents
+                for path in paths
+            )
+        )
+        if not affected:
+            continue
+        if not any(
+            row["previous"] is not None
+            and (
+                item.path == Path(row["target"])
+                or Path(row["target"]) in item.path.parents
+            )
+            for row in artifacts
+        ):
+            raise ValueError("rollback_sidecar_main_unaffected")
+        actual_sidecars = {
+            Path(str(item.path) + suffix)
+            for suffix in ("-wal", "-shm")
+            if os.path.lexists(str(item.path) + suffix)
+        }
+        if actual_sidecars != {row.path for row in sidecars.values()}:
+            raise ValueError("rollback_sidecar_unclassified")
+        groups.append(
+            {
+                "logical_id": item.logical_id,
+                "owner_id": item.owner,
+                "source": observe_artifact(item.path, metadata=True),
+                "sidecars": {
+                    key: observe_artifact(row.path, metadata=True)
+                    for key, row in sidecars.items()
+                },
+                "artifacts": affected,
+            }
+        )
+    return sorted(groups, key=lambda row: row["logical_id"])
+
+
 def _prepare(
     journal, candidate, plan, bootstrap_root, namespaces, selectors, generation
 ):
@@ -607,7 +707,21 @@ def _prepare(
             plan_digest=_plan_digest(plan),
             descriptor=receipt.descriptor,
         )
-        if not {str(path) for _, path in plan.selectors} <= set(context.selectors):
+        from .staging import _items
+
+        with reader._regular(journal.root / "verified-manifest.json") as stream:
+            manifest = stream.read(ArchiveLimits().manifest_bytes + 1)
+        if hashlib.sha256(manifest).hexdigest() != receipt.manifest_digest:
+            raise ValueError("verified_manifest_changed")
+        doc = reader._manifest(manifest, ArchiveLimits(), True)
+        # Managed DB/data relocation keys stay bound by the plan, not fingerprinted
+        # as config selectors. Data-only primitives may retain a local selector.
+        restored_selectors = {
+            str(item.path)
+            for item in _items(doc, plan).values()
+            if item.owner == "config" and item.status == "included"
+        }
+        if not restored_selectors <= set(context.selectors):
             raise ValueError("publication_selector_mismatch")
         _pending(
             journal,
@@ -687,15 +801,19 @@ def _prepare(
                     / hashlib.sha256(row["logical_id"].encode()).hexdigest()
                 )
                 source = target_items.get(target)
+                source = (
+                    _sidecar_main(source, plan.target.items, owners) if source else None
+                )
                 owner = owners.get(source.owner) if source else None
                 if owner is None:
                     raise ValueError("rollback_owner_unavailable")
                 for local_path, local_item in target_items.items():
                     if local_path == target or target in local_path.parents:
-                        local_owner = owners.get(local_item.owner)
+                        main = _sidecar_main(local_item, plan.target.items, owners)
+                        local_owner = owners.get(main.owner)
                         if local_owner is None:
                             raise ValueError("rollback_owner_unavailable")
-                        policy = local_owner.schema_policy()
+                        policy = _item_validator(local_owner, main).schema_policy()
                         requires_owner |= policy is not None and bool(policy.schema_sql)
             artifacts.append(
                 {
@@ -763,6 +881,7 @@ def _prepare(
                 "artifacts": artifacts,
                 "publication": context.model_dump(),
                 "installed_paths": installed_paths,
+                "rollback_sources": _rollback_sources(plan, artifacts, owners),
                 "directory_metadata": directory_metadata,
             },
         )
