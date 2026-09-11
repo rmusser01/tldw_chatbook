@@ -174,9 +174,10 @@ CONVERSATION_SCOPE_ALL = "all"
 # The canonical note-to-note link: the `(note://<id>)` tail of the markdown
 # link the Obsidian importer writes for a resolvable `[[wikilink]]`
 # (`note_import_plan_models.rewrite_wikilinks`), and the form a hand-typed link
-# uses too. Only the tail is matched: task-32129 changed the visible half of an
-# imported link to `[[target|title]]` (task-32263 the spelling it ships), and
-# what any further link-text change must keep.
+# uses too. ONLY the tail is matched, on purpose: the visible half of an
+# imported link has already changed twice (task-32129, then task-32263, which
+# ships `[[target|title]]`), while the tail is what survived both and what any
+# further link-text change must keep.
 #
 # The target character class matches the importer's own link grammar
 # (`note_import_plan_models._NOTE_LINK_TAIL`: `note://[^()\s]*`), so what this
