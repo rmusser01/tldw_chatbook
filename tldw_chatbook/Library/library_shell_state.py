@@ -133,6 +133,13 @@ LIBRARY_GLYPH_OUTCOME_SKIPPED = "–"
 # re-critique RC-07).
 LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP = "Nothing here to select yet."
 
+# task-32172: Sort re-pages the folder tree, but filter results come back
+# ranked by the search seam, so the control cannot own their order. Reason
+# and next step on the same line.
+LIBRARY_NOTES_SORT_FILTERED_TOOLTIP = (
+    "Filter results keep their own order. Clear the filter to sort."
+)
+
 
 #: Blank stand-in for the marker prefix, exactly as wide as it renders
 #: (task-31635, critique #5 item 4). The marker is part of the LABEL, so an
