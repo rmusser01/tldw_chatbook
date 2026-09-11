@@ -256,26 +256,15 @@ def test_grouped_rows_take_the_first_non_empty_rationale():
     assert _collapse_pending_calls(blanks)[0]["rationale"] == ""
 
 
-@pytest.mark.unit
-def test_needs_decision_state_is_text_labelled_not_colour_only():
-    """TASK-1845: PRODUCT.md forbids colour as the only carrier of meaning.
-
-    `.approval-row.needs-decision` was a border plus a 10% tint with no text
-    change, so the state was invisible in monochrome and to anyone who cannot
-    distinguish the tint.
-    """
-    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
-        NEEDS_DECISION_PREFIX,
-        _format_row_header,
-    )
-
-    entry = {"llm_name": "write_file", "server": "Built-in", "needs_decision": True}
-    header = _format_row_header(entry)
-    assert NEEDS_DECISION_PREFIX in header, (
-        f"needs-decision is colour-only; header reads {header!r}"
-    )
-    plain = _format_row_header({"llm_name": "write_file", "server": "Built-in"})
-    assert NEEDS_DECISION_PREFIX not in plain
+# TASK-1845's "colour is never the only carrier of state" contract for the
+# needs-decision flag is exercised end to end (row class AND header text)
+# by the live `_mark_row_needs_decision` mechanism's own tests in
+# ``test_console_mcp_approval.py`` (e.g.
+# ``test_approve_all_leaves_raw_shell_row_on_deny_and_flags_needs_decision``).
+# A unit test used to cover the same claim here via a `needs_decision` key
+# on the row entry dict, but no producer ever set that key on a real entry
+# -- `_format_row_header`'s read of it was dead code, removed alongside
+# this comment.
 
 
 @pytest.mark.unit

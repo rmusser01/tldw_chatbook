@@ -355,9 +355,6 @@ def _format_row_header(entry: Mapping[str, Any]) -> str:
     server_label = str(entry.get("server_label", "") or "")
     tool_name = str(entry.get("tool_name", "") or entry.get("llm_name", "") or "")
     header = f"{server_label} · {tool_name}" if server_label else tool_name
-    # TASK-1845: carry the needs-decision state in TEXT, not colour alone.
-    if entry.get("needs_decision"):
-        header = f"{NEEDS_DECISION_PREFIX}{header}"
     count = int(entry.get("count", 1) or 1)
     if count > 1:
         header += f" ×{count}"
@@ -704,9 +701,9 @@ class ChatApprovalCard(Container):
         self._batch_summary: str | None = None
         #: TASK-32288: the current round's absolute deadline, a LOCAL
         #: `time.monotonic()` timestamp captured once in `set_batch` -- this
-        #: card has no access to the controller's own auto-deny clock (see
-        #: the module docstring), so it counts down its own copy instead.
-        #: `None` while no deadline is armed.
+        #: card has no access to the controller's own auto-deny clock, so it
+        #: counts down its own copy instead. `None` while no deadline is
+        #: armed.
         self._deadline_at: float | None = None
         #: TASK-32288: the interval driving `_tick_deadline`, or `None` when
         #: no deadline is armed / the card is hidden -- `_stop_deadline_
@@ -1088,6 +1085,17 @@ class ChatApprovalCard(Container):
                 classes="approval-row-scope",
             )
             scope_statics.append(scope_static)
+            # Final-review fix: a raw-shell row already states its own,
+            # WIDER scope under `.approval-row-raw-scope` ("All shell ·
+            # session" covers every future command, not just this
+            # displayed one) -- mounting the generic per-decision line
+            # too would duplicate and undercut that authoritative
+            # statement. Left out of the row's children but still
+            # appended to `scope_statics` above (index-aligned with
+            # `_batch_selects`/`_batch_rows`), so `_on_batch_row_select_
+            # changed` can keep updating it -- a harmless no-op on an
+            # unmounted Static -- without a raw-shell special case there.
+            scope_children = () if entry.get("scope_notice") else (scope_static,)
             rows.append(
                 Vertical(
                     header_static,
@@ -1097,7 +1105,7 @@ class ChatApprovalCard(Container):
                         *control_children,
                         classes="approval-row-controls",
                     ),
-                    scope_static,
+                    *scope_children,
                     id=f"approval-row-{generation}-{index}",
                     classes="approval-row",
                 )

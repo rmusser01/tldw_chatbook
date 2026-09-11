@@ -319,6 +319,31 @@ async def test_raw_shell_row_shows_complete_command_and_danger_context():
 
 
 @pytest.mark.asyncio
+async def test_raw_shell_row_has_no_generic_scope_static_but_an_mcp_row_does():
+    """Final-review fix: `.approval-row-raw-scope` ("Session scope: ...") is the
+    raw-shell row's own, WIDER statement of what "All shell · session"
+    covers -- the generic per-decision `.approval-row-scope` line
+    (`DECISION_SCOPE_COPY`) would duplicate and undercut it, so a
+    raw-shell row must not also mount that Static. An ordinary MCP row
+    carries no `.approval-row-raw-scope` and must keep its
+    `.approval-row-scope` line exactly as before.
+    """
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(
+            [_sample_calls()[0], _raw_shell_call("printf ok")],
+            timeout_seconds=45.0,
+        )
+        await pilot.pause()
+
+        mcp_row, raw_row = list(app.query(".approval-row"))
+        assert list(mcp_row.query(".approval-row-scope"))
+        assert not list(raw_row.query(".approval-row-scope"))
+        assert list(raw_row.query(".approval-row-raw-scope"))
+
+
+@pytest.mark.asyncio
 async def test_raw_shell_row_defaults_to_deny_and_enter_does_not_submit():
     app = _CardHarnessApp()
     async with app.run_test() as pilot:

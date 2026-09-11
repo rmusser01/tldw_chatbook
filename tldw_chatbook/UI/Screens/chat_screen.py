@@ -17749,12 +17749,19 @@ class ChatScreen(BaseAppScreen):
         run_state = controller.run_state if controller is not None else None
         if run_state is None or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES:
             return ""
-        # Invariant: this reads the round-KEYED registry (`has_pending_
-        # approval_round`), while `_console_pending_approval_count` /
-        # `ConsoleInspectorState.pending_approval_count` (console_display_
-        # state.py) read the viewed session's mounted-card count via a
-        # separate signal -- both describe "is a card waiting" for the SAME
-        # viewed session and must never disagree.
+        # `has_pending_approval_round` reads the controller's round
+        # registry, which `run_round` (console_interrupt_rounds.py) feeds
+        # for ALL FIVE interrupt-round kinds -- approval, skill_install,
+        # skill_script, worktree_merge, and question -- not just MCP
+        # approvals. `_console_pending_approval_count` / `ConsoleInspector
+        # State.pending_approval_count` (console_display_state.py) instead
+        # count the viewed session's mounted APPROVAL card only. So during
+        # a non-approval round (e.g. an ask_user question card) this chip
+        # says "Waiting for your approval" while the inspector correctly
+        # shows no pending approval -- imprecise copy, not a bug; a
+        # kind-aware pending registry (rider, filed as a follow-up to
+        # task program 2026-09-10-approval-card-fix-wave) would let this
+        # say "Waiting for your answer." for a question round instead.
         if controller.has_pending_approval_round(session_id or ""):
             return "Waiting for your approval."
         return run_state.visible_copy or run_state.status.value
@@ -23815,6 +23822,15 @@ class ChatScreen(BaseAppScreen):
                 # `ConsoleChatController.switch_session`'s park/re-mount
                 # behaviour), so it has to be activated first for its card
                 # to be the one that mounts.
+                #
+                # This branch is checked before `_handle_console_session_
+                # tab_press` below, whose own contract is "press the
+                # already-active tab to rename it" -- so a ◆ tab press
+                # intentionally pre-empts that rename gesture even when
+                # `session_id` IS already the active/viewed session; the
+                # user still reaches rename for a ◆ tab via the session
+                # switcher's own rename choice
+                # (`_apply_console_switcher_choice`'s "rename" kind).
                 if controller.store.active_session_id != session_id:
                     await self._session._activate_native_console_session(session_id)
                 self._route_console_pending_approval_focus()

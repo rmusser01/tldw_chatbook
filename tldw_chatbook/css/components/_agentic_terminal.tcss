@@ -5965,6 +5965,13 @@ Button.console-inspector-action:disabled {
    `#approval-batch-actions` did. ChatQuestionCard is absent
    here on purpose: it already ships `height: auto; max-height: 24` in its
    own BUNDLED_CSS and measures 14 rows in that same harness. */
+/* #skill-install-buttons/#skill-script-buttons are the button rows INSIDE
+   SkillInstallConfirmCard/SkillScriptConfirmCard, not scoped to the Console
+   card ids above -- the same two cards are also mounted, under different
+   outer ids (#buddy-install/#buddy-script), inside
+   BuddyConversationModal (buddy_conversation_modal.py). The id selectors
+   here are deliberately global so both hosts get the fix; verified green
+   in the Buddy modal too. */
 #chat-resume-panel,
 #chat-skill-install-card,
 #chat-skill-script-card,
