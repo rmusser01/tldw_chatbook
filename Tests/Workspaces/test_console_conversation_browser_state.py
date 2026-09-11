@@ -34,6 +34,8 @@ def _row(
     run_marker: str = "",
     icon: str = "",
     color: str = "",
+    character_id: str | None = None,
+    character_label: str = "",
 ) -> ConsoleConversationBrowserInputRow:
     return ConsoleConversationBrowserInputRow(
         row_key=key,
@@ -55,6 +57,8 @@ def _row(
         run_marker=run_marker,
         icon=icon,
         color=color,
+        character_id=character_id,
+        character_label=character_label,
     )
 
 
@@ -363,3 +367,102 @@ def test_browser_row_appearance_participates_in_equality():
     base = _row("conv-eq", "Same title")
     recolored = _row("conv-eq", "Same title", color="#22d3ee")
     assert base != recolored
+
+
+# -- Character-chat exclusion (TASK-32309) -------------------------------------
+
+
+def _character_row(
+    key: str,
+    title: str,
+    *,
+    character_id: str = "7",
+    **kwargs,
+) -> ConsoleConversationBrowserInputRow:
+    kwargs.setdefault("scope_type", "global")
+    kwargs.setdefault("workspace_id", None)
+    kwargs.setdefault("workspace_label", "")
+    return _row(
+        key,
+        title,
+        character_id=character_id,
+        character_label="Detective Vale",
+        **kwargs,
+    )
+
+
+def test_flat_chats_lane_excludes_character_conversations():
+    """TASK-32309: global character conversations leave the flat Chats lane.
+
+    The Character section owns them; the flat Conversations list must show
+    only non-character Default/unassigned rows (the same
+    one-owner-per-conversation rule the workspace Tree already follows).
+    """
+    state = build_console_conversation_browser_state(
+        rows=(
+            _character_row("conv-c1", "Locket case"),
+            _row(
+                "conv-g1",
+                "Plain global chat",
+                scope_type="global",
+                workspace_id=None,
+                workspace_label="",
+            ),
+        ),
+        active_workspace_id=None,
+    )
+
+    assert [row.row_key for row in _chats(state).rows] == ["conv-g1"]
+
+
+def test_default_workspace_character_rows_leave_the_flat_lane():
+    """A Default-workspace character conversation is also owned by Character."""
+    state = build_console_conversation_browser_state(
+        rows=(
+            _character_row(
+                "conv-c2",
+                "Default-scoped character chat",
+                workspace_id=DEFAULT_WORKSPACE_ID,
+                workspace_label="Chats",
+            ),
+        ),
+        active_workspace_id=None,
+    )
+
+    assert _chats(state).rows == ()
+
+
+def test_character_row_identity_survives_normalization():
+    """A starred character row keeps its character identity for its owner lane.
+
+    TASK-32309: the marks overlay (`overlay_console_conversation_markers`)
+    re-derives rows from the flat lane's prepared rows, so a starred
+    character conversation must keep its character identity through the
+    builder even while the flat section itself stays empty.
+    """
+    starred_overlay = overlay_console_conversation_markers(
+        (
+            _character_row("conv-c3", "Cold case"),
+            _row(
+                "conv-g1",
+                "Plain global chat",
+                scope_type="global",
+                workspace_id=None,
+                workspace_label="",
+            ),
+        ),
+        starred_ids=("conv-c3",),
+        selected_conversation_id=None,
+        run_markers={},
+    )
+    by_key = {row.row_key: row for row in starred_overlay}
+    assert by_key["conv-c3"].starred is True
+    assert by_key["conv-c3"].character_id == "7"
+    assert by_key["conv-c3"].character_label == "Detective Vale"
+    assert by_key["conv-g1"].character_id is None
+
+    state = build_console_conversation_browser_state(
+        rows=(_character_row("conv-c3", "Cold case", starred=True),),
+        active_workspace_id=None,
+    )
+    assert _chats(state).rows == ()

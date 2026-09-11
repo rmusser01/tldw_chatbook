@@ -1690,3 +1690,82 @@ def test_keyword_metadata_updates_do_not_reindex_unrelated_text(tmp_path: Path) 
     assert reindexed == ["A"]
     assert service.keyword_search("AFTER_TERM").total == 1
     assert service.keyword_search("BEFORE_TERM").total == 2
+
+
+def test_recent_groups_exclude_workspace_scoped_conversations(tmp_path: Path) -> None:
+    """TASK-32309 workspace-wins: a character chat inside a named workspace
+    belongs to that workspace's Console Tree node, never under its character.
+
+    The Character section's recent groups must count and list only
+    global/Default-scope character conversations.
+    """
+    db = CharactersRAGDB(tmp_path / "workspace-scope.sqlite", client_id="scope")
+    character_id = _card(db, "Detective Vale")
+    try:
+        _chat(
+            db,
+            conversation_id="chat-global",
+            character_id=character_id,
+            title="Global chat",
+            content="global",
+            modified="2026-09-03T10:00:00Z",
+        )
+        _chat(
+            db,
+            conversation_id="chat-workspace",
+            character_id=character_id,
+            title="Workspace chat",
+            content="workspace",
+            modified="2026-09-03T11:00:00Z",
+        )
+        with db.transaction() as connection:
+            connection.execute(
+                "UPDATE conversations SET scope_type = 'workspace', "
+                "workspace_id = 'ws-research' WHERE id = 'chat-workspace'"
+            )
+
+        groups = CharacterConversationNavigationService(db).recent_groups()
+
+        (group,) = groups
+        assert group.total == 1
+        assert [row.title for row in group.rows] == ["Global chat"]
+    finally:
+        db.close_connection()
+
+
+def test_page_for_character_excludes_workspace_scoped_conversations(
+    tmp_path: Path,
+) -> None:
+    """The per-character paging path applies the same workspace-wins rule."""
+    db = CharactersRAGDB(tmp_path / "page-scope.sqlite", client_id="page")
+    character_id = _card(db, "Detective Vale")
+    try:
+        _chat(
+            db,
+            conversation_id="page-global",
+            character_id=character_id,
+            title="Global chat",
+            content="global",
+            modified="2026-09-03T10:00:00Z",
+        )
+        _chat(
+            db,
+            conversation_id="page-workspace",
+            character_id=character_id,
+            title="Workspace chat",
+            content="workspace",
+            modified="2026-09-03T11:00:00Z",
+        )
+        with db.transaction() as connection:
+            connection.execute(
+                "UPDATE conversations SET scope_type = 'workspace', "
+                "workspace_id = 'ws-research' WHERE id = 'page-workspace'"
+            )
+
+        key = ResolvedLocalCharacterKey(db.get_local_authority_id(), character_id)
+        page = CharacterConversationNavigationService(db).page_for_character(key)
+
+        assert page.total == 1
+        assert [row.title for row in page.rows] == ["Global chat"]
+    finally:
+        db.close_connection()

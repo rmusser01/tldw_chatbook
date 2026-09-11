@@ -1578,6 +1578,12 @@ class ConsoleWorkspaceController:
     def _row_belongs_to_flat_projection(
         row: ConsoleConversationBrowserInputRow,
     ) -> bool:
+        # TASK-32309: keep this controller-side twin in agreement with the
+        # builder's `_belongs_to_chats` -- character conversations belong to
+        # the Character section (or their workspace Tree node), never the
+        # flat lane, so the settled-rows cache must not retain them either.
+        if str(row.character_id or "").strip():
+            return False
         return row.scope_type == "global" or row.workspace_id in (
             None,
             DEFAULT_WORKSPACE_ID,
@@ -2625,6 +2631,7 @@ class ConsoleWorkspaceController:
         if store is None:
             return []
         labels = self._console_browser_workspace_labels()
+        character_labels = self._console_browser_character_labels()
         starred_ids = self._starred_console_conversation_ids()
         active_session_id = store.active_session_id
         controller = self._console_chat_controller
@@ -2637,6 +2644,23 @@ class ConsoleWorkspaceController:
                 else "workspace"
             )
             workspace_id = None if scope_type == "global" else session_workspace_id
+            # TASK-32309: a live global character session carries its
+            # character identity so the flat lane excludes it like every
+            # other character conversation. The session's own
+            # character_name wins over the cards DB (it is the
+            # authoritative projection for the bound card).
+            local_character_id = getattr(session, "local_character_id", None)
+            session_character_id = (
+                str(local_character_id() or "").strip() or None
+                if callable(local_character_id)
+                else None
+            )
+            session_character_label = ""
+            if session_character_id is not None:
+                session_character_label = (
+                    str(getattr(session, "character_name", "") or "").strip()
+                    or character_labels.get(session_character_id, "")
+                )
             persisted_id = (
                 str(session.persisted_conversation_id).strip()
                 if session.persisted_conversation_id
@@ -2677,6 +2701,8 @@ class ConsoleWorkspaceController:
                 updated_sort=str(session.updated_at or ""),
                 run_marker=run_marker,
                 queued_count=queued_count,
+                character_id=session_character_id,
+                character_label=session_character_label,
             )
             rows.append(self._apply_console_browser_star_state(row, starred_ids))
         return rows
@@ -3183,6 +3209,11 @@ class ConsoleWorkspaceController:
             return [], None, ""
 
         labels = self._console_browser_workspace_labels()
+        # TASK-32309: character card names label character rows (the flat
+        # lane excludes them; the Character section and any future consumer
+        # read the identity off the row). Deleted/missing cards degrade to
+        # an empty label.
+        character_labels = self._console_browser_character_labels()
         # The flat Conversations lane owns only unassigned/global and Default
         # records. Named-workspace search and pages have separate service calls.
         query_scopes = scopes or (
@@ -3286,6 +3317,17 @@ class ConsoleWorkspaceController:
                         if item_scope_type == "global"
                         else str(item_workspace_id or workspace_id or "").strip()
                     )
+                    # TASK-32309: a row with a character_id is owned by the
+                    # Character section (or its workspace Tree node when
+                    # workspace-scoped). The identity rides on the row; the
+                    # state builder's `_belongs_to_chats` excludes it from
+                    # the flat lane.
+                    raw_character_id = item.get("character_id")
+                    character_id = (
+                        str(raw_character_id).strip()
+                        if raw_character_id is not None
+                        else None
+                    ) or None
                     row = ConsoleConversationBrowserInputRow(
                         row_key=conversation_id,
                         conversation_id=conversation_id,
@@ -3305,6 +3347,12 @@ class ConsoleWorkspaceController:
                         source_kind="persisted",
                         updated_sort=console_persisted_row_updated_sort(item),
                         run_marker=self._console_browser_unseen_marker(conversation_id),
+                        character_id=character_id,
+                        character_label=(
+                            character_labels.get(character_id, "")
+                            if character_id is not None
+                            else ""
+                        ),
                     )
                     rows.append(
                         self._apply_console_browser_star_state(row, starred_ids)
@@ -6316,6 +6364,36 @@ class ConsoleWorkspaceController:
                 "Unable to list Console browser workspaces"
             )
             return ()
+
+    def _console_browser_character_labels(self) -> dict[str, str]:
+        """Return character card names keyed by stringified local character id.
+
+        TASK-32309: character conversation rows carry their character's
+        display name so the rows are self-describing outside the flat lane
+        (which excludes them). Only non-deleted cards are listed; rows whose
+        card is gone keep an empty label.
+        """
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        list_cards = getattr(db, "list_character_cards", None)
+        if not callable(list_cards):
+            return {}
+        try:
+            cards = list_cards(limit=500)
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Unable to list character cards for Console browser"
+            )
+            return {}
+        labels: dict[str, str] = {}
+        for card in cards:
+            if not isinstance(card, dict):
+                continue
+            card_id = card.get("id")
+            name = str(card.get("name") or "").strip()
+            text_id = str(card_id).strip() if card_id is not None else ""
+            if text_id and name:
+                labels[text_id] = name
+        return labels
 
     def _console_browser_workspace_labels(self) -> dict[str, str]:
         """Return workspace labels keyed by workspace id for browser rows."""

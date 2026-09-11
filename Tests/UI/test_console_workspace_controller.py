@@ -4586,3 +4586,161 @@ def test_expired_browser_cache_retains_only_matching_rows_during_refresh(request
         "",
     )
     assert len(screen.workers) == 2
+
+
+# -- Character-chat flat-lane exclusion (TASK-32309) ---------------------------
+
+
+@pytest.mark.asyncio
+async def test_persisted_rows_route_character_conversations_out_of_flat_lane():
+    """TASK-32309: global persisted rows carrying a character_id keep that
+    identity (the state builder then excludes them from the flat lane);
+    plain global rows stay character-free."""
+    workspace = SimpleNamespace(workspace_id="workspace-7", name="Workspace 7")
+    registry = SimpleNamespace(
+        ensure_default_workspace=lambda: workspace,
+        list_workspaces=lambda: (workspace,),
+        list_workspace_conversations=lambda _workspace_id: (),
+    )
+
+    async def list_conversations(**kwargs):
+        if kwargs["scope_type"] == "global":
+            return {
+                "items": [
+                    {"id": "chat-plain", "title": "Plain chat", "scope_type": "global"},
+                    {
+                        "id": "chat-vale",
+                        "title": "Locket case",
+                        "scope_type": "global",
+                        "character_id": 7,
+                    },
+                    {
+                        "id": "chat-deleted-card",
+                        "title": "Orphaned chat",
+                        "scope_type": "global",
+                        "character_id": 9,
+                    },
+                ],
+                "total": 3,
+            }
+        return {"items": [], "total": 0}
+
+    app = SimpleNamespace(
+        workspace_registry_service=registry,
+        chat_conversation_scope_service=SimpleNamespace(
+            list_conversations=list_conversations,
+            local_service=None,
+        ),
+        chachanotes_db=SimpleNamespace(
+            list_character_cards=lambda limit=500: [
+                {"id": 7, "name": "Detective Vale"}
+            ],
+        ),
+    )
+    controller = _workspace_controller(app_instance=app)
+
+    rows, _total, error = await controller._persisted_console_browser_rows()
+
+    assert error == ""
+    by_key = {row.row_key: row for row in rows}
+    assert by_key["chat-plain"].character_id is None
+    assert by_key["chat-vale"].character_id == "7"
+    assert by_key["chat-vale"].character_label == "Detective Vale"
+    # A conversation whose card is gone keeps its id and degrades to an
+    # empty label.
+    assert by_key["chat-deleted-card"].character_id == "9"
+    assert by_key["chat-deleted-card"].character_label == ""
+
+
+@pytest.mark.asyncio
+async def test_persisted_character_rows_leave_the_built_flat_state():
+    """End-to-end through the state builder: the persisted character row is
+    absent from the built flat Chats section."""
+    workspace = SimpleNamespace(workspace_id="workspace-7", name="Workspace 7")
+    registry = SimpleNamespace(
+        ensure_default_workspace=lambda: workspace,
+        list_workspaces=lambda: (workspace,),
+        list_workspace_conversations=lambda _workspace_id: (),
+    )
+
+    async def list_conversations(**kwargs):
+        if kwargs["scope_type"] == "global":
+            return {
+                "items": [
+                    {"id": "chat-plain", "title": "Plain chat", "scope_type": "global"},
+                    {
+                        "id": "chat-vale",
+                        "title": "Locket case",
+                        "scope_type": "global",
+                        "character_id": 7,
+                    },
+                ],
+                "total": 2,
+            }
+        return {"items": [], "total": 0}
+
+    app = SimpleNamespace(
+        workspace_registry_service=registry,
+        chat_conversation_scope_service=SimpleNamespace(
+            list_conversations=list_conversations,
+            local_service=None,
+        ),
+        chachanotes_db=SimpleNamespace(
+            list_character_cards=lambda limit=500: [
+                {"id": 7, "name": "Detective Vale"}
+            ],
+        ),
+    )
+    controller = _workspace_controller(app_instance=app)
+    controller._console_rail_body_height = lambda: None
+
+    rows, total, _error = await controller._persisted_console_browser_rows()
+    # The state build reads the TTL cache, so prime it exactly like the
+    # refresh worker does, then build the full projection.
+    controller._console_persisted_rows_cache = (rows, total, "")
+    controller._console_persisted_rows_cache_key = ("", None)
+    controller._console_persisted_rows_cache_at = time.monotonic()
+    state = controller._with_console_conversation_browser_state(
+        _minimal_workspace_context_state()
+    )
+
+    (chats,) = state.conversation_browser.sections
+    assert [row.row_key for row in chats.rows] == ["chat-plain"]
+
+
+def test_native_character_session_rows_carry_character_identity():
+    """TASK-32309: an open global character session is excluded from the flat
+    lane like every other character conversation."""
+    from tldw_chatbook.Chat.console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
+
+    session = SimpleNamespace(
+        id="s1",
+        workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
+        persisted_conversation_id=None,
+        title="Untitled conversation",
+        updated_at="2026-01-01T00:00:00Z",
+        local_character_id=lambda: 7,
+        character_name="Detective Vale",
+    )
+    plain_session = SimpleNamespace(
+        id="s2",
+        workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
+        persisted_conversation_id=None,
+        title="Plain session",
+        updated_at="2026-01-01T00:00:00Z",
+        local_character_id=lambda: None,
+        character_name=None,
+    )
+    store = SimpleNamespace(
+        active_session_id="s1",
+        sessions=lambda: (session, plain_session),
+    )
+    controller = _workspace_controller(current_chat_store_accessor=lambda: store)
+
+    rows = controller._native_console_browser_rows()
+
+    by_key = {row.row_key: row for row in rows}
+    assert by_key["native:s1"].character_id == "7"
+    assert by_key["native:s1"].character_label == "Detective Vale"
+    assert by_key["native:s2"].character_id is None
+    assert by_key["native:s2"].character_label == ""
