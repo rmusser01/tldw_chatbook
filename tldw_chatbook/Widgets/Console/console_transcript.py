@@ -5805,6 +5805,34 @@ class ConsoleTranscript(VerticalScroll):
             return None
         return widget
 
+    def _fold_row_action_menus_for_pointer(self) -> None:
+        """Fold rail row-action menus on a transcript press (ADR-068).
+
+        The screen-level outside-click dismissal returns early for
+        transcript targets -- this widget owns its in-area interaction --
+        and this widget's own cleanup only knew its selection UI, so a
+        press on the transcript (most of the screen) left a conversation or
+        workspace action menu floating. Fold both registries here with no
+        opener focus-restore: the press already expresses the user's focus
+        intent. Imports stay function-local per ADR-097 (this module is on
+        the boot path; the menu modules must not be).
+        """
+        try:
+            screen = self.screen
+        except Exception:
+            return
+        from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
+            conversation_action_menus_on_screen,
+        )
+        from tldw_chatbook.Widgets.Console.console_workspace_action_menu import (
+            workspace_action_menus_on_screen,
+        )
+
+        for menu in conversation_action_menus_on_screen(screen):
+            menu.dismiss_menu(restore_focus=False)
+        for menu in workspace_action_menus_on_screen(screen):
+            menu.dismiss_menu(restore_focus=False)
+
     async def on_mouse_down(self, event: MouseDown) -> None:
         """Dismiss More, then arm a drag on a left press over selectable text."""
         if self._kb_selection_row is not None:
@@ -5821,6 +5849,7 @@ class ConsoleTranscript(VerticalScroll):
         # proceeds; the active opener is exempt so its Button.Pressed can
         # keep owning the menu's open/reopen lifecycle.
         await self._dismiss_message_more_for_pointer(press_control)
+        self._fold_row_action_menus_for_pointer()
         # Click-outside dismissal, row-body half (final review): rows stop
         # their own Clicks (the message-selection toggle), so with a menu
         # open a press on another row's body never reaches this
