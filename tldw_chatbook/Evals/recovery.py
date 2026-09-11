@@ -314,8 +314,7 @@ def _retained_definition_paths(context) -> tuple[tuple[str, Path], ...]:
     plan = load_plan(journal)
     receipt = _CandidateReceipt.model_validate(rows[0].evidence)
     if (
-        plan.local_snapshot is not None
-        or plan.archive_digest != receipt.archive_digest
+        plan.archive_digest != receipt.archive_digest
         or publication.plan_digest != receipt.plan_digest
     ):
         raise ValueError("eval_retained_plan_unverified")
@@ -339,6 +338,15 @@ def _retained_definition_paths(context) -> tuple[tuple[str, Path], ...]:
     ):
         raise ValueError("verified_manifest_changed")
     doc = archive_reader._manifest(raw, limits, encrypted=True)
+    if plan.local_snapshot is not None:
+        from tldw_chatbook.Backup_Recovery.later_rollback import verify_snapshot_source
+
+        _, snapshot = verify_snapshot_source(plan)
+        if (
+            snapshot.manifest_digest != receipt.manifest_digest
+            or doc.credential_policy != "rollback"
+        ):
+            raise ValueError("eval_retained_plan_unverified")
     destinations = dict(plan.restore)
     configs = {
         row.logical_id
@@ -364,6 +372,12 @@ def _retained_definition_paths(context) -> tuple[tuple[str, Path], ...]:
             raise ValueError("eval_retained_destination_unverified")
         _ancestor(path)
         retained.append((row.logical_id, path))
+    if plan.local_snapshot is not None:
+        retained.extend(
+            _original_definition_paths(
+                selector, binding, rows, prepared, plan, preserved_only=True
+            )
+        )
     with journal._locked(exclusive=False) as parent:
         if journal._records(parent) != rows:
             raise ValueError("eval_retained_generation_changed")
@@ -377,14 +391,23 @@ def _rolled_back_definition_paths(
 ):
     """Use the original target and actual rollback coverage, never incoming YAML."""
     from tldw_chatbook.Backup_Recovery.activation import _rollback_installation_id
-    from tldw_chatbook.Backup_Recovery.journal import _Rollback
     from tldw_chatbook.Backup_Recovery.plan_records import load_plan
-    from tldw_chatbook.Backup_Recovery.restore_plan import _ancestor
 
     if prepared.publication is None:
         raise ValueError("eval_retained_generation_unverified")
     _rollback_installation_id(selector, root, witness, profiles, rows, prepared)
-    plan = load_plan(journal)
+    return _original_definition_paths(
+        selector, binding, rows, prepared, load_plan(journal)
+    )
+
+
+def _original_definition_paths(
+    selector, binding, rows, prepared, plan, *, preserved_only=False
+):
+    """Retain exact original sources covered by this operation's own safety copy."""
+    from tldw_chatbook.Backup_Recovery.journal import _Rollback
+    from tldw_chatbook.Backup_Recovery.restore_plan import _ancestor
+
     target = plan.target
     if target is None or not target.complete:
         raise ValueError("eval_retained_originals_unverified")
@@ -419,14 +442,19 @@ def _rolled_back_definition_paths(
             item.dependencies
         ):
             continue
+        if preserved_only and (item.logical_id, item.path) not in plan.preserve:
+            continue
         path = item.path
         if path is None or item.status != "included":
             raise ValueError("eval_retained_owner_unverified")
         saved = safety.get(item.logical_id)
-        covered = any(
-            path == Path(record.path)
-            or (record.kind == "directory" and Path(record.path) in path.parents)
-            for record in previous
+        covered = (
+            not preserved_only
+            and any(
+                path == Path(record.path)
+                or (record.kind == "directory" and Path(record.path) in path.parents)
+                for record in previous
+            )
         ) or (
             item.logical_id in plan.safety_scope
             and saved is not None

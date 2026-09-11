@@ -223,6 +223,7 @@ def plan_restore(
     profile_names: Mapping[str, str] | None = None,
     safety_scope: tuple[str, ...] = (),
     acknowledged_credential_issues: tuple[str, ...] = (),
+    local_snapshot: LocalSnapshotSource | None = None,
 ) -> RestorePlan:
     """Plan from explicit local owner selections; never load current configuration.
 
@@ -367,9 +368,23 @@ def plan_restore(
             raise ValueError("unsupported_restore_capability")
         if policy is None or owner.schema_version not in policy.versions:
             raise ValueError("unsupported_schema_version")
+    preserved_snapshot = {}
+    if local_snapshot is not None:
+        from .later_rollback import _preserved_snapshot_members, _verify_snapshot_source
+
+        _verify_snapshot_source(local_snapshot, mode, archive.digest, archive)
+        preserved_snapshot = _preserved_snapshot_members(
+            local_snapshot, archive, target
+        )
+        if any(
+            item.logical_id not in safety_scope or key in selected
+            for key, item in preserved_snapshot.items()
+        ):
+            raise ValueError("local_snapshot_preservation_unverified")
     for group in doc.dependency_groups:
         if selected.intersection(group.members) and (
-            not group.complete or not set(group.members) <= selected
+            not group.complete
+            or not set(group.members) <= selected | preserved_snapshot.keys()
         ):
             raise ValueError("dependency_group_incomplete")
     restore = tuple(
@@ -692,7 +707,14 @@ def plan_restore(
         tuple(sorted(names.items())),
         safety_scope=tuple(sorted(safety_scope)),
         acknowledged_credential_issues=tuple(sorted(acknowledged_credential_issues)),
+        local_snapshot=local_snapshot,
     )
+    if any(
+        (item.logical_id, item.path) not in plan.preserve
+        or item.path in dict(plan.restore).values()
+        for item in preserved_snapshot.values()
+    ):
+        raise ValueError("local_snapshot_preservation_unverified")
     from dataclasses import replace
 
     metadata, issues = (

@@ -27,8 +27,13 @@ from .service_storage import ensure_storage
 
 def verify_snapshot_source(plan, archive=None):
     """Match local terminal evidence, never a caller's archive-policy assertion."""
-    source = plan.local_snapshot
-    if type(source) is not LocalSnapshotSource or plan.mode != "replace":
+    return _verify_snapshot_source(
+        plan.local_snapshot, plan.mode, plan.archive_digest, archive
+    )
+
+
+def _verify_snapshot_source(source, mode, archive_digest, archive=None):
+    if type(source) is not LocalSnapshotSource or mode != "replace":
         raise ValueError("local_snapshot_source_required")
     journal = _journal(source.control_root, source.operation_id)
     with journal._locked(exclusive=False) as parent:
@@ -39,7 +44,7 @@ def verify_snapshot_source(plan, archive=None):
     proof = _Rollback.model_validate(record.evidence)
     if (
         _evidence_digest(record.evidence) != source.rollback_digest
-        or proof.sealed_digest != plan.archive_digest
+        or proof.sealed_digest != archive_digest
     ):
         raise ValueError("local_snapshot_source_changed")
     if archive is not None:
@@ -52,6 +57,85 @@ def verify_snapshot_source(plan, archive=None):
         ):
             raise ValueError("local_snapshot_source_changed")
     return journal, proof
+
+
+def _preserved_snapshot_members(source, archive, target):
+    """Match authenticated original safety sources to observed current owners."""
+    from .restore_plan import _ancestor
+
+    journal, proof = _verify_snapshot_source(source, "replace", archive.digest, archive)
+    original = load_plan(journal)
+    with journal._locked(exclusive=False) as parent:
+        rows = journal._records(parent)
+    prepared = _Prepared.model_validate(
+        next(row.evidence for row in rows if row.event == "prepared")
+    )
+    if (
+        target is None
+        or not target.complete
+        or original.target is None
+        or not original.target.complete
+        or prepared.publication is None
+        or prepared.publication.bootstrap_root
+        != str(bootstrap.default_bootstrap_root())
+        or proof.safety_sources != prepared.safety_sources
+    ):
+        raise ValueError("local_snapshot_preservation_unverified")
+    document = archive_reader.verify_sealed(archive)
+    producers = {item.logical_id: item for item in document.producer_inventory}
+    records = {item.logical_id for item in (*document.files, *document.directories)}
+    originals = {item.logical_id: item for item in original.target.items}
+    safety = {item.logical_id: item for item in proof.safety_sources}
+    preserved = {}
+    for key in original.safety_scope:
+        item, saved, producer = originals.get(key), safety.get(key), producers.get(key)
+        if (
+            item is None
+            or saved is None
+            or producer is None
+            or key not in records
+            or item.path is None
+            or item.status not in {"included", "included_directory"}
+            or saved.owner_id != item.owner
+            or producer.owner_id != item.owner
+            or producer.status != item.status
+            or set(producer.dependencies) != set(item.dependencies)
+            or Path(saved.source.path) != item.path
+        ):
+            raise ValueError("local_snapshot_preservation_unverified")
+        matches = [current for current in target.items if current.path == item.path]
+        if (
+            len(matches) != 1
+            or matches[0].owner != item.owner
+            or matches[0].status != item.status
+        ):
+            raise ValueError("local_snapshot_preservation_unverified")
+        dependencies = set()
+        for dependency in item.dependencies:
+            prior = originals.get(dependency)
+            current = [
+                entry
+                for entry in target.items
+                if prior is not None
+                and entry.path == prior.path
+                and entry.owner == prior.owner
+            ]
+            if len(current) != 1:
+                raise ValueError("local_snapshot_preservation_unverified")
+            dependencies.add(current[0].logical_id)
+        if set(matches[0].dependencies) != dependencies:
+            raise ValueError("local_snapshot_preservation_unverified")
+        _ancestor(item.path)
+        info = item.path.lstat()
+        if (
+            item.status == "included"
+            and (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1)
+            or item.status == "included_directory"
+            and not stat.S_ISDIR(info.st_mode)
+        ):
+            raise ValueError("local_snapshot_preservation_unverified")
+        preserved[key] = matches[0]
+    return preserved
 
 
 def _acquire(entry, proof, work, password, cancel):
@@ -256,20 +340,21 @@ def _preview(journal, proof, archive, target, acknowledged):
     for record in (*document.directories, *document.files):
         if record.root_id in roots and record.logical_id in original.safety_scope:
             raise ValueError("shared_scope_expansion_required")
+    snapshot = LocalSnapshotSource(
+        journal.root.parent, journal.operation_id, _evidence_digest(proof.model_dump())
+    )
+    preserved = _preserved_snapshot_members(snapshot, archive, target)
     plan = plan_restore(
         archive,
         mode="replace",
         destinations={**roots, **dict(original.selectors)},
         target=target,
         profile_names=dict(original.profile_names),
-        safety_scope=original.safety_scope,
+        safety_scope=tuple(item.logical_id for item in preserved.values()),
         acknowledged_credential_issues=acknowledged,
+        local_snapshot=snapshot,
     )
     plan = _known_absences(plan, original, prepared)
-    snapshot = LocalSnapshotSource(
-        journal.root.parent, journal.operation_id, _evidence_digest(proof.model_dump())
-    )
-    plan = replace(plan, local_snapshot=snapshot)
     verify_snapshot_source(plan, archive)
     _current_config_scope(plan, document)
     recheck_targets(plan)
