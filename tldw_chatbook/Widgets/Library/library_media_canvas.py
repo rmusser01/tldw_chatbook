@@ -59,6 +59,9 @@ from tldw_chatbook.UI.destination_recovery import (
     load_failure_callout,
 )
 from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
+from tldw_chatbook.Widgets.Library.library_choice_strip import (
+    LibraryChoiceOptionList,
+)
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
     library_row_button,
@@ -79,6 +82,13 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 _MEDIA_ROW_COMPACT_HEIGHT = 1
 _MEDIA_ROW_WIDE_HEIGHT = 2
+
+#: task-32213 review, finding 4: the F-018 reason for a "Review these" with
+#: no rows behind it. Reason then next step, on one line, like the rest of
+#: this canvas's disabled tooltips.
+LIBRARY_MEDIA_REVIEW_EMPTY_TOOLTIP = (
+    "Nothing here to review · clear the filter or pick another type."
+)
 
 # task-30043 (critique 2026-09-03 P1): the items pane sits at ~40-44 cols in
 # EVERY real shell layout (3-pane reading shell AND the compact stage), so a
@@ -1032,23 +1042,29 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             # query-echoing status copy plus the (now visible) Clear filter
             # control above are the honest recovery. Import/Show-all stay
             # the recovery for a genuinely empty source only.
-            if self.canvas.query:
-                return
-            if self.canvas.active_type is None:
-                yield Button(
-                    "Import media",
-                    id="library-media-empty-import",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-            else:
+            #
+            # task-32213 (critique #9 row 10): this block used to RETURN,
+            # taking `type:`, `sort:`, Export…, Trash, Select and Review
+            # these with it -- so the facet that produced the empty page
+            # could neither be read nor reset from the canvas. Only the
+            # recovery BUTTON is conditional now; composition falls through
+            # to the toolbar. The recovery budget is unchanged (still at
+            # most one action here), and `select_disabled` below already
+            # disables Select on a zero-row page.
+            if self.canvas.active_type is not None:
                 yield Button(
                     "Show all types",
                     id="library-media-empty-clear-type",
                     classes="library-canvas-action",
                     compact=True,
                 )
-            return
+            elif not self.canvas.query:
+                yield Button(
+                    "Import media",
+                    id="library-media-empty-import",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
         # Gate/label off the RENDERED rows, not ``canvas.count`` -- the latter
         # is the pre-filter total across ALL media types, so with a media-type
         # filter active it overstates what's shown (and stays > 0 when the
@@ -1142,13 +1158,26 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # task-28242: "Review these" pins the WHOLE filtered result as an
         # ordered review set and walks it in the Reader. A list-level
         # action, hidden in select mode like Export/Trash.
+        # task-32213 review, finding 4: with the toolbar now surviving a
+        # 0-result page, "Review these" would paint live next to a
+        # "○ Select" that says there is nothing to select -- and pressing
+        # it only raised a toast ("No media items to review."). A state
+        # that cannot act says so ON the control, in this canvas's own
+        # grammar (the "○" marker plus an F-018 reason), never only in a
+        # toast. Same predicate as ``select_disabled`` below.
+        review_disabled = rendered_count == 0
         review_btn = Button(
-            "Review these",
+            library_disabled_action_label("Review these", review_disabled),
             id="library-media-review",
             classes="library-canvas-action",
             compact=True,
-            tooltip="Review every item in this list, one by one.",
+            tooltip=(
+                LIBRARY_MEDIA_REVIEW_EMPTY_TOOLTIP
+                if review_disabled
+                else "Review every item in this list, one by one."
+            ),
         )
+        review_btn.disabled = review_disabled
         review_btn.display = not select_mode
         # task-31960: "Review these" pins the WHOLE filtered list, exactly
         # like "Export…" -- so it takes the same failed-list gate, in the
@@ -1228,7 +1257,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 options.append(option)
                 if value == self.canvas.active_type:
                     highlighted = index
-            choices = OptionList(
+            # task-32210: the house `█` cursor on the highlighted option --
+            # the plain OptionList marked it by background alone (1.09:1).
+            choices = LibraryChoiceOptionList(
                 *options,
                 id="library-media-type-choices",
                 compact=True,
@@ -1254,7 +1285,8 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 sort_options.append(option)
                 if value == current_sort:
                     sort_highlighted = index
-            sort_choices = OptionList(
+            # task-32210: same `█` cursor as the type chooser above.
+            sort_choices = LibraryChoiceOptionList(
                 *sort_options,
                 id="library-media-sort-choices",
                 compact=True,
@@ -1685,6 +1717,15 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 gate=self._gate_mutation_action,
             )
 
+        if fresh_zero:
+            # task-32213: the fresh-zero branch near the top of this method
+            # owns the page from here down -- it already yielded THIS id
+            # (with the same ``empty_copy``) and the one recovery action.
+            # Its old early return took the TOOLBAR with it, which is the
+            # bug; everything BELOW is list furniture (row viewport,
+            # "No media item selected." placeholder, "Item 0-0 of 0" pager)
+            # a zero-row page has never shown and still has no use for.
+            return
         status_text = (
             self.pager.status_copy
             if self.pager is not None and self.pager.status_copy

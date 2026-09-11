@@ -91,6 +91,10 @@ $ds-library-source-browser-width: 31;
    siblings in that row. */
 .library-toolbar-count {
     width: auto;
+    /* task-32227 (critique #9 row 26): the count sat flush against the next
+       action's focus border ("2 selected┃ Select all"). One cell, in the one
+       declaration every canvas's counter already shares. */
+    margin: 0 1 0 0;
 }
 
 /* Canvas actions gain .console-action-primary (mirrors the project's live
@@ -1290,6 +1294,12 @@ with stray left-edge border fragments), and padding 0 1 so the full
     height: 3;
     min-height: 3;
     margin: 0 0 1 0;
+    /* task-32212 (critique #9 row 9): this 3 is only honoured because
+       `LibraryRail.compose` zeroes the button's `line_pad` inline --
+       Textual's `Button` defaults to `line-pad: 1`, whose two flanking
+       cells made a 3-cell box paint 5 and shoved the rail's frame two
+       columns right. `line-pad: 0` cannot be written here: Textual's
+       `_process_integer` rejects a literal 0. See library_rail.py. */
     border: tall $ds-grid-line;
     background: $ds-surface-raised;
     color: $ds-text-primary;
@@ -1304,6 +1314,32 @@ with stray left-edge border fragments), and padding 0 1 so the full
     border: tall $ds-grid-line;
     background: $ds-surface-raised;
     color: $ds-text-primary;
+}
+
+/* task-32220 (critique #9 row 17): at the 22-column compact rail the heading
+   was cut mid-word to "Navigati". AC#1 accepts an ellipsis; the label keeps
+   its full word wherever it fits. */
+#library-rail-heading-label {
+    text-overflow: ellipsis;
+}
+
+/* task-32219 (critique #9 row 16): the rail's "there is more below" line.
+   `dock: bottom` is load-bearing -- a cue that scrolls with the content is
+   only ever on screen once you have scrolled to the bottom, where there is
+   nothing left to announce (proven live at 235x52 with the first,
+   un-docked version). Docked means the row is RESERVED out of the
+   scrollable viewport (`textual/_arrange.py` shrinks the layout region by
+   the dock spacing and grows `scroll_spacing` by it) -- which is exactly
+   why `_sync_fold_cue` discounts its own row when deciding whether the
+   rail still overflows. Nothing becomes unreachable; it costs one notch
+   of scroll. The background keeps the row opaque against the panel. */
+#library-rail-fold-cue {
+    dock: bottom;
+    height: 1;
+    width: 100%;
+    background: $ds-surface-panel;
+    color: $ds-text-muted;
+    text-overflow: ellipsis;
 }
 
 #library-conversations-filter {

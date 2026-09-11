@@ -453,6 +453,7 @@ from ...Widgets.Library import (
     library_rag_scope_shows_recovery,
     skill_editor_warning_lines,
 )
+from ...Widgets.Library.library_rail import library_db_size_rows
 from ...Widgets.Library.library_file_notes_events import (
     FileNotesEditableOpened,
     FileNotesIdentityCleared,
@@ -5067,6 +5068,7 @@ class LibraryScreen(BaseAppScreen):
         self._notes_state.pending_focus_waits_for_snapshot = False
         self._notes_state.pending_focus_generation = None
         self._notes_state.navigation_status = ""
+        self._notes_state.navigation_focus_intent = False
         branches = getattr(self._notes_state, "tree_branches", {})
         generations = getattr(self._notes_state, "tree_request_generations", {})
         navigation_requests = getattr(
@@ -7853,6 +7855,13 @@ class LibraryScreen(BaseAppScreen):
         re-derived here. One no-landing case is still knowingly left
         inside "owns": a pending Find focus whose input never mounts --
         narrow, and it ends at ``None`` rather than at a wrong widget.
+
+        task-32213: that empty page now keeps its toolbar, so the shared
+        helper always finds a target for Media and the ``is None`` leg
+        below no longer fires for a filter miss. It is kept because the
+        helper still answers ``None`` for the states that compose no
+        enabled control at all (an open type/sort chooser replaces the
+        toolbar row), and because both readers must keep agreeing.
         """
         if self._media_state.find_focus_pending:
             return True
@@ -8184,11 +8193,25 @@ class LibraryScreen(BaseAppScreen):
         left Library. Tab now cycles within ``#screen-content``; the nav bar
         keeps its own documented keys (Ctrl+digit / F-keys) and stays
         traversable once focus is genuinely in it (mirrors ``ChatScreen``).
+
+        task-32106 (PR #2571 re-review, NEW-1): the note editor's fields
+        carry a PRIORITY ``tab`` binding, and ``App._check_bindings``
+        consumes a priority key before ``on_key`` ever runs -- so for a
+        focused note field this action, not ``on_key``, is the whole Tab
+        path. ``on_key``'s preamble marks the keystroke as a Notes user
+        interaction, which is the only keyboard site that clears
+        ``resize_settling``; without it the first Tab after a terminal
+        resize was classified programmatic in ``on_descendant_focus``.
+        Marking it here covers both the field bindings and this screen's
+        own (``on_key`` marks it a second time for non-priority keys, and
+        marking twice is a no-op).
         """
+        self._mark_library_notes_user_interaction()
         self._move_library_screen_focus(1)
 
     def action_focus_previous(self) -> None:
         """Shift+Tab: the reverse of ``action_focus_next``."""
+        self._mark_library_notes_user_interaction()
         self._move_library_screen_focus(-1)
 
     def _move_library_screen_focus(self, direction: int) -> Widget | None:
@@ -9602,6 +9625,15 @@ class LibraryScreen(BaseAppScreen):
         them. Complements the unconditional disarm at the top of
         ``on_key`` -- this hook is what also covers mouse clicks, which
         never reach ``on_key`` at all.
+
+        Args:
+            event: The queued descendant-focus event. Its ``widget`` is the
+                newly focused node, evaluated for user focus intent: a
+                genuine one vetoes deferred restores and supersedes a
+                running locator that wants focus (task-32100).
+
+        Returns:
+            None.
         """
         focused = event.widget
         if focused is not self.focused:
@@ -9676,7 +9708,34 @@ class LibraryScreen(BaseAppScreen):
                 # Veto every older deferred restore before its next turn can
                 # steal the control the user just chose.
                 self._notes_state.focus_intent_generation += 1
-                if self._notes_state.navigation_status:
+                # PR #2571 review, finding 4: the supersede below does four
+                # more things -- it clears the pending focus handoff, the
+                # navigation status and the branch navigation requests. None
+                # of those run now while a focus=False locator is in flight.
+                # The status and the in-flight branch requests are that
+                # locator's own and MUST survive. The pending focus handoff
+                # is the one that could in principle go stale, and the
+                # invariant that makes this safe is: nothing arms a pending
+                # handoff while a focus=False locator runs -- the only
+                # arming site (`_exit_library_note_editor_guarded`)
+                # supersedes navigation itself and arms with the generation
+                # that supersede returns. Hoisting the handoff clear out of
+                # the supersede was TRIED and reverted: it reds the notes
+                # focus/footer pins in `test_library_canvas_sync_defects.py`,
+                # because `_rehydrate_library_notes_after_recompose` reads
+                # that same pending identity to decide it MAY restore focus
+                # at all.
+                # task-32100: a running locator that would take focus is the
+                # one this focus change overrules. A ``focus=False`` locator
+                # only reveals a row, and the row click that started it lands
+                # here ~20 ms later -- superseding it abandoned every open.
+                # Its status and its in-flight branch requests are its own and
+                # must survive, which is why the rest of the supersede does
+                # not run for it.
+                if (
+                    self._notes_state.navigation_status
+                    and self._notes_state.navigation_focus_intent
+                ):
                     LibraryScreen._supersede_library_notes_navigation(self)
             self.call_after_refresh(
                 self._record_library_notes_focus_interaction,
@@ -9744,25 +9803,42 @@ class LibraryScreen(BaseAppScreen):
     def _library_media_empty_list_fallback_target(self) -> Widget | None:
         """The control an EMPTY Media list can hand keyboard focus to.
 
-        The first of Media's four recovery controls that is both present
-        and enabled, or ``None`` when the page offers none. One owner for
-        both readers: ``_focus_library_list_entry`` lands on it, and
+        The first of the candidates below that is both present and
+        enabled, or ``None`` when the page offers none. One owner for both
+        readers: ``_focus_library_list_entry`` lands on it, and
         ``_library_focus_channel_owns_this_window`` asks whether there is
-        anything to land on at all -- a filter MISS composes none of these
-        four (the canvas returns right after its query-echoing status
-        line), so the answer has to be the same in both places or the seam
-        stands down for a channel that never arrives. The miss page's own
-        ``#library-media-filter-clear`` is deliberately NOT a fifth entry:
-        with nothing here the shared seam restores the filter ``Input``
-        (the right place to retype), and listing Clear would put the
-        predicate back into "owns" and re-open the gap.
+        anything to land on at all, so the answer has to be the same in
+        both places or the seam stands down for a channel that never
+        arrives (Qodo #2483).
+
+        task-32213 changed the shape of this question. The empty page used
+        to compose NONE of the four recovery controls on a filter MISS --
+        the canvas returned right after its query-echoing status line --
+        and the whole point of the shared owner was to say "nothing to
+        land on" there. The toolbar now survives that page, so
+        ``#library-media-type-filter`` is always present and enabled on it
+        (``fresh_zero`` excludes ``mutation_action_reason``, so
+        ``_gate_mutation_action`` never disables it) and this helper no
+        longer returns ``None`` for a Media miss.
+
+        That would have landed entry focus on ``type:`` -- the facet the
+        user did NOT type into, and the same symptom task-32214 was filed
+        for. The intent recorded here still stands: with a query in force
+        the filter ``Input`` is the right place to retype, so it LEADS the
+        list rather than being left to the shared seam. ``#library-media-
+        filter-clear`` is still deliberately not a candidate: Clear
+        discards the query rather than letting the user fix it.
         """
-        for selector in (
+        selectors = (
             "#library-media-type-filter",
             "#library-media-empty-clear-type",
             "#library-media-empty-import",
             "#library-media-retry",
-        ):
+        )
+        applied = self._library_media_browse_controller.applied_scope
+        if applied is not None and applied.query:
+            selectors = ("#library-media-filter", *selectors)
+        for selector in selectors:
             try:
                 control = self.query_one(selector, Widget)
             except (NoMatches, QueryError):
@@ -13257,18 +13333,64 @@ class LibraryScreen(BaseAppScreen):
         """Shorten ``state.handoff_label`` for the Workspace group's Handoff row.
 
         Drops the redundant "Console/RAG handoff: " prefix (the "Handoff"
-        row label already says as much) and prefixes a "●" glyph directly
-        before a nonzero blocked count, so this single line carries the
-        signal the retired blocked-state callouts used to repeat three
-        times.
+        row label already says as much). task-32230 AC#2 (critique #9 row
+        29): a nonzero blocked count used to be flagged with a "●" glyph
+        and nothing else -- a colour dot beside a number, naming neither
+        what was blocked nor how to unblock it. The count now carries the
+        rule's own reason and its next step in the house
+        ``reason · next step`` grammar, read off the eligibility decision
+        the state already holds (``LibraryWorkspaceSourceRow.reason_code``).
+        The unblocked case is unchanged and grows no dot.
         """
         label = state.handoff_label
         if label.startswith(LIBRARY_HANDOFF_LABEL_PREFIX):
             label = label[len(LIBRARY_HANDOFF_LABEL_PREFIX) :]
         match = re.search(r"(\d+) blocked", label)
-        if match and int(match.group(1)) > 0:
-            label = f"{label[: match.start()]}● {match.group(0)}{label[match.end() :]}"
-        return label
+        if not match or int(match.group(1)) == 0:
+            return label
+        blocked = tuple(
+            row for row in state.source_rows if not row.active_context_eligible
+        )
+        if not blocked:
+            return label
+        # The reason and the remedy answer different questions, so they are
+        # decided separately (PR #2581 review): one shared reason code does
+        # not imply one shared item type, and neither implies that the
+        # control the remedy names exists.
+        labels = {
+            linkable_ineligibility_label(row.reason_code) for row in blocked
+        }
+        every_block_is_linkable = "" not in labels
+        # A set whose rows disagree cannot borrow one row's label for all of
+        # them -- `not_in_active_workspace` and `cross_workspace` are both
+        # link-resolvable but say different things -- so it falls back to
+        # the aggregate rather than mis-describing the others.
+        reason = (
+            labels.pop() if len(labels) == 1 else ""
+        ) or LIBRARY_GENERIC_WORKSPACE_BLOCK
+        item_types = {row.item_type for row in blocked}
+        pronoun = "it" if len(blocked) == 1 else "them"
+        if not every_block_is_linkable:
+            # Linking cannot resolve at least one of these; the rule wrote
+            # its own recovery sentence, which is already a next step.
+            remedy = blocked[0].recovery_copy.strip().rstrip(".") or (
+                "Open the item to see why"
+            )
+        elif item_types == {"conversation"}:
+            # "Link to workspace" is a real button, and task-32056 put it on
+            # the conversation reader's header -- the ONLY reader in the repo
+            # that builds one. Naming a header for a blocked note or media
+            # item sent the reader to press something that is not there.
+            remedy = f"Link {pronoun} from the conversation's header"
+        else:
+            # Linkable, but no single control to name: the house wording for
+            # this state, the same one `#library-use-in-console`'s tooltip
+            # carries ("Copy or link blocked Library sources into the active
+            # workspace"), minus the workspace id the per-row recovery
+            # sentence would drag into a 34-cell rail row.
+            remedy = f"Copy or link {pronoun} into this workspace"
+        head = label[: match.start()].rstrip().rstrip(",")
+        return f"{head} · {match.group(0)} · {reason} · {remedy}"
 
     def _workspaces_detail_rows(
         self,
@@ -14452,12 +14574,13 @@ class LibraryScreen(BaseAppScreen):
     ) -> tuple[str, ...]:
         """Build the Status group's Details disclosure lines for the rail.
 
-        Returns up to three plain-text values: the source value (rendered
+        Returns two plain-text values, or five: the source value (rendered
         by the rail with a dimmed "Source" label), the local source counts
         (or a lookup-error/recovery block in place of the counts when the
-        local source snapshot failed to load), and -- only when the
-        DBStatusManager has cached them on the app -- the local DB file
-        sizes (F-014: telemetry relocated out of the app footer; omitted
+        local source snapshot failed to load), and then -- only when the
+        DBStatusManager has cached them on the app -- ONE VALUE PER local DB
+        file (task-32230: the rail gives each its own row so none wraps
+        mid-value; F-014: telemetry relocated out of the app footer, omitted
         entirely until first computed, never an "N/A" triplet).
         """
         runtime_value = (
@@ -14482,10 +14605,12 @@ class LibraryScreen(BaseAppScreen):
             # disagree, and only a genuine deadline claims a wait.
             #
             # (fix round 2) It joins the COUNTS value rather than becoming a
-            # fourth line: ``details_lines`` is a positional three-slot
-            # contract (Source / body / DB sizes -- see ``LibraryRail.
-            # _compose_details_body_children``), so a fourth entry landed in
-            # the DB-sizes slot and evicted the real sizes line.
+            # line of its own, and task-32230 makes that MORE load-bearing,
+            # not less: everything from index 2 onward is now a DB size (one
+            # row per source), so an extra entry appended here would not
+            # merely evict the sizes line -- it would be rendered AS a size.
+            # Both properties therefore hold together: the failure sentence
+            # never displaces a size, and each size keeps its own row.
             waited = (
                 f" (waited {LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS:g} s)"
                 if collections_count_failure == "timeout"
@@ -14495,36 +14620,33 @@ class LibraryScreen(BaseAppScreen):
                 f"{counts_or_error} · Collections count unavailable{waited} — "
                 "open Collections to load it."
             )
-        lines = [runtime_value, counts_or_error]
-        sizes_line = self._library_db_sizes_line()
-        if sizes_line is not None:
-            lines.append(sizes_line)
-        return tuple(lines)
+        return (runtime_value, counts_or_error, *self._library_db_sizes_lines())
 
-    def _library_db_sizes_line(self) -> str | None:
-        """Format the Details DB-sizes value from the app-level cache.
+    def _library_db_sizes_lines(self) -> tuple[str, ...]:
+        """Format the Details DB-size values from the app-level cache.
 
-        Single source for the sizes line's format, shared by the rail's
-        compose path (via ``_library_details_lines``) and the
-        Details-open refresh patcher
-        (``_refresh_library_details_db_sizes``) -- the recompose-
+        Single source for the sizes' format, shared by the rail's compose
+        path (via ``_library_details_lines``) and the Details-open refresh
+        patcher (``_refresh_library_details_db_sizes``) -- the recompose-
         discipline rule: the in-place updater owns the same conditional
         the compose branch owns.
 
         Returns:
-            The formatted line, or ``None`` while the DBStatusManager has
-            never cached a reading (F-014: never an "N/A" triplet).
+            One ``"<Source> <size>"`` value per database, in render order
+            (task-32230 AC#1: the rail gives each its own row, so none can
+            wrap mid-value); empty while the DBStatusManager has never
+            cached a reading (F-014: never an "N/A" triplet).
         """
         db_sizes = getattr(self.app_instance, "db_sizes_status", None)
         if not isinstance(db_sizes, dict) or not db_sizes:
-            return None
+            return ()
         prompts_size = _unbreakable_size_text(str(db_sizes.get("prompts", "?")))
         chachanotes_size = _unbreakable_size_text(str(db_sizes.get("chachanotes", "?")))
         media_size = _unbreakable_size_text(str(db_sizes.get("media", "?")))
         return (
-            f"Prompts {prompts_size} · "
-            f"Chats/Notes {chachanotes_size} · "
-            f"Media {media_size}"
+            f"Prompts {prompts_size}",
+            f"Chats/Notes {chachanotes_size}",
+            f"Media {media_size}",
         )
 
     async def _refresh_library_details_db_sizes(self) -> None:
@@ -14552,31 +14674,29 @@ class LibraryScreen(BaseAppScreen):
                     "Details-open DB size recompute failed; the disclosure "
                     "keeps its cached reading."
                 )
-        sizes_line = self._library_db_sizes_line()
-        if sizes_line is None:
-            return
-        rendered = library_dim_label_text("DB sizes", sizes_line)
-        existing = list(self.query("#library-details-db-sizes"))
-        if existing:
-            existing[0].update(rendered)
-            return
         anchors = list(self.query("#library-details-body"))
         if not anchors:
             return
-        try:
-            await anchors[0].parent.mount(
-                Static(
-                    rendered,
-                    id="library-details-db-sizes",
-                    classes="library-details-row",
-                ),
-                after=anchors[0],
-            )
-        except Exception:
-            loguru_logger.debug(
-                "Mounting the freshly computed DB-sizes line failed; the "
-                "next rail recompose renders it from the updated cache."
-            )
+        # task-32230: one row per source, so the patcher walks the same row
+        # list ``LibraryRail`` composes -- updating the rows that are there
+        # and mounting the ones that are not, each after its predecessor.
+        previous = anchors[0]
+        for row_id, rendered in library_db_size_rows(self._library_db_sizes_lines()):
+            existing = list(self.query(f"#{row_id}"))
+            if existing:
+                existing[0].update(rendered)
+                previous = existing[0]
+                continue
+            row = Static(rendered, id=row_id, classes="library-details-row")
+            try:
+                await previous.parent.mount(row, after=previous)
+            except Exception:
+                loguru_logger.debug(
+                    "Mounting the freshly computed DB-sizes rows failed; the "
+                    "next rail recompose renders them from the updated cache."
+                )
+                return
+            previous = row
 
     def _conversation_reader_list_summary(self) -> str:
         return self._conversation_reader_controller._conversation_reader_list_summary()
@@ -16300,10 +16420,17 @@ class LibraryScreen(BaseAppScreen):
             self._notes_state.navigation_generation = navigation_generation
         topology_epoch = self._notes_state.tree_topology_epoch
         lifecycle_generation = self._notes_state.tree_lifecycle_generation
-        focus_generation = getattr(self._notes_state, "focus_intent_generation", 0)
+        # task-32100: only a locator that will take focus has a stake in the
+        # focus intent. The one every note open starts (``focus=False``) just
+        # reveals and marks a row, and fencing it on focus meant the row
+        # click's own focus event abandoned it before it could land.
+        focus_generation = (
+            getattr(self._notes_state, "focus_intent_generation", 0) if focus else None
+        )
         self._notes_state.navigation_status = (
             "Locating note…" if note_id else "Locating folder…"
         )
+        self._notes_state.navigation_focus_intent = focus
         LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
 
         def current() -> bool:
@@ -16313,8 +16440,11 @@ class LibraryScreen(BaseAppScreen):
                 and topology_epoch == self._notes_state.tree_topology_epoch
                 and lifecycle_generation
                 == self._notes_state.tree_lifecycle_generation
-                and focus_generation
-                == getattr(self._notes_state, "focus_intent_generation", 0)
+                and (
+                    focus_generation is None
+                    or focus_generation
+                    == getattr(self._notes_state, "focus_intent_generation", 0)
+                )
                 and LibraryScreen._library_notes_restore_guard_is_current(
                     self, restore_guard
                 )
@@ -23485,6 +23615,21 @@ class LibraryScreen(BaseAppScreen):
             ``True`` to force-activate it, or ``None`` to defer to Textual's
             default resolution.
         """
+        if action in {"focus_next", "focus_previous"}:
+            # task-32106 (PR #2571 re-review, NEW-1). These stay universal
+            # everywhere except the canvas-only emergency stage, where
+            # ``on_key``'s ``emergency_tab`` branch OWNS Tab: it advances the
+            # emergency interaction and gives Shift+Tab its hop to
+            # ``#library-emergency-return``. A note field's PRIORITY tab
+            # binding would be consumed by ``App._check_bindings`` before
+            # ``on_key`` runs, so deactivating the action there hands the key
+            # back to the normal path and that branch keeps working. The
+            # screen's own non-priority binding never ran there either --
+            # ``on_key`` stops the event first -- so nothing else changes.
+            return not (
+                self._library_emergency_stage == "canvas-only"
+                and self._library_emergency_restore_receipt is not None
+            )
         if action in {
             "library_notes_new",
             "library_notes_focus_filter",

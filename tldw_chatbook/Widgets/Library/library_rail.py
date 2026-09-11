@@ -40,6 +40,20 @@ from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 LIBRARY_RAIL_ROW_PREFIX = "library-row-"
 
+#: task-32219 AC#2: the rail's own last line when its content runs past the
+#: fold. The scrollbar alone was not enough of a cue -- its thumb fills most
+#: of the track at 52 rows, so it reads as absent.
+#:
+#: MEASURED length, not chosen: the rail's Details column is 32 cells at 235
+#: columns, 22 at 100 and ~19 at the rail's own minimum width, so the cue has
+#: to say "there is more" AND "scroll" inside 19 cells or it wraps to two
+#: rows and costs another line of the space it is complaining about. The key
+#: hint that does not fit lives in the tooltip.
+LIBRARY_RAIL_FOLD_CUE = "▾ scroll for more"
+LIBRARY_RAIL_FOLD_CUE_TOOLTIP = (
+    "The rail has more below. Scroll it, or press F6 to move focus into it."
+)
+
 _MAX_LIBRARY_ROW_TITLE = 20
 
 
@@ -65,6 +79,53 @@ def library_dim_label_text(label: str, value: str) -> Text:
     text.append(f"{label} · ", style="dim")
     text.append(str(value))
     return text
+
+
+#: task-32230: a hanging indent marks each DB-size row as belonging to the
+#: "DB sizes" label above it. Deliberately two cells: at 100 columns the
+#: rail's Details column is 22 cells of content, and the widest real value
+#: ("Chats/Notes 1023.9MB", 20) leaves exactly two to spare.
+LIBRARY_DETAILS_CONTINUATION_PAD = "  "
+
+
+def library_db_size_rows(
+    sizes: Iterable[str],
+) -> tuple[tuple[str, Text], ...]:
+    """Build the Details DB-size rows: one widget id + renderable per source.
+
+    task-32230 AC#1 (critique #9 row 29): the three sizes used to share one
+    ``Static`` joined by "·", which wrapped mid-value at the rail's 22-cell
+    Details column ("Chats/Notes" on one line, its size on the next). A row
+    per source cannot wrap -- but MEASURED, the label cannot ride along on
+    the first of them either: ``"DB sizes · Prompts 180.0KB"`` is 26 cells
+    and wraps in exactly the same place. So the label takes its own row and
+    the values hang under it. ``#library-details-db-sizes`` stays the id of
+    the first VALUE row, which is what every existing pin queries.
+
+    Single source of the id/label rule for the three consumers that must
+    agree: ``LibraryRail`` compose, ``LibraryRail.apply_shell_state``'s
+    in-place patch, and ``LibraryScreen._refresh_library_details_db_sizes``.
+
+    Args:
+        sizes: Already-formatted ``"<Source> <size>"`` values, in order.
+
+    Returns:
+        ``(widget_id, renderable)`` pairs, in render order; empty when
+        there are no sizes to show (F-014: never an "N/A" triplet).
+    """
+    rows: list[tuple[str, Text]] = []
+    for index, size_line in enumerate(sizes):
+        if index == 0:
+            rows.append(("library-details-db-sizes-label", Text("DB sizes", "dim")))
+        rows.append(
+            (
+                "library-details-db-sizes"
+                if index == 0
+                else f"library-details-db-sizes-{index}",
+                Text(f"{LIBRARY_DETAILS_CONTINUATION_PAD}{size_line}"),
+            )
+        )
+    return tuple(rows)
 
 
 def _truncate_row_title(title: str, budget: int = _MAX_LIBRARY_ROW_TITLE) -> str:
@@ -346,6 +407,13 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             wiring; rendered inside the collapsed Details section.
     """
 
+    #: task-32219: whether the below-the-fold cue is currently up. Kept on
+    #: the RAIL, not read off the widget, because the rail recomposes on
+    #: every count/evidence/route change -- a cue rebuilt as hidden each
+    #: time was reset faster than the post-layout measurement could turn it
+    #: on, and live it never appeared at all.
+    _fold_cue_visible: bool = False
+
     def __init__(
         self,
         shell: LibraryShellState,
@@ -592,12 +660,24 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             self.query_one("#library-details-body", Static).update(
                 details_lines[1] if len(details_lines) > 1 else ""
             )
-            if len(details_lines) > 2 and details_lines[2]:
-                self.query_one("#library-details-db-sizes", Static).update(
-                    library_dim_label_text("DB sizes", details_lines[2])
-                )
+            for row_id, renderable in library_db_size_rows(
+                line for line in details_lines[2:] if line
+            ):
+                self.query_one(f"#{row_id}", Static).update(renderable)
         except NoMatches:
             self.refresh(recompose=True)
+        # task-32219: the rail's state is re-applied whenever counts,
+        # evidence or the selected route land, which is the one trigger that
+        # reliably fires AFTER a screen switch has given the rail its real
+        # size -- `on_mount` alone measured too early live (proven on a
+        # profile whose Details section was open from a saved preference:
+        # the rail was visibly clipped with no cue until an unrelated
+        # resize). Harness mounts settle without it; the live app does not.
+        self._schedule_fold_cue_sync()
+
+    def on_show(self) -> None:
+        """Re-decide the fold cue when the rail becomes visible again."""
+        self._schedule_fold_cue_sync()
 
     def apply_selection(
         self,
@@ -780,6 +860,18 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             # at a stale query had no affordance at all.
             clear = Button("x", id="library-search-clear", compact=True)
             clear.tooltip = "Clear the Library search box"
+            # task-32212 (critique #9 row 9): MEASURED, not inferred. Every
+            # region already sat inside the rail; what overflowed was this
+            # button's own CONTENT. Textual's Button carries `line-pad: 1`,
+            # flanking its label with a cell each side, so "x" painted as
+            # border(2) + " x "(3) = 5 cells inside its 3-cell box -- and
+            # Textual does not clip that. The search row's middle line
+            # therefore painted two cells long, pushing the rail's right
+            # border from column 41 to 43 and the canvas's left border with
+            # it, on every canvas and at every width. It has to be set here:
+            # `line-pad: 0` in TCSS is rejected by Textual's own integer
+            # parser, which errors on a literal 0.
+            clear.styles.line_pad = 0
             yield clear
         for section in self.shell.sections:
             yield from self._compose_section(section)
@@ -813,6 +905,35 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
                 id="library-rail-back-to-starter",
                 compact=True,
             )
+        yield self._build_fold_cue()
+
+    def _build_fold_cue(self) -> Static:
+        """The rail's own "there is more below" line (task-32219 AC#2).
+
+        At 52 rows the Details ▸ Actions group sits past the rail's fold and
+        the scrollbar reads as absent -- its thumb fills most of the track,
+        and the live review took six wheel notches to find the group at all.
+
+        ``dock: bottom`` is what makes this work at all: a cue that scrolls
+        with the content is only ever on screen once you have already
+        scrolled to the bottom, where there is nothing more to announce.
+        Verified live at 235x52 -- the un-docked first version sat below the
+        very fold it was describing.
+        """
+        fold_cue = Static(
+            LIBRARY_RAIL_FOLD_CUE,
+            id="library-rail-fold-cue",
+            classes="library-details-row",
+        )
+        fold_cue.tooltip = LIBRARY_RAIL_FOLD_CUE_TOOLTIP
+        # The rail recomposes often (counts, evidence, route changes), and a
+        # freshly composed cue that always started hidden was reset faster
+        # than the post-layout measurement could turn it on -- live, it
+        # never appeared at all. The decision lives on the rail, not on the
+        # widget, so a recompose carries it and the next measurement only
+        # has to correct it.
+        fold_cue.display = self._fold_cue_visible
+        return fold_cue
 
     def _compose_details_body_children(self) -> ComposeResult:
         """Build the Details disclosure's children from current shell state."""
@@ -838,17 +959,82 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             classes="library-details-row",
             markup=False,
         )
-        if len(details_lines) > 2 and details_lines[2]:
-            # F-014: the DB-size telemetry relocated out of the app
-            # footer lives here -- third Status row, only when the
-            # shell actually carries it (never an "N/A" triplet).
+        # F-014: the DB-size telemetry relocated out of the app footer
+        # lives here -- the Status rows after the counts, only when the
+        # shell actually carries them (never an "N/A" triplet). task-32230:
+        # one row per source, so no value wraps at the rail's width.
+        for row_id, renderable in library_db_size_rows(
+            line for line in details_lines[2:] if line
+        ):
             yield Static(
-                library_dim_label_text("DB sizes", details_lines[2]),
-                id="library-details-db-sizes",
+                renderable,
+                id=row_id,
                 classes="library-details-row",
             )
         if self.workspaces_body_factory is not None:
             yield from self.workspaces_body_factory()
+
+    def on_mount(self) -> None:
+        """Settle the below-the-fold cue once the rail has a real height.
+
+        No ``super()`` call: Textual dispatches EVERY class's own handler
+        along the MRO, so chaining here would double-fire the mixins'.
+        """
+        self._schedule_fold_cue_sync()
+
+    def on_resize(self, event: Resize) -> None:
+        """Re-decide the below-the-fold cue whenever the rail changes size.
+
+        Args:
+            event: Textual's resize event for this rail. Its ``size`` is
+                deliberately NOT read -- the decision needs ``max_scroll_y``
+                from the layout this resize is about to produce, not the
+                one it reports, so the handler only reschedules the
+                measurement (see ``_schedule_fold_cue_sync``).
+        """
+        self._schedule_fold_cue_sync()
+
+    def watch_virtual_size(self) -> None:
+        """Re-decide the cue whenever the rail's CONTENT height changes.
+
+        The rail's own size does not move when a section disclosure opens
+        (the screen just flips that body's ``display``), so ``on_resize``
+        alone never sees the case this cue exists for: Details opening and
+        pushing Actions past the fold.
+        """
+        self._schedule_fold_cue_sync()
+
+    def _schedule_fold_cue_sync(self) -> None:
+        """Measure the fold AFTER the layout that prompted the measurement.
+
+        ``max_scroll_y`` still reports the PREVIOUS layout inside
+        ``on_mount`` and inside the ``virtual_size`` watcher, so measuring
+        there reads zero overflow for a rail that is about to overflow.
+        Proven live at 235x52 with Details open from a saved preference:
+        the cue stayed hidden under a visibly clipped rail until an
+        unrelated resize happened to re-run the check.
+        """
+        if self.is_running:
+            self.call_after_refresh(self._sync_fold_cue)
+
+    def _sync_fold_cue(self) -> None:
+        """Show the fold cue only while the rail actually scrolls.
+
+        The cue is docked to the rail's bottom edge, so showing it takes a
+        row off the scrollable viewport; the overflow test discounts that
+        row when the cue is already up, or a rail that overflows by exactly
+        one line would toggle it on and off forever. The write is also
+        guarded, so a settled rail schedules no further work.
+        """
+        try:
+            cue = self.query_one("#library-rail-fold-cue", Static)
+        except NoMatches:
+            return
+        wanted = (self.max_scroll_y - (1 if cue.display else 0)) > 0
+        self._fold_cue_visible = wanted
+        if cue.display != wanted:
+            cue.display = wanted
+
     def _row(self, row_id: str) -> LibraryRailRow:
         """Return one canonical row from the full shell state."""
         return next(

@@ -1173,7 +1173,16 @@ def build_library_media_browse_state(
     )
     empty_copy = ""
     if not rows:
-        if result.scope.query:
+        if result.scope.query and result.scope.media_type is not None:
+            # task-32213 (critique #9 row 10): BOTH facets produced this
+            # empty page, so the sentence names both -- a query miss inside
+            # a type scope used to read as if the whole library had been
+            # searched, and the type went unmentioned.
+            empty_copy = (
+                f"No media of type '{result.scope.media_type}' matched "
+                f"“{result.scope.query}” in titles, content or keywords."
+            )
+        elif result.scope.query:
             # task-31274: name the fields the filter actually searched
             # (LIBRARY_BROWSE_SEARCH_FIELDS in media_reading_scope_service).
             empty_copy = (

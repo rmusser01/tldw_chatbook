@@ -29,6 +29,8 @@ from Tests.UI.test_library_shell import (
     _seed_conversations,
     _two_conversations,
     _two_notes,
+    _task10_activate_with_keyboard,
+    _wait_for_condition,
     _wait_for_library_shell,
     _wait_for_selector,
 )
@@ -666,13 +668,10 @@ async def test_every_sort_option_renders_in_the_narrowest_pane() -> None:
 async def test_pressing_a_sort_option_applies_that_sort(monkeypatch) -> None:
     """task-32128 AC#3: the composed option really applies its sort value.
 
-    The press -> apply round trip used to be pinned in the shell by
-    `test_library_shell_notes_sort_opens_direct_choices_and_applies_one_value`,
-    which now only asserts Sort's ABSENCE (the seeded shell always builds the
-    folder tree, so it composes no Sort control to press). Nothing else
-    asserted that pressing an option changes the sort, so the two real halves
-    are joined here: the option Button this canvas composes, and the
-    controller handler the screen routes its press to.
+    The two real halves are joined here: the option Button this canvas
+    composes, and the controller handler the screen routes its press to.
+    The shell's own press -> apply round trip is
+    `test_library_shell_notes_sort_opens_direct_choices_and_applies_one_value`.
     """
     state = LibraryNotesListState(
         rows=(LibraryNotesListRow("n1", "Alpha", "2h", False),),
@@ -717,6 +716,149 @@ async def test_pressing_a_sort_option_applies_that_sort(monkeypatch) -> None:
     assert fake._library_notes_select_mode is False
     assert cleared == [True]
     assert synced == ["notes"]
+
+
+def _adopt_screen_on(handler_name: str):
+    """Bind a harness method to whatever ``LibraryScreen.<handler_name>`` is.
+
+    Textual's ``@on`` records ``(message type, parsed selectors)`` on the
+    function object as ``_textual_on``; copying that list across is the whole
+    job, and it keeps the selector strings in exactly one place -- production.
+    """
+    decorations = getattr(getattr(LibraryScreen, handler_name), "_textual_on", None)
+    assert decorations, f"LibraryScreen.{handler_name} carries no @on decoration"
+
+    def decorate(method):
+        method._textual_on = list(decorations)
+        return method
+
+    return decorate
+
+
+class _SortKeyboardApp(_CanvasApp):
+    """`_CanvasApp` plus the two Sort routes ``LibraryScreen`` declares.
+
+    The canvas composes the real Sort Buttons but has no screen above it to
+    dispatch their presses. Re-typing the screen's two selectors here would
+    pin this harness's copy of them rather than production's, so
+    ``_adopt_screen_on`` lifts the real ``@on`` decorations off
+    ``LibraryScreen``'s own methods instead: edit the selector string in
+    ``library_screen.py`` and this test binds the edited one. Everything
+    between the key press and the controller handler -- focus traversal,
+    ``Button.Pressed``, the selector match -- is then Textual's own, which
+    is the half a direct handler call cannot reach.
+    """
+
+    def __init__(self, *, screen_state, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.screen_state = screen_state
+
+    @_adopt_screen_on("handle_library_notes_sort")
+    def _open_sort_choices(self, event: Button.Pressed) -> None:
+        LibraryNotesController.handle_library_notes_sort(self.screen_state, event)
+
+    @_adopt_screen_on("handle_library_notes_sort_choice")
+    def _apply_sort_choice(self, event: Button.Pressed) -> None:
+        LibraryNotesController.handle_library_notes_sort_choice(
+            self.screen_state, event
+        )
+
+
+@pytest.mark.asyncio
+async def test_sort_is_operable_by_keyboard_on_the_flat_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """task-32175 review round 1: Sort's keyboard round trip, re-pinned here.
+
+    ``test_library_note_keyboard_capability_matrix[filter_sort]`` used to
+    drive ``#library-notes-sort`` -> ``#library-notes-sort-oldest`` with Tab
+    and Enter. It was split to ``filter`` while task-32128 had Sort off the
+    folder tree, and the keyboard half went with it; task-32172 has since put
+    Sort back on the tree, but that node is red for an unrelated
+    filter-submit defect (task-32201), so this stays Sort's keyboard pin
+    either way. Keyboard completeness was a P1 of the Library critique.
+
+    What this pins: Textual's focus traversal and press dispatch, through
+    ``LibraryScreen``'s own ``@on`` selectors (adopted, not retyped -- see
+    ``_adopt_screen_on``), into the real controller handlers. Change either
+    selector string in ``library_screen.py`` and this goes red.
+
+    What it does not pin: that ``LibraryScreen`` itself binds those handlers.
+    The screen is too heavy to mount in this file, so the harness App stands
+    in for it; the screen's own method binding is covered where the screen is
+    mounted.
+
+    Args:
+        monkeypatch: Replaces the controller's ``_sync_library_canvas`` seam,
+            which needs a whole screen, with a repaint of this canvas from the
+            state the handler just wrote -- the same attribute-set-then-
+            ``refresh(recompose=True)`` that ends ``LibraryNotesCanvas.
+            sync_state``.
+    """
+    repaged: list[bool] = []
+    screen_state = SimpleNamespace(
+        _library_notes_mutation_fenced=lambda: False,
+        _library_notes_sort="newest",
+        _library_notes_sort_choices_visible=False,
+        _library_notes_select_mode=False,
+        _library_notes_row_selection=SimpleNamespace(clear=lambda: None),
+        # task-32172: a changed sort value IS the tree's repository ORDER BY,
+        # so the handler must ask for a re-page rather than re-sorting the
+        # loaded window (which could not move a note across a page boundary).
+        _request_library_notes_tree_initial_load=lambda: repaged.append(True),
+    )
+    app = _SortKeyboardApp(
+        pane_width=100,
+        list_state=_list_state(
+            rows=(LibraryNotesListRow("n1", "Alpha", "2h", False),)
+        ),
+        screen_state=screen_state,
+    )
+
+    def _resync(_screen, kind, **_kwargs) -> None:
+        # Stands in for `_sync_library_canvas`, which needs a whole screen.
+        # Both handlers under test only ask it to repaint the canvas from
+        # the state they just wrote, which is what this does -- attribute
+        # assignment then `refresh(recompose=True)`, exactly the tail of
+        # `LibraryNotesCanvas.sync_state`.
+        assert kind == "notes"
+        canvas = app.query_one("#library-notes-canvas", LibraryNotesCanvas)
+        canvas.list_state = replace(
+            canvas.list_state,
+            sort_choices_visible=screen_state._library_notes_sort_choices_visible,
+        )
+        canvas.sort_mode = screen_state._library_notes_sort
+        canvas.refresh(recompose=True)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Library_Modules.library_notes_controller"
+        "._sync_library_canvas",
+        _resync,
+    )
+
+    async with app.run_test(size=WIDE) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        assert not app.query("#library-notes-sort-choices")
+
+        await _task10_activate_with_keyboard(screen, pilot, "#library-notes-sort")
+        await _wait_for_selector(screen, pilot, "#library-notes-sort-oldest")
+        assert screen_state._library_notes_sort_choices_visible is True
+
+        await _task10_activate_with_keyboard(
+            screen, pilot, "#library-notes-sort-oldest"
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: screen_state._library_notes_sort == "oldest",
+            message="Keyboard Enter on the Oldest option never applied the sort.",
+        )
+
+    # The option's own side effects, so this pins the applied sort and not
+    # merely that some handler ran.
+    assert screen_state._library_notes_sort_choices_visible is False
+    assert screen_state._library_notes_select_mode is False
+    assert repaged == [True], "the changed sort never asked the tree to re-page"
 
 
 # -- task-32137: rows carry an age and duplicates are distinguishable -----
