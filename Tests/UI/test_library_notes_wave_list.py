@@ -541,10 +541,13 @@ class _RestoreService(_BranchService):
         )
 
 
-@pytest.mark.parametrize("parent", [None, "ideas"])
+@pytest.mark.parametrize(
+    ("parent", "start_expanded"),
+    [(None, False), ("ideas", True), ("ideas", False)],
+)
 @pytest.mark.asyncio
 async def test_undo_delete_returns_the_row_to_the_tree_projection(
-    monkeypatch, parent: str | None
+    monkeypatch, parent: str | None, start_expanded: bool
 ) -> None:
     """task-32124 AC#1/#2: Undo restores the row itself, not only the count.
 
@@ -552,10 +555,14 @@ async def test_undo_delete_returns_the_row_to_the_tree_projection(
     not asserted here: this fake stubs `_restore_library_notes_focus_identity`
     (there is no DOM), so the pin is the SELECTION the restore lands on, and
     focus is evidenced live (caps/05-undo-row-returns.txt).
+
+    task-32255 AC#3: the ``("ideas", False)`` case starts with the target
+    folder COLLAPSED -- the state the critique saw a restore land in, where
+    a row that returns to a shut branch is a receipt the user cannot check.
     """
     service = _RestoreService(parent)
     fake = _branch_screen_fake(service)
-    if parent is not None:
+    if parent is not None and start_expanded:
         fake._notes_state.tree_expanded_ids = {parent}
     fake._notes_state.delete_receipt = None
     fake._local_source_records = {"notes": ()}
@@ -624,6 +631,92 @@ async def test_undo_delete_returns_the_row_to_the_tree_projection(
     )
     assert restored[0].placement_id == expected
     assert fake._notes_state.tree_selected_placement_id == expected
+    if parent is not None:
+        # task-32255 AC#1: a row restored into a shut folder is invisible,
+        # so the restore opens it -- from either starting state.
+        assert parent in fake._notes_state.tree_expanded_ids
+
+
+class _FailingReloadRestoreService(_RestoreService):
+    """Restore succeeds; the branch the row returns to fails to re-page.
+
+    The shape the critique hit: the note comes back and the count moves,
+    but the slice reload behind it does not answer.
+    """
+
+    async def page_note_placements(self, **kwargs):
+        if self.restored and kwargs["parent_id"] == self.parent:
+            raise RuntimeError("placements offline")
+        return await super().page_note_placements(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_undo_opens_the_restored_folder_even_when_its_reload_fails(
+    monkeypatch,
+) -> None:
+    """task-32255 AC#1: the reveal is not all-or-nothing on the locator.
+
+    The locator resolves the folder path first and the placement second,
+    but banked every expansion until BOTH had answered -- so a branch
+    reload that failed after the restore committed left the folder shut
+    and the pane silent: the note was back, and nothing on screen said so.
+    """
+    service = _FailingReloadRestoreService("ideas")
+    fake = _branch_screen_fake(service)
+    fake._notes_state.delete_receipt = None
+    fake._local_source_records = {"notes": ()}
+    fake._local_source_counts = {"notes": 0}
+    fake._library_notes_mutation_in_flight = True
+    fake._library_note_delete_receipt = None
+    fake._selected_note_id = ""
+    fake._restore_library_notes_focus_identity = lambda *_a, **_k: None
+    fake._focus_library_note_control = lambda *_a, **_k: None
+    fake._library_notes_restore_guard_is_current = lambda *_a, **_k: True
+    fake._refresh_library_notes_trash = lambda: None
+    fake._source_record_id = LibraryScreen._source_record_id
+    fake._append_library_note_source_record = MethodType(
+        LibraryNotesController._append_library_note_source_record, fake
+    )
+    fake._run_library_service_call = _passthrough_service_call
+    fake._locate_library_notes_tree_target = MethodType(
+        LibraryScreen._locate_library_notes_tree_target, fake
+    )
+    fake._reconcile_library_notes_tree_mutation = MethodType(
+        LibraryScreen._reconcile_library_notes_tree_mutation, fake
+    )
+    fake._notes_state.tree_pending_target_placement_id = ""
+    fake._notes_state.mutation_in_flight = False
+    fake._notes_state.notice = ""
+    fake._load_library_notes_tree_slice = MethodType(
+        LibraryScreen._load_library_notes_tree_slice, fake
+    )
+    fake._build_library_notes_tree_projection = MethodType(
+        LibraryScreen._build_library_notes_tree_projection, fake
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Library_Modules.library_notes_controller._sync_library_canvas",
+        lambda *_a, **kwargs: (
+            kwargs["then"]() if kwargs.get("then") is not None else None
+        ),
+    )
+
+    for key in (
+        NotesBranchKey(None, "folders"),
+        NotesBranchKey(None, "placements"),
+        NotesBranchKey("ideas", "placements"),
+    ):
+        await LibraryScreen._load_library_notes_tree_slice(
+            fake, key, direction="replace", offset=0
+        )
+
+    await LibraryNotesController._undo_library_note_delete(
+        fake, LibraryNoteDeleteReceipt(note_id="n1", title="n1", expected_version=2)
+    )
+
+    assert "ideas" in fake._notes_state.tree_expanded_ids, (
+        "the restored note's folder stayed shut, so the row it holds is "
+        "invisible and the failed reload says nothing"
+    )
 
 
 async def _passthrough_service_call(call, *, isolate_in_worker=False, **kwargs):
