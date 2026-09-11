@@ -456,3 +456,18 @@ CORE_SCHEMAS = (
         ),
     ),
 )
+
+
+# TASK-31989: the shipped native dictionary updater recreates this one trigger
+# with fixed indentation. Retain both exact full schemas; never normalize SQL
+# supplied by a source/archive or import the ordinary chat runtime here.
+_CHAT_DICTIONARIES_INITIAL_TRIGGER = "CREATE TRIGGER chat_dictionaries_au\nAFTER UPDATE ON chat_dictionaries BEGIN\n  INSERT INTO chat_dictionaries_fts(chat_dictionaries_fts, rowid, name, description, content)\n  SELECT 'delete', OLD.id, OLD.name, OLD.description, OLD.content\n  WHERE OLD.deleted = 0;\n\n  INSERT INTO chat_dictionaries_fts(rowid, name, description, content)\n  SELECT NEW.id, NEW.name, NEW.description, NEW.content\n  WHERE NEW.deleted = 0;\nEND"
+_CHAT_DICTIONARIES_UPDATED_TRIGGER = "CREATE TRIGGER chat_dictionaries_au\n        AFTER UPDATE ON chat_dictionaries BEGIN\n          INSERT INTO chat_dictionaries_fts(chat_dictionaries_fts, rowid, name, description, content)\n          SELECT 'delete', OLD.id, OLD.name, OLD.description, OLD.content\n          WHERE OLD.deleted = 0;\n\n          INSERT INTO chat_dictionaries_fts(rowid, name, description, content)\n          SELECT NEW.id, NEW.name, NEW.description, NEW.content\n          WHERE NEW.deleted = 0;\n        END"
+CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = tuple(
+    _CHAT_DICTIONARIES_UPDATED_TRIGGER
+    if sql == _CHAT_DICTIONARIES_INITIAL_TRIGGER
+    else sql
+    for sql in next(
+        row[2] for row in CORE_SCHEMAS if row[0] == "db.chachanotes.primary"
+    )
+)

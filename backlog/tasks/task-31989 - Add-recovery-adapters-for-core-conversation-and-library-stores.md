@@ -3,15 +3,15 @@ id: TASK-31989
 title: Add recovery adapters for core conversation and library stores
 status: Done
 assignee:
-  - '@codex'
-created_date: '2026-09-07 23:50'
-updated_date: '2026-09-08 06:36'
+- '@codex'
+created_date: 2026-09-07 23:50
+updated_date: 2026-09-11 19:01
 labels:
-  - backup-recovery
+- backup-recovery
 dependencies:
-  - task-31978
-  - task-31986
-  - task-31987
+- task-31978
+- task-31986
+- task-31987
 ---
 
 ## Description
@@ -47,7 +47,7 @@ Review fix round 1 plan (ADR-126 remains applicable): reproduce failed-construct
 
 ## Implementation Notes
 
-<!-- SECTION:NOTES:BEGIN -->
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Implemented the five frozen core recovery adapters and exact current SQL policies (ChaChaNotes 42, Media 6, Prompts 4, Collections 1, Ingest Jobs 5), preserving every SQLite record/FTS/BLOB through registered committed-WAL snapshots. Pure discovery honors existing custom selectors and profile-qualified dependencies. Historical/physical schema variants are unsupported; no schema bump or runtime constructor/migration is used. Relative managed locators/BLOB identities survive relocation; external sync/ingest locators stay inert. The auxiliary dependency validator checks actual local cross-store references using only the item's exact declared profile-qualified IDs; server-origin ingestion remains a separate boundary.
 
 ADR: [ADR-126](../decisions/126-complete-local-backup-and-recovery.md). Controller rulings extend the task narrowly with native-issued maintenance capture scopes, a frozen SQL catalog, exact dynamic owner-dispatch guard qualification, and shared-lock reuse of existing fixed admission authority. Capture requires verified bindings, source namespaces plus bootstrap.unbound, exact source read-only authority, disjoint private staging and native handle retirement. Actual process tests exposed and fixed idempotent registration blocking disjoint profiles; established authority now opens without recreation and verifies marker/registry identity under shared locking. No Complete/replacement product flow is exposed.
@@ -68,8 +68,10 @@ Independent spec and quality review passed after one fix round; all acceptance c
 Review fix round 1: capture now refuses custom factories before either constructor phase or file creation, preserving ordinary owner factory compatibility. Dependency validation scans each referenced installed peer once per invocation and reuses bounded read-only connections, including its own source reader. Real file-backed constructor regressions and nine-reference validation/connection-count evidence are GREEN; the prior capture custom-close branch is superseded by default-factory-only qualification. Hard base-native-close fault injection remains a downstream qualification limit.
 
 Fix-round targeted verification: core **62 passed**; relevant SQLite constructor/copy/close **22 passed**; ordinary custom-factory lifecycle **2 passed**; exact SQLite/recovery inventories **38 passed**. Final focused regressions after fixture-close cleanup **4 passed**. Scoped fatal lint/format and diff checks clean; baseline dependency/AST warnings deferred without environment changes.
-<!-- SECTION:NOTES:END -->
-
+2026-09-11: Original complete-backup fixture using native LocalChatDictionaryService.add_entry exposes unsupported_schema on otherwise healthy ChaChaNotes databases. Read-only exact evidence /private/tmp/dictionary-style-core-schema-preflight.md: 298 rows, only chat_dictionaries_au indentation differs after supported updater; v42, FK/quick_check pass. Resume bounded fix in existing DB/recovery_core.py and recovery_core_schema.py plus focused schema tests: allow only exact native alternate full schema; preserve all other schema/version/integrity checks, no normalization or writer changes. Agent A owns implementation and regression; original two-owner fixture remains retained. Root review/verification/commit required.
+2026-09-11: Initial adapter-only variant passed8 but actual complete capture failed1/14.95s in validated_schema_version: bounded sqlite_validation consumes SchemaPolicy independently. Existing SchemaPolicy already supports repeated version entries as full exact alternatives. Correct same DB2 to publish initial+known updater layouts in that existing policy and make core.validate consume identical alternatives; no validator/model changes. Extend new8cases to actual validate_candidate and update existing test_core_owners sole-layout assertion to initial equality plus exact2 ChaChaNotes/1other count. Preserve first8/failure receipts, then rerun relevant core tests/full2profile fixture.
+2026-09-11 canonical dictionary schema policy4 approved: /private/tmp/dictionary-schema-policy-independent-review.md. Existing SchemaPolicy full-layout alternatives now consumed by both adapter and restricted SQLite validation; fixed known native updater trigger only. Correct disposable-candidate red1/1.54s→new8+constructor5=13/9.54s. Actual original two-profile Complete capture→isolated restore→fresh dictionary/style reads GREEN1/51.99s /private/tmp/dictionary-style-stage2b-policy-final.log, unchanged real add_entry. Preserved adapter-only8 insufficient result/full capture refusal and invalid live-WAL fixture runs. Exact frozen4 SHA04d400acafe716fdef2adfae5fcd7d781fa94854883cf36d4c6834f4e81a0127 and source/receipt hashes verified. Ruff44→44/Bandit75→77 only2 test assertions, no new production findings; compile/format/diffpass. Source DB2 +new schema test+existing coreowners assertion and this task ready scoped commit.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Design references
 
 - [Approved specification](../../Docs/superpowers/specs/2026-09-07-complete-local-backup-restore-design.md)

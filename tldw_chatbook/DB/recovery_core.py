@@ -236,7 +236,7 @@ class _CoreAdapter:
                     )
                 )
                 policy = self.schema_policy()
-                if actual != policy.schema_sql[0][1]:
+                if not any(actual == sql for _, sql in policy.schema_sql):
                     return ("unsupported_schema",)
                 version_sql = (
                     "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
@@ -416,10 +416,16 @@ class _CoreAdapter:
             return ("dependency_unavailable",)
 
     def schema_policy(self) -> SchemaPolicy | None:
-        from .recovery_core_schema import CORE_SCHEMAS
+        from .recovery_core_schema import (
+            CHACHANOTES_DICTIONARY_UPDATE_SCHEMA,
+            CORE_SCHEMAS,
+        )
 
         _, version, sql = next(row for row in CORE_SCHEMAS if row[0] == self.owner_id)
-        return SchemaPolicy(self.owner_id, (version,), ((version, sql),), ())
+        schemas = ((version, sql),)
+        if self.owner_id == "db.chachanotes.primary":
+            schemas += ((version, CHACHANOTES_DICTIONARY_UPDATE_SCHEMA),)
+        return SchemaPolicy(self.owner_id, (version,), schemas, ())
 
 
 def core_adapters() -> tuple[OwnerAdapter, ...]:
