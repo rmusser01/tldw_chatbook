@@ -12177,6 +12177,13 @@ class SettingsScreen(BaseAppScreen):
     def _render_overview_detail(self) -> ComposeResult:
         presentation = self._settings_overview_presentation()
         yield Static("Overview", classes="destination-section settings-column-title")
+        with Horizontal(classes="settings-action-row"):
+            yield Button(
+                "Backup & Restore",
+                id="settings-backup-restore",
+                classes="settings-open-backup-restore",
+                tooltip="Create a backup or inspect and restore an archive.",
+            )
         with Vertical(id="settings-overview-card", classes="settings-focus-card"):
             yield self._render_category_state_banner(SettingsCategoryId.OVERVIEW)
             yield Static("Status", classes="destination-section")
@@ -15575,6 +15582,12 @@ class SettingsScreen(BaseAppScreen):
             except (OSError, RuntimeError, ValueError) as exc:
                 config_path = f"invalid - {redact_secret_text(str(exc))}"
             yield Static("Storage", classes="destination-section settings-column-title")
+            yield Button(
+                "Backup & Restore",
+                id="settings-storage-backup-restore",
+                classes="settings-open-backup-restore",
+                tooltip="Create a backup or inspect and restore an archive.",
+            )
             with Vertical(id="settings-storage-card", classes="settings-focus-card"):
                 yield Static("Storage defaults", classes="destination-section")
                 yield self._detail_row(
@@ -18468,6 +18481,12 @@ class SettingsScreen(BaseAppScreen):
     ) -> None:
         # task-1369 (review): persist disclosure state across recomposes.
         self._overview_ownership_details_collapsed = event.collapsible.collapsed
+
+    @on(Button.Pressed, ".settings-open-backup-restore")
+    def handle_open_backup_restore(self, event: Button.Pressed) -> None:
+        """Keep storage draft saving separate from deliberate recovery work."""
+        event.stop()
+        self.app.action_backup_restore()
 
     @on(Button.Pressed, ".settings-overview-open-category")
     def handle_overview_open_category(self, event: Button.Pressed) -> None:

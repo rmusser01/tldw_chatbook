@@ -1319,6 +1319,11 @@ class SettingsProvider(Provider):
 
         settings_commands = [
             (
+                "Settings & Preferences: Backup & Restore",
+                "backup_restore",
+                "Create backups, inspect archives, and review recovery copies",
+            ),
+            (
                 "Settings & Preferences: Open Config File",
                 "open_config",
                 "Open the configuration file for editing",
@@ -1347,6 +1352,11 @@ class SettingsProvider(Provider):
 
     async def discover(self) -> Hits:
         popular_settings = [
+            (
+                "Settings & Preferences: Backup & Restore",
+                "backup_restore",
+                "Create backups, inspect archives, and review recovery copies",
+            ),
             (
                 "Settings & Preferences: Open Settings Tab",
                 "open_settings",
@@ -1377,6 +1387,8 @@ class SettingsProvider(Provider):
         try:
             if setting_id == "open_settings":
                 _navigate_via_screen(self.app, TAB_SETTINGS, "Opened Settings")
+            elif setting_id == "backup_restore":
+                self.app.action_backup_restore()
             elif setting_id == "open_config":
                 self.app.notify(
                     f"Config file location: {get_cli_config_path()}",
@@ -11644,6 +11656,72 @@ class TldwCli(
         deferred.add(kind)
         return False
 
+    @property
+    def recovery_service(self):
+        """Retain accepted recovery work independently of any navigation view."""
+        service = getattr(self, "_recovery_service", None)
+        if service is None:
+            from .Backup_Recovery.recovery_service import (
+                RecoveryService,
+                default_control_root,
+            )
+
+            service = self._recovery_service = RecoveryService(default_control_root())
+        return service
+
+    def action_backup_restore(self) -> None:
+        """Open the canonical recovery view with the currently selected profile."""
+        from .UI.Screens.backup_restore_screen import BackupRestoreScreen
+
+        self.push_screen(
+            BackupRestoreScreen(self.recovery_service, config_paths=(get_cli_config_path(),))
+        )
+
+    async def _shutdown_recovery_service(self) -> asyncio.CancelledError | None:
+        """Settle native recovery while the app maintenance monitor is available."""
+        service = getattr(self, "_recovery_service", None)
+        if service is None:
+            return None
+        task = getattr(self, "_recovery_service_shutdown_task", None)
+        if task is None:
+            task = self._recovery_service_shutdown_task = asyncio.create_task(
+                asyncio.to_thread(service.close), name="shutdown-recovery-service"
+            )
+        cancellation = None
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError as error:
+                cancellation = cancellation or error
+        task.result()
+        return cancellation
+
+    @work(group="recovery-profile-launch")
+    async def open_recovery_profile(self, profile_id: str) -> None:
+        """Keep the parent terminal suspended until the actual child exits."""
+        from textual.app import SuspendNotSupported
+
+        service = self.recovery_service
+        current = service.current()
+        if current is not None and current["state"] == "running":
+            self.notify("Another recovery operation is running.", severity="warning")
+            return
+        cancellation = None
+        try:
+            with self.suspend():
+                operation = service.start_open_profile(profile_id)
+                settling = asyncio.create_task(asyncio.to_thread(service.wait, operation))
+                while not settling.done():
+                    try:
+                        await asyncio.shield(settling)
+                    except asyncio.CancelledError as error:
+                        cancellation = cancellation or error
+                settling.result()
+        except (OSError, RuntimeError, ValueError, SuspendNotSupported) as error:
+            self.notify("Profile opening failed: " + service.issue_code(error), severity="error")
+        if cancellation is not None:
+            raise cancellation
+
     def _start_backup_maintenance_monitor(self) -> None:
         """Retain the installed live maintenance monitor for this app lifetime."""
         if getattr(self, "_backup_maintenance_monitor_task", None) is not None:
@@ -12029,6 +12107,9 @@ class TldwCli(
 
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
+        recovery_cancellation = await TldwCli._shutdown_recovery_service(self)
+        if recovery_cancellation is not None:
+            raise recovery_cancellation
         coordinator = getattr(self, "_audio_cpp_artifact_lease_coordinator", None)
         if coordinator is not None:
             await coordinator.shutdown()
@@ -12133,11 +12214,14 @@ class TldwCli(
         """Clean up logging resources on application exit."""
         import asyncio
 
+        recovery_cleanup_cancellation = await TldwCli._shutdown_recovery_service(self)
         monitor_cleanup_cancellation = await TldwCli._stop_backup_maintenance_monitor(self)
         self._speech_initialization_closed = True
         speech_cleanup_cancellation = await self._settle_speech_initialization()
         speech_cleanup_cancellation = (
-            monitor_cleanup_cancellation or speech_cleanup_cancellation
+            recovery_cleanup_cancellation
+            or monitor_cleanup_cancellation
+            or speech_cleanup_cancellation
         )
         logging.info("--- App Unmounting ---")
         # TASK-1240. Distinguishes a clean exit from a kill: a log whose last
