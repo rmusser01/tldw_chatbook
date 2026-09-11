@@ -42,6 +42,26 @@ def verify_default_storage() -> None:
             raise ValueError("recovery_control_unverified")
 
 
+def is_private_service_work(candidate: Path, preserved_item) -> bool:
+    """Recognize internal work beneath the exact excluded default service store."""
+    control = default_control_root()
+    if (
+        preserved_item.owner != "recovery.control"
+        or preserved_item.logical_id != "recovery.control:service"
+        or preserved_item.status != "intentionally_excluded"
+        or preserved_item.path != control.parent
+        or not candidate.is_absolute()
+        or ".." in candidate.parts
+        or work_root(control) not in candidate.parents
+    ):
+        return False
+    try:
+        verify_default_storage()
+    except (OSError, ValueError, RuntimeError):
+        return False
+    return True
+
+
 def ensure_storage(control: Path) -> Path:
     """Create missing private storage; never chmod or repair existing evidence."""
     is_default = control == default_control_root()

@@ -270,9 +270,25 @@ def stage_restore(
 
         verify_snapshot_source(plan, archive)
     recheck_targets(plan)
-    for _, live in (*plan.restore, *plan.retire, *plan.preserve):
+    for _, live in (*plan.restore, *plan.retire):
         if work_root == live or live in work_root.parents or work_root in live.parents:
             raise ValueError("staging_target_alias")
+    target_items = (
+        {item.logical_id: item for item in plan.target.items}
+        if plan.target is not None
+        else {}
+    )
+    for logical_id, live in plan.preserve:
+        if work_root == live or live in work_root.parents or work_root in live.parents:
+            from .service_storage import is_private_service_work
+
+            item = target_items.get(logical_id)
+            if (
+                item is None
+                or item.path != live
+                or not is_private_service_work(work_root, item)
+            ):
+                raise ValueError("staging_target_alias")
     work_parent = _ancestor(work_root)
     targets = tuple(path for _, path in plan.destinations)
     if any(

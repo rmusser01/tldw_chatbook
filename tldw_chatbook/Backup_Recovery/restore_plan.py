@@ -119,8 +119,55 @@ def _observed(path):
 
 
 def _fingerprint(paths, target):
+    observations = []
+    for path in sorted(set(paths)):
+        observed = _observed(path)
+        items = [item for item in target.items if item.path == path] if target else []
+        if (
+            len(items) == 1
+            and items[0].owner == "recovery.control"
+            and (
+                items[0].status == "intentionally_excluded"
+                and items[0].logical_id
+                in {"recovery.control:fixed-bootstrap", "recovery.control:service"}
+            )
+        ):
+            from .inventory import _fixed_control_exclusion, _service_control_exclusion
+
+            discover = (
+                _fixed_control_exclusion
+                if items[0].logical_id == "recovery.control:fixed-bootstrap"
+                else _service_control_exclusion
+            )
+            current = discover()
+            if len(current) != 1 or current[0] != items[0] or observed[2] is None:
+                raise ValueError("recovery_control_changed")
+            # Native recovery records evolve while this preserved directory stays
+            # installed. Payloads retain full content/metadata observations.
+            identity = observed[2]
+            observed = (
+                observed[0],
+                observed[1],
+                (identity[0], identity[1], identity[5]),
+            )
+            if items[0].logical_id == "recovery.control:service":
+                children = []
+                for child in (path / "control", path / "control-work"):
+                    child_observed = _observed(child)
+                    identity = child_observed[2]
+                    if identity is None:
+                        raise ValueError("recovery_control_changed")
+                    children.append(
+                        (
+                            child_observed[0],
+                            child_observed[1],
+                            (identity[0], identity[1], identity[5]),
+                        )
+                    )
+                observed = (*observed, children)
+        observations.append(observed)
     document = {
-        "paths": [_observed(path) for path in sorted(set(paths))],
+        "paths": observations,
         "inventory": [
             (
                 item.owner,
