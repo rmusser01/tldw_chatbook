@@ -4,7 +4,7 @@ title: >-
   Library structural waits: follow-ups from the task-32055 review (timer
   retention, File Notes Cancel timing, narrow back toggle, cancelled-import
   refresh)
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-08 22:42'
@@ -27,8 +27,8 @@ Found by the task-32055 reviews (PR #2524): the patience `set_timer` in `_begin_
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each of the seven items is fixed or closed with a recorded reason (2 of 7 fixed here; the other 5 are implemented on task-32180 / PR #2557 and land with it -- tick on that merge)
-- [ ] #2 The File Notes Cancel affordance and its copy appear at the same moment (lands with #2557: implemented on task-32180 / branch fix/library-notes-r-file-notes at 203f4dc633, tick on that merge)
+- [x] #1 Each of the seven items is fixed or closed with a recorded reason (2 of 7 fixed here; the other 5 are implemented on task-32180 / PR #2557 and land with it -- tick on that merge)
+- [x] #2 The File Notes Cancel affordance and its copy appear at the same moment (lands with #2557: implemented on task-32180 / branch fix/library-notes-r-file-notes at 203f4dc633, tick on that merge)
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -111,4 +111,7 @@ Files: `tldw_chatbook/UI/Screens/library_screen.py`,
 `tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py`,
 `Tests/UI/test_library_crit8_wait_riders.py`,
 `Docs/User_Guide/library/skills.md`.
+
+**Closed 2026-09-11 on evidence:** the five File Notes items (Cancel affordance timing, `-empty-root` cleared alongside `-warning`/`-offline`, exit-abandon notify via `cancel_structural_wait(leaving=True)`, and the two others) shipped with the peer's PR #2557 (task-32180, commit 203f4dc633, merged 2026-09-11 00:36Z); the two items owned here shipped with PR #2569 (task review + fix rounds). All seven are now on dev.
+
 <!-- SECTION:NOTES:END -->

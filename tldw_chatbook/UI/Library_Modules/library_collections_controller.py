@@ -376,12 +376,20 @@ class LibraryCollectionsController:
             and previous.items_width == 0
         ):
             previous = None
+        capture_controller = self._library_collections_capture_controller
         layout = resolve_adaptive_reader_layout(
             width,
             self._library_collections_reader_preferences,
             LIBRARY_COLLECTIONS_READER_PROFILE,
             previous=previous,
             priority=priority,
+            # task-32217 (critique #9 row 14): "Select a capture to read it
+            # here." is not a document -- the reader keeps its floor until a
+            # capture is genuinely picked.
+            reader_has_item=(
+                capture_controller is not None
+                and capture_controller.state.selected_identity is not None
+            ),
         )
         shell.sync_layout(layout)
         self._library_collections_reader_layout = layout

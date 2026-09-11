@@ -17,6 +17,7 @@ from .library_adaptive_reader_shell import (
     AdaptiveReaderShellResized,
     LibraryAdaptiveReaderPaneGrip,
     LibraryAdaptiveReaderShell,
+    LibraryPaneVisibilityChanged,
 )
 from .library_export_canvas import LibraryExportCanvas
 from .library_entry_canvases import (
@@ -160,6 +161,7 @@ __all__ = [
     "LibraryNotesCanvas",
     "LibraryNotesSyncRootsCanvas",
     "LibraryNavigationRailHandle",
+    "LibraryPaneVisibilityChanged",
     "PaneToggleRequested",
     "LibraryPromptsListCanvas",
     "LibraryPromptWorkPane",
