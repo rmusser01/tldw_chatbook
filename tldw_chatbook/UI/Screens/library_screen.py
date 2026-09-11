@@ -4459,8 +4459,24 @@ class LibraryScreen(BaseAppScreen):
             # painted (live capture at 60x24 showed "/ focus search | F6 next
             # pane" and no return). Recovery outranks navigation here anyway,
             # which is the order that ladder assumes.
-            shortcuts = (("esc", "back to Library"),) + tuple(
-                pair for pair in shortcuts if pair[0] != "esc"
+            #
+            # Cross-branch (task-32360 with task-32346): while a text field
+            # holds focus the footer says SO FIRST on every other surface --
+            # every printable key is being inserted as text, which outranks
+            # any navigation the footer could advertise. Prepending the
+            # return chip ahead of that marker made this one width the
+            # exception. The field state keeps the head; the return follows
+            # it, still ahead of the navigation chips.
+            rest = tuple(pair for pair in shortcuts if pair[0] != "esc")
+            field_state = (
+                rest[:1]
+                if isinstance(focused, (Input, TextArea)) and rest and rest[0][0] == ""
+                else ()
+            )
+            shortcuts = (
+                field_state
+                + (("esc", "back to Library"),)
+                + rest[len(field_state) :]
             )
         # re-review N4: below 64 columns the box "/" jumps to can be inside a
         # CLOSED pane -- mounted, so the handler finds it, but unfocusable, so

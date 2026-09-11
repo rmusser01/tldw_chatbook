@@ -528,3 +528,51 @@ async def test_the_focused_rail_row_is_a_shape_not_a_second_blue(size) -> None:
         assert _leftmost(rows, media) != _THICK_LEFT_GLYPH
         # The active row keeps its own treatment and its whole label.
         assert "Conversations" in rows[conversations.region.y]
+
+
+@pytest.mark.asyncio
+async def test_the_field_state_stays_first_when_the_return_chip_joins_it() -> None:
+    """task-32360 / task-32346 (cross-branch): one footer grammar at 60x24.
+
+    While a text field holds focus the footer says so FIRST, on every
+    surface -- every printable key is being inserted as text, which outranks
+    any navigation the footer could advertise. The narrow-stage return chip
+    prepended itself ahead of that marker, making this the one width where
+    the field state was not first. It now follows it.
+    """
+    from unittest.mock import patch
+
+    from textual.widgets import Input
+
+    from Tests.UI.test_library_crit9_shell import (
+        NARROW_TEST_SIZE,
+        _active_library_screen,
+        _library_host,
+        _wait_for_condition,
+        _wait_for_library_shell,
+    )
+
+    host = _library_host()
+    async with host.run_test(size=NARROW_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: ("esc", "back to Library")
+            in tuple((screen._footer_shortcut_registration or ("", ()))[1]),
+            message="The registered footer never named the return.",
+        )
+        # The rail's own search box lives INSIDE the pane this stage closed,
+        # so focusing it bounces (task-32225); the filter is the field that
+        # is actually on screen here.
+        # The branch under test reads ``self.focused`` and nothing else, and
+        # this harness's own entry-focus arm keeps taking the key back from
+        # any field a test focuses; state the input the footer is deciding
+        # about directly rather than racing that arm.
+        with patch.object(type(screen), "focused", property(lambda _self: Input())):
+            chips = screen._library_footer_shortcuts_for_current_state()
+        assert chips[0][0] == "", chips
+        assert "typing in field" in chips[0][1], chips
+        assert ("esc", "back to Library") in chips, chips
+        assert chips.index(("esc", "back to Library")) == 1, chips
