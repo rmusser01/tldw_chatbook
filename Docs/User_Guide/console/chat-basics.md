@@ -78,6 +78,12 @@ three-column handles; expanded rails, tooltips, and badges keep their normal
 behavior. Return to Console after a successful save to see the change — no app
 restart is required.
 
+You can also open and close the rails with the keyboard — **Alt+C** for the
+Context rail, **Alt+I** for the Inspector — which works at every width,
+including the single-pane sizes where the handles hide. The handle badges
+abbreviate ("N appr" = N approvals pending, "art" = artifact ready); hover a
+badge for its full text.
+
 Console Behavior uses category-wide drafts: **Save** writes every pending edit
 in that category, and **Revert** discards every pending edit there, not just the
 rail-label choice. A failed save keeps the draft and leaves the active rail

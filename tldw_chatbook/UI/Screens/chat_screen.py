@@ -1255,6 +1255,7 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
             # reference didn't.
             ("Alt+A", "Review pending approval"),
             ("Alt+C", "open or close the Context rail"),
+            ("Handle badges", "'N appr' = N approvals pending; 'art' = artifact ready"),
             ("Escape", "return to the composer"),
         ),
     ),

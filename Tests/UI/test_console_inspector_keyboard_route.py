@@ -82,6 +82,8 @@ def test_the_context_shortcut_is_advertised():
         for key, label in shortcuts
     )
     assert "Alt+C" in text
+    # TASK-32324: the handle badges' abbreviations get a legend.
+    assert "appr" in text and "artifact" in text
 
 
 def test_palette_offers_both_rail_toggles():
