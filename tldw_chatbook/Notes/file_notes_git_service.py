@@ -6542,8 +6542,10 @@ class FileNotesGitService:
         short_oid = head.object_id[:12]
         return CommitOutcome(
             "succeeded",
-            f"Committed {count} session notes as {short_oid}; "
-            "unrelated changes untouched.",
+            # task-32265: this string IS the receipt the panel shows, so
+            # "Committed 1 session notes" was the user-visible copy.
+            f"Committed {count} session note{'' if count == 1 else 's'} "
+            f"as {short_oid}; unrelated changes untouched.",
             qualification=(
                 "No unrelated staged content was committed; "
                 "Chatbook selected no unrelated worktree paths."

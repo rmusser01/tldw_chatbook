@@ -7485,3 +7485,165 @@ async def test_commit_focus_retry_never_steals_workflow_focus(
     await workspace.shutdown()
     owner.shutdown()
     replica.close()
+
+
+# --- task-32248: the panel's printed keyboard contract -----------------------
+
+
+@pytest.mark.asyncio
+async def test_first_ready_status_focuses_the_session_git_row_list() -> None:
+    """AC#1: after 'Trust and check status', focus lands on the status list.
+
+    Reproduced live at 235x52 on dev 4a14b3f36f: the trust button hides
+    when trust lands, `_repair_hidden_focus` rescued focus onto Refresh,
+    and the panel's own line -- "Up/Down select · Tab actions · Enter run"
+    -- was then true of nothing. Down/Tab/Enter left `git status`
+    unchanged.
+    """
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _PanelHarness(panel)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        panel.render_untrusted("/canonical/repository")
+        await pilot.pause()
+        panel.query_one("#file-notes-git-trust", Button).focus()
+        await pilot.pause()
+
+        panel.render_status(_status(_row("unstaged", stage_action="stage")))
+        await _wait_until(
+            pilot,
+            lambda: panel.query_one("#file-notes-git-rows", ListView).has_focus,
+            "Session Git did not focus its status list after trust",
+        )
+
+
+@pytest.mark.asyncio
+async def test_tab_from_the_row_list_reaches_stage() -> None:
+    """AC#2/AC#3: "Tab actions · Enter run" from the state the panel opens in."""
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _PanelHarness(panel)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        panel.render_untrusted("/canonical/repository")
+        await pilot.pause()
+        panel.query_one("#file-notes-git-trust", Button).focus()
+        await pilot.pause()
+        panel.render_status(_status(_row("unstaged", stage_action="stage")))
+        await _wait_until(
+            pilot,
+            lambda: panel.query_one("#file-notes-git-rows", ListView).has_focus,
+            "Session Git did not focus its status list after trust",
+        )
+
+        await pilot.press("tab")
+        stage = panel.query_one("#file-notes-git-stage-selected", Button)
+        assert stage.has_focus, "Tab from the row list did not reach Stage"
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert any(
+            isinstance(message, LibraryFileNotesGitPanel.StageRequested)
+            for message in app.messages
+        ), "Enter on the focused Stage action ran nothing"
+
+
+@pytest.mark.asyncio
+async def test_stage_renders_next_to_the_row_it_acts_on() -> None:
+    """AC#3: not at the pane floor -- live capture had 24 rows between them."""
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _PanelHarness(panel)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        panel.render_status(_status(_row("unstaged", stage_action="stage")))
+        await _wait_until(
+            pilot,
+            lambda: len(panel.query(".file-notes-git-row")) == 1,
+            "Git row did not mount",
+        )
+        await pilot.pause()
+        row = panel.query_one(".file-notes-git-row", Widget)
+        stage = panel.query_one("#file-notes-git-stage-selected", Button)
+        distance = stage.region.y - (row.region.y + row.region.height)
+        assert 0 <= distance <= 6, (
+            f"Stage renders {distance} rows below the row it acts on"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_later_status_refresh_does_not_steal_focus() -> None:
+    """The entry focus is an ENTRY focus: Refresh must not yank it back."""
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _PanelHarness(panel)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        panel.render_status(_status(_row("unstaged", stage_action="stage")))
+        await _wait_until(
+            pilot,
+            lambda: len(panel.query(".file-notes-git-row")) == 1,
+            "Git row did not mount",
+        )
+        back = panel.query_one("#file-notes-git-back", Button)
+        back.focus()
+        await pilot.pause()
+
+        panel.render_status(_status(_row("unstaged", stage_action="stage")))
+        await _wait_for_current_git_row_projection_panel(panel)
+        await pilot.pause()
+        assert back.has_focus
+
+
+async def _wait_for_current_git_row_projection_panel(panel) -> None:
+    row_list = panel.query_one("#file-notes-git-rows", ListView)
+    for _ in range(_ASYNC_POLL_ATTEMPTS):
+        if (
+            len(panel.query(".file-notes-git-row")) == len(panel.rows)
+            and row_list.display is bool(panel.rows)
+        ):
+            return
+        await asyncio.sleep(_ASYNC_POLL_INTERVAL_SECONDS)
+    raise AssertionError("Git row projection did not settle")
+
+
+# --- task-32265: the disclosure's two machine-shaped strings -----------------
+
+
+def test_one_session_note_is_not_plural() -> None:
+    assert git_panel_module._session_note_count(1) == "1 session note"
+    assert git_panel_module._session_note_count(0) == "0 session notes"
+    assert git_panel_module._session_note_count(2) == "2 session notes"
+
+
+def test_a_branch_renders_as_its_short_name() -> None:
+    assert git_panel_module._branch_for_display("refs/heads/main") == "main"
+    assert (
+        git_panel_module._branch_for_display("refs/heads/feature/session-git")
+        == "feature/session-git"
+    )
+    assert git_panel_module._branch_for_display("main") == "main"
+
+
+@pytest.mark.asyncio
+async def test_commit_form_meta_pluralises_and_shortens_the_branch() -> None:
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _PanelHarness(panel)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        panel.render_commit_form(
+            _commit_draft_projection(
+                branch="refs/heads/main",
+                staged_note_count=1,
+            )
+        )
+        await pilot.pause()
+        meta = str(
+            panel.query_one("#file-notes-git-commit-form-meta", Static).renderable
+        )
+        assert "Branch: main ·" in meta
+        assert "1 session note staged" in meta
+        assert "refs/heads" not in meta
+        assert "1 session notes" not in meta

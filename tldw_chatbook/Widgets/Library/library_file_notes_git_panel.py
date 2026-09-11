@@ -294,6 +294,26 @@ def _repository_path_for_display(path: str, *, markup: bool = False) -> str:
     return escape_markup(display) if markup else display
 
 
+def _branch_for_display(ref: str) -> str:
+    """Render a branch ref the way a user names it: ``main``, not the ref.
+
+    task-32265: the pre-commit disclosure is the most honest copy in the
+    product and then said ``refs/heads/main``. The push panel already
+    stripped the prefix inline; this is that same expression, named, for
+    every place a branch is shown.
+    """
+    return _repository_path_for_display(ref.removeprefix("refs/heads/"))
+
+
+def _session_note_count(count: int) -> str:
+    """Pluralise the session-note count, including the one-note case.
+
+    task-32265: "1 session notes will be committed" / "Committed 1 session
+    notes as bd746be6...".
+    """
+    return f"{count} session note{'' if count == 1 else 's'}"
+
+
 def _grapheme_spans(text: str) -> list[tuple[int, int, int]]:
     """Return Rich spans with regional-indicator pairs kept together."""
     spans, _ = split_graphemes(text)
@@ -711,8 +731,15 @@ class LibraryFileNotesGitPanel(Vertical):
     }
 
     #file-notes-git-rows {
-        height: 1fr;
-        min-height: 1;
+        /* task-32248 AC#3: `1fr` made the list swallow every spare row of
+           the surface, so Stage/Commit -- the actions for the SELECTED row
+           -- rendered ~24 rows below it (live capture: row 20 vs row 44 at
+           235x52). Bounded, the list scrolls its own overflow and the
+           actions sit directly under the rows they act on. 12 cells = 6
+           two-cell rows. */
+        height: auto;
+        max-height: 12;
+        min-height: 2;
     }
 
     .file-notes-git-row {
@@ -2050,11 +2077,11 @@ class LibraryFileNotesGitPanel(Vertical):
         candidate = review.candidate
         destination = review.destination
         repository = projection.repository
-        branch = destination.destination_ref.removeprefix("refs/heads/")
+        branch = _branch_for_display(destination.destination_ref)
         values = {
             "lead": (
                 "Pushes 1 reviewed commit created from "
-                f"{candidate.included_note_count} session notes."
+                f"{_session_note_count(candidate.included_note_count)}."
             ),
             "subject": f"Commit subject: {candidate.subject}",
             "repository": (
@@ -2063,7 +2090,7 @@ class LibraryFileNotesGitPanel(Vertical):
             ),
             "destination": f"{review.configured_remote_label}/{branch}",
             "counts": (
-                f"{candidate.included_note_count} session notes: "
+                f"{_session_note_count(candidate.included_note_count)}: "
                 + " · ".join(
                     f"{change_type} {count}"
                     for change_type, count in projection.availability.change_counts
@@ -2075,7 +2102,9 @@ class LibraryFileNotesGitPanel(Vertical):
             ),
             "candidate": f"Candidate OID: {candidate.candidate_oid}",
             "transition": f"Parent transition: {candidate.transition}",
-            "local-branch": f"Local branch: {candidate.local_branch_ref}",
+            "local-branch": (
+                f"Local branch: {_branch_for_display(candidate.local_branch_ref)}"
+            ),
             "remote": (
                 f"Configured remote: {review.configured_remote_label}"
             ),
@@ -2302,13 +2331,13 @@ class LibraryFileNotesGitPanel(Vertical):
     def render_commit_form(self, projection: CommitDraftProjection) -> None:
         """Render the literal binding-scoped draft and its inline errors."""
         self._active_commit_draft = projection
-        branch = _repository_path_for_display(projection.branch)
+        branch = _branch_for_display(projection.branch)
         self.query_one(
             "#file-notes-git-commit-form-meta",
             Static,
         ).update(
             f"Branch: {branch} · "
-            f"{projection.staged_note_count} session notes staged"
+            f"{_session_note_count(projection.staged_note_count)} staged"
         )
         subject = self.query_one("#file-notes-git-commit-subject", Input)
         body = self.query_one("#file-notes-git-commit-body-input", TextArea)
@@ -2369,7 +2398,7 @@ class LibraryFileNotesGitPanel(Vertical):
         self._commit_review = projection
         review = projection.review
         repository = projection.repository
-        branch = _repository_path_for_display(review.branch)
+        branch = _branch_for_display(review.branch)
         self.query_one(
             "#file-notes-git-commit-review-repository",
             Static,
@@ -2410,7 +2439,7 @@ class LibraryFileNotesGitPanel(Vertical):
             "#file-notes-git-commit-review-promise",
             Static,
         ).update(
-            f"{count} session notes will be committed; "
+            f"{_session_note_count(count)} will be committed; "
             "unrelated changes untouched"
         )
         self.query_one(
@@ -2514,7 +2543,7 @@ class LibraryFileNotesGitPanel(Vertical):
             "#file-notes-git-commit-execution-title",
             Static,
         ).update(
-            f"Committing {projection.staged_note_count} session notes..."
+            f"Committing {_session_note_count(projection.staged_note_count)}..."
         )
         self.query_one(
             "#file-notes-git-commit-execution-detail",
@@ -2824,6 +2853,15 @@ class LibraryFileNotesGitPanel(Vertical):
                 status still belongs to the currently trusted authority.
         """
         prior_group_id = self._selected_group_id
+        # task-32248 AC#1: the panel advertises "Up/Down select · Tab
+        # actions · Enter run" and then, after Trust, left focus on
+        # Refresh (the trust button hides and `_repair_hidden_focus`
+        # rescues focus onto it) -- so Down did nothing, Tab reached the
+        # list, and Enter ran nothing. The status list is the only
+        # actionable thing on this panel, so the FIRST ready status
+        # focuses it. Only the first: a Refresh or a post-stage
+        # re-render must not yank focus off whatever the user is on.
+        was_ready = self._status_ready
         authority_available = status.repository is not None
         self._trusted = authority_available
         self._trust_available = False
@@ -2842,6 +2880,8 @@ class LibraryFileNotesGitPanel(Vertical):
 
         if self._status_ready:
             self._rows = status.rows
+            if not was_ready and status.rows and self._focus_is_inside():
+                self._commit_list_focus_pending = True
             self._replace_rows(prior_group_id)
             stage_count = sum(row.stage_eligible for row in self._rows)
             unstage_count = sum(row.unstage_eligible for row in self._rows)
@@ -3155,8 +3195,8 @@ class LibraryFileNotesGitPanel(Vertical):
             object_id = head.object_id or "unknown"
             return f"Detached HEAD {object_id[:12]}"
         if head.kind == "unborn":
-            return f"Branch: {head.branch or 'unborn'} (unborn)"
-        return f"Branch: {head.branch or 'unknown'}"
+            return f"Branch: {_branch_for_display(head.branch or 'unborn')} (unborn)"
+        return f"Branch: {_branch_for_display(head.branch or 'unknown')}"
 
     def _selected_row(self) -> SessionGitRow | None:
         return next(
@@ -3297,6 +3337,18 @@ class LibraryFileNotesGitPanel(Vertical):
             )
             if label != rendered_label:
                 button.label = rendered_label
+
+    def _focus_is_inside(self) -> bool:
+        """Return whether focus currently sits on this panel.
+
+        Guards the entry-focus move (task-32248 AC#1): a status result
+        that lands while the user is somewhere else entirely must not
+        pull focus into Session Git.
+        """
+        focused = self.screen.focused
+        return focused is not None and (
+            focused is self or self in focused.ancestors
+        )
 
     def _settle_action_focus(self, target: Button) -> None:
         """Finish action focus repair without stealing focus outside the panel."""
@@ -3983,7 +4035,8 @@ class PushDestinationAuthorizationDialog(SafeModalDismissMixin, ModalScreen[bool
                 yield Label(
                     (
                         f"Endpoint: {_push_destination_summary(destination)}\n"
-                        f"Local branch: {self._candidate.local_branch_ref}\n"
+                        "Local branch: "
+                        f"{_branch_for_display(self._candidate.local_branch_ref)}\n"
                         f"Full destination ref: {destination.destination_ref}\n"
                         f"Transport: {transport}\n\n"
                         "Scope: authorization lasts only for this application "
