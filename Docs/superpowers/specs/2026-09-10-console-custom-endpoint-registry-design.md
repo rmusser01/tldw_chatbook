@@ -4,7 +4,7 @@
 - **Status:** Draft — pending user review
 - **Origin:** 2026-09-10 Conversation Settings modal UX review (issue P0-4) and follow-up decision "(c) both, sequenced"
 - **Related:** `Docs/superpowers/specs/2026-09-02-console-conversation-settings-ready-to-send-design.md` (TASK-30012 modal recomposition), `backlog/tasks/task-32307` (landed P0 stopgaps)
-- **ADR required:** Yes. Storage schema, provider-boundary mapping, and credential handling are ADR-worthy decisions; the ADR is authored before implementation begins and linked from the Backlog task and implementation plan.
+- **ADR required:** Yes. Storage schema, provider-boundary mapping, and credential handling are ADR-worthy decisions; the ADR is authored before implementation begins and linked from the Backlog task and implementation plan. ADR: backlog/decisions/146-console-custom-endpoint-registry.md
 
 ## Problem
 
