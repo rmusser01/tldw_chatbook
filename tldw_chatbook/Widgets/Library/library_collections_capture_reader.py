@@ -26,6 +26,7 @@ from tldw_chatbook.Library.collections_capture_models import (
     CaptureCapabilities,
     CaptureHighlight,
     CaptureIdentity,
+    CapturePageRequest,
     CaptureSummary,
     SavedCaptureSearch,
 )
@@ -220,6 +221,49 @@ class LibraryCollectionsScopeRows(Vertical):
                 id="library-collections-more-saved-searches",
                 compact=True,
             )
+
+
+def collections_empty_state_copy(scope: CapturePageRequest) -> str:
+    """Name what narrowed an empty capture page, and the way back out of it.
+
+    task-32352 AC#2 (critique #10): one sentence covered both an empty
+    collection and a filtered-to-nothing one, so a profile that had never
+    saved anything was told to clear filters it had never set and pointed at
+    an action ("Quick Capture") as if it were elsewhere on the screen.
+
+    Three cases, narrowest first, because the two narrowings come from
+    different controls and have different ways out: the filter form and the
+    search box set ``search``/``tags``/``domain``/``date_from``/``date_to``
+    and are undone by **Clear**, while the rail's scope rows (and saved
+    searches) set ``statuses``/``favorite`` and are undone by choosing **All
+    Captures**. A filter set inside a scope takes the filter sentence -- it
+    is the narrowing this canvas can undo. Only when neither is set has the
+    profile really never saved anything.
+
+    Args:
+        scope: The request that produced the empty page -- ``page.applied``,
+            never the requested scope, which a retained stale page outlives.
+
+    Returns:
+        One sentence, already in "reason · next step" form.
+    """
+    if (
+        scope.search
+        or scope.tags
+        or scope.domain
+        or scope.date_from
+        or scope.date_to
+    ):
+        return "No captures match these filters · clear them to see everything saved."
+    # ``favorite`` is tri-state: ``False`` is the saved-search predicate "not
+    # a favourite", an active narrowing, so truthiness is the wrong test
+    # (Qodo review of PR #2599, item 4).
+    if scope.statuses or scope.favorite is not None:
+        return (
+            "Nothing in this scope yet · choose All Captures in the rail to see "
+            "everything saved."
+        )
+    return "No saved captures yet · press Quick Capture above to save a page by URL."
 
 
 def _capture_row_label(
@@ -433,52 +477,21 @@ class LibraryCollectionsItemsPane(Vertical):
             )
 
         page = state.page
-        if page is None or not page.items:
-            # task-32352 AC#2 (critique #10): one sentence covered both an
-            # empty collection and a filtered-to-nothing one, so a profile
-            # that had never saved anything was told to clear filters it had
-            # never set, and pointed at an action ("Quick Capture") as if it
-            # were somewhere else on the screen.
-            #
-            # Three cases, narrowest first. The two narrowings come from
-            # different controls and have different ways out, so they cannot
-            # share a sentence: the filter form and the search box set
-            # ``search``/``tags``/``domain``/``date_from``/``date_to`` and are
-            # undone by Clear, while the rail's scope rows set
-            # ``statuses``/``favorite`` and are undone by choosing All
-            # Captures. Only when neither is set has the profile really
-            # never saved anything.
-            scope = state.requested_scope
-            filtered = scope is not None and bool(
-                scope.search
-                or scope.tags
-                or scope.domain
-                or scope.date_from
-                or scope.date_to
-            )
-            scoped = scope is not None and bool(scope.statuses or scope.favorite)
-            if filtered:
-                empty_copy = (
-                    "No captures match these filters · clear them to see "
-                    "everything saved."
-                )
-            elif scoped:
-                empty_copy = (
-                    "Nothing in this scope yet · choose All Captures in the rail "
-                    "to see everything saved."
-                )
-            else:
-                empty_copy = (
-                    "No saved captures yet · press Quick Capture above to save "
-                    "a page by URL."
-                )
+        if page is not None and not page.items:
+            # task-32352 AC#2 (critique #10) + Qodo review of PR #2599 (item
+            # 1): "no captures" is a claim about a page that actually came
+            # back. An absent page means loading, an initial failure, or a
+            # scope never requested -- the callout above is the only honest
+            # message then. And the copy describes ``page.applied``, the scope
+            # that produced THIS page, never ``requested_scope``: a retained
+            # stale page outlives the request that replaced it.
             yield Static(
-                empty_copy,
+                collections_empty_state_copy(page.applied),
                 id="library-collections-items-empty",
                 classes="destination-purpose",
                 markup=False,
             )
-        else:
+        elif page is not None:
             loaded_identity = (
                 state.loaded_detail.capture.identity
                 if state.loaded_detail is not None
@@ -1048,6 +1061,7 @@ class LibraryCollectionsWorkPane(VerticalScroll):
 
 
 __all__ = [
+    "collections_empty_state_copy",
     "CollectionsCaptureReaderPresentation",
     "CollectionsReaderMode",
     "LibraryCollectionsHighlightButton",

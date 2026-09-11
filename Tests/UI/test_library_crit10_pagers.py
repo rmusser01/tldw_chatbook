@@ -36,12 +36,26 @@ from tldw_chatbook.UI.Library_Modules.library_collections_capture_controller imp
 from tldw_chatbook.Widgets.Library.library_collections_capture_reader import (
     CollectionsCaptureReaderPresentation,
     LibraryCollectionsItemsPane,
+    collections_empty_state_copy,
 )
 
 
 # ---------------------------------------------------------------------------
 # Collections
 # ---------------------------------------------------------------------------
+
+# The three empty-state sentences, written out here rather than imported, so
+# the wording itself is pinned and not just the branch that produces it.
+_EMPTY_NOTHING_SAVED = (
+    "No saved captures yet · press Quick Capture above to save a page by URL."
+)
+_EMPTY_FILTERED = (
+    "No captures match these filters · clear them to see everything saved."
+)
+_EMPTY_SCOPED = (
+    "Nothing in this scope yet · choose All Captures in the rail to see "
+    "everything saved."
+)
 
 
 class _ItemsApp(ConsolidatedCSSApp):
@@ -72,23 +86,41 @@ def _capture(index: int) -> CaptureSummary:
     )
 
 
-def _collections_app(
-    *, total: int, rows: int = 0, stale: bool = False, **scope
-) -> _ItemsApp:
-    """Build an Items pane over a page of ``rows`` items out of ``total``."""
-    request = CapturePageRequest(AUTHORITY, **scope)
-    page = CapturePage(request, tuple(_capture(index) for index in range(rows)), total)
-    state = CollectionsCaptureControllerState(
-        authority_key=AUTHORITY,
-        requested_scope=request,
-        applied_scope=request,
-        page=page,
-        page_stale=stale,
-    )
+def _pane(state: CollectionsCaptureControllerState) -> _ItemsApp:
     return _ItemsApp(
         CollectionsCaptureReaderPresentation(
             state=state,
             capabilities=_capabilities("browse", "capture"),
+        )
+    )
+
+
+def _collections_app(*, total: int, rows: int = 0, stale: bool = False, **scope):
+    """Build an Items pane over a page of ``rows`` items out of ``total``."""
+    request = CapturePageRequest(AUTHORITY, **scope)
+    page = CapturePage(request, tuple(_capture(index) for index in range(rows)), total)
+    return _pane(
+        CollectionsCaptureControllerState(
+            authority_key=AUTHORITY,
+            requested_scope=request,
+            applied_scope=request,
+            page=page,
+            page_stale=stale,
+        )
+    )
+
+
+def _collections_app_without_a_page(
+    *, loading: bool = False, error: str | None = None, **scope
+):
+    """An Items pane whose requested scope has produced no page yet."""
+    return _pane(
+        CollectionsCaptureControllerState(
+            authority_key=AUTHORITY,
+            requested_scope=CapturePageRequest(AUTHORITY, **scope),
+            page=None,
+            page_loading=loading,
+            page_error=error,
         )
     )
 
@@ -130,9 +162,7 @@ async def test_collections_empty_state_never_blames_an_unset_filter():
     async with app.run_test(size=(235, 52)) as pilot:
         await pilot.pause()
         empty = app.query_one("#library-collections-items-empty", Static)
-        assert str(empty.renderable) == (
-            "No saved captures yet · press Quick Capture above to save a page by URL."
-        )
+        assert str(empty.renderable) == _EMPTY_NOTHING_SAVED
 
 
 @pytest.mark.asyncio
@@ -142,9 +172,7 @@ async def test_collections_empty_state_names_filters_only_when_one_is_set():
     async with app.run_test(size=(235, 52)) as pilot:
         await pilot.pause()
         empty = app.query_one("#library-collections-items-empty", Static)
-        assert str(empty.renderable) == (
-            "No captures match these filters · clear them to see everything saved."
-        )
+        assert str(empty.renderable) == _EMPTY_FILTERED
 
 
 @pytest.mark.parametrize(
@@ -165,10 +193,7 @@ async def test_collections_empty_state_names_an_empty_rail_scope(scope):
     async with app.run_test(size=(235, 52)) as pilot:
         await pilot.pause()
         empty = app.query_one("#library-collections-items-empty", Static)
-        assert str(empty.renderable) == (
-            "Nothing in this scope yet · choose All Captures in the rail to see "
-            "everything saved."
-        )
+        assert str(empty.renderable) == _EMPTY_SCOPED
 
 
 @pytest.mark.asyncio
@@ -178,9 +203,97 @@ async def test_collections_empty_state_prefers_the_filter_copy_inside_a_scope():
     async with app.run_test(size=(235, 52)) as pilot:
         await pilot.pause()
         empty = app.query_one("#library-collections-items-empty", Static)
-        assert str(empty.renderable) == (
-            "No captures match these filters · clear them to see everything saved."
+        assert str(empty.renderable) == _EMPTY_FILTERED
+
+
+# --- the empty-state rule itself, without mounting anything ----------------
+# Qodo review of PR #2599 (item 3): the branch precedence and the field
+# classification are a rule, not a rendering detail, and were reachable only
+# through a mounted Textual app.
+
+
+@pytest.mark.parametrize(
+    ("scope", "expected"),
+    (
+        ({}, _EMPTY_NOTHING_SAVED),
+        ({"search": "anything"}, _EMPTY_FILTERED),
+        ({"tags": ("research",)}, _EMPTY_FILTERED),
+        ({"domain": "example.com"}, _EMPTY_FILTERED),
+        ({"date_from": "2026-01-01"}, _EMPTY_FILTERED),
+        ({"date_to": "2026-01-01"}, _EMPTY_FILTERED),
+        ({"statuses": ("archived",)}, _EMPTY_SCOPED),
+        ({"favorite": True}, _EMPTY_SCOPED),
+        # Qodo item 4: "not favourite" is a real saved-search predicate, and
+        # `False` is not "no scope".
+        ({"favorite": False}, _EMPTY_SCOPED),
+        # Precedence: a filter inside a scope is the narrowing this canvas
+        # can undo, so it wins.
+        ({"favorite": True, "search": "anything"}, _EMPTY_FILTERED),
+        ({"statuses": ("read",), "domain": "example.com"}, _EMPTY_FILTERED),
+    ),
+)
+def test_collections_empty_state_copy_rule(scope, expected):
+    assert collections_empty_state_copy(CapturePageRequest(AUTHORITY, **scope)) == (
+        expected
+    )
+
+
+@pytest.mark.asyncio
+async def test_collections_empty_state_names_a_non_favourite_saved_search():
+    """Qodo item 4, at the UI boundary: `favorite=False` is an active scope."""
+    app = _collections_app(total=0, favorite=False)
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        empty = app.query_one("#library-collections-items-empty", Static)
+        assert str(empty.renderable) == _EMPTY_SCOPED
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    ({"loading": True}, {"error": "refresh_failed"}, {}),
+    ids=("loading", "failed", "never-requested"),
+)
+@pytest.mark.asyncio
+async def test_collections_says_nothing_definitive_before_a_page_arrives(kwargs):
+    """Qodo item 1: an absent page is not an authoritative empty result.
+
+    "No saved captures yet" beside a "Loading captures…" callout or a Retry
+    is a claim the canvas cannot support — no request for this scope has
+    succeeded yet.
+    """
+    app = _collections_app_without_a_page(**kwargs)
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        assert not app.query("#library-collections-items-empty")
+        if kwargs.get("loading"):
+            assert app.query_one("#library-collections-page-loading", Static)
+        if kwargs.get("error"):
+            assert app.query_one("#library-collections-page-error", Static)
+
+
+@pytest.mark.asyncio
+async def test_collections_empty_state_follows_the_page_it_describes():
+    """Qodo item 1, second half: a retained stale page keeps its own scope.
+
+    A scope change leaves the last good page on screen while the new request
+    runs, so copy derived from `requested_scope` would describe a page that
+    is not the one being shown.
+    """
+    applied = CapturePageRequest(AUTHORITY, statuses=("archived",))
+    requested = CapturePageRequest(AUTHORITY, search="something else")
+    app = _pane(
+        CollectionsCaptureControllerState(
+            authority_key=AUTHORITY,
+            requested_scope=requested,
+            applied_scope=applied,
+            page=CapturePage(applied, (), 0),
+            page_stale=True,
         )
+    )
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        empty = app.query_one("#library-collections-items-empty", Static)
+        assert str(empty.renderable) == _EMPTY_SCOPED
 
 
 @pytest.mark.asyncio

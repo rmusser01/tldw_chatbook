@@ -405,7 +405,14 @@ async def test_skills_list_renders_trust_header_setup():
     app = _CanvasHost(_two_row_state(), trust_posture="needs_setup")
     async with app.run_test() as pilot:
         header = pilot.app.query_one("#library-skills-trust-header", Static)
-        assert "isn't set up" in str(header.renderable)
+        # task-32363: the whole sentence, at the UI boundary. A substring
+        # check on "isn't set up" survived reverting the explanation, so the
+        # thing the task added had no integration coverage at all (Qodo
+        # review of PR #2599, item 2).
+        assert str(header.renderable) == (
+            'Skill trust isn\'t set up, so every skill reads "needs review" — '
+            "set it up to review and use skills."
+        )
         action = pilot.app.query_one("#library-skills-trust-action", Button)
         assert action.trust_action == "setup"
 

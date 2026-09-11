@@ -48,6 +48,14 @@ The action id is unchanged (`setup`), so the **Set up skill trust** button and e
 
 One cost worth naming: at 60 columns the sentence wraps to 4 lines instead of 2. It fits because task-32354 gave the same canvas 3 rows back from the pager on the same branch (`crit10/wave/pagers/caps/09-skills-60x24.txt` — both skills still visible).
 
+## Bot review round (Qodo on PR #2599, 2026-09-11)
+
+The new banner had an exact unit assertion but only a substring one
+(`"isn't set up"`) at the UI boundary, so reverting the explanation would
+have left the mounted Skills suite green.
+`test_skills_list_renders_trust_header_setup` now asserts the whole
+sentence.
+
 ## Files
 
 - `tldw_chatbook/Library/library_skills_state.py`, `Tests/Library/test_library_skills_state.py`, `Docs/User_Guide/library/skills.md`.

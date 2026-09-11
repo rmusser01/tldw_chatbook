@@ -65,6 +65,32 @@ filter sentence. Pinned red-first by
 `test_collections_empty_state_names_an_empty_rail_scope[favorites|archived]`
 and `test_collections_empty_state_prefers_the_filter_copy_inside_a_scope`.
 
+## Bot review round (Qodo on PR #2599, 2026-09-11)
+
+Two real correctness bugs in the fix-round-1 empty state, both fixed
+red-first, plus the testability rule the second one exposed.
+
+- **The empty state spoke before it had a result.** It rendered whenever
+  `page` was `None` *or* empty, and `page is None` is also initial loading
+  and initial failure — so "No saved captures yet" painted beside
+  "Loading captures…" and beside the error's **Retry**. It now renders only
+  for a page that actually came back. This was pre-existing (the old
+  one-size sentence did it too), but splitting the copy made the claim
+  sharper and therefore more wrong.
+- **The copy described the wrong scope.** It read `state.requested_scope`,
+  while a retained stale page outlives the request that replaced it. It now
+  reads `page.applied` — the scope that produced the page on screen.
+- **`favorite=False` is a scope, not "no scope".** `favorite` is tri-state;
+  a saved search for non-favourites carries `False`, which a truthiness test
+  read as unset, so an empty non-favourites search claimed nothing had ever
+  been saved.
+- The rule moved out of `compose` into `collections_empty_state_copy`, a
+  pure function in the same module, so the precedence and the field
+  classification are testable without mounting Textual — the same shape the
+  Library's other copy rules already use (`skill_trust_header_line`,
+  `library_pager_layout`). 11 parameterized unit rows plus the mounted tests
+  as integration coverage.
+
 **P3 — the Collections/Trash boundary-reason asymmetry is a decision, not an
 accident.** Collections gained a `#library-collections-page-reason` line (the
 brief's Step 3 asks for it, and it matches Media/Conversations/Prompts);

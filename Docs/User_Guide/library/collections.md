@@ -83,14 +83,20 @@ right.
   - A filter is set (search text, domain, tags or a date bound — the things
     **Clear** undoes): "No captures match these filters · clear them to see
     everything saved."
-  - A rail scope is selected (Saved, Reading, Read, Archived, Favorites):
-    "Nothing in this scope yet · choose All Captures in the rail to see
-    everything saved."
+  - A rail scope is selected (Saved, Reading, Read, Archived, Favorites, or a
+    saved search carrying its own status / favourite predicate): "Nothing in
+    this scope yet · choose All Captures in the rail to see everything
+    saved."
   - Neither: "No saved captures yet · press Quick Capture above to save a
     page by URL."
 
   A filter set *inside* a scope takes the filter sentence: it is the
-  narrowing the reader can undo from the canvas.
+  narrowing the reader can undo from the canvas. None of the three appears
+  until a page has actually come back — while the first load is running, or
+  after it failed, the "Loading captures…" line or the error and its
+  **Retry** are the only message, because "no captures" is a claim about a
+  result. If a page is left on screen while a new scope loads, the sentence
+  describes the page you can see, not the scope being fetched.
 - **Range line** — `1–20 of 57 · Page 1 of 3`, or `0–0 of 0` when the scope
   is empty, or `Page N · total unavailable` when a refresh failed.
 - **Previous** / **Next** — 20 captures per page. They are drawn **only
@@ -270,4 +276,7 @@ tells a profile that never captured anything to clear filters it never set;
 the pager at `0–0 of 0` draws no controls at all, per task-32354's shared
 single-page rule. Live at 235x52, 100x30 and 60x24 on a seeded profile. Fix
 round 1: the empty state gained a third sentence for an empty rail scope,
-which the first cut mis-read as a never-used profile.)*
+which the first cut mis-read as a never-used profile. Bot review round: it no
+longer speaks at all before a page has come back, it describes the page on
+screen rather than the scope being fetched, and a saved search's
+`favorite=False` predicate counts as a scope.)*
