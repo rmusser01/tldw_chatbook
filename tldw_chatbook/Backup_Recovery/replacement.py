@@ -1484,19 +1484,34 @@ def _recovery_admission_record(journal, admission_root):
 
 def _recovery_admission_aliases(journal, admission_root, names, roots):
     """Resolve only missing registered roots inside a checked native move gap."""
-    from .journal import _absent, _MoveIntent
-    from .publication import _check_parents, _move_position
+    from .journal import _absent, _MoveIntent, _RollbackCredentialPlan
+    from .publication import _check_parents, _directory_state, _move_position
 
     expected, prepared, records = _recovery_admission_record(journal, admission_root)
     if names != expected:
         raise ValueError("replacement_recovery_scope_changed")
-    latest = {}
+    latest, credential_artifacts = {}, {}
     for row in records:
-        if row.event == "move_intended":
+        if row.event == "rollback_credentials_planned":
+            for artifact in _RollbackCredentialPlan.model_validate(
+                row.evidence
+            ).artifacts:
+                credential_artifacts.setdefault(artifact.logical_id, []).append(
+                    artifact
+                )
+        elif row.event == "move_intended":
             intent = _MoveIntent.model_validate(row.evidence)
-            latest[intent.logical_id] = (intent, None)
+            latest[intent.logical_id] = (
+                intent,
+                None,
+                tuple(credential_artifacts.get(intent.logical_id, ())),
+            )
         elif row.event == "move_observed":
-            latest[intent.logical_id] = (intent, row.evidence["moved"])
+            latest[intent.logical_id] = (
+                intent,
+                row.evidence["moved"],
+                latest[intent.logical_id][2],
+            )
     aliases, checked = {}, {}
     for root in roots:
         resolved = root.resolve(strict=False)
@@ -1512,28 +1527,76 @@ def _recovery_admission_aliases(journal, admission_root, names, roots):
         if item.logical_id not in checked:
             if item.logical_id not in latest or not _absent(item.target):
                 raise ValueError("recovery_root_unverified")
-            intent, moved = latest[item.logical_id]
-            if intent.step not in {"retire", "publish", "unpublish", "restore"}:
+            intent, moved, alternatives = latest[item.logical_id]
+            if intent.step not in {
+                "retire",
+                "publish",
+                "unpublish",
+                "restore",
+                "credential_retire",
+                "credential_publish",
+                "credential_unpublish",
+            }:
                 raise ValueError("recovery_move_unqualified")
             if moved is None:
                 moved = _move_position(intent) == "after"
-            away = intent.step in {"retire", "unpublish"}
+            away = intent.step in {
+                "retire",
+                "unpublish",
+                "credential_retire",
+                "credential_unpublish",
+            }
             if moved != away:
                 raise ValueError("recovery_root_unverified")
             held = Path(intent.destination if away else intent.source.path)
             if (intent.source.path if away else intent.destination) != item.target:
                 raise ValueError("recovery_root_unverified")
-            original = intent.step in {"retire", "restore"}
+            original = intent.step in {"retire", "restore", "credential_retire"}
             expected_object = item.previous_metadata if original else item.candidate
-            expected_path = item.retained if original else item.candidate.path
+            expected_path = (
+                item.retained
+                if original
+                else item.candidate.path
+                if item.candidate
+                else None
+            )
+            metadata = original
+            if intent.step in {"credential_publish", "credential_unpublish"}:
+                alternate = (
+                    (alternatives[-1] if alternatives else None)
+                    if intent.step == "credential_publish"
+                    else next(
+                        (
+                            row
+                            for row in alternatives
+                            if row.candidate.path == intent.destination
+                        ),
+                        None,
+                    )
+                )
+                if alternate is None:
+                    raise ValueError("recovery_root_unverified")
+                expected_object, expected_path = (
+                    alternate.metadata,
+                    alternate.candidate.path,
+                )
+                metadata = True
             if (
                 expected_object is None
                 or str(held) != expected_path
                 or not _matches(intent.source, str(held))
-                or not _matches(expected_object, str(held), metadata=original)
+                or not _matches(expected_object, str(held), metadata=metadata)
             ):
                 raise ValueError("recovery_root_unverified")
             _check_parents(item)
+            for parent in intent.parents:
+                current = _directory_state(parent.state.path)
+                if (current.device, current.inode, current.mode) != (
+                    parent.state.device,
+                    parent.state.inode,
+                    parent.state.mode,
+                ):
+                    raise ValueError("move_parent_changed")
             holders = [held]
             if not original and item.previous is not None:
                 if not _matches(item.previous_metadata, item.retained, metadata=True):
