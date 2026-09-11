@@ -28,7 +28,7 @@ _ONE_HIT_QUERY = "interview"
 
 def test_the_age_label_says_what_the_age_is():
     now = datetime(2026, 9, 11, 12, 0, tzinfo=timezone.utc)
-    assert media_added_age_copy("2026-09-11T11:50:00+00:00", now=now) == "added 10m ago"
+    assert media_added_age_copy("2026-09-11T11:50:00+00:00", now=now) == "added 10m"
     assert media_added_age_copy("2026-09-11T11:59:40+00:00", now=now) == "added just now"
     assert media_added_age_copy("", now=now) == ""
 

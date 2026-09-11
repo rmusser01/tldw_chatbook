@@ -206,8 +206,8 @@ def _media_row_label_rest(
     # ("▸ Loaded · Attention Is All You Need"), so the row's identity was
     # displaced by its status. task-30044's constraint still holds -- the
     # SHORT word, never the old prose -- it just belongs on the fact line.
-    state = "Loading" if loading else "Loaded" if loaded else ""
-    detail = f"{secondary} · {state.lower()}" if state else secondary
+    state = "loading" if loading else "loaded" if loaded else ""
+    detail = f"{secondary} · {state}" if state else secondary
     if compact:
         return f" {visible_title} · {detail}"
     return f" {visible_title}\n    {detail}"

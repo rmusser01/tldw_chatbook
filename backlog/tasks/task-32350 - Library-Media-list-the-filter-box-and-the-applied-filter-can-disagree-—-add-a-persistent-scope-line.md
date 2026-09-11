@@ -32,7 +32,11 @@ The filter box keeps a draft while the list shows the last applied query and the
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Failing UI tests for #library-media-scope-line and #library-media-scope-clear\n2. scope_line/scope_clearable on LibraryMediaCanvasState, built inside build_library_media_browse_state from the APPLIED scope\n3. unfiltered_total passed from library_media_controller\n4. scope row in library_media_canvas compose + Clear routed to the existing clear path, which now also blanks the Input\n5. TCSS rule + bundle rebuild
+1. Failing UI tests for #library-media-scope-line and #library-media-scope-clear
+2. scope_line/scope_clearable on LibraryMediaCanvasState, built inside build_library_media_browse_state from the APPLIED scope
+3. unfiltered_total passed from library_media_controller
+4. scope row in library_media_canvas compose + Clear routed to the existing clear path, which now also blanks the Input
+5. TCSS rule + bundle rebuild
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

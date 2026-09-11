@@ -31,7 +31,10 @@ Every media row ends '· 10m' (audio · 10m, video · 10m, pdf · 10m). The valu
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. New test for media_added_age_copy in Tests/UI/test_library_crit10_media_rows.py\n2. Add media_added_age_copy beside media_trash_age_copy in library_media_state.py\n3. Swap the two browse call sites (browse state + legacy build_library_media_state); leave the Trash row alone\n4. Update the four pinned secondary strings to the labelled form
+1. New test for media_added_age_copy in Tests/UI/test_library_crit10_media_rows.py
+2. Add media_added_age_copy beside media_trash_age_copy in library_media_state.py
+3. Swap the two browse call sites (browse state + legacy build_library_media_state); leave the Trash row alone
+4. Update the four pinned secondary strings to the labelled form
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

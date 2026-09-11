@@ -321,7 +321,8 @@ path that has not been checked yet it runs the pre-check and the footer
 reads **`enter check this path`**; once the gate line clears the footer
 reads **`enter start import`** and Enter starts the import. With "⚠"
 warnings outstanding, Enter,Enter carries the same two-press consent as the
-Start button. **r** re-stages your last import of the session ("Retry this batch") when the queue has settled — inside a
+Start button. **r** re-stages your last import of the session ("Retry this
+batch") when the queue has settled — inside a
 text field it stays a letter. **Escape** first backs out of a pending
 "Press Start again" confirm (staying on the form), otherwise returns you
 to the Library landing (a half-filled form is kept, same as switching
@@ -934,3 +935,9 @@ AC#3: the Import footer no longer says "enter start" for both steps — on an
 unchecked path it reads "enter check this path" and only once the Start gate
 clears does it read "enter start import", derived from the same gate Enter
 itself obeys.)*
+
+*Verified against fix/library-crit10-media-rows — 2026-09-11, fix round 1
+(task-32364 AC#3 review: the Enter label now reaches the footer on a gate
+transition that does not recompose the canvas — previously only a changed
+type-group set re-registered it, so opening the gate any other way left the
+footer naming the previous step's action.)*

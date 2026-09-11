@@ -117,10 +117,12 @@ Reader falls back to "Select a media item to read it here.".)*
 
 **Row markers.** An item's second row says what it is and when it arrived, and
 adds **· analysed** when that item already carries an analysis — so you can
-see what is worth generating without opening anything (`document · added 5m
-ago · analysed`). The age is labelled, because a bare "10m" on an `audio` or
+see what is worth generating without opening anything (`document · added 5m ·
+analysed`). The age is labelled, because a bare "10m" on an `audio` or
 `video` row reads as the item's *length*; under a minute it reads **added
-just now**. The row that is open in the Reader ends **· loaded** (**·
+just now**. It shares the Trash list's grammar (`pdf · trashed 3m`), which is
+also why it is "added 5m" and not "added 5m ago" — on this pane four cells
+are the difference between a keyword row showing its term and hiding it. The row that is open in the Reader ends **· loaded** (**·
 loading** while it is fetching) — the state is a fact about the row, so it
 sits with the other facts rather than in front of the title.
 
@@ -141,14 +143,18 @@ reuses that same cell for its **☑/☐**, so a row never carries two markers.
 While a filter is active, a row it found only through one of its **keywords**
 adds **· keyword: \<term\>** — the filter searches titles, item text and
 keywords, so without it a hit whose title and body hold nothing you typed
-reads as a mistake (`article · added 2m ago · keyword: notes`). A row whose
+reads as a mistake (`article · added 2m · keyword: notes`). A row whose
 title or text carries the term already shows you why it is there and says nothing
 extra. Long tags are cut to ten columns (`keyword: quokkasand…`; five
 wide CJK characters, or five flag emoji) to keep the line short — the cut
 counts a flag by the two columns it paints and never leaves half of one, so
-the row frame does not drift. It can still be too long for a narrow Items pane:
-at the pane's narrowest the row ends in an ellipsis mid-term, and a row that is
-both analysed and a keyword hit can run out of room at the default width too. The
+the row frame does not drift. It can still be too long for a narrow Items
+pane, and the labelled age made that tighter: at the pane's narrowest the row
+ends in an ellipsis a few characters into `keyword:` itself, before the term
+starts. A row that is both analysed and a keyword hit can run out of room at
+the default width too, and the row open in the Reader spends a further nine
+columns on its `· loaded`, so at the automatic narrow width (100 columns) that
+row is the first to clip. The
 Reader's **Info** tab "Keywords:" line applies the same guard: it shows the
 full stored keyword but drops a dangling half-flag so that surface's frame
 does not drift either (the edit form still prefills the stored keyword
@@ -1195,3 +1201,10 @@ filter box, so an unsubmitted draft in the box can no longer be mistaken for
 what the rows came from. task-32364: the Reader's row ends "· loaded"
 instead of prefixing its title with "Loaded ·", and a conversation row reads
 "5 messages · 16m" with the same separator every other Library list uses.)*
+
+*Verified against fix/library-crit10-media-rows — 2026-09-11, fix round 1
+(task-32347 review: the row age drops its " ago" and reads `audio · added
+10m`, the Trash list's own grammar — the four cells are what let a narrow
+Items pane paint a keyword row's term again. task-32350 review: the scope
+line drops its "of M" half when the screen's Media total is a lower bound,
+rather than stating a flat total the rail itself renders as "5+".)*

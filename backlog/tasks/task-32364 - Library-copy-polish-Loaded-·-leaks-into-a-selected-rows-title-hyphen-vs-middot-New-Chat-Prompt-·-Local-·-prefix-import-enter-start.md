@@ -31,7 +31,10 @@ Selecting a media row prefixes its title with 'Loaded ·' (A caps 39/47); conver
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Move the Loading/Loaded state word out of the title into the secondary in _media_row_label\n2. Conversations separator hyphen -> middot; 'New Chat' -> 'Untitled conversation'\n3. Prompts row: drop 'Prompt · ' prefix, 'System + User' -> 'has system and user text'\n4. Import footer: state-dependent Enter label
+1. Move the Loading/Loaded state word out of the title into the secondary in _media_row_label
+2. Conversations separator hyphen -> middot; 'New Chat' -> 'Untitled conversation'
+3. Prompts row: drop 'Prompt · ' prefix, 'System + User' -> 'has system and user text'
+4. Import footer: state-dependent Enter label
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -48,4 +51,23 @@ AC#3: _library_ingest_shortcuts_for_current_state now derives the Enter label fr
 Live-verified 235x52: the conversation row reads '5 messages · 1h · Default · Active'; the media row reads 'pdf · added 1h ago · keyword: notes · loaded' with an unprefixed title; the Import footer reads 'enter check this path'. The open-gate half could NOT be live-verified: local media Import cannot run on this host (POSIX semaphores exhausted -> multiprocessing.Pool [Errno 28]), so the pre-check never settles and the Start gate never opens. Both strings are pinned by a unit test that drives the controller's state directly.
 
 Files: tldw_chatbook/Widgets/Library/library_media_canvas.py; tldw_chatbook/Library/library_conversations_state.py; tldw_chatbook/Widgets/Library/library_prompts_canvas.py; tldw_chatbook/Library/library_prompts_state.py; tldw_chatbook/UI/Library_Modules/library_ingest_controller.py; tldw_chatbook/UI/Screens/library_screen.py (LIBRARY_INGEST_SHORTCUTS only); Tests/UI/test_library_crit10_media_rows.py, test_library_media_toolbar_adapt.py, test_library_media_reader_shell.py, test_library_ingest_keyboard.py, test_library_prompts_canvas.py; Tests/Library/test_library_conversations_state.py, test_library_prompts_state.py; Docs/User_Guide/library/media-and-conversations.md, prompts.md, import-and-export.md.
+## Fix round 1 (review response)
+
+AC#3 was met in the pure function but not in the running app: nothing
+re-registered the Ingest footer when the Start gate opened. Tracing it under
+a real harness narrowed the review's claim -- the common blank-to-valid-path
+transition is saved by accident, because filling in an empty `type_groups`
+sends `_update_library_ingest_dynamic_regions` down its STRUCTURAL branch and
+that recomposes. Every transition that is NOT structural left the footer
+naming the previous step's action. `_resync_library_ingest_footer()` now runs
+at the pre-flight seam every gate transition passes through; the new app-test
+drives a non-structural transition and is red without it.
+
+Also: the Prompts row now keys off `artifact_type` rather than the rendered
+`type_label`, and the state word is built lower-case once.
+
+The two halves of the critique this task could not close honestly are now
+riders rather than notes inside a closed task: **task-32378** (the prompt
+lane summary reads four different ways across Library and Console) and
+**task-32379** (the stored "New Chat" title, a cross-surface product call).
 <!-- SECTION:NOTES:END -->

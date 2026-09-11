@@ -1014,7 +1014,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 summary_parts = [
                     part
                     for part in (
-                        "" if row.type_label == "Prompt" else row.type_label,
+                        "" if row.artifact_type == "prompt" else row.type_label,
                         row.source_label,
                         row.lane_summary,
                     )
