@@ -1227,7 +1227,9 @@ async def test_commit_form_is_binding_keyed_validates_inline_and_emits_typed_int
         assert not workflow.query("#file-notes-git-back")
         assert (
             _text(panel.query_one("#file-notes-git-commit-form-meta", Static))
-            == "Branch: refs/heads/feature/[literal] · 2 session notes staged"
+            # task-32265: the short branch name, not the ref, on the
+            # pre-commit disclosure.
+            == "Branch: feature/[literal] · 2 session notes staged"
         )
         subject = panel.query_one("#file-notes-git-commit-subject", Input)
         body = panel.query_one("#file-notes-git-commit-body-input", TextArea)
@@ -1537,7 +1539,7 @@ async def test_commit_review_is_literal_complete_and_discloses_included_notes() 
         )
         assert _text(
             panel.query_one("#file-notes-git-commit-review-branch", Static)
-        ) == (f"Branch: refs/heads/feature/[literal] · Parent: {'a' * 40}")
+        ) == (f"Branch: feature/[literal] · Parent: {'a' * 40}")  # task-32265
         message = panel.query_one(
             "#file-notes-git-commit-review-message",
             Static,

@@ -294,6 +294,13 @@ def _repository_path_for_display(path: str, *, markup: bool = False) -> str:
     return escape_markup(display) if markup else display
 
 
+#: Cells one Session Git row occupies (`.file-notes-git-row { height: 2 }`).
+_ROW_CELLS = 2
+
+#: Most rows the list shows before it scrolls its own overflow.
+_ROW_LIST_MAX_CELLS = 12
+
+
 def _branch_for_display(ref: str) -> str:
     """Render a branch ref the way a user names it: ``main``, not the ref.
 
@@ -731,15 +738,15 @@ class LibraryFileNotesGitPanel(Vertical):
     }
 
     #file-notes-git-rows {
-        /* task-32248 AC#3: `1fr` made the list swallow every spare row of
-           the surface, so Stage/Commit -- the actions for the SELECTED row
-           -- rendered ~24 rows below it (live capture: row 20 vs row 44 at
-           235x52). Bounded, the list scrolls its own overflow and the
-           actions sit directly under the rows they act on. 12 cells = 6
-           two-cell rows. */
-        height: auto;
-        max-height: 12;
-        min-height: 2;
+        /* task-32248 AC#3: a bare `1fr` made the list swallow every spare
+           row of the surface, so Stage/Commit -- the actions for the
+           SELECTED row -- rendered ~24 rows below it (live capture: row 20
+           vs row 44 at 235x52). `1fr` is kept, because the list still has
+           to SHRINK on a short pane (at 40x20 a fixed height pushes the
+           status line off the bottom); the ceiling is set per render from
+           the row count instead -- see `_sync_row_list_height`. */
+        height: 1fr;
+        min-height: 1;
     }
 
     .file-notes-git-row {
@@ -799,6 +806,7 @@ class LibraryFileNotesGitPanel(Vertical):
         min-height: 1;
         min-width: 0;
     }
+
 
     #file-notes-git-commit-workflow,
     #file-notes-git-push-workflow {
@@ -1213,6 +1221,9 @@ class LibraryFileNotesGitPanel(Vertical):
         self._commit_included_expanded = False
         self._commit_note_render_generation = 0
         self._commit_list_focus_pending = False
+        #: Set by the FIRST ready status, consumed once the rows mount
+        #: (task-32248 AC#1).
+        self._entry_focus_pending = False
         self._commit_list_preferred_group_id: int | None = None
         self._commit_list_focus_selector: str | None = None
         self._commit_entry_focus: tuple[object, str] | None = None
@@ -2883,7 +2894,7 @@ class LibraryFileNotesGitPanel(Vertical):
         if self._status_ready:
             self._rows = status.rows
             if not was_ready and status.rows and self._focus_is_inside():
-                self._commit_list_focus_pending = True
+                self._entry_focus_pending = True
             self._replace_rows(prior_group_id)
             stage_count = sum(row.stage_eligible for row in self._rows)
             unstage_count = sum(row.unstage_eligible for row in self._rows)
@@ -3087,6 +3098,22 @@ class LibraryFileNotesGitPanel(Vertical):
         self.query_one("#file-notes-git-rows", ListView).display = (
             bool(self._rows) and not self._replacing_rows
         )
+        self._sync_row_list_height()
+
+    def _sync_row_list_height(self) -> None:
+        """Cap the row list at its own content, and at six rows.
+
+        task-32248 AC#3. Without a ceiling the `1fr` list takes every spare
+        row of the surface and the actions it feeds render at the pane
+        floor. Without the `1fr` it cannot shrink, and on a 40x20 pane the
+        status line falls off the bottom. So: `1fr` for the shrink, this
+        for the growth. Six rows because past that the bulk actions are the
+        right tool anyway.
+        """
+        rows = max(1, len(self._rows))
+        self.query_one("#file-notes-git-rows", ListView).styles.max_height = min(
+            rows * _ROW_CELLS, _ROW_LIST_MAX_CELLS
+        )
 
     def _settle_commit_list_focus(self) -> None:
         """Focus a requested row only after its mounted generation settles."""
@@ -3186,6 +3213,14 @@ class LibraryFileNotesGitPanel(Vertical):
                 self._replacing_rows = False
                 self._sync_empty_state()
                 self._update_actions()
+                if self._entry_focus_pending:
+                    self._entry_focus_pending = False
+                    # Re-checked HERE, not only when the status landed: the
+                    # rows mount on a worker, and the user can reclaim focus
+                    # (pressing Edit, say) while they do. An entry focus that
+                    # fires after that is a focus THEFT.
+                    if self._focus_is_inside():
+                        self._commit_list_focus_pending = True
                 if self._commit_list_focus_pending:
                     self._settle_commit_list_focus()
 
