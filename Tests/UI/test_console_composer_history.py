@@ -17,6 +17,10 @@ import json
 import pytest
 from textual.widgets import Static
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 from Tests.UI.test_console_native_chat_flow import (
     _configure_native_ready_console,
 )

@@ -39,7 +39,10 @@ from Tests.console_resource_fixtures import (
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
-from Tests.Architecture.test_console_private_delegate_cleanup import DELEGATES
+from Tests.Architecture.test_console_private_delegate_cleanup import (
+    DELEGATES,
+    RETIRED_SUBMISSION_METHODS,
+)
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
@@ -49,7 +52,10 @@ from tldw_chatbook.Prompt_Management.prompt_variables import (
     fingerprint_system_text,
 )
 from tldw_chatbook.UI.Console_Modules.prompts import ConsolePromptsController
-from tldw_chatbook.UI.Console_Modules.wiring import build_console_commands_controller
+from tldw_chatbook.UI.Console_Modules.wiring import (
+    build_console_commands_controller,
+    build_console_controllers,
+)
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsolePromptsModal
 from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsResult
@@ -306,7 +312,7 @@ async def test_improve_stays_unavailable_during_an_active_run_even_with_a_health
         console._console_provider_blocker_copy = lambda: ""
         console._console_run_active = lambda: True
 
-        console._open_console_prompts_modal()
+        console._prompts._open_console_prompts_modal()
         await pilot.pause()
         modal = host.screen_stack[-1]
 
@@ -1301,9 +1307,8 @@ PROMPT_OWNER_ROUTES = {
         "eval",
     ),
     "_ensure_console_prompt_history": (
-        "console_view_hooks",
-        "self._prompts._ensure_console_prompt_history() "
-        "if prompts is not None else None",
+        "compose_content",
+        "composer.set_prompt_history(self._prompts._ensure_console_prompt_history())",
         "eval",
     ),
     "_console_command_insert_prompt": (
@@ -1337,7 +1342,10 @@ def test_retired_screen_prompt_facades_keep_exact_current_owner_routes(
     name: str,
 ) -> None:
     """Pin each approved facade's real owner and invocation-phase caller."""
-    assert len(DELEGATES) == 64
+    assert len(DELEGATES) == 60
+    assert len(RETIRED_SUBMISSION_METHODS) == 4
+    assert set(DELEGATES).isdisjoint(RETIRED_SUBMISSION_METHODS)
+    assert len(set(DELEGATES) | RETIRED_SUBMISSION_METHODS) == 64
     assert DELEGATES[name] == ("prompts", "ConsolePromptsController", name)
     assert name in ConsolePromptsController.__dict__
 
@@ -1365,6 +1373,23 @@ def test_retired_screen_prompt_facades_keep_exact_current_owner_routes(
             if ast.dump(node) == ast.dump(expected)
         ]
     assert len(matches) == 1
+
+    if name == "_ensure_console_prompt_history":
+        wiring_tree = ast.parse(dedent(inspect.getsource(build_console_controllers)))
+        history_accessor = ast.parse(
+            "lambda: screen._console_runtime().ensure_prompt_history()", mode="eval"
+        ).body
+        history_routes = [
+            keyword
+            for node in ast.walk(wiring_tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "ConsolePromptsController"
+            for keyword in node.keywords
+            if keyword.arg == "prompt_history_accessor"
+        ]
+        assert len(history_routes) == 1
+        assert ast.dump(history_routes[0].value) == ast.dump(history_accessor)
 
 
 def test_moved_methods_are_gone_from_the_screen() -> None:

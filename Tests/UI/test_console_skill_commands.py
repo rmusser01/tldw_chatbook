@@ -14,6 +14,7 @@ store.
 from __future__ import annotations
 
 import time
+from functools import partial
 from typing import Any, Mapping
 from unittest.mock import MagicMock
 
@@ -35,9 +36,13 @@ from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleMessageRole,
+    ConsoleSubmissionOrigin,
+)
 from tldw_chatbook.Chat.console_command_grammar import default_console_registry
 from tldw_chatbook.Chat.console_skill_resolver import SKILLS_EMPTY_LIST_ROW
+from tldw_chatbook.Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
 from tldw_chatbook.UI.Console_Modules.skill import (
     CONSOLE_SKILL_NEEDS_REVIEW_HINT_TEMPLATE,
 )
@@ -65,7 +70,7 @@ def _blocked_skill(name: str, *, reason: str = "skill_modified") -> dict[str, An
 
 
 class FakeSkillsScopeService:
-    """Minimal stand-in for ``SkillsScopeService.get_context``/``execute_skill``.
+    """Scripted scope service with the local catalog's send-time capture seam.
 
     ``execute_skill`` exists because the provider-payload substitution rule
     renders the triggering `$skill-name` turn at build time through the
@@ -86,6 +91,16 @@ class FakeSkillsScopeService:
         self.blocked_skills = blocked_skills or []
         self.calls: list[str | None] = []
         self.executions: list[tuple[str, str | None]] = []
+        self.local_service = self
+
+    def _load_index(self) -> dict[str, dict[str, Any]]:
+        return {
+            skill["name"]: skill
+            for skill in [*self.available_skills, *self.blocked_skills]
+        }
+
+    def _summary_for_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        return dict(record)
 
     async def get_context(self, *, mode: str | None = None) -> Mapping[str, Any]:
         self.calls.append(mode)
@@ -308,9 +323,40 @@ async def test_leading_dollar_skill_mention_executes_through_normal_send():
 
         # The raw `$`-prefixed draft is submitted verbatim -- no composer
         # command dispatch ever intercepts it.
+        submit_spy.assert_awaited_once()
+        configuration = submit_spy.await_args.kwargs["configuration"]
+        assert isinstance(configuration, ConsoleTurnConfigurationSnapshot)
+        assert configuration.__dataclass_params__.frozen is True
+        assert configuration.session_id == session_id
+        assert configuration.skill_context_maximum == {
+            "backend": "local",
+            "available_skills": (_skill("code-review", "Reviews a diff."),),
+            "blocked_skills": (),
+            "context_text": "- code-review",
+        }
+        runtime = console._console_runtime()
+        release = submit_spy.await_args.kwargs["staged_evidence_release"]
+        assert isinstance(release, partial)
+        assert release.func == runtime.release_console_staged_evidence
+        assert release.args == ()
+        assert release.keywords == {"revision": None}
+        acceptance_hook = submit_spy.await_args.kwargs["custody_acceptance_hook"]
+        assert callable(acceptance_hook)
         submit_spy.assert_awaited_once_with(
             "$code-review fix it",
             session_id=session_id,
+            origin=ConsoleSubmissionOrigin.MANUAL,
+            queue_entry_id=None,
+            queue_authorization=None,
+            wake_authorization=None,
+            configuration=configuration,
+            accepted_attachments=(),
+            captured_one_shot_prefill=None,
+            captured_one_shot_prefill_revision=0,
+            staged_evidence_launch=None,
+            staged_evidence_capture=runtime._capture_frozen_console_staged_rag,
+            staged_evidence_release=release,
+            custody_acceptance_hook=acceptance_hook,
         )
         # The skill actually ran (controller-side substitution).
         assert skills.executions == [("code-review", "fix it")]

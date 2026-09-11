@@ -16,9 +16,13 @@ import pytest
 from textual.events import Key
 from textual.widgets import Button
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
+from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.test_console_native_chat_flow import (
     BlockedGateway,
-    _build_console_send_test_app,
     _persist_console_provider_config,
     _select_llamacpp_console,
 )
@@ -36,6 +40,13 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
+
+
+def _build_console_send_test_app():
+    """Build through this module's exact-owner fixture before attaching the DB."""
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    return app
 
 
 async def _wait_for_text(console, pilot, needle: str, tries: int = 40) -> None:

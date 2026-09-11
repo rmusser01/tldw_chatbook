@@ -763,9 +763,18 @@ async def test_durable_capture_classifies_only_unsaved_leading_system_rows(
             ]
         )
 
+        destination = preparation.execution_context.resolved_destination
+        assert destination is not None
         request = controller._build_durable_trace_request(
             preparation=replace(
                 preparation, capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON
+            ),
+            resolution=ConsoleProviderResolution(
+                ready=True,
+                provider=destination.provider,
+                model=destination.model,
+                base_url=destination.endpoint_identity,
+                resolved_destination=destination,
             ),
             provider_messages=messages,
             trace_source_messages=tuple(messages),
