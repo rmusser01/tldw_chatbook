@@ -9706,7 +9706,15 @@ class LibraryScreen(BaseAppScreen):
                 self._library_list_entry_focus_generation,
             )
         elif media_return is None:
-            self.call_after_refresh(self._focus_library_list_entry)
+            # Qodo #3 on PR #2585: guarded like the two branches around it.
+            # The plain call re-checks neither the pending flag nor the arm
+            # generation, so a user who took control between this schedule and
+            # the callback had focus pulled back into the list -- the exact
+            # yank task-2856's review round 2 added the immediate disarm for.
+            self.call_after_refresh(
+                self._focus_library_list_entry_if_current,
+                self._library_list_entry_focus_generation,
+            )
         else:
             self.call_after_refresh(
                 self._focus_library_list_entry_if_current,
@@ -13740,7 +13748,13 @@ class LibraryScreen(BaseAppScreen):
                     self.set_focus(None)
                 self._media_state.return_settlement = None
             elif pending_media_return is None:
-                self.call_after_refresh(self._focus_library_list_entry)
+                # Qodo #3 on PR #2585: the recompose re-request carries the arm
+                # generation too, so a disarm between this compose and the
+                # callback stands it down instead of re-focusing the list.
+                self.call_after_refresh(
+                    self._focus_library_list_entry_if_current,
+                    self._library_list_entry_focus_generation,
+                )
             else:
                 self.call_after_refresh(
                     self._focus_library_list_entry_if_current,

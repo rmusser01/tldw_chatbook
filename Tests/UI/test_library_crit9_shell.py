@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 from textual._context import NoActiveAppError
 from textual.widget import Widget
+from textual.widgets import Input
 
 from tldw_chatbook.UI.Library_Modules.screen_constants import (
     _LIBRARY_READER_SHELL_SELECTOR,
@@ -504,3 +505,69 @@ async def test_the_slash_chip_survives_where_the_key_still_works() -> None:
         await pilot.press("slash")
         await pilot.pause()
         assert getattr(screen.focused, "id", "") == "library-media-filter"
+
+
+async def test_a_disarmed_entry_focus_request_cannot_steal_focus_back() -> None:
+    """Qodo #3: the queued entry-focus callback must respect its own disarm.
+
+    ``_arm_library_list_entry_focus`` queued the plain
+    ``_focus_library_list_entry`` for the non-Media case (and ``compose_content``
+    did the same on every recompose while armed), neither of which re-checks the
+    pending flag or the arm generation. A user who takes control between the
+    schedule and the callback had focus pulled back into the list -- the exact
+    yank task-2856's review round 2 added the immediate disarm to prevent.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=WIDE_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
+
+        rail_search = screen.query_one("#library-search-input", Input)
+        rail_search.focus()
+        await pilot.pause()
+        assert screen.focused is rail_search
+
+        # Arm, then take control before the queued callback can run.
+        screen._arm_library_list_entry_focus()
+        screen._disarm_library_list_entry_focus()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen.focused is rail_search, screen.focused
+
+
+async def test_an_unrecognised_trust_status_paints_no_word_on_the_row() -> None:
+    """Qodo #2: the unknown-status fallback, through the real list canvas.
+
+    The table is pinned on the helper above; this pins what a user sees, so a
+    later change to the state-to-row wiring cannot re-introduce an unsupported
+    trust claim while the unit test stays green.
+    """
+    app = _build_test_app()
+    app.skills_scope_service = _FakeSkillsScopeService(
+        available=[{"name": "code-review", "trust_status": "some_future_status"}],
+        blocked=[{"name": "summarize", "trust_status": "another_unknown_status"}],
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=WIDE_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-skills").press()
+        await _wait_for_selector(screen, pilot, "#library-skill-row-code-review")
+        labels = {
+            str(button.label) for button in screen.query("#library-skills-list Button")
+        }
+        print(f"MEASURED unknown-trust rows: {sorted(labels)}")
+
+        # The not-blocked row claims nothing; the blocked one still warns.
+        assert any(label.rstrip() == "✓ code-review" for label in labels), labels
+        assert not any("trusted" in label for label in labels), labels
+        assert any("summarize · needs review" in label for label in labels), labels
+        # No orphan separator where the word was dropped.
+        assert not any(label.rstrip().endswith("·") for label in labels), labels
