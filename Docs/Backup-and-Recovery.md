@@ -5,11 +5,11 @@ recovery archive, separate from a Chatbook content export. It covers selected
 Chatbook-owned data; it does not back up a remote tldw server, the operating
 system, or the application installer.
 
-Implementation and release qualification are still in progress. The complete F9
-replacement regression has passed on the development host, but that does not
-qualify every platform or the entire recovery workflow. In particular, the
-saved-copy later-rollback UI is still being qualified. Follow the operation's
-actual coverage and refusal messages rather than assuming platform support.
+Implementation and release qualification are still in progress. The F9 replacement
+and saved-copy later-rollback workflow has passed on the development host,
+including explicit credential-omission review. This does not qualify every
+platform or every recovery scenario. Follow the operation's actual coverage and
+refusal messages rather than assuming platform support.
 
 ## Create a backup
 
@@ -101,11 +101,17 @@ Recovery copies remain until explicit deletion. Deleting a copy removes that
 later-rollback option; the UI asks for acknowledgement and protects copies needed
 by active recovery. There is no automatic retention cleanup in this version.
 
-Later rollback is intended to replace changes made since the selected copy while
-first preserving those current changes in a new verified encrypted safety copy.
-Its **Review later rollback** flow is still under end-to-end qualification. A
-refused review is not a completed rollback; retain the existing copy and operation
-records.
+Later rollback replaces changes made since the selected copy while first
+preserving those current changes in a new verified encrypted safety copy. Select
+the copy and current profile configuration, enter the old copy's password, and
+choose **Review later rollback**. Review any reported credential omissions. If
+offered, use **Abort untouched replacement**, then explicitly acknowledge the
+omissions and request a fresh review. Changing the selection or acknowledgements
+invalidates the reviewed plan.
+
+Confirm the reviewed consequences, re-enter the old password, and provide matching
+passwords for the new safety copy before executing later rollback. A refused
+review is not a completed rollback; retain the existing copy and operation records.
 
 ## Manage recovered media
 
