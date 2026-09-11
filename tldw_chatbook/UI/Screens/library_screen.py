@@ -1115,6 +1115,12 @@ class LibraryScreen(BaseAppScreen):
             show=False,
         ),
         Binding("t", "library_media_move_to_trash", "Move to trash", show=False),
+        # task-32348 (critique #10, B K20): Find had no key at all -- it was
+        # a Button and nothing else, so a keyboard-only reader could not open
+        # the search bar the guide promises. ``ctrl+f`` is free on this screen
+        # (grep the BINDINGS above) and is not a printable key, so it works
+        # from inside the Reader's own text controls too.
+        Binding("ctrl+f", "library_media_reader_find", "Find", show=False),
         # task-28241: review-set keys, gated in check_action to a plain Reader
         # with a set active. "R" exits (the set stays resumable); "m" toggles
         # the current item's done mark (the manual counterpart to ]'s auto-mark).
@@ -4206,6 +4212,10 @@ class LibraryScreen(BaseAppScreen):
                 # refuse (external/server detail hides l and t). Short
                 # labels: the footer compacts at 100 columns.
                 for key, gated_action, label in (
+                    # task-32348: a multi-char key, so it survives the
+                    # focused-Input transformation above and stays useful
+                    # while the Find field itself has focus.
+                    ("ctrl+f", "library_media_reader_find", "find"),
                     ("l", "library_media_read_later", "read later"),
                     ("c", "library_media_use_in_console", "use in Console"),
                     ("t", "library_media_move_to_trash", "trash"),
@@ -24252,6 +24262,7 @@ class LibraryScreen(BaseAppScreen):
             "library_media_read_later",
             "library_media_use_in_console",
             "library_media_move_to_trash",
+            "library_media_reader_find",
         ):
             # task-28027: Reader action-row accelerators. Only in a plain
             # media Reader (no edit/confirm/analysis-edit sub-state). Read-
@@ -24273,6 +24284,21 @@ class LibraryScreen(BaseAppScreen):
                 session.pending_request is not None
                 or session.loaded_id != self._media_state.selected_media_id
             ):
+                return False
+            if action == "library_media_reader_find":
+                # task-32348: live exactly where the button is enabled, so
+                # the footer chip below can never advertise a refusal.
+                return not self._library_media_find_unavailable_reason()
+            if (
+                action == "library_media_move_to_trash"
+                and self._media_state.find_open
+            ):
+                # task-32348 AC#2 (B D4a): with the Find bar open the user is
+                # typing a query. The bar takes focus on mount, so this is
+                # belt-and-braces -- but the one path where it did NOT (a
+                # tab with no bar, now refused outright) armed "Delete this
+                # media?" from the "t" of "token". The footer chip drops
+                # with the gate.
                 return False
             if action == "library_media_use_in_console":
                 return True
@@ -31558,6 +31584,20 @@ class LibraryScreen(BaseAppScreen):
             event: The Find button press.
         """
         event.stop()
+        self._toggle_library_media_find()
+
+    def action_library_media_reader_find(self) -> None:
+        """Open (or close) the Reader's Find bar from the keyboard (task-32348).
+
+        The same gesture the Find button performs -- one implementation, so
+        the key can never diverge from the control (the ``check_action``
+        gate is the same reason string the button's own disabled state
+        reads).
+        """
+        self._toggle_library_media_find()
+
+    def _toggle_library_media_find(self) -> None:
+        """Open the Find bar for the tab being read, or close an open one."""
         if self._media_state.find_open:
             # task-31269 AC4: Find is a toggle -- a second press closes the
             # bar (live: it did nothing while the bar was open).

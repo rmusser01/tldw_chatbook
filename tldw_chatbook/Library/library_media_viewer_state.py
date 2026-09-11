@@ -521,7 +521,7 @@ def detail_analysis_text(detail: Mapping[str, Any]) -> str:
 def analysis_find_unavailable_reason(
     *, mode: str, analysis: str, generating: bool, editing: bool
 ) -> str:
-    """Why Find cannot open on the Analysis tab right now, or "" when it can.
+    """Why Find cannot open on the Reader tab being read, or "" when it can.
 
     Qodo on #2378: Find opens the bar for the tab being read, and the
     Analysis tab composes its bar only around analysis text. With no text
@@ -538,6 +538,15 @@ def analysis_find_unavailable_reason(
     Returns:
         The user-facing reason, or "" when Find is available.
     """
+    # task-32348 (critique #10, B D4): Find mounts the bar that
+    # ``_compose_active_body`` composes, and only the Read and Analysis
+    # bodies compose one. On Info/Highlights the gate returned "" (the
+    # function only ever considered the Analysis tab), so the button was
+    # enabled, armed ``find_open``, mounted nothing, and left focus outside
+    # any Input -- where the next typed character fired the screen's own
+    # accelerators ("t" armed "Delete this media?", B D4a).
+    if mode in ("info", "highlights"):
+        return "This tab has no text to search · switch to Read or Analysis."
     if mode != "analysis":
         return ""
     if generating:

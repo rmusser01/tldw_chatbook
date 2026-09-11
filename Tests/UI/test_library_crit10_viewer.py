@@ -14,7 +14,6 @@ from Tests.UI.test_library_crit9_shell import (
     _library_host,
 )
 from Tests.UI.test_library_media_render_fixes import (
-    _analysis_flow_host,
     _open_first_reader_row,
     _painted,
     _switch_to_analysis,
@@ -88,3 +87,77 @@ async def test_the_media_filter_box_keeps_the_list_verbs_the_same_way():
         joined = " ".join(label for _key, label in chips)
         assert "after esc: " in joined and "s select" in joined, chips
         assert chips[-1] == ("F6", "next pane"), chips
+
+
+# --------------------------------------------------------------------------
+# task-32348: Find
+# --------------------------------------------------------------------------
+
+
+def test_find_is_refused_on_the_tabs_that_have_no_search_bar():
+    from tldw_chatbook.Library.library_media_viewer_state import (
+        analysis_find_unavailable_reason,
+    )
+
+    for mode in ("info", "highlights"):
+        assert analysis_find_unavailable_reason(
+            mode=mode, analysis="anything", generating=False, editing=False
+        ) == "This tab has no text to search · switch to Read or Analysis.", mode
+    assert analysis_find_unavailable_reason(
+        mode="read", analysis="", generating=False, editing=False
+    ) == ""
+    assert analysis_find_unavailable_reason(
+        mode="analysis", analysis="", generating=False, editing=False
+    ) == "No analysis to search yet."
+
+
+async def _open_first_media_reader(host, pilot):
+    """Open the first media item's Reader and return the settled screen."""
+    screen = await _open_media_list(host, pilot)
+    await _open_first_reader_row(screen, pilot)
+    return screen
+
+
+@pytest.mark.asyncio
+async def test_ctrl_f_opens_the_reader_find_bar_and_the_footer_names_it():
+    host = _media_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_first_media_reader(host, pilot)
+        assert ("ctrl+f", "find") in screen._library_footer_shortcuts_for_current_state()
+        await pilot.press("ctrl+f")
+        await pilot.pause()
+        assert screen.query("#library-media-content-search-controls")
+        assert screen._media_state.find_open is True
+
+
+@pytest.mark.asyncio
+async def test_t_never_arms_the_trash_while_find_is_open():
+    host = _media_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_first_media_reader(host, pilot)
+        await pilot.press("ctrl+f")
+        await pilot.pause()
+        assert screen.check_action("library_media_move_to_trash", ()) is False
+        assert ("t", "trash") not in screen._library_footer_shortcuts_for_current_state()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert screen.check_action("library_media_move_to_trash", ()) is True
+
+
+@pytest.mark.asyncio
+async def test_find_is_refused_on_the_info_tab_and_t_stays_a_plain_character():
+    """task-32348 AC#2, B D4/D4a: the Info tab has no bar to mount."""
+    host = _media_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_first_media_reader(host, pilot)
+        screen.query_one("#library-media-reader-select-info", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-reader-mode-info")
+        await pilot.pause()
+        assert screen.check_action("library_media_reader_find", ()) is False
+        assert ("ctrl+f", "find") not in (
+            screen._library_footer_shortcuts_for_current_state()
+        )
+        await pilot.press("ctrl+f")
+        await pilot.pause()
+        assert screen._media_state.find_open is False
+        assert not screen.query("#library-media-content-search-controls")
