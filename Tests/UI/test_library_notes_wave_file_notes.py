@@ -345,3 +345,54 @@ async def test_folder_files_refuses_an_unusable_remembered_directory(
             assert workspace._file_notes_browse_location() == Path.home(), remembered
     await workspace.shutdown()
     replica.close()
+
+
+# --- task-32264: the editor says what it is hiding and preserving -----------
+
+
+@pytest.mark.asyncio
+async def test_a_file_with_frontmatter_says_it_is_hidden_and_preserved(
+    tmp_path,
+) -> None:
+    """AC#1/AC#3: the editor shows the body only and writes the block back.
+
+    Verified both ways in the critique -- the properties DO survive -- and
+    nothing on screen said so, so an Obsidian user had no way to know.
+    """
+    root = tmp_path / "vault"
+    root.mkdir()
+    source = root / "props.md"
+    raw = "---\ntitle: Exact\ntags: [a]\n---\nbody\n"
+    source.write_text(raw, encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=root, replica=replica, poll_interval=10)
+
+    async with _WorkspaceHarness(workspace).run_test(size=WIDE) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("props.md")
+        await pilot.pause()
+
+        disclosure = workspace.query_one("#file-notes-preview-status", Static)
+        assert disclosure.display
+        copy = str(disclosure.renderable)
+        assert "4 lines of YAML frontmatter" in copy
+        assert "kept exactly as they are on disk" in copy
+    await workspace.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_a_file_without_frontmatter_says_nothing(tmp_path) -> None:
+    root = tmp_path / "vault"
+    root.mkdir()
+    (root / "plain.md").write_text("body\n", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=root, replica=replica, poll_interval=10)
+
+    async with _WorkspaceHarness(workspace).run_test(size=WIDE) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("plain.md")
+        await pilot.pause()
+        assert not workspace.query_one("#file-notes-preview-status", Static).display
+    await workspace.shutdown()
+    replica.close()
