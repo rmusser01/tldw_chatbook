@@ -1018,26 +1018,30 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # draft until submitted, so it cannot be trusted to describe the
         # rows; this line is projected from the applied scope in
         # build_library_media_browse_state and can only ever agree with them.
-        scope_row = Horizontal(id="library-media-scope-row")
-        scope_row.styles.height = "auto"
-        with scope_row:
-            # Width comes from `.library-media-scope-line` (1fr + ellipsis),
-            # not an inline style: an auto-width Static pushed its own Clear
-            # off the pane edge once the Reader narrowed Items.
-            yield Static(
-                self.canvas.scope_line,
-                id="library-media-scope-line",
-                classes="library-media-scope-line",
-                markup=False,
-            )
-            if self.canvas.scope_clearable:
-                yield Button(
-                    "Clear",
-                    id="library-media-scope-clear",
-                    classes="library-canvas-action",
-                    compact=True,
-                    tooltip="Clear the filter and type this line states.",
+        # A state built by the legacy ``build_library_media_state`` carries no
+        # scope_line; an empty Static would just spend a row saying nothing.
+        if self.canvas.scope_line:
+            scope_row = Horizontal(id="library-media-scope-row")
+            scope_row.styles.height = "auto"
+            with scope_row:
+                # Width comes from `.library-media-scope-line` (1fr +
+                # ellipsis), not an inline style: an auto-width Static
+                # pushed its own Clear off the pane edge once the Reader
+                # narrowed Items.
+                yield Static(
+                    self.canvas.scope_line,
+                    id="library-media-scope-line",
+                    classes="library-media-scope-line",
+                    markup=False,
                 )
+                if self.canvas.scope_clearable:
+                    yield Button(
+                        "Clear",
+                        id="library-media-scope-clear",
+                        classes="library-canvas-action",
+                        compact=True,
+                        tooltip="Clear the filter and type this line states.",
+                    )
         filter_row = Horizontal(classes="ds-toolbar")
         filter_row.styles.height = "auto"
         with filter_row:
