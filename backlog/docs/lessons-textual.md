@@ -890,3 +890,34 @@ through the whole hazard, because the row it presses (`.library-media-row`) was
 NOT one of the migrated handlers. A guard's pin only covers the handlers that
 route through the guard; migrating a handler out from under one silently
 narrows what the pin proves without changing the pin's result.
+
+## A toast belongs to the screen that is current when it FIRES, and it docks over that screen's bottom chrome (task-32266, 2026-09-11)
+
+`App.notify()` hands the notification to `self.screen`, and Textual's
+`ToastRack` is `dock: bottom; align: right bottom; layer: _toastrack`. So a
+toast raised from an ASYNC completion does not land on the surface that asked
+for it — it lands on whatever is current a second or two later, on top of that
+surface's docked footer.
+
+The incident: the first-run wizard's Voice step saves TTS settings by posting
+`STTSSettingsSaveEvent` to the app while the user presses Next. The shared
+handler announced the publication with "Settings saved successfully!". By the
+time the write settled the wizard had advanced one or two steps, so the toast
+painted over the Protect step's buttons, and — walking at normal speed — over
+the Summary's docked exit actions, "Write your first note" included. Nobody
+who read `FirstRunSetupWizard.py` would find it: the emitter is
+`Event_Handlers/STTS_Events/stts_events.py`, three modules away, and the
+wizard's own `notify()` calls are all unrelated. Three reviewers filed it as
+"the wizard's completion toast" — the wizard never raised one.
+
+**The rule:** a component that posts a work request to an app-level handler and
+then AWAITS the result renders its own outcome; the handler's toast is
+duplication that will land somewhere else. Give such requests an explicit
+opt-out (`notify_outcome=False` here) rather than repositioning the rack —
+scoped CSS only relocates a message that should not exist on that screen.
+
+**Reproduction note:** the default toast timeout is 5 s, so a scripted walk
+with 2.5 s between steps can easily capture the toast on one step and miss it
+on the next. Reproducing the Summary case needed the step advances tightened to
+~1.3 s. A single clean capture is not evidence the toast cannot reach a later
+screen.
