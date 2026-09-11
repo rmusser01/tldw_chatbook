@@ -2499,6 +2499,9 @@ class SettingsScreen(BaseAppScreen):
         self._openai_reconnect_token = None
         self._openai_reconnect_busy = False
         self._openai_reconnect_prompt_open = False
+        self._local_model_review_token = None
+        self._local_model_review_busy = False
+        self._local_model_review_prompt_open = False
         self._provider_credential_revision = 0
         self._provider_save_result = (
             "Provider settings have not been saved this session."
@@ -3237,6 +3240,7 @@ class SettingsScreen(BaseAppScreen):
         """Fence any late Model Library review before this screen is replaced."""
 
         self._discard_openai_reconnect_review()
+        self._discard_local_model_review()
         self._audio_cpp_result_cancellation.set()
         try:
             self._retry_audio_cpp_staged_request_cleanup()
@@ -6923,6 +6927,7 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _stage_library_rag_value(self, key: str, value: object) -> None:
+        self._discard_local_model_review()
         category = SettingsCategoryId.LIBRARY_RAG
         draft = self._settings_drafts.setdefault(
             category, SettingsDraft(category=category)
@@ -14210,6 +14215,8 @@ class SettingsScreen(BaseAppScreen):
         with Horizontal(classes="settings-action-row"):
             yield Button("Review recovery", id="settings-library-rag-recovery-review")
             yield Button("Reconcile / rebuild", id="settings-library-rag-recovery-reconcile")
+        with Horizontal(classes="settings-action-row"):
+            yield Button("Review local model", id="settings-library-rag-model-review")
 
     def _queue_rag_select_suppression(
         self, select: Select, expected_value: object
@@ -17687,6 +17694,7 @@ class SettingsScreen(BaseAppScreen):
                     )
                 return
         self._discard_openai_reconnect_review()
+        self._discard_local_model_review()
         if category_value != SettingsCategoryId.PROVIDERS_MODELS.value:
             self._active_settings_field_id = None
             self._clear_provider_suppression_queues()
@@ -19637,6 +19645,7 @@ class SettingsScreen(BaseAppScreen):
         if queue and event.value == queue[0]:
             queue.pop(0)
             return
+        self._discard_local_model_review()
         selected = event.value
         active_id = active_profile_info()["id"]
         # PR #863 review: `Select.NULL` is the real blank sentinel on this
@@ -19921,6 +19930,108 @@ class SettingsScreen(BaseAppScreen):
     def on_screen_suspend(self) -> None:
         if not self._openai_reconnect_prompt_open:
             self._discard_openai_reconnect_review()
+        if not self._local_model_review_prompt_open:
+            self._discard_local_model_review()
+
+    def _discard_local_model_review(self) -> None:
+        self._local_model_review_token = None
+
+    def _local_model_review_current(self, token) -> bool:
+        return (
+            self.is_mounted and token is self._local_model_review_token
+            and self._active_category_id() == SettingsCategoryId.LIBRARY_RAG
+            and not self._category_has_unsaved_changes(SettingsCategoryId.LIBRARY_RAG)
+            and self._rag_preview_profile_id is None
+        )
+
+    @on(Button.Pressed, "#settings-library-rag-model-review")
+    def handle_library_rag_model_review(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._local_model_review_busy:
+            return
+        token = self._local_model_review_token = object()
+        if not self._local_model_review_current(token):
+            self._discard_local_model_review()
+            self.app.notify(
+                "Review the active RAG profile after saving or discarding changes.",
+                severity="warning",
+            )
+            return
+        self.run_worker(
+            self._prepare_local_model_review(token),
+            group="settings-local-model-preview", exit_on_error=False,
+        )
+
+    async def _prepare_local_model_review(self, token) -> None:
+        from ...RAG_Search.model_recovery import preview_local_embedding
+        from ...RAG_Search.simplified.active_config import resolve_active_rag_config
+        from ...TTS._async_lifecycle import join_retained_task
+
+        def preview():
+            return preview_local_embedding(resolve_active_rag_config())
+
+        try:
+            task = asyncio.create_task(asyncio.to_thread(preview))
+            await join_retained_task(task)
+            review = task.result()
+        except (OSError, ValueError, RuntimeError):
+            if self._local_model_review_current(token):
+                self._discard_local_model_review()
+                self.app.notify(
+                    "No local model recovery review is available. Select an existing "
+                    "local HF embedding model in the active restored RAG profile.",
+                    severity="warning",
+                )
+            return
+        if not self._local_model_review_current(token) or self.app.screen is not self:
+            return
+        message = (
+            f"Model directory: {review.model_path}\nFiles: {review.file_count}\n"
+            f"Generations: {', '.join(review.generations)}\n\n"
+            "Allow this local embedding model for the reviewed generation? "
+            "No model will load or download. RAG review and Reconcile / rebuild "
+            "are separate actions."
+        )
+        self._local_model_review_prompt_open = True
+        self.app.push_screen(
+            ConfirmationDialog(
+                title="Review restored local embedding model",
+                message=escape_markup(message), confirm_label="Approve local model",
+            ),
+            lambda accepted: self._confirm_local_model_review(token, review, accepted),
+        )
+
+    def _confirm_local_model_review(self, token, review, accepted: bool) -> None:
+        self._local_model_review_prompt_open = False
+        current = self._local_model_review_current(token) and self.app.screen is self
+        self._discard_local_model_review()
+        if not accepted or not current or self._local_model_review_busy:
+            return
+        self._local_model_review_busy = True
+        # Accepted native receipt writes belong to the app across view navigation.
+        self.app.run_worker(
+            self._record_local_model_review(review.fingerprint),
+            group="settings-local-model-confirm", exit_on_error=False,
+        )
+
+    async def _record_local_model_review(self, fingerprint: str) -> None:
+        from ...RAG_Search.model_recovery import approve_local_embedding
+        from ...RAG_Search.simplified.active_config import resolve_active_rag_config
+        from ...TTS._async_lifecycle import join_retained_task
+
+        def approve():
+            return approve_local_embedding(resolve_active_rag_config(), fingerprint)
+
+        message = "Local model review recorded. No model loaded and no index rebuilt."
+        try:
+            task = asyncio.create_task(asyncio.to_thread(approve))
+            await join_retained_task(task)
+        except (OSError, ValueError, RuntimeError):
+            message = "Local model or active settings changed. Request a fresh review."
+        finally:
+            self._local_model_review_busy = False
+        if self.is_mounted and self.app.is_running:
+            self.app.notify(message)
 
     def _openai_reconnect_review_current(self, token) -> bool:
         if (
@@ -20028,8 +20139,8 @@ class SettingsScreen(BaseAppScreen):
                 approve_recovery_review(config, fingerprint, sources=sources)
                 self.app.call_from_thread(
                     self.app.notify,
-                    "RAG owner review approved. Configuration and model setup remain "
-                    "separate. Use Reconcile / rebuild when prerequisites are ready.",
+                    "RAG owner review approved. Local model setup remains separate. "
+                    "Use Reconcile / rebuild when prerequisites are ready.",
                 )
         except (OSError, ValueError, RuntimeError):
             self.app.call_from_thread(
@@ -20072,7 +20183,7 @@ class SettingsScreen(BaseAppScreen):
             ConfirmationDialog(
                 title="Reconcile restored search index",
                 message="Rebuild and verify this profile's index from available local "
-                "sources? Configuration, RAG owners and model setup must already "
+                "sources? RAG owners and local model setup must already "
                 "permit execution. This can take a while for large libraries.",
                 confirm_label="Reconcile / rebuild",
             ),
