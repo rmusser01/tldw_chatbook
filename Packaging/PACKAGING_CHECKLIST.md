@@ -55,6 +55,46 @@ target file hash remains unchanged.
 
 ## Pre-release steps
 
+### Local backup and recovery qualification
+
+Complete capture and replacement require separate release decisions. The helper
+and native filesystem declarations qualify only their recorded operations; neither
+alone establishes that a packaged application can recover an installation.
+
+Before advertising either capability for a distribution:
+
+- [ ] Verify the bundled helper's protocol, digest, native pipe behavior and
+  installed-wheel behavior following [helper qualification](backup_age/README.md).
+- [ ] Match the actual OS, architecture, Python version, filesystem and native
+  protocol to installed evidence. Keep untested combinations unavailable.
+- [ ] Verify every supported owner-inventory row using the synthetic multi-profile
+  fixture, including shared stores, directory metadata, selected optional assets,
+  deleted data and excluded credentials.
+- [ ] Exercise the packaged F9 create/inspect/isolated-restore/open flow. Qualify
+  replacement and later rollback separately, including preservation of edits made
+  after restore in the new encrypted safety copy.
+- [ ] Verify startup-independent recovery and the applicable interruption tests,
+  including SQLite sidecars, changed credentials and multiple-volume behavior.
+- [ ] Confirm restored execution remains inactive until the applicable explicit
+  owner review, and distinguish archive verification, installation validation,
+  successful opening and remaining setup requirements in the displayed results.
+- [ ] Record exact commands, revision, artifact hashes, native identity and actual
+  results in the [release evidence ledger](../backlog/docs/backup-recovery-release-evidence.md).
+  Do not combine results from different source snapshots into a single build claim.
+- [ ] Review [user recovery instructions](../Docs/Backup-and-Recovery.md) against
+  the qualified artifact, including password loss, plaintext staging, retained
+  copies, credential/model exclusions and upgrade interoperability.
+
+Use disposable profiles, private HOME/XDG/config paths and fixture credential
+stores; contain network access before application imports. Run the named checks
+in [Task 26](../Docs/superpowers/plans/2026-09-07-backup-recovery-06-release-evidence.md)
+and its applicable native matrix. A missing test or unavailable runner leaves its
+gate open; skipped checks and the boolean conjunction regression are not product
+qualification. These checklist items remain unchecked until demonstrated against
+the exact release build.
+
+### Build and publish
+
 1. Update the version in `pyproject.toml` and
    `tldw_chatbook/__init__.py`, then update `CHANGELOG.md`.
 2. Build and pass the fresh artifact and installed-wheel gates above.
