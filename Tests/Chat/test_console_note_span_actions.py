@@ -428,3 +428,116 @@ async def test_oversized_span_blocks_at_the_real_budget(tmp_path):
     assert blocked.accepted is False
     assert "too large" in blocked.visible_copy
     assert gateway.calls == 0
+
+
+# --- task-32146: capture one answer as a Library note -----------------------
+
+
+@pytest.mark.asyncio
+async def test_capture_note_dispatches_one_exclusive_note_worker():
+    """The new per-message capture rides the same note worker group as the
+    TASK-31759 span actions (never console-run, so it cannot cancel a
+    live stream)."""
+    app, screen = _build_screen()
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="q")
+    completed = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="the answer"
+    )
+
+    spawned = []
+
+    def fake_run_worker(work, **kwargs):
+        spawned.append(kwargs)
+        if asyncio.iscoroutine(work):
+            work.close()
+        return SimpleNamespace(cancel=lambda: None)
+
+    screen.run_worker = fake_run_worker
+
+    handled = await screen.handle_console_message_action(
+        _dispatch_event("capture-note", completed.id)
+    )
+
+    assert handled is True
+    assert len(spawned) == 1
+    assert spawned[0].get("group") == "console-note-actions"
+    assert spawned[0].get("exclusive") is True
+
+
+@pytest.mark.asyncio
+async def test_capture_note_records_the_conversation_and_message_it_came_from():
+    """task-32146 AC#2: the captured note is titled by the answer's own
+    first line, carries the answer verbatim, and records its provenance as
+    keywords; the created note id is handed to the receipt."""
+    app, screen = _build_screen()
+    app.notes_user_id = "notes-owner-1"
+    saved: list[dict] = []
+
+    class StubNotesService:
+        async def save_note(self, **kwargs):
+            saved.append(kwargs)
+            return {"id": "note-42", "version": 1}
+
+    app.notes_scope_service = StubNotesService()
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    session.persisted_conversation_id = "conv-7"
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="q")
+    completed = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Use a worker for slow work.\n\nThen stream the result.",
+    )
+
+    offered: list[str] = []
+
+    async def fake_receipt(note_id: str) -> None:
+        offered.append(note_id)
+
+    screen._message._offer_captured_note_handoff = fake_receipt
+
+    await screen._message._capture_console_answer_as_note(completed.id)
+
+    assert len(saved) == 1
+    call = saved[0]
+    assert call["scope"] == "local_note"
+    assert call["title"] == "Use a worker for slow work."
+    assert call["content"] == (
+        "Use a worker for slow work.\n\nThen stream the result."
+    )
+    assert call["keywords"] == [
+        "console",
+        "conversation:conv-7",
+        f"message:{completed.id}",
+    ]
+    assert call["user_id"] == "notes-owner-1"
+    assert offered == ["note-42"]
+
+
+@pytest.mark.asyncio
+async def test_console_note_writes_use_the_configured_notes_identity():
+    """Regression (task-32146): Save as... > Note wrote under a `current_user`
+    attribute that nothing in the tree ever sets, so every note it saved
+    landed under "default_user" while Library > Notes reads `notes_user_id`
+    -- the note was saved and then invisible."""
+    app, screen = _build_screen()
+    app.notes_user_id = "notes-owner-1"
+    saved: list[dict] = []
+
+    class StubNotesService:
+        async def save_note(self, **kwargs):
+            saved.append(kwargs)
+            return {"id": "note-9"}
+
+    app.notes_scope_service = StubNotesService()
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="the answer"
+    )
+
+    await screen._message._save_console_message_as_note(message.id)
+
+    assert saved and saved[0]["user_id"] == "notes-owner-1"

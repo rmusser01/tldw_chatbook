@@ -151,7 +151,9 @@ from ...Chat.console_message_actions import (
     resolve_canvas_html_block,
 )
 from ...Chat.console_save_targets import (
+    console_answer_note_title,
     console_chatbook_artifact_payload,
+    console_note_provenance_keywords,
     derive_console_save_title,
     resolve_console_artifact_owner_request,
 )
@@ -1499,6 +1501,14 @@ class ConsoleMessageController:
             )
             return True
 
+        if action_id == "capture-note":
+            self.run_worker(
+                self._capture_console_answer_as_note(message_id),
+                exclusive=True,
+                group="console-note-actions",
+            )
+            return True
+
         if action_id == "summarize-note":
             self.run_worker(
                 self._summarize_console_span_as_note(message_id),
@@ -2087,6 +2097,131 @@ class ConsoleMessageController:
                 f"Saved {len(written)} images to {escape_markup(str(save_location))}"
             )
 
+    def _console_notes_owner_id(self) -> str:
+        """Return the identity every Console note write must be saved under.
+
+        Local notes are owned by the configured notes identity
+        (``app.notes_user_id`` drives every local note view and ingest), so
+        a note written under any other id is saved and then invisible in
+        Library ▸ Notes. TASK-31759 stated this for its own two actions;
+        task-32146 found ``_save_console_message_as_note`` still writing
+        under a ``current_user`` attribute nothing in the tree ever sets --
+        i.e. always the literal "default_user" fallback -- and hoisted the
+        one resolution here so all three Console note writers share it.
+        """
+        return getattr(self.app_instance, "notes_user_id", None) or "default_user"
+
+    async def _capture_console_answer_as_note(self, message_id: str) -> None:
+        """Capture one finished assistant answer as a Local Note (task-32146).
+
+        The reverse of "Use in Console": the note is titled by the answer's
+        own first line, carries the answer verbatim, and records the
+        conversation and message it came from as keywords (AC#2). No LLM
+        call and no clipboard -- unlike the two TASK-31759 span actions,
+        this is a straight copy of one row.
+
+        Args:
+            message_id: Console transcript message to capture.
+        """
+        notes_scope_service = getattr(self.app_instance, "notes_scope_service", None)
+        save_note = getattr(notes_scope_service, "save_note", None)
+        if not callable(save_note):
+            self.app_instance.notify(
+                "Saving as a Note is unavailable: Notes service is not ready.",
+                severity="warning",
+            )
+            return
+
+        try:
+            message = self._ensure_console_chat_store().get_message(message_id)
+        except KeyError:
+            self.app_instance.notify(
+                "Console message action target no longer exists.",
+                severity="warning",
+            )
+            return
+
+        content = self._console_message_content(message)
+        try:
+            result = save_note(
+                scope=ScopeType.LOCAL_NOTE.value,
+                title=console_answer_note_title(content),
+                content=content,
+                note_id=None,
+                version=None,
+                user_id=self._console_notes_owner_id(),
+                workspace_id=None,
+                keywords=console_note_provenance_keywords(
+                    conversation_id=self._current_console_conversation_id(),
+                    message_id=message_id,
+                ),
+            )
+            if inspect.isawaitable(result):
+                result = await result
+        except Exception as exc:
+            logger.opt(exception=True).warning("Console capture-note failed.")
+            self.app_instance.notify(
+                f"Saving the answer as a Note failed: {escape_markup(str(exc))}",
+                severity="error",
+            )
+            return
+        if not result:
+            self.app_instance.notify(
+                "Saving the answer as a Note failed.", severity="error"
+            )
+            return
+        self._last_console_action = ConsoleActionResult(
+            action_id="capture-note",
+            status="completed",
+            visible_copy="Saved answer as Note.",
+            target_message_id=message_id,
+            target_content=content,
+        )
+        self.app_instance.notify("Saved answer as Note.", severity="success")
+        # `save_note` returns the created row (a Mapping) whenever keywords
+        # are supplied, which they always are here; anything else means the
+        # note landed but its id is unknown, so the receipt is skipped
+        # rather than offering a hand-off that cannot resolve.
+        note_id = result.get("id") if isinstance(result, Mapping) else None
+        if isinstance(note_id, str) and note_id:
+            await self._offer_captured_note_handoff(note_id)
+
+    async def _offer_captured_note_handoff(self, note_id: str) -> None:
+        """Offer the receipt that lands on the note just captured.
+
+        Uses the same ``LIBRARY_NAV_CONTEXT_NOTE_ID`` deep link Home's
+        resume-latest control posts, so the Library notes editor opens on
+        this note with its entry focus armed.
+
+        Args:
+            note_id: Id of the note created by the capture.
+        """
+        from ...Constants import LIBRARY_NAV_CONTEXT_NOTE_ID, TAB_LIBRARY
+        from ...Widgets.confirmation_dialog import ConfirmationDialog
+        from ..Navigation.main_navigation import NavigateToScreen
+
+        def _open_note(confirmed: bool | None) -> None:
+            if not confirmed:
+                return
+            self.app_instance.post_message(
+                NavigateToScreen(
+                    TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_NOTE_ID: note_id}
+                )
+            )
+
+        await self.push_screen(
+            ConfirmationDialog(
+                title="Saved to Notes",
+                message=(
+                    "The answer is now a note in Library ▸ Notes, tagged with "
+                    "this conversation."
+                ),
+                confirm_label="Open note",
+                cancel_label="Stay in Console",
+            ),
+            callback=_open_note,
+        )
+
     async def _save_console_message_as_note(self, message_id: str) -> None:
         """Persist one selected Console message as a local Note."""
         notes_scope_service = getattr(self.app_instance, "notes_scope_service", None)
@@ -2116,8 +2251,10 @@ class ConsoleMessageController:
                 content=content,
                 note_id=None,
                 version=None,
-                user_id=getattr(self.app_instance, "current_user", None)
-                or "default_user",
+                # task-32146: was `current_user`, an attribute nothing in
+                # the tree sets -- every note this path saved landed under
+                # "default_user" while Library ▸ Notes reads `notes_user_id`.
+                user_id=self._console_notes_owner_id(),
                 workspace_id=None,
                 keywords=["console"],
             )
@@ -2173,8 +2310,7 @@ class ConsoleMessageController:
                     # note view/ingest), NOT current_user -- saving under a
                     # different id would make the note invisible in the
                     # library.
-                    user_id=getattr(self.app_instance, "notes_user_id", None)
-                    or "default_user",
+                    user_id=self._console_notes_owner_id(),
                     workspace_id=None,
                     keywords=["console"],
                 )
@@ -2664,6 +2800,7 @@ class ConsoleMessageController:
             ("console-message-action-keep-", "keep"),
             ("console-message-action-review-changes-", "review-changes"),
             ("console-message-action-save-as-", "save-as"),
+            ("console-message-action-capture-note-", "capture-note"),
             ("console-message-action-save-transcript-note-", "save-transcript-note"),
             ("console-message-action-summarize-note-", "summarize-note"),
             ("console-message-action-save-image-", "save-image"),

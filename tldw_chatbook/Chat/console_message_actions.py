@@ -179,6 +179,16 @@ def _speech_visible(message: ConsoleChatMessage) -> bool:
     )
 
 
+def _capturable_assistant_answer(message: ConsoleChatMessage) -> bool:
+    """Whether this row is a finished assistant answer worth capturing.
+
+    task-32146: same three conditions Manual Speak reads for -- a completed
+    ASSISTANT row with text. A pending/streaming row has no final answer to
+    file, and a USER row is the question, not the answer.
+    """
+    return _speech_visible(message)
+
+
 def resolve_console_header_speech(
     message: ConsoleChatMessage,
     state: ConsoleSpeechPresentationState,
@@ -360,6 +370,10 @@ class ConsoleMessageActionService:
         ("continue", "--->"),
         ("feedback", "Feedback"),
         ("delete", "🗑"),
+        # task-32146: capture THIS answer (narrowest scope) ahead of the two
+        # span actions below. Same overflow-only, routed-before-``dispatch()``
+        # shape as they have.
+        ("capture-note", "Save answer as note"),
         # TASK-31759: More-menu note actions over the active-path span up
         # to and including the selected message. Overflow-only (never in
         # ``_PRIMARY_ACTION_IDS``) and dispatched by the UI router before
@@ -620,6 +634,12 @@ class ConsoleMessageActionService:
                 for action_id, label in completed_actions
                 if action_id != "fork"
             ]
+        if not _capturable_assistant_answer(message):
+            completed_actions = [
+                (action_id, label)
+                for action_id, label in completed_actions
+                if action_id != "capture-note"
+            ]
         if not self._speak_visible(message):
             completed_actions = [
                 (action_id, label)
@@ -829,7 +849,11 @@ class ConsoleMessageActionService:
                 )
             elif action.action_id.startswith("canvas-open"):
                 overflow.append(action)
-            elif action.action_id in {"summarize-note", "save-transcript-note"}:
+            elif action.action_id in {
+                "capture-note",
+                "summarize-note",
+                "save-transcript-note",
+            }:
                 overflow.append(action)
         return tuple(overflow)
 
@@ -1210,8 +1234,8 @@ class ConsoleMessageActionService:
             )
         if action_id in {"feedback", "feedback-up", "feedback-down"}:
             return not message.generation_projection_quarantined
-        if action_id == "save-image":
-            return blocked_reason("save-image", ephemeral=ephemeral) is None
+        if action_id in {"save-image", "capture-note"}:
+            return blocked_reason(action_id, ephemeral=ephemeral) is None
         if action_id in {"video-play", "video-save-copy"}:
             return video_file_available
         return ConsoleMessageActionService._variant_action_enabled(
@@ -1247,8 +1271,8 @@ class ConsoleMessageActionService:
             and message.generation_projection_quarantined
         ):
             return ConsoleMessageActionService._QUARANTINED_FEEDBACK_REASON
-        if action_id == "save-image":
-            return blocked_reason("save-image", ephemeral=ephemeral) or ""
+        if action_id in {"save-image", "capture-note"}:
+            return blocked_reason(action_id, ephemeral=ephemeral) or ""
         if action_id in {"video-play", "video-save-copy"} and not video_file_available:
             return ConsoleMessageActionService._VIDEO_FILE_MISSING_REASON
         if action_id in {
