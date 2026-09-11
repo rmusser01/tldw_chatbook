@@ -1330,6 +1330,20 @@ CONSOLE_FLEET_MARKER_LEGEND = (
     "— clears once you visit that tab. Qn is the unsent prompt count."
 )
 
+#: Qodo #5: the decision cards a ◆-marked session can be waiting on, in the
+#: same kind precedence `console_chat_models.console_pending_round_copy`
+#: uses for the copy -- approval, then question, then the confirmations --
+#: so the card the user is sent to is the one the run chip named.
+#: `worktree_merge` is the fifth `KIND_SETTER_ATTRS` kind and has no entry:
+#: `set_pending_worktree_merge` is never wired on this screen, so no such
+#: card is ever mounted here. Add its selector the day it is.
+CONSOLE_DECISION_CARD_SELECTORS: tuple[str, ...] = (
+    "#chat-approval-card",
+    "#chat-question-card",
+    "#chat-skill-install-card",
+    "#chat-skill-script-card",
+)
+
 
 def _console_workbench_agents_notes(max_parallel_runs: int) -> tuple[str, ...]:
     """Build the F1 Help "Agents" section lines (fleet-UX F2, task-1232).
@@ -20242,8 +20256,10 @@ class ChatScreen(BaseAppScreen):
         if card.is_mounted:
             card.finish_undo_all(success=success)
 
-    def _route_console_pending_approval_focus(self) -> None:
-        """Focus the pending approval card, or notify none is pending.
+    def _route_console_pending_approval_focus(
+        self, *, notify_missing: bool = True
+    ) -> bool:
+        """Focus the pending decision card, or notify none is pending.
 
         task-32277: the single seam every approval-review entry point
         routes through -- the inspector's Review approval button, the
@@ -20251,50 +20267,82 @@ class ChatScreen(BaseAppScreen):
         NEEDS_APPROVAL (``◆``) marker. Moved out of
         ``handle_console_inspector_review_approval`` verbatim so a third
         (or fourth) caller cannot drift from it.
+
+        Qodo #5: that ``◆`` marker is worn for ALL FIVE interrupt-round
+        kinds (``console_interrupt_rounds.KIND_SETTER_ATTRS``), but this
+        knew only approvals and questions -- a pending skill-install or
+        skill-script confirm reached the "no approval" warning instead of
+        its own mounted card. The scan now walks every decision card in the
+        same kind precedence the copy uses (approval first, then question,
+        then the confirmations), so it cannot disagree with what the run
+        chip is telling the user is waiting.
+
+        Args:
+            notify_missing: Whether to warn when nothing is focusable. The
+                tab-strip caller passes ``False`` and falls back to normal
+                tab activation instead -- a stale marker must not turn a
+                tab press into an error toast.
+
+        Returns:
+            Whether a card was found and focused.
         """
-        if self._console_pending_approval_count() <= 0:
-            # PRD A4: the chip's focus action is how keyboard-only users
-            # reach a question card that deliberately never steals focus.
-            question = next(
-                (c for c in self.query("#chat-question-card") if c.display), None
+        if self._console_pending_approval_count() > 0:
+            card = self._first_displayed_console_decision_card(
+                "#chat-approval-card"
             )
-            if question is not None:
-                with contextlib.suppress(Exception):
-                    question.scroll_visible(animate=False)
-                target = next(
-                    iter(question.query("RadioSet, SelectionList, Input")), None
-                )
-                if target is not None:
-                    target.focus()
-                return
+            if card is not None:
+                self._focus_console_decision_card(card)
+                return True
+        else:
+            # PRD A4: this focus action is how keyboard-only users reach a
+            # question card that deliberately never steals focus -- and,
+            # since Qodo #5, the skill/merge confirms that never had a
+            # route at all.
+            for selector in CONSOLE_DECISION_CARD_SELECTORS:
+                card = self._first_displayed_console_decision_card(selector)
+                if card is not None:
+                    self._focus_console_decision_card(card)
+                    return True
+        if notify_missing:
             self.app_instance.notify(
                 CONSOLE_INSPECTOR_NO_APPROVAL_REASON, severity="warning"
             )
-            return
-        card = next(
-            (
-                candidate
-                for candidate in self.query("#chat-approval-card")
-                if candidate.display
-            ),
+        return False
+
+    def _first_displayed_console_decision_card(self, selector: str) -> Any | None:
+        """Return the one displayed card matching ``selector``, if any."""
+        return next(
+            (candidate for candidate in self.query(selector) if candidate.display),
             None,
         )
-        if card is None:
-            self.app_instance.notify(
-                CONSOLE_INSPECTOR_NO_APPROVAL_REASON, severity="warning"
-            )
-            return
-        try:
+
+    def _focus_console_decision_card(self, card: Any) -> None:
+        """Scroll one decision card into view and focus its first control.
+
+        `ChatApprovalCard` owns `focus_first_decision` (``set_batch``, the
+        card's sole production entry point, is the only body it ever
+        renders, so a displayed card's action is always its "Submit"
+        button). The other four kinds have no such method, so their first
+        interactive control is focused directly -- Buttons included, which
+        is what a confirm card's Approve/Deny pair is made of.
+        """
+        with contextlib.suppress(Exception):
             card.scroll_visible(animate=False)
-        except Exception:
-            pass
-        # `set_batch` (the card's sole production entry point, task-914) is
-        # the only body it ever renders, so a displayed card's action is
-        # always its "Submit" button.
-        try:
-            card.focus_first_decision()
-        except Exception:
-            pass
+        focus_first = getattr(card, "focus_first_decision", None)
+        if callable(focus_first):
+            with contextlib.suppress(Exception):
+                focus_first()
+            return
+        # Two passes, not one selector: a single "…, Button" query returns
+        # DOM order, which would hand a question card's focus to whatever
+        # button happens to be mounted above its RadioSet. The original
+        # question-card behaviour is the first pass, unchanged.
+        for selector in ("RadioSet, SelectionList, Input", "Button"):
+            with contextlib.suppress(Exception):
+                target = next(iter(card.query(selector)), None)
+                if target is not None:
+                    target.focus()
+                    return
 
     @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}")
     def handle_console_inspector_review_approval(self, event: Button.Pressed) -> None:
@@ -23770,10 +23818,26 @@ class ChatScreen(BaseAppScreen):
                 # `session_id` IS already the active/viewed session; the
                 # user still reaches rename for a ◆ tab via the session
                 # switcher's own rename choice
-                # (`_apply_console_switcher_choice`'s "rename" kind).
-                if controller.store.active_session_id != session_id:
+                # (`_apply_console_switcher_choice`'s "rename" kind). It
+                # pre-empts it only when there IS a card to route to,
+                # though -- see the fallback below.
+                was_active = controller.store.active_session_id == session_id
+                if not was_active:
                     await self._session._activate_native_console_session(session_id)
-                self._route_console_pending_approval_focus()
+                # Qodo #5: the ◆ marker covers every interrupt kind, so the
+                # route below now finds skill/question cards too -- but a
+                # marker can still outlive its card. When nothing is
+                # focusable, fall back to the ordinary tab press rather
+                # than warning "No approval is pending" at someone who just
+                # clicked a tab; activating the session (above) already did
+                # the normal thing for a non-viewed one.
+                if not self._route_console_pending_approval_focus(
+                    notify_missing=False
+                ):
+                    if was_active:
+                        await self._session._handle_console_session_tab_press(
+                            session_id
+                        )
                 return
             await self._session._handle_console_session_tab_press(session_id)
             return
