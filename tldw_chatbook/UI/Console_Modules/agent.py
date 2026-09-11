@@ -151,7 +151,11 @@ from ...Agents.agent_models import (
     TERMINAL_RUN_STATUSES,
 )
 from ...Chat.cost_display import format_token_count
-from ...Chat.console_chat_models import ConsoleMessageRole
+from ...Chat.console_chat_models import (
+    ConsoleMessageRole,
+    console_pending_round_copy_for,
+)
+from ...Chat.console_glyphs import STATUS_GLYPHS
 from ...Widgets.Console.console_agent_steering_bar import (
     STEERING_STATE_HIDDEN,
     ConsoleAgentSteeringState,
@@ -175,13 +179,11 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: below -- one vocabulary, one place (agent.py:354/:457-463 in the PR2b
 #: seam map). Unknown/future statuses fall back to "●" wherever this is
 #: consulted via `.get(status, "●")`.
-_AGENT_STATUS_GLYPHS: Dict[str, str] = {
-    "done": "✓",
-    "running": "●",
-    "stuck": "⚠",
-    "error": "✗",
-    "cancelled": "✗",
-}
+#: TASK-32334: the fleet's status glyphs moved to the shared Console
+#: vocabulary (``Chat/console_glyphs.STATUS_GLYPHS``) so every rail section
+#: renders statuses with one glyph language. Same keys, same marks; the
+#: shared map additionally covers "blocked" (Environment/Tasks rows).
+_AGENT_STATUS_GLYPHS: Dict[str, str] = dict(STATUS_GLYPHS)
 
 #: TASK-31429: the rail's Agent status line ("Agent: running · step 3",
 #: "Sub-agent · done") carries its run status as the first word after the
@@ -250,6 +252,20 @@ CONSOLE_TURN_ACTIVITY_TOOL_GLYPH = "⚙"
 #: emitted AFTER the round returns, carrying its text), so this is derived
 #: from "the last primary step is not a tool call", not from an event.
 CONSOLE_TURN_ACTIVITY_THINKING = "Thinking…"
+#: task-32344: the turn-activity line's PRE-PROVIDER state. The send has
+#: been accepted but the first provider call has not happened yet, because
+#: the run is still composing this turn's tool surface (MCP catalog, local
+#: tools, and the lazily-bootstrapped Personal Context profile tools).
+#: There is no step to name -- there is no run yet -- so this state comes
+#: from the bridge's own setup mark, not from ``steps``.
+CONSOLE_TURN_ACTIVITY_SETUP = "Connecting tools…"
+#: task-32345: a primary tool call is parked awaiting the user's approval
+#: decision (an MCP/skill approval round is outstanding for the viewed
+#: session -- ``ConsoleChatController.has_pending_approval_round``). Takes
+#: priority over every other state: a card waiting on the user is the most
+#: important thing to tell them, more than a stale tool name or sub-agent
+#: noise.
+CONSOLE_TURN_ACTIVITY_WAITING_APPROVAL = "Waiting for your approval"
 #: Separator between the state and its elapsed segment.
 CONSOLE_TURN_ACTIVITY_SEPARATOR = " · "
 #: task-31386: a primary tool call that has run at least this long offers
@@ -264,8 +280,10 @@ __all__ = [
     "CONSOLE_TURN_ACTIVITY_ABANDON_ACTION",
     "CONSOLE_TURN_ACTIVITY_ABANDON_AFTER_SECONDS",
     "CONSOLE_TURN_ACTIVITY_SEPARATOR",
+    "CONSOLE_TURN_ACTIVITY_SETUP",
     "CONSOLE_TURN_ACTIVITY_THINKING",
     "CONSOLE_TURN_ACTIVITY_TOOL_GLYPH",
+    "CONSOLE_TURN_ACTIVITY_WAITING_APPROVAL",
     "console_turn_activity_text",
 ]
 
@@ -374,7 +392,12 @@ def console_turn_activity_abandon_action(snapshot: Any, *, now: float) -> str:
 
 
 def console_turn_activity_text(
-    snapshot: Any, *, now: float, children: Sequence[Any] = ()
+    snapshot: Any,
+    *,
+    now: float,
+    children: Sequence[Any] = (),
+    pending_approval: bool = False,
+    pending_copy: str = "",
 ) -> str:
     """Return the live activity line for one in-flight Console turn.
 
@@ -386,16 +409,33 @@ def console_turn_activity_text(
     ``format_agent_step_marker``, which is deliberately shared by the live
     and resume paths so both render byte-identical text.)
 
-    The four states, derived from the primary agent's most recent step:
+    The six states. All but the first two are derived from the primary
+    agent's most recent step:
 
     ===========================  ==========================================
     situation                    line
     ===========================  ==========================================
+    pre-provider setup           ``Connecting tools… · <elapsed>``
+    interrupt round pending      ``Waiting for your <approval|answer|
+                                 confirmation> · <elapsed>`` (by kind)
     a tool is running            ``⚙ <tool> · <elapsed>``
     between tools / after one    ``Thinking… · <elapsed>``
     running, no primary step     ``Generating…`` (today's copy, unchanged)
     turn ended (any non-running) ``""`` -- the caller renders nothing
     ===========================  ==========================================
+
+    task-32344: the ``setup`` state is the window between "send accepted"
+    and "provider called", which the first send of a process pays in full
+    (tool catalogs plus the lazy Personal Context bootstrap) and which
+    used to render as a blank assistant row for its whole duration.
+
+    task-32345: the approval-pending state is a LEADING branch, checked
+    right after the running-status gate and before the tool/thinking
+    derivation below -- a card waiting on the user outranks whatever the
+    primary's last step happened to be (a stale tool name, or a fleet of
+    sub-agents still nominally "working"). Its elapsed segment reuses the
+    same ``step.started_at`` base the tool/thinking states use, so the
+    clock does not reset just because the label changed.
 
     Sub-agent steps are skipped, not merely deprioritised: a child's work
     belongs to the Agent rail's fleet rows, never to the primary assistant
@@ -425,10 +465,35 @@ def console_turn_activity_text(
         now: ``time.monotonic()`` reading for this poll tick, injected so
             the elapsed segment is testable without sleeping.
         children: Live snapshots of the RUNNING sub-agents, if any.
+        pending_approval: Whether an approval-like round is outstanding for
+            this session (``ConsoleChatController.has_pending_approval_
+            round``) -- never inferred from a tool name.
+        pending_copy: Qodo #4 -- the waiting label for the KIND of round
+            actually outstanding (``console_chat_models.console_pending_
+            round_copy_for``): "Waiting for your answer" for an ask_user
+            question, "Waiting for your confirmation" for a skill-install/
+            skill-script/worktree-merge confirm. Empty (the default, and
+            every pre-existing caller) keeps the approval wording, which is
+            what this line said for all five kinds before.
 
     Returns:
         The line to render, or ``""`` when nothing is live.
     """
+    if getattr(snapshot, "status", "idle") == "setup":
+        # No steps exist yet -- the run has not started -- so the elapsed
+        # segment times from the setup mark, or is omitted when there is
+        # none (`_format_fleet_elapsed`'s "no usable base" rule).
+        started_at = getattr(snapshot, "setup_started_at", None)
+        elapsed = (
+            _format_fleet_elapsed(max(0.0, now - started_at))
+            if started_at is not None
+            else ""
+        )
+        return (
+            f"{CONSOLE_TURN_ACTIVITY_SETUP}{CONSOLE_TURN_ACTIVITY_SEPARATOR}{elapsed}"
+            if elapsed
+            else CONSOLE_TURN_ACTIVITY_SETUP
+        )
     if getattr(snapshot, "status", "idle") != "running":
         return ""
     step = next(
@@ -439,6 +504,17 @@ def console_turn_activity_text(
         ),
         None,
     )
+    if pending_approval:
+        started_at = getattr(step, "started_at", None) if step is not None else None
+        elapsed = (
+            _format_fleet_elapsed(max(0.0, now - started_at))
+            if started_at is not None
+            else ""
+        )
+        label = pending_copy or CONSOLE_TURN_ACTIVITY_WAITING_APPROVAL
+        return (
+            f"{label}{CONSOLE_TURN_ACTIVITY_SEPARATOR}{elapsed}" if elapsed else label
+        )
     if step is None or step.kind != STEP_TOOL_CALL:
         fleet = _fleet_turn_activity(children, now=now)
         if fleet:
@@ -863,7 +939,31 @@ class ConsoleAgentController:
             for summary in (getattr(snapshot, "subagents", ()) or ())
             if getattr(summary, "status", "") == "running"
         ]
-        return console_turn_activity_text(snapshot, now=time.monotonic(), children=children)
+        # task-32345: the pending flag comes ONLY from the controller's own
+        # round registry, never inferred from a tool name -- `getattr`
+        # because `_GateController` (and other partial doubles) expose a
+        # bare `SimpleNamespace(run_state=...)`, not the real controller.
+        has_pending = getattr(controller, "has_pending_approval_round", None)
+        pending_approval = False
+        pending_copy = ""
+        if has_pending is not None:
+            store = getattr(controller, "store", None)
+            session_id = getattr(store, "active_session_id", None) if store else None
+            pending_approval = bool(has_pending(session_id or ""))
+            if pending_approval:
+                # Qodo #4: which kind is waiting decides the wording -- a
+                # question card asked for an answer, not an approval. Same
+                # late-bound, double-tolerant lookup as the flag above.
+                pending_copy = console_pending_round_copy_for(
+                    controller, session_id or ""
+                )
+        return console_turn_activity_text(
+            snapshot,
+            now=time.monotonic(),
+            children=children,
+            pending_approval=pending_approval,
+            pending_copy=pending_copy,
+        )
 
     def console_turn_activity_abandon_action(self) -> str:
         """task-31386: the "abandon call" action for the live line, or ``""``.

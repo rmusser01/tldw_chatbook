@@ -3310,6 +3310,31 @@ ConsoleBoundedSection {
     min-height: 0;
 }
 
+/* task-32287 review: and so do the sibling cards that share the surface.
+   With the surface `auto`, a child left on Textual's `height: 1fr` default
+   resolves that fraction against the whole offered box instead of the
+   surface's content, so each of these rendered 50 rows in a 50-row harness
+   -- the ballooning simply moved down a level. The two skill cards need
+   their button rows named as well (`Horizontal`, also unstyled, also
+   `1fr`): a `1fr` grandchild re-inflates an `auto` parent exactly as
+   `#approval-batch-actions` did. ChatQuestionCard is absent
+   here on purpose: it already ships `height: auto; max-height: 24` in its
+   own BUNDLED_CSS and measures 14 rows in that same harness. */
+/* #skill-install-buttons/#skill-script-buttons are the button rows INSIDE
+   SkillInstallConfirmCard/SkillScriptConfirmCard, not scoped to the Console
+   card ids above -- the same two cards are also mounted, under different
+   outer ids (#buddy-install/#buddy-script), inside
+   BuddyConversationModal (buddy_conversation_modal.py). The id selectors
+   here are deliberately global so both hosts get the fix; verified green
+   in the Buddy modal too. */
+#chat-resume-panel,
+#chat-skill-install-card,
+#chat-skill-script-card,
+#skill-install-buttons,
+#skill-script-buttons {
+    height: auto;
+}
+
 .-dark-mode .console-assistant-turn {
     border-left: tall $ds-chat-assistant-accent-dark;
 }
@@ -4592,6 +4617,19 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
     width: 20;
 }
 
+/* task-32287: the card's body and its action bar hug their content too.
+   Both were unstyled -- `#approval-batch-body` is a Container and
+   `#approval-batch-actions` a Horizontal, so both defaulted to `height:
+   1fr` and expanded to fill the card, which (despite `.ds-approval-card`'s
+   own `height: auto`) therefore took whatever its parent offered: a
+   ONE-row batch measured 46 lines in a 50-row harness, with the ten-plus
+   blank rows between the action bar and the bottom border the 2026-09-10
+   live pass reported. */
+#approval-batch-body,
+#approval-batch-actions {
+    height: auto;
+}
+
 /* The Console MCP batch-approval card's per-row layout
    (`ChatApprovalCard.set_batch()`, chat_approval_card.py -- T5 deferred
    this CSS to T9's phase gate). This card carries no `DEFAULT_CSS` of its
@@ -4642,10 +4680,11 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
     min-height: 1;
     width: 1fr;
 }
-/* TASK-1846 AC#2: `.approval-row` is now a Vertical of two lines --
-   header, arguments, and `.approval-row-controls` each on their own FULL
-   width line. Before the split all four shared one Horizontal, and the
-   controls' 26 + 14 + 14 = 54 fixed cells left the arguments 10 cells at 80
+/* TASK-1846 AC#2: `.approval-row` is now a Vertical -- header, arguments,
+   and `.approval-row-controls` each on their own FULL width line (plus, since
+   task-32278, the reason and scope lines below).
+   Before the split all four shared one Horizontal, and the
+   controls' 27 + 14 + 14 = 55 fixed cells left the arguments 10 cells at 80
    columns: `{"path":"~/` of `{"path":"~/notes/secrets.md"}`. Since
    TASK-1861 the card offers one decision per TARGET, so that clipped text
    was the decision.
@@ -4682,8 +4721,27 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
     width: 1fr;
     height: auto;
 }
+/* task-32278: the label area is this width MINUS 8 cells of Textual chrome
+   (`SelectCurrent`: `border: tall` 1+1, `padding: 0 2` 2+2, `.arrow`
+   `width: 1` with `padding: 0 0 0 1`). The closed Select does not
+   ellipsize -- `SelectCurrent` is `height: auto` and its `Static#label`
+   wraps -- so a label one cell over grows the control instead of clipping:
+   "Always allow this exact input" measured FOUR lines tall at width 26.
+   The labels are short now (longest: "Always · these args", 19); 27 is
+   19 + 8, and `Tests/UI/test_chat_approval_card.py` reads this number back
+   out of this file so the two cannot drift apart again. */
 .approval-row-decision {
-    width: 26;
+    width: 27;
+}
+/* task-32278: the row's reason line (why this is asking -- the visible
+   replacement for the old header tooltip) and its scope line (what the
+   selected decision commits to, and where to undo it). Both carry full
+   sentences, so they get the same explicit `1fr` share as the header and
+   args lines above rather than a `width: auto` that overflows the row. */
+.approval-row-reason,
+.approval-row-scope {
+    width: 1fr;
+    height: auto;
 }
 /* Fleet-UX expert review F5 (task-1234): single-row cards additionally
    mount two compact fast-path buttons after the decision Select --

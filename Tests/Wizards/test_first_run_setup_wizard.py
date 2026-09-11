@@ -10144,13 +10144,21 @@ async def test_summary_primary_first_run_exit_buttons_set_expected_routes():
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        # task-32072 added "Add your first document" and task-32140 added
+        # "Write your first note"; the Summary has offered five exits across
+        # two docked rows since. The ordered label list below is the real
+        # contract (it pins the reading order too) -- keep it exhaustive.
         assert {b.id for b in step.query(Button)} == {
             "setup-exit-chat",
+            "setup-exit-library",
+            "setup-exit-library-notes",
             "setup-exit-home",
             "setup-exit-settings",
         }
         assert [str(button.label) for button in step.query(Button)] == [
             "Review provider setup",
+            "Add your first document",
+            "Write your first note",
             "Explore Home",
             "Review settings",
         ]
@@ -10199,13 +10207,19 @@ async def test_summary_primary_rerun_complete_actions_start_chatting():
             ):
                 break
             await pilot.pause(0.05)
+        # Same five exits as the first-run case (task-32072, task-32140);
+        # only the primary's label differs on a complete rerun.
         assert {b.id for b in step.query(Button)} == {
             "setup-exit-chat",
+            "setup-exit-library",
+            "setup-exit-library-notes",
             "setup-exit-home",
             "setup-exit-settings",
         }
         assert [str(button.label) for button in step.query(Button)] == [
             "Start chatting",
+            "Add your first document",
+            "Write your first note",
             "Explore Home",
             "Review settings",
         ]
@@ -11331,6 +11345,33 @@ async def test_tools_step_rows_are_described_and_do_not_overlap():
         # Mutating tools carry a visible warning in their description.
         write_desc = str(step.query_one("#setup-tool-desc-write_file", Static).render())
         assert "⚠" in write_desc
+
+
+def test_read_class_tool_copy_mentions_per_call_approval():
+    """task-32289 AC#2: Full setup's tools step described reads as safe with
+    no mention that they still ask every time -- append that fact to every
+    read-class tool's description instead of just the mutating ones' ⚠.
+
+    Qodo #6: the first wording ("Asks you each time before running.") was
+    unconditional, and a tool-level Allow or a session approval makes it
+    false -- a user who picks a broader scope then sees behaviour the setup
+    screen promised would not happen. The sentence now states the default
+    AND acknowledges the broader scopes the approval card offers.
+    """
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import ToolsStep
+
+    for tool_name in (
+        "read_file",
+        "list_directory",
+        "glob_files",
+        "grep_files",
+        "expand_document",
+    ):
+        _title, desc = ToolsStep._TOOL_COPY[tool_name]
+        assert desc.endswith(
+            "Asks before running unless you approve a longer scope."
+        ), (tool_name, desc)
+        assert "each time" not in desc.lower(), (tool_name, desc)
 
 
 @pytest.mark.asyncio

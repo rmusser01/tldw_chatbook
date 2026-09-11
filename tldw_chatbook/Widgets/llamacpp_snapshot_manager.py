@@ -22,7 +22,7 @@ from tldw_chatbook.LLM_Management.snapshot_service import LlamaCppSnapshotServic
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 PREFERENCES_UNAVAILABLE = (
-    "Snapshot preferences unavailable. In F9 Advanced Config, correct "
+    "Snapshot preferences unavailable. In F4 Advanced Config, correct "
     "llamacpp_snapshots.enabled (true/false) and keep_count (1–1000), then Reload."
 )
 

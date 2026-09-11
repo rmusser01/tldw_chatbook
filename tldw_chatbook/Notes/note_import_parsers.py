@@ -71,6 +71,14 @@ _CSV_FIELD_SIZE_LIMIT_LOCK = RLock()
 
 _MESSAGES = {
     "unsupported_extension": "This file type is not supported.",
+    # task-32262: a vault's own file types deserve the vault-aware copy
+    # `.obsidian` and `.trash` already get, not one generic sentence for
+    # everything from a canvas to a PDF.
+    "unsupported_canvas": "Obsidian canvas — not a note.",
+    "unsupported_base": "Obsidian base — not a note.",
+    "unsupported_image": "Image — not a note. Add it in Library ▸ Media.",
+    "unsupported_document": "Document — not a note. Add it in Library ▸ Media.",
+    "unsupported_media": "Audio or video — not a note. Add it in Library ▸ Media.",
     "source_changed": "This source changed during the import preview.",
     "source_unavailable": "This source could not be read safely.",
     "secure_read_unavailable": "Secure source reading is unavailable.",
@@ -88,6 +96,32 @@ _MESSAGES = {
     "invalid_destination": "The destination folder path is not valid.",
     "selection_changed": "The discovered source set changed before parsing.",
 }
+
+_UNSUPPORTED_EXTENSION_REASONS = {
+    ".canvas": "unsupported_canvas",
+    ".base": "unsupported_base",
+    ".png": "unsupported_image",
+    ".jpg": "unsupported_image",
+    ".jpeg": "unsupported_image",
+    ".gif": "unsupported_image",
+    ".webp": "unsupported_image",
+    ".svg": "unsupported_image",
+    ".pdf": "unsupported_document",
+    ".docx": "unsupported_document",
+    ".epub": "unsupported_document",
+    ".mp3": "unsupported_media",
+    ".m4a": "unsupported_media",
+    ".wav": "unsupported_media",
+    ".mp4": "unsupported_media",
+    ".mov": "unsupported_media",
+    ".webm": "unsupported_media",
+}
+"""Reason code per non-note extension, keyed casefolded (task-32262).
+
+Anything absent keeps the generic ``unsupported_extension`` sentence: an
+honest "this file type is not supported" beats a confident wrong noun.
+"""
+
 
 # task-32130: every other parse failure stays FAILED.
 _FAILURE_CLASSIFICATIONS = {
@@ -341,7 +375,9 @@ def parse_import_sources(
                     candidate,
                     bounds,
                     ImportClassification.UNSUPPORTED,
-                    "unsupported_extension",
+                    _UNSUPPORTED_EXTENSION_REASONS.get(
+                        extension, "unsupported_extension"
+                    ),
                 )
             )
             continue
@@ -464,6 +500,7 @@ def _parse_text(
         # body is empty while the content stays the original YAML, so a
         # `source: "[[README]]"` property is metadata and is never rewritten.
         body = text
+        unimported_keys: tuple[str, ...] = ()
         if obsidian_mode and markdown:
             metadata, body = _split_frontmatter(text)
             # A note that is only frontmatter (an Obsidian Properties-only file,
@@ -472,6 +509,9 @@ def _parse_text(
             # BETTER into a failure it did not have before.
             if body.strip():
                 text = body
+                # Only a stripped block loses anything (task-32262); a
+                # frontmatter-only note keeps every property in its content.
+                unimported_keys = _unimported_frontmatter_keys(metadata)
         stem = PurePosixPath(candidate.source.display_path).stem
         title = _frontmatter_title(metadata) or _text_title(text, stem, markdown)
         if len(title) > MAX_IMPORT_TITLE_LENGTH:
@@ -482,6 +522,7 @@ def _parse_text(
                 content=text,
                 keywords=_frontmatter_keywords(metadata, bounds),
                 wikilinks=_wikilinks(body) if obsidian_mode and markdown else (),
+                unimported_frontmatter_keys=unimported_keys,
             ),
         )
     if extension == ".json":
@@ -550,6 +591,37 @@ def _frontmatter_title(metadata: Mapping[Any, Any] | None) -> str | None:
     if not title or _TEMPLATE_PLACEHOLDER.search(title):
         return None
     return title
+
+
+_IMPORTED_FRONTMATTER_KEYS = frozenset({"title", *_FRONTMATTER_KEYS})
+"""Frontmatter properties the import actually keeps."""
+
+_MAX_REPORTED_FRONTMATTER_KEYS = 12
+
+
+def _unimported_frontmatter_keys(
+    metadata: Mapping[Any, Any] | None,
+) -> tuple[str, ...]:
+    """Return the frontmatter property names this import drops, in file order.
+
+    Args:
+        metadata: One parsed frontmatter mapping, or None when there was none.
+
+    Returns:
+        Bounded, deduplicated property names that reach neither the title, the
+        keywords nor the stored body.
+    """
+    if metadata is None:
+        return ()
+    names: list[str] = []
+    for key in metadata:
+        if not isinstance(key, str):
+            continue
+        name = key.strip()
+        if not name or name.casefold() in _IMPORTED_FRONTMATTER_KEYS:
+            continue
+        names.append(name[:MAX_IMPORT_KEYWORD_LENGTH])
+    return tuple(dict.fromkeys(names))[:_MAX_REPORTED_FRONTMATTER_KEYS]
 
 
 def _frontmatter_keywords(

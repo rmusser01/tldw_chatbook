@@ -104,7 +104,7 @@ async def test_tour_plus_modal_opens_stay_under_the_soft_source_limit():
     async with app.run_test(size=(235, 52)) as pilot:
         await pilot.pause()
         await asyncio.sleep(2)
-        for key in [f"ctrl+{digit}" for digit in "1234567890"] + ["f7", "f8", "f9"]:
+        for key in [f"ctrl+{digit}" for digit in "1234567890"] + ["f2", "f3", "f4", "f5", "f7"]:
             await pilot.press(key)
             await pilot.pause()
             await asyncio.sleep(0.75)

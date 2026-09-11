@@ -756,6 +756,12 @@ class ConsoleSettingsSummaryState:
     context_row: str
     sampling_row: str
     identity_row: str
+    #: Structured sampling values for the left rail's Model section
+    #: (TASK-32338): the rail used to regex-parse these back out of
+    #: ``sampling_row``; empty string means "not set" (renders as an
+    #: em-dash placeholder at the rail).
+    temperature: str = ""
+    max_tokens: str = ""
     readiness_label: str = ""
     provider_row: str = ""
     endpoint_row: str = ""
@@ -1391,6 +1397,7 @@ def build_console_settings_readiness(
 
     if not readiness.requires_api_key:
         credential: CredentialFacet = "not_required"
+        credential_source = "none"
     elif not readiness.ready:
         credential = "missing"
     elif (
@@ -1657,6 +1664,10 @@ def build_console_settings_summary_state(
         model_row=f"Model: {model_label}",
         context_row=_format_context_summary_row(context_estimate.label),
         sampling_row=f"Sampling: {', '.join(sampling_parts)}",
+        temperature=_format_summary_float(settings.temperature),
+        max_tokens=(
+            str(settings.max_tokens) if settings.max_tokens is not None else ""
+        ),
         identity_row=identity_row,
         readiness_label="",
         provider_row=f"Provider: {provider_label}",

@@ -288,6 +288,44 @@ def validate_tool_arguments(value: object) -> dict[str, Any]:
         raise ValueError(message) from None
 
 
+class CanvasGuideArgumentsInput(BaseModel):
+    """Strict, closed arguments for the model-visible Canvas guide tool.
+
+    Attributes:
+        topic: Exact packaged documentation topic, without coercion.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    topic: Literal["basics", "controls", "mermaid", "repair"]
+
+    @field_validator("topic", mode="before")
+    @classmethod
+    def _exact_topic(cls, value: object) -> str:
+        if type(value) is not str:
+            raise ValueError("invalid topic type")
+        return value
+
+
+def validate_canvas_guide_arguments(value: object) -> dict[str, str]:
+    """Validate guide arguments without normalizing or echoing raw input.
+
+    Args:
+        value: Untrusted model-issued tool arguments.
+
+    Returns:
+        A new dictionary containing only the validated topic.
+
+    Raises:
+        ValueError: If arguments are not an exact dictionary with one valid topic.
+    """
+    if type(value) is not dict:
+        raise ValueError("invalid Canvas guide arguments") from None
+    try:
+        return {"topic": CanvasGuideArgumentsInput.model_validate(value).topic}
+    except PydanticValidationError:
+        raise ValueError("invalid Canvas guide arguments") from None
+
+
 class CanvasBridgeWireInput(BaseModel):
     """Strict source-private shape for one untrusted Canvas bridge envelope."""
 

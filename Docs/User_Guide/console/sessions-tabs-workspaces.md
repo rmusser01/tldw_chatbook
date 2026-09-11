@@ -50,12 +50,18 @@ items — see [Context & RAG](context-and-rag.md).
 box with **Clear**, a **New conversation** button, and a flat list containing
 only Default-workspace and unassigned conversations. A conversation assigned
 to a named workspace appears under that workspace in the Tree instead, never
-in both places. Starred entries sort first inside their one owner; starring is
-a property and action, not a duplicate Starred group.
+in both places. Character conversations never appear in this list — they
+belong to the Character section below (or to their workspace in the Tree,
+when they were created inside one). Starred entries sort first inside their
+one owner; starring is a property and action, not a duplicate Starred group.
 
 **Character section** (left rail). Shows up to four local character cards or
 unavailable-character groups, with up to five recent saved conversations in
-the one expanded group. Search returns at most eight saved local character
+the one expanded group. Only global and Default-scope character
+conversations are listed and counted here: a character chat created inside a
+named workspace stays under that workspace's node in the Tree — the same
+one-owner rule the rest of the rail follows. Search returns at most eight
+saved local character
 conversations and never sends titles or transcript text to a network service.
 Each search result keeps its title, character name, and Local/age metadata
 on separate lines so the metadata remains readable in the narrow rail.

@@ -17,7 +17,7 @@ import contextlib
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
@@ -396,7 +396,11 @@ from tldw_chatbook.Agents.project_instruction_resolver import (
     ProjectInstructionResolver,
     StartupInstructionCandidate,
 )
-from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvider
+from tldw_chatbook.Agents.mcp_tool_provider import (
+    MCPPendingCall,
+    MCPToolProvider,
+    approval_effects_for_tool,
+)
 from tldw_chatbook.Agents.run_context import current_run_actor, current_run_id
 
 # NOTE (boot budget, ADR-097): `Agents.persona_policy` is imported lazily
@@ -747,6 +751,36 @@ _DEFAULT_WORKTREE_MERGE_CONFIRM_TIMEOUT_SECONDS = 0.0
 _DEFAULT_ASK_USER_TIMEOUT_SECONDS = 0.0
 #: Env override for `[console] ask_user_timeout_seconds` (env -> config -> default).
 ASK_USER_TIMEOUT_ENV_VAR = "TLDW_CONSOLE_ASK_USER_TIMEOUT_SECONDS"
+#: task-32344: ceiling on the pre-provider setup a send will wait through
+#: before giving up on the optional part of it and calling the provider
+#: anyway. The one seam that needed a bound is the app-owned Personal
+#: Context service, which is bootstrapped lazily on the FIRST agent send of
+#: a process and whose constructor reads the OS credential store -- on
+#: macOS that can enter the Keychain authorization UI and block for as long
+#: as nobody answers it (traced live: a warm-restart first send sat in
+#: `SecItemAdd` -> `makeLoginAuthUI` for >6 minutes with the assistant row
+#: blank). Personalization is documented never to block chat; that promise
+#: was enforced against exceptions only, and a hang is not an exception.
+#: 10s is the budget because a healthy cold bootstrap measured 3.7s on the
+#: same machine -- generous enough never to fire on a slow-but-working
+#: profile, short enough that a wedged one degrades instead of hanging.
+CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS = 10.0
+#: Set while a Personal Context bootstrap attempt is still running in a
+#: worker thread, and cleared by that thread whichever way it ends -- or by
+#: the waiter, when the callable was cancelled before the executor ever
+#: started it and so will never run its own `finally`.
+#: Expiring the budget above abandons the worker but cannot kill it, and
+#: `TldwCli.get_personal_context_service` holds a module-level lock for the
+#: WHOLE bootstrap -- so a wedged credential store means every later send
+#: would park another `to_thread` worker on that lock, permanently. The
+#: shared default executor has ~22 slots and also carries `run_reply` and
+#: ~1100 other `to_thread` calls, so ~22 sends against an unanswered
+#: keychain prompt would starve every offload in the app (and Python 3.12's
+#: `Runner.close()` then joins that executor for up to 300s on quit).
+#: While this is set the resolver returns `None` without submitting
+#: anything. Self-healing survives: the original worker clears the flag and
+#: caches the service if the OS ever answers.
+_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT = threading.Event()
 #: A9 bounce counters are keyed by run id; a run that only ever bounced has no
 #: end-of-run hook here, so the map is bounded by evicting the oldest run.
 _MAX_TRACKED_QUESTION_BOUNCE_RUNS = 64
@@ -2299,6 +2333,11 @@ def build_tool_review_hook(
                         :TOOL_DESCRIPTION_CAPTURE_CAP
                     ],
                     reason="risk_floored" if state.risk_floored else "ask",
+                    # task-32278: the card's high-risk sentence must say
+                    # "changes" for a mutating built-in, and `effects` is the
+                    # only signal it reads. Derived from the same tags the
+                    # floor above keys on, so the two cannot disagree.
+                    effects=approval_effects_for_tool(tool),
                     options=("approve_once", "approve_session", "deny"),
                     # TASK-1231/F3 AC2: pre-flight the roots check for the
                     # three file tools -- never gates or auto-denies, just
@@ -3626,6 +3665,14 @@ class ConsoleChatController:
         #     viewed session's own terminal transition is seen live and is
         #     deliberately never stamped here.
         self._pending_approvals: dict[str, set[str]] = {}
+        #: Qodo #4 (task-32345): the KIND of each outstanding round, kept
+        #: beside `_pending_approvals` rather than inside it -- that map's
+        #: `set[str]` value is asserted on verbatim across eight test files,
+        #: and the lifecycle logic wants "is anything outstanding", not the
+        #: kind. Same key, same writers, same lock; `pending_round_kinds`
+        #: reads it. An entry is only ever present for a round id that is
+        #: also in `_pending_approvals`.
+        self._pending_round_kinds: dict[str, dict[str, str]] = {}
         self._unvisited_outcomes: dict[str, ConsoleRunMarker] = {}
         self._ordinary_outcome_ids: dict[str, str] = {}
         self._ordinary_outcome_assistant_ids: dict[str, str | None] = {}
@@ -5498,7 +5545,9 @@ class ConsoleChatController:
         """
         return len(self._live_busy_session_ids())
 
-    def add_pending_round(self, session_id: str, round_id: str) -> None:
+    def add_pending_round(
+        self, session_id: str, round_id: str, kind: str = "approval"
+    ) -> None:
         """Register ``round_id`` as an outstanding approval-like round for ``session_id``.
 
         TASK-1050 (Defect A): the fleet-visible pending-approval badge used
@@ -5529,6 +5578,16 @@ class ConsoleChatController:
             round_id: The round's own unique id (a real bridge round id, or
                 the reserved ``_LEGACY_PENDING_APPROVAL_ROUND_ID`` sentinel
                 -- see ``set_run_pending_approval``).
+            kind: Which interrupt kind is waiting -- a
+                ``console_interrupt_rounds.KIND_SETTER_ATTRS`` key
+                (``approval``, ``question``, ``skill_install``,
+                ``skill_script``, ``worktree_merge``). Qodo #4: the badge and
+                lifecycle do not care, but the run chip and activity line do
+                -- they used to translate this registry's generic "something
+                is pending" into "Waiting for your approval" even for a
+                question. Defaults to ``approval``, which is what every
+                caller without a kind of its own (the deprecated boolean
+                shim, direct test drives) has always meant.
         """
         # F2b fix (Qodo wave), preserved: reachable from a worker thread
         # while the UI thread concurrently iterates `_pending_approvals`
@@ -5538,6 +5597,9 @@ class ConsoleChatController:
             rounds = self._pending_approvals.setdefault(session_id, set())
             changed = round_id not in rounds
             rounds.add(round_id)
+            self._pending_round_kinds.setdefault(session_id, {})[round_id] = str(
+                kind or "approval"
+            )
         if changed:
             if self._buddy_sink is not None:
                 self._buddy_sink.approval_round(session_id, round_id, pending=True)
@@ -5568,6 +5630,11 @@ class ConsoleChatController:
                 return
             changed = round_id in rounds
             rounds.discard(round_id)
+            kinds = self._pending_round_kinds.get(session_id)
+            if kinds is not None:
+                kinds.pop(round_id, None)
+                if not kinds:
+                    self._pending_round_kinds.pop(session_id, None)
             if not rounds:
                 self._pending_approvals.pop(session_id, None)
         if changed:
@@ -5610,6 +5677,29 @@ class ConsoleChatController:
         """
         with self._approval_state_lock:
             return session_id in self._pending_approvals
+
+    def pending_round_kinds(self, session_id: str) -> frozenset[str]:
+        """Return the KINDS of ``session_id``'s outstanding interrupt rounds.
+
+        Qodo #4: ``has_pending_approval_round`` answers "is anything waiting
+        on the user", which is the right question for the badge and the
+        lifecycle but the wrong one for copy -- the shared registry holds
+        questions, skill-install/skill-script confirms and worktree-merge
+        confirms as well as MCP approvals, and translating the generic
+        predicate into "Waiting for your approval" mislabels the other four
+        (and can disagree with the inspector, which counts mounted approval
+        cards only).
+
+        Args:
+            session_id: The session to read.
+
+        Returns:
+            Every distinct kind currently outstanding for ``session_id``
+            (``console_interrupt_rounds.KIND_SETTER_ATTRS`` keys), empty
+            when nothing is.
+        """
+        with self._approval_state_lock:
+            return frozenset(self._pending_round_kinds.get(session_id, {}).values())
 
     def set_run_pending_approval(self, session_id: str, pending: bool) -> None:
         """DEPRECATED boolean shim -- prefer ``add_pending_round``/``discard_pending_round``.
@@ -18506,17 +18596,126 @@ class ConsoleChatController:
             )
 
     async def _personal_context_service(self) -> PersonalContextService | None:
-        """Resolve the app-owned Personal Context service off the UI loop."""
+        """Resolve the app-owned Personal Context service off the UI loop.
+
+        Bounded by ``CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS`` (task-
+        32275). ``get_personal_context_service`` bootstraps the service on
+        first use, and that bootstrap talks to the OS credential store,
+        which can block indefinitely; without a bound the "personalization
+        never blocks chat" rule below held only against exceptions, and the
+        first send after a restart stalled with a blank assistant row.
+
+        Giving up yields ``None``, the same value every other failure here
+        yields: the turn runs without profile tools rather than not at all.
+        The worker thread is NOT killed (nothing can interrupt a blocking
+        syscall); it is abandoned, and will finish and cache its result for
+        a later send if the OS ever answers. Because it is abandoned rather
+        than finished, `_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT` keeps the
+        next send from parking a SECOND worker behind the first on the
+        app's bootstrap lock -- see that flag's comment for why a shared
+        executor makes that fatal rather than merely wasteful.
+
+        Returns:
+            The service, or ``None`` when the app owns none, an earlier
+            attempt is still running, the bootstrap raised, or it outran
+            its budget.
+        """
 
         getter = getattr(
             getattr(self, "app", None), "get_personal_context_service", None
         )
         if not callable(getter):
             return None
-        try:
-            return await asyncio.to_thread(getter)
-        except Exception:  # noqa: BLE001 - personalization never blocks chat
+        if _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.is_set():
             return None
+        _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.set()
+        # SUBMITTED is not STARTED: `to_thread` only queues the callable, and
+        # a Stop that cancels this await while it is still queued cancels the
+        # executor future outright -- the callable never runs, so its
+        # `finally` never clears the guard and every later resolution in the
+        # process returns None (Qodo #5). The worker owns the clear once it
+        # has started; before that, we do.
+        started = threading.Event()
+
+        def _bootstrap():
+            started.set()
+            # We may have already given up and cleared the guard on the way
+            # to the executor; the worker is running now, so re-assert it.
+            _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.set()
+            try:
+                return getter()
+            finally:
+                _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.clear()
+
+        def _release_unless_worker_owns_it() -> None:
+            """Clear the guard only while nothing is holding the lock yet.
+
+            A budget expiry with the callable genuinely running keeps it set:
+            that worker is still parked on the app's bootstrap lock, which is
+            exactly what the guard exists to stop later sends from joining.
+            """
+            if not started.is_set():
+                _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.clear()
+
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(_bootstrap),
+                CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS,
+            )
+        except (asyncio.TimeoutError, TimeoutError):
+            _release_unless_worker_owns_it()
+            logger.warning(
+                "Console personal context bootstrap exceeded its "
+                "{budget_seconds}s budget; sending without profile tools",
+                budget_seconds=CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS,
+            )
+            return None
+        except asyncio.CancelledError:
+            _release_unless_worker_owns_it()
+            raise
+        except Exception:  # noqa: BLE001 - personalization never blocks chat
+            _release_unless_worker_owns_it()
+            return None
+
+    @contextlib.asynccontextmanager
+    async def _pre_provider_setup_phase(
+        self, conversation_id: str
+    ) -> AsyncIterator[None]:
+        """Name the pre-provider setup window on the assistant row.
+
+        task-32344: between "send accepted" and "provider called" the run
+        does not exist yet, so nothing publishes a step and the row renders
+        blank -- for however long the setup takes. The mark is cleared on
+        every exit, including a raise: a stale mark would keep the row
+        claiming setup into the next turn.
+
+        The live send opens this at tool-catalog composition and holds it to
+        the provider dispatch, so the whole window is named. Most of the time
+        is still the personal-context resolution (3.7s cold, unbounded when
+        the credential store wedged) against composition's 20ms measured
+        live -- but composition does async MCP discovery I/O, which a slow or
+        unreachable server turns into an unbounded blank row of its own
+        (Qodo #6 on PR #2586).
+
+        The 10s budget is unaffected: it belongs to the Personal Context
+        bootstrap (`CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS`), not to this
+        phase, which bounds nothing and only labels the row.
+
+        Args:
+            conversation_id: The conversation whose assistant row should say
+                it is setting up for the duration of the block.
+        """
+
+        bridge = getattr(self, "_agent_bridge", None)
+        begin = getattr(bridge, "begin_setup_phase", None)
+        end = getattr(bridge, "end_setup_phase", None)
+        if callable(begin):
+            begin(conversation_id)
+        try:
+            yield
+        finally:
+            if callable(end):
+                end(conversation_id)
 
     async def _personal_context_builder(
         self,
@@ -20398,7 +20597,7 @@ class ConsoleChatController:
                 # Logs is finally true.
                 "Not sent: your conversation database could not be opened, so "
                 "this message could not be saved. Your draft was kept; a "
-                "temporary chat still sends. Open Logs (F8) for the recorded "
+                "temporary chat still sends. Open Logs (F3) for the recorded "
                 "database error."
             )
         else:
@@ -24658,296 +24857,303 @@ class ConsoleChatController:
             if preparation is not None:
                 capture_mode = preparation.capture_mode
 
-        # P5-T6: compose this run's MCP tool provider (if eligible) HERE,
-        # on the running main loop, BEFORE the bridge is dispatched onto
-        # asyncio.to_thread below -- see `_compose_mcp_provider`'s own
-        # docstring for why `compose_catalog()`'s async I/O can never run
-        # from the worker thread. `(None, None)` (no service, kill switch
-        # on, or nothing composed) leaves the bridge's MCP-free path
-        # byte-identical to before this task.
-        #
-        # task-545/T6: `_compose_mcp_provider`'s own `mcp_review_hook`
-        # (built from `build_mcp_review_hook`) is deliberately discarded
-        # here rather than wired -- it is `None` whenever MCP is not
-        # eligible for this run, and built-in tools (calculator/datetime
-        # today) must be gated regardless of MCP eligibility. Changing
-        # `_compose_mcp_provider`'s own return contract to drop that
-        # second element was considered and rejected: several existing
-        # test suites (`Tests/Chat/test_console_agent_swap.py`,
-        # `Tests/UI/test_console_internals_decomposition.py`) assert its
-        # exact `(provider, hook)` / `(None, None)` shape directly and sit
-        # outside this task's file scope, so keeping that function
-        # byte-identical and building the run-level hook separately here
-        # is the lower-blast-radius choice.
-        run_admitted_roots = capture_run_admitted_workspace_roots(
-            session=next(
-                (item for item in self.store.sessions() if item.id == session_id),
-                None,
-            ),
-            registry=getattr(self.app, "workspace_registry_service", None),
-            project_selection=project_selection,
-            project_authority_guard=project_authority_guard,
-        )
-        (
-            mcp_provider,
-            builtin_gate,
-            local_provider,
-            local_review_hook,
-        ) = await self._compose_agent_request_providers(
-            session_id=session_id,
-            project_selection=project_selection,
-            project_authority_guard=project_authority_guard,
-            turn_context=turn_context,
-            admitted_roots=run_admitted_roots,
-        )
-        virtual_cli_provider, virtual_cli_review_hook = (
-            self._compose_virtual_cli_provider(
+        # task-32344: from here to the provider dispatch is the window the
+        # first send of a process pays in full -- the MCP catalog composition
+        # below (async discovery I/O) and the lazy Personal Context bootstrap
+        # above all, plus the profile and canvas providers built from it. The
+        # row says so for the WHOLE window: entering only after composition
+        # left a slow discovery rendering a blank row (Qodo #6 on PR #2586).
+        async with self._pre_provider_setup_phase(conversation_id):
+            # P5-T6: compose this run's MCP tool provider (if eligible) HERE,
+            # on the running main loop, BEFORE the bridge is dispatched onto
+            # asyncio.to_thread below -- see `_compose_mcp_provider`'s own
+            # docstring for why `compose_catalog()`'s async I/O can never run
+            # from the worker thread. `(None, None)` (no service, kill switch
+            # on, or nothing composed) leaves the bridge's MCP-free path
+            # byte-identical to before this task.
+            #
+            # task-545/T6: `_compose_mcp_provider`'s own `mcp_review_hook`
+            # (built from `build_mcp_review_hook`) is deliberately discarded
+            # here rather than wired -- it is `None` whenever MCP is not
+            # eligible for this run, and built-in tools (calculator/datetime
+            # today) must be gated regardless of MCP eligibility. Changing
+            # `_compose_mcp_provider`'s own return contract to drop that
+            # second element was considered and rejected: several existing
+            # test suites (`Tests/Chat/test_console_agent_swap.py`,
+            # `Tests/UI/test_console_internals_decomposition.py`) assert its
+            # exact `(provider, hook)` / `(None, None)` shape directly and sit
+            # outside this task's file scope, so keeping that function
+            # byte-identical and building the run-level hook separately here
+            # is the lower-blast-radius choice.
+            run_admitted_roots = capture_run_admitted_workspace_roots(
+                session=next(
+                    (item for item in self.store.sessions() if item.id == session_id),
+                    None,
+                ),
+                registry=getattr(self.app, "workspace_registry_service", None),
+                project_selection=project_selection,
+                project_authority_guard=project_authority_guard,
+            )
+            (
+                mcp_provider,
+                builtin_gate,
+                local_provider,
+                local_review_hook,
+            ) = await self._compose_agent_request_providers(
+                session_id=session_id,
+                project_selection=project_selection,
+                project_authority_guard=project_authority_guard,
+                turn_context=turn_context,
+                admitted_roots=run_admitted_roots,
+            )
+            virtual_cli_provider, virtual_cli_review_hook = (
+                self._compose_virtual_cli_provider(
+                    session_id=session_id,
+                    turn_context=turn_context,
+                    project_root=(
+                        project_selection.root if project_selection is not None else None
+                    ),
+                    project_root_identity=(
+                        project_selection.root_identity
+                        if project_selection is not None
+                        else None
+                    ),
+                    project_root_guard=project_authority_guard,
+                    admitted_roots=run_admitted_roots,
+                )
+            )
+            raw_shell_provider, raw_shell_review_hook = self._compose_raw_shell_provider(
                 session_id=session_id,
                 turn_context=turn_context,
                 project_root=(
                     project_selection.root if project_selection is not None else None
                 ),
-                project_root_identity=(
-                    project_selection.root_identity
-                    if project_selection is not None
-                    else None
-                ),
-                project_root_guard=project_authority_guard,
-                admitted_roots=run_admitted_roots,
             )
-        )
-        raw_shell_provider, raw_shell_review_hook = self._compose_raw_shell_provider(
-            session_id=session_id,
-            turn_context=turn_context,
-            project_root=(
-                project_selection.root if project_selection is not None else None
-            ),
-        )
-        self._mcp_provider = mcp_provider
+            self._mcp_provider = mcp_provider
 
-        # Resolve the direct Library provider before building the shared
-        # review hook: Agent Lesson saves are classified by that exact
-        # provider instance and its approve-once authority must be visible
-        # to the same instance later registered for dispatch.
-        library_provider: Any | None = None
-        library_provider_authority: Any | None = None
-        if self._library_provider_factory is not None:
-            try:
-                library_selection = self._library_provider_for_context(turn_context)
-                if library_selection is not None:
-                    library_provider, library_provider_authority = library_selection
-            except Exception:  # noqa: BLE001 -- never block a send
-                logger.opt(exception=True).warning(
-                    "library_provider_factory failed; running without Library tools"
-                )
+            # Resolve the direct Library provider before building the shared
+            # review hook: Agent Lesson saves are classified by that exact
+            # provider instance and its approve-once authority must be visible
+            # to the same instance later registered for dispatch.
+            library_provider: Any | None = None
+            library_provider_authority: Any | None = None
+            if self._library_provider_factory is not None:
+                try:
+                    library_selection = self._library_provider_for_context(turn_context)
+                    if library_selection is not None:
+                        library_provider, library_provider_authority = library_selection
+                except Exception:  # noqa: BLE001 -- never block a send
+                    logger.opt(exception=True).warning(
+                        "library_provider_factory failed; running without Library tools"
+                    )
 
-        # task-545/T6: build THIS run's built-in permission gate and hand
-        # the SAME instance to both the review hook (below) and
-        # `ConsoleAgentBridge.run_reply` (which threads it into the
-        # `BuiltinToolProvider` that actually invokes tools) -- a second,
-        # independently-built gate would silently desynchronize stamps:
-        # a decision made here would never be visible to `invoke()`'s own
-        # gate, and vice versa. `build_builtin_gate(None)` (no
-        # `unified_mcp_service` on the app) is fail-closed-correct, not
-        # "ungated" -- see that function's own docstring.
-        # Only `.tool_for(name)` is used by the review hook below, to
-        # resolve a `ToolCall.name` to the `Tool` object `builtin_gate.
-        # resolve` needs -- this instance is never used to invoke a tool,
-        # so it does not need to be the SAME `BuiltinToolProvider` object
-        # the bridge's registry actually dispatches through (its `_tools`
-        # dict is stateless data rebuilt identically by any instance).
-        # Round 1 review CRITICAL 1: resolve THIS run's OWN workspace id --
-        # the SAME lookup `ConsoleAgentBridge.run_reply` makes
-        # (`self._store.session_workspace_id(session_id)`) for the real
-        # `BuiltinToolProvider(workspace_id=...)` dispatch below -- and
-        # thread it into the review hook so its `path_precheck_failed`
-        # pre-flight resolves the IDENTICAL workspace dispatch will, never
-        # whatever happens to be active in the UI for a parked/background
-        # session. `KeyError` (an already-closed session) degrades to
-        # `None`, matching `allowed_file_roots`'s own fail-safe posture.
-        review_workspace_id = frozen_workspace_id
-        builtin_review_provider = BuiltinToolProvider(
-            gate=builtin_gate,
-            workspace_id=review_workspace_id,
-            workspace_read_binding_ids=frozen_workspace_read_binding_ids,
-            workspace_write_binding_ids=frozen_workspace_write_binding_ids,
-            workspace_binding_authority=frozen_workspace_binding_authority,
-            sandbox_root=scratch_snapshot.root,
-            sandbox_lease=scratch_lease,
-        )
-        # Task 9: bind THIS run's owning session id into the approval
-        # bridge so `request_mcp_approvals` can (a) scope its cancellation
-        # check to this run's own cancel event rather than falling back to
-        # whichever session is currently VIEWED (finding #1), and (b) park
-        # rather than mount when `session_id` is not the active session.
-        review_hook = build_tool_review_hook(
-            builtin_gate,
-            builtin_review_provider,
-            mcp_provider,
-            functools.partial(self.request_mcp_approvals, session_id=session_id),
-            workspace_id=review_workspace_id,
-            # TASK-631: the switch must cover the tool families NEITHER
-            # provider claims (skills/spawn/find/load), and this hook is the
-            # only choke point they all pass. Read fresh per turn so a
-            # mid-run flip takes effect on the next batch. Absent service ->
-            # no switch to honor (None), matching `_compose_mcp_provider`.
-            kill_switch=self._console_tool_kill_switch_reader(),
-            library_provider=library_provider,
-        )
-
-        # Local tools (ADR-032): same per-run composition point. Both
-        # hooks see every batch; each gates only what its provider owns,
-        # so the combined hook is a collision-free merge.
-        if local_review_hook is not None:
-            review_hook = build_combined_review_hook([review_hook, local_review_hook])
-        if virtual_cli_review_hook is not None:
-            review_hook = build_combined_review_hook(
-                [review_hook, virtual_cli_review_hook]
+            # task-545/T6: build THIS run's built-in permission gate and hand
+            # the SAME instance to both the review hook (below) and
+            # `ConsoleAgentBridge.run_reply` (which threads it into the
+            # `BuiltinToolProvider` that actually invokes tools) -- a second,
+            # independently-built gate would silently desynchronize stamps:
+            # a decision made here would never be visible to `invoke()`'s own
+            # gate, and vice versa. `build_builtin_gate(None)` (no
+            # `unified_mcp_service` on the app) is fail-closed-correct, not
+            # "ungated" -- see that function's own docstring.
+            # Only `.tool_for(name)` is used by the review hook below, to
+            # resolve a `ToolCall.name` to the `Tool` object `builtin_gate.
+            # resolve` needs -- this instance is never used to invoke a tool,
+            # so it does not need to be the SAME `BuiltinToolProvider` object
+            # the bridge's registry actually dispatches through (its `_tools`
+            # dict is stateless data rebuilt identically by any instance).
+            # Round 1 review CRITICAL 1: resolve THIS run's OWN workspace id --
+            # the SAME lookup `ConsoleAgentBridge.run_reply` makes
+            # (`self._store.session_workspace_id(session_id)`) for the real
+            # `BuiltinToolProvider(workspace_id=...)` dispatch below -- and
+            # thread it into the review hook so its `path_precheck_failed`
+            # pre-flight resolves the IDENTICAL workspace dispatch will, never
+            # whatever happens to be active in the UI for a parked/background
+            # session. `KeyError` (an already-closed session) degrades to
+            # `None`, matching `allowed_file_roots`'s own fail-safe posture.
+            review_workspace_id = frozen_workspace_id
+            builtin_review_provider = BuiltinToolProvider(
+                gate=builtin_gate,
+                workspace_id=review_workspace_id,
+                workspace_read_binding_ids=frozen_workspace_read_binding_ids,
+                workspace_write_binding_ids=frozen_workspace_write_binding_ids,
+                workspace_binding_authority=frozen_workspace_binding_authority,
+                sandbox_root=scratch_snapshot.root,
+                sandbox_lease=scratch_lease,
             )
-        if raw_shell_review_hook is not None:
-            review_hook = build_combined_review_hook(
-                [review_hook, raw_shell_review_hook]
-            )
-        managed_skill_promotion_gate = None
-        if library_provider is not None:
-            from tldw_chatbook.Agents.agent_lesson_promotion import (
-                ManagedSkillProposalGate,
-            )
-
-            managed_skill_promotion_gate = ManagedSkillProposalGate()
-            managed_skill_review_hook = build_managed_skill_promotion_review_hook(
-                managed_skill_promotion_gate,
+            # Task 9: bind THIS run's owning session id into the approval
+            # bridge so `request_mcp_approvals` can (a) scope its cancellation
+            # check to this run's own cancel event rather than falling back to
+            # whichever session is currently VIEWED (finding #1), and (b) park
+            # rather than mount when `session_id` is not the active session.
+            review_hook = build_tool_review_hook(
+                builtin_gate,
+                builtin_review_provider,
+                mcp_provider,
                 functools.partial(self.request_mcp_approvals, session_id=session_id),
-            )
-            review_hook = build_combined_review_hook(
-                [review_hook, managed_skill_review_hook]
+                workspace_id=review_workspace_id,
+                # TASK-631: the switch must cover the tool families NEITHER
+                # provider claims (skills/spawn/find/load), and this hook is the
+                # only choke point they all pass. Read fresh per turn so a
+                # mid-run flip takes effect on the next batch. Absent service ->
+                # no switch to honor (None), matching `_compose_mcp_provider`.
+                kill_switch=self._console_tool_kill_switch_reader(),
+                library_provider=library_provider,
             )
 
-        # TASK-1971 (Agent Change Review): THIS run's tracked roots -- the
-        # same workspace folder bindings the file tools resolve against.
-        # Best-effort: an unavailable registry yields no roots and an
-        # untracked (but otherwise normal) run.
-        from tldw_chatbook.Tools.workspace_file_roots import frozen_workspace_roots
-
-        live_frozen_roots = set(
-            frozen_workspace_roots(
-                frozen_workspace_id,
-                frozen_workspace_binding_authority,
-                registry=getattr(self.app, "workspace_registry_service", None),
-            )
-        )
-        change_roots: list = [
-            Path(root)
-            for root in turn_context.workspace_roots
-            if Path(root) in live_frozen_roots
-        ]
-
-        # Swap site: the agent loop runs synchronously on a worker thread via
-        # asyncio.to_thread, so Stop is cooperative-only -- `should_cancel` is
-        # polled between chunks/steps inside the bridge, never preempts the
-        # thread itself. A provider that hangs mid-request without emitting a
-        # single chunk cannot be interrupted here; RunBudget.max_wall_seconds
-        # (agent_models.py) is what bounds a run overall, but only once
-        # control returns to a checkpoint the loop actually polls -- it is
-        # not a hard timeout on an in-flight, zero-chunk provider call.
-        if self._teardown_refuses_turn(session_id):
-            return self._accepted_shutdown_before_dispatch(
-                assistant_message_id, session_id
-            )
-        await self._wait_for_trace_maintenance_dispatch()
-        self._trace_last_provider_activity = time.monotonic()
-        if before_provider_dispatch is not None:
-            try:
-                await before_provider_dispatch()
-            except asyncio.CancelledError:
-                if not cancel_event.is_set():
-                    raise
-                # No agent worker exists yet; the durable handoff has drained
-                # and its published checkpoint can now settle normally.
-                stopped = self._mark_stream_stopped(
-                    assistant_message_id, visible_copy="Response stopped."
+            # Local tools (ADR-032): same per-run composition point. Both
+            # hooks see every batch; each gates only what its provider owns,
+            # so the combined hook is a collision-free merge.
+            if local_review_hook is not None:
+                review_hook = build_combined_review_hook([review_hook, local_review_hook])
+            if virtual_cli_review_hook is not None:
+                review_hook = build_combined_review_hook(
+                    [review_hook, virtual_cli_review_hook]
                 )
-                return ConsoleSubmitResult(True, True, stopped.content)
-        elif preparation_id is not None and not self._transition_preparation(
-            preparation_id,
-            ConsoleTurnPreparationState.ACCEPTED,
-            ConsoleTurnPreparationState.DISPATCH_STARTED,
-        ):
-            raise RuntimeError("Prepared turn changed before provider dispatch.")
-        if generation_token is None:
-            generation_token = self.store.begin_generation_attempt(assistant_message_id)
-        _generation_handoff.issue(generation_token)
-        if variant_mode:
-            self.store.begin_variant_stream(
-                assistant_message_id,
-                generation_token=generation_token,
-            )
-        elif prepare_retry:
-            self.store.prepare_message_retry(
-                assistant_message_id,
-                generation_token=generation_token,
-            )
-        personal_context_service = await self._personal_context_service()
-        profile_context_service = await self._personal_context_builder(
-            personal_context_service
-        )
-        trusted_profile_user_message = None
-        if trusted_profile_user_message_id is not None:
-            try:
-                candidate = self.store.get_message(trusted_profile_user_message_id)
-                if (
-                    candidate.role is ConsoleMessageRole.USER
-                    and self.store.session_id_for_message(candidate.id) == session_id
-                ):
-                    trusted_profile_user_message = candidate
-            except KeyError:
-                pass
-        profile_provider = None
-        if personal_context_service is not None and session is not None:
-            profile_provider = await asyncio.to_thread(
-                _compose_profile_tool_provider,
-                personal_context_service,
-                workspace_id=session.workspace_id,
-                ephemeral=session.ephemeral,
-                run_id=assistant_message_id,
-                session_id=session_id,
-                current_user_message=trusted_profile_user_message,
-                kill_switch=(self._console_tool_kill_switch_reader() or (lambda: False)),
-            )
-        canvas_provider = None
-        canvas_authority = None
-        canvas_controller = getattr(self.store, "canvas_turn_controller", None)
-        try:
-            canvas_enabled = self._canvas_enabled_reader() is True
-        except Exception:  # noqa: BLE001 - Canvas tool advertising fails closed
-            canvas_enabled = False
-        if canvas_enabled and canvas_controller is not None and session is not None:
-            from tldw_chatbook.Agents.canvas_tool_provider import CanvasToolProvider
-            from tldw_chatbook.Canvas.models import CanvasScope
+            if raw_shell_review_hook is not None:
+                review_hook = build_combined_review_hook(
+                    [review_hook, raw_shell_review_hook]
+                )
+            managed_skill_promotion_gate = None
+            if library_provider is not None:
+                from tldw_chatbook.Agents.agent_lesson_promotion import (
+                    ManagedSkillProposalGate,
+                )
 
-            canvas_run_id = str(uuid4())
-            canvas_scope = CanvasScope(
-                session_id=session_id,
-                conversation_id=conversation_id,
-                active_message_ids=self.store.canvas_active_path_message_ids(
-                    session_id
-                ),
-                selected_canvas_id=None,
-                selected_revision_id=None,
-                run_id=canvas_run_id,
+                managed_skill_promotion_gate = ManagedSkillProposalGate()
+                managed_skill_review_hook = build_managed_skill_promotion_review_hook(
+                    managed_skill_promotion_gate,
+                    functools.partial(self.request_mcp_approvals, session_id=session_id),
+                )
+                review_hook = build_combined_review_hook(
+                    [review_hook, managed_skill_review_hook]
+                )
+
+            # TASK-1971 (Agent Change Review): THIS run's tracked roots -- the
+            # same workspace folder bindings the file tools resolve against.
+            # Best-effort: an unavailable registry yields no roots and an
+            # untracked (but otherwise normal) run.
+            from tldw_chatbook.Tools.workspace_file_roots import frozen_workspace_roots
+
+            live_frozen_roots = set(
+                frozen_workspace_roots(
+                    frozen_workspace_id,
+                    frozen_workspace_binding_authority,
+                    registry=getattr(self.app, "workspace_registry_service", None),
+                )
             )
-            canvas_scope = canvas_controller.capture_selected_scope(canvas_scope)
-            canvas_run = canvas_controller.register_run(
-                canvas_scope,
-                assistant_message_id=assistant_message_id,
-                temporary=session.ephemeral,
+            change_roots: list = [
+                Path(root)
+                for root in turn_context.workspace_roots
+                if Path(root) in live_frozen_roots
+            ]
+
+            # Swap site: the agent loop runs synchronously on a worker thread via
+            # asyncio.to_thread, so Stop is cooperative-only -- `should_cancel` is
+            # polled between chunks/steps inside the bridge, never preempts the
+            # thread itself. A provider that hangs mid-request without emitting a
+            # single chunk cannot be interrupted here; RunBudget.max_wall_seconds
+            # (agent_models.py) is what bounds a run overall, but only once
+            # control returns to a checkpoint the loop actually polls -- it is
+            # not a hard timeout on an in-flight, zero-chunk provider call.
+            if self._teardown_refuses_turn(session_id):
+                return self._accepted_shutdown_before_dispatch(
+                    assistant_message_id, session_id
+                )
+            await self._wait_for_trace_maintenance_dispatch()
+            self._trace_last_provider_activity = time.monotonic()
+            if before_provider_dispatch is not None:
+                try:
+                    await before_provider_dispatch()
+                except asyncio.CancelledError:
+                    if not cancel_event.is_set():
+                        raise
+                    # No agent worker exists yet; the durable handoff has drained
+                    # and its published checkpoint can now settle normally.
+                    stopped = self._mark_stream_stopped(
+                        assistant_message_id, visible_copy="Response stopped."
+                    )
+                    return ConsoleSubmitResult(True, True, stopped.content)
+            elif preparation_id is not None and not self._transition_preparation(
+                preparation_id,
+                ConsoleTurnPreparationState.ACCEPTED,
+                ConsoleTurnPreparationState.DISPATCH_STARTED,
+            ):
+                raise RuntimeError("Prepared turn changed before provider dispatch.")
+            if generation_token is None:
+                generation_token = self.store.begin_generation_attempt(assistant_message_id)
+            _generation_handoff.issue(generation_token)
+            if variant_mode:
+                self.store.begin_variant_stream(
+                    assistant_message_id,
+                    generation_token=generation_token,
+                )
+            elif prepare_retry:
+                self.store.prepare_message_retry(
+                    assistant_message_id,
+                    generation_token=generation_token,
+                )
+            personal_context_service = await self._personal_context_service()
+            profile_context_service = await self._personal_context_builder(
+                personal_context_service
             )
-            canvas_provider = CanvasToolProvider(
-                canvas_run,
-                scope=canvas_scope,
-                enabled_reader=self._canvas_enabled_reader,
-            )
-            canvas_authority = canvas_provider.issue_registration_authority()
+            trusted_profile_user_message = None
+            if trusted_profile_user_message_id is not None:
+                try:
+                    candidate = self.store.get_message(trusted_profile_user_message_id)
+                    if (
+                        candidate.role is ConsoleMessageRole.USER
+                        and self.store.session_id_for_message(candidate.id) == session_id
+                    ):
+                        trusted_profile_user_message = candidate
+                except KeyError:
+                    pass
+            profile_provider = None
+            if personal_context_service is not None and session is not None:
+                profile_provider = await asyncio.to_thread(
+                    _compose_profile_tool_provider,
+                    personal_context_service,
+                    workspace_id=session.workspace_id,
+                    ephemeral=session.ephemeral,
+                    run_id=assistant_message_id,
+                    session_id=session_id,
+                    current_user_message=trusted_profile_user_message,
+                    kill_switch=(self._console_tool_kill_switch_reader() or (lambda: False)),
+                )
+            canvas_provider = None
+            canvas_authority = None
+            canvas_controller = getattr(self.store, "canvas_turn_controller", None)
+            try:
+                canvas_enabled = self._canvas_enabled_reader() is True
+            except Exception:  # noqa: BLE001 - Canvas tool advertising fails closed
+                canvas_enabled = False
+            if canvas_enabled and canvas_controller is not None and session is not None:
+                from tldw_chatbook.Agents.canvas_tool_provider import CanvasToolProvider
+                from tldw_chatbook.Canvas.models import CanvasScope
+
+                canvas_run_id = str(uuid4())
+                canvas_scope = CanvasScope(
+                    session_id=session_id,
+                    conversation_id=conversation_id,
+                    active_message_ids=self.store.canvas_active_path_message_ids(
+                        session_id
+                    ),
+                    selected_canvas_id=None,
+                    selected_revision_id=None,
+                    run_id=canvas_run_id,
+                )
+                canvas_scope = canvas_controller.capture_selected_scope(canvas_scope)
+                canvas_run = canvas_controller.register_run(
+                    canvas_scope,
+                    assistant_message_id=assistant_message_id,
+                    temporary=session.ephemeral,
+                )
+                canvas_provider = CanvasToolProvider(
+                    canvas_run,
+                    scope=canvas_scope,
+                    enabled_reader=self._canvas_enabled_reader,
+                )
+                canvas_authority = canvas_provider.issue_registration_authority()
         try:
             # run_reply returns (run_id, outcome): run_id lets us write the
             # produced reply's PERSISTED id back onto the run after
@@ -26625,6 +26831,7 @@ class ConsoleChatController:
             # stays correct if a future caller ever moves this off-thread).
             with self._approval_state_lock:
                 self._pending_approvals.pop(target, None)
+                self._pending_round_kinds.pop(target, None)
             if self._buddy_sink is not None:
                 self._buddy_sink.release_session(target, sources={"approval"})
             # PR3a-2 Task 5: a terminal transition frees send capacity

@@ -180,7 +180,8 @@ async def test_console_f6_from_header_switch_advances_from_composer_pane(
         await _wait_for_focused_id(app, pilot, switch_id)
 
         await pilot.press("f6")
-        await _wait_for_focused_id(app, pilot, "console-context-rail-collapse")
+        # TASK-32321: F6 targets the rail's first CONTENT control.
+        await _wait_for_focused_id(app, pilot, "console-terminal-open")
 
 
 @pytest.mark.asyncio
@@ -281,9 +282,10 @@ async def test_console_focus_tour_reaches_transcript_chips_inspector_under_ten_s
         else:
             pytest.fail(f"expected a status chip within the stop budget: {stops}")
 
-        # F6 again: Inspector pane (rail open -> its collapse button).
+        # F6 again: Inspector pane (TASK-32321: first content control,
+        # the pinned authority summary, not the collapse button).
         await tour("f6")
-        assert stops[-1][1] == "console-inspector-rail-collapse", f"tour: {stops}"
+        assert stops[-1][1] == "console-send-authority-summary", f"tour: {stops}"
 
         assert len(stops) <= 10, f"tour took too long: {stops}"
         assert not any(focused_id.startswith("nav-") for _, focused_id in stops)

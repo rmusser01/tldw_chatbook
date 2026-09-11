@@ -18,7 +18,7 @@ This page is the orientation tour; the details live on the child pages below:
 - [Video generation, playback & streaming](console/video.md) — `/generate-video`, ephemeral videos & tombstones, in-app playback, `/stream-video`.
 - [Agent runs & tools](console/agent-runs-and-tools.md) — per-tab runs, fleet markers, approvals, skills, MCP tools.
 - [Canvas](console/canvas.md) — create, revise, inspect, recover, and safely export interactive artifacts.
-- [Context & RAG](console/context-and-rag.md) — "Chat Context" viewer, prompts, retrieval scope, staged sources, Library RAG.
+- [Context & RAG](console/context-and-rag.md) — "Current Context" viewer, prompts, retrieval scope, staged sources, Library RAG.
 - [Semantic trace capture](console/semantic-trace-capture.md) — what Capture On saves, Safe/Full views, masking, forks, legacy traces, export, and purge.
 
 ## Getting there
@@ -37,7 +37,7 @@ Top to bottom:
   live runs, and control actions.", and a status badge that reads **Ready**,
   **Running**, or **Blocked** depending on the active session.
 - **Control bar** — one row of buttons: **New tab**, **Settings**,
-  **Attach context**, **Search Library**, **Help**. (**Save as Chatbook**
+  **Context rail**, **Search Library**, **Help**. (**Save as Chatbook**
   lives in the composer's **Menu** button, left of the draft.)
 - **Left rail: "Console context"** — separate sections for **Sessions**
   (the active chat), **Workspaces** (named workspaces and their
@@ -128,6 +128,30 @@ Inspector's **▼ more sections — scroll** keeps the generic wording.
 See [Reading long Context and Inspector sections](console/context-and-rag.md#reading-long-context-and-inspector-sections)
 for pointer and keyboard navigation.
 
+### Terminology
+
+The Console docs use these words consistently:
+
+- **Context rail** — the LEFT rail (workspaces, conversations, model,
+  agent, details). Its full name is the "Console context" rail; Alt+C
+  toggles it.
+- **Inspector** — the RIGHT rail (sources, scope, environment, the run
+  inspector, session settings). Alt+I toggles it.
+- **Handle** — a collapsed rail's edge tab (**Context ▸** / **◂ Inspect**);
+  click it (or use the Alt chord) to reopen the rail.
+- **Staged sources** — Library items staged for the next send, listed in
+  the Inspector's Sources tray. Staging happens from Library surfaces;
+  the "Context rail" control-bar button opens the rail, it does not
+  attach anything.
+- **Retrieval scope** ("Scope") — the Library items retrieval is narrowed
+  to (the Scope row in the Inspector). "Sources" (the kinds searched)
+  and "Scope" (the items searched) are different settings.
+- **Conversation Inspector** (Ctrl+Shift+P) — the read-only viewer of
+  what the model has seen (**Current Context** tab) and is about to see
+  (**Next Send** tab). Not the same surface as the Inspector rail.
+- **Run inspector** — the run-status groups (Run recipe, Tools,
+  Approvals, …) inside the Inspector rail.
+
 ### Small terminals
 
 The shell adapts instead of clipping: below 35 rows the header banner hides
@@ -143,7 +167,10 @@ handles hide and the transcript takes the full width, so it stays usable
 even at 80x24 or 60x18. An explicitly opened rail yields to this rule once
 the terminal cannot fit the rail plus a usable transcript (~70 columns for
 the Context rail, ~74 for the Inspector); the preference itself survives and
-the rail returns when the terminal widens again.
+the rail returns when the terminal widens again. When one of these width
+rules closes a rail you had open, a one-time notice (once per rail per
+session) says which rail collapsed and how to bring it back — the
+Context handle for the left rail, **Alt+I** for the Inspector.
 
 The full-width layout on larger terminals remains primary, while short
 terminals keep every Context header and complete open section reachable by
@@ -261,7 +288,7 @@ composer-level strip below shows once setup completes.
 |---|---|
 | **New tab** | Creates a Console tab — see [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md). |
 | **Settings** | Opens the "Console Settings" modal (provider, model, tools, and generation). |
-| **Attach context** | Opens the "Console context" rail (staging itself is done from Library) — see [Context & RAG](console/context-and-rag.md). |
+| **Context rail** | Opens the "Console context" rail (source staging is done from Library) — see [Context & RAG](console/context-and-rag.md). |
 | **Search Library** | Runs a user-initiated **Manual Search Library** request before sending; it remains available regardless of the conversation's automatic or assistant policy — see [Context & RAG](console/context-and-rag.md#per-conversation-library-controls). |
 | **Save as Chatbook** (composer **Menu**) | Saves this run as a Chatbook — see [Artifacts](artifacts.md). |
 | **Buddy** (composer **Menu**) | Manage independent Buddy artwork, follow a conversation/workspace, and change Persona settings — see [Buddies](buddies.md). |
@@ -300,7 +327,7 @@ fails without playing a truncated file.
 |---|---|
 | **Context ◂** / **Inspect\|--------->** headers | Collapse the open Context or Inspector rail; the entire painted header is the button. |
 | **Context->** handle | Reopens the collapsed "Console context" rail when the viewport can retain a usable transcript. |
-| **<-Inspect** handle | Reopens the collapsed "Inspector" rail when the viewport can retain a usable transcript; shows badges like "1 appr" (pending approvals) or "art" (artifact ready). |
+| **<-Inspect** handle | Reopens the collapsed "Inspector" rail when the viewport can retain a usable transcript; shows badges like "1 appr" (pending approvals) or "art" (artifact ready) — F1 lists this legend. |
 | **Sessions** section | Names the active chat. Hovering it shows the durable conversation id. |
 | **Workspaces** section | Shows every named workspace with its associated conversations in a native Tree. Its compact strip keeps **Switch**, **New**, and **RAG** together; **Switch** is also the route to Default. Starred conversations sort first within their workspace. |
 | **Conversations** section | Independently searches, starts, and resumes only Default and unassigned conversations; favourited entries sort first and are marked beside the title. Each row carries an **\*** that opens its action menu — Favourite, Change status, Archive, Rename, and More ▸ Delete. See [Context & RAG](console/context-and-rag.md#workspaces-and-conversation-ownership). |
@@ -398,7 +425,7 @@ provider, model, and temperature without the full modal.
 QwenCloud behaves like the other hosted providers: select it once, use the
 normal streaming Console and native function tools, and discover models
 through the shared cached catalog. Configure its durable **API mode** in
-**F9 ▸ Providers & Models**; it is not a per-session Console override. A run
+**F4 ▸ Providers & Models**; it is not a per-session Console override. A run
 pins the selected mode and endpoint for every model turn, so changing Settings
 mid-run cannot switch its continuation to another API.
 
@@ -440,7 +467,7 @@ mode or provider conversation ID. Fresh defaults are `kimi-k3` at
 `https://api.moonshot.ai/v1` and `glm-5.2` at
 `https://api.z.ai/api/paas/v4`; saved historical models remain usable.
 Moonshot's China endpoint and intentional compatible custom endpoints are
-configured in **F9 ▸ Providers & Models**.
+configured in **F4 ▸ Providers & Models**.
 
 - Existing Chatbook function tools use the same approval, cancellation,
   execution, budget, and durable recovery loop for both providers. Moonshot
@@ -535,7 +562,7 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 | Key | Action |
 |---|---|
 | F1 | Open the Console help panel (actions, agent notes, full shortcut list) |
-| F6 / Shift+F6 | Focus the next / previous pane (context rail → transcript → Inspector → composer) |
+| F6 / Shift+F6 | Focus the next / previous pane (context rail → transcript → Inspector → composer); F6 lands on each rail's first content control, never its collapse button |
 | Tab / Shift+Tab | Move through rail controls and any overflowing section in normal order; sections that fit do not add an extra stop |
 | Arrow keys / Page Up / Page Down / Home / End | Scroll within a focused overflowing section |
 | n / p (Inspector focused) | Move to the next / previous named Inspector section, without wrapping or taking over editable input |
@@ -543,9 +570,11 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 | Ctrl+T | New Console tab |
 | Alt+1 … Alt+9 | Jump to Console tab 1–9 |
 | Alt+M | Quick "Model" popover |
+| Alt+C | Open or close the Context (left) rail |
+| Alt+I | Open or close the Inspector (right) rail |
 | Alt+W | "Change Workspace" switcher |
 | Alt+V | Paste an image from the clipboard |
-| Ctrl+Shift+P | "Chat Context" viewer (what the model will see) |
+| Ctrl+Shift+P | Conversation Inspector (the Current Context / Next Send viewer — what the model will see) |
 | Ctrl+Shift+F | Toggle focus mode — the chrome-free Console surface (see above) |
 | Ctrl+Shift+H | Optional Hands-free binding when delivered by the terminal; use the visible **Hands-free** switch on macOS. |
 | Esc | Return focus to the composer (expanding it first if collapsed) |

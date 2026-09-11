@@ -204,7 +204,9 @@ class LibraryConversationsCanvas(
                 yield Static(
                     f"{self.canvas.selected_count} selected",
                     id="library-conversations-selected-count",
-                    classes="library-toolbar-count",
+                    classes=(
+                        "library-toolbar-count library-conversations-selection-count"
+                    ),
                     markup=False,
                 )
                 select_all = Button(

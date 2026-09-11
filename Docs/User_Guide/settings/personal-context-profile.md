@@ -14,7 +14,7 @@ Settings Save button.
 
 ## Getting there
 
-Open **Settings** with **F9**, then choose **Data & Privacy > My Profile**. You
+Open **Settings** with **F4**, then choose **Data & Privacy > My Profile**. You
 can also press **/** in Settings and search for `profile`, `personal context`,
 or `interview`.
 
@@ -24,7 +24,7 @@ opt out. Setup finishes before an interview selected there opens.
 <!-- personal-context-quick-start:start -->
 ## In five minutes
 
-1. Open **F9 > Data & Privacy > My Profile**.
+1. Open **F4 > Data & Privacy > My Profile**.
 2. **Manual:** if needed, choose **Create profile**. Use **Add** for a new record or **Edit** for an existing one, review its scope, visibility, and syncability, then choose **Save**.
 3. **Interview:** select a scope with **Show**, choose a **Question style**, and select **Run interview again**. Review every proposed row and its controls, then choose **Save only** or **Save and use with agents**.
 4. After either path, agent use is optional. In Console, press **Ctrl+Shift+P** (**View context**) to open **Conversation Inspector**; select the outer **Next Send** tab, then the inner **Next Send** payload tab before sending.

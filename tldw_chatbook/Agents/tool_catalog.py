@@ -97,7 +97,7 @@ PROFILE_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
     }
 )
 CANVAS_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
-    {"canvas_list", "canvas_read", "canvas_create", "canvas_update"}
+    {"canvas_list", "canvas_read", "canvas_create", "canvas_update", "canvas_guide"}
 )
 
 

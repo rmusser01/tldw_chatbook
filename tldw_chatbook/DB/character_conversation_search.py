@@ -207,6 +207,16 @@ class CharacterConversationSearchRepository:
 
     _POLICY_VERSION = 1
     _BACKFILL_BATCH_SIZE = 128
+    #: TASK-32309 workspace-wins: the Console Character section owns only
+    #: global/Default-scope character conversations. A workspace-scoped
+    #: character conversation belongs to its workspace's Console Tree node
+    #: and must never also count/list under its character. (``c`` is the
+    #: conversations table alias every read query below already uses.)
+    _CHARACTER_SCOPE_SQL = (
+        "(c.scope_type IS NULL OR c.scope_type = 'global' "
+        "OR (c.scope_type = 'workspace' "
+        "AND (c.workspace_id IS NULL OR c.workspace_id = 'workspace-default')))"
+    )
 
     def __init__(
         self,
@@ -383,7 +393,7 @@ class CharacterConversationSearchRepository:
         with self._database.transaction() as connection:
             revision = self._revision(connection)
             total = connection.execute(
-                """
+                f"""
                 SELECT COUNT(*)
                   FROM conversations AS c
                   JOIN character_cards AS card ON card.id = c.character_id
@@ -392,6 +402,7 @@ class CharacterConversationSearchRepository:
                    AND c.assistant_kind = 'character'
                    AND c.assistant_authority_id = ?
                    AND c.character_id = ?
+                   AND {self._CHARACTER_SCOPE_SQL}
                 """,
                 (self._authority, key.character_id),
             ).fetchone()[0]
@@ -411,6 +422,7 @@ class CharacterConversationSearchRepository:
                    AND c.assistant_kind = 'character'
                    AND c.assistant_authority_id = ?
                    AND c.character_id = ?
+                   AND {self._CHARACTER_SCOPE_SQL}
                    {cursor_sql}
                  ORDER BY c.last_modified DESC, c.created_at DESC, c.id DESC
                  LIMIT ?
@@ -515,7 +527,7 @@ class CharacterConversationSearchRepository:
             )
             total = int(
                 connection.execute(
-                    """
+                    f"""
                     SELECT COUNT(*)
                       FROM character_conversation_fts
                       JOIN character_conversation_search_documents AS d
@@ -538,6 +550,7 @@ class CharacterConversationSearchRepository:
                        AND c.assistant_kind = 'character'
                        AND c.assistant_authority_id = d.data_authority_id
                        AND c.character_id = d.character_id
+                       AND {self._CHARACTER_SCOPE_SQL}
                     """,
                     search_params,
                 ).fetchone()[0]
@@ -553,6 +566,7 @@ class CharacterConversationSearchRepository:
                     search_params=search_params,
                     limit=min(batch_limit, 50 - scanned),
                     offset=candidate_offset,
+                    character_scope_sql=self._CHARACTER_SCOPE_SQL,
                 )
                 if not candidates:
                     break
@@ -604,9 +618,10 @@ class CharacterConversationSearchRepository:
         search_params: tuple[str, str, str, int, int | None, int | None],
         limit: int,
         offset: int,
+        character_scope_sql: str,
     ) -> list[sqlite3.Row]:
         return connection.execute(
-            """
+            f"""
             SELECT d.conversation_id, d.title, d.body,
                    d.eligibility_digest, d.source_revision,
                    CAST(c.last_modified AS TEXT) AS last_modified,
@@ -637,6 +652,7 @@ class CharacterConversationSearchRepository:
                AND c.assistant_kind = 'character'
                AND c.assistant_authority_id = d.data_authority_id
                AND c.character_id = d.character_id
+               AND {character_scope_sql}
              ORDER BY search_rank, c.last_modified DESC, c.id DESC
              LIMIT ? OFFSET ?
             """,
@@ -1369,7 +1385,7 @@ class CharacterConversationSearchRepository:
         query_pattern = f"%{escaped_query.casefold()}%"
         return int(
             connection.execute(
-                """
+                f"""
                 SELECT COUNT(*)
                   FROM conversations AS c
                   LEFT JOIN character_cards AS card ON card.id = c.character_id
@@ -1379,6 +1395,7 @@ class CharacterConversationSearchRepository:
                         OR typeof(c.character_id) != 'integer'
                         OR c.character_id < 1
                         OR card.id IS NULL OR card.deleted != 0)
+                   AND {self._CHARACTER_SCOPE_SQL}
                    AND (? = ''
                         OR LOWER(COALESCE(c.title, '')) LIKE ? ESCAPE '\\'
                         OR LOWER(COALESCE(c.id, '')) LIKE ? ESCAPE '\\'
@@ -1412,7 +1429,7 @@ class CharacterConversationSearchRepository:
         if limit <= 0:
             return []
         return connection.execute(
-            """
+            f"""
             SELECT c.character_id, card.name AS card_name,
                    COUNT(*) AS total,
                    MAX(CAST(c.last_modified AS TEXT)) AS latest
@@ -1423,6 +1440,7 @@ class CharacterConversationSearchRepository:
                AND c.assistant_kind = 'character'
                AND c.assistant_authority_id = ?
                AND (? IS NULL OR c.character_id != ?)
+               AND {self._CHARACTER_SCOPE_SQL}
              GROUP BY c.character_id, card.name
              ORDER BY latest DESC, c.character_id DESC
              LIMIT ?
@@ -1448,17 +1466,18 @@ class CharacterConversationSearchRepository:
         if total is None:
             total = int(
                 connection.execute(
-                    """
+                    f"""
                     SELECT COUNT(*) FROM conversations AS c
                      WHERE c.deleted = 0 AND c.runtime_backend = 'local'
                        AND c.assistant_kind = 'character'
                        AND c.assistant_authority_id = ? AND c.character_id = ?
+                       AND {self._CHARACTER_SCOPE_SQL}
                     """,
                     (self._authority, character_id),
                 ).fetchone()[0]
             )
         sources = connection.execute(
-            """
+            f"""
             SELECT c.id, c.title,
                    CAST(c.last_modified AS TEXT) AS last_modified,
                    CAST(c.created_at AS TEXT) AS created_at,
@@ -1471,6 +1490,7 @@ class CharacterConversationSearchRepository:
              WHERE c.deleted = 0 AND c.runtime_backend = 'local'
                AND c.assistant_kind = 'character'
                AND c.assistant_authority_id = ? AND c.character_id = ?
+               AND {self._CHARACTER_SCOPE_SQL}
              ORDER BY c.last_modified DESC, c.created_at DESC, c.id DESC
              LIMIT ?
             """,
@@ -1518,7 +1538,7 @@ class CharacterConversationSearchRepository:
         escaped_query = self._escape_like_query(query)
         query_pattern = f"%{escaped_query.casefold()}%"
         return connection.execute(
-            """
+            f"""
             SELECT c.id, c.title,
                    CAST(c.last_modified AS TEXT) AS last_modified,
                    CAST(c.created_at AS TEXT) AS created_at,
@@ -1534,6 +1554,7 @@ class CharacterConversationSearchRepository:
                     OR typeof(c.character_id) != 'integer'
                     OR c.character_id < 1
                     OR card.id IS NULL OR card.deleted != 0)
+               AND {self._CHARACTER_SCOPE_SQL}
                AND (? = ''
                     OR LOWER(COALESCE(c.title, '')) LIKE ? ESCAPE '\\'
                     OR LOWER(COALESCE(c.id, '')) LIKE ? ESCAPE '\\'

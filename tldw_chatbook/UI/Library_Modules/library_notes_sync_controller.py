@@ -17,6 +17,7 @@ from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LastingSyncRootRow,
     LibraryNotesLastingSyncSnapshot,
     build_reconciliation_review,
+    check_failure_line,
     initial_lasting_sync_snapshot,
     set_setup_value,
     validate_lasting_sync_history_page,
@@ -729,7 +730,7 @@ class LibraryNotesSyncController:
         self._publish()
         try:
             plan = await self._runtime.check_root(root_id)
-        except Exception:
+        except Exception as error:
             if not self._lifecycle_is_current(root_id, epoch):
                 return
             self._state = replace(
@@ -741,7 +742,7 @@ class LibraryNotesSyncController:
                     activation=activation,
                     epoch=epoch,
                 ),
-                status_line="Check failed. Review root status, then Check again.",
+                status_line=check_failure_line(error, root_id=root_id),
             )
             self._publish()
             return
@@ -803,13 +804,13 @@ class LibraryNotesSyncController:
                     direction=direction,
                 )
             )
-        except Exception:
+        except Exception as error:
             if not self._lifecycle_is_current(None, epoch):
                 return
             self._state = replace(
                 self._state,
                 phase="configure",
-                status_line="Check failed. Review the folder and settings, then try again.",
+                status_line=check_failure_line(error),
             )
             self._publish()
             return

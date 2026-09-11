@@ -11,6 +11,12 @@ from enum import StrEnum
 from typing import Any, Callable, Protocol, runtime_checkable
 from uuid import UUID, uuid4
 
+from tldw_chatbook.Canvas.guide import (
+    CANVAS_GUIDE_PATHS,
+    CANVAS_OFFER_POLICY,
+    MAX_CANVAS_GUIDE_RESULT_BYTES,
+    read_canvas_guide,
+)
 from tldw_chatbook.Canvas.limits import (
     MAX_CANVAS_ORIGIN_TURN_ID_BYTES,
     MAX_CANVAS_TITLE_BYTES,
@@ -32,6 +38,7 @@ from tldw_chatbook.Canvas.models import (
     CanvasRevisionInfo,
     CanvasScope,
 )
+from tldw_chatbook.Utils.input_validation import validate_canvas_guide_arguments
 
 from .agent_models import (
     ToolCall,
@@ -49,14 +56,21 @@ _CANVAS_TOOL_ORDER = (
     "canvas_read",
     "canvas_create",
     "canvas_update",
+    "canvas_guide",
 )
-CANVAS_TOOL_NAMES = frozenset(_CANVAS_TOOL_ORDER)
+CANVAS_ARTIFACT_TOOL_NAMES = frozenset(
+    {"canvas_list", "canvas_read", "canvas_create", "canvas_update"}
+)
+CANVAS_TOOL_NAMES = CANVAS_ARTIFACT_TOOL_NAMES | {"canvas_guide"}
 CANVAS_MUTATION_TOOL_NAMES = frozenset({"canvas_create", "canvas_update"})
-_CANVAS_USE_GUIDANCE = (
-    "Canvas: use Canvas when a visual, interactive, or iteratively revised "
-    "single-page artifact materially helps."
-)
+_CANVAS_USE_GUIDANCE = CANVAS_OFFER_POLICY
 _CANVAS_TOOL_GUIDANCE = {
+    "canvas_guide": (
+        "After the user requests or accepts Canvas, call canvas_guide for a "
+        "needed topic: basics, controls, mermaid, or repair. Reuse topics already "
+        "in context. This reads documentation; it does not create an artifact "
+        "or admit a runtime profile."
+    ),
     "canvas_list": "Call canvas_list for reachable Canvases.",
     "canvas_read": "Call canvas_read for complete selected HTML and revision_id.",
     "canvas_create": (
@@ -243,6 +257,24 @@ _SCHEMAS: dict[str, ToolSchema] = {
             "additionalProperties": False,
         },
     ),
+    "canvas_guide": ToolSchema(
+        id="canvas:canvas_guide",
+        name="canvas_guide",
+        description=(
+            "Read a focused authoring guide after the user requests or accepts Canvas."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "topic": {
+                    "type": "string",
+                    "enum": ["basics", "controls", "mermaid", "repair"],
+                }
+            },
+            "required": ["topic"],
+            "additionalProperties": False,
+        },
+    ),
 }
 
 _DESCRIPTIONS = {name: schema.description for name, schema in _SCHEMAS.items()}
@@ -256,6 +288,7 @@ _ERROR_MESSAGES = {
     "title_bytes": "Canvas title exceeds its UTF-8 byte limit.",
     "revision_source_bytes": "Canvas HTML exceeds its UTF-8 byte limit.",
     "operation_failed": "Canvas operation failed.",
+    "guide_unavailable": "Canvas authoring guide is unavailable.",
 }
 
 
@@ -291,7 +324,7 @@ def _context_canvas_profiles(messages: Iterable[dict]) -> set[str]:
                     calls[call.get("id")] = call["function"].get("name")
         if (
             message.get("role") != "tool"
-            or calls.get(message.get("tool_call_id")) not in CANVAS_TOOL_NAMES
+            or calls.get(message.get("tool_call_id")) not in CANVAS_ARTIFACT_TOOL_NAMES
         ):
             continue
         try:
@@ -307,8 +340,19 @@ def build_canvas_runtime_guidance(
     schemas: Iterable[ToolSchema],
     *,
     messages: Iterable[dict] = (),
+    system_prompt: str = "",
 ) -> str:
-    """Describe only disclosed Canvas tools, adding V1 APIs for mutations."""
+    """Describe disclosed Canvas tools without repeating the shared policy.
+
+    Args:
+        schemas: Tool schemas disclosed on this request.
+        messages: Conversation messages used to identify current Canvas profiles.
+        system_prompt: Existing system instructions, possibly containing policy
+            from discovery. Only an exact policy match suppresses reinjection.
+
+    Returns:
+        Additional guidance for disclosed tools, or empty text without Canvas.
+    """
 
     try:
         schemas = tuple(schemas)
@@ -319,7 +363,7 @@ def build_canvas_runtime_guidance(
     if not disclosed:
         return ""
     sections = [
-        _CANVAS_USE_GUIDANCE,
+        *([] if CANVAS_OFFER_POLICY in system_prompt else [_CANVAS_USE_GUIDANCE]),
         *(
             _CANVAS_TOOL_GUIDANCE[name]
             for name in _CANVAS_TOOL_ORDER
@@ -351,7 +395,19 @@ def build_canvas_runtime_guidance(
 
 
 class CanvasToolProvider:
-    """Expose four Canvas tools bound to one immutable server-owned scope."""
+    """Expose Canvas artifact and guide tools bound to one server-owned scope.
+
+    Args:
+        coordinator: Host coordinator for scope checks and artifact operations.
+        scope: Owning session, conversation, and run authority.
+        enabled: Initial provider enablement; false keeps this provider disabled.
+        enabled_reader: Optional live enablement callback. Defaults to the Canvas
+            configuration reader. Only literal True enables execution; exceptions
+            and other values fail closed. An observed disable latches until restart.
+
+    Raises:
+        TypeError: If the coordinator, scope, flag, or callback has an invalid type.
+    """
 
     SOURCE = CANVAS_SOURCE
 
@@ -478,6 +534,8 @@ class CanvasToolProvider:
             schema = _SCHEMAS[name]
         except KeyError:
             raise KeyError(f"Unknown Canvas tool id: {tool_id}") from None
+        if name == "canvas_guide":
+            return schema
         from tldw_chatbook.Canvas.authoring import canvas_authoring_guide
         from tldw_chatbook.Canvas.profiles import ProfileSnapshot, resolve_profile
 
@@ -527,6 +585,17 @@ class CanvasToolProvider:
             return _error("canvas_scope_unavailable")
         try:
             checked = _validate_arguments(name, args)
+            if name == "canvas_guide":
+                try:
+                    guide = read_canvas_guide(checked["topic"])
+                    content = _json(
+                        {"status": "ok", "topic": checked["topic"], "guide": guide}
+                    )
+                    if len(content.encode("utf-8")) > MAX_CANVAS_GUIDE_RESULT_BYTES:
+                        return _error("guide_unavailable")
+                except (OSError, UnicodeError, ValueError):
+                    return _error("guide_unavailable")
+                return ToolResult(ok=True, content=content)
             if name == "canvas_list":
                 result: object = self._coordinator.list_canvases(self._scope)
             elif name == "canvas_read":
@@ -592,6 +661,11 @@ def _name_from_id(tool_id: str) -> str:
 
 
 def _validate_arguments(name: str, args: object) -> dict[str, str]:
+    if name == "canvas_guide":
+        try:
+            return validate_canvas_guide_arguments(args)
+        except ValueError:
+            raise _ArgumentError("invalid_arguments") from None
     if type(args) is not dict:
         raise _ArgumentError("invalid_arguments")
     expected = {
@@ -870,6 +944,8 @@ def _conflict_payload(conflict: CanvasConflictResult) -> dict[str, object]:
 
 
 def _project_arguments(call: ToolCall) -> dict[str, object]:
+    if call.name == "canvas_guide":
+        return _validate_arguments(call.name, call.args)
     args = call.args if type(call.args) is dict else {}
     projected: dict[str, object] = {}
     for key in ("canvas_id", "expected_parent_revision_id"):
@@ -910,6 +986,22 @@ def _project_result(result: ToolResult | None) -> tuple[str, str]:
 
 def _source_free_payload(payload: dict[str, object]) -> dict[str, object]:
     status = payload.get("status")
+    if status == "ok" and "guide" in payload:
+        if set(payload) != {"status", "topic", "guide"}:
+            raise _ArgumentError("operation_failed")
+        topic, guide = payload["topic"], payload["guide"]
+        if (
+            type(topic) is not str
+            or topic not in CANVAS_GUIDE_PATHS
+            or type(guide) is not str
+            or len(_json(payload).encode("utf-8")) > MAX_CANVAS_GUIDE_RESULT_BYTES
+        ):
+            raise _ArgumentError("operation_failed")
+        return {
+            "status": "ok",
+            "topic": topic,
+            "guide_bytes": len(guide.encode("utf-8")),
+        }
     if status == "ok" and "canvases" in payload:
         if set(payload) != {"status", "count", "canvases"}:
             raise _ArgumentError("operation_failed")
@@ -1166,6 +1258,7 @@ def _json(payload: object) -> str:
 
 
 __all__ = [
+    "CANVAS_ARTIFACT_TOOL_NAMES",
     "CANVAS_MUTATION_APPROVAL_CLASSIFICATION",
     "CANVAS_MUTATION_TOOL_NAMES",
     "CANVAS_RUNTIME_GUIDANCE",
