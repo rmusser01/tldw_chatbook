@@ -93,13 +93,26 @@ async def main():
   assert notification['is_read'] and notification['is_dismissed']
   assert notification['payload']=={'quiz_id':quiz['id'],'attempt_id':attempt['id']}
   domains=dict(writing=dict(path=str(writing.db_path),project=project['id'],chapter=chapter['id'],scene=scene['id'],version=version['id'],version_number=version['version_number']),study=dict(deck=deck['id'],card=card['id']),quiz=dict(quiz=quiz['id'],question=question['id'],attempt=attempt['id'],completed_at=attempt['completed_at']),notification=dict(path=str(notifications.db_path),id=notification['id'],read_at=notification['read_at'],dismissed_at=notification['dismissed_at']))
+  from tldw_chatbook.Chat.prompt_history import PromptHistory,default_prompt_history_path
+  from tldw_chatbook.Widgets.emoji_picker import save_recent_emoji,load_recent_emojis
+  history=PromptHistory(default_prompt_history_path())
+  assert await history.append(name+' retained input')
+  emoji='★' if name=='alpha' else '✓'
+  save_recent_emoji(emoji)
+  assert load_recent_emojis()==[emoji]
+  state=selector.parent/'ui_state.toml'
+  state.write_text('[sidebar]\nsearch_query='+json.dumps(name+' retained search')+'\n')
+  theme=selector.parent/'themes'/(name+'.toml')
+  theme.parent.mkdir(mode=0o700,exist_ok=True)
+  theme.write_text('[theme]\nname='+json.dumps(name)+'\ndark=true\n[colors]\nbackground="#112233"\n')
+  preferences={owner:dict(path=str(path),hex=path.read_bytes().hex()) for owner,path in (('chat.prompt_history',history.path),('ui.emoji_recents',selector.parent/'recent_emojis.json'),('ui.state',state),('ui.themes',theme))}
   empty=get_private_chatbooks_dir()
   assert not list(empty.iterdir())
   jobs=LibraryIngestJobsDB(get_library_ingest_jobs_db_path(),'fixture')
   try:
    jobs.upsert_job(LibraryIngestJob('ingest-job-1',str(fixture/(name+'-input.txt')),state=IngestJobState.QUEUED))
   finally:jobs.close()
-  (fixture/(name+'-seed.json')).write_text(json.dumps(dict(note=note,deleted=deleted,conversation=conversation,message=message,media=media,prompt=prompt,research=session['id'],deleted_research=deleted_session['id'],empty=str(empty),domains=domains)))
+  (fixture/(name+'-seed.json')).write_text(json.dumps(dict(note=note,deleted=deleted,conversation=conversation,message=message,media=media,prompt=prompt,research=session['id'],deleted_research=deleted_session['id'],empty=str(empty),domains=domains,preferences=preferences)))
   assert not blocked_attempts(),blocked_attempts()
   print('SEEDED',name,flush=True)
  finally:
@@ -219,6 +232,10 @@ async def main():
     assert row['metadata']=={'version':1,'mode':meta.mode,'mtime_ns':meta.mtime_ns}
   for label in ('alpha','beta'):
    seed=json.loads((fixture/(label+'-seed.json')).read_text())
+   for owner,expected in seed['preferences'].items():
+    row=next(row for row in manifest['files'] if row['owner_id']==owner and source[row['logical_id']].path==Path(expected['path']))
+    assert source[row['logical_id']].status=='included'
+    assert (result.root/row['payload']).read_bytes()==bytes.fromhex(expected['hex'])
    for owner,leaf in (('db.chachanotes.primary','notes.db'),('db.media.primary','media.db'),('research.local','research.db')):
     row=next(row for row in manifest['files'] if row['owner_id']==owner and source[row['logical_id']].path==fixture/label/'custom'/leaf)
     with closing(sqlite3.connect(result.root/row['payload'])) as db:
@@ -402,7 +419,7 @@ mapping={}
 # Exact installed destinations for this finite captured cohort; new owners must
 # be reviewed explicitly instead of silently landing in a miscellaneous folder.
 custom={'db.chachanotes.primary','chat.attachments','notes.sync_bindings','quiz.local','study.local','db.media.primary','research.local'}
-ordinary={'db.evals','db.library_collections','db.library_ingest_jobs','db.scheduled_tasks','db.subscriptions','db.workspaces','kanban.local','mcp.targets','notifications.client','runtime.event_state','runtime.sync_state','writing.local'}
+ordinary={'db.evals','db.library_collections','db.library_ingest_jobs','db.scheduled_tasks','db.subscriptions','db.workspaces','kanban.local','mcp.targets','notifications.client','runtime.event_state','runtime.sync_state','writing.local','chat.prompt_history'}
 trees={'chat.dictionaries':'chat_dicts','chatbooks.archives':'chatbooks','rag.definitions':'rag_profiles'}
 for key,row in roots.items():
  owner=producer[key].owner_id
@@ -418,7 +435,7 @@ for key,row in roots.items():
  home=destination/profiles[profile]
  data=home/'data'/names[profile]
  if row.synthetic:
-  if owner in {'config','config.history','runtime.source_state'}:target=home/'config'
+  if owner in {'config','config.history','runtime.source_state','ui.state','ui.emoji_recents'}:target=home/'config'
   elif owner in custom:target=home/'custom'
   elif owner in {'db.prompts.primary','chatbooks.registry'}:target=destination/'shared-prompts'
   elif owner=='eval.definitions':target=destination/'inactive-eval'
@@ -427,6 +444,7 @@ for key,row in roots.items():
    target=data
  else:
   if owner=='persona.visual_identity_builtin':target=destination/'inactive-builtin'
+  elif owner=='ui.themes':target=home/'config'/'themes'
   else:
    assert owner in trees,(key,owner)
    target=data/trees[owner]
@@ -527,6 +545,11 @@ async def main():
   assert str(app.media_db.db_path)==expected['media']
   assert str(app.prompts_db.db_path)==expected['prompts']
   label=expected['label'];core=app.chachanotes_db
+  from tldw_chatbook.Chat.prompt_history import PromptHistory,default_prompt_history_path
+  from tldw_chatbook.Widgets.emoji_picker import load_recent_emojis
+  history=PromptHistory(default_prompt_history_path());await history.load()
+  assert history.size==1 and history.complete(label)==label+' retained input'
+  assert load_recent_emojis()==['★' if label=='alpha' else '✓']
   assert core.get_note_by_id(seed['note'])['content']==label+' native note bytes'
   assert core.get_note_by_id(seed['deleted']) is None
   assert core.get_message_by_id(seed['message'])['content']==label+' message bytes'
@@ -634,6 +657,9 @@ try:
    labels=[label for label in ('alpha','beta') if db.execute('SELECT 1 FROM notes WHERE id=?',(json.loads((fixture/(label+'-seed.json')).read_text())['note'],)).fetchone()]
    assert len(labels)==1,labels
    label=labels[0];seed=json.loads((fixture/(label+'-seed.json')).read_text())
+   for owner,expected_file in seed['preferences'].items():
+    payload=next(item for item in doc.files if item.owner_id==owner and item.logical_id.startswith('profile:'+profile+':'))
+    assert selected[payload.logical_id].read_bytes()==bytes.fromhex(expected_file['hex'])
    assert db.execute('SELECT content,deleted FROM notes WHERE id=?',(seed['deleted'],)).fetchone()==('Retained soft deletion '+label,1)
    assert db.execute('SELECT 1 FROM notes WHERE title=?',('After capture '+label,)).fetchone() is None
   with closing(sqlite3.connect(path_for('research.local').as_uri()+'?mode=ro',uri=True)) as db:
@@ -669,6 +695,9 @@ try:
  assert all(row['needs_setup'] and row['status']=='restoration_validated' for row in service.profiles())
 finally:service.close()
 assert source_hashes=={str(path):hashlib.sha256(path.read_bytes()).hexdigest() for path in source_paths}
+for label in ('alpha','beta'):
+ seed=json.loads((fixture/(label+'-seed.json')).read_text())
+ assert all(Path(row['path']).read_bytes()==bytes.fromhex(row['hex']) for row in seed['preferences'].values())
 assert not blocked_attempts(),blocked_attempts()
 print('TWO_PROFILE_RESTORED_AND_OPENED',flush=True)
 """,
