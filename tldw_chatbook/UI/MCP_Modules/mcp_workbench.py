@@ -5456,8 +5456,14 @@ class MCPWorkbench(Container):
         plus `web_deep_search`) and `[console]` (the local group's master
         switch, `local_tools_enabled`). The resync's `_show_selected_detail()`
         call rebuilds the gate buttons fresh from `all_tool_gates()`
-        (via `MCPServersMode._rebuild_tool_gate_buttons()`), so a failed
-        write shows the truth rather than an optimistic local flip.
+        (via `MCPServersMode._rebuild_tool_gate_buttons()`), so the rows
+        always end up showing persisted truth.
+
+        Qodo #2600 #15: the resync now runs on the FAILURE paths too. The
+        pressed Button flips its own label (and its cached `ToolGate`)
+        optimistically, so that a rapid second press can reverse the first
+        -- which means a rejected write must repaint the row rather than
+        leave the optimistic flip standing.
         """
         try:
             saved = await asyncio.to_thread(
@@ -5468,10 +5474,9 @@ class MCPWorkbench(Container):
                 "{}", _safe_diagnostic_message("MCP tool gate save failed", exc)
             )
             self.app.notify(_toast(f"Failed to save {key}: {exc}"), severity="error")
-            return
-        if not saved:
-            self.app.notify(f"Failed to save {key}.", severity="error")
-            return
+        else:
+            if not saved:
+                self.app.notify(f"Failed to save {key}.", severity="error")
         self._snapshots = await self._collect_snapshots()
         await self._sync_children()
 
