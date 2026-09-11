@@ -43,6 +43,13 @@ from tldw_chatbook.Chat.console_voice_input import (
     realtime_vad_threshold as _read_realtime_vad_threshold,
     realtime_voice as _read_realtime_voice,
 )
+from tldw_chatbook.Chat.console_voice_settings import (
+    RESPONSE_EAGERNESS_DEFAULT_MS,
+    RESPONSE_EAGERNESS_MAX_MS,
+    RESPONSE_EAGERNESS_MIN_MS,
+    pipeline_aec_enabled,
+    response_eagerness_ms,
+)
 from tldw_chatbook.config import get_cli_setting, save_settings_to_cli_config
 from tldw_chatbook.Model_Artifacts.service import ArtifactRef
 from tldw_chatbook.Model_Artifacts.store import managed_service
@@ -142,6 +149,7 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
 # import paths.
 from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_panel_types import (
     _MAX_DRAFT_REVISION,
+    _PipelineVoiceSettingsDraft,
     _RealtimeSettingsDraft,
     SpeechTTSPanelDraftSnapshot,
 )
@@ -263,6 +271,7 @@ class _RealtimeSavePayload:
     section_values: dict[str, dict[str, Any]]
     delete_keys: dict[str, tuple[str, ...]]
     persisted_draft: _RealtimeSettingsDraft
+    persisted_pipeline_draft: _PipelineVoiceSettingsDraft
 
 
 def _read_realtime_settings_draft() -> _RealtimeSettingsDraft:
@@ -287,6 +296,28 @@ def _read_realtime_settings_draft() -> _RealtimeSettingsDraft:
         # than writing a number the user never chose.
         vad_threshold=_format_optional_number(_read_realtime_vad_threshold()),
         vad_silence_ms=_format_optional_number(_read_realtime_vad_silence_ms()),
+    )
+
+
+def _read_pipeline_voice_settings_draft() -> _PipelineVoiceSettingsDraft:
+    """Read only the two canonical speculative-pipeline config keys."""
+
+    section = {
+        "response_eagerness_ms": get_cli_setting(
+            "dictation",
+            "response_eagerness_ms",
+            RESPONSE_EAGERNESS_DEFAULT_MS,
+        ),
+        "pipeline_aec_enabled": get_cli_setting(
+            "dictation",
+            "pipeline_aec_enabled",
+            True,
+        ),
+    }
+    config = {"dictation": section}
+    return _PipelineVoiceSettingsDraft(
+        response_eagerness_ms=str(response_eagerness_ms(config)),
+        pipeline_aec_enabled=pipeline_aec_enabled(config),
     )
 
 
@@ -628,6 +659,8 @@ class SpeechTTSSettingsPanel(Vertical):
                 realtime_original=draft_snapshot.realtime_original,
                 configure_provider=draft_snapshot.configure_provider,
                 draft_revision=draft_snapshot.draft_revision,
+                pipeline_voice_draft=draft_snapshot.pipeline_voice_draft,
+                pipeline_voice_original=draft_snapshot.pipeline_voice_original,
             )
             self.original_state = deepcopy(restored.original_state)
             self.state = deepcopy(restored.state)
@@ -748,10 +781,14 @@ class SpeechTTSSettingsPanel(Vertical):
         if restored is None:
             self._realtime_original = _read_realtime_settings_draft()
             self._realtime_draft = replace(self._realtime_original)
+            self._pipeline_voice_original = _read_pipeline_voice_settings_draft()
+            self._pipeline_voice_draft = replace(self._pipeline_voice_original)
             self._draft_revision = 0
         else:
             self._realtime_original = replace(restored.realtime_original)
             self._realtime_draft = replace(restored.realtime_draft)
+            self._pipeline_voice_original = replace(restored.pipeline_voice_original)
+            self._pipeline_voice_draft = replace(restored.pipeline_voice_draft)
             self._draft_revision = restored.draft_revision
         self._draft_revision_basis = self._draft_revision_values()
 
@@ -829,6 +866,8 @@ class SpeechTTSSettingsPanel(Vertical):
             deepcopy(self.original_state),
             replace(self._realtime_draft),
             replace(self._realtime_original),
+            replace(self._pipeline_voice_draft),
+            replace(self._pipeline_voice_original),
             self.configure_provider,
         )
 
@@ -855,6 +894,8 @@ class SpeechTTSSettingsPanel(Vertical):
             realtime_original=self._realtime_original,
             configure_provider=self.configure_provider,
             draft_revision=self._draft_revision,
+            pipeline_voice_draft=self._pipeline_voice_draft,
+            pipeline_voice_original=self._pipeline_voice_original,
         )
 
     def restore_draft_snapshot(
@@ -874,6 +915,8 @@ class SpeechTTSSettingsPanel(Vertical):
             realtime_original=snapshot.realtime_original,
             configure_provider=snapshot.configure_provider,
             draft_revision=snapshot.draft_revision,
+            pipeline_voice_draft=snapshot.pipeline_voice_draft,
+            pipeline_voice_original=snapshot.pipeline_voice_original,
         )
         focus_id = self._focused_id() if self.is_mounted else None
         live_metadata = self.state
@@ -890,6 +933,8 @@ class SpeechTTSSettingsPanel(Vertical):
             target.provider_field_sources = deepcopy(metadata.provider_field_sources)
         self._realtime_draft = replace(restored.realtime_draft)
         self._realtime_original = replace(restored.realtime_original)
+        self._pipeline_voice_draft = replace(restored.pipeline_voice_draft)
+        self._pipeline_voice_original = replace(restored.pipeline_voice_original)
         self.configure_provider = restored.configure_provider
         self._draft_revision = restored.draft_revision
         self._draft_revision_basis = self._draft_revision_values()
@@ -2011,6 +2056,8 @@ class SpeechTTSSettingsPanel(Vertical):
             classes="settings-focus-card",
         )
 
+        yield from self._compose_pipeline_conversation_section()
+
         yield from self._compose_realtime_section()
 
         yield _SpeechSettingsCard(
@@ -2494,6 +2541,92 @@ class SpeechTTSSettingsPanel(Vertical):
             yield Static(
                 "Ordinary Save validates and persists locally. Use Speech Lab for "
                 "connection tests, discovery, generation, and playback.",
+                classes="settings-detail-row",
+                markup=False,
+            )
+
+    def _compose_pipeline_conversation_section(self) -> ComposeResult:
+        """Build the speculative pipeline's small canonical settings block."""
+
+        draft = self._pipeline_voice_draft
+        with Vertical(
+            id="settings-speech-pipeline-conversation",
+            classes="settings-focus-card",
+        ):
+            yield Static("Pipeline conversation", classes="destination-section")
+            yield Static(
+                "Transcription mode: Native live is preferred when the selected "
+                "speech-to-text backend supports it; otherwise the pipeline uses "
+                "the rolling-window fallback.",
+                classes="settings-detail-row",
+                markup=False,
+            )
+            yield Static(
+                "Cost: a remote rolling-window backend may process overlapping audio "
+                "more than once. Starting replies sooner can also create billable "
+                "discarded STT, model, or speech attempts when you continue talking.",
+                classes="settings-detail-row",
+                markup=False,
+            )
+            yield self._row(
+                "Response eagerness (ms)",
+                Input(
+                    value=draft.response_eagerness_ms,
+                    id="settings-speech-pipeline-response-eagerness-ms",
+                    placeholder=str(RESPONSE_EAGERNESS_DEFAULT_MS),
+                    type="integer",
+                    classes="settings-compact-input settings-speech-draft-field",
+                ),
+                error=self._error("pipeline", "response_eagerness_ms"),
+            )
+            yield self._row(
+                "Response preset",
+                Horizontal(
+                    Button(
+                        "Fast · 700 ms",
+                        id="settings-speech-pipeline-preset-fast",
+                        compact=True,
+                        classes="settings-speech-pipeline-preset",
+                        tooltip="Set response eagerness to 700 milliseconds.",
+                    ),
+                    Button(
+                        "Balanced · 1200 ms",
+                        id="settings-speech-pipeline-preset-balanced",
+                        compact=True,
+                        classes="settings-speech-pipeline-preset",
+                        tooltip="Set response eagerness to 1200 milliseconds.",
+                    ),
+                    Button(
+                        "Deliberate · 2000 ms",
+                        id="settings-speech-pipeline-preset-deliberate",
+                        compact=True,
+                        classes="settings-speech-pipeline-preset",
+                        tooltip="Set response eagerness to 2000 milliseconds.",
+                    ),
+                    classes="settings-action-row",
+                ),
+            )
+            yield Static(
+                "Safe range: 500-3000 ms. Presets — Fast: 700 ms; "
+                "Balanced: 1200 ms; Deliberate: 2000 ms. Values below 700 ms "
+                "are more likely to restart during a mid-thought pause.",
+                classes="settings-detail-row",
+                markup=False,
+            )
+            yield self._row(
+                "Echo cancellation",
+                Switch(
+                    value=draft.pipeline_aec_enabled,
+                    id="settings-speech-pipeline-aec-enabled",
+                    classes="settings-speech-field settings-speech-draft-field",
+                ),
+                error=self._error("pipeline", "pipeline_aec_enabled"),
+            )
+            yield Static(
+                "Keep echo cancellation on. Turning it off is for troubleshooting "
+                "only and forces half duplex while the assistant speaks. If echo "
+                "cancellation is warming, unhealthy, or unavailable, the pipeline "
+                "also switches to safe half duplex automatically.",
                 classes="settings-detail-row",
                 markup=False,
             )
@@ -3353,6 +3486,7 @@ class SpeechTTSSettingsPanel(Vertical):
                 values[field_id] = widget.value
 
         self._collect_realtime_visible_state()
+        self._collect_pipeline_voice_visible_state()
 
     def _collect_realtime_visible_state(self) -> None:
         """Copy the Realtime block's mounted widget values into its draft."""
@@ -3396,6 +3530,19 @@ class SpeechTTSSettingsPanel(Vertical):
         self._realtime_draft.vad_threshold = threshold_widget.value
         self._realtime_draft.vad_silence_ms = silence_widget.value
 
+    def _collect_pipeline_voice_visible_state(self) -> None:
+        """Copy the mounted pipeline controls into their separate draft."""
+
+        try:
+            eagerness = self.query_one(
+                "#settings-speech-pipeline-response-eagerness-ms", Input
+            )
+            aec = self.query_one("#settings-speech-pipeline-aec-enabled", Switch)
+        except QueryError:
+            return
+        self._pipeline_voice_draft.response_eagerness_ms = eagerness.value
+        self._pipeline_voice_draft.pipeline_aec_enabled = bool(aec.value)
+
     def has_unsaved_changes(self) -> bool:
         """Return whether any non-secret global value differs from its baseline."""
         self._collect_visible_state()
@@ -3436,7 +3583,11 @@ class SpeechTTSSettingsPanel(Vertical):
                 continue
             if proposal.settings or proposal.delete_setting_keys:
                 return True
-        return self._realtime_draft.snapshot() != self._realtime_original.snapshot()
+        return (
+            self._realtime_draft.snapshot() != self._realtime_original.snapshot()
+            or self._pipeline_voice_draft.snapshot()
+            != self._pipeline_voice_original.snapshot()
+        )
 
     def _announce_draft_state(self) -> None:
         """Publish the latest safe draft snapshot to the Settings shell."""
@@ -3623,17 +3774,20 @@ class SpeechTTSSettingsPanel(Vertical):
         if realtime_payload is not None and not (guided_packages or guided_lease_refs):
             if not self._persist_realtime_draft(realtime_payload):
                 self._set_result(
-                    "Realtime engine settings were not saved.",
+                    "Voice engine settings were not saved.",
                     severity="error",
                 )
                 return None
             self._realtime_original = replace(realtime_payload.persisted_draft)
+            self._pipeline_voice_original = replace(
+                realtime_payload.persisted_pipeline_draft
+            )
 
         if not provider_save_required:
             # Only the realtime/dictation block changed; already persisted
             # locally above through the same atomic config writer -- no TTS
             # provider adapter round trip needed.
-            self._set_result("Saved locally. Realtime engine settings updated.")
+            self._set_result("Saved locally. Voice engine settings updated.")
             self._announce_draft_state()
             return None
 
@@ -3771,10 +3925,13 @@ class SpeechTTSSettingsPanel(Vertical):
             if not self._persist_realtime_draft(realtime_payload):
                 self._abort_pending_save(
                     request_id,
-                    "Realtime engine settings were not saved.",
+                    "Voice engine settings were not saved.",
                 )
                 return
             self._realtime_original = replace(realtime_payload.persisted_draft)
+            self._pipeline_voice_original = replace(
+                realtime_payload.persisted_pipeline_draft
+            )
         try:
             self._post_settings_save(request_id, proposal)
         except BaseException:
@@ -3820,6 +3977,65 @@ class SpeechTTSSettingsPanel(Vertical):
             leave_waiter.set_result(False)
 
     def _validated_realtime_payload(self) -> _RealtimeSavePayload | None:
+        """Validate and merge Realtime plus speculative-pipeline mutations."""
+
+        realtime_payload = self._validated_realtime_only_payload()
+        pipeline_changed = (
+            self._pipeline_voice_draft.snapshot()
+            != self._pipeline_voice_original.snapshot()
+        )
+        if not pipeline_changed:
+            return realtime_payload
+
+        raw_eagerness = self._pipeline_voice_draft.response_eagerness_ms.strip()
+        try:
+            eagerness_ms = int(raw_eagerness)
+        except (TypeError, ValueError):
+            eagerness_ms = None
+        if (
+            eagerness_ms is None
+            or str(eagerness_ms) != raw_eagerness
+            or eagerness_ms < RESPONSE_EAGERNESS_MIN_MS
+            or eagerness_ms > RESPONSE_EAGERNESS_MAX_MS
+        ):
+            raise GlobalSpeechTTSValidationError(
+                "pipeline",
+                "response_eagerness_ms",
+                "Response eagerness must be a whole number from 500 to 3000 ms.",
+            )
+
+        section_values = (
+            {
+                section: dict(values)
+                for section, values in realtime_payload.section_values.items()
+            }
+            if realtime_payload is not None
+            else {}
+        )
+        section_values.setdefault("dictation", {}).update(
+            {
+                "response_eagerness_ms": eagerness_ms,
+                "pipeline_aec_enabled": (
+                    self._pipeline_voice_draft.pipeline_aec_enabled
+                ),
+            }
+        )
+        return _RealtimeSavePayload(
+            section_values=section_values,
+            delete_keys=(
+                dict(realtime_payload.delete_keys)
+                if realtime_payload is not None
+                else {}
+            ),
+            persisted_draft=(
+                replace(realtime_payload.persisted_draft)
+                if realtime_payload is not None
+                else replace(self._realtime_draft)
+            ),
+            persisted_pipeline_draft=replace(self._pipeline_voice_draft),
+        )
+
+    def _validated_realtime_only_payload(self) -> _RealtimeSavePayload | None:
         """Validate the Realtime block draft; ``None`` when unchanged.
 
         Sibling validation shape to the global defaults' speed field: an
@@ -3909,6 +4125,7 @@ class SpeechTTSSettingsPanel(Vertical):
             },
             delete_keys=delete_keys,
             persisted_draft=replace(self._realtime_draft),
+            persisted_pipeline_draft=replace(self._pipeline_voice_draft),
         )
 
     @staticmethod
@@ -3968,8 +4185,27 @@ class SpeechTTSSettingsPanel(Vertical):
                 )
             )
         except Exception:
-            logger.exception("Failed to save realtime engine settings")
+            logger.exception("Failed to save voice engine settings")
             return False
+
+    @on(Button.Pressed, ".settings-speech-pipeline-preset")
+    def handle_pipeline_response_preset(self, event: Button.Pressed) -> None:
+        """Apply one named preset to the editable numeric field."""
+
+        values = {
+            "settings-speech-pipeline-preset-fast": 700,
+            "settings-speech-pipeline-preset-balanced": 1200,
+            "settings-speech-pipeline-preset-deliberate": 2000,
+        }
+        value = values.get(event.button.id or "")
+        if value is None:
+            return
+        event.stop()
+        eagerness = self.query_one(
+            "#settings-speech-pipeline-response-eagerness-ms", Input
+        )
+        eagerness.value = str(value)
+        eagerness.focus()
 
     def submit_credential_mutation(
         self,
@@ -5143,6 +5379,7 @@ class SpeechTTSSettingsPanel(Vertical):
         self._clear_validation_errors()
         self.state = deepcopy(self.original_state)
         self._realtime_draft = replace(self._realtime_original)
+        self._pipeline_voice_draft = replace(self._pipeline_voice_original)
         self.result_text = "Reverted to the last successfully loaded global values."
 
     async def revert_to_saved(self) -> None:

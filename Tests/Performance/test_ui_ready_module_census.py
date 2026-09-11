@@ -129,6 +129,16 @@ ABSENT_AT_READY_PREFIXES = (
     "tldw_chatbook.Tool_Packs",
 )
 ABSENT_AT_READY_MODULES = (
+    # Speculative voice resources are first-voice work, never first paint.
+    "tldw_chatbook.Audio.native_duplex_stream",
+    "tldw_chatbook.Audio.voice_process_types",
+    "tldw_chatbook.Chat.console_voice_controls",
+    "tldw_chatbook.Chat.console_voice_promotion",
+    "tldw_chatbook.Chat.console_voice_settings",
+    "tldw_chatbook.Chat.console_voice_supervisor",
+    "tldw_chatbook.Chat.console_voice_trace_gateway",
+    "tldw_chatbook.Chat.console_voice_trace_promotion",
+    "tldw_chatbook.Widgets.Console.console_voice_preview",
     # PCM wrapping belongs to requested playback, not Console first paint.
     "tldw_chatbook.TTS.pcm_playback",
     # Inspect's Environment implementation is first-open work, not closed-rail boot.

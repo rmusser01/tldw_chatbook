@@ -1176,18 +1176,18 @@ async def test_typed_enter_during_listening_sends_normally_once(monkeypatch):
     )
     send_calls: list[str] = []
 
-    async def _fake_send(self, event) -> bool:
-        # TASK-340: a keyboard send stashes the draft (and clears it from
-        # the composer) at the Enter KEYPRESS, before the `Button.Pressed`
-        # this fake intercepts even fires -- `composer.draft_text()` reads
-        # empty by this point; the stash is where the sent text actually is.
-        stash = self._console_pending_send_stash
-        send_calls.append(stash.text if stash is not None else "")
-        event.stop()
+    async def _fake_send(self, *, session_id=None, pending_send_token=None) -> bool:
+        # Enter freezes the draft in the app-owned pending-send carrier before
+        # the scheduled visible-action callback runs.
+        pending = self._console_pending_send
+        send_calls.append(pending.stash.text if pending is not None else "")
+        self._console_pending_send = None
         return True
 
     monkeypatch.setattr(
-        chat_screen_module.ChatScreen, "handle_console_send_message", _fake_send
+        chat_screen_module.ChatScreen,
+        "_send_console_message_from_visible_action",
+        _fake_send,
     )
     _, host = _ready_host()
 
@@ -1226,18 +1226,18 @@ async def test_typed_enter_cancels_an_armed_countdown_first(monkeypatch):
     )
     send_calls: list[str] = []
 
-    async def _fake_send(self, event) -> bool:
-        # TASK-340: a keyboard send stashes the draft (and clears it from
-        # the composer) at the Enter KEYPRESS, before the `Button.Pressed`
-        # this fake intercepts even fires -- `composer.draft_text()` reads
-        # empty by this point; the stash is where the sent text actually is.
-        stash = self._console_pending_send_stash
-        send_calls.append(stash.text if stash is not None else "")
-        event.stop()
+    async def _fake_send(self, *, session_id=None, pending_send_token=None) -> bool:
+        # Enter freezes the draft in the app-owned pending-send carrier before
+        # the scheduled visible-action callback runs.
+        pending = self._console_pending_send
+        send_calls.append(pending.stash.text if pending is not None else "")
+        self._console_pending_send = None
         return True
 
     monkeypatch.setattr(
-        chat_screen_module.ChatScreen, "handle_console_send_message", _fake_send
+        chat_screen_module.ChatScreen,
+        "_send_console_message_from_visible_action",
+        _fake_send,
     )
     _, host = _ready_host()
 

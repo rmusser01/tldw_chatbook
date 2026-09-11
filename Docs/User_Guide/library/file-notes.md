@@ -1,11 +1,11 @@
-# Folder Files — plain notes on disk, edited in place
+# Folder files — plain notes on disk, edited in place
 
 ## What this screen is for
 
-Folder Files edits ordinary files that live in a folder you choose on disk —
+Folder files edits ordinary files that live in a folder you choose on disk —
 what you see in the editor is exactly what's in the file, and saves write
-straight back to it. It is a separate system from [Database notes](notes.md):
-nothing here is stored in the Library database, there are no templates or
+straight back to it. It is a separate system from [Library notes](notes.md):
+nothing here is stored in the Library's own database, there are no templates or
 database mirror, and no "Use in Console" handoff. This is also the key
 difference
 from Library Notes lasting sync: lasting sync keeps a reviewed relationship
@@ -23,10 +23,10 @@ Open [Library](../library.md) (**Ctrl+3**), pick **Notes** in the rail's
 Browse section, then use the source strip at the top of the canvas: it reads
 **Library notes** | **Folder files**. Click **Folder files** — while the
 workspace loads you'll briefly see "Opening File Notes…". At wide sizes,
-Library navigation and the Folder Files tree have separate slim collapse
+Library navigation and the Folder files tree have separate slim collapse
 grips. Each pane remembers its own choice; collapsing the tree does not also
-collapse Library navigation or the Database Notes list. On compact
-terminals, Library shows the Folder Files canvas as the single visible stage so
+collapse Library navigation or the Library notes list. On compact
+terminals, Library shows the Folder files canvas as the single visible stage so
 its controls remain on-screen; **Escape** or **Library notes** returns to the
 Library notes view. Either switch first saves any unsaved edits on the side
 you're leaving.
@@ -37,8 +37,8 @@ change your saved pane choice. Reopen Library navigation with its grip and it
 stays open for the rest of the work session. Opening another file, switching
 between Edit and Manage, autosaving, resolving a conflict, or resizing does
 not close it again. The automatic close resets only when you close or clear
-the open Folder Files file, switch between Folder Files and Database Notes,
-change the linked folder, clear the selected Database note, or leave Notes.
+the open Folder files file, switch between Folder files and Library notes,
+change the linked folder, clear the selected Library note, or leave Notes.
 Using compact **Back to navigator** does not reset it.
 
 ## Layout tour
@@ -77,7 +77,7 @@ Using compact **Back to navigator** does not reset it.
   input, the **Files** tree of everything under the linked folder, and a
   **Search results** tree that appears only while a query is active. Its grip
   collapses or restores this tree independently of Library navigation and the
-  Database Notes list. Large folders and direct-path
+  Library notes list. Large folders and direct-path
   search fallbacks show 100 rows at a time; activate **Load more** to append
   the next 100 without rebuilding the entire tree.
 - **File work area** (right) — a breadcrumb ("No file selected" until you
@@ -178,7 +178,7 @@ report that diff output was omitted or elided. A deleted or unreadable Disk side
 is named explicitly. Closing Compare returns to the conflict without resolving
 it or changing any side.
 
-Folder Files does not use **Ctrl+S** and does not assign a replacement. Keep
+Folder files does not use **Ctrl+S** and does not assign a replacement. Keep
 typing and autosave writes the file. When the file body has keyboard focus,
 only its boundary becomes more prominent; its background and size do not
 change. Compact inputs such as a named target path keep their usual filled
@@ -388,9 +388,9 @@ not available.
 | Esc (reload confirmation) | Cancel reload, preserve the draft and conflict, and return focus to the action that opened the confirmation |
 | Esc (Session Git panel) | Step back safely: row list → Files; commit form → cancel; commit review → edit message; candidate/remote check → cancel; push review → Back; active push/uncertain recovery check → Files while it continues; push result → session |
 | Esc (dialogs) | Close "File Notes folder details" or **Endpoint Details**; cancel the repository-trust or destination-authorization dialog |
-| Esc (folder change running) | Leaves Folder files for Database notes, exactly as it does when nothing is running — the folder change is abandoned and the previously linked folder is kept. The same applies to the "‹ Library / Notes" cue, the **Database** button, switching rail rows, the command palette and Ctrl+Q: a running folder change never blocks the way out |
+| Esc (folder change running) | Leaves Folder files for Library notes, exactly as it does when nothing is running — the folder change is abandoned and the previously linked folder is kept. The same applies to the "‹ Library / Notes" cue, the **Library notes** button, switching rail rows, the command palette and Ctrl+Q: a running folder change never blocks the way out |
 
-Folder Files does not register **Ctrl+S** and does not replace it with another
+Folder files does not register **Ctrl+S** and does not replace it with another
 save shortcut. File edits save automatically.
 
 ## Related settings & docs
@@ -400,8 +400,8 @@ save shortcut. File edits save automatically.
   picker reopens while no folder is linked yet: the folder you last picked
   through it, written on every pick, and ignored in favour of your home
   directory if it no longer exists. **Import once** and **Keep a folder
-  synced** keep their own separate keys, see [Database notes](notes.md).
-- [Database notes](notes.md) — the Library-stored notes system, with
+  synced** keep their own separate keys, see [Library notes](notes.md).
+- [Library notes](notes.md) — the Library-stored notes system, with
   templates, reviewed **Add from files…**, lasting root management, and Console
   handoff. Folder files is different — the files *are* the notes.
 - [Library](../library.md) — the parent screen; [guide index](../index.md)
@@ -450,7 +450,7 @@ save shortcut. File edits save automatically.
   operation updates only the approved remote ref; it does not fetch or update
   the local remote-tracking ref. Refresh that state later with external Git if
   you need it.
-- **No Console handoff.** Unlike Database notes, media, and prompts, this
+- **No Console handoff.** Unlike Library notes, media, and prompts, this
   workspace has no "Use in Console" — copy text out manually if you need it
   in a chat.
 - **Structural actions wait during Git work.** While a stage, unstage, commit,
@@ -502,7 +502,7 @@ the picker left open for an invalid path. Pinned in
 *Verified against fix/library-notes-docs — 2026-09-09 (task-32141: guide
 sweep after the Notes critique wave; the linked-folder status line reads
 "Linked · Local folder: \<folder\>", not "Linked — \<folder\>"; corrected
-here and in [Database notes](notes.md)).*
+here and in [Library notes](notes.md)).*
 
 *Verified against fix/library-notes-file-notes — 2026-09-09 (task-32121
 review round 2: **Keep waiting** also extends a change queued behind an
@@ -517,7 +517,7 @@ falling back to home when none has been picked yet — or when the stored
 value no longer names a real folder. Stored as `[file_notes] browse` in
 `config.toml`. Independent of Import once's and
 Keep a folder synced's own last-used directories, see
-[Database notes](notes.md).)*
+[Library notes](notes.md).)*
 
 *Verified against fix/library-notes-r-file-notes — 2026-09-09 (task-32173:
 the Library rail is now shown inside Folder files before a folder is linked,
@@ -544,3 +544,9 @@ a folder change reports the cancellation as a notification rather than into
 the row being torn down, and the wait line no longer carries the warning or
 offline tint of the state it replaced. Pinned by tests, not by a live
 capture.)*
+
+*Verified against fix/library-crit9-notes — 2026-09-10 (task-32218: one noun
+per Notes source. This page, the canvas authority line and the F1 Escape row
+all say **Folder files** and **Library notes**; the capitalised "Folder Files"
+and the "back to Database" footer chip are retired. Escape from Folder files
+now reads `esc back to Library notes`.)*

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "audio_format": {
+    "sample_rate_hz": 48000,
+    "channels": 1,
+    "sample_width_bytes": 2,
+    "sample_format": "pcm_s16le",
+    "frame_duration_ms": 10,
+    "frame_count": 600
+  },
+  "source": {
+    "kind": "deterministic_synthesis",
+    "generator": "Packaging/voice_aec_corpus.py:iter_voice_aec_case_frames",
+    "source_manifest": "Tests/Audio/fixtures/voice_aec/manifest.json",
+    "source_case_id": "stationary-echo-30m:first-600-render-frames",
+    "source_recipe_sha256": "14952533bb07b5b05c3a30db226532c4a7aa889e728c9c3f1d5fc90b2b17289d",
+    "contains_captured_audio": false,
+    "contains_user_audio": false
+  },
+  "license_spdx": "CC0-1.0",
+  "redistribution_grant": "The deterministic generated audio is dedicated under CC0-1.0 and may be redistributed in this repository and its distributions without restriction.",
+  "sha256": "d3f1822e269f009d029be6973e89d1f679bd299d9ad6fdec43d80923882cb9c5"
+}

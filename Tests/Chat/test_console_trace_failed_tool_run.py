@@ -2,6 +2,7 @@
 
 from contextlib import asynccontextmanager
 from dataclasses import replace
+import json
 
 import pytest
 
@@ -44,8 +45,10 @@ async def _failed_console(
         )
         if transform:
             assert app.store.persist_session_if_needed(app.session.id)
-            app.controller._chat_dictionary_applier = lambda _conversation, text: (
-                text.replace("calculator", "calculator tool")
+            app.controller._chat_dictionary_applier = (
+                lambda _conversation, text, _frozen_inputs: text.replace(
+                    "calculator", "calculator tool"
+                )
             )
         build = ConsoleAgentTraceRequestFactory.build
 
@@ -103,7 +106,7 @@ async def _failed_console(
                 ).fetchone()[0]
                 == 0
             )
-        _reload_console(app)
+        await _reload_console(app)
         assert not (
             await app.controller.discard_dispatch_recovery(app.session.id)
         ).accepted
@@ -124,11 +127,11 @@ async def _failed_console(
             app.untraced_users.append(
                 app.store.get_message(failed.user_message_id).persisted_message_id
             )
-            _reload_console(app)
+            await _reload_console(app)
             assert (
                 await app.controller.discard_dispatch_recovery(app.session.id)
             ).accepted
-            _reload_console(app)
+            await _reload_console(app)
         for index in range(bypass):
             _privacy(app, False)
             result = await app.controller.submit_draft(
@@ -138,7 +141,7 @@ async def _failed_console(
             app.untraced_users.append(
                 app.store.get_message(result.user_message_id).persisted_message_id
             )
-            _reload_console(app)
+            await _reload_console(app)
         _privacy(app, True)
         yield app
 
@@ -210,7 +213,7 @@ async def test_captured_sends_after_failed_empty_tool_run(
                         ).fetchone()[0]
                         == 0
                     )
-            _reload_console(app)
+            await _reload_console(app)
         assert (
             app.reservation_errors == ["unsupported_surface_change"] * failed_followups
         )
@@ -229,6 +232,10 @@ async def test_captured_sends_after_failed_empty_tool_run(
         "continuation",
         "attachment",
         "metadata",
+        "metadata_receipt_malformed",
+        "metadata_receipt_unknown",
+        "metadata_receipt_provider",
+        "metadata_receipt_wrong_type",
         "deleted",
         "wrong_parent",
         "sibling",
@@ -351,6 +358,24 @@ async def test_closed_history_is_revalidated_before_dispatch(
                 cursor.execute(
                     "UPDATE messages SET metadata_json = ? WHERE id = ?",
                     ('{"canvas_cards":[{}]}', assistant_id),
+                )
+            elif tamper.startswith("metadata_receipt_"):
+                from tldw_chatbook.Chat.message_metadata import MessageMetadata
+
+                metadata = json.loads(
+                    MessageMetadata(terminal_receipt_id=new_opaque_id()).to_json()
+                )
+                if tamper == "metadata_receipt_malformed":
+                    metadata["terminal_receipt_id"] = "not-a-canonical-receipt"
+                elif tamper == "metadata_receipt_unknown":
+                    metadata["unknown"] = "unrecognized"
+                elif tamper == "metadata_receipt_provider":
+                    metadata["provider"] = "not-local-control"
+                else:
+                    metadata["interrupted"] = 0
+                cursor.execute(
+                    "UPDATE messages SET metadata_json = ? WHERE id = ?",
+                    (json.dumps(metadata), assistant_id),
                 )
             elif tamper == "deleted":
                 cursor.execute(
@@ -582,7 +607,7 @@ async def test_guard_stopped_search_allows_next_capture(
                 )
                 assert closure == ("failed", ""), closure
             if cold:
-                _reload_console(app)
+                await _reload_console(app)
             second = await app.controller.submit_draft(
                 "Now answer directly", session_id=app.session.id
             )
@@ -645,7 +670,7 @@ async def test_capture_after_discard_then_uncaptured_followup(
                 )
             ] == ["response_started", "response_started"]
         original = reader.read_calls(prior_user)
-        _reload_console(app)
+        await _reload_console(app)
         assert (await app.controller.discard_dispatch_recovery(app.session.id)).accepted
         _privacy(app, False)
         followup = await app.controller.submit_draft(
@@ -655,7 +680,7 @@ async def test_capture_after_discard_then_uncaptured_followup(
         assert len(app.http_payloads) == 3, app.reservation_errors
         assert app.controller.run_state.status.value == "completed"
         if cold:
-            _reload_console(app)
+            await _reload_console(app)
         _privacy(app, True)
         changed = []
         if change_discard_at_binding:

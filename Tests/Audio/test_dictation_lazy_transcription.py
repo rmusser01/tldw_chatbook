@@ -21,6 +21,50 @@ import pytest
 pytestmark = pytest.mark.unit
 
 
+def test_admitted_frame_hook_is_explicit_and_does_not_change_legacy_mic_callback(
+    monkeypatch,
+):
+    from tldw_chatbook.Audio.duplex_contracts import AudioFrame
+
+    class _Engine:
+        def __init__(self) -> None:
+            self.frames = []
+
+        def append_admitted_frame(self, frame) -> None:
+            self.frames.append(frame)
+
+    engine = _Engine()
+    service = _build_service(
+        monkeypatch,
+        _FakeTranscriptionService(),
+        transcript_engine=engine,
+    )
+    admitted = AudioFrame(
+        sequence=4,
+        started_ns=40_000_000,
+        ended_ns=50_000_000,
+        pcm16=bytes(960),
+        clock_generation=2,
+    )
+
+    service.submit_admitted_frame(admitted)
+    assert engine.frames == [admitted]
+
+    raw_legacy_chunk = bytes(640)
+    service._audio_callback(raw_legacy_chunk)
+    assert engine.frames == [admitted]
+    assert service.processing_queue.get_nowait() == ("audio", raw_legacy_chunk)
+
+
+def test_rolling_hook_is_optional_and_legacy_segment_safety_bound_is_unchanged(
+    monkeypatch,
+):
+    service = _build_service(monkeypatch, _FakeTranscriptionService())
+
+    assert service.transcript_engine is None
+    assert service.MAX_NON_STREAMING_SEGMENT_SECONDS == 30.0
+
+
 # --------------------------------------------------------------------------
 # Fakes
 # --------------------------------------------------------------------------
@@ -187,6 +231,7 @@ def _build_service(
     **settings: Any,
 ):
     """The real service, wired to fakes. No lazy property ever constructs."""
+    transcript_engine = settings.pop("transcript_engine", None)
     _stub_settings(monkeypatch, **settings)
     from tldw_chatbook.Audio.dictation_service_lazy import LazyLiveDictationService
 
@@ -195,6 +240,7 @@ def _build_service(
         transcription_model=model,
         language="fr",
         enable_commands=False,
+        transcript_engine=transcript_engine,
     )
     service._transcription_service = transcription
     service._audio_service = recorder if recorder is not None else _FakeRecorder()

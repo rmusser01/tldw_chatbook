@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 from loguru import logger as loguru_logger
 
+from Tests.Chat.console_close_helpers import close_controller_session
 from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Agents.agent_models import (
     RUN_CANCELLED,
@@ -115,6 +116,47 @@ def _close_citation_persistences():
         except Exception:  # pragma: no cover - cleanup must not mask failures
             pass
         shutil.rmtree(persistence._db_dir, ignore_errors=True)
+
+
+class _LegacyCitationStore(ConsoleChatStore):
+    """Let legacy citation fakes observe writes from a temporary test chat.
+
+    Production temporary chats intentionally never persist. These focused
+    citation tests instead pin the older per-message persistence seam and set
+    an explicit fake conversation ID, so expose only that already-selected ID
+    without granting first-persistence behavior to an ephemeral session.
+    """
+
+    def persist_session_if_needed(self, session_id, **kwargs):
+        session = next(item for item in self.sessions() if item.id == session_id)
+        if session.ephemeral and session.persisted_conversation_id is not None:
+            return session.persisted_conversation_id
+        return super().persist_session_if_needed(session_id, **kwargs)
+
+    def register_ephemeral_dispatch_recovery(self, *_args, **_kwargs):
+        # The recovery owner intentionally settles temporary chats in memory.
+        # This compatibility store instead exists solely to exercise the
+        # legacy terminal citation create/finalizer boundary below.
+        return None
+
+    def _persist_existing_terminal(self, message, **kwargs):
+        session_id = self._message_session_index.get(message.id)
+        session = self._sessions.get(session_id or "")
+        if session is not None and session.ephemeral:
+            # The citation fixtures intentionally keep the old per-message
+            # adapter seam while production now requires atomic settlement.
+            # A failed/empty temporary assistant may have no row to update;
+            # preserve that legacy no-op instead of advertising durability.
+            self._begin_new_terminal_attempt(message)
+            self._persist_existing_message(
+                message,
+                force_metadata_write=kwargs.get("force_metadata_write", False),
+                preserve_provider_continuation=kwargs.get(
+                    "preserve_provider_continuation", True
+                ),
+            )
+            return None
+        return super()._persist_existing_terminal(message, **kwargs)
 
 
 class _RequestBuilder:
@@ -331,6 +373,10 @@ class _ReadyCitationPersistence:
         parent_message_id: str | None = None,
         feedback: str | None = None,
         citation_write: SealedCitationWrite | None | object = _MISSING,
+        terminal_receipt_id: str | None = None,
+        terminal_outcome: str | None = None,
+        assistant_generation_state: str | None = None,
+        **_kwargs: Any,
     ) -> str:
         call = {
             "conversation_id": conversation_id,
@@ -439,7 +485,7 @@ class _RecordingGateway:
     async def resolve_for_send(self, _selection):
         return provider_resolution(max_tokens=128)
 
-    async def stream_chat(self, _resolution, messages, signals=None):
+    async def stream_chat(self, _resolution, messages, signals=None, **_route):
         if self.builder_ref is not None:
             assert self.builder_ref() is not None
         self.messages_seen = messages
@@ -449,7 +495,7 @@ class _RecordingGateway:
             raise self.error
 
 
-class _RecordingCitationStore(ConsoleChatStore):
+class _RecordingCitationStore(_LegacyCitationStore):
     def __init__(self, *, persistence=None):
         super().__init__(persistence=persistence)
         self.assistant_append_kwargs: list[dict[str, Any]] = []
@@ -538,6 +584,7 @@ class _ScriptedCitationGateway:
         messages,
         tools=_OMITTED,
         signals=_OMITTED,
+        **_route,
     ):
         call_index = len(self.calls)
         self.calls.append(
@@ -587,6 +634,7 @@ class _ControlledCitationGateway(_ScriptedCitationGateway):
         messages,
         tools=_OMITTED,
         signals=_OMITTED,
+        **_route,
     ):
         call_index = len(self.calls)
         self.calls.append(
@@ -893,7 +941,7 @@ async def test_console_canonical_evidence_is_added_after_prompt_transforms_and_b
             prompt_evidence_set_id=prompt_id,
         )
 
-    def apply_dictionary(_conversation_id, text):
+    def apply_dictionary(_conversation_id, text, _frozen_inputs):
         return (
             text.replace(ordinary_prompt, transformed_prompt)
             .replace(evidence_title, "MUTATED_EVIDENCE_TITLE")
@@ -958,14 +1006,14 @@ async def test_repair_contract_exact_context_order_follows_all_prompt_transforms
             citation_repair_contract=contract,
         )
 
-    def apply_dictionary(_conversation_id, text):
+    def apply_dictionary(_conversation_id, text, _frozen_inputs):
         return (
             text.replace(ordinary_prompt, dictionary_prompt)
             .replace("EVIDENCE_TITLE_REPAIR_CONTRACT_ORDER", "MUTATED_DICT_TITLE")
             .replace("EVIDENCE_BODY_REPAIR_CONTRACT_ORDER", "MUTATED_DICT_BODY")
         )
 
-    def apply_world_info(_conversation_id, text, _history):
+    def apply_world_info(_conversation_id, text, _history, _frozen_inputs):
         return (
             text.replace(dictionary_prompt, world_prompt)
             .replace("EVIDENCE_TITLE_REPAIR_CONTRACT_ORDER", "MUTATED_WORLD_TITLE")
@@ -1000,7 +1048,7 @@ async def test_legacy_raw_without_repair_contract_keeps_early_transform_order():
     async def capture(_draft):
         return SimpleNamespace(context=context, citation_builder=None)
 
-    def apply_dictionary(_conversation_id, text):
+    def apply_dictionary(_conversation_id, text, _frozen_inputs):
         return text.replace("legacy evidence body", "transformed evidence body")
 
     store = _persisted_store()
@@ -1331,11 +1379,11 @@ async def test_direct_markers_in_markdown_literals_still_seal(body: str):
 
 
 @pytest.mark.parametrize(
-    ("chunks", "error", "raises"),
+    ("chunks", "error"),
     (
-        ((), None, False),
-        (("partial",), RuntimeError("provider failed"), False),
-        (("partial",), asyncio.CancelledError(), True),
+        ((), None),
+        (("partial",), RuntimeError("provider failed")),
+        (("partial",), asyncio.CancelledError()),
     ),
     ids=("empty", "provider-error", "cancelled-error"),
 )
@@ -1343,7 +1391,6 @@ async def test_direct_markers_in_markdown_literals_still_seal(body: str):
 async def test_direct_non_success_does_not_seal_and_clears_terminal_state(
     chunks: tuple[str, ...],
     error: BaseException | None,
-    raises: bool,
 ):
     persistence = _ReadyCitationPersistence()
     builder, prompt_id = _citation_builder(persistence=persistence)
@@ -1359,38 +1406,13 @@ async def test_direct_non_success_does_not_seal_and_clears_terminal_state(
         agent_runtime_enabled=False,
     )
 
-    if raises:
-        # TASK-22301: on the DURABLE path a stream failure no longer propagates.
-        # The turn was already committed, so `resume_durable_postcommit` retains
-        # it for recovery instead of losing it -- which is the whole point of a
-        # durable turn. The old `pytest.raises(CancelledError)` was correct for
-        # an EPHEMERAL session, where there is nothing to retain and the error
-        # is all that is left. The subject of this test is unchanged and still
-        # asserted below: a non-success must not seal, and must clear terminal
-        # state.
-        outcome = await controller.submit_draft("question")
-        assert outcome.terminal_status is ConsoleRunStatus.BLOCKED
-        assert outcome.visible_copy == "Accepted turn is retained for recovery."
-    else:
-        await controller.submit_draft("question")
+    result = await controller.submit_draft("question")
 
+    assert result.accepted is True
     assert _citation_calls(persistence) == []
     assert builder.is_sealed is False
     assert builder.answer_attempts == ()
-    if raises:
-        # A RETAINED turn keeps its terminal citation finalizer armed, because
-        # the recovery that is supposed to resume it still needs one. Asserting
-        # it is empty here would demand that recovery lose the very thing it
-        # would resume with. Note the two non-retained failures below DO clear
-        # it, which is what makes this conditional meaningful rather than a
-        # blanket exemption -- a finalizer left behind by a turn that was NOT
-        # retained is still caught.
-        assert store._terminal_citation_finalizers != {}, (
-            "a turn retained for recovery dropped the finalizer that recovery "
-            "would need"
-        )
-    else:
-        _assert_no_terminal_state(store)
+    _assert_no_terminal_state(store)
 
 
 @pytest.mark.asyncio
@@ -1732,10 +1754,13 @@ async def test_citation_repair_predispatch_exception_privacy_scrubs_session(
         raise RuntimeError(_REPAIR_PROVIDER_EXCEPTION_SENTINEL)
 
     if failure_seam == "compaction":
+        async def fail_preflight(**_kwargs: object) -> object:
+            return fail()
+
         monkeypatch.setattr(
             controller,
-            "_apply_context_summary_compaction",
-            fail,
+            "_apply_conversation_memory_preflight",
+            fail_preflight,
         )
     else:
         monkeypatch.setattr(controller_module, "bound_messages_to_window", fail)
@@ -2059,7 +2084,7 @@ async def test_original_attempt_cache_cleans_up_and_is_never_reconstructed():
         )
         controller._remember_original_attempt(message.id, f"original {message.id}")
 
-    controller.close_session(first_session_id)
+    close_controller_session(controller, first_session_id)
 
     assert controller.original_attempt_for_message(first.id) is None
     assert controller.original_attempt_for_message(second.id) == f"original {second.id}"
@@ -2740,7 +2765,11 @@ def _controlled_citation_repair(
 
 
 async def _wait_for_citation_checking(controller: ConsoleChatController) -> None:
-    for _ in range(1_000):
+    # Durable admission now awaits thread-owned persistence. Scheduler turns
+    # are not a time budget, and can expire before that worker runs at all.
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 5.0
+    while loop.time() < deadline:
         if controller.run_state.status is ConsoleRunStatus.CHECKING_CITATIONS:
             return
         await asyncio.sleep(0)
@@ -2998,7 +3027,7 @@ async def test_citation_repair_session_close_privacy_sentinels(
         assert retained_session is not None
         session_id = store.active_session_id
         assert session_id is not None
-        controller.close_session(session_id)
+        close_controller_session(controller, session_id)
         result = await task
     finally:
         loguru_logger.remove(sink_id)
@@ -3011,7 +3040,7 @@ async def test_citation_repair_session_close_privacy_sentinels(
         loguru_records,
         *(call["signals"] for call in gateway.calls),
         retained_session,
-        persistence.create_calls,
+        _sanitize_selected_persistence(persistence, initial_body),
         controller.run_state,
         controller.run_state_history,
         _active_citation_repair_session(controller),
@@ -3235,7 +3264,7 @@ async def test_citation_repair_close_unrelated_session_preserves_cancel_ownershi
     await gateway.repair_started.wait()
     repair_session = _active_citation_repair_session(controller)
 
-    controller.close_session(unrelated.id)
+    close_controller_session(controller, unrelated.id)
 
     assert _active_citation_repair_session(controller) is repair_session
     assert controller.stop_active_run() is True
@@ -3405,7 +3434,7 @@ async def test_citation_repair_close_during_collection_never_resurrects_session_
     await gateway.repair_started.wait()
     session_id = store.active_session_id
 
-    controller.close_session(session_id)
+    close_controller_session(controller, session_id)
     result = await task
 
     assert result.visible_copy == "Session closed."

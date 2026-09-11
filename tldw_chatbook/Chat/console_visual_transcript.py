@@ -420,6 +420,7 @@ def plan_visual_compaction(
                 if base_provenance is not None and visual_provenance is not None
                 else None
             ),
+            capture_durability=without_old.capture_durability,
         )
         after = prepare_main(after_semantic)
         conversation_tokens = (

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 import json
@@ -10,7 +11,9 @@ from typing import Any
 
 import pytest
 
+from Tests.Chat.console_close_helpers import close_controller_session
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
@@ -47,7 +50,43 @@ from tldw_chatbook.Chat.library_preparation import (
     LibraryPreparationEvent,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+from tldw_chatbook.Chat.conversation_local_marks_service import (
+    ConversationLocalMarksService,
+)
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, TransactionContextManager
+
+
+class _AcceptedCancellationGateway:
+    """Hold after durable acceptance and dispatch ownership are observable."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.never_release = asyncio.Event()
+
+    async def resolve_for_send(self, selection):
+        return type(
+            "Resolution",
+            (),
+            {
+                "ready": True,
+                "provider": selection.provider,
+                "model": selection.explicit_model or "test-model",
+                "base_url": "http://127.0.0.1:9099",
+                "visible_copy": "",
+                "resolved_destination": ConsoleResolvedDestination(
+                    provider=selection.provider,
+                    model=selection.explicit_model or "test-model",
+                    endpoint_identity="http://127.0.0.1:9099",
+                    egress_class=ConsoleEgressClass.ON_DEVICE,
+                ),
+            },
+        )()
+
+    async def stream_chat(self, _resolution, _messages, **_kwargs):
+        self.started.set()
+        await self.never_release.wait()
+        yield "unreachable"
 
 
 @dataclass
@@ -496,23 +535,35 @@ def test_sequence_allocation_failure_rolls_back_existing_conversation_byte_exact
     assert paused.pause_kind is ConsolePreparationPauseKind.PERSISTENCE
 
 
+@pytest.mark.parametrize(
+    "changed_column",
+    ("policy_revision", "auto_retrieve_on_send", "assistant_library_access"),
+)
 def test_existing_conversation_policy_mismatch_fails_closed_without_version_drift(
     tmp_path: Path,
+    changed_column: str,
 ) -> None:
     db, _service, store, _preparation, acceptance = _ready_store(
         tmp_path,
         existing=True,
         attachments=False,
     )
+    updates = {
+        "policy_revision": "SET policy_revision = 2 WHERE conversation_id = ?",
+        "auto_retrieve_on_send": "SET auto_retrieve_on_send = 0 WHERE conversation_id = ?",
+        "assistant_library_access": "SET assistant_library_access = 0 WHERE conversation_id = ?",
+    }
     db.get_connection().execute(
-        "UPDATE console_conversation_library_policy "
-        "SET policy_revision = 2 WHERE conversation_id = ?",
+        "UPDATE console_conversation_library_policy " + updates[changed_column],
         (acceptance.conversation_id,),
     )
     db.get_connection().commit()
     before = _database_snapshot(db)
 
-    with pytest.raises(Exception):
+    with pytest.raises(
+        RuntimeError,
+        match="Durable Console Library policy no longer matches acceptance",
+    ):
         store.commit_durable_turn(acceptance)
 
     assert _database_snapshot(db) == before
@@ -574,3 +625,86 @@ def test_success_persists_exact_attachment_state_hash_sync_intent_and_private_ch
         "provider_request",
     ):
         assert forbidden not in serialized
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancellation", ["user_stop", "session_close", "app_shutdown"])
+async def test_explicit_accepted_cancellation_settles_stopped_without_receipt(
+    tmp_path: Path,
+    cancellation: str,
+) -> None:
+    db = CharactersRAGDB(
+        tmp_path / f"accepted-{cancellation}.sqlite",
+        client_id="accepted-cancel-test",
+    )
+    store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    session = store.create_session(title="Accepted cancellation")
+    gateway = _AcceptedCancellationGateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="test-model",
+        base_url="http://127.0.0.1:9099",
+        agent_runtime_enabled=False,
+    )
+    task = asyncio.create_task(controller.submit_draft("accepted turn"))
+    await asyncio.wait_for(gateway.started.wait(), timeout=1)
+    assistant_id = controller._active_assistant_message_ids[session.id]
+    before = db.get_message_by_id(assistant_id)
+    assert before is not None
+    assert before["assistant_generation_state"] == "dispatch_started"
+    assert MessageMetadata.from_json(before["metadata_json"]) is None
+
+    if cancellation == "user_stop":
+        assert controller.stop_active_run(record_user_stop=False) is True
+    elif cancellation == "session_close":
+        close_controller_session(controller, session.id)
+    else:
+        await controller.shutdown()
+    result = await asyncio.wait_for(task, timeout=1)
+
+    stored = db.get_message_by_id(assistant_id)
+    assert result.accepted is True
+    assert stored is not None
+    assert stored["assistant_generation_state"] == "stopped"
+    metadata = MessageMetadata.from_json(stored["metadata_json"])
+    assert metadata is None or metadata.terminal_receipt_id == ""
+    assert ConversationLocalMarksService(db).list_console_unseen_marks() == ()
+
+
+@pytest.mark.asyncio
+async def test_reasonless_accepted_cancellation_settles_failed_with_receipt(
+    tmp_path: Path,
+) -> None:
+    db = CharactersRAGDB(
+        tmp_path / "accepted-unexpected.sqlite",
+        client_id="accepted-cancel-test",
+    )
+    store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    session = store.create_session(title="Unexpected cancellation")
+    gateway = _AcceptedCancellationGateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="test-model",
+        base_url="http://127.0.0.1:9099",
+        agent_runtime_enabled=False,
+    )
+    task = asyncio.create_task(controller.submit_draft("accepted turn"))
+    await asyncio.wait_for(gateway.started.wait(), timeout=1)
+    assistant_id = controller._active_assistant_message_ids[session.id]
+
+    task.cancel()
+    result = await asyncio.wait_for(task, timeout=1)
+
+    stored = db.get_message_by_id(assistant_id)
+    assert result.accepted is True
+    assert stored is not None
+    assert stored["assistant_generation_state"] == "failed"
+    metadata = MessageMetadata.from_json(stored["metadata_json"])
+    assert metadata is not None and metadata.terminal_receipt_id
+    assert ConversationLocalMarksService(db).list_console_unseen_marks() == (
+        (session.persisted_conversation_id, metadata.terminal_receipt_id),
+    )

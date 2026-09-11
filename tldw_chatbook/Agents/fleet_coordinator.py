@@ -174,6 +174,7 @@ class FleetCoordinator:
         *,
         retained_transcripts: int = DEFAULT_RETAINED_TRANSCRIPTS,
         retained_transcript_max_chars: int = DEFAULT_RETAINED_TRANSCRIPT_MAX_CHARS,
+        on_reserve: Callable[[], None] | None = None,
     ) -> None:
         """Initialize the coordinator.
 
@@ -186,10 +187,17 @@ class FleetCoordinator:
             retained_transcript_max_chars: Serialized-size ceiling above
                 which a transcript is NOT retained (ruling #2: refuse,
                 never truncate); 0 retains none.
+            on_reserve: Best-effort observer invoked after a successful
+                reservation is visible. Observer failures never unwind an
+                already-admitted handle.
         """
         self._max_live = max_live
         self._clock = clock
         self._lock = threading.Lock()  # No reentrant calls, lock to catch bugs
+        # Terminal admission fence. Existing children remain visible and may
+        # settle normally, but no caller can reserve another child after a
+        # conversation/app close has begun.
+        self._fenced = False
         self._handles: dict[str, FleetHandle] = {}
         self._live_ids: set[str] = set()  # handle_ids with status != terminal
         self._events: list[FleetEvent] = []
@@ -208,6 +216,7 @@ class FleetCoordinator:
         self._retained_transcripts_cap = retained_transcripts
         self._retained_transcript_max_chars = retained_transcript_max_chars
         self._retained: dict[str, RetainedTranscript] = {}
+        self._on_reserve = on_reserve
 
     def reserve(
         self, task: str, agent: str | None, *, isolation: str | None = None
@@ -235,7 +244,7 @@ class FleetCoordinator:
             attached later) -- so this is safe.
         """
         with self._lock:
-            if len(self._live_ids) >= self._max_live:
+            if self._fenced or len(self._live_ids) >= self._max_live:
                 return None
 
             handle_id = uuid.uuid4().hex
@@ -263,7 +272,40 @@ class FleetCoordinator:
                     status="running",
                 )
             )
+            # Admission observers run before the coordinator lock is
+            # released. A close fence that acquires this lock afterward is
+            # therefore guaranteed to observe the matching lifecycle
+            # revision. Observers must not re-enter the coordinator; failures
+            # are isolated because the handle is already admitted.
+            if self._on_reserve is not None:
+                try:
+                    self._on_reserve()
+                except Exception:  # noqa: BLE001 -- observer cannot unwind admission
+                    pass
             return dataclasses.replace(handle)
+
+    def fence(self) -> None:
+        """Refuse new reservations without disturbing live work.
+
+        A fence is terminal once cancellation or shutdown begins. Before that
+        boundary, the bridge may withdraw an exact-generation provisional fence
+        with :meth:`abort_fence` if its lifecycle-revision recheck fails.
+        Cancellation and terminal draining remain separate operations so
+        existing handles keep their honest state until their workers settle.
+        """
+        with self._lock:
+            self._fenced = True
+
+    def abort_fence(self) -> None:
+        """Reopen admission when an unfired provisional close is withdrawn.
+
+        Exact generation ownership is enforced by the bridge before it calls
+        this low-level seam. No cancellation has begun on this path; existing
+        handles keep running and future reservations become legal again.
+        """
+
+        with self._lock:
+            self._fenced = False
 
     def attach_run(self, handle_id: str, run_id: str) -> None:
         """Attach a run ID to an existing handle.

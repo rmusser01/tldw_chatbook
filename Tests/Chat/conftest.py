@@ -13,8 +13,10 @@ import pytest
 
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 
-from Tests.console_provider_doubles import provider_resolution
-from Tests.console_provider_doubles import persisted_console_store
+from Tests.console_provider_doubles import (
+    persisted_console_store,
+    provider_resolution,
+)
 
 
 class StreamingGateway:

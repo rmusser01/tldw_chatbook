@@ -2251,6 +2251,27 @@ class TTSService:
             admission_authorizer=admission_authorizer,
         )
 
+    async def synthesize_hands_free(
+        self,
+        *,
+        text: str,
+        explicit: TTSSelectionOverrides | None = None,
+        character_profile: TTSCharacterProfileSelection | None = None,
+        default_profile: TTSDefaultProfileSelection | None = None,
+        progress_sink: ProgressSink | None = None,
+        admission_authorizer: TTSAdmissionAuthorizer | None = None,
+    ) -> TTSAudioResponse:
+        """Synthesize app-owned PCM or declared WAV for hands-free playback."""
+
+        return await self._request_admission.synthesize_hands_free(
+            text=text,
+            explicit=explicit,
+            character_profile=character_profile,
+            default_profile=default_profile,
+            progress_sink=progress_sink,
+            admission_authorizer=admission_authorizer,
+        )
+
     async def synthesize_effective(
         self,
         *,

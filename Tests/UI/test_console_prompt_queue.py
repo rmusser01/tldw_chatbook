@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -14,12 +15,18 @@ from textual.widgets import TextArea
 
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 
+from tldw_chatbook.Chat.attachment_core import PendingAttachment
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_chat_models import ConsoleControllerActivity
 from tldw_chatbook.Chat.console_prompt_queue import (
     ConsolePromptQueueRegistry,
     MAX_CONSOLE_QUEUE_ENTRIES,
     PromptQueuePauseReason,
     QueueMutationStatus,
+)
+from tldw_chatbook.Chat.console_runtime import (
+    ConsoleRuntime,
+    ConsoleTurnRecoveryEntry,
 )
 from tldw_chatbook.UI.Console_Modules.prompt_queue import (
     ConsolePromptDispatchStatus,
@@ -159,6 +166,20 @@ class _RegionApp(ConsolidatedCSSApp):
         yield ConsolePromptQueueRegion(id="queue")
 
 
+class _RecoveryRegionApp(ConsolidatedCSSApp):
+    def __init__(self, actions: list[tuple[str, int, str]]) -> None:
+        super().__init__()
+        self.actions = actions
+
+    def compose(self) -> ComposeResult:
+        yield ConsolePromptQueueRegion(
+            id="queue",
+            on_primary_requested=lambda session_id, revision, action: (
+                self.actions.append((session_id, revision, action))
+            ),
+        )
+
+
 @pytest.mark.asyncio
 async def test_region_is_revision_guarded_and_hides_preview_when_collapsed() -> None:
     registry = _registry_with_chain()
@@ -189,6 +210,30 @@ async def test_region_is_revision_guarded_and_hides_preview_when_collapsed() -> 
         )
         region.sync_presentation("session-a", collapsed)
         assert not region.has_class("-visible")
+
+
+@pytest.mark.asyncio
+async def test_recovery_shelf_buttons_pin_the_displayed_turn_id() -> None:
+    registry = ConsolePromptQueueRegistry()
+    presentation = derive_prompt_queue_presentation(
+        registry.snapshot("session-a"),
+        _activity(),
+        turn_recovery_id="turn-a",
+    )
+    actions: list[tuple[str, int, str]] = []
+    app = _RecoveryRegionApp(actions)
+
+    async with app.run_test(size=(100, 24)) as pilot:
+        region = app.query_one("#queue", ConsolePromptQueueRegion)
+        region.sync_presentation("session-a", presentation)
+        await pilot.pause()
+        await pilot.click("#console-prompt-queue-manage")
+        await pilot.click("#console-prompt-queue-pause")
+
+    assert actions == [
+        ("session-a", 0, "turn-recovery:restore:turn-a"),
+        ("session-a", 0, "turn-recovery:discard:turn-a"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -245,17 +290,7 @@ async def test_mounted_shelf_and_neighboring_composer_fit_terminal(size) -> None
 
 
 @pytest.mark.asyncio
-async def test_confirm_navigation_is_a_pure_allow_with_manager_open() -> None:
-    """TASK-31520 rewrite: the lifecycle dialog is retired with the loss.
-
-    Pre-reuse, a busy/paused queue raised a Stay/Leave dialog from
-    ``confirm_navigation`` because leaving destroyed the screen. The chat
-    route is reusable now -- the queue registry, the paused chain, and the
-    session all survive navigation -- so the gate answers True. What still
-    matters: the CALL must be a pure gate with no side effects -- it must
-    not dismiss the open manager, discard the unsaved edit, or move focus
-    (the real navigation seam owns overlay dismissal separately).
-    """
+async def test_navigation_confirmation_is_pure_and_preserves_manager_edit() -> None:
     _app, host = _ready_host()
     async with host.run_test(size=(100, 30)) as pilot:
         console = await _mounted_console(host, pilot)
@@ -290,13 +325,10 @@ async def test_confirm_navigation_is_a_pure_allow_with_manager_open() -> None:
         edit.text = "unsaved manager edit"
         edit.focus()
 
-        assert await console.confirm_navigation() is True, (
-            "nothing is lost by navigating under reuse; the gate must allow"
-        )
+        assert await console.confirm_navigation() is True
         await pilot.pause()
-        assert isinstance(host.screen_stack[-1], ConsolePromptQueueModal), (
-            "the gate must not dismiss the open manager"
-        )
+
+        assert isinstance(host.screen_stack[-1], ConsolePromptQueueModal)
         assert edit.text == "unsaved manager edit"
         assert edit.has_focus
 
@@ -343,6 +375,9 @@ class _FakeChatController:
             active_session_id="session-a",
             conversation_context_epoch=lambda _session_id: 8,
         )
+        self.prompt_queue_coordinator = SimpleNamespace(
+            dispatch_recovery_blocks_queue=lambda _session_id: False
+        )
         self._accepted = accepted
         self._preparing = preparing
 
@@ -355,7 +390,9 @@ class _FakeChatController:
             count=snapshot.total_count,
         )
 
-    def queue_prompt(self, session_id: str, *, text: str, expected_revision: int):
+    def queue_prompt(
+        self, session_id: str, *, text: str, expected_revision: int, configuration=None
+    ):
         return self.prompt_queue_registry.admit(
             session_id, text=text, expected_revision=expected_revision
         )
@@ -367,6 +404,7 @@ class _FakeChatController:
         entry_id: str,
         text: str,
         expected_revision: int,
+        configuration=None,
     ):
         return self.prompt_queue_registry.edit(
             session_id,
@@ -384,6 +422,10 @@ def _ui_controller(
     calls: dict[str, Any],
     *,
     edit_refusal=lambda _text: "",
+    turn_recovery_ids=None,
+    restore_turn_recovery=None,
+    discard_turn_recovery=None,
+    load_recovered_turn=None,
 ) -> ConsolePromptQueueUIController:
     async def append_system(text: str) -> None:
         calls["system"].append(text)
@@ -391,25 +433,35 @@ def _ui_controller(
     async def sync_ui() -> None:
         calls["sync"].append(True)
 
+    kwargs = {}
+    kwargs.update(
+        turn_recovery_ids=turn_recovery_ids or (lambda _session_id: ()),
+        restore_turn_recovery=restore_turn_recovery or (lambda _turn_id: None),
+        discard_turn_recovery=discard_turn_recovery or (lambda _turn_id: False),
+        load_recovered_turn=load_recovered_turn or (lambda _session_id: None),
+    )
     return ConsolePromptQueueUIController(
         chat_controller_accessor=lambda: fake,
+        capture_configuration=lambda _: None,
         ensure_active_session=lambda: None,
         blocked_reason_accessor=lambda: "",
         setup_blocked_reason_accessor=lambda: "",
-        restore_stash=lambda stash: calls["restored"].append(stash),
         append_system_message=append_system,
         notify=lambda text, severity: calls["notified"].append((text, severity)),
         focus_composer=lambda: calls["focused"].append(True),
-        inflight_stashes_accessor=lambda: calls["inflight"],
         note_follow_intent=lambda: calls["follow"].append(True),
-        launch_chain=lambda draft, session_id: calls["staged"].append(
-            (draft, session_id)
+        launch_chain=lambda draft, session_id: (
+            calls["staged"].append((draft, session_id)) or "turn-a"
+        ),
+        commit_captured_draft=lambda session_id, stash: calls["committed"].append(
+            (session_id, stash)
         ),
         commit_queued_draft=lambda session_id, stash: calls["queued"].append(
             (session_id, stash)
         ),
         edit_refusal=edit_refusal,
         sync_ui=sync_ui,
+        **kwargs,
     )
 
 
@@ -417,14 +469,224 @@ def _calls() -> dict[str, Any]:
     return {
         "system": [],
         "sync": [],
-        "restored": [],
         "notified": [],
         "focused": [],
         "staged": [],
         "queued": [],
+        "committed": [],
         "inflight": {},
         "follow": [],
     }
+
+
+def _runtime_with_two_recoveries():
+    store = ConsoleChatStore()
+    store.create_session(
+        session_id="session-a", title="Recovery", workspace_id="global"
+    )
+    first_attachment = PendingAttachment(
+        "/private/first-secret.png",
+        "first-secret.png",
+        "image",
+        "attachment",
+        data=b"first-secret-bytes",
+    )
+    second_attachment = PendingAttachment(
+        "/private/second-secret.png",
+        "second-secret.png",
+        "image",
+        "attachment",
+        data=b"second-secret-bytes",
+    )
+    runtime = ConsoleRuntime(SimpleNamespace())
+    runtime.set_chat_store(store)
+    entries = (
+        ConsoleTurnRecoveryEntry(
+            turn_id="turn-a",
+            session_id="session-a",
+            draft="first secret draft",
+            attachments=(first_attachment,),
+            insertion_order=1,
+        ),
+        ConsoleTurnRecoveryEntry(
+            turn_id="turn-b",
+            session_id="session-a",
+            draft="second secret draft",
+            attachments=(second_attachment,),
+            insertion_order=2,
+        ),
+    )
+    runtime._turn_recoveries.update((entry.turn_id, entry) for entry in entries)
+    runtime._recovery_turns_by_session["session-a"] = [
+        entry.turn_id for entry in entries
+    ]
+    return runtime, store, entries
+
+
+def _recovery_ui_controller(runtime, fake, calls, loaded):
+    return _ui_controller(
+        fake,
+        calls,
+        turn_recovery_ids=lambda session_id: tuple(
+            entry.turn_id for entry in runtime.recoveries_for_session(session_id)
+        ),
+        restore_turn_recovery=runtime.restore_turn_recovery,
+        discard_turn_recovery=runtime.discard_turn_recovery,
+        load_recovered_turn=lambda session_id: loaded.append(session_id),
+    )
+
+
+def test_fresh_controller_projects_oldest_recovery_without_secret_body() -> None:
+    runtime, store, _entries = _runtime_with_two_recoveries()
+    fake = _FakeChatController(accepted=False)
+    fake.store = store
+    calls = _calls()
+
+    fresh = _recovery_ui_controller(runtime, fake, calls, [])
+    presentation = fresh.presentation_for("session-a")
+    rendered = repr(presentation)
+
+    assert presentation.count == 0
+    assert presentation.shelf_visible
+    assert presentation.state_label == "Unsent turn needs attention"
+    assert presentation.primary_action == "turn-recovery"
+    assert presentation.turn_recovery_id == "turn-a"
+    for secret in (
+        "turn-a",
+        "first secret draft",
+        "first-secret.png",
+        "/private/first-secret.png",
+        "first-secret-bytes",
+    ):
+        assert secret not in rendered
+
+
+@pytest.mark.asyncio
+async def test_restore_restages_exact_attachments_then_reveals_next_recovery() -> None:
+    runtime, store, entries = _runtime_with_two_recoveries()
+    suffix = PendingAttachment(
+        "/later.png", "later.png", "image", "attachment", data=b"later"
+    )
+    store.add_pending_attachment("session-a", suffix)
+    fake = _FakeChatController(accepted=False)
+    fake.store = store
+    calls = _calls()
+    loaded: list[str] = []
+    controller = _recovery_ui_controller(runtime, fake, calls, loaded)
+
+    await controller.handle_primary_intent(
+        "session-a",
+        action="turn-recovery:restore:turn-a",
+        expected_revision=0,
+    )
+
+    assert store.session_draft("session-a") == "first secret draft"
+    assert store.pending_attachments("session-a") == [
+        entries[0].attachments[0],
+        suffix,
+    ]
+    assert store.pending_attachments("session-a")[0] is entries[0].attachments[0]
+    assert loaded == ["session-a"]
+    assert calls["focused"] == [True]
+    assert controller.presentation_for("session-a").turn_recovery_id == "turn-b"
+
+
+@pytest.mark.asyncio
+async def test_discard_releases_exact_oldest_and_reveals_next_recovery() -> None:
+    runtime, store, _entries = _runtime_with_two_recoveries()
+    fake = _FakeChatController(accepted=False)
+    fake.store = store
+    calls = _calls()
+    controller = _recovery_ui_controller(runtime, fake, calls, [])
+
+    await controller.handle_primary_intent(
+        "session-a",
+        action="turn-recovery:discard:turn-a",
+        expected_revision=0,
+    )
+
+    assert [entry.turn_id for entry in runtime.recoveries_for_session("session-a")] == [
+        "turn-b"
+    ]
+    assert controller.presentation_for("session-a").turn_recovery_id == "turn-b"
+    assert store.session_draft("session-a") == ""
+
+
+@pytest.mark.asyncio
+async def test_stale_recovery_action_is_a_warning_and_does_not_touch_next() -> None:
+    runtime, store, entries = _runtime_with_two_recoveries()
+    fake = _FakeChatController(accepted=False)
+    fake.store = store
+    calls = _calls()
+    controller = _recovery_ui_controller(runtime, fake, calls, [])
+    assert runtime.discard_turn_recovery("turn-a")
+
+    await controller.handle_primary_intent(
+        "session-a",
+        action="turn-recovery:restore:turn-a",
+        expected_revision=0,
+    )
+
+    assert runtime.recoveries_for_session("session-a") == (entries[1],)
+    assert store.session_draft("session-a") == ""
+    assert store.pending_attachments("session-a") == []
+    assert calls["notified"] == [
+        ("That unsent turn is no longer available.", "warning")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_restore_warns_without_changing_recovery_or_store() -> None:
+    runtime, store, entries = _runtime_with_two_recoveries()
+    existing = PendingAttachment(
+        "/existing.png",
+        "existing.png",
+        "image",
+        "attachment",
+        data=b"existing",
+    )
+    store.set_session_draft("session-a", "new live draft")
+    store.add_pending_attachment("session-a", existing)
+    fake = _FakeChatController(accepted=False)
+    fake.store = store
+    calls = _calls()
+    controller = _recovery_ui_controller(runtime, fake, calls, [])
+
+    await controller.handle_primary_intent(
+        "session-a",
+        action="turn-recovery:restore:turn-a",
+        expected_revision=0,
+    )
+
+    assert runtime.recoveries_for_session("session-a") == entries
+    assert store.session_draft("session-a") == "new live draft"
+    assert store.pending_attachments("session-a") == [existing]
+    assert calls["focused"] == []
+    assert calls["notified"] == [
+        ("That unsent turn could not be restored safely.", "warning")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_restore_for_closed_session_warns_and_keeps_exact_recovery() -> None:
+    runtime, store, entries = _runtime_with_two_recoveries()
+    store.close_session("session-a")
+    fake = _FakeChatController(accepted=False)
+    fake.store = store
+    calls = _calls()
+    controller = _recovery_ui_controller(runtime, fake, calls, [])
+
+    await controller.handle_primary_intent(
+        "session-a",
+        action="turn-recovery:restore:turn-a",
+        expected_revision=0,
+    )
+
+    assert runtime.recoveries_for_session("session-a") == entries
+    assert calls["focused"] == []
+    assert calls["notified"] == [
+        ("That unsent turn could not be restored safely.", "warning")
+    ]
 
 
 @pytest.mark.asyncio
@@ -447,6 +709,179 @@ async def test_dispatch_admits_exact_text_behind_accepted_turn() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("admission", ("busy", "race", "edit"))
+async def test_wired_queue_admission_freezes_view_source_filter(
+    monkeypatch, admission
+) -> None:
+    from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
+    from Tests.Chat.test_console_turn_execution_context import _authority, _destination
+    from Tests.Chat.test_console_turn_preparation import _preparation_values
+    from tldw_chatbook.Chat.console_library_policy import ConsoleAutoRetrieve
+    from tldw_chatbook.Chat.console_turn_preparation import (
+        ConsoleTurnPreparation,
+        ConsoleTurnPreparationState,
+    )
+
+    _app, host = _ready_host()
+    async with host.run_test(size=(100, 30)) as pilot:
+        console = await _mounted_console(host, pilot)
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        session_id = store.active_session_id
+        selected = ["notes"]
+        monkeypatch.setattr(
+            console._session, "_rag_source_types_accessor", lambda: tuple(selected)
+        )
+        snapshot = controller.prompt_queue_registry.snapshot(session_id)
+        armed = controller.prompt_queue_registry.begin_chain(
+            session_id,
+            context_epoch=store.conversation_context_epoch(session_id),
+            expected_revision=snapshot.revision,
+        )
+        assert armed.applied
+        activity_calls = 0
+
+        def activity(owner):
+            nonlocal activity_calls
+            activity_calls += 1
+            return _activity(owner, accepted=admission != "race" or activity_calls > 1)
+
+        monkeypatch.setattr(controller, "activity_for", activity)
+        if admission == "race":
+            # The initial UI activity snapshot is stale while admission becomes
+            # accepted between that snapshot and the exact launch boundary.
+            monkeypatch.setattr(controller, "send_refusal_copy", lambda _: "")
+        # Use the production wiring and builder, not an injected capture double.
+        if admission == "edit":
+            queued = controller.queue_prompt(
+                session_id, text="original", expected_revision=armed.snapshot.revision
+            )
+            outcome = console._prompt_queue.edit_waiting(
+                session_id,
+                queued.snapshot.entries[0].entry_id,
+                text="edited",
+                expected_revision=queued.snapshot.revision,
+            )
+            assert outcome.applied
+        else:
+            outcome = await console._prompt_queue.dispatch(
+                "queued", session_id=session_id
+            )
+            assert outcome.status is ConsolePromptDispatchStatus.QUEUED
+        request = (
+            controller.prompt_queue_registry._states[session_id]
+            .waiting[0]
+            .custody_request
+        )
+        assert request.configuration.rag_defaults["source_types"] == ("notes",)
+        selected[:] = ["media", "conversations"]
+        runtime = console._console_runtime()
+        assert runtime.detach_view(console, runtime._attached_generation)
+        assert runtime.view is None
+        authority = _authority()
+        authority = replace(
+            authority,
+            policy=replace(
+                authority.policy, auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC
+            ),
+        )
+        context = ConsoleTurnExecutionContext(
+            request.configuration, authority, _destination()
+        )
+        assert controller._frozen_rag_source_types(context) == ("notes",)
+        values = _preparation_values(session_id=session_id, execution_context=context)
+        values.update(
+            executed_draft=request.draft,
+            transient_user_message_id=None,
+            attachment_ids=(),
+            evidence_ids=(),
+            prefill_id=None,
+        )
+        preparation = ConsoleTurnPreparation(**values)
+        assert store.begin_preparation(preparation) is preparation
+        requests = []
+
+        async def search(query, source_types, mode, **kwargs):
+            requests.append((query, source_types, mode, kwargs))
+            return {"results": []}
+
+        monkeypatch.setattr(
+            controller.app, "library_rag_search_service", SimpleNamespace(search=search)
+        )
+        result = await controller.prepare_library_for_turn(preparation.preparation_id)
+        assert result.state is ConsoleTurnPreparationState.READY
+        assert requests[0][0] == request.draft
+        assert requests[0][1] == ("notes",)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("admission", ("busy", "race", "edit"))
+async def test_wired_queue_rejects_wrong_owner_before_draft_or_queue_mutation(
+    monkeypatch, admission
+) -> None:
+    _app, host = _ready_host()
+    async with host.run_test(size=(100, 30)) as pilot:
+        console = await _mounted_console(host, pilot)
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        session_id = store.active_session_id
+        other = store.create_session(ephemeral=True)
+        wrong = controller.resolve_runtime_turn_configuration_snapshot(other.id)
+        store.switch_session(session_id)
+        monkeypatch.setattr(
+            console._session, "_build_console_turn_execution_context", lambda _: wrong
+        )
+        snapshot = controller.prompt_queue_registry.snapshot(session_id)
+        armed = controller.prompt_queue_registry.begin_chain(
+            session_id,
+            context_epoch=store.conversation_context_epoch(session_id),
+            expected_revision=snapshot.revision,
+        )
+        activity_calls = 0
+
+        def activity(owner):
+            nonlocal activity_calls
+            activity_calls += 1
+            return _activity(owner, accepted=admission != "race" or activity_calls > 1)
+
+        monkeypatch.setattr(controller, "activity_for", activity)
+        if admission == "race":
+            monkeypatch.setattr(controller, "send_refusal_copy", lambda _: "")
+        if admission == "edit":
+            queued = controller.queue_prompt(
+                session_id, text="original", expected_revision=armed.snapshot.revision
+            )
+        before = controller.prompt_queue_registry.snapshot(session_id)
+        committed = []
+        monkeypatch.setattr(
+            console._prompt_queue,
+            "_commit_queued_draft",
+            lambda *args: committed.append(args),
+        )
+        monkeypatch.setattr(
+            console._prompt_queue,
+            "_commit_captured_draft",
+            lambda *args: committed.append(args),
+        )
+        if admission == "edit":
+            result = console._prompt_queue.edit_waiting(
+                session_id,
+                queued.snapshot.entries[0].entry_id,
+                text="replacement",
+                expected_revision=before.revision,
+            )
+            assert result.status is QueueMutationStatus.INVALID
+        else:
+            result = await console._prompt_queue.dispatch(
+                "keep draft", session_id=session_id
+            )
+            assert result.status is ConsolePromptDispatchStatus.REFUSED
+        assert "different session" in result.detail
+        assert controller.prompt_queue_registry.snapshot(session_id) == before
+        assert committed == []
+
+
+@pytest.mark.asyncio
 async def test_dispatch_stages_one_manual_chain_when_queue_does_not_own_work() -> None:
     fake = _FakeChatController(accepted=False)
     calls = _calls()
@@ -456,11 +891,68 @@ async def test_dispatch_stages_one_manual_chain_when_queue_does_not_own_work() -
 
     assert outcome.status is ConsolePromptDispatchStatus.SENT
     assert calls["staged"] == [("send now", "session-a")]
+    assert calls["committed"] == [("session-a", None)]
     assert fake.prompt_queue_registry.snapshot("session-a").total_count == 0
 
 
 @pytest.mark.asyncio
-async def test_dispatch_restores_exact_stash_when_queue_is_full() -> None:
+async def test_runtime_custody_succeeds_before_composer_revision_is_committed() -> None:
+    fake = _FakeChatController(accepted=False)
+    calls = _calls()
+    stash = object()
+    events: list[str] = []
+
+    controller = _ui_controller(fake, calls)
+    controller._launch_chain = lambda draft, session_id: (
+        events.append("custody") or "turn-a"
+    )
+    controller._commit_captured_draft = lambda session_id, captured: events.append(
+        f"composer-commit:{session_id}"
+    )
+
+    outcome = await controller.dispatch("send now", stash=stash)
+
+    assert outcome.status is ConsolePromptDispatchStatus.SENT
+    assert events == ["custody", "composer-commit:session-a"]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_uses_explicit_owning_session_instead_of_active_session() -> None:
+    fake = _FakeChatController(accepted=False)
+    calls = _calls()
+    controller = _ui_controller(fake, calls)
+
+    outcome = await controller.dispatch(
+        "belongs to b", session_id="session-b", stash=None
+    )
+
+    assert outcome.status is ConsolePromptDispatchStatus.SENT
+    assert calls["staged"] == [("belongs to b", "session-b")]
+    assert calls["committed"] == [("session-b", None)]
+
+
+@pytest.mark.asyncio
+async def test_synchronous_custody_refusal_leaves_composer_revision_untouched() -> None:
+    fake = _FakeChatController(accepted=False)
+    calls = _calls()
+    stash = object()
+    staged_attachments = [object()]
+    controller = _ui_controller(fake, calls)
+
+    def refuse(_draft: str, _session_id: str) -> str:
+        raise RuntimeError("custody refused")
+
+    controller._launch_chain = refuse
+
+    outcome = await controller.dispatch("keep me", stash=stash)
+
+    assert outcome.status is ConsolePromptDispatchStatus.REFUSED
+    assert calls["committed"] == []
+    assert staged_attachments == staged_attachments
+
+
+@pytest.mark.asyncio
+async def test_dispatch_keeps_captured_stash_when_queue_is_full() -> None:
     fake = _FakeChatController(accepted=True)
     snapshot = fake.prompt_queue_registry.snapshot("session-a")
     for index in range(MAX_CONSOLE_QUEUE_ENTRIES):
@@ -476,14 +968,13 @@ async def test_dispatch_restores_exact_stash_when_queue_is_full() -> None:
     outcome = await controller.dispatch("must survive", stash=stash)
 
     assert outcome.status is ConsolePromptDispatchStatus.REFUSED
-    assert calls["restored"] == [stash]
     assert calls["queued"] == []
     assert calls["staged"] == []
     assert outcome.detail == "Queue full (10/10). Manage or remove an item."
 
 
 @pytest.mark.asyncio
-async def test_pre_acceptance_race_restores_stash_instead_of_launching() -> None:
+async def test_pre_acceptance_race_keeps_captured_stash_instead_of_launching() -> None:
     fake = _FakeChatController(accepted=False)
     calls = _calls()
     controller = _ui_controller(fake, calls)
@@ -499,7 +990,6 @@ async def test_pre_acceptance_race_restores_stash_instead_of_launching() -> None
     outcome = await controller.dispatch("race-safe", stash=stash)
 
     assert outcome.status is ConsolePromptDispatchStatus.REFUSED
-    assert calls["restored"] == [stash]
     assert calls["staged"] == []
     assert "Preparing" in outcome.detail
 

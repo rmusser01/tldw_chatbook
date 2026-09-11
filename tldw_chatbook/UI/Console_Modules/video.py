@@ -101,6 +101,27 @@ class ConsoleVideoController:
     def _ensure_console_chat_store(self) -> Any:
         return self._ensure_console_chat_store_fn()
 
+    def _append_durable_video_message(
+        self,
+        store: Any,
+        session_id: str,
+        **kwargs: Any,
+    ) -> Any:
+        """Persist one terminal video and then refresh app-owned attention."""
+        message = store.append_video_message(session_id, persist=True, **kwargs)
+        app_instance = getattr(self, "app_instance", None)
+        runtime = getattr(app_instance, "console_runtime", None)
+        recompute = getattr(runtime, "recompute_console_attention", None)
+        if callable(recompute):
+            try:
+                recompute()
+            except Exception as exc:  # noqa: BLE001 -- durable media already committed
+                logger.debug(
+                    "Console video attention refresh failed (exception_type={})",
+                    type(exc).__name__,
+                )
+        return message
+
     async def _wait_for_console_screen_result(self, screen: Any) -> Any:
         result = self._wait_for_console_screen_result_fn(screen)
         return await result if inspect.isawaitable(result) else result
@@ -972,10 +993,11 @@ class ConsoleVideoController:
                         if resolved_path is not None and Path(resolved_path) == Path(
                             managed_path
                         ):
-                            chat_store.append_video_message(
+                            ConsoleVideoController._append_durable_video_message(
+                                self,
+                                chat_store,
                                 session_id,
                                 video_metadata=artifact.metadata,
-                                persist=True,
                                 message_id=artifact.message_id,
                             )
                             return Path(managed_path)
@@ -1067,10 +1089,11 @@ class ConsoleVideoController:
     ) -> None:
         """Persist one already-published normal video without touching the UI."""
         metadata, _managed_path = outcome
-        self._ensure_console_chat_store().append_video_message(
+        ConsoleVideoController._append_durable_video_message(
+            self,
+            self._ensure_console_chat_store(),
             session_id,
             video_metadata=metadata,
-            persist=True,
             message_id=message_id,
         )
 

@@ -1017,6 +1017,9 @@ class BuiltinToolProvider:
         self,
         gate: Any | None = None,
         workspace_id: str | None = None,
+        workspace_read_binding_ids: tuple[str, ...] | None = None,
+        workspace_write_binding_ids: tuple[str, ...] | None = None,
+        workspace_binding_authority: tuple[Any, ...] | None = None,
         ephemeral: bool = False,
         diff_sink: Callable[[tuple[str, str, str, str]], None] | None = None,
         instruction_root: Path | None = None,
@@ -1032,6 +1035,9 @@ class BuiltinToolProvider:
         # in `builtin_tool_gate.builtin_permission_rows`) leaves
         # `allowed_file_roots` to fall back to the active workspace.
         self._workspace_id = workspace_id
+        self._workspace_read_binding_ids = workspace_read_binding_ids
+        self._workspace_write_binding_ids = workspace_write_binding_ids
+        self._workspace_binding_authority = workspace_binding_authority
         self._sandbox_root = (
             Path(sandbox_root).resolve() if sandbox_root is not None else None
         )
@@ -1191,7 +1197,12 @@ class BuiltinToolProvider:
         from tldw_chatbook.Tools.workspace_file_roots import run_workspace
         from tldw_chatbook.Utils.path_validation import validate_path_multi
 
-        with self._file_authority(), run_workspace(self._workspace_id):
+        with self._file_authority(), run_workspace(
+            self._workspace_id,
+            read_binding_ids=self._workspace_read_binding_ids,
+            write_binding_ids=self._workspace_write_binding_ids,
+            binding_authority=self._workspace_binding_authority,
+        ):
             roots = allowed_file_roots(write=write, sandbox_root=_tool_sandbox_root())
             path = validate_path_multi(value, roots)
             try:
@@ -1295,7 +1306,12 @@ class BuiltinToolProvider:
             # concurrent run's. `self._workspace_id=None` keeps the
             # ContextVar at `None`, which is `allowed_file_roots`' own
             # documented fallback to the active workspace.
-            with authority, run_workspace(self._workspace_id):
+            with authority, run_workspace(
+                self._workspace_id,
+                read_binding_ids=self._workspace_read_binding_ids,
+                write_binding_ids=self._workspace_write_binding_ids,
+                binding_authority=self._workspace_binding_authority,
+            ):
                 raw = asyncio.run(tool.execute(**args))
         except Exception as exc:  # noqa: BLE001 — captured, never escapes
             return ToolResult(

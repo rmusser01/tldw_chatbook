@@ -3,7 +3,7 @@
 PR 3a-2 Task 7's live pass proved the wake DELIVERY layer correct and
 durable while the UI around a wake turn froze: the 0.2s transcript poll
 is armed only by the user-driven send worker
-(``_submit_console_native_draft``), and a wake turn enters through
+(runtime custody), and a wake turn enters through
 ``ConsoleFleetWakeCoordinator._deliver`` -> ``controller.submit_draft``
 -- so nothing ever repainted the wake turn's streaming reply, its
 terminal tab glyph, or the composer state. Observed live (Task 7,

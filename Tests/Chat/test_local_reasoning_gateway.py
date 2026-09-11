@@ -10,12 +10,62 @@ import httpx
 import pytest
 
 from tldw_chatbook.Chat.console_provider_gateway import (
+    ConsoleProviderCallPurpose,
     ConsoleProviderGateway,
     ConsoleProviderResolution,
+    ConsoleProviderStreamSignals,
     ProviderThinkingDelta,
     ProviderToolCalls,
 )
 from tldw_chatbook.Chat.local_reasoning import resolve_reasoning_policy
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("oversized", [False, True])
+async def test_provisional_structured_reasoning_is_bounded_and_never_spoken(oversized):
+    from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
+
+    thought = "x" * 262145 if oversized else "Private calculation"
+    answer = "visible " * 800
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **kwargs: {
+            "choices": [{"message": {"reasoning_content": thought, "content": answer}}]
+        }
+    )
+    resolution = ConsoleProviderResolution(
+        provider="local_vllm",
+        execution_key="local_vllm",
+        model="fixture",
+        ready=True,
+        base_url="http://localhost:9099",
+        streaming=False,
+        thinking_stream_disposition="displayable",
+        thinking_round_trip_version=1,
+    )
+    output = []
+
+    async def consume():
+        async for item in gateway.stream_chat(
+            resolution,
+            [{"role": "user", "content": "test"}],
+            signals=ConsoleProviderStreamSignals(exchange_capture_enabled=False),
+            dispatch_purpose=ConsoleProviderCallPurpose.VOICE_PROVISIONAL,
+        ):
+            output.append(item)
+
+    if oversized:
+        with pytest.raises(ChatProviderError):
+            await consume()
+        assert not output
+    else:
+        await consume()
+        visible = [item for item in output if isinstance(item, str)]
+        assert "".join(visible) == answer
+        assert len(visible) > 1
+        assert max(len(item.encode("utf-8")) for item in visible) <= 4096
+        assert [
+            item.text for item in output if isinstance(item, ProviderThinkingDelta)
+        ] == [thought]
 
 
 @pytest.mark.asyncio

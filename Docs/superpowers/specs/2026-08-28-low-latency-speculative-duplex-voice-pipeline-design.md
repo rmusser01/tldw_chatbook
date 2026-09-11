@@ -202,8 +202,54 @@ then processed through AEC3. Post-AEC frames alone reach residual-echo health, V
 STT. The design uses a narrow native interface rather than exposing WebRTC types to the
 Python application.
 
+The native package vendors a verified compile closure from WebRTC commit
+`109e23c9cec3a44e67c08774874a409741b1e58a`. Its broad allowlisted roots remain
+`api/audio`, `common_audio`, `modules/audio_processing`, `rtc_base`,
+`system_wrappers`, and the required `third_party/abseil-cpp` dependency, with
+`api/array_view.h` plus these exact source-required exceptions:
+
+- `api/ref_counted_base.h`
+- `api/rtp_headers.h`
+- `api/rtp_packet_info.h`
+- `api/rtp_packet_infos.h`
+- `api/scoped_refptr.h`
+- `api/units/time_delta.h`
+- `api/units/timestamp.h`
+- `api/video/color_space.h`
+- `api/video/hdr_metadata.h`
+- `api/video/video_content_type.h`
+- `api/video/video_frame_marking.h`
+- `api/video/video_rotation.h`
+- `api/video/video_timing.h`
+- `common_types.h`
+
+The allowlist must not be broadened to all of `api`. These exceptions are the minimal
+recursive include closure required by `AudioBuffer` through `AudioFrame`; after adding
+the exact support implementations required at native link time, the verified source and
+link closure contains 322 files and introduces no additional external dependency.
+This includes the exact pinned `system_wrappers/source/cpu_features.cc` implementation
+omitted from the earlier 315-file closure; it is selected individually, without the
+rest of its owning `//system_wrappers:system_wrappers` target.
+The subsequent six-file support repair preserves all 316 prior pristine entries:
+the x86 Sinc SSE implementation, Abseil optional-access and raw-logging implementations,
+and their three required headers. These sources are selected individually; ARM64
+excludes the x86-only Sinc source, and both upstream exception branches are preserved.
+Abseil is copied from WebRTC's exact Chromium `src/third_party` DEPS pin
+`ac875ae5393d0516243cfd5d078cd4b098388f6b`. Both upstream revisions are recorded in
+package provenance. The imported source initially has no patches. Integration testing
+requires a narrowly declared first patch that carries AEC3's existing per-instance delay
+estimate availability, coarse/refined quality, freshness, and clock-drift evidence
+through the public metrics seam. A second patch adds `<stddef.h>` directly to the
+clock-drift header for its global `size_t`. A third adds `<memory>` directly to the
+reverb-model header for its `std::unique_ptr`. All three patches and their SHA-256 hashes are
+checked in, applied by the deterministic vendoring recipe, and covered by the source
+manifest; the 322-file pristine closure and pinned
+upstream commit and tree remain the provenance root.
+
 AEC health states are `warming`, `healthy`, and `degraded`. Health uses residual echo,
-delay confidence, underruns/overruns, discontinuities, and bounded hysteresis. On first
+categorical refined/fresh delay evidence, clock drift, underruns/overruns,
+discontinuities, and bounded hysteresis. It does not invent a probabilistic confidence
+when the upstream API exposes a categorical estimate. On first
 playback or after a device reset, the admission gate remains closed while AEC converges.
 When health becomes stable it opens. A degraded transition closes admission immediately
 but keeps hardware capture flowing through AEC so recovery remains possible. Manual or
@@ -365,43 +411,163 @@ discards them without a terminal receipt. This matches the existing rule that au
 resources do not survive screen navigation and the user's requirement that cancelled
 attempts leave no conversation artifacts.
 
-For a no-tool winning attempt, the exact transcript snapshot and assistant response are
-promoted through the existing durable-turn terminalization contract. One ChaChaNotes
-transaction writes the user/assistant pair, mints ADR-094's stable terminal receipt,
-and writes the exact `console_unseen:<receipt-id>` local mark. Promotion registers an
-already-complete accepted voice turn and terminalizes it atomically; it does not create
-a second runtime task for provider work that already ended. A mounted view clears only
-that exact receipt after synchronizing the committed pair. If navigation wins the race,
-the mark survives for the next view. A mounted view may project provisional rows before
-promotion, but ordinary history observes only the committed pair. Failure preserves the
-user transcript as an editable voice draft rather than persisting a partial pair or
-receipt.
+For a no-tool winning attempt, the exact transcript snapshot and assistant response
+enter a dedicated completed-pair promotion path. After the render/capture/transcript
+seal succeeds, the coordinator enters `PROMOTING` and presents an immutable
+`VoicePromotionContext` to an app-lifetime promotion owner. The context freezes an
+opaque random promotion ID, attempt identity, a `ConsoleSessionBindingOrigin`
+(session ID, session incarnation, persisted conversation ID, and binding revision),
+expected native active leaf and, when one exists, its persisted identity, exact
+transcript and assistant text, content-free usage, terminal boundary, and the
+capture-eligibility decision made at provider dispatch.
+
+`VoicePromotionOwner` is rooted in `ConsoleRuntime`, not a mounted view. Its synchronous
+`try_claim` first asks `ConsoleChatStore` to acquire a per-session
+`ConsoleVoicePromotionLease`. Under the store's promotion lock, that lease validates
+the frozen binding origin and both active-leaf identities, then fences every store path
+that could append a typed turn, select a branch, rebind the session, save/promote it, or
+delete it until the result is published. A same-incarnation first persistence from
+`None` to one conversation ID remains eligible because the existing first-persistence
+path preserves the binding revision; the lease records that one authorized successor.
+It then returns a `ResolvedVoicePromotionDestination` containing either the still-
+temporary store identity or the exact durable conversation and currently resolved
+persisted identity of the unchanged native leaf. An unrelated rebind or session
+incarnation is never eligible.
+
+A serialized cancel, hands-free exit, session close, or navigation event that arrives
+before the lease-backed claim wins discards the provisional turn. Once the claim wins,
+view teardown cannot cancel it; the runtime owner finishes it and leaves the exact
+unseen mark for the next view. The claim is the view-ownership/acceptance linearization
+point, while durable history publication still occurs only at transaction commit.
+`ConsoleRuntime` injects this one owner into every view coordinator. Session close waits
+for that session's claimed promotion before deletion. If the wait times out or the
+promotion enters recovery, close is vetoed and the live session retains the exact pair
+and separate next-turn draft until the user retries or explicitly discards them.
+
+The app's existing pre-quit confirmation first acquires a reversible opaque quit token
+from `ConsoleRuntime`; that token fences new claims but does not yet assert a revision.
+After the guard has boundedly drained to zero claims/recoveries, one locked
+`seal_quiescent(token)` CAS captures the then-current promotion-owner revision and
+returns an immutable `VoicePromotionQuitPermit`. Success carries that exact sealed
+permit into `begin_dispose`, which atomically validates/consumes it before shutdown.
+
+The quit worker owns the token/permit until consumption and uses an idempotent exact-
+token abort in `finally` on every other exit: wait timeout, recovery, later
+`prepare_for_quit` failure, worker cancellation, stale-permit rejection, or any
+exception. Abort cannot release a newer permit. A timeout vetoes that quit attempt,
+keeps the runtime, gateway, store, and persistence owner open, and leaves the
+non-cancelled promotion running; the user may try quit again after it settles. A
+confirmed promotion failure keeps its reachable recovery object until Retry succeeds
+or the user explicitly chooses Discard and Quit. `begin_dispose` fails closed on a
+missing/stale permit or any remaining claim/recovery, so neither a guard-to-dispose race
+nor the ordinary shutdown deadline can close a dependency underneath a promotion.
+Forced OS/process termination remains a crash boundary: volatile recovery may be lost,
+and no content-bearing emergency artifact is written.
+
+Speech timestamped after the terminal render boundary is a new user turn, so it is
+buffered while `PROMOTING` settles rather than cancelling or branching ahead of the
+accepted pair. Dispatch for that buffered turn remains blocked until the promoted
+assistant is the active leaf.
+
+If the resolved destination remains temporary, the store lease publishes the complete
+user/assistant pair and advances the native leaf as one in-memory mutation. It creates
+no terminal receipt, unseen mark, durable usage row, or trace. A later ordinary Save
+persists those message rows with the rest of the temporary session but never invents
+capture for their earlier provider call.
+
+For a durable destination, one ChaChaNotes transaction writes the already-complete
+user/assistant pair, mints ADR-094's stable terminal receipt, writes the exact
+`console_unseen:<receipt-id>` local mark, records content-free usage, and advances the
+durable active leaf. The store lease is the serialized authority for the process-local
+binding and native leaf; the database transaction separately compare-and-swaps the
+resolved expected persisted conversation leaf to catch out-of-band durable mutation. A typed
+turn, branch change, or unrelated rebind that wins before the claim causes promotion
+to fail closed into recovery instead of attaching the pair to the wrong history. After
+the claim those mutations are visibly refused or buffered until the lease settles. A
+temporary-to-saved transition supplies a durable destination only through the exact
+same-incarnation `None`-to-ID successor recorded by the store lease; capture eligibility
+nevertheless remains the temporary decision frozen at dispatch.
+
+User message, assistant message, receipt, unseen mark, and retry identities are derived
+by domain separation from the opaque promotion ID, never from transcript or response
+content. A retry first reconciles those identities, so an exception returned after an
+otherwise successful commit is recognized as success; only a genuinely absent pair
+attempts the active-leaf CAS again. Promotion registers and terminalizes an
+already-complete accepted voice turn atomically and never creates a second provider
+task or an ordinary dispatch checkpoint. A mounted view clears only the exact receipt
+after synchronizing the committed pair. Ordinary history therefore observes either the
+whole pair or none of it.
+
+If persistence fails before commit, the recovery surface retains both the exact user
+transcript and the exact assistant text that may already have been heard. Voice
+speculation is suspended for that lineage until the user retries the same promotion or
+chooses another explicit recovery action. Retry reuses the opaque promotion ID and
+does not call the provider again. A partial pair, receipt, or unseen mark is never
+published. Any post-boundary speech buffered as the next turn is preserved separately
+as an editable `pending next voice turn` draft. It never disappears, dispatches, or
+merges into the failed/retried pair. A successful retry releases that draft only after
+the promoted assistant becomes the active leaf; discard/rebranch recovery requires an
+explicit choice before the draft can move.
 
 Ordinary ADR-097 Capture On reservation cannot run before a provisional provider call
 without persisting cancelled prompt content. The narrow amendment is:
 
-- the provider gateway builds the same sanitized semantic capture envelope in memory;
-- cancelled attempts destroy that envelope;
+- capture eligibility is frozen at provider dispatch; a temporary conversation is
+  ineligible even if it is saved before the response finishes;
+- the provider gateway alone issues a typed, one-use `ProvisionalTraceEnvelope`
+  capability for each eligible provider call. The public envelope is only an opaque
+  handle; the gateway registry retains the sanitized semantic payload already permitted
+  by ADR-097;
+- when the attempt ends, the gateway seals a `ProvisionalTraceManifest` naming the exact
+  attempt, contiguous call sequence, envelope identities, count, and aggregate retained
+  bytes. Generic capture objects and caller-assembled tuples are not accepted;
+- one attempt may retain at most eight calls and 64 MiB of sanitized capture, the
+  app-wide provisional registry may retain at most 128 MiB, and a sealed manifest
+  expires after ten minutes. Overflow/expiry disables only trace promotion with a
+  content-free warning; it never invalidates the conversation pair;
+- cancelled and losing attempts destroy every envelope; forgery, cross-attempt use,
+  and replay fail closed;
 - content-free attempt count, timing, backend mode, and billed-usage counters may remain
   in local diagnostics;
-- after the winning conversation pair commits, its capture is settled best-effort as a
-  `provisional_voice_promoted` exchange linked to the committed turn;
-- the exchange declares that capture was promoted after dispatch and makes no
-  crash-durable pre-dispatch-reservation claim; and
+- after the winning conversation pair commits, one importer redeems all of that
+  attempt's ordered envelopes in one trace transaction linked to the committed
+  assistant revision;
+- a missing envelope, sequence gap, manifest mismatch, expired handle, or aggregate
+  bound violation rejects the entire trace import rather than retaining a partial call
+  history;
+- the importer atomically creates or reconciles all missing ADR-097 lineage: capture
+  policy, conversation owner and root segment, target segment/turn/run, semantic
+  request surface and header, committed-assistant semantic revision, ordered terminal
+  calls, response links, and events. An ownerless first call, an existing owner, and a
+  concurrent ordinary trace writer converge through unique identities and
+  reconciliation;
+- schema version 56 adds `reservation_provenance`, whose ordinary default is
+  `crash_durable_reserved` and whose exceptional value is
+  `post_dispatch_promoted`, plus nullable `import_reason_code`, which must be null for
+  ordinary calls and exactly `provisional_voice_promoted` for promoted calls;
+- the importer creates an exceptional direct terminal trace. It does not replay or
+  fabricate reserve, bind, or dispatch-start events that never happened. Required
+  dispatch/response/settlement timestamps are the actual gateway observations retained
+  in the bounded manifest, not values synthesized during import;
+- envelope redemption and deterministic trace identities reconcile an uncertain
+  commit, while a confirmed pre-commit failure may retry from the still-owned bounded
+  envelope; and
 - a crash before promotion leaves neither provisional conversation nor exchange trace.
 
 If post-promotion trace settlement fails, it does not roll back the committed
-conversation. The existing trace durability warning/retry policy applies where it can
-honestly retry from the winning in-memory envelope; shutdown does not persist that
-envelope merely to enable later repair. Tool-barrier turns discard their speculative
-envelope and use the ordinary ADR-097 captured pipeline on re-dispatch.
+conversation. The existing trace durability warning/retry policy applies only while
+the gateway-owned in-memory capability can be honestly redeemed; shutdown does not
+persist that capability merely to enable later repair. Pair success remains
+authoritative. Tool-barrier turns destroy their speculative envelopes and use the
+ordinary ADR-097 captured pipeline on re-dispatch.
 
 Temporary conversations retain their existing ADR-097 restriction. Speculative voice
 remains usable, but the status explicitly says exchange capture is unavailable for the
-temporary chat. Winning message rows and the winning envelope remain process-local;
-neither pre-dispatch reservation nor post-dispatch capture promotion is attempted. A
-later Save persists the conversation messages under ordinary temporary-chat promotion
-rules but does not retroactively invent capture for an earlier provider call. Tool
+temporary chat. Winning message rows remain process-local and no trace envelope is
+issued; neither pre-dispatch reservation nor post-dispatch capture promotion is
+attempted. Saving during or after the attempt may persist the winning messages only
+under the same-lineage binding rules above, but never retroactively enables capture or
+invents trace for the earlier provider call. Tool
 barrier expiry uses the existing Save & Send requirement before ordinary captured agent
 dispatch.
 
@@ -468,12 +634,19 @@ hot audio path.
   and apply the restart governor/backpressure rules.
 - **TTS phrase failure:** stop further speech for the attempt, allow text generation to
   complete, and commit text only if no newer speech exists.
-- **Persistence failure:** retain the winning pair in the existing visible durability
-  failure/retry surface; never pretend a partial pair committed.
+- **Persistence failure:** retain the exact winning transcript and already-heard
+  assistant text in the visible durability recovery surface, suspend voice dispatch
+  for that lineage, retain post-boundary speech as a separate editable next-turn draft,
+  and retry by opaque promotion ID without another provider call; never pretend a
+  partial pair committed.
 - **Trace promotion failure:** do not roll back conversation success; report the existing
-  local capture warning while the in-memory retry source still exists.
-- **Shutdown/unmount:** advance all fences, stop audio, discard provisional buffers,
-  release devices, and create no provisional approvals or durable content.
+  local capture warning while the one-use in-memory capability still exists.
+- **Shutdown/unmount:** advance all unclaimed fences, stop audio, discard provisional
+  buffers, and release devices. A claimed promotion remains owned by `ConsoleRuntime`
+  and completes independently of the view. Session close is vetoed on wait timeout or
+  recovery. Pre-quit timeout/failure leaves the app and dependencies alive; only a
+  quiescent or explicitly discarded recovery may enter `begin_dispose`. No provisional
+  approvals are created.
 
 ## Privacy, security, and cost
 
@@ -538,10 +711,28 @@ underruns, and device resets.
 - Phrase tests cover punctuation, bounded fallback, ordering, cancellation, incomplete
   Markdown, links, fenced code, abbreviations, and synthesis failure.
 - Persistence tests prove cancelled attempts create no content-bearing durable owner,
-  winning pairs commit atomically, capture promotion is labeled and best-effort, and
-  tool turns use ordinary pre-dispatch capture after the barrier. They also prove the
-  ADR-094 receipt and exact unseen mark share the winning-pair transaction, mounted and
-  navigation-racing acknowledgement behavior, and temporary-chat no-capture behavior.
+  winning pairs commit atomically, and tool turns use ordinary pre-dispatch capture
+  after the barrier. They force cancel-before-claim and claim-before-navigation orders,
+  active-leaf and binding conflicts, rebind between validation and database commit,
+  typed-turn races, temporary-save races that preserve the existing same-lineage
+  `None`-to-ID binding revision, provider-free recovery retry, exceptions before
+  commit, and uncertain results after commit. They also prove the ADR-094 receipt and
+  exact unseen mark share the winning-pair transaction; runtime ownership survives
+  navigation/unmount; forced pre-commit failure vetoes session close and app quit while
+  retaining the recovery object; a commit stalled past either wait deadline leaves the
+  session/app and persistence dependencies alive; explicit recovery discard is required
+  before close/quit; quit-token cleanup runs after preparation failure, cancellation,
+  stale/recovery rejection, and every exception; the owner revision is sealed only
+  after quiescence; exactly one successful permit is consumed; and buffered
+  post-boundary speech cannot dispatch until the promoted assistant is the active leaf.
+- Trace tests prove capture eligibility is frozen at provider dispatch; only typed
+  gateway-issued one-use envelopes are accepted; losing, forged, cross-attempt, and
+  replayed envelopes fail closed; manifest loss/gaps/overflow/expiry reject the whole
+  import; multiple winning provider calls import atomically in order; ownerless first
+  calls, existing owners, and concurrent ordinary writers reconcile; both provenance
+  fields round-trip; no false reserve/bind/dispatch history is synthesized; uncertain
+  commits reconcile; pair success survives trace failure; and temporary/save-later
+  paths never create historical capture.
 - Integration uses a deterministic fake duplex transport with streaming and batch STT,
   cancellable and cancellation-resistant LLMs, streaming and file-producing TTS,
   ordered capture/render clocks, delayed VAD/STT delivery, seal timeout, skipped
@@ -553,6 +744,9 @@ underruns, and device resets.
 
 - Build/import-test native wheels for every supported Python/platform architecture,
   with hashes, provenance, SBOM, license inventory, and applicable signing.
+- Bind rollout authority to the exact CPython ABI and native-extension bytes exercised
+  by each platform report. An unqualified ABI uses the legacy path even when another
+  ABI on the same platform is qualified.
 - Run a 30-minute echo-only soak and a mixed-speech/device-switch soak, checking callback
   overruns, bounded queues, detached cleanup, and memory stability.
 - Run real-room speaker/microphone tests on macOS, Windows, and Linux using built-in
@@ -593,17 +787,17 @@ independent acceptance criteria and targeted verification.
 | Provider ignores cancellation | Epoch fence before cancel request; bounded detached cleanup |
 | Speculative tools produce irreversible effects | Two-second effect barrier and ordinary agent re-dispatch |
 | Cancelled text leaks through Console capture | Memory-only attempt sink; winning-only promoted trace |
-| Winning capture conflicts with ADR-097 reservation | Explicit `provisional_voice_promoted` post-dispatch provenance and ADR-098 amendment |
+| Winning capture conflicts with ADR-097 reservation | Typed one-use envelopes plus schema-v56 `post_dispatch_promoted` direct-terminal provenance; no invented reserve chronology |
 | Legacy settings retain old behavior | New pipeline-specific AEC/eagerness keys; old acoustic key remains Realtime-owned and old delay remains legacy-only |
 | Temporary chat has no durable capture lineage | Explicit capture-unavailable status; no retroactive trace invention on Save |
 | Promotion races queued speech or a late STT correction | Serialized mailbox plus shared-clock capture/AEC/VAD/STT watermarks through the render boundary |
-| Winning promotion bypasses ADR-094 attention | Existing terminalization transaction mints the exact receipt and unseen mark |
+| Winning promotion bypasses ADR-094 attention | Dedicated completed-pair transaction atomically writes pair, usage, receipt, exact unseen mark, and active leaf after a deterministic claim |
 | Uncooperative cancellations never exit | Force-close deadline, terminal draft failure, app-lifetime fenced orphan set capped at two, and global voice-dispatch quarantine |
 | Pre-boundary speech remains queued behind playback completion | Shared-clock capture sequence watermark plus AEC/VAD/STT drain before promotion |
 | Audio device switches invalidate AEC timing | Fence playback, rebuild one clock domain, keep transcript, regenerate |
 | Aggressive mode increases usage | Usage split, duplicated-STT duration, restart governor, Settings disclosure |
 | Native dependency becomes unmaintained | Narrow ABI, reproducible wheels, SBOM, license/update policy, capability fallback |
-| Navigation outlives view-owned audio | Provisional voice work is pre-acceptance and cancels on detach under ADR-094 |
+| Navigation races acceptance | Detach cancels before the synchronous claim; after claim, the app-lifetime owner completes and leaves the exact unseen mark |
 
 ## Documentation changes
 
@@ -611,7 +805,8 @@ independent acceptance criteria and targeted verification.
   semantics, half-duplex fallback, tool barrier, and increased-usage disclosure.
 - Update Speech & TTS Settings documentation with response eagerness and diagnostics.
 - Document native package installation/troubleshooting and supported platform wheels.
-- Document the winning-only exchange-capture exception and its post-dispatch label.
+- Document the winning-only exchange-capture exception, typed one-use capability, and
+  schema-v56 post-dispatch provenance.
 - Record live qualification evidence per platform without committing user-recorded raw
   microphone material.
 

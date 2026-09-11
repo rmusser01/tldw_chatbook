@@ -454,11 +454,12 @@ async def test_set_batch_row_with_options_key_narrows_the_select_and_stays_valid
         ]
         assert narrowed_select.value == "approve_session"
 
-        # The row with no `options` key is untouched: full four choices,
+        # The row with no `options` key is untouched: full dev choices,
         # default `approve_once` (MCP behavior unchanged, byte-identical).
         assert [value for _label, value in unfiltered_select._options] == [
             "approve_once",
             "approve_session",
+            "allow_matching",
             "always_allow",
             "deny",
         ]
@@ -2196,8 +2197,14 @@ def _pending(
 class _FakeApp:
     """`call_from_thread` stand-in: invokes the callback immediately."""
 
+    def __init__(self) -> None:
+        self.notifications: list[str] = []
+
     def call_from_thread(self, fn, *args, **kwargs):
         return fn(*args, **kwargs)
+
+    def notify(self, message, **_kwargs) -> None:
+        self.notifications.append(str(message))
 
 
 def _build_controller() -> tuple[ConsoleChatController, ConsoleChatStore]:
@@ -2389,7 +2396,9 @@ def test_close_session_discards_its_approved_definitive_row(retained_phase):
     # request thread can publish its finishing transition.
     received[-1]["phase"] = retained_phase
 
-    controller.close_session(session.id)
+    from Tests.Chat.console_close_helpers import close_controller_session
+
+    close_controller_session(controller, session.id)
 
     assert received[-1] is None
     assert controller._parked_approval_payloads == {}
@@ -2430,14 +2439,18 @@ def test_request_mcp_approvals_cancellation_denies_undecided():
     controller.set_pending_approval = received.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
-    def _cancel_soon() -> None:
-        time.sleep(0.05)
-        controller.begin_shutdown()
-
-    canceller = threading.Thread(target=_cancel_soon)
-    canceller.start()
-    decisions = controller.request_mcp_approvals([_pending()])
-    canceller.join()
+    result = {}
+    worker = threading.Thread(
+        target=lambda: result.update(
+            decisions=controller.request_mcp_approvals([_pending()])
+        )
+    )
+    worker.start()
+    assert _wait_until(lambda: bool(controller._pending_approval_rounds))
+    controller.begin_shutdown()  # Queue mutation stays on its owning UI thread.
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+    decisions = result["decisions"]
 
     assert decisions == {"mcp__srv__tool": "deny"}
     assert received[-1] is None
@@ -2558,22 +2571,26 @@ def test_request_mcp_approvals_cancellation_records_denied_decision_to_execution
     )
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
-    def _cancel_soon() -> None:
-        time.sleep(0.05)
-        controller.begin_shutdown()
+    result = {}
 
-    canceller = threading.Thread(target=_cancel_soon)
-    canceller.start()
-    decisions = controller.request_mcp_approvals(
-        [
-            _pending(
-                server_key="local:docs",
-                tool_name="search",
-                llm_name="mcp__docs__search",
-            )
-        ]
-    )
-    canceller.join()
+    def request() -> None:
+        result["decisions"] = controller.request_mcp_approvals(
+            [
+                _pending(
+                    server_key="local:docs",
+                    tool_name="search",
+                    llm_name="mcp__docs__search",
+                )
+            ]
+        )
+
+    worker = threading.Thread(target=request)
+    worker.start()
+    assert _wait_until(lambda: bool(controller._pending_approval_rounds))
+    controller.begin_shutdown()  # Queue mutation stays on its owning UI thread.
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+    decisions = result["decisions"]
 
     assert decisions == {"mcp__docs__search": "deny"}
 
@@ -2665,18 +2682,20 @@ def test_request_mcp_approvals_parks_for_a_non_active_session():
     """PA-T9: a round whose `session_id` differs from the store's ACTIVE
     session parks -- no card mount (`set_pending_approval` never called
     with a real payload), the run-marker pending flag flips, and
-    `park_pending_approval` fires exactly once. Visiting (switching to)
-    the owning session later mounts the SAME retained payload and lets it
-    resolve normally."""
+    one app-owned sanitized notice is emitted. The retired screen parking
+    hook is never used. Visiting the owning session later mounts the SAME
+    retained payload and lets it resolve normally."""
     controller, store = _build_controller()
     viewed = store.create_session(title="Viewed").id
     background = store.create_session(title="Background").id
     store.switch_session(viewed)  # keep viewing the first session
-    controller.app = _FakeApp()
+    app = _FakeApp()
+    controller.app = app
     mounted: list[dict | None] = []
     controller.set_pending_approval = mounted.append
-    parked: list[str] = []
-    controller.park_pending_approval = parked.append
+    controller.park_pending_approval = lambda _session_id: pytest.fail(
+        "background decisions must not use the legacy screen notice hook"
+    )
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
     result_holder: dict[str, dict[str, str]] = {}
@@ -2688,9 +2707,12 @@ def test_request_mcp_approvals_parks_for_a_non_active_session():
 
     worker = threading.Thread(target=_run_round)
     worker.start()
-    time.sleep(0.1)
+    assert _wait_until(lambda: bool(app.notifications))
 
-    assert parked == [background]
+    assert app.notifications == [
+        "A Console session needs approval to use a tool. "
+        "Return to Console to respond."
+    ]
     assert mounted == []  # never mounted -- the active session's card is untouched
     assert background in controller._pending_approvals
     assert controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
@@ -2829,19 +2851,44 @@ def test_request_mcp_approvals_other_sessions_cancel_event_does_not_deny_this_ro
     # the no-app path.
     controller.app = _FakeApp()
     controller.set_pending_approval = lambda payload: None
-    # A short deadline: if A's cancel event wrongly denied this round, the
-    # cancellation branch would fire first (`_record_cancelled_approval_
-    # decisions` aside) -- observing "timeout" instead of "deny" proves the
-    # cancellation branch never triggered.
-    controller.mcp_approval_timeout_seconds = lambda: 0.05
+    controller.mcp_approval_timeout_seconds = lambda: 60.0
 
     a_cancel_event = threading.Event()
     a_cancel_event.set()
     controller._active_cancel_events[session_a] = a_cancel_event
 
-    decisions = controller.request_mcp_approvals([_pending()], session_id=session_b)
+    cancel_checked = threading.Event()
+    original_is_cancelled = controller._is_session_cancelled
 
-    assert decisions == {"mcp__srv__tool": "timeout"}
+    def _checked_is_cancelled(*args, **kwargs):
+        result = original_is_cancelled(*args, **kwargs)
+        cancel_checked.set()
+        return result
+
+    controller._is_session_cancelled = _checked_is_cancelled
+    result: dict[str, dict[str, str]] = {}
+
+    def _request() -> None:
+        result["decisions"] = controller.request_mcp_approvals(
+            [_pending()], session_id=session_b
+        )
+
+    worker = threading.Thread(target=_request, daemon=True)
+    worker.start()
+    assert cancel_checked.wait(timeout=2), "the owning-session cancel check never ran"
+    assert worker.is_alive(), "session A's cancel event settled session B's round"
+    round_id = next(
+        round_id
+        for round_id, state in controller._pending_approval_rounds.items()
+        if state.get("session_id") == session_b
+    )
+    controller.resolve_pending_approval(
+        {"mcp__srv__tool": "deny"}, round_id=round_id
+    )
+    worker.join(timeout=2)
+
+    assert not worker.is_alive()
+    assert result["decisions"] == {"mcp__srv__tool": "deny"}
 
 
 def test_request_mcp_approvals_own_session_cancel_event_denies_the_round():
@@ -3147,12 +3194,9 @@ class _DeferredClearApp:
     clear closures until a test explicitly releases them, while every
     OTHER `call_from_thread` use (mount, park) still runs immediately.
 
-    The clear closures built by `_clear_pending_approval_if_round_is_
-    current` (and its skill-install/skill-script mirrors) are always
-    invoked with zero positional/keyword args -- every other
-    `call_from_thread` call in these bridges carries a positional
-    payload/session_id -- so that shape is what identifies "this is a
-    teardown clear" without needing any bridge-specific hook.
+    Defer the exact `_remount_head` closure. Retained-decision projection
+    also marshals a zero-argument callable before teardown accounting,
+    so argument count no longer identifies this race seam.
     """
 
     def __init__(self) -> None:
@@ -3160,7 +3204,7 @@ class _DeferredClearApp:
         self.release_clear = threading.Event()
 
     def call_from_thread(self, fn, *args, **kwargs):
-        if not args and not kwargs:
+        if fn.__qualname__.endswith("remount_head.<locals>._apply"):
             self.clear_enqueued.set()
             self.release_clear.wait(timeout=5)
             return fn()
@@ -3290,33 +3334,52 @@ def test_resolve_pending_approval_ignores_a_stale_or_unknown_round_id():
 
 def test_resolve_pending_approval_stale_round_id_never_resolves_a_newer_round_for_the_same_session():
     """Mirrors `resolve_pending_skill_script`'s identical defended scenario:
-    round 1 for session A times out (its round_id is popped), round 2 arms
+    round 1 for session A settles (its round_id is popped), round 2 arms
     for the SAME session immediately after -- a late decision carrying
     round 1's now-stale id must never resolve round 2."""
     controller, store = _build_controller()
     session_a = store.create_session(title="A").id
     controller.app = _FakeApp()
     mounted: list[dict | None] = []
-    controller.set_pending_approval = mounted.append
-    controller.mcp_approval_timeout_seconds = lambda: 0.05
+    projected = threading.Event()
 
-    round_1_decisions = controller.request_mcp_approvals(
-        [_pending(llm_name="mcp__srv__tool")], session_id=session_a
-    )
-    assert round_1_decisions == {"mcp__srv__tool": "timeout"}
-    stale_round_id = mounted[0]["round_id"]
+    def _mount(payload: dict | None) -> None:
+        mounted.append(payload)
+        if payload is not None:
+            projected.set()
 
+    controller.set_pending_approval = _mount
     controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    result_1: dict[str, dict[str, str]] = {}
+
+    def _run_round_1() -> None:
+        result_1["decisions"] = controller.request_mcp_approvals(
+            [_pending(llm_name="mcp__srv__tool")], session_id=session_a
+        )
+
+    first = threading.Thread(target=_run_round_1, daemon=True)
+    first.start()
+    assert projected.wait(timeout=2), "round 1 never mounted"
+    stale_round_id = mounted[-1]["round_id"]
+    controller.resolve_pending_approval(
+        {"mcp__srv__tool": "deny"}, round_id=stale_round_id
+    )
+    first.join(timeout=2)
+    assert not first.is_alive()
+    assert result_1["decisions"] == {"mcp__srv__tool": "deny"}
+
     result_2: dict[str, dict[str, str]] = {}
+    projected.clear()
 
     def _run_round_2() -> None:
         result_2["decisions"] = controller.request_mcp_approvals(
             [_pending(llm_name="mcp__srv__tool")], session_id=session_a
         )
 
-    worker = threading.Thread(target=_run_round_2)
+    worker = threading.Thread(target=_run_round_2, daemon=True)
     worker.start()
-    time.sleep(0.1)
+    assert projected.wait(timeout=2), "round 2 never mounted"
     round_2_id = mounted[-1]["round_id"]
     assert round_2_id != stale_round_id
 
@@ -3324,13 +3387,15 @@ def test_resolve_pending_approval_stale_round_id_never_resolves_a_newer_round_fo
     controller.resolve_pending_approval(
         {"mcp__srv__tool": "deny"}, round_id=stale_round_id
     )
-    time.sleep(0.1)
     assert "decisions" not in result_2
+    assert worker.is_alive()
 
     # Round 2 still resolves normally via its OWN id.
     controller.resolve_pending_approval(
         {"mcp__srv__tool": "approve_once"}, round_id=round_2_id
     )
+    worker.join(timeout=2)
+    assert not worker.is_alive()
     worker.join(timeout=2.0)
     assert result_2["decisions"] == {"mcp__srv__tool": "approve_once"}
 
@@ -3436,6 +3501,7 @@ def test_request_mcp_approvals_snapshot_covers_exactly_the_unique_names():
 @pytest.fixture
 def mock_chat_host():
     host = Mock()
+    host.chachanotes_db = None
     host.app_config = {
         "chat_defaults": {
             "provider": "openai",

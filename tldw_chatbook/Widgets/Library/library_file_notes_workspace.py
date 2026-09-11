@@ -238,14 +238,14 @@ def resolve_file_note_status_channels(
     else:
         path = Path(root)
         folder_name = path.name or path.anchor or str(path)
-        authority_prefix = "Folder Files · Folder:"
+        authority_prefix = "Folder files · Folder:"
         available = 60 - cell_len(authority_prefix + " " + authority_suffix)
         if available > 0:
             root_name = _middle_elide_cells(folder_name, min(14, available))
             root_copy = f"Folder: {root_name}"
         else:
             root_copy = "Folder:…"
-    authority = f"Folder Files · {root_copy}{authority_suffix}"
+    authority = f"Folder files · {root_copy}{authority_suffix}"
     if cell_len(authority) > 60:
         authority = _middle_elide_cells(authority, 60)
     return NotesStatusChannels(content, authority, safe)

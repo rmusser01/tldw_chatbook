@@ -219,6 +219,7 @@ class PreparedConsoleRequest:
     effective_thinking_policy: EffectiveThinkingHistoryPolicy = "auto"
     tools: tuple[Mapping[str, Any], ...] = field(default=(), repr=False)
     provenance: ConsoleRequestProvenance | None = field(default=None, repr=False)
+    capture_durability: Literal["durable", "temporary"] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "system", _freeze_messages(self.system))
@@ -279,6 +280,12 @@ class PreparedConsoleRequest:
                 active_continuations=len(self.active_continuation_groups),
                 tools=len(self.tools),
             )
+        if self.capture_durability not in {None, "durable", "temporary"}:
+            raise ValueError("capture_durability is invalid")
+        if provenance is None and self.capture_durability is not None:
+            raise TraceProvenanceAlignmentError(
+                "Capture Off cannot carry capture durability"
+            )
 
     def flattened_messages(self) -> tuple[Mapping[str, Any], ...]:
         """Return messages in deterministic semantic/wire order."""
@@ -312,6 +319,7 @@ class PreparedConsoleRequest:
                 if self.provenance is not None
                 else None
             ),
+            capture_durability=self.capture_durability,
         )
 
 
@@ -406,6 +414,7 @@ def attach_thinking_history(
         for message in messages:
             row = dict(message)
             owner_id = row.pop(owner_key, None)
+            row.pop("_native_message_id", None)
             group = by_owner.get(owner_id) if type(owner_id) is str else None
             if group is not None:
                 row[THINKING_OWNER_KEY] = group.owner_message_id

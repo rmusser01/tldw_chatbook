@@ -12,6 +12,10 @@ from textual.widgets import Button, Input, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_GLYPH_SELECTED,
+    LIBRARY_GLYPH_UNSELECTED,
+)
 from tldw_chatbook.Library.library_note_import_state import (
     LibraryNoteImportItemSnapshot,
     LibraryNoteImportSnapshot,
@@ -434,8 +438,10 @@ async def test_update_choices_are_independent_and_post_item_scoped_messages() ->
         await pilot.pause()
         replace_button = app.query_one("#note-import-replace-item-1", Button)
         membership_button = app.query_one("#note-import-membership-item-1", Button)
-        assert replace_button.label.plain.startswith("✓")
-        assert membership_button.label.plain.startswith("○")
+        # task-32235 AC#2: the legend's checkbox pair, not the outcome "✓"
+        # and the blocked-action "○" these labels used to borrow.
+        assert replace_button.label.plain.startswith(LIBRARY_GLYPH_SELECTED)
+        assert membership_button.label.plain.startswith(LIBRARY_GLYPH_UNSELECTED)
         assert await pilot.click(replace_button)
         assert await pilot.click(membership_button)
         await pilot.pause()
