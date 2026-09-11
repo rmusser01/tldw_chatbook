@@ -221,3 +221,42 @@ async def test_the_note_editor_body_takes_the_height_its_pane_has_spare():
             f"at {region.region.bottom}: {region.region.bottom - body.region.bottom} "
             "blank rows under the note."
         )
+
+
+@pytest.mark.asyncio
+async def test_the_note_preview_takes_the_same_height_the_body_does():
+    """Preview replaces the Body one-for-one, so it fills the pane too.
+
+    Qodo #2590 comment 3: the component rule this branch added is a bare
+    `#library-note-preview-region`, but `LibraryScreen.BUNDLED_CSS` carries its
+    own copy, which the build scopes to `LibraryScreen #library-note-preview-
+    region` -- one type selector more specific, so it kept the retired
+    `height: auto / min-height: 12 / max-height: 20`. Edit expanded and Preview
+    stayed capped at 20 rows in a 30-row pane. `#library-note-body` has no such
+    scoped copy, which is why only Preview was affected.
+    """
+    host = _notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        row = await _wait_for_selector(screen, pilot, ".library-notes-tree-note-row")
+        row.press()
+        await _wait_for_selector(screen, pilot, "#library-note-body")
+        screen.query_one("#library-note-preview", Button).press()
+        preview = await _wait_for_selector(screen, pilot, "#library-note-preview-region")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one("#library-note-preview-region").region.height > 0,
+            message="Preview never took the work pane.",
+        )
+
+        parent = preview.parent
+        assert parent.content_region.height > 20, parent.content_region
+        # One row of the region's own bottom margin is all that may be left.
+        assert preview.region.bottom >= parent.content_region.bottom - 1, (
+            f"Preview stops at {preview.region.bottom} in a pane whose content "
+            f"ends at {parent.content_region.bottom}: "
+            f"{parent.content_region.bottom - preview.region.bottom} blank rows "
+            "under the rendered note."
+        )
