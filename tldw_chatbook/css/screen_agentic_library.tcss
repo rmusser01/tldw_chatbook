@@ -1829,6 +1829,22 @@ with stray left-edge border fragments), and padding 0 1 so the full
     margin: 0 0 1 0;
 }
 
+/* task-32143: the editor chrome strip -- one row at the bottom of the body
+   carrying "N words · L:C", right-aligned so the eye finds it in the same
+   place whatever the note is called. Exactly one row: it is shown only
+   while Edit is the open view on a terminal 80 columns or wider, and the
+   body's `1fr` pays for it there (measured at 100x30: body 16 -> 15).
+   Muted to the same tier as the meta line above -- chrome, not content. */
+#library-note-chrome-facts {
+    width: 100%;
+    height: 1;
+    padding: 0 1 0 0;
+    text-align: right;
+    color: $ds-text-muted;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
 #library-note-conflict-copy,
 #library-note-delete-confirm-copy {
     width: 100%;

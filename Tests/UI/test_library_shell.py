@@ -32263,10 +32263,18 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
                 "#library-note-body-label",
                 "#library-note-status",
                 "#library-note-primary-actions",
+                # task-32143: the editor chrome strip ("N words · L:C") is
+                # one more fixed row under the body at 80 columns and wider,
+                # so the 1fr owner is one shorter at BOTH sizes below --
+                # 10 -> 9 and 16 -> 15. It is still one owner growing by the
+                # same 6, which is what this test is about. Below 80 columns
+                # the strip is hidden and nothing here changes (the 60x20
+                # allocations keep their 6-row body).
+                "#library-note-chrome-facts",
             ),
-            (1, 1, 1, 1, 2),
-            10,
-            16,
+            (1, 1, 1, 1, 2, 1),
+            9,
+            15,
         ),
         (
             "context",

@@ -1466,6 +1466,10 @@ class LibraryNotesController:
         return LibraryNotePresentationState(
             snapshot=snapshot,
             metadata_line=metadata_line,
+            # task-32143: the same count the meta line above is built from,
+            # carried as a number so the editor chrome strip needs no scan
+            # and no database read of its own.
+            word_count=word_count,
             status_line=status_line,
             region="context" if self._library_note_context else "editor",
             presentation="preview" if self._library_note_preview else "edit",

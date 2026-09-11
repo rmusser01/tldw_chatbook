@@ -371,7 +371,8 @@ own. Nothing is ever painted as half a word.
 | **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. |
 | **Info** | Shows Properties (including comma-separated keywords, note dates/version, and **Linked from**), Reuse & Export, and Danger sections. |
 | **Linked from (N)** (Info → Properties) | Lists the notes whose bodies link to this one, newest import or not — the `[title](note://…)` links Import once writes for an Obsidian vault's `[[wikilinks]]` (see "Obsidian vaults"). Click an entry to open that note. While the lookup runs the line reads "Linked from — checking…", and "Linked from — couldn't check" if it failed, so a count is only claimed once the answer is in. When nothing points here the line reads "Linked from (0) — no notes link here yet". The list is capped at 50 entries; past that the count reads "50+". Links you type by hand in the body count too, as long as they use the same `note://` form. |
-| Status line | Shows the autosave state: "Saved", "Saving…", "Unsaved changes", "Conflict — …", "Save failed — …", or "Unavailable — …". It does not carry a word count. Created/Modified/version details are under Info → Properties, each with an absolute local timestamp beside its relative age and the word count (e.g. "Created 2026-09-08 21:14 · 3m ago · Modified … · v1 · 6 words"). "Saved" appears once per view, not repeated in Info. |
+| Status line | Shows the autosave state: "Saved", "Saving…", "Unsaved changes", "Conflict — …", "Save failed — …", or "Unavailable — …". It was "It does not carry a word count" — superseded by task-32143 below: the word count is no longer only under Info, it is on the chrome strip under the body. Created/Modified/version details are under Info → Properties, each with an absolute local timestamp beside its relative age and the word count (e.g. "Created 2026-09-08 21:14 · 3m ago · Modified … · v1 · 6 words"). "Saved" appears once per view, not repeated in Info. |
+| Chrome strip | One row directly under the body, right-aligned: "N words · L:C" — the words in the note and the caret's line and column, both counted from 1. It follows your typing and your arrow keys with no save and no reload. Nothing on it is a control; Tab never stops there. It appears while **Edit** is the open view on a terminal 80 columns or wider; **Preview** and **Info** have no caret, and a narrower terminal gives the row back to the body. The strip does not repeat the save state — that stays on the status line above the mode controls. |
 | **Save** | Saves immediately, without waiting for autosave. It remains visible beside the mode controls. |
 | **Use in Console** | Hands the note to the Console as staged context, with the suggested prompt "Use this note as context and help me work with it." It remains visible beside **Save**. |
 | **Copy** (Info) | Copies the note to the clipboard as Markdown — "Note copied to clipboard as markdown!" |
@@ -1107,3 +1108,9 @@ critique-10 claims reconciled; surface fixes in task-32346, 32348, 32349,
 32354, 32355). This page needed no correction — the note editor's autosave
 story and its guarded return were already stated here; the Library overview is
 what had drifted.*
+
+*Verified against fix/library-notes-w3-chrome-strip — 2026-09-11 (task-32143:
+the note editor gained a chrome strip — one right-aligned row under the body
+reading "N words · L:C", live at 235x52 and 100x30, hidden at 79 columns and
+in Preview/Info. The save state was NOT moved onto it: it stays on the status
+line above the mode controls, so nothing on screen reports saving twice.)*
