@@ -18,3 +18,7 @@ Implement the named custom-endpoint registry per Docs/superpowers/specs/2026-09-
 <!-- AC:BEGIN -->
 - [ ] #1 Registry entries persist in [custom_endpoints.<slug>] and survive restart,custom-ep:<slug> ids resolve through the family execution path with pinned endpoint,Endpoint created from any provider template inside the modal without config editing,Selecting a registry entry never hits the unsaved-endpoint block,F9 Settings rename/edit/delete with reference guard + detach,custom and custom_2 keep working; optional convert action,Unit + Pilot tests per spec testing section,ADR authored and linked before implementation
 <!-- AC:END -->
+
+## Implementation Plan
+
+ADR: backlog/decisions/146-console-custom-endpoint-registry.md
