@@ -410,7 +410,16 @@ _BUDGETS: dict[str, int] = {
     # vault-detection flag and the two `obsidian_mode` arguments threaded
     # through `_plan_selection`/`check`.
     "tldw_chatbook/UI/Library_Modules/library_note_import_controller.py": 602,
-    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2023,
+    # 2026-09-11, task-32243 (refused Check names its reason): 2023 -> 2128
+    # (+105), a BEHAVIOUR ADD, not a move -- `_CHECK_REFUSAL_COPY` (one
+    # sentence and one next action per bounded admission reason the runtime
+    # and coordinator can name) plus `_refusal_reason`/`_check_failure_line`,
+    # the two helpers both Check paths now route through instead of each
+    # substituting a fixed "Check failed" string and logging nothing. The
+    # copy is presentation data and stays with the controller that renders
+    # it; splitting a sixteen-row string table across modules to stay under
+    # a line count would make the refusal grammar harder to read, not safer.
+    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2128,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based

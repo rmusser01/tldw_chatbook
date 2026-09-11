@@ -494,6 +494,18 @@ The first use of either — or a remembered folder that has since been moved or
 deleted — opens at your home directory instead. **Folder files** keeps its own
 separate memory, see [File notes](file-notes.md).
 
+**What a folder has to be before it can be checked.** It must be a real folder
+(not a link to one) on a local disk, outside Chatbook's own data directory,
+not already connected as a sync folder, not the Folder files root, and you
+must be able to write every file in it. **Check changes** refuses anything
+else and names which of those it was, at the control, with the next action —
+for example "That folder is inside Chatbook's own data directory. Pick a
+folder outside it, then Check again", "Another Chatbook window is using that
+folder", "That folder is already connected", or "Some files there use a
+permission model this sync can't track. Make every file in the folder
+writable, then Check again". A refusal changes nothing: pick a different
+folder, or fix the cause, and **Check changes** again in the same session.
+
 If files or notes change after checking, activation is refused as stale and the
 nearest valid action is **Check again**. Conflicts and deletion choices are not
 silently settled by a global winner policy. Server setup is visibly disabled
@@ -680,9 +692,12 @@ outside the batch stayed as text and are not counted.
    away). Choose a direction and local destination. Server sync remains
    unavailable until its separate capability is installed.
 4. Choose **Check changes** and review the exact safe, attention, skipped, and
-   deletion-like effects.
+   deletion-like effects. If the folder cannot be used, the line above the
+   button says which rule it broke and what to do; choose **Choose folder…**
+   again and check the new one.
 5. Choose **Activate reviewed root**. If the review is stale, choose **Check
-   again** instead.
+   again** instead. **Manage sync folders** appears in the notes toolbar once
+   a root is active.
 
 Existing legacy evidence appears as a paused candidate. Open **Manage sync
 folders**, choose **Review migration**, inspect the current dry-run, and
@@ -1107,3 +1122,18 @@ critique-10 claims reconciled; surface fixes in task-32346, 32348, 32349,
 32354, 32355). This page needed no correction — the note editor's autosave
 story and its guarded return were already stated here; the Library overview is
 what had drifted.*
+
+*Verified against fix/library-notes-w3-sync — 2026-09-11 (task-32269, and the
+task-32243 fix it waited on): the lasting-sync chapter was written from the
+design and had never been walked, because no folder could be admitted — a
+refused **Check changes** crashed over its own refusal and then poisoned the
+folder for the whole session. Walked end to end on this branch at 235x52
+against a 179-file vault under `$HOME`: refusal copy on a folder inside the
+profile → **Choose folder…** → the `$HOME` vault → 60 safe · 0 attention →
+**Activate reviewed root** → "Sync root activated. 60 applied · durable
+receipt recorded" → the notes appear under a **⇄ Sync managed** folder →
+**Manage sync folders** (now reachable) → **Check changes** → "Manual check
+finished." Added: what a folder has to be before it can be checked, and the
+named refusals. Known gap, not fixed here: the root row in **Manage sync
+folders** reads "Sync folder (name unavailable before cutover)" rather than
+the display name you typed.)*
