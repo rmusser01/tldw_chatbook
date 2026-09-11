@@ -2925,7 +2925,7 @@ async def test_resolve_for_send_blocks_generic_base_url_override_that_differs_fr
     )
 
     assert resolved.ready is False
-    assert "save the endpoint in Conversation settings" in resolved.visible_copy
+    assert "Save model defaults" in resolved.visible_copy
     assert "Selected endpoint: http://127.0.0.1:9999/v1" in resolved.visible_copy
     assert "Saved endpoint: http://127.0.0.1:11434" in resolved.visible_copy
     assert "user" not in resolved.visible_copy
@@ -3035,7 +3035,7 @@ async def test_resolve_for_send_preserves_explicit_cloud_url_without_configured_
     assert resolved.readiness_key == "openai"
     assert resolved.execution_key == "openai"
     assert resolved.base_url == "http://127.0.0.1:9999/v1"
-    assert "save the endpoint in Conversation settings" not in resolved.visible_copy
+    assert "Save model defaults" not in resolved.visible_copy
 
 
 @pytest.mark.asyncio
@@ -3273,7 +3273,7 @@ async def test_resolve_for_send_blocks_malformed_generic_base_url_without_crashi
     )
 
     assert resolved.ready is False
-    assert "save the endpoint in Conversation settings" in resolved.visible_copy
+    assert "Save model defaults" in resolved.visible_copy
 
 
 @pytest.mark.asyncio

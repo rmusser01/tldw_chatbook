@@ -515,8 +515,37 @@ def test_provider_options_include_all_configured_providers() -> None:
     )
     option_values = [option.value for option in options]
 
-    assert option_values == sorted(option_values)
     assert {"anthropic", "llama_cpp", "openai"}.issubset(option_values)
+
+
+def test_provider_options_follow_settings_group_order_then_display_name() -> None:
+    """Cloud before local before custom-and-legacy, display-name order within.
+
+    Matches the F4 Settings / First-Run Wizard taxonomy (task-180) instead of
+    an alphabetical-by-config-key order that shuffles the display labels.
+    """
+    options = build_console_provider_options(
+        providers_models={
+            "custom": ["custom-model"],
+            "llama_cpp": ["local-model"],
+            "custom_2": ["custom-model-2"],
+            "zai": ["glm-model"],
+            "local_llamacpp": ["legacy-model"],
+            "openai": ["gpt-4.1"],
+            "anthropic": ["claude-sonnet"],
+        }
+    )
+    option_values = [option.value for option in options]
+    position = {value: index for index, value in enumerate(option_values)}
+
+    # Cloud group first, display-name alphabetical within it.
+    assert position["anthropic"] < position["openai"] < position["zai"]
+    # Local group follows cloud; custom-and-legacy follows local.
+    assert position["zai"] < position["llama_cpp"]
+    assert position["llama_cpp"] < position["custom"]
+    # Custom-and-legacy ordered by display label: "Custom OpenAI-compatible",
+    # "Custom OpenAI-compatible #2", "llama.cpp (legacy alias)".
+    assert position["custom"] < position["custom_2"] < position["local_llamacpp"]
 
 
 def test_provider_options_include_console_sendable_handlers_missing_from_model_registry() -> (
@@ -1617,7 +1646,7 @@ def test_readiness_blocks_unsaved_generic_endpoint_with_safe_details() -> None:
 
     assert readiness.label == "Endpoint not saved"
     assert readiness.native_send_supported is False
-    assert "save the endpoint in Conversation settings" in readiness.detail
+    assert "Save model defaults" in readiness.detail
     assert "Selected endpoint: http://127.0.0.1:9999/v1" in readiness.detail
     assert "Saved endpoint: http://127.0.0.1:11434" in readiness.detail
 
