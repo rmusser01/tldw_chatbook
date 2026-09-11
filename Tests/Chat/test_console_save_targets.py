@@ -292,3 +292,20 @@ def test_console_note_provenance_keywords_drop_absent_provenance():
     assert console_note_provenance_keywords(
         conversation_id="  ", message_id=""
     ) == ["console"]
+
+
+def test_console_answer_note_title_skips_code_fence_lines():
+    """task-32146 fix round 1 (review finding 4): a reply that opens with a
+    fenced block must not title the note with the fence."""
+    assert console_answer_note_title("```python\nprint(1)\n```") == "print(1)"
+    assert console_answer_note_title("~~~\nSELECT 1;\n~~~") == "SELECT 1;"
+    assert console_answer_note_title("```\n```") == CONSOLE_NOTE_FALLBACK_TITLE
+
+
+def test_console_answer_note_title_strips_heading_and_quote_markers():
+    """task-32146 fix round 1 (review finding 4): a markdown heading or a
+    block quote titles the note by its text, not by the marker."""
+    assert console_answer_note_title("# Heading\n\nbody") == "Heading"
+    assert console_answer_note_title("## Two hashes ##") == "Two hashes ##"
+    assert console_answer_note_title("> quoted first line\nmore") == "quoted first line"
+    assert console_answer_note_title("#\n#\nreal line") == "real line"

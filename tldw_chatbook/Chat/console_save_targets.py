@@ -7,6 +7,7 @@ derivations stay unit-testable without a running app.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -23,6 +24,11 @@ CONSOLE_SAVE_TITLE_PREFIX = "Console message"
 #: whitespace. The capture action is only offered on non-blank completed
 #: assistant rows, so this is a floor, not an expected outcome.
 CONSOLE_NOTE_FALLBACK_TITLE = "Console answer"
+#: task-32146 fix round 1: a captured answer that opens with a fenced code
+#: block or a markdown heading must not be titled by the fence or the
+#: hashes -- the Library notes list shows titles verbatim.
+_NOTE_TITLE_FENCE_LINE = re.compile(r"^\s*(?:`{3,}|~{3,})")
+_NOTE_TITLE_MARKDOWN_PREFIX = re.compile(r"^[\s#>]+")
 
 # Stable bounds for Console chatbook artifacts consumed by Artifacts and Home.
 CONSOLE_CHATBOOK_ARTIFACT_CONTENT_MAX_CHARS = 20_000
@@ -131,11 +137,17 @@ def console_answer_note_title(
         max_length: Hard cap for the returned title.
 
     Returns:
-        The first non-blank line, whitespace-collapsed and bounded, or
-        ``CONSOLE_NOTE_FALLBACK_TITLE`` when there is no text at all.
+        The first non-blank line that is not a code fence, with any
+        leading heading/quote markers dropped, whitespace-collapsed and
+        bounded, or ``CONSOLE_NOTE_FALLBACK_TITLE`` when there is no text
+        at all.
     """
     for line in str(answer_text or "").splitlines():
-        normalized = _collapse_whitespace(line)
+        if _NOTE_TITLE_FENCE_LINE.match(line):
+            continue
+        normalized = _collapse_whitespace(
+            _NOTE_TITLE_MARKDOWN_PREFIX.sub("", line, count=1)
+        )
         if not normalized:
             continue
         if len(normalized) > max_length:
