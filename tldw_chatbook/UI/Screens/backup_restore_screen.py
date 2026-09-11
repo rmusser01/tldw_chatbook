@@ -54,6 +54,7 @@ class BackupRestoreScreen(Screen):
         self._dismissed_inspection_id = None
         self._inspection_summary = None
         self._restore_plan = None
+        self._extraction_plan = None
         self._delete_copy_id = None
         self._last_terminal = None
         self._review_codes_seen = ()
@@ -173,6 +174,27 @@ class BackupRestoreScreen(Screen):
                         variant="warning",
                         disabled=True,
                     )
+                with Vertical(id="backup-inert-form", classes="backup-form"):
+                    yield Static(
+                        "Manual extraction: copy selected groups as inert files. No profile is restored or opened."
+                    )
+                    yield Vertical(id="backup-inert-groups", classes="backup-form")
+                    yield Input(
+                        placeholder="New absolute directory for extracted files",
+                        id="backup-inert-destination",
+                    )
+                    yield Static(
+                        "Select groups and review the extraction first.",
+                        id="backup-inert-preview",
+                        markup=False,
+                    )
+                    yield Button("Review extraction", id="backup-review-extraction")
+                    yield Button(
+                        "Confirm inert extraction",
+                        id="backup-start-extraction",
+                        variant="warning",
+                        disabled=True,
+                    )
             with Vertical(id="backup-dependent", classes="backup-form"):
                 yield Static("", id="backup-list-title", markup=False)
                 yield Input(
@@ -284,6 +306,9 @@ class BackupRestoreScreen(Screen):
         self.query_one("#backup-create-form").display = mode == "create"
         self.query_one("#backup-inspect-form").display = mode == "inspect"
         self.query_one("#backup-restore-form").display = (
+            mode == "inspect" and self._inspection_id is not None
+        )
+        self.query_one("#backup-inert-form").display = (
             mode == "inspect" and self._inspection_id is not None
         )
         self.query_one("#backup-later-form").display = False
@@ -649,6 +674,8 @@ class BackupRestoreScreen(Screen):
         self._preview = self._reviewed = None
         self.query_one("#backup-create", Button).disabled = True
         self._restore_plan = None
+        self._extraction_plan = None
+        self.query_one("#backup-start-extraction", Button).disabled = True
         self.query_one("#backup-start-restore", Button).disabled = True
         self._rollback_plan = None
         self.query_one("#backup-later-start", Button).disabled = True
@@ -822,6 +849,9 @@ class BackupRestoreScreen(Screen):
         )
         self._restore_plan = None
         self.query_one("#backup-restore-form").display = False
+        self._extraction_plan = None
+        self.query_one("#backup-inert-form").display = False
+        self.query_one("#backup-start-extraction", Button).disabled = True
         self.query_one("#backup-start-restore", Button).disabled = True
 
     def _refresh_status(self):
@@ -844,6 +874,8 @@ class BackupRestoreScreen(Screen):
             needs_setup=bool(result.get("needs_setup")),
         )
         phase = current["phase"].replace("_", " ")
+        if current["state"] == "succeeded" and result.get("inert_extracted"):
+            label = "Inert files extracted"
         text = (
             label
             if current["state"] == "succeeded" and label != "Not verified"
@@ -963,10 +995,87 @@ class BackupRestoreScreen(Screen):
                     id=f"backup-profile-name-{index}",
                 ),
             )
+        groups = self.query_one("#backup-inert-groups", Vertical)
+        await groups.remove_children()
+        for index, group in enumerate(summary["dependency_groups"]):
+            await groups.mount(
+                Checkbox(
+                    Text(f"{group['group_id']}: {len(group['members'])} members"),
+                    id=f"backup-inert-group-{index}",
+                )
+            )
         if not self.is_mounted or operation != self._summary_requested:
             return
         self._inspection_id, self._inspection_summary = operation, summary
         self.query_one("#backup-restore-form").display = self._mode == "inspect"
+        self.query_one("#backup-inert-form").display = self._mode == "inspect"
+
+    @on(Button.Pressed, "#backup-review-extraction")
+    def _review_extraction(self):
+        if self._inspection_id is None:
+            return
+        groups = tuple(
+            group["group_id"]
+            for index, group in enumerate(self._inspection_summary["dependency_groups"])
+            if self.query_one(f"#backup-inert-group-{index}", Checkbox).value
+        )
+        destination = Path(self._input("backup-inert-destination")).expanduser()
+        if not groups or not destination.is_absolute():
+            self.query_one("#backup-inert-preview", Static).update(
+                "Select at least one group and a new absolute directory."
+            )
+            return
+        self._invalidate()
+        self._preview_extraction(
+            self.app, self._revision, self._inspection_id, groups, destination
+        )
+
+    @work(exclusive=True, thread=True, group="backup-extraction-preview")
+    def _preview_extraction(self, app, revision, inspection, groups, destination):
+        try:
+            operation = self.service.start_extraction_preview(
+                inspection, group_ids=groups, destination=destination
+            )
+            status = self.service.wait(operation)
+            plan = status["result"].get("plan")
+            issue = (
+                ", ".join(status["issues"]) if status["state"] != "succeeded" else None
+            )
+        except (OSError, ValueError, RuntimeError) as error:
+            plan, issue = None, self.service.issue_code(error)
+        self._deliver(app, self._extraction_ready, revision, inspection, plan, issue)
+
+    def _extraction_ready(self, revision, inspection, plan, issue):
+        if (
+            not self.is_mounted
+            or revision != self._revision
+            or inspection != self._inspection_id
+        ):
+            return
+        self._extraction_plan = plan
+        self.query_one("#backup-start-extraction", Button).disabled = plan is None
+        text = "Extraction review refused: " + str(issue)
+        if plan is not None:
+            text = (
+                f"Inert extraction to {plan.destination}\n"
+                f"Groups: {', '.join(plan.group_ids)}\n"
+                f"Payload: {plan.payload_bytes} bytes\n"
+                f"Unselected dependencies: {plan.unselected_dependencies}"
+            )
+        self.query_one("#backup-inert-preview", Static).update(text)
+
+    @on(Button.Pressed, "#backup-start-extraction")
+    def _start_extraction(self):
+        if self._inspection_id is None or self._extraction_plan is None:
+            return
+        try:
+            self.service.start_extraction(self._inspection_id, self._extraction_plan)
+        except (OSError, ValueError, RuntimeError) as error:
+            self.query_one("#backup-inert-preview", Static).update(
+                "Extraction could not start: " + self.service.issue_code(error)
+            )
+        self._invalidate()
+        self._refresh_status()
 
     @on(Button.Pressed, "#backup-review-restore")
     def _review_restore(self):

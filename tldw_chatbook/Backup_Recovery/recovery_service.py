@@ -313,6 +313,16 @@ class RecoveryService:
                 "file_count": len(doc.files),
                 "payload_bytes": sum(row.size for row in doc.files),
                 "owners": tuple(row.owner_id for row in doc.owners),
+                "dependency_groups": tuple(
+                    MappingProxyType(
+                        {
+                            "group_id": row.group_id,
+                            "members": row.members,
+                            "complete": row.complete,
+                        }
+                    )
+                    for row in doc.dependency_groups
+                ),
                 "required_capabilities": doc.required_capabilities,
                 "exclusions": tuple(
                     (row.logical_id, row.reason) for row in doc.exclusions
