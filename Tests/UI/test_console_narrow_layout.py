@@ -25,7 +25,7 @@ import pytest
 from textual.widgets import Button, Static, Switch
 
 from Tests.UI.app_factory import _build_test_app
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
+from Tests.UI.consolidated_css import APP_STYLESHEETS, BUNDLED_STYLESHEET
 from Tests.UI.test_console_internals_decomposition import (
     _configure_native_ready_console,
 )
@@ -43,7 +43,7 @@ from tldw_chatbook.UI.Navigation.main_navigation import (
 class ConsoleLayoutHarness(ConsoleHarness):
     """Mount the real Console with the same app bundle production loads."""
 
-    CSS_PATH = str(BUNDLED_STYLESHEET)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 async def _wait_for_condition(pilot, predicate, *, timeout: float = 4.0) -> None:

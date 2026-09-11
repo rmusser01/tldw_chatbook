@@ -17,10 +17,15 @@
 
 from __future__ import annotations
 
+import ast
+import re
+from pathlib import Path
+
 import pytest
 from textual.color import Color
 
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Widgets.Note_Widgets.note_selection_dialog import (
     NoteSelectionDialog,
 )
@@ -239,3 +244,187 @@ async def test_dynamic_first_mount_keeps_inherited_base_defaults():
             f"rail region {rail.region} -- expected the 1fr split of a "
             "24-row screen shared with the boot-time Vertical"
         )
+
+
+# --------------------------------------------------------------------------
+# task-32204: the screen-owned-split sweep guard.
+#
+# TASK-25812/TASK-24459 moved the Library, Console, Settings, Evals,
+# Scheduling and Watchlists rules out of the boot bundle into sheets the
+# OWNING SCREEN loads (its own `CSS_PATH`, or `TldwCli._SCREEN_OWNED_ROUTE_CSS`
+# for the three feature sheets). A harness that pins `CSS_PATH` to the bundle
+# alone and composes one of those widgets DIRECTLY -- without pushing the
+# screen that owns the sheet -- has measured unstyled geometry ever since:
+# `Button` falls back to `width: auto`, `Vertical` to `height: 1fr`. The
+# scan below is the sweep that found them, kept executable so the next one
+# cannot reappear silently.
+# --------------------------------------------------------------------------
+
+_TESTS_ROOT = Path(__file__).resolve().parent.parent
+
+#: Split sheet -> the screen classes whose own `CSS_PATH` loads it. A harness
+#: that names one of these pushes the real screen, so Textual (or
+#: `TldwCli._ensure_screen_owned_css`) loads the sheet exactly as production
+#: does and the harness is correct as written.
+_SPLIT_SHEET_OWNERS = {
+    "screen_agentic_console.tcss": ("ChatScreen",),
+    "screen_agentic_library.tcss": ("LibraryScreen",),
+    "screen_agentic_settings.tcss": ("SettingsScreen",),
+    "screen_feature_evals.tcss": ("EvalsScreen",),
+    "screen_feature_scheduling.tcss": ("SchedulesScreen", "SchedulingScreen"),
+    "screen_feature_watchlists.tcss": ("WatchlistsCollectionsScreen",),
+}
+
+_SELECTOR_TOKEN_RE = re.compile(r"[#.]([A-Za-z][\w-]*)")
+
+
+def _selector_tokens(path: Path) -> set[str]:
+    """Every id/class token that heads a rule in ``path``."""
+    tokens: set[str] = set()
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.split("/*")[0].strip()
+        if "{" in line or line.endswith(","):
+            tokens.update(_SELECTOR_TOKEN_RE.findall(line.split("{")[0]))
+    return tokens
+
+
+def _module_string_literals(tree: ast.AST) -> str:
+    """Every string constant in ``tree`` except docstrings.
+
+    Docstrings are excluded because this repo's tests discuss selectors in
+    prose constantly; only a selector a test actually *queries* is evidence
+    that it composes the widget.
+    """
+    docstrings = {
+        id(node.body[0].value)
+        for node in ast.walk(tree)
+        if isinstance(
+            node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+        )
+        and node.body
+        and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+        and isinstance(node.body[0].value.value, str)
+    }
+    return " ".join(
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and id(node) not in docstrings
+    )
+
+
+def _expanded_css_path_source(value: ast.AST, tree: ast.AST, text: str) -> str:
+    """``value``'s source with the names it references inlined.
+
+    Harnesses spell their pin a dozen ways (``str(BUNDLE)``,
+    ``_REAL_CSS_PATH``, ``OtherHarness.CSS_PATH``, ``TldwCli.CSS_PATH``), so
+    the literal source segment is not enough to tell which sheets a pin
+    carries. Two substitution passes over module-level assignments (plus
+    same-module ``Class.CSS_PATH`` references and the real
+    ``TldwCli.CSS_PATH``) resolve every shape in this repo; anything still
+    unresolved simply keeps its name and is treated as carrying nothing,
+    which can only produce a report, never a silent pass.
+    """
+    bindings: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    bindings[target.id] = ast.unparse(node.value)
+        elif isinstance(node, ast.ClassDef):
+            for stmt in node.body:
+                if isinstance(stmt, ast.Assign) and any(
+                    isinstance(t, ast.Name) and t.id == "CSS_PATH"
+                    for t in stmt.targets
+                ):
+                    bindings[f"{node.name}.CSS_PATH"] = ast.unparse(stmt.value)
+    bindings["TldwCli.CSS_PATH"] = " ".join(str(entry) for entry in TldwCli.CSS_PATH)
+
+    source = ast.unparse(value)
+    for _ in range(3):
+        expanded = source
+        for name, replacement in bindings.items():
+            expanded = re.sub(
+                rf"(?<![\w.]){re.escape(name)}(?![\w])",
+                lambda _match, value=replacement: value,
+                expanded,
+            )
+        if expanded == source:
+            break
+        source = expanded
+    return source
+
+
+def scan_bundle_only_harnesses() -> list[tuple[str, str, str, tuple[str, ...]]]:
+    """Harnesses pinned without a split sheet whose widgets need it.
+
+    Returns:
+        ``(test file, harness class, sheet, sample selectors)`` per finding,
+        sorted, where the file's own queries name selectors that ONLY the
+        missing sheet styles.
+    """
+    css_dir = BUNDLED_STYLESHEET.parent
+    bundle_tokens = _selector_tokens(BUNDLED_STYLESHEET)
+    split_only = {
+        sheet: _selector_tokens(css_dir / sheet) - bundle_tokens
+        for sheet in _SPLIT_SHEET_OWNERS
+    }
+
+    findings: list[tuple[str, str, str, tuple[str, ...]]] = []
+    for py in sorted(_TESTS_ROOT.rglob("*.py")):
+        text = py.read_text(encoding="utf-8")
+        if "CSS_PATH" not in text:
+            continue
+        tree = ast.parse(text)
+        literals = _module_string_literals(tree)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            for stmt in node.body:
+                if not isinstance(stmt, ast.Assign) or not any(
+                    isinstance(t, ast.Name) and t.id == "CSS_PATH"
+                    for t in stmt.targets
+                ):
+                    continue
+                pin = _expanded_css_path_source(stmt.value, tree, text)
+                if "APP_STYLESHEETS" in pin:
+                    continue
+                for sheet, owners in _SPLIT_SHEET_OWNERS.items():
+                    if sheet in pin:
+                        continue
+                    if any(re.search(rf"\b{owner}\b", text) for owner in owners):
+                        continue
+                    used = sorted(
+                        token
+                        for token in split_only[sheet]
+                        if re.search(rf"[#.]{re.escape(token)}\b", literals)
+                    )
+                    if used:
+                        findings.append(
+                            (
+                                str(py.relative_to(_TESTS_ROOT.parent)),
+                                node.name,
+                                sheet,
+                                tuple(used[:5]),
+                            )
+                        )
+    return sorted(findings)
+
+
+def test_no_harness_composes_split_sheet_widgets_with_the_bundle_alone():
+    """task-32204 AC#2: a bundle-only pin over split-sheet widgets is a bug.
+
+    The failure names the harness and the sheet it is missing so the fix is
+    a one-line swap to ``APP_STYLESHEETS`` (``Tests/UI/consolidated_css.py``),
+    which is what the running app ends up with once the owning screen has
+    been visited.
+    """
+    findings = scan_bundle_only_harnesses()
+    assert not findings, "\n".join(
+        f"{path}::{cls} pins the bundle without {sheet} "
+        f"but queries {', '.join(used)} -- "
+        "use CSS_PATH = [str(p) for p in APP_STYLESHEETS]"
+        for path, cls, sheet, used in findings
+    )

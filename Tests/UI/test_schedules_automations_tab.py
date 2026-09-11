@@ -25,7 +25,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from textual.widgets import Button, DataTable, Input, Select, Static
 
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from Tests.UI.schedules_test_helpers import (
     MockSchedulingDB,
     MockSchedulingServiceMixin,
@@ -1014,7 +1014,7 @@ class _BareDefinitionDetailApp(ConsolidatedCSSApp):
     `css/features/_scheduling.tcss` styling resolves.
     """
 
-    CSS_PATH = str(BUNDLED_STYLESHEET)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def compose(self):
         yield DefinitionDetail()

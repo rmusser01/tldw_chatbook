@@ -46,6 +46,7 @@ from tldw_chatbook.Subscriptions.briefing_cast import (
 from tldw_chatbook.UI.Watchlists_Modules import kept_briefings_modal as kbm_module
 from tldw_chatbook.UI.Watchlists_Modules.kept_briefings_modal import KeptBriefingsModal
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 # Marked so CI actually runs this file: the unit job selects `-m unit` and
 # the UI job runs `Tests/UI` plus `Tests -m ui --ignore=Tests/UI`, so an
@@ -165,7 +166,7 @@ class _ModalHost(App[None]):
     `DEFAULT_CSS` -- see the module docstring's three-way-vacuity note.
     """
 
-    CSS_PATH = ProductionCSSDestinationHarness.CSS_PATH
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def compose(self) -> ComposeResult:
         yield Static("host")

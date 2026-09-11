@@ -11,7 +11,7 @@ from textual.widgets import Button, Input
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.console_rail_section_helpers import open_rail_section
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
+from Tests.UI.consolidated_css import APP_STYLESHEETS, BUNDLED_STYLESHEET
 from Tests.UI.test_console_character_avatar import _set_chat_images_setting
 from Tests.UI.test_console_character_context import _groups, _resolved
 from Tests.UI.test_console_inspector_compact_access import _stored_rail_preferences
@@ -282,7 +282,7 @@ async def test_real_console_walkthrough_uses_synthetic_local_database(
     _set_chat_images_setting(app, "show_character_avatar", False)
 
     class ProductionStyledConsoleHarness(ConsoleHarness):
-        CSS_PATH = str(BUNDLED_STYLESHEET)
+        CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     host = ProductionStyledConsoleHarness(app)
     async with host.run_test(size=(120, 50)) as pilot:

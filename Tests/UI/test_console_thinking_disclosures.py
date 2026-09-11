@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 from textual.app import App, ComposeResult
 
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
+from Tests.UI.consolidated_css import APP_STYLESHEETS, BUNDLED_STYLESHEET
 from tldw_chatbook.Chat.console_chat_models import (
     PROPRIETARY_THINKING_NOTICE,
     ConsoleActivityPresentation,
@@ -50,7 +50,7 @@ class ThinkingTranscriptHarness(App[None]):
 class StyledThinkingTranscriptHarness(ThinkingTranscriptHarness):
     """Thinking harness using the same bundled stylesheet as production."""
 
-    CSS_PATH = str(BUNDLED_STYLESHEET)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 def _displayable(

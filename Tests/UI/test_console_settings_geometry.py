@@ -7,7 +7,7 @@ from textual import events
 from textual.containers import ScrollableContainer
 from textual.widgets import Button, Input, Static
 
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
@@ -30,7 +30,7 @@ LONG_CONNECTION_STATUS = (
 class GeometryHarness(ConsolidatedCSSApp):
     """Isolated app that loads the same consolidated CSS as production."""
 
-    CSS_PATH = str(BUNDLED_STYLESHEET)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self) -> None:
         super().__init__()

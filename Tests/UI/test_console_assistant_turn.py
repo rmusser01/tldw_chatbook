@@ -22,6 +22,7 @@ from tldw_chatbook.Widgets.Console.console_assistant_turn import (
     ConsoleAssistantTurnWidget,
 )
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 
 _CSS_DIR = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
@@ -116,7 +117,7 @@ class StyledActivityHarness(ActivityHarness):
 
     CSS_PATH = [
         str(_CSS_DIR / "screen_css_scoped.tcss"),
-        str(_CSS_DIR / "tldw_cli_modular.tcss"),
+        *[str(path) for path in APP_STYLESHEETS],
         str(_CSS_DIR / "screen_css_self.tcss"),
     ]
 
@@ -397,7 +398,7 @@ class StyledTranscriptHarness(App[None]):
 
     CSS_PATH = [
         str(_CSS_DIR / "screen_css_scoped.tcss"),
-        str(_CSS_DIR / "tldw_cli_modular.tcss"),
+        *[str(path) for path in APP_STYLESHEETS],
         str(_CSS_DIR / "screen_css_self.tcss"),
     ]
 

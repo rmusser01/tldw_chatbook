@@ -12,7 +12,7 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.widgets import Button
 
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 
 from tldw_chatbook.css import build_css
 from tldw_chatbook.Widgets.Console.console_turn_file_card import (
@@ -133,7 +133,7 @@ class _NotesCapableMultiHunkProvider(_MultiHunkProvider):
 
 
 class _Host(ConsolidatedCSSApp):
-    CSS_PATH = [str(_SELF), str(_CSS_DIR / "tldw_cli_modular.tcss"), str(_SCOPED)]
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def compose(self) -> ComposeResult:
         yield ConsoleTurnFileCard(
@@ -145,7 +145,7 @@ class _Host(ConsolidatedCSSApp):
 class _UndoCaptureHost(ConsolidatedCSSApp):
     """Card host that records direct Undo All requests without handling them."""
 
-    CSS_PATH = [str(_SELF), str(_CSS_DIR / "tldw_cli_modular.tcss"), str(_SCOPED)]
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self, provider) -> None:
         super().__init__()
@@ -654,7 +654,7 @@ async def test_real_provider_two_windows_on_same_root_no_duplicates_own_diffs(tm
     )
 
     class _RealHost(App):
-        CSS_PATH = [str(_SELF), str(_CSS_DIR / "tldw_cli_modular.tcss"), str(_SCOPED)]
+        CSS_PATH = [str(_SELF), *[str(path) for path in APP_STYLESHEETS], str(_SCOPED)]
 
         def compose(self) -> ComposeResult:
             yield ConsoleTurnFileCard(
@@ -961,7 +961,7 @@ async def test_narrow_card_elides_a_long_path_but_tooltip_keeps_it_whole():
     provider = _LongPathProvider()
 
     class _NarrowHost(App):
-        CSS_PATH = [str(_SELF), str(_CSS_DIR / "tldw_cli_modular.tcss"), str(_SCOPED)]
+        CSS_PATH = [str(_SELF), *[str(path) for path in APP_STYLESHEETS], str(_SCOPED)]
 
         def compose(self) -> ComposeResult:
             yield ConsoleTurnFileCard(

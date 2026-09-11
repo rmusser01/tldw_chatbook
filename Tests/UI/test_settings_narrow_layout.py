@@ -25,13 +25,14 @@ import tldw_chatbook
 from Tests.UI.test_destination_shells import DestinationHarness, _active_destination_screen
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 CSS_PATH = str(Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss")
 
 class _SettingsCssHarness(DestinationHarness):
     """DestinationHarness with the real application stylesheet loaded."""
 
-    CSS_PATH = CSS_PATH
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 def _rendered_lines(screen) -> list[str]:

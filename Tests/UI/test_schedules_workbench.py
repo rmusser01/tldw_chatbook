@@ -10,7 +10,7 @@ from loguru import logger as _loguru_logger
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from textual.widgets import (
     Button,
     Checkbox,
@@ -345,7 +345,7 @@ class _BareTaskDetailApp(ConsolidatedCSSApp):
     -- Task 1's own harness precedent (`test_detail_value_row.py`).
     """
 
-    CSS_PATH = str(BUNDLED_STYLESHEET)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def compose(self):
         yield TaskDetail()
@@ -359,7 +359,7 @@ class _BareConflictsTabApp(ConsolidatedCSSApp):
     measures Textual's OWN built-in `Horizontal`/`Static` defaults instead
     of this widget's own rules."""
 
-    CSS_PATH = str(BUNDLED_STYLESHEET)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def compose(self):
         yield ConflictsTab(None)
@@ -1275,7 +1275,7 @@ class _BareDefinitionDetailApp(ConsolidatedCSSApp):
     """Bare app mounting one `DefinitionDetail` (schedules-redesign PR-3,
     task 4), matching `_BareTaskDetailApp`'s own pattern."""
 
-    CSS_PATH = str(BUNDLED_STYLESHEET)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def compose(self):
         yield DefinitionDetail()
@@ -1320,7 +1320,7 @@ class _CapturingDefinitionDetailApp(ConsolidatedCSSApp):
     posted `Message` bubbling past it -- an `@on` handler on the App
     itself records what `DefinitionDetail` posts, no workbench needed."""
 
-    CSS_PATH = str(BUNDLED_STYLESHEET)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
