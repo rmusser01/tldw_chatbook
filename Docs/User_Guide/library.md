@@ -258,7 +258,8 @@ readable measure rather than stretched across the whole canvas.
   landing adds "i import content"
   and "n new note" (single-letter accelerators for the hub actions);
   the Search / RAG canvas adds "u use Library
-  context in Console", "enter select evidence", and "o open evidence";
+  context in Console", "o open evidence", and an "enter" hint that names
+  whatever Enter does on the control you are focused on;
   a Media/Notes/Prompts/Skills/Collections list adds "esc focus rail";
   that list's item viewer/editor (or the media viewer) adds "esc back to
   list" instead; the Export canvas adds "esc back to Media" (or whichever
@@ -266,6 +267,9 @@ readable measure rather than stretched across the whole canvas.
   staging canvas adds "esc back to hub". Every hint is a per-key
   "key action" pair — the Notes editor, for example, shows "ctrl+s save
   note | esc back to notes".
+  While a text field has focus the footer leads with `typing in field`,
+  names `esc leave field`, and keeps the canvas verbs after `after esc:` —
+  they are not live until you leave the field.
 
 One special case: selecting **Notes** adds a
 **Library notes | Folder files** strip above the workbench. **Folder files**
@@ -884,3 +888,10 @@ list, and the landing hub is capped at 96 cells).*
 (task-32225: the return chip stands down wherever a canvas owns Escape itself,
 so the footer never names a return the key would not perform; task-32228:
 Conversations arrives with its first row focused like every other browse list).*
+
+*Verified against fix/library-crit10-viewer — 2026-09-11 (task-32346: with the
+caret in the Search/RAG query box the footer reads "typing in field | esc leave
+field | after esc: u use Library context in Console · o open evidence | enter
+run search | F6 next pane"; the same shape on the Media list keeps "s select"
+behind the same gesture, and "F6 next pane" is last so a narrow footer drops it
+before any verb).*

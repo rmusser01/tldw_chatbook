@@ -161,3 +161,53 @@ async def test_find_is_refused_on_the_info_tab_and_t_stays_a_plain_character():
         await pilot.pause()
         assert screen._media_state.find_open is False
         assert not screen.query("#library-media-content-search-controls")
+# --------------------------------------------------------------------------
+# task-32365: a Markdown analysis renders
+# --------------------------------------------------------------------------
+
+
+_MARKDOWN_ANALYSIS = "## Key contributions\n\nA first point, and a second."
+
+
+def _analysis_host(analysis: str) -> LibraryProductionCSSHarness:
+    """Media whose stored analysis is ``analysis``.
+
+    Local media detail never carries ``analysis_content`` at the top level;
+    the viewer reads the newest ``versions`` entry.
+    """
+    app = _build_media_test_app()
+    items = _two_media_items()
+    for item in items:
+        item["versions"] = [{"version_number": 1, "analysis_content": analysis}]
+    _seed_conversations(app, _two_conversations(), media=items)
+    return LibraryProductionCSSHarness(app)
+
+
+@pytest.mark.asyncio
+async def test_a_stored_analysis_renders_its_markdown_with_a_raw_toggle():
+    host = _analysis_host(_MARKDOWN_ANALYSIS)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_first_media_reader(host, pilot)
+        await _switch_to_analysis(screen, pilot)
+        body = await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
+        painted = _painted(host, body.region)
+        assert "Key contributions" in painted, painted
+        assert "## Key" not in painted, painted
+        toggle = screen.query_one("#library-media-analysis-content-mode-raw", Button)
+        toggle.press()
+        await pilot.pause()
+        await pilot.pause()
+        assert "## Key contributions" in _painted(
+            host, screen.query_one("#library-media-viewer-content").region
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_plain_text_analysis_is_offered_no_toggle():
+    """Nothing to render, so no affordance for it (the Read tab's rule)."""
+    host = _analysis_host("A flat paragraph of prose, with no markup at all.")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_first_media_reader(host, pilot)
+        await _switch_to_analysis(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
+        assert not screen.query("#library-media-analysis-content-mode-raw")
