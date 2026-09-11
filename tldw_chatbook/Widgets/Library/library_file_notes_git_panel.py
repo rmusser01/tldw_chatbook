@@ -2102,9 +2102,11 @@ class LibraryFileNotesGitPanel(Vertical):
             ),
             "candidate": f"Candidate OID: {candidate.candidate_oid}",
             "transition": f"Parent transition: {candidate.transition}",
-            "local-branch": (
-                f"Local branch: {_branch_for_display(candidate.local_branch_ref)}"
-            ),
+            # NOT `_branch_for_display`: this line sits in the push panel's
+            # Technical details beside "Full destination ref", where the
+            # complete ref IS the audit evidence (task-32265 is scoped to
+            # the pre-commit disclosure).
+            "local-branch": f"Local branch: {candidate.local_branch_ref}",
             "remote": (
                 f"Configured remote: {review.configured_remote_label}"
             ),
@@ -4035,8 +4037,7 @@ class PushDestinationAuthorizationDialog(SafeModalDismissMixin, ModalScreen[bool
                 yield Label(
                     (
                         f"Endpoint: {_push_destination_summary(destination)}\n"
-                        "Local branch: "
-                        f"{_branch_for_display(self._candidate.local_branch_ref)}\n"
+                        f"Local branch: {self._candidate.local_branch_ref}\n"
                         f"Full destination ref: {destination.destination_ref}\n"
                         f"Transport: {transport}\n\n"
                         "Scope: authorization lasts only for this application "
