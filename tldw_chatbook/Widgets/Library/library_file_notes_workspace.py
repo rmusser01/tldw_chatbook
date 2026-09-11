@@ -801,8 +801,16 @@ class LibraryFileNotesWorkspace(Vertical):
         width: auto;
     }
 
+    /* task-32180: every optional control in the folder row, not just the
+       two it shipped with. Textual's Button default is ``min-width: 16``,
+       so "Cancel" reserved 16 cells and the row's three wait controls ran
+       11 cells off the right edge of a 60-column terminal. */
     #file-notes-root-details,
-    #file-notes-choose-root {
+    #file-notes-choose-root,
+    #library-structural-wait-cancel,
+    #file-notes-root-keep-waiting,
+    #file-notes-root-choose-another,
+    #file-notes-use-sync-folder {
         width: auto;
         min-width: 0;
         height: 1;
@@ -819,6 +827,13 @@ class LibraryFileNotesWorkspace(Vertical):
     #file-notes-body {
         height: 1fr;
         min-height: 8;
+    }
+
+    /* task-32173: before a folder is linked the body holds the Library
+       rail and nothing else, so it must not claim eight rows back from
+       the empty state's own copy on a short terminal. */
+    #file-notes-body.-no-root {
+        min-height: 0;
     }
 
     #library-file-notes-reader-shell,
@@ -1554,6 +1569,11 @@ class LibraryFileNotesWorkspace(Vertical):
         shell = self._reader_shell
         if shell is not None:
             shell.sync_layout(layout, manual_reopen=manual_reopen)
+            # task-32173: ``sync_layout`` restores ``items`` from the
+            # resolved layout, which knows nothing about whether a folder
+            # is linked. Re-assert the root gate here so a resize cannot
+            # paint the file panes back into the empty state.
+            self._sync_body_panes()
         self._schedule_editor_action_layout()
 
     def _ensure_standalone_reader_shell(self) -> LibraryAdaptiveReaderShell:
@@ -2601,37 +2621,75 @@ class LibraryFileNotesWorkspace(Vertical):
         return f"{wait.label}… · {progress}"
 
     def _configured_sync_folder(self) -> Path | None:
-        """Return the folder ``[notes] sync_directory`` names, when usable.
+        """Return the configured notes folder to offer by name, when usable.
 
         task-32136: a user who already configured a notes folder should be
         offered it by name instead of being sent to a file picker that
         opens on their home directory.
 
-        The setting is config-derived input, so it goes through
+        task-32180: ``[file_notes] root`` -- the key this mode itself writes
+        on every successful folder change -- is read first; the legacy
+        ``[notes] sync_directory`` (TASK-21112 calls it that) stays the
+        fallback for a profile that has never linked a folder here.
+
+        Both are config-derived input, so they go through
         ``path_validation`` (review round 2) rather than straight to
         ``is_dir()``: a relative spelling would otherwise resolve against
         whatever directory the app was launched from.
         """
-        raw = get_cli_setting("notes", "sync_directory", None)
-        if not isinstance(raw, str) or not raw.strip():
-            return None
+        for section, key in (("file_notes", "root"), ("notes", "sync_directory")):
+            raw = get_cli_setting(section, key, None)
+            if not isinstance(raw, str) or not raw.strip():
+                continue
+            try:
+                return validate_existing_absolute_directory(
+                    Path(raw).expanduser()
+                )
+            except (OSError, ValueError):
+                continue
+        return None
+
+    def _sync_body_panes(self) -> None:
+        """Keep the Library rail; make only the file panes wait for a folder.
+
+        task-32173: Folder files is a mode of Notes (task-32136 user
+        decision), so its rail belongs on screen from the first frame, not
+        after a folder is linked. The body itself stays mounted --
+        display-gating it left the reader shell with zero width, so the
+        adaptive layout never resolved at all and the rail could not open
+        even at 235 columns.
+
+        Compact terminals are unchanged because the resolver already closes
+        the rail below the Library's compact breakpoint: at 60 and at 100
+        columns it reports ``library_open=False``, so the unlinked body
+        holds nothing to paint.
+        """
+        linked = self._root is not None
+        shell = self._reader_shell
+        if shell is not None:
+            # ``library`` is deliberately absent: the resolver owns it.
+            shell.items.display = linked and shell.effective_layout.items_open
+            shell.items_grip.display = linked
+            shell.library_grip.display = linked
+            shell.work.display = linked
         try:
-            return validate_existing_absolute_directory(
-                Path(raw).expanduser()
-            )
-        except (OSError, ValueError):
-            return None
+            body = self.query_one("#file-notes-body")
+        except NoMatches:
+            return
+        # An empty body must not claim its ``min-height`` back from the
+        # empty state's own copy on a short terminal.
+        body.set_class(not linked, "-no-root")
 
     def _update_root_surface(self, *, offline: bool | None = None) -> None:
         if not self._active or not self.is_mounted or not self.children:
             return
         try:
             status = self.query_one("#file-notes-root-status", Static)
-            body = self.query_one("#file-notes-body")
             details = self.query_one("#file-notes-root-details", Button)
             choose = self.query_one("#file-notes-choose-root", Button)
         except NoMatches:
             return
+        self._sync_body_panes()
         binding = self._session_binding
         mutation_active = binding is not None and self._session_owner.mutation_active(
             binding
@@ -2646,9 +2704,16 @@ class LibraryFileNotesWorkspace(Vertical):
             )
         except NoMatches:
             structural_cancel = None
-        if structural_cancel is not None:
-            structural_cancel.display = wait is not None and wait.cancel is not None
         slow = wait is not None and wait.is_slow(monotonic())
+        if structural_cancel is not None:
+            # task-32102: the way out arrives when the row first admits it
+            # is slow -- the same patience boundary Keep waiting and Choose
+            # another already use. Revealed at t=0 it offered an escape from
+            # an operation that had not yet claimed to be stuck, while the
+            # line still read a bare "Changing folder…".
+            structural_cancel.display = (
+                wait is not None and wait.cancel is not None and slow
+            )
         self._show_root_row_button(
             "#file-notes-root-keep-waiting",
             slow and not self._root_change_extension_used,
@@ -2674,10 +2739,26 @@ class LibraryFileNotesWorkspace(Vertical):
             self._root_status_summary = self._root_status_detail
             status.tooltip = None
             status.update(self._root_status_summary)
-            status.set_class(self._root is None, "-empty-root")
-            body.display = self._root is not None
-            details.display = self._root is not None
-            choose.display = True
+            # Never the empty state's hug (fix round 1): task-2850's
+            # ``width: auto`` is for the short "Choose a notes folder."
+            # prompt, and a wait line wearing it hugs its own full length
+            # instead of eliding -- which pushed Keep waiting and Choose
+            # another off a 60-column row whenever the change started from
+            # an unlinked state. Same reasoning as the ``_root is None``
+            # branch below, which already excludes its own reason line.
+            status.set_class(False, "-empty-root")
+            # task-32102: and never the tint of the state the wait replaced
+            # -- this branch returns before the resets below, so a warning
+            # or offline colour stayed under the wait line.
+            status.set_class(False, "-warning")
+            status.set_class(False, "-offline")
+            # task-32180: the row belongs to the wait's own three controls
+            # while it runs. Details would open a dialog showing this very
+            # line, and Change… is disabled for the whole transition while
+            # Choose another does exactly its job -- two dead controls that
+            # pushed Choose another 11 cells off a 60-column row.
+            details.display = False
+            choose.display = False
             self._render_status_channels()
             self.call_after_refresh(self._fit_root_status)
             return
@@ -2694,7 +2775,6 @@ class LibraryFileNotesWorkspace(Vertical):
             status.set_class(not reason, "-empty-root")
             status.set_class(False, "-warning")
             status.set_class(False, "-offline")
-            body.display = False
             details.display = False
             choose.label = "Choose folder…"
             choose.display = True
@@ -2729,7 +2809,6 @@ class LibraryFileNotesWorkspace(Vertical):
             self._root_status_summary = self._root_action_reason
         status.tooltip = Text(detail)
         status.update(self._root_status_summary)
-        body.display = True
         details.display = True
         choose.label = "Change…"
         choose.display = True
@@ -6399,6 +6478,26 @@ class LibraryFileNotesWorkspace(Vertical):
         still refuse -- which is the swallowed-Escape bug. Bumping the
         generation makes the abandoned run's late results stale, so it can
         never commit the folder it was still scanning.
+
+        Invariant (task-32180): **every** way a folder change ends early
+        arrives here, and nothing else releases the previous scan's hold on
+        ``_service_lock``. Three call sites reach it: the deadline and the
+        ``CancelledError`` branch of ``_change_root_with_deadline``, and
+        the ``StructuralWait.cancel`` partial that Cancel, Escape, the back
+        cue, the navigation flush and ``Choose another`` all go through. A
+        re-entrant folder change arrives by the second of those: the worker
+        is ``exclusive=True`` in the ``file-notes-root-change`` group, so
+        picking a second folder cancels the first worker.
+
+        What it is NOT: synchronous. Textual's exclusive-worker cancel
+        delivers ``CancelledError`` on a later loop turn, so the new
+        attempt's ``set_root`` can reach ``_scan_for_root`` while the
+        abandoned scan still holds the lock. That overlap is covered, not
+        avoided: ``_scan_for_root`` polls the lock and gives up only on
+        THIS attempt's cancel flag, so the new attempt simply waits out
+        the microseconds the old one needs to notice its flag. Do not
+        write an assertion here claiming the previous attempt is already
+        finished -- it usually is not.
         """
         task.cancel()
         # task-32121: the asyncio cancel never reached the scan THREAD,
@@ -6412,12 +6511,31 @@ class LibraryFileNotesWorkspace(Vertical):
         self._root_generation += 1
         self._root_transitioning = False
 
-    def _abandon_root_change(self, wait: StructuralWait, reason: str) -> None:
-        """Report why a folder change ended and keep the current folder."""
+    def _abandon_root_change(
+        self,
+        wait: StructuralWait,
+        reason: str,
+        *,
+        leaving: bool = False,
+    ) -> None:
+        """Report why a folder change ended and keep the current folder.
+
+        Args:
+            wait: The wait being abandoned.
+            reason: What to tell the user.
+            leaving: Whether the user is leaving this surface. task-32102:
+                the reason line owns the root row, which is exactly the
+                canvas being torn down on the way out -- nobody ever read
+                it. A toast is app-wide, so it follows the user to wherever
+                they land instead.
+        """
         self._end_structural_wait(wait)
+        if leaving:
+            self.app.notify(reason)
+            return
         self._report_root_change_reason(reason)
 
-    def cancel_structural_wait(self) -> bool:
+    def cancel_structural_wait(self, *, leaving: bool = False) -> bool:
         """Abandon the in-flight structural wait, keeping the current folder.
 
         The single seam for every exit: the Cancel button, Escape, the back
@@ -6425,13 +6543,18 @@ class LibraryFileNotesWorkspace(Vertical):
         wait can gate the WRITE (a second folder change) without ever
         gating the way out.
 
+        Args:
+            leaving: Whether this exit also leaves the surface, in which
+                case the outcome is announced rather than written to the
+                row the user is walking away from (task-32102).
+
         Returns:
             True when a wait was actually abandoned.
         """
         wait = self._structural_wait
         if wait is None or not wait.request_cancel():
             return False
-        self._abandon_root_change(wait, ROOT_CHANGE_CANCELLED_COPY)
+        self._abandon_root_change(wait, ROOT_CHANGE_CANCELLED_COPY, leaving=leaving)
         return True
 
     @on(Button.Pressed, "#library-structural-wait-cancel")

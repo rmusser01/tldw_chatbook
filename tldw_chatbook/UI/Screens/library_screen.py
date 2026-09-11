@@ -240,7 +240,10 @@ from ...Library.library_notes_tree_paging import (
     fail_notes_slice_load,
     patch_notes_tree_branches_title,
 )
-from ...Notes.note_folder_repository import LocalNoteFolderRepository
+from ...Notes.note_folder_repository import (
+    PLACEMENT_ORDERS,
+    LocalNoteFolderRepository,
+)
 from ...Library.library_notes_session import (
     DatabaseNoteSessionCoordinator,
     DestructiveAdmission,
@@ -9951,7 +9954,10 @@ class LibraryScreen(BaseAppScreen):
         if not self._file_notes_active():
             return True
         assert self._notes_state.file_notes_workspace is not None
-        self._notes_state.file_notes_workspace.cancel_structural_wait()
+        # task-32102: this seam is only ever reached on the way out, so the
+        # outcome is announced -- the root row it used to be written to is
+        # part of the canvas being torn down.
+        self._notes_state.file_notes_workspace.cancel_structural_wait(leaving=True)
         return await self._notes_state.file_notes_workspace.flush_pending_work()
 
     def _acquire_file_notes_transition(
@@ -15665,16 +15671,35 @@ class LibraryScreen(BaseAppScreen):
         self._notes_state.tree_inactive_managed_folder_ids = frozenset()
         self._notes_state.filter_browse_receipt = None
 
+    def _library_notes_placement_order(self) -> str:
+        """Return the repository placement order the Sort value asks for.
+
+        task-32172: the Sort control's value is the tree's ORDER BY now, and
+        it reaches both the pager and the deep-link locator's rank through
+        this one read so the two can never diverge.
+        """
+        order = getattr(self._notes_state, "sort", "title")
+        return order if order in PLACEMENT_ORDERS else "title"
+
     def _request_library_notes_tree_initial_load(self) -> None:
-        """Start one fresh visit by requesting only the two root slices."""
+        """Start one fresh visit by requesting the root and open branches.
+
+        task-32172: a folder's placements only exist while it is expanded,
+        so reloading the roots alone left every open folder rendered with no
+        children until the user collapsed and re-opened it. Under a changed
+        sort that is the whole point of the reload, and the same emptiness
+        was already reachable from the import/editor-return refreshes.
+        """
+        expanded = sorted(getattr(self._notes_state, "tree_expanded_ids", set()))
         LibraryScreen._begin_library_notes_tree_visit(self)
         # task-32144: and the tombstones behind them, so the "Recently
         # deleted (N)" row is truthful on the visit's first paint.
         self._refresh_library_notes_trash()
-        for kind in ("folders", "placements"):
-            LibraryScreen._request_library_notes_tree_slice(
-                self, NotesBranchKey(None, kind)
-            )
+        for parent_id in (None, *expanded):
+            for kind in ("folders", "placements"):
+                LibraryScreen._request_library_notes_tree_slice(
+                    self, NotesBranchKey(parent_id, kind)
+                )
 
     def _sync_library_notes_tree_canvas_if_present(
         self,
@@ -15919,6 +15944,13 @@ class LibraryScreen(BaseAppScreen):
                 limit=LIBRARY_NOTES_TREE_PAGE_SIZE,
                 offset=offset,
                 user_id=self._library_notes_user_id(),
+                # task-32172: folders have no date to order by, so only the
+                # placement slice carries the Sort value.
+                **(
+                    {}
+                    if key.slice_kind == "folders"
+                    else {"order": LibraryScreen._library_notes_placement_order(self)}
+                ),
             )
         except Exception as exc:  # noqa: BLE001 - normalized service boundary
             event = (
@@ -16308,6 +16340,9 @@ class LibraryScreen(BaseAppScreen):
                     note_id=note_id,
                     preferred_folder_id=preferred_folder_id,
                     preferred_membership_id=preferred_membership_id,
+                    # task-32172: the returned offset is a rank, so it has
+                    # to be counted in the order the tree will page in.
+                    order=LibraryScreen._library_notes_placement_order(self),
                 )
             else:
                 location = await method(**common, folder_id=folder_id)
@@ -19063,15 +19098,18 @@ class LibraryScreen(BaseAppScreen):
         # cached branch slices (and, while filtering, an FTS filter window) --
         # NOT the flat records patched above. Retitle the matching placement in
         # the branch slices AND re-sort the affected slice, because repository
-        # pages are ordered by title so a rename changes collation position
-        # (Qodo #3). Cross-page offset boundaries are reconciled on the next
-        # slice reload/visit; see patch_notes_tree_branches_title's contract.
+        # pages are ordered so a save changes the row's position (Qodo #3) --
+        # by title under Title, and by the fresh modified stamp under
+        # Newest/Oldest (task-32172). Cross-page offset boundaries are
+        # reconciled on the next slice reload/visit; see
+        # patch_notes_tree_branches_title's contract.
         self._notes_state.tree_branches, _tree_retitled = (
             patch_notes_tree_branches_title(
                 self._notes_state.tree_branches,
                 note_id=baseline.note_id,
                 title=persisted_title,
                 modified_at=baseline.modified_at,
+                order=LibraryScreen._library_notes_placement_order(self),
             )
         )
         # Qodo #4: the notes filter is an FTS MATCH over title+body+keywords
