@@ -1092,7 +1092,7 @@ def create_console_speculative_voice_session(
         preserve_draft=preserve_original_draft,
         on_runtime_failure=on_runtime_failure,
     )
-    supervisor.retain(engine)
+    supervisor.retain(engine, session_id=session_id)
     return engine
 
 

@@ -266,6 +266,33 @@ def test_voice_promotion_locator_inventory_covers_owned_message_revision_tables(
     assert discovered == categorized
 
 
+@pytest.mark.parametrize("already_committed", [False, True])
+def test_archive_blocks_new_voice_pair_but_preserves_committed_reconciliation(
+    db_instance, already_committed
+):
+    conversation_id, _, destination, context = _voice_promotion_case(db_instance)
+    service = ChatPersistenceService(db_instance)
+    if already_committed:
+        service.commit_completed_voice_pair(destination=destination, context=context)
+    row = db_instance.get_conversation_by_id(conversation_id)
+    db_instance.set_conversations_archived(
+        [conversation_id],
+        archived=True,
+        expected_versions={conversation_id: row["version"]},
+    )
+    if already_committed:
+        result = service.commit_completed_voice_pair(
+            destination=destination, context=context
+        )
+        assert result.already_committed
+    else:
+        with pytest.raises(RuntimeError):
+            service.commit_completed_voice_pair(
+                destination=destination, context=context
+            )
+        assert _promotion_identity_rows(db_instance) == ([], [])
+
+
 def test_commit_completed_voice_pair_atomically_persists_terminal_pair(db_instance):
     conversation_id, _root_id, destination, context = _voice_promotion_case(db_instance)
     service = ChatPersistenceService(db_instance)

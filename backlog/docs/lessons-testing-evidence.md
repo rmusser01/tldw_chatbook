@@ -13233,3 +13233,18 @@ assertion on the actual renamed conversation creation exposed the TypeError;
 correcting the mock contract then made that assertion pass. Batch tests must
 assert the specific item's persisted outcome or write payload, not only an
 aggregate count that unrelated items can satisfy.
+
+### Rebased cold-session fixtures must cross activation boundaries (2026-09-10)
+
+PR #2504's final integration initially failed 31 closed-history cases before the
+intended tamper hook. Its reload fixture restored rows but omitted real Library
+policy hydration, so the new send-time frozen configuration correctly retained
+unavailable authority. Hydrating through the real store method fixed that fixture
+gap; accepting the new third frozen-input dictionary callback argument fixed a
+second fixture mismatch. Neither justified weakening production policy checks.
+The still-failing exact closed-history proof then exposed a real composition gap:
+ordinary terminal receipt-only metadata was not one of its accepted empty forms.
+An exact canonical receipt/default shape, with four negative metadata regressions,
+resolved it; all 39 selected closed-history cases passed. Locate the actual failed
+boundary before treating every post-rebase failure as either fixture-only or a
+production regression.

@@ -360,6 +360,7 @@ class _ConsoleTurnCustodyRecord:
     request: ConsoleTurnCustodyRequest | None = field(repr=False)
     inputs: _ConsoleTurnCustodyInputs = field(default_factory=_ConsoleTurnCustodyInputs, repr=False)
     task: asyncio.Task[Any] | None = field(default=None, repr=False)
+    archive_conversation_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -2089,12 +2090,39 @@ class ConsoleRuntime:
             ),
         )
         self._turn_custody[record.turn_id] = record
+        if self._app is not None and self._chat_store is not None:
+            session = next(
+                (
+                    item
+                    for item in self._chat_store.sessions()
+                    if item.id == request.session_id
+                ),
+                None,
+            )
+            record.archive_conversation_id = (
+                session.persisted_conversation_id if session is not None else None
+            )
+            if record.archive_conversation_id:
+                reservations = getattr(self._app, "_conversation_send_inflight", None)
+                if reservations is None:
+                    reservations = self._app._conversation_send_inflight = {}
+                reservations[record.archive_conversation_id] = (
+                    reservations.get(record.archive_conversation_id, 0) + 1
+                )
         return record
 
     def _release_custody(self, turn_id: str) -> None:
         """Drop the runtime's final references to an accepted turn."""
         record = self._turn_custody.pop(turn_id, None)
         if record is not None:
+            if record.archive_conversation_id:
+                reservations = self._app._conversation_send_inflight
+                remaining = reservations.get(record.archive_conversation_id, 1) - 1
+                if remaining:
+                    reservations[record.archive_conversation_id] = remaining
+                else:
+                    reservations.pop(record.archive_conversation_id, None)
+                record.archive_conversation_id = None
             record.request = None
             record.inputs.attachments = ()
             record.inputs.staged_evidence_revision = None
@@ -2227,6 +2255,22 @@ class ConsoleRuntime:
         if request is None or controller is None:
             raise RuntimeError("Console controller is unavailable for runtime custody.")
 
+        if record.archive_conversation_id:
+            from tldw_chatbook.Chat.conversation_archive_actions import (
+                conversation_send_refusal,
+            )
+
+            refusal = await conversation_send_refusal(
+                self._app, record.archive_conversation_id
+            )
+            if refusal:
+                notify = getattr(self._app, "notify", None)
+                if callable(notify):
+                    notify(refusal, severity="warning")
+                raise RuntimeError(
+                    "Console conversation is unavailable for submission."
+                )
+
         def mark_durable_acceptance() -> None:
             record.inputs.durable_accepted = True
 
@@ -2241,9 +2285,7 @@ class ConsoleRuntime:
                 configuration=request.configuration,
                 accepted_attachments=record.inputs.attachments,
                 captured_one_shot_prefill=request.one_shot_prefill,
-                captured_one_shot_prefill_revision=(
-                    request.one_shot_prefill_revision
-                ),
+                captured_one_shot_prefill_revision=(request.one_shot_prefill_revision),
                 staged_evidence_launch=request.staged_evidence_launch,
                 staged_evidence_capture=self._capture_frozen_console_staged_rag,
                 staged_evidence_release=functools.partial(
@@ -2412,7 +2454,16 @@ class ConsoleRuntime:
             result = task.result()
             accepted = bool(getattr(result, "accepted", False))
         except asyncio.CancelledError:
-            pass
+            if (
+                record is not None
+                and recover_before_acceptance
+                and not record.inputs.durable_accepted
+                and self._chat_store is not None
+                and any(
+                    item.id == record.session_id for item in self._chat_store.sessions()
+                )
+            ):
+                self._record_turn_recovery(record)
         except BaseException as exc:
             if (
                 record is not None

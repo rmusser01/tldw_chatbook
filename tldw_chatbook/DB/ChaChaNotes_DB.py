@@ -715,7 +715,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 71  # Local conversation archive lifecycle.
+    _CURRENT_SCHEMA_VERSION = 72  # Voice provenance follows local conversation archive.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -8155,42 +8155,42 @@ UPDATE db_schema_version
                 f"{type(exc).__name__}"
             ) from exc
 
-    def _migrate_from_v70_to_v71(self, conn: sqlite3.Connection) -> None:
+    def _migrate_from_v71_to_v72(self, conn: sqlite3.Connection) -> None:
         """Add explicit provenance and guarded promoted terminal imports."""
 
-        self._require_migration_entry_version(conn, 70, "V70→V71")
+        self._require_migration_entry_version(conn, 71, "V71→V72")
         migration_path = (
             Path(__file__).parent
             / "migrations"
-            / "chachanotes_v70_to_v71_voice_trace_provenance.sql"
+            / "chachanotes_v71_to_v72_voice_trace_provenance.sql"
         )
         try:
             with self.transaction() as cursor:
                 self._execute_migration_statements(
                     cursor,
                     migration_path.read_text(encoding="utf-8"),
-                    "V70→V71",
+                    "V71→V72",
                 )
                 version_cursor = cursor.execute(
                     """
                     UPDATE db_schema_version
-                       SET version = 71
+                       SET version = 72
                      WHERE schema_name = ?
-                       AND version = 70
+                       AND version = 71
                     """,
                     (self._SCHEMA_NAME,),
                 )
                 if version_cursor.rowcount != 1:
                     raise SchemaError(
-                        f"[{self._SCHEMA_NAME} V70→V71] Migration version update was not applied"
+                        f"[{self._SCHEMA_NAME} V71→V72] Migration version update was not applied"
                     )
-            if self._get_db_version(conn) != 71:
+            if self._get_db_version(conn) != 72:
                 raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V70→V71] Migration version check failed"
+                    f"[{self._SCHEMA_NAME} V71→V72] Migration version check failed"
                 )
         except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
             raise SchemaError(
-                f"Migration from V70 to V71 failed for '{self._SCHEMA_NAME}': "
+                f"Migration from V71 to V72 failed for '{self._SCHEMA_NAME}': "
                 f"{type(exc).__name__}"
             ) from exc
 
@@ -8437,6 +8437,7 @@ UPDATE db_schema_version
                     68: self._migrate_from_v68_to_v69,
                     69: self._migrate_from_v69_to_v70,
                     70: self._migrate_from_v70_to_v71,
+                    71: self._migrate_from_v71_to_v72,
                 }
 
                 if current_db_version == 0:

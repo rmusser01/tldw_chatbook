@@ -290,6 +290,63 @@ def _runtime_with_custody_inputs(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_before_start", [True, False])
+async def test_archive_reservation_and_recovery_follow_actual_custody(
+    cancel_before_start, monkeypatch
+):
+    from tldw_chatbook.Chat import conversation_archive_actions as archive
+
+    request = _custody_request()
+    runtime, store, attachments = _runtime_with_custody_inputs(request)
+    session = store.sessions()[0]
+    session.persisted_conversation_id = "original-conversation"
+    runtime._app = SimpleNamespace(console_runtime=runtime)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    observed = []
+
+    async def refusal(app, conversation_id):
+        observed.append(conversation_id)
+        entered.set()
+        await release.wait()
+        return "This conversation is archived."
+
+    async def chain(*, initial_turn, **kwargs):
+        return await initial_turn()
+
+    async def submit(*args, **kwargs):
+        pytest.fail("Archived custody reached provider submission")
+
+    runtime._chat_controller = SimpleNamespace(
+        run_prompt_chain=chain, submit_draft=submit
+    )
+    monkeypatch.setattr(archive, "conversation_send_refusal", refusal)
+    turn_id = runtime.accept_turn(request)
+    record = runtime._turn_custody[turn_id]
+    task = record.task
+    try:
+        assert getattr(runtime._app, "_conversation_send_inflight", {}) == {
+            "original-conversation": 1
+        }
+        session.persisted_conversation_id = "new-conversation"
+        if not cancel_before_start:
+            await asyncio.wait_for(entered.wait(), 1)
+            assert observed == ["original-conversation"]
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(0)
+        assert runtime._app._conversation_send_inflight == {}
+        recovery = runtime._turn_recoveries[turn_id]
+        assert recovery.draft == request.draft
+        assert recovery.attachments == attachments
+    finally:
+        release.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_custody_registers_before_the_runtime_task_starts():
     """An accepted turn is retained synchronously before it can run."""
     request = _custody_request()
@@ -625,9 +682,7 @@ async def test_leaving_console_does_not_resolve_a_pending_approval_round():
         assert worker.is_alive()
         assert decisions == {}
     finally:
-        controller.resolve_pending_approval(
-            {"write_file": "deny"}, round_id=round_id
-        )
+        controller.resolve_pending_approval({"write_file": "deny"}, round_id=round_id)
         worker.join(timeout=10)
 
     assert decisions == {"write_file": "deny"}
@@ -750,9 +805,7 @@ async def test_a_round_from_the_previous_visit_is_not_resurrected():
     assert not resolved.is_set()
     assert decisions == {}
 
-    controller.resolve_pending_approval(
-        {"write_file": "deny"}, round_id=round_id
-    )
+    controller.resolve_pending_approval({"write_file": "deny"}, round_id=round_id)
     worker.join(timeout=10)
     assert resolved.is_set()
     assert decisions == {"write_file": "deny"}

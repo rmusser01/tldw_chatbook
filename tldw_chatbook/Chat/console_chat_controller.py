@@ -7760,6 +7760,15 @@ class ConsoleChatController:
         )
         if session is None:
             raise VoicePreparationError("session_unavailable")
+        if self.app is not None and session.persisted_conversation_id:
+            from tldw_chatbook.Chat.conversation_archive_actions import (
+                conversation_send_refusal,
+            )
+
+            if await conversation_send_refusal(
+                self.app, session.persisted_conversation_id
+            ):
+                raise VoicePreparationError("session_unavailable")
         (
             resolution,
             turn_context,

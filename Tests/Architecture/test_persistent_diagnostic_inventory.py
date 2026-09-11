@@ -113,7 +113,8 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "wake send gate raised; deferring": ("type(exc).__name__",),
         "wake user-priority probe raised; deferring": ("type(exc).__name__",),
         "wake delivery failed": ("type(exc).__name__",),
-        "wake delivery ledger stamp failed": ("type(exc).__name__",),
+        "wake delivery ledger stamp failed (exception_type=": ("type(exc).__name__",),
+        "wake delivery ledger stamp failed after dispose": ("type(exc).__name__",),
         "wake mark listing failed": ("type(exc).__name__",),
         "wake ledger read failed": ("type(exc).__name__",),
         "wake session resolution failed": ("type(exc).__name__",),
@@ -260,12 +261,14 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
             "isinstance(exc, TransferError) and getattr(exc, 'retryable', False)",
         ),
     },
-    "tldw_chatbook/UI/Console_Modules/session.py": {
-        "Character swap: roleplay template seed failed": ("type(exc).__name__",),
-        "Start Chat: roleplay template seed/persist failed": ("type(exc).__name__",),
+    "tldw_chatbook/Chat/console_turn_context.py": {
         "Console turn context: tool policy profile resolution failed": (
             "type(exc).__name__",
         ),
+    },
+    "tldw_chatbook/UI/Console_Modules/session.py": {
+        "Character swap: roleplay template seed failed": ("type(exc).__name__",),
+        "Start Chat: roleplay template seed/persist failed": ("type(exc).__name__",),
         "Console turn context: persona policy rules resolution failed": (
             "type(exc).__name__",
         ),

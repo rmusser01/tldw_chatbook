@@ -806,3 +806,35 @@ This task was initially created as `TASK-23113`. It was renumbered before its fi
 commit because that ID was already owned by the older Wizard-suite load-flake task on
 multiple remote refs. `TASK-23175` was clear across all remote refs and local worktrees
 at filing time.
+
+## Implementation Notes — September 10 current-dev integration
+
+The approved normal rebase composes published voice work with exact dev
+`3afa68f1b99103ec8b5b5f19921ac480ad9344ac`, after the initial pinned `0fcb79e596`
+replay. Incoming archive migration 70→71 remains byte-identical; unmerged voice
+provenance moves to 71→72 with real predecessor70/71 coverage. Native sources,
+build identity and packaged qualification/hard-off authority remain unchanged.
+
+Archive admission now follows existing runtime turn custody and retained Hands-free
+session cleanup. Original persisted conversation IDs stay reserved through actual
+cleanup, including pre-start cancellation. Direct voice preparation revalidates
+archive state, and pair persistence rejects newly archived destinations only after
+checking already-committed reconciliation. Existing ADR094/098/125/147 govern this
+composition. ADR097 records exact local-only terminal receipt metadata in closed
+history proofs; provider/content/unknown metadata exclusions remain strict.
+
+Focused cohorts passed12 new schema/custody cases,34 provider/custody cases,
+28 UI/bridge cases and finally39 closed-history cases (counts overlap). The trace
+cohort previously recorded50 pass/31 fail before real fixture hydration, frozen
+dictionary callback alignment and the receipt-only production correction. Source
+and diagnostic expectation failures were individually repaired and retested.
+Known baseline limitations remain explicit: preimport510/500 on exact incoming dev
+versus513 with the already-published three voice modules; one historical TASK15743
+diagnostic assertion fails equally upstream;206 full-list Ruff E402 diagnostics
+exactly match replayed controller/store/app. No budget inflation or unrelated
+formatting repair was used. Changed scope has no new lint diagnostics.
+
+Independent final review, exact-source commit/digest and normal PR checks remain
+the publication gates. Root owns push and merge. This is targeted software and
+file-only evidence, not live audio/native execution or release qualification;
+task remains In Progress and broader acceptance criteria remain unchecked.

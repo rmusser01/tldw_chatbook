@@ -1,4 +1,4 @@
-"""ChaChaNotes v71 post-dispatch trace provenance and lookup indexes."""
+"""ChaChaNotes v72 post-dispatch trace provenance and lookup indexes."""
 
 from __future__ import annotations
 
@@ -95,10 +95,10 @@ def test_genuine_v70_upgrades_without_rewriting_semantic_rows(tmp_path: Path) ->
             .fetchone()
         )
 
-    migrated = CharactersRAGDB(path, "v71-migrated")
+    migrated = CharactersRAGDB(path, "v72-migrated")
     try:
         connection = migrated.get_connection()
-        assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION == 71
+        assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION == 72
         assert (
             tuple(
                 tuple(row)
@@ -156,8 +156,59 @@ def test_genuine_v70_upgrades_without_rewriting_semantic_rows(tmp_path: Path) ->
         migrated.close_connection()
 
 
-def test_v71_provenance_defaults_and_cross_column_constraints() -> None:
-    db = CharactersRAGDB(":memory:", "v71-provenance")
+def test_genuine_v71_preserves_archived_rows_columns_indexes_and_triggers(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "genuine-v71.sqlite"
+    with chachanotes_db_at_version(path, 71, client_id="archive-before-voice") as old:
+        connection = old.get_connection()
+        assert _version(connection) == 71
+        conversation_id = old.add_conversation({"title": "Archived before voice"})
+        row = old.get_conversation_by_id(conversation_id)
+        old.set_conversations_archived(
+            [conversation_id],
+            archived=True,
+            expected_versions={conversation_id: row["version"]},
+        )
+        archived_before = dict(old.get_conversation_by_id(conversation_id))
+        columns_before = tuple(
+            tuple(row) for row in connection.execute("PRAGMA table_info(conversations)")
+        )
+        schema_before = tuple(
+            tuple(row)
+            for row in connection.execute(
+                "SELECT type, name, sql FROM sqlite_master WHERE tbl_name = 'conversations' ORDER BY type, name"
+            )
+        )
+        assert any(row[1] == "idx_conversations_archive" for row in schema_before)
+        assert any(row[0] == "trigger" for row in schema_before)
+    current = CharactersRAGDB(path, "archive-after-voice")
+    try:
+        connection = current.get_connection()
+        assert _version(connection) == 72
+        assert dict(current.get_conversation_by_id(conversation_id)) == archived_before
+        assert (
+            tuple(
+                tuple(row)
+                for row in connection.execute("PRAGMA table_info(conversations)")
+            )
+            == columns_before
+        )
+        assert (
+            tuple(
+                tuple(row)
+                for row in connection.execute(
+                    "SELECT type, name, sql FROM sqlite_master WHERE tbl_name = 'conversations' ORDER BY type, name"
+                )
+            )
+            == schema_before
+        )
+    finally:
+        current.close_connection()
+
+
+def test_v72_provenance_defaults_and_cross_column_constraints() -> None:
+    db = CharactersRAGDB(":memory:", "v72-provenance")
     try:
         connection = db.get_connection()
         columns = {
@@ -225,7 +276,7 @@ def test_v71_provenance_defaults_and_cross_column_constraints() -> None:
 
 
 def test_every_completed_pair_reconciliation_locator_uses_indexed_search() -> None:
-    db = CharactersRAGDB(":memory:", "v71-index-plans")
+    db = CharactersRAGDB(":memory:", "v72-index-plans")
     try:
         connection = db.get_connection()
         assert (

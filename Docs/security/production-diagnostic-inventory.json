@@ -11500,11 +11500,11 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 596,
+    "owner_files": 597,
     "path_privacy_candidate_calls": 709,
     "persistent_sink_files": 12,
     "task_31551_calls": 55,
-    "task_492_calls": 1351,
-    "task_494_calls": 7672
+    "task_492_calls": 1384,
+    "task_494_calls": 7687
   }
 }

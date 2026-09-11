@@ -73,6 +73,10 @@ from tldw_chatbook.Chat.console_trace_repository import (
     TraceCallRecord,
     TraceEventType,
 )
+from tldw_chatbook.Chat.conversation_local_marks_service import (
+    ConversationLocalMarksService,
+)
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.provider_continuation import parse_provider_continuation_json
 from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.DB.transaction_observer import (
@@ -3054,7 +3058,18 @@ class ConsoleTraceService:
             # This narrow recovery carries plain saved messages only. Canvas,
             # video and unknown metadata cannot silently become an empty owner.
             if metadata not in ({}, {"canvas_cards": []}):
-                return None
+                try:
+                    receipt_id = (
+                        ConversationLocalMarksService.validate_terminal_receipt_id(
+                            metadata.get("terminal_receipt_id")
+                        )
+                    )
+                    receipt_only = MessageMetadata(terminal_receipt_id=receipt_id)
+                    # Compare JSON types exactly: False and 0 are not aliases.
+                    if json.dumps(metadata, sort_keys=True) != receipt_only.to_json():
+                        return None
+                except (AttributeError, TypeError, ValueError, RecursionError):
+                    return None
         if complete_assistant_id is not None:
             return (
                 assistant_id

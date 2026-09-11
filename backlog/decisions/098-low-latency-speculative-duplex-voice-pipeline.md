@@ -724,3 +724,17 @@ authority off the UI/app loop.
 - [ADR-097: reference-backed semantic trace ledger](097-console-reference-backed-semantic-trace-ledger.md)
 - [Hands-Free Conversation Loop design](../../Docs/superpowers/specs/2026-08-02-hands-free-loop-design.md)
 - [Realtime Voice Engine design](../../Docs/superpowers/specs/2026-08-04-realtime-voice-engine-design.md)
+
+## Current-dev integration (2026-09-10)
+
+Archive's accepted schema 70→71 SQL remains unchanged; unmerged voice provenance
+follows at 71→72 with unchanged identifiers. Earlier migration numbers above
+describe their historical verification checkpoints.
+
+ADR-147 archive admission includes runtime-owned sends and the existing retained
+Hands-free process sessions through cleanup, including idle listening. Cancelling
+a pre-durable send preserves its exact recovery under ADR-094. Direct voice
+preparation rechecks durable archive state; the pair transaction rejects new
+writes into archived conversations after reconciling already-committed identities.
+This composes existing owners and preserves ADR-125 private SQLite connections.
+No release qualification or packaged hard-off authority changes.

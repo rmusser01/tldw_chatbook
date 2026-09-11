@@ -47,6 +47,8 @@ Tests/Chat/test_console_speculative_voice_promotion_races.py
 Tests/Chat/test_console_speculative_voice_properties.py
 Tests/Chat/test_console_speculative_voice_session.py
 Tests/Chat/test_console_trace_call_lifecycle.py
+Tests/Chat/test_console_trace_discarded_tool_run.py
+Tests/Chat/test_console_trace_failed_tool_run.py
 Tests/Chat/test_console_trace_repository.py
 Tests/Chat/test_console_trace_service.py
 Tests/Chat/test_console_voice_attempts.py
@@ -71,10 +73,11 @@ Tests/Chat/test_console_voice_trace_repository.py
 Tests/Chat/test_console_voice_tts_bridge.py
 Tests/Chat/test_console_voice_worker.py
 Tests/Chat/test_console_voice_worker_integration.py
+Tests/Chat/test_local_reasoning_gateway.py
 Tests/Chat/test_voice_phrase_sequencer.py
 Tests/DB/test_chachanotes_v56_semantic_trace_migration.py
 Tests/DB/test_chachanotes_v57_semantic_mutation_guard_migration.py
-Tests/DB/test_chachanotes_v71_voice_trace_provenance_migration.py
+Tests/DB/test_chachanotes_v72_voice_trace_provenance_migration.py
 Tests/DB/test_console_voice_trace_grants_gc.py
 Tests/Packaging/test_installed_distribution.py
 Tests/Packaging/test_physical_voice_runner.py
@@ -175,6 +178,8 @@ tldw_chatbook/Chat/console_voice_trace_gateway.py
 tldw_chatbook/Chat/console_voice_trace_promotion.py
 tldw_chatbook/Chat/console_voice_tts_bridge.py
 tldw_chatbook/Chat/console_voice_worker.py
+tldw_chatbook/Chat/conversation_archive_actions.py
+tldw_chatbook/Chat/local_reasoning.py
 tldw_chatbook/Chat/voice_phrase_sequencer.py
 tldw_chatbook/DB/ChaChaNotes_DB.py
 tldw_chatbook/Local_Ingestion/__init__.py

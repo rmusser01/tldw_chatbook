@@ -504,6 +504,8 @@ close, and application quit retain their cancellation behavior. Details in
 Microphone, playback, and unaccepted speculative voice are view-owned: covering,
 suspending, or removing Console stops them, and returning does not restart
 Hands-free. A winning voice save already claimed by the runtime continues.
+Before archiving a chat or its workspace, stop Hands-free and let its retained
+work finish. An archived chat must be restored before it can accept a new reply.
 See [Hands-free voice conversation](console/attachments-images-voice.md#hands-free-voice-conversation)
 and [ADR-094](../../backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md).
 

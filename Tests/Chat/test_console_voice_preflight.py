@@ -25,6 +25,33 @@ def controller_for(gateway, *, persistence=None):
 
 
 @pytest.mark.asyncio
+async def test_archived_conversation_refuses_direct_voice_preparation_before_provider(
+    monkeypatch,
+):
+    from tldw_chatbook.Chat import conversation_archive_actions as archive
+    from tldw_chatbook.Chat.console_voice_preflight import VoicePreparationError
+
+    async def resolve(selection):
+        pytest.fail("Archived voice reached provider resolution")
+
+    controller = controller_for(SimpleNamespace(resolve_for_send=resolve))
+    controller.app = SimpleNamespace()
+    controller.store.sessions()[0].persisted_conversation_id = "archived-conversation"
+    observed = []
+
+    async def refusal(app, conversation_id):
+        observed.append(conversation_id)
+        return "This conversation is archived."
+
+    monkeypatch.setattr(archive, "conversation_send_refusal", refusal)
+    with pytest.raises(VoicePreparationError, match="session_unavailable"):
+        await controller.prepare_speculative_voice_attempt(
+            attempt_epoch=1, transcript="kept words", turn_id="turn"
+        )
+    assert observed == ["archived-conversation"]
+
+
+@pytest.mark.asyncio
 async def test_readiness_only_resolves_selected_provider_and_returns_fenced_stamp(
     monkeypatch,
 ):

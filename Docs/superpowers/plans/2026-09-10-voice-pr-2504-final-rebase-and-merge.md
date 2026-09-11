@@ -76,6 +76,21 @@ after the already-landed archive migration; preserve upstream SQL bytes.
    auto-merge shortcuts or manual branch deletion. Verify the resulting merge
    commit and report it. Preserve local worktrees and backups.
 
+## Reviewed target advance and archive composition
+
+After the pinned replay, the reviewed twelve-file portrait-fit change advanced
+the target to `3afa68f1b99103ec8b5b5f19921ac480ad9344ac`. A second normal rebase
+preserved that change before integration verification. Frozen original inputs
+above remain historical evidence.
+
+Archive admission follows the existing runtime custody owner, with original
+conversation reservations released by actual task cleanup, including cancellation
+before first execution. Hands-free lifecycle checks consult retained process
+sessions through actual parent-effects retirement. Direct voice preparation
+revalidates durable archive state; completed-pair transactions reject a newly
+archived target after reconciling already-committed identities. These compose
+ADR-094/098/147 without a new ownership or runtime boundary.
+
 ## Verification limits
 
 Only targeted software and file-only provenance checks run locally. No full test

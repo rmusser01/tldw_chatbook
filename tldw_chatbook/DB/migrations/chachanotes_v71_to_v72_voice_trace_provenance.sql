@@ -1,4 +1,4 @@
--- ChaChaNotes v70 -> v71: explicit post-dispatch voice trace provenance.
+-- ChaChaNotes v71 -> v72: explicit post-dispatch voice trace provenance.
 --
 -- Ordinary ADR-097 reservations retain their existing default and chronology.
 -- A terminal post-dispatch row is admitted only while the repository holds the

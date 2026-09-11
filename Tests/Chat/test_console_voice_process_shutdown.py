@@ -1311,13 +1311,22 @@ async def test_runtime_lazily_shares_device_lease_and_retains_parent_cleanup():
             await release.wait()
 
     session = Session()
-    supervisor.retain(session)
+    supervisor.retain(session, session_id="voice-session")
+    assert supervisor.has_live_session("voice-session")
+    assert not supervisor.has_live_session("other-session")
+    from tldw_chatbook.Chat.conversation_archive_actions import _session_refusal
+
+    app = SimpleNamespace(console_runtime=runtime)
+    chat = SimpleNamespace(id="voice-session", persisted_conversation_id="saved")
+    assert "Hands-free" in _session_refusal(app, chat)
     observer = asyncio.create_task(supervisor.aclose())
     await entered.wait()
     observer.cancel()
     with pytest.raises(asyncio.CancelledError):
         await observer
     assert not supervisor.close_task.done()
+    assert supervisor.has_live_session("voice-session")
     release.set()
     await supervisor.aclose()
     assert supervisor.close_task.done()
+    assert not supervisor.has_live_session("voice-session")

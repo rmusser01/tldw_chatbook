@@ -95,14 +95,18 @@ class VoiceProcessSupervisor:
 
     def __init__(self):
         self.device_lease = DeviceLease()
-        self._sessions = set()
+        self._sessions = {}
         self.close_task = None
 
-    def retain(self, session):
+    def retain(self, session, *, session_id: str | None = None):
         if self.close_task is not None:
             raise VoiceProcessError("stale")
-        self._sessions.add(session)
-        session._on_retired = lambda: self._sessions.discard(session)
+        self._sessions[session] = session_id
+        session._on_retired = lambda: self._sessions.pop(session, None)
+
+    def has_live_session(self, session_id: str) -> bool:
+        """Include listening and retained cleanup in conversation lifecycle checks."""
+        return session_id in self._sessions.values()
 
     def begin_close(self):
         """Synchronously revoke all current sessions before any quit observer."""

@@ -765,7 +765,7 @@ class ChatPersistenceService:
                 result = reconciled
             else:
                 conversation = cursor.execute(
-                    """SELECT active_leaf_message_id, deleted
+                    """SELECT active_leaf_message_id, deleted, archived
                          FROM conversations
                         WHERE id = ?""",
                     (conversation_id,),
@@ -773,6 +773,7 @@ class ChatPersistenceService:
                 if (
                     conversation is None
                     or conversation["deleted"]
+                    or conversation["archived"]
                     or conversation["active_leaf_message_id"]
                     != destination.expected_persisted_leaf_id
                 ):

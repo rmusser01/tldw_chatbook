@@ -77,6 +77,8 @@ Tests/Chat/test_console_speculative_voice_promotion_races.py
 Tests/Chat/test_console_speculative_voice_properties.py
 Tests/Chat/test_console_speculative_voice_session.py
 Tests/Chat/test_console_trace_call_lifecycle.py
+Tests/Chat/test_console_trace_discarded_tool_run.py
+Tests/Chat/test_console_trace_failed_tool_run.py
 Tests/Chat/test_console_trace_repository.py
 Tests/Chat/test_console_trace_service.py
 Tests/Chat/test_console_voice_attempts.py
@@ -101,10 +103,11 @@ Tests/Chat/test_console_voice_trace_repository.py
 Tests/Chat/test_console_voice_tts_bridge.py
 Tests/Chat/test_console_voice_worker.py
 Tests/Chat/test_console_voice_worker_integration.py
+Tests/Chat/test_local_reasoning_gateway.py
 Tests/Chat/test_voice_phrase_sequencer.py
 Tests/DB/test_chachanotes_v56_semantic_trace_migration.py
 Tests/DB/test_chachanotes_v57_semantic_mutation_guard_migration.py
-Tests/DB/test_chachanotes_v71_voice_trace_provenance_migration.py
+Tests/DB/test_chachanotes_v72_voice_trace_provenance_migration.py
 Tests/DB/test_console_voice_trace_grants_gc.py
 Tests/Packaging/fixtures/speculative_voice_physical/safe_full_duplex.json
 Tests/Packaging/fixtures/speculative_voice_physical/safe_half_duplex.json
@@ -149,7 +152,9 @@ Tests/test_persistent_diagnostic_boundary.py
 Tests/test_persistent_diagnostic_sentinel_matrix.py
 backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md
 backlog/decisions/098-low-latency-speculative-duplex-voice-pipeline.md
+backlog/decisions/125-lock-safe-private-sqlite-validation.md
 backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md
+backlog/decisions/147-conversation-archive-and-exact-resume.md
 backlog/docs/lessons-testing-evidence.md
 backlog/tasks/task-23175 - Add-low-latency-speculative-duplex-voice-pipeline.md
 native/voice_aec/.gitattributes
@@ -558,6 +563,8 @@ tldw_chatbook/Chat/console_voice_trace_gateway.py
 tldw_chatbook/Chat/console_voice_trace_promotion.py
 tldw_chatbook/Chat/console_voice_tts_bridge.py
 tldw_chatbook/Chat/console_voice_worker.py
+tldw_chatbook/Chat/conversation_archive_actions.py
+tldw_chatbook/Chat/local_reasoning.py
 tldw_chatbook/Chat/voice_phrase_sequencer.py
 tldw_chatbook/DB/ChaChaNotes_DB.py
 tldw_chatbook/DB/migrations/chachanotes_v55_to_v56_console_semantic_trace.sql
@@ -575,7 +582,8 @@ tldw_chatbook/DB/migrations/chachanotes_v66_to_v67_canvas_revisions.sql
 tldw_chatbook/DB/migrations/chachanotes_v67_to_v68_canvas_runtime_profiles.sql
 tldw_chatbook/DB/migrations/chachanotes_v68_to_v69_console_trace_source_pin.sql
 tldw_chatbook/DB/migrations/chachanotes_v69_to_v70_independent_buddy.sql
-tldw_chatbook/DB/migrations/chachanotes_v70_to_v71_voice_trace_provenance.sql
+tldw_chatbook/DB/migrations/chachanotes_v70_to_v71_conversation_archive.sql
+tldw_chatbook/DB/migrations/chachanotes_v71_to_v72_voice_trace_provenance.sql
 tldw_chatbook/Local_Ingestion/__init__.py
 tldw_chatbook/Local_Ingestion/transcription_service.py
 tldw_chatbook/STT/__init__.py
