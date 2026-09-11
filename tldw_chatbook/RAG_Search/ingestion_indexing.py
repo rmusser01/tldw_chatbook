@@ -43,7 +43,7 @@ import threading
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import (
@@ -496,12 +496,15 @@ class IndexEntry:
             item, used to decide whether re-indexing is needed.
         document: Document dict for ``RAGService.index_batch_optimized``
             ({'id', 'content', 'title', 'metadata'}).
+        source_path: Actual local owner path carried by accepted ingestion work;
+            a dependency hint for query gating, never a readiness credential.
     """
 
     item_id: str
     item_type: str
     last_modified: datetime
     document: Dict[str, Any]
+    source_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -706,6 +709,9 @@ async def index_entries(
     """
     summary: Dict[str, Any] = {"indexed": 0, "skipped": 0, "failed": 0, "errors": []}
 
+    from .generation import record_source_paths
+
+    record_source_paths(service, (entry.source_path for entry in entries))
     to_index: List[IndexEntry] = []
     for entry in entries:
         if indexing_db is not None:
@@ -1379,7 +1385,7 @@ def _media_post_ingest_hook(db: Any, media_id: int, media_uuid: Optional[str]) -
         entry = media_index_entry(media)
         if entry is None:
             return
-        get_ingestion_indexer().submit(entry)
+        get_ingestion_indexer().submit(replace(entry, source_path=db.db_path))
     except Exception as e:
         logger.warning(f"RAG post-ingest hook failed for media_id={media_id}: {e}")
 
@@ -1662,6 +1668,11 @@ async def backfill_semantic_index(
         summary["errors"].append("RAG service could not be created")
         return summary
 
+    from .generation import record_source_paths
+
+    record_source_paths(
+        service, (getattr(db, "db_path", None) for db in (media_db, chachanotes_db))
+    )
     if indexing_db is None:
         indexing_db = _default_indexing_db()
 

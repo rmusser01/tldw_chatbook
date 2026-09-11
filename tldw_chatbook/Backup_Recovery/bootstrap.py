@@ -171,7 +171,7 @@ def _control_records(
         if len(names) > MAX_RECORDS:
             raise ValueError("too_many_records")
         for name in names:
-            if name in ("admission", "unbound-owner"):
+            if name in ("admission", "unbound-owner", "projection-dependencies"):
                 continue
             if name.startswith("activation-") and not name.startswith(
                 "activation-update-"

@@ -134,6 +134,22 @@ class ChromaLifetime:
                 borrower.failed = True
                 raise
 
+    def retained_lease(self, store):
+        """Borrow only this exact store's live installed native lifetime."""
+        with self._lock:
+            for item in self._borrowers:
+                if (
+                    item.store is not None
+                    and item.store() is store
+                    and item.client is store._client
+                    and item.path == store.persist_directory
+                    and not item.closed
+                    and not item.failed
+                ):
+                    item.lease.execution_context(item.path)
+                    return item.lease
+        raise RecoveryRequired("projection_native_lease_unavailable")
+
     def close_client(self, client):
         """Preserve ordinary cleanup behavior while retaining ambiguous holds."""
         with self._lock:

@@ -25,6 +25,7 @@ PRODUCER_CALLS = frozenset(
         "copytree",
         "atomic_private_write_text",
         "atomic_private_write_bytes",
+        "_publish_activation_record",
         "create_private_text",
         "create_private_file",
         "create_private_binary",

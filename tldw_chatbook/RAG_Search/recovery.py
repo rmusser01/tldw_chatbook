@@ -1,8 +1,8 @@
 """Fresh owner observations for projection recovery; persisted records are hints.
 
-A result is valid only for its observed sources/index. Later generation binding
-must call recheck_projection under its held scope; this module grants no runtime
-or restored-generation authority and never trusts imported collection metadata.
+A result is valid only for its observed sources/index. Explicit reconciliation
+binds it through the paired local-generation owner; queries recheck current owners.
+No imported collection metadata grants readiness or runtime execution authority.
 """
 
 import hashlib
@@ -180,6 +180,11 @@ def _model(service):
 def _failure(error):
     """Keep fixed owner prerequisites while suppressing arbitrary backend text."""
     known = {
+        "projection_generation_unavailable",
+        "projection_readiness_unavailable",
+        "projection_readiness_missing",
+        "projection_readiness_invalid",
+        "projection_model_reopen_unavailable",
         "projection_model_identity_unavailable",
         "projection_model_revision_unavailable",
         "projection_source_scope_unavailable",
@@ -340,7 +345,32 @@ def _qualified_service(service):
 
 
 @participant.async_operation
-async def reconcile_projection(
+async def reconcile_projection(service, **sources):
+    """Reconcile current owners without model acquisition or rebuild."""
+    from .generation import load_provenance, persist_readiness
+
+    try:
+        if type(getattr(service, "_recovery_projection_build", None)) is not _Build:
+            load_provenance(service, sources)
+        observation = _reconcile_projection(service, **sources)
+        if observation.ready:
+            persist_readiness(service, observation, **sources)
+        return observation
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+        KeyError,
+        RuntimeError,
+        AttributeError,
+    ) as error:
+        reason = _failure(error)
+        if reason == "projection_owner_observation_unavailable":
+            reason = "projection_readiness_unavailable"
+        return ProjectionObservation(issues=(reason,))
+
+
+def _reconcile_projection(
     service,
     *,
     media_db=None,
@@ -348,8 +378,6 @@ async def reconcile_projection(
     item_types=("media", "note", "conversation"),
 ):
     """Reconcile without writes, model acquisition, re-embedding or auto-rebuild."""
-    import asyncio
-
     try:
         _qualified_service(service)
         build = getattr(service, "_recovery_projection_build", None)
@@ -360,7 +388,7 @@ async def reconcile_projection(
         _, sources, source_digest = _sources(
             media_db=media_db, chachanotes_db=chachanotes_db, item_types=item_types
         )
-        native = await asyncio.to_thread(service.vector_store.recovery_snapshot)
+        native = service.vector_store.recovery_snapshot()
         model = _model(service)
         configuration = _configuration(service)
         issues = []
@@ -383,7 +411,7 @@ async def reconcile_projection(
             media_db=media_db, chachanotes_db=chachanotes_db, item_types=item_types
         )[1:] != (sources, source_digest):
             issues.append("projection_source_changed_during_verification")
-        if await asyncio.to_thread(service.vector_store.recovery_snapshot) != native:
+        if service.vector_store.recovery_snapshot() != native:
             issues.append("projection_changed_during_verification")
         if _model(service) != model or _configuration(service) != configuration:
             issues.append("projection_identity_changed_during_verification")
@@ -402,11 +430,12 @@ async def reconcile_projection(
         return ProjectionObservation(issues=(_failure(error),))
 
 
+@participant.async_operation
 async def recheck_projection(observation, service, **sources):
     """Recompute exact observations; an earlier ready result is never a lease."""
     if type(observation) is not ProjectionObservation or not observation.ready:
         return False
-    current = await reconcile_projection(service, **sources)
+    current = _reconcile_projection(service, **sources)
     return current.ready and current == observation
 
 

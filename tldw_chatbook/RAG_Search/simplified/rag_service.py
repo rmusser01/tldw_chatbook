@@ -67,6 +67,7 @@ from .vector_store import create_vector_store, SearchResult, SearchResultWithCit
 from .citations import Citation, CitationType, merge_citations
 from .config import RAGConfig, DEFAULT_HYBRID_POOL_MULTIPLIER
 from .collection_fingerprint import fingerprinted_collection_name, collection_provenance
+from ..generation import register_service, service_query
 from ..fusion import (
     reciprocal_rank_fusion,
     resolve_hybrid_alpha,
@@ -813,6 +814,7 @@ class RAGService:
         self._last_index_time = None
         self._total_chunks_created = 0
         self._search_type_counts = {"semantic": 0, "keyword": 0, "hybrid": 0}
+        register_service(self)
 
         # Get and store embedding dimension
         self._embedding_dim = self._get_embedding_dimension()
@@ -1161,6 +1163,7 @@ class RAGService:
 
     @timeit("rag_search_operation")
     @projection_lifetime.async_operation
+    @service_query
     async def search(
         self,
         query: str,

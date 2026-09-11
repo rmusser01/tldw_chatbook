@@ -16,6 +16,8 @@ from loguru import logger
 from ...Backup_Recovery.rag_definition_participant import definition_experiment_operation
 
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram, timeit
+from ..generation import service_query
+from tldw_chatbook.Backup_Recovery.rag_projection_lifetime import participant as projection_lifetime
 from .enhanced_rag_service import EnhancedRAGService
 from .rag_service import MetadataAllowlist
 from .config import RAGConfig
@@ -203,6 +205,8 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
         return cls(config=profile, profile_manager=manager, **kwargs)
 
     @timeit("rag_search_v2")
+    @projection_lifetime.async_operation
+    @service_query
     async def search(
         self,
         query: str,

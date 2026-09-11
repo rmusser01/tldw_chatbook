@@ -1174,6 +1174,9 @@ operational activation stay explicit dependencies. See [core qualification](back
 | tldw_chatbook/Backup_Recovery/admission.py | Admission._write | os.unlink | 1 | unsupported | backup_control |
 | tldw_chatbook/Backup_Recovery/control_records.py | _publish_activation_record | os.replace | 1 | generic_boundary | backup_control |
 | tldw_chatbook/Backup_Recovery/control_records.py | _bind_activation | os.unlink | 1 | generic_boundary | backup_control |
+| tldw_chatbook/Backup_Recovery/control_records.py | _bind_activation | _publish_activation_record | 1 | generic_boundary | backup_control |
+| tldw_chatbook/RAG_Search/generation.py | persist_readiness | _publish_activation_record | 1 | generic_boundary | backup_control |
+| tldw_chatbook/RAG_Search/generation.py | _publish_dependencies | _publish_activation_record | 1 | generic_boundary | backup_control |
 | tldw_chatbook/DB/private_sqlite.py | _connect_registered_sqlite | connect | 1 | generic_boundary | generic |
 | tldw_chatbook/DB/private_sqlite.py | _open_artifact_fd | open | 1 | generic_boundary | generic |
 | tldw_chatbook/DB/private_sqlite.py | _prepare_windows_artifact | open | 1 | generic_boundary | generic |
@@ -2912,3 +2915,23 @@ Cached Kokoro reads retain ordinary dictionary semantics. The seven helper censu
 rows above replace moved producer edges; their presence does not qualify complete
 live capture. Actual runtime inventory of standalone selected roots, producer
 settlement and capture/resume composition still require their own evidence.
+
+### Restored projection readiness records
+
+`RAG_Search/generation.py:persist_readiness` uses the existing private control
+record publisher for `projection-<hash>.json` inside the checked local activation
+generation directory. These local control records are outside restored payload
+authority. Source, index, model and configuration observations must be rechecked;
+an imported ready flag or runtime approval cannot grant projection readiness.
+The exact publisher call is included in the producer census alongside its
+existing activation-binding caller.
+
+The same module's `_publish_dependencies` records the conservative union of
+actual installed indexing source paths for each native root and collection in
+the private bootstrap `projection-dependencies` directory. The existing native
+directory helper creates that directory; its producer is already recorded above.
+These dependency hints survive owner reopen and select sources to check. They
+cannot grant readiness or execution approval. The bounded read/union/publication
+holds the pinned directory lock, and failed publication refuses indexing.
+Explicitly unavailable native backup capabilities retain ordinary in-memory
+hints without claiming durable dependency or recovery qualification.

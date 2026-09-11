@@ -39,6 +39,7 @@ from tldw_chatbook.Backup_Recovery.rag_projection_lifetime import (
     participant as projection_lifetime, store_operation,
 )
 from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+from ..generation import store_query
 from .citations import Citation, CitationType, SearchResultWithCitations
 from .config import validate_chroma_persist_directory
 
@@ -457,6 +458,7 @@ class ChromaVectorStore:
 
     @timeit("vector_store_search")
     @store_operation
+    @store_query
     def search(
         self,
         query_embedding: Union[np.ndarray, List[float]],
@@ -554,6 +556,7 @@ class ChromaVectorStore:
             return []
 
     @store_operation
+    @store_query
     def search_with_citations(
         self,
         query_embedding: Union[np.ndarray, List[float]],

@@ -12,6 +12,8 @@ from typing import List, Optional, Dict, Any, Union, Literal
 from loguru import logger
 import time
 
+from ..generation import service_query
+from tldw_chatbook.Backup_Recovery.rag_projection_lifetime import participant as projection_lifetime
 from .rag_service import RAGService, SearchResult, SearchResultWithCitations
 from .config import RAGConfig
 from .data_models import IndexingResult
@@ -349,6 +351,8 @@ class EnhancedRAGService(RAGService):
         return results
 
     @timeit("enhanced_rag_search_with_expansion")
+    @projection_lifetime.async_operation
+    @service_query
     async def search_with_context_expansion(
         self,
         query: str,
