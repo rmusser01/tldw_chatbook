@@ -69,8 +69,8 @@ def _identity(path):
 @contextmanager
 def _scope(owner, paths):
     # This existing pure reader validates actual admission plus paired generations.
+    from tldw_chatbook.Backup_Recovery.generation_witnesses import _witnesses
     from tldw_chatbook.Backup_Recovery.isolated_restore import installation_client_id
-    from tldw_chatbook.RAG_Search.generation import _witnesses
 
     with ExitStack() as stack:
         witnesses = []

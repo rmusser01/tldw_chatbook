@@ -166,15 +166,25 @@ def test_fresh_pairing_does_not_resume_historical_conflicts_or_memberships(tmp_p
 
 
 _IMPORT = r"""
-import sqlite3,sys
+import builtins,sqlite3,sys
+from pathlib import Path
 from Tests.network_guard import install,blocked_attempts
 install()
 def denied(*args,**kwargs):raise AssertionError('generation import opened a database')
 sqlite3.connect=denied
-for name in ('tldw_chatbook.config','chromadb','sentence_transformers','transformers'):
- sys.modules[name]=None
-from tldw_chatbook.RAG_Search.generation import _witnesses
+original=builtins.__import__
+def guarded(name,*args,**kwargs):
+ if any(name==blocked or name.startswith(blocked+'.') for blocked in ('tldw_chatbook.config','tldw_chatbook.app','tldw_chatbook.RAG_Search','chromadb','sentence_transformers','transformers')):
+  raise AssertionError('passive reader attempted runtime import: '+name)
+ return original(name,*args,**kwargs)
+builtins.__import__=guarded
+from tldw_chatbook.Backup_Recovery.generation_witnesses import _witnesses
+from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+source=Path.home()/'actual';source.mkdir(mode=0o700)
+with acquire_storage(source) as lease:assert _witnesses(source,lease)==[]
 assert not blocked_attempts()
+assert 'tldw_chatbook.config' not in sys.modules
+assert 'tldw_chatbook.RAG_Search' not in sys.modules
 print('retired and reopened')
 """
 
