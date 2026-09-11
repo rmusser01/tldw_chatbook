@@ -4551,3 +4551,28 @@ def test_console_appearance_map_caches_within_ttl_and_refetches_new_ids():
     # An id outside the cached map must refetch (once), not serve a stale miss.
     controller._console_conversation_appearance_map(["conv-1", "conv-9"])
     assert len(service.calls) == 2
+
+
+@pytest.mark.parametrize(
+    "requested_key", [("", None), ("new search", None), ("", "other-chat")]
+)
+def test_expired_browser_cache_retains_only_matching_rows_during_refresh(requested_key):
+    screen = _NoMountScreen()
+    controller = _workspace_controller(screen=screen)
+    cached = ([_rich_row()], 1, "")
+    controller._console_persisted_rows_cache = cached
+    controller._console_persisted_rows_cache_key = ("", None)
+    controller._console_persisted_rows_cache_at = 0.0
+
+    for _ in range(3):
+        result = controller._sync_persisted_console_browser_rows(*requested_key)
+        assert result == (cached if requested_key == ("", None) else ([], None, ""))
+    assert len(screen.workers) == 1
+
+    controller._invalidate_console_persisted_rows_cache()
+    assert controller._sync_persisted_console_browser_rows(*requested_key) == (
+        [],
+        None,
+        "",
+    )
+    assert len(screen.workers) == 2

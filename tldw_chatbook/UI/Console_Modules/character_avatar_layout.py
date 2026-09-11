@@ -6,10 +6,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Any, Callable
 
-from ...Chat.console_image_view import (
-    fit_image_cell_size,
-    scale_image_pixel_size_for_cell_box,
-)
+from ...Chat.console_image_view import fit_image_cell_size
 from ...Utils.mosaic_render import mosaic_contain_cell_size
 
 
@@ -18,25 +15,17 @@ def fit_character_avatar_cell_box(
     available_cols: int,
     available_lines: int,
 ) -> tuple[int, int]:
-    """Return a scale-down-only contain box for ``image``.
+    """Return the largest aspect-preserving contain box for ``image``.
 
-    The shared image scaler's ``thumbnail`` operation never enlarges its
-    source. Its dimensions cap the intrinsic terminal footprint; the shared
-    cell fitter still receives the original dimensions so thumbnail rounding
-    cannot change the source aspect ratio by a row or column. The shared mosaic
-    contain-grid helper canonicalizes the result to the exact fallback grid;
-    graphics then uses that same box.
-
-    TASK-22221: those capping dimensions come from
-    ``scale_image_pixel_size_for_cell_box`` -- arithmetic identical to what
-    ``thumbnail`` would produce -- rather than from an actual LANCZOS resample
-    whose pixels were discarded. The rail runs this once per distinct viewport
-    size during a resize drag, on the event loop.
+    Fit to the available terminal area, allowing both enlargement and
+    reduction. Source pixels describe proportions, not a display-size cap.
+    Geometry stays arithmetic-only; the mosaic helper canonicalizes the
+    result to the fallback grid shared with graphics rendering.
 
     Args:
         image: Decoded PIL-compatible image. The source is never modified.
         available_cols: Measured Character-body columns available to the image.
-        available_lines: Rows left beneath the 35-row complete-body ceiling.
+        available_lines: Rows left beneath the current complete-body ceiling.
 
     Returns:
         ``(width_cells, height_cells)``. ``(0, 0)`` means no image cell fits.
@@ -47,19 +36,11 @@ def fit_character_avatar_cell_box(
     if box_cols == 0 or box_lines == 0:
         return 0, 0
 
-    scaled_width, scaled_height = scale_image_pixel_size_for_cell_box(
-        image.width,
-        image.height,
-        box_cols,
-        box_lines,
-    )
-    intrinsic_cols = min(box_cols, max(1, int(scaled_width)))
-    intrinsic_lines = min(box_lines, max(1, (max(1, int(scaled_height)) + 1) // 2))
     fitted_cols, fitted_lines = fit_image_cell_size(
         max(1, int(image.width)),
         max(1, int(image.height)),
-        intrinsic_cols,
-        intrinsic_lines,
+        box_cols,
+        box_lines,
     )
     return mosaic_contain_cell_size(
         image.width,

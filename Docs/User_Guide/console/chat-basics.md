@@ -43,6 +43,15 @@ task...".
   Mic and Attach have their own page:
   [attachments, images & voice](attachments-images-voice.md).
 
+### Character portrait sizing
+
+The selected character's portrait scales up or down to fit the available
+Character image area, keeping the whole image visible without stretching or
+cropping. Space may remain beside or beneath the image when its proportions
+differ from the area. The Character section grows with the terminal height and reserves space
+for the name and controls. Resizing smaller fits the portrait back into the
+reduced area. Click the portrait to open the larger image viewer.
+
 ### What the next send will cost
 
 When there is something to send, Send reads **Send | $** (or **Queue | $**
