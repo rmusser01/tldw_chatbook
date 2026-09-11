@@ -3,11 +3,11 @@ id: TASK-32269
 title: >-
   Library Notes user guide documents an entire lasting-sync chapter that cannot
   be entered
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-10 18:05'
-updated_date: '2026-09-11 15:07'
+updated_date: '2026-09-11 15:32'
 labels:
   - library
   - notes
@@ -31,9 +31,9 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The chapter states, in the user's terms, what is required for a folder to be admitted
-- [ ] #2 Every step in the chapter has been walked against a real admitted root before its 'Verified against' stamp is refreshed
-- [ ] #3 Nothing in the chapter describes a surface that cannot be reached from the shipped build
+- [x] #1 The chapter states, in the user's terms, what is required for a folder to be admitted
+- [x] #2 Every step in the chapter has been walked against a real admitted root before its 'Verified against' stamp is refreshed
+- [x] #3 Nothing in the chapter describes a surface that cannot be reached from the shipped build
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -43,3 +43,15 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 2. Walk the lasting-sync chapter live against a real admitted $HOME vault.
 3. Rewrite the chapter: state the admission precondition in the user's terms, list the refusal reasons and their copy, remove or supersede claims that cannot run; refresh the stamp.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+The chapter could not be walked before task-32243 landed, so it was written from the design. Walked end to end on this branch at 235x52 against a 179-file git-backed vault under $HOME: refusal copy on an in-profile folder, Choose folder again, Check (60 safe / 0 attention), Activate ("60 applied · durable receipt recorded"), the notes appearing under a '⇄ Sync managed' folder with '⇄ Synced placement' badges, Manage sync folders (which only exists once a root is active), and a second Check on the persisted root ("Manual check finished").
+
+Added to 'Add from files and lasting sync': what a folder has to be before it can be checked, and the named refusals with their copy. Added to 'Set up lasting folder sync': what a refusal looks like at step 4 and where Manage sync folders appears at step 5. Stamped with the walk.
+
+One gap found and left unfixed, recorded in the stamp: the root row in Manage sync folders reads 'Sync folder (name unavailable before cutover)' instead of the display name the user typed.
+
+Files: Docs/User_Guide/library/notes.md.
+<!-- SECTION:NOTES:END -->

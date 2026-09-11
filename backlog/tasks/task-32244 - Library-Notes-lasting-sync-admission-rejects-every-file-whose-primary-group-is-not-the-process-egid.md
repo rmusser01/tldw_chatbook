@@ -3,11 +3,11 @@ id: TASK-32244
 title: >-
   Library Notes lasting sync admission rejects every file whose primary group is
   not the process egid
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-10 18:05'
-updated_date: '2026-09-11 15:07'
+updated_date: '2026-09-11 15:32'
 labels:
   - library
   - notes
@@ -30,10 +30,10 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A file the caller can write is admitted regardless of whether its primary group equals the process egid (owner match and supplementary-group membership both count)
-- [ ] #2 A file that genuinely cannot be written still reports `unsupported_metadata`, with the reason naming what is wrong
-- [ ] #3 `root_discovery_incomplete` names how many files were rejected and the dominant reason, not only that discovery was incomplete
-- [ ] #4 Covered by a test over a file whose group is not the caller's egid but which the caller can write
+- [x] #1 A file the caller can write is admitted regardless of whether its primary group equals the process egid (owner match and supplementary-group membership both count)
+- [x] #2 A file that genuinely cannot be written still reports `unsupported_metadata`, with the reason naming what is wrong
+- [x] #3 `root_discovery_incomplete` names how many files were rejected and the dominant reason, not only that discovery was incomplete
+- [x] #4 Covered by a test over a file whose group is not the caller's egid but which the caller can write
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -44,3 +44,15 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 3. Replace the egid equality with an honest writability test from the snapshot's own owner/group/mode bits (owner match, supplementary-group membership, other bits).
 4. Aggregate the per-file refusals so root_discovery_incomplete names the count and the dominant reason instead of raising on the first refusal.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+`_metadata_issue` demanded `owner_user == os.geteuid() and owner_group == os.getegid()`. The second half is not a writability test: a file you own whose group is any other group you belong to -- or, as in this harness, `wheel` under /private/tmp -- was refused, and the root then failed `root_discovery_incomplete` with no count and no reason. The check now asks the permission bits the snapshot already carries: owner match uses S_IWUSR, supplementary-group membership uses S_IWGRP, otherwise S_IWOTH. A file that genuinely cannot be written still reports `unsupported_metadata` (it previously did NOT -- a 0444 file you own was admitted and would have failed at replace time).
+
+`observe_root` no longer raises on the first refused file. It counts refusals across the walk (`collections.Counter`) and raises `NotesSyncRootRefused("root_discovery_incomplete", detail="N of M files refused; K for <reason>")`; the discovery-level failure names its count too. Worst case is one full walk, which is what a good root already costs.
+
+Proof: before, a vault under /private/tmp (group wheel) refused all files and failed the root; after, the same vault is admitted (scratchpad repro2.py, wave3-caps/sync/repro-after-reasons.txt).
+
+Files: tldw_chatbook/Notes/notes_sync_filesystem.py, tldw_chatbook/Notes/notes_sync_runtime.py, Tests/Notes/test_notes_sync_filesystem.py, Tests/Notes/test_notes_sync_runtime.py.
+<!-- SECTION:NOTES:END -->
