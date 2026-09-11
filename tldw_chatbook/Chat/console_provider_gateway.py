@@ -4492,6 +4492,17 @@ class ConsoleProviderGateway:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            if isinstance(exc, ChatConfigurationError) and exc.status_code is None:
+                # task-32342: a status-less configuration error never reached
+                # the provider -- the request could not be built or its reply
+                # could not be read, locally. The wrapping below has no status
+                # to carry, so it substituted 502 and renamed the failure a
+                # provider outage; the Console provider test then reported
+                # "provider_error" for what is a bad_request (Qodo #2). Its
+                # message is already redacted at the raise site, so re-raise
+                # it untouched. A configuration error that DOES carry a
+                # provider status keeps the normal wrapping.
+                raise
             if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
                 status_code = 408
             elif isinstance(exc, (ConnectionError, OSError, httpx.ConnectError)):
