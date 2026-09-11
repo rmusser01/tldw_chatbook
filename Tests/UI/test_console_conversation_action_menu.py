@@ -531,3 +531,26 @@ async def test_copy_follows_the_active_branch_not_every_sibling(
         assert "question" in copied[0]
         assert "first attempt" in copied[0]
         assert copied[0].count("## Assistant") == 1
+
+
+@pytest.mark.asyncio
+async def test_transcript_click_folds_the_menu(monkeypatch) -> None:
+    """ADR-068 completion: transcript presses own the biggest screen area.
+
+    The screen-level outside-click dismissal returns early for transcript
+    targets (the transcript owns its in-area interaction), and the
+    transcript's own cleanup only knew its selection UI -- so a click on
+    the transcript left a row action menu floating. The transcript's
+    pointer press now folds the row menus itself.
+    """
+    async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
+        screen = pilot.app.screen
+        _opener(screen).press()
+        await pilot.pause(0.3)
+        assert screen.query(ConsoleConversationActionMenu)
+
+        assert await pilot.click("#console-native-transcript")
+        await pilot.pause(0.3)
+        assert not screen.query(ConsoleConversationActionMenu), (
+            "a transcript press left the row action menu mounted"
+        )
