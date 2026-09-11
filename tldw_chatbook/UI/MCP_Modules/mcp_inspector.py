@@ -2370,6 +2370,16 @@ class MCPInspector(Vertical):
 
         A block that is not currently showing anything stays hidden --
         `_render_permission_container(None, None)` is its own no-op.
+
+        Args:
+            session_approvals: Every live session grant in the profile this
+                block is explaining, as ``(server_key, tool_name)`` pairs --
+                `MCPWorkbench._session_approvals_for_row()`'s fetch, itself
+                `UnifiedMCPControlPlaneService.list_session_approvals()`
+                scoped to one profile and sorted. The pairs are the GRANTS'
+                own identities, not this block's tool: the listing spans
+                the whole profile, and the order is what the mounted Revoke
+                buttons are index-aligned with. Empty clears the group.
         """
         async with self._refresh_lock:
             await self._render_permission_container(

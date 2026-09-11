@@ -5376,7 +5376,22 @@ class UnifiedMCPControlPlaneService:
         *,
         profile_id: str = "default",
     ) -> list[dict[str, Any]]:
-        """List one tool's stored exact-input allow rules (task-32281)."""
+        """List the exact-input allow rules in force for one tool (task-32281).
+
+        Args:
+            server_key: Prefixed server key the tool belongs to.
+            tool_name: Name of the tool whose rules to list.
+            profile_id: Permission profile being reviewed. Its inheritance
+                chain is walked, so a rule stored on an ancestor profile is
+                listed here too (Qodo #2597 #1) -- the same chain
+                ``arg_rule_allows_call`` authorizes against.
+
+        Returns:
+            One dict per rule, oldest first, each carrying ``rule_id``,
+            ``args_json``, ``created_at``, and ``profile_id`` (the OWNING
+            profile, which :meth:`remove_tool_arg_rule` must be pointed
+            at). Empty when no permission store is configured.
+        """
         store = self.permission_store
         if store is None:
             return []
@@ -5390,7 +5405,23 @@ class UnifiedMCPControlPlaneService:
         *,
         profile_id: str = "default",
     ) -> bool:
-        """Delete one exact-input allow rule (task-32281)."""
+        """Delete one exact-input allow rule (task-32281).
+
+        Args:
+            server_key: Prefixed server key the tool belongs to.
+            tool_name: Name of the tool the rule belongs to.
+            rule_id: The rule's canonical ``args_json`` -- the ``rule_id``
+                :meth:`list_tool_arg_rules` returned for it.
+            profile_id: The rule's OWNING profile, i.e. the ``profile_id``
+                listing reported for that rule. For an inherited rule that
+                is an ancestor of the profile under review, not the
+                reviewed profile.
+
+        Returns:
+            ``True`` when a rule was actually removed. ``False`` for an
+            unknown or already-removed ``rule_id`` (a no-op, not an
+            error), and when no permission store is configured.
+        """
         store = self.permission_store
         if store is None:
             return False
