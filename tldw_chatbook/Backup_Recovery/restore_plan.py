@@ -264,11 +264,30 @@ def plan_restore(
                     or not (roots[key].synthetic and roots[other].synthetic)
                 ):
                     raise ValueError("destination_collision")
-    for left in destinations.values():
-        if any(
-            left in right.parents for right in destinations.values() if right != left
-        ):
-            raise ValueError("destination_overlap")
+    for key, left in destinations.items():
+        normalized_left = Path(unicodedata.normalize("NFC", str(left)).casefold())
+        for other, right in destinations.items():
+            normalized_right = Path(unicodedata.normalize("NFC", str(right)).casefold())
+            if key == other or normalized_left not in normalized_right.parents:
+                continue
+            if left not in right.parents or not roots[key].synthetic:
+                raise ValueError("destination_overlap")
+            # A synthetic root owns selected files, not the containing directory.
+            # Its actual members must remain disjoint from the other owner tree.
+            for row in (*doc.directories, *doc.files):
+                if row.root_id != key or row.logical_id == key:
+                    continue
+                member = Path(
+                    unicodedata.normalize(
+                        "NFC", str(left / row.relative_path)
+                    ).casefold()
+                )
+                if (
+                    member == normalized_right
+                    or member in normalized_right.parents
+                    or normalized_right in member.parents
+                ):
+                    raise ValueError("destination_collision")
     records = (*doc.directories, *doc.files)
     selected = {row.logical_id for row in records if row.root_id in destinations}
     selected_owners = {row.owner_id for row in doc.files if row.logical_id in selected}
@@ -647,7 +666,10 @@ def plan_restore(
     for root in root_paths | parents.copy():
         parent = root.parent
         while not parent.exists():
-            if parent not in root_paths:
+            if parent not in root_paths and not any(
+                selected in parent.parents and not selected.exists()
+                for selected in root_paths
+            ):
                 parents.add(parent)
             parent = parent.parent
     plan = replace(

@@ -514,7 +514,11 @@ def stage_restore(
         by_volume = {}
         work_device = stage.stat().st_dev
         root_candidates = {}
-        for root_id, destination in (*plan.destinations, *plan.containers):
+        selected_root_ids = dict(plan.destinations).keys()
+        ordered_roots = sorted(
+            plan.destinations, key=lambda row: (len(row[1].parts), str(row[1]), row[0])
+        )
+        for root_id, destination in (*ordered_roots, *plan.containers):
             parent = _ancestor(destination.parent)
             device = parent.stat().st_dev
             if device not in by_volume:
@@ -527,10 +531,31 @@ def stage_restore(
                 created_identities[private] = (info.st_dev, info.st_ino)
                 by_volume[device] = private
             if destination not in root_candidates:
-                candidate = (
-                    by_volume[device] / hashlib.sha256(root_id.encode()).hexdigest()
+                containing = (
+                    next(
+                        (
+                            parent
+                            for parent in destination.parents
+                            if parent in root_candidates
+                        ),
+                        None,
+                    )
+                    if root_id in selected_root_ids
+                    else None
                 )
-                create_private_directory(candidate)
+                if containing is None:
+                    candidate = (
+                        by_volume[device] / hashlib.sha256(root_id.encode()).hexdigest()
+                    )
+                    create_private_directory(candidate)
+                else:
+                    # Selected child roots share the physical tree that will be
+                    # published with their synthetic parent. Local containers
+                    # are created separately after all selected roots.
+                    candidate = root_candidates[containing] / destination.relative_to(
+                        containing
+                    )
+                    _mkdirs(candidate, root_candidates[containing])
                 root_candidates[destination] = candidate
             candidates[root_id] = root_candidates[destination]
         containers = []
