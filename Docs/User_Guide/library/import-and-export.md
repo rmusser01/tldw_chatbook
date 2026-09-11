@@ -146,8 +146,10 @@ only loses content when you ask it to (task-32353).
 
 Directly above the submit button, two quiet lines say what pressing it
 will write, before you press it (task-32353): a **bundle line** —
-"Bundle: 2 media items · full files · about 4 KB" — naming the item count,
-the fidelity the chooser is set to, and the estimated size; and a
+"Bundle: 2 media items · full files · about 4 KB before compression" —
+naming the item count, the fidelity the chooser is set to, and how much
+content is going in (the written `.zip` is smaller; the receipt after the
+run reports that file's own size); and a
 **contents list** naming the items themselves, up to 20 of them, then
 "+ N more". Where the size cannot be known up front (an "Everything"
 export spans four sources, only one of which can be measured beforehand)
@@ -272,7 +274,7 @@ destination, or leaving the Import canvas cancels pending consent.
 |---|---|
 | "Export name" | Pre-filled "Library export 2026-07-31" (today's date); becomes the bundle's display name. |
 | "quality: original" | Opens on "original" (full fidelity, task-32353). Press to open a one-row strip of thumbnail / compressed / original (✓ on the active one) right under the button; pick one directly, or press the button again / Escape to close without changing. The helper line underneath always describes the option currently showing. Only "original" copies full media files into the zip; the others keep the package small. |
-| "Bundle: N media items · full files · about X KB" | What pressing Export will actually write: the item count, the fidelity the quality chooser is set to, and the estimated size. Reads "size known once it runs" when the scope's size cannot be measured up front. Appears once counting finishes. |
+| "Bundle: N media items · full files · about X KB before compression" | What pressing Export will actually write: the item count, the fidelity the quality chooser is set to, and how much content is going in. The archive itself is smaller — the receipt after the run stats the written `.zip`. Reads "size known once it runs" when the scope's size cannot be measured up front. Appears once counting finishes. |
 | The contents list | The titles of the items going into the bundle, up to 20, then "+ N more". Absent when the scope's items cannot be enumerated before the run. |
 | "Choose destination…" | Opens "Choose Export Destination". Whatever you pick is normalized to end in `.zip`; if that file already exists, an "Overwrites <name>" note appears (informational — exporting proceeds and replaces it). |
 | "Export bundle (.zip)" | Enabled once counting has finished, the scope is non-empty, and a destination is chosen. "Nothing to export in this scope." appears when the scope is empty; either way, the reason is printed on the line directly below the button AND repeated in its tooltip (or "Write the bundle to the chosen destination." once it's ready) — a disabled press can never look like it silently did nothing. |
@@ -948,5 +950,7 @@ path, jumping the listing to it, with Ctrl+A selecting the field.)*
 quality chooser opens on "original" instead of "thumbnail", so a bundle only
 loses content when asked, and a bundle line plus a contents list state what
 the export will write — count, fidelity, estimated size, and the item titles
-— before the button is pressed; task-32362: a blocked "Export bundle (.zip)"
+— before the button is pressed, the size qualified "before compression" so it
+cannot be read as contradicting the receipt's smaller written-archive figure;
+task-32362: a blocked "Export bundle (.zip)"
 prints its reason on the line below it, not only in a tooltip.)*

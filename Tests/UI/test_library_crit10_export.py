@@ -70,7 +70,7 @@ async def test_the_export_canvas_says_what_the_bundle_will_contain():
     async with app.run_test(size=(235, 52)) as pilot:
         line = pilot.app.query_one("#library-export-consequence-line", Static)
         assert (
-            str(line.renderable) == "Bundle: 2 media items · full files · about 4 KB"
+            str(line.renderable) == "Bundle: 2 media items · full files · about 4 KB before compression"
         ), str(line.renderable)
         assert line.display is True
         contents = pilot.app.query_one("#library-export-contents", Static)

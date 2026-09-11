@@ -324,8 +324,12 @@ def build_library_export_form_state(
         if show_media_fields
         else ""
     )
+    # "before compression" is load-bearing, not padding: this counts the
+    # content going IN, while the receipt after the run stats the zip that
+    # came OUT (live check: a 9 KB estimate wrote a 4 KB archive). Without
+    # the qualifier the two numbers read as a contradiction.
     size = (
-        f" · about {format_export_bytes(approx_bytes)}"
+        f" · about {format_export_bytes(approx_bytes)} before compression"
         if approx_bytes is not None
         else " · size known once it runs"
     )
