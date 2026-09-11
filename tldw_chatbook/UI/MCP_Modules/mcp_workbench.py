@@ -17,10 +17,10 @@ from loguru import logger
 from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
-from textual.css.query import QueryError
+from textual.css.query import NoMatches, QueryError
 from textual.message import Message
 from textual.reactive import reactive
-from textual.widgets import ContentSwitcher
+from textual.widgets import ContentSwitcher, DataTable
 from textual.worker import Worker
 
 from tldw_chatbook.Agents.builtin_tool_gate import (
@@ -3074,7 +3074,16 @@ class MCPWorkbench(Container):
                     severity="warning",
                 )
             else:
-                self.app.notify(_toast("Permission update failed."), severity="error")
+                # Wave A (F10): the typed service methods raise user-ready
+                # messages, so surface the first line instead of a bare
+                # generic sentence -- bounded so a verbose exception can't
+                # turn the toast into a stack dump. `_toast()` escapes the
+                # text (service messages embed store-derived ids).
+                reason = str(exc).strip().splitlines()[0][:140] if str(exc).strip() else type(exc).__name__
+                self.app.notify(
+                    _toast(f"Permission update failed: {reason}"),
+                    severity="error",
+                )
             return
         # Task 3 (MCP Hub Phase 6): the transient mutation echo -- pinned
         # copy shape `"{tool_name} → {ui_label} · "`, TOOL-row cycles only
@@ -3229,6 +3238,39 @@ class MCPWorkbench(Container):
                 group="mcp-tool-clear",
                 exclusive=True,
             )
+            # Wave A (F5a): entering Permissions mode moves the keyboard
+            # onto the matrix -- Space-cycling is the mode's primary
+            # gesture and the binding lives on the canvas, so focus left
+            # over from the previous mode (e.g. a mode chip, where Space
+            # ACTIVATES the chip) made the advertised key do something
+            # else entirely. `call_after_refresh` so the newly-shown canvas
+            # exists before the focus lands; focus already INSIDE the
+            # permissions canvas (the filter Input mid-typing) is respected.
+            if mode == "permissions":
+                self.call_after_refresh(self._focus_permissions_matrix)
+
+    def _focus_permissions_matrix(self) -> None:
+        """F5a: focus `#mcp-perm-table` unless the permissions canvas
+        already owns focus (the filter Input is the one place inside the
+        canvas where the keyboard should stay put)."""
+        try:
+            canvas = self.query_one(MCPPermissionsMode)
+        except NoMatches:
+            return
+        try:
+            focused = self.screen.focused if self.is_mounted else None
+        except Exception:
+            focused = None
+        if focused is not None:
+            try:
+                if canvas in focused.ancestors_with_self:
+                    return
+            except Exception:
+                pass
+        try:
+            canvas.query_one("#mcp-perm-table", DataTable).focus()
+        except NoMatches:
+            pass
 
     async def _clear_tool_view(self) -> None:
         await self.query_one(MCPInspector).show_tool(None)
@@ -4350,6 +4392,17 @@ class MCPWorkbench(Container):
         """
         inspector = self.query_one(MCPInspector)
         status = await inspector.open_test_panel()
+        if status == "no_tool" and self._active_mode == "tools":
+            # Wave A (O5): IN TOOLS MODE the user may have ARROWED onto a
+            # row without selecting it into the inspector -- the visible
+            # cursor row is their evident intent, so drive the same tool
+            # view a selection would and retry before falling back to the
+            # hint. Gated on the active mode: in any OTHER mode the Tools
+            # table's cursor row is not on screen and "resolving" it would
+            # be the same mode hijack F-055 removed (a key advertised in
+            # every mode must not teleport the user based on state they
+            # cannot see).
+            status = await self._open_test_for_tools_cursor_row(inspector)
         if status == "no_tool":
             self.app.notify("Select a tool in Tools mode first.", severity="warning")
             return
@@ -4369,6 +4422,43 @@ class MCPWorkbench(Container):
             )
             return
         self.set_mode("tools")
+
+    async def _open_test_for_tools_cursor_row(self, inspector: MCPInspector) -> str:
+        """Wave A (O5): resolve the Tools table's CURSOR row (arrowed onto,
+        not Enter-selected) into the inspector's tool view and retry the
+        Test Tool open through the exact same path a row selection takes
+        (`on_mcp_tools_mode_tool_selected`'s show_tool call).
+
+        Returns `open_test_panel()`'s status after the retry, or
+        `"no_tool"` when there is no cursor row to resolve (empty table,
+        unmounted canvas, tool dropped from the catalog, or no validated
+        profile context) -- the caller then falls back to its hint.
+        """
+        try:
+            canvas = self.query_one(MCPToolsMode)
+            table = canvas.query_one("#mcp-tools-table", DataTable)
+        except NoMatches:
+            return "no_tool"
+        if table.row_count == 0 or table.cursor_row < 0:
+            return "no_tool"
+        try:
+            row_key, _ = table.coordinate_to_cell_key((table.cursor_row, 0))
+        except Exception:
+            return "no_tool"
+        if row_key is None or row_key.value is None:
+            return "no_tool"
+        tool = self._tool_for_row_key(str(row_key.value))
+        if tool is None:
+            return "no_tool"
+        context = self._validate_profile_context(self._tool_policy_profile_context)
+        if context is None:
+            return "no_tool"
+        await inspector.show_tool(
+            tool,
+            effective=self._effective_for_display(tool),
+            profile_context=context,
+        )
+        return await inspector.open_test_panel()
 
     def _tool_profile_lifecycle_authority(self) -> object | None:
         """Resolve the shared lifecycle after deferred app composition."""

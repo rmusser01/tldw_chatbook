@@ -824,7 +824,16 @@ def _render_section_payload(section: str, payload: Any) -> str:
     or `OverflowError` (an out-of-range float) -- which should not happen
     for a service-returned dict but must never crash the Advanced pane
     either way.
+
+    Wave A (F13): a Mapping payload carrying a truthy "error" key is a
+    FAILED section load (the `_AdvancedSectionShim` in mcp_workbench.py
+    normalizes exceptions to exactly this shape) -- rendered as ONE plain
+    status line instead of the JSON dump, which is the noise the UX review
+    flagged on the server-source no-target state. An empty/absent "error"
+    is a legitimate payload and still renders as JSON.
     """
+    if isinstance(payload, Mapping) and payload.get("error"):
+        return f"Could not load this section: {str(payload['error']).strip()}"
     try:
         return json.dumps(payload, indent=2, sort_keys=True, default=str)
     except Exception:

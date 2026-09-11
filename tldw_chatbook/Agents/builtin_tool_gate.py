@@ -581,6 +581,12 @@ class ToolGate:
     description: str
     enabled: bool
     group: str
+    #: Wave A (F12): True for construction-time gates that only take
+    #: effect after an app restart (tool providers build their catalogs at
+    #: startup) -- the UI renders a "(⟳ restart)" suffix on exactly these
+    #: rows so the restart class is visible per-checkbox, not only in the
+    #: group's shared note. Every gate that reads back live stays False.
+    restart_required: bool = False
 
 
 #: The local group's master-switch config key, named so it isn't re-typed
@@ -705,6 +711,7 @@ def all_tool_gates() -> list[ToolGate]:
                 get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
             ),
             group="local",
+            restart_required=True,
         )
     )
     gates.append(

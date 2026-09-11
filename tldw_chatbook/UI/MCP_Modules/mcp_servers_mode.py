@@ -1221,6 +1221,12 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             if gate.key == LOCAL_TOOLS_MASTER_KEY
             else gate.tool_name
         )
+        # Wave A (F12): restart-class gates carry a per-checkbox marker so
+        # the restart rule is visible on the row itself, not only in the
+        # group note below -- an enabled-looking checkbox that silently
+        # does nothing until relaunch is the exact confusion this prevents.
+        if gate.restart_required:
+            label = f"{label} (⟳ restart)"
         return Checkbox(
             label,
             value=gate.enabled,

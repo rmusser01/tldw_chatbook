@@ -1770,3 +1770,41 @@ def test_named_items_text_truncates_at_named_items_cap():
     text = _named_items_text(items, key="name")
     assert text.startswith("10: tool0, tool1, tool2, tool3, tool4, tool5, tool6, tool7")
     assert text.endswith("… +2 more")
+
+
+# -- Wave A (2026-09-11 MCP Hub UX program): bounded polish -----------------
+
+
+@pytest.mark.asyncio
+async def test_restart_class_gates_carry_a_restart_marker(monkeypatch):
+    """A4/F12: gates that only take effect after an app restart
+    (web_deep_search) carry a visible "(⟳ restart)" suffix on their
+    checkbox label -- the shared note under the group explains the rule
+    once, but the checkbox itself must signal which class it belongs to.
+    Immediate-effect gates (the built-ins, the master switch) carry no
+    marker."""
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
+    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
+
+    first_builtin_key = _GATEABLE_BUILTINS[0].gate_key
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        if key == "local_tools_enabled":
+            return True
+        return default
+
+    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.show_detail(builtin_readiness(enabled=True))
+        await pilot.pause()
+
+        deep = app.query_one(f"#mcp-gate-{WEB_DEEP_SEARCH_GATE_KEY}", Checkbox)
+        assert "⟳ restart" in str(deep.label)
+        first_cb = app.query_one(f"#mcp-gate-{first_builtin_key}", Checkbox)
+        assert "⟳" not in str(first_cb.label)
+        master = app.query_one("#mcp-gate-local_tools_enabled", Checkbox)
+        assert "⟳" not in str(master.label)
