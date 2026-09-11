@@ -105,14 +105,31 @@ async def main():
   theme=selector.parent/'themes'/(name+'.toml')
   theme.parent.mkdir(mode=0o700,exist_ok=True)
   theme.write_text('[theme]\nname='+json.dumps(name)+'\ndark=true\n[colors]\nbackground="#112233"\n')
-  preferences={owner:dict(path=str(path),hex=path.read_bytes().hex()) for owner,path in (('chat.prompt_history',history.path),('ui.emoji_recents',selector.parent/'recent_emojis.json'),('ui.state',state),('ui.themes',theme))}
+  from tldw_chatbook.Chunking.chunking_templates import ChunkingTemplate,ChunkingTemplateManager
+  persona_service=app.local_character_persona_service
+  persona=persona_service.create_persona_profile({'name':name+' persona','system_prompt':name+' retained persona prompt','is_active':False})
+  dictionary_service=app.local_chat_dictionary_service
+  dictionary=dictionary_service.create_dictionary({'name':name+' dictionary','description':name+' retained dictionary history'})
+  dictionary_version=dictionary_service.get_version(dictionary['id'],dictionary['version'])
+  grammar=await app.local_chat_grammars_service.create_grammar(name=name+' grammar',grammar_text='root ::= "'+name+'"')
+  feedback=await app.local_feedback_service.submit_feedback(conversation_id=conversation,message_id=message,feedback_type='helpful',helpful=True,user_notes=name+' retained feedback')
+  audio_service=app.local_audio_services_service
+  # Only the external generator is substituted; history uses the actual owner.
+  audio_service.tts_audio_generator=lambda **kwargs:(name+' retained audio bytes').encode()
+  audio=await audio_service.create_audio_speech({'input':name+' spoken input','response_format':'wav'})
+  await audio_service.update_tts_history_favorite(audio['history_id'],{'favorite':True})
+  templates=ChunkingTemplateManager()
+  template=ChunkingTemplate(name=name+'-retained',description=name+' chunking template',pipeline=[])
+  templates.save_template(template)
+  durable_api=dict(persona=persona['id'],dictionary=dictionary['id'],dictionary_revision=dictionary_version['revision'],grammar=grammar['id'],feedback=feedback['feedback_id'],audio=audio['history_id'],template=template.name)
+  durable_files={owner:dict(path=str(path),hex=path.read_bytes().hex()) for owner,path in (('chat.prompt_history',history.path),('ui.emoji_recents',selector.parent/'recent_emojis.json'),('ui.state',state),('ui.themes',theme),('personas',persona_service.persona_store_path),('chat.dictionary_history',dictionary_service.history_store_path),('chat.grammars',app.local_chat_grammars_service.store_path),('feedback',app.local_feedback_service.store_path),('audio.history',audio_service.history_store_path),('chunking.templates',templates.user_templates_dir/(template.name+'.json')))}
   empty=get_private_chatbooks_dir()
   assert not list(empty.iterdir())
   jobs=LibraryIngestJobsDB(get_library_ingest_jobs_db_path(),'fixture')
   try:
    jobs.upsert_job(LibraryIngestJob('ingest-job-1',str(fixture/(name+'-input.txt')),state=IngestJobState.QUEUED))
   finally:jobs.close()
-  (fixture/(name+'-seed.json')).write_text(json.dumps(dict(note=note,deleted=deleted,conversation=conversation,message=message,media=media,prompt=prompt,research=session['id'],deleted_research=deleted_session['id'],empty=str(empty),domains=domains,preferences=preferences)))
+  (fixture/(name+'-seed.json')).write_text(json.dumps(dict(note=note,deleted=deleted,conversation=conversation,message=message,media=media,prompt=prompt,research=session['id'],deleted_research=deleted_session['id'],empty=str(empty),domains=domains,durable_files=durable_files,durable_api=durable_api)))
   assert not blocked_attempts(),blocked_attempts()
   print('SEEDED',name,flush=True)
  finally:
@@ -232,7 +249,7 @@ async def main():
     assert row['metadata']=={'version':1,'mode':meta.mode,'mtime_ns':meta.mtime_ns}
   for label in ('alpha','beta'):
    seed=json.loads((fixture/(label+'-seed.json')).read_text())
-   for owner,expected in seed['preferences'].items():
+   for owner,expected in seed['durable_files'].items():
     row=next(row for row in manifest['files'] if row['owner_id']==owner and source[row['logical_id']].path==Path(expected['path']))
     assert source[row['logical_id']].status=='included'
     assert (result.root/row['payload']).read_bytes()==bytes.fromhex(expected['hex'])
@@ -419,8 +436,8 @@ mapping={}
 # Exact installed destinations for this finite captured cohort; new owners must
 # be reviewed explicitly instead of silently landing in a miscellaneous folder.
 custom={'db.chachanotes.primary','chat.attachments','notes.sync_bindings','quiz.local','study.local','db.media.primary','research.local'}
-ordinary={'db.evals','db.library_collections','db.library_ingest_jobs','db.scheduled_tasks','db.subscriptions','db.workspaces','kanban.local','mcp.targets','notifications.client','runtime.event_state','runtime.sync_state','writing.local','chat.prompt_history'}
-trees={'chat.dictionaries':'chat_dicts','chatbooks.archives':'chatbooks','rag.definitions':'rag_profiles'}
+ordinary={'db.evals','db.library_collections','db.library_ingest_jobs','db.scheduled_tasks','db.subscriptions','db.workspaces','kanban.local','mcp.targets','notifications.client','runtime.event_state','runtime.sync_state','writing.local','chat.prompt_history','personas','chat.dictionary_history','chat.grammars','feedback','audio.history'}
+trees={'chat.dictionaries':'chat_dicts','chatbooks.archives':'chatbooks','rag.definitions':'rag_profiles','chunking.templates':'chunking_templates'}
 for key,row in roots.items():
  owner=producer[key].owner_id
  if row.synthetic:
@@ -550,6 +567,21 @@ async def main():
   history=PromptHistory(default_prompt_history_path());await history.load()
   assert history.size==1 and history.complete(label)==label+' retained input'
   assert load_recent_emojis()==['★' if label=='alpha' else '✓']
+  durable=seed['durable_api']
+  persona=app.local_character_persona_service.get_persona_profile(durable['persona'])
+  assert persona['system_prompt']==label+' retained persona prompt' and not persona['is_active']
+  version=app.local_chat_dictionary_service.get_version(durable['dictionary'],durable['dictionary_revision'])
+  assert version['snapshot']['description']==label+' retained dictionary history'
+  grammar=await app.local_chat_grammars_service.get_grammar(durable['grammar'])
+  assert grammar['grammar_text']=='root ::= "'+label+'"' and grammar['validation_status']=='unchecked'
+  feedback=await app.local_feedback_service.get_feedback(durable['feedback'])
+  assert feedback['conversation_id']==seed['conversation'] and feedback['message_id']==seed['message']
+  assert feedback['helpful'] is True and feedback['user_notes']==label+' retained feedback'
+  audio=await app.local_audio_services_service.get_tts_history_entry(durable['audio'])
+  assert audio['text']==label+' spoken input' and audio['content']==(label+' retained audio bytes').encode() and audio['favorite']
+  from tldw_chatbook.Chunking.chunking_templates import ChunkingTemplateManager
+  template=ChunkingTemplateManager().load_template(durable['template'])
+  assert template is not None and template.description==label+' chunking template' and template.pipeline==[]
   assert core.get_note_by_id(seed['note'])['content']==label+' native note bytes'
   assert core.get_note_by_id(seed['deleted']) is None
   assert core.get_message_by_id(seed['message'])['content']==label+' message bytes'
@@ -657,7 +689,7 @@ try:
    labels=[label for label in ('alpha','beta') if db.execute('SELECT 1 FROM notes WHERE id=?',(json.loads((fixture/(label+'-seed.json')).read_text())['note'],)).fetchone()]
    assert len(labels)==1,labels
    label=labels[0];seed=json.loads((fixture/(label+'-seed.json')).read_text())
-   for owner,expected_file in seed['preferences'].items():
+   for owner,expected_file in seed['durable_files'].items():
     payload=next(item for item in doc.files if item.owner_id==owner and item.logical_id.startswith('profile:'+profile+':'))
     assert selected[payload.logical_id].read_bytes()==bytes.fromhex(expected_file['hex'])
    assert db.execute('SELECT content,deleted FROM notes WHERE id=?',(seed['deleted'],)).fetchone()==('Retained soft deletion '+label,1)
@@ -697,7 +729,7 @@ finally:service.close()
 assert source_hashes=={str(path):hashlib.sha256(path.read_bytes()).hexdigest() for path in source_paths}
 for label in ('alpha','beta'):
  seed=json.loads((fixture/(label+'-seed.json')).read_text())
- assert all(Path(row['path']).read_bytes()==bytes.fromhex(row['hex']) for row in seed['preferences'].values())
+ assert all(Path(row['path']).read_bytes()==bytes.fromhex(row['hex']) for row in seed['durable_files'].values())
 assert not blocked_attempts(),blocked_attempts()
 print('TWO_PROFILE_RESTORED_AND_OPENED',flush=True)
 """,
