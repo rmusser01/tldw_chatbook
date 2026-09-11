@@ -128,6 +128,15 @@ Verification after the round: 397 passed across the six affected suites
 controller, Character context, repository) with zero failures; ruff clean
 for all new code.
 
+**Persistent-diagnostic pin (CI, Derived Artifacts guard).** The review round's
+label resolver added one DEBUG diagnostic in
+`tldw_chatbook/UI/Console_Modules/workspace.py` ("Unable to read character
+card {} for Console browser"). Reviewed per the guard's procedure: it
+interpolates only the parsed integer character id -- no user content,
+secrets, paths, or URLs reach a persistent sink. Inventory pin updated via
+`check_persistent_diagnostic_inventory.py --write` and committed with this
+note.
+
 **ADR check.** Not required — routing policy over existing data and queries;
 no schema, storage, or interface-boundary change.
 
