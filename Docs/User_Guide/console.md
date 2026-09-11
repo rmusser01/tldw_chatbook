@@ -37,7 +37,7 @@ Top to bottom:
   live runs, and control actions.", and a status badge that reads **Ready**,
   **Running**, or **Blocked** depending on the active session.
 - **Control bar** — one row of buttons: **New tab**, **Settings**,
-  **Attach context**, **Search Library**, **Help**. (**Save as Chatbook**
+  **Context rail**, **Search Library**, **Help**. (**Save as Chatbook**
   lives in the composer's **Menu** button, left of the draft.)
 - **Left rail: "Console context"** — separate sections for **Sessions**
   (the active chat), **Workspaces** (named workspaces and their
@@ -264,7 +264,7 @@ composer-level strip below shows once setup completes.
 |---|---|
 | **New tab** | Creates a Console tab — see [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md). |
 | **Settings** | Opens the "Console Settings" modal (provider, model, tools, and generation). |
-| **Attach context** | Opens the "Console context" rail (staging itself is done from Library) — see [Context & RAG](console/context-and-rag.md). |
+| **Context rail** | Opens the "Console context" rail (source staging is done from Library) — see [Context & RAG](console/context-and-rag.md). |
 | **Search Library** | Runs a user-initiated **Manual Search Library** request before sending; it remains available regardless of the conversation's automatic or assistant policy — see [Context & RAG](console/context-and-rag.md#per-conversation-library-controls). |
 | **Save as Chatbook** (composer **Menu**) | Saves this run as a Chatbook — see [Artifacts](artifacts.md). |
 | **Buddy** (composer **Menu**) | Manage independent Buddy artwork, follow a conversation/workspace, and change Persona settings — see [Buddies](buddies.md). |

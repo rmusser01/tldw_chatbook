@@ -664,7 +664,7 @@ the staged count, "none" when empty). Empty state: "No sources attached.
 Stage sources from Library." — and the tray's continuation is directly
 beneath it: the **Ask Library sources** search card mounted under the
 tray stages what it finds. To attach a file to the draft instead, use the
-composer menu's **Attach file**. The control-bar **Attach context**
+composer menu's **Attach file**. The control-bar **Context rail**
 action opens the "Console context" rail; Library staging itself happens
 from the Library surfaces named above.
 
