@@ -11,6 +11,7 @@ from __future__ import annotations
 import dataclasses
 
 import pytest
+from textual.app import App
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
@@ -392,3 +393,138 @@ async def test_the_receipt_does_not_survive_a_different_conversation() -> None:
         assert not screen.query_one(
             "#library-conversation-link-receipt", Static
         ).display
+
+
+# --------------------------------------------------------------------------
+# task-32360 AC#1/AC#2: the narrow stage's return, and clipped copy
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_narrow_stage_return_is_painted_not_just_registered() -> None:
+    """task-32360 AC#1: the return survives the real footer at 60 columns.
+
+    Measured, not assumed. The wave plan expected the chip to be lost to the
+    footer's width ladder and prescribed trimming the context to two chips;
+    driving ``AppFooterStatus`` at width 60 with one, two, three and five
+    chips renders "esc back to Library | F1 · F6 · Ctrl+P · Ctrl+Q" in every
+    case -- task-32225's "FIRST, not appended" already carries it. So this
+    is a REGRESSION pin on the existing behaviour, not a new fix: whatever
+    B saw at 60x24 was a route where this context is not active at all.
+    """
+    from Tests.UI.test_library_crit9_shell import (
+        NARROW_TEST_SIZE,
+        _active_library_screen,
+        _library_host,
+        _wait_for_condition,
+        _wait_for_library_shell,
+    )
+
+    host = _library_host()
+    async with host.run_test(size=NARROW_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: ("esc", "back to Library")
+            in tuple((screen._footer_shortcut_registration or ("", ()))[1]),
+            message="The registered footer never named the return.",
+        )
+        chips = screen._library_footer_shortcuts_for_current_state()
+        assert chips[0] == ("esc", "back to Library"), chips
+
+        # ...and that short context SURVIVES the real footer at this width.
+        # The Library harness mounts no app chrome, so the widget that does
+        # the eliding is driven directly with the very set registered above.
+        from Tests.UI.test_chrome_ux_fixes import _FooterHarness, _shown_text
+
+        footer_app = _FooterHarness()
+        async with footer_app.run_test(size=NARROW_TEST_SIZE) as footer_pilot:
+            await footer_pilot.pause()
+            footer_app.footer.set_workbench_shortcuts(source="library", shortcuts=chips)
+            await footer_pilot.pause()
+            shown = _shown_text(footer_app.footer)
+            assert "back to Library" in shown, shown
+
+
+# --------------------------------------------------------------------------
+# task-32359: the focused rail row differs from the active one by shape
+# --------------------------------------------------------------------------
+
+
+_THICK_LEFT_GLYPH = "█"
+
+
+class _RailRowsHost(App):
+    """Two real rail rows under the production stylesheet: one active.
+
+    The shape of ``library_rail.py``'s rows exactly: a ``Button`` classed
+    ``library-rail-row``, the active destination additionally carrying
+    ``library-rail-row-selected``. ``AUTO_FOCUS = None`` keeps both genuinely
+    blurred until a test moves focus, so the observed cue is the one a real
+    Tab/arrow produces.
+    """
+
+    AUTO_FOCUS = None
+
+    def __init__(self) -> None:
+        from Tests.UI.consolidated_css import APP_STYLESHEETS
+
+        self.CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+        super().__init__()
+
+    def compose(self):
+        from textual.containers import Vertical
+
+        with Vertical():
+            yield Button("Media", id="rail-media", classes="library-rail-row")
+            yield Button(
+                "▸ Conversations",
+                id="rail-conversations",
+                classes="library-rail-row library-rail-row-selected",
+            )
+
+
+def _rail_rows(app) -> list[str]:
+    return [
+        "".join(segment.text for segment in strip)
+        for strip in app.screen._compositor.render_strips()
+    ]
+
+
+def _leftmost(rows: list[str], widget) -> str:
+    line = rows[widget.region.y]
+    return line[widget.region.x] if widget.region.x < len(line) else ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)])
+async def test_the_focused_rail_row_is_a_shape_not_a_second_blue(size) -> None:
+    """task-32359 AC#1/AC#2: focus paints the house bar; active does not.
+
+    B measured both states as bold + underline over backgrounds three RGB
+    units apart (rgb(25,68,102) vs rgb(28,70,102)) -- indistinguishable, and
+    colour-only. Focus everywhere else on this screen is the ``█`` left bar
+    (task-31983), so the rail stops being the exception.
+    """
+    app = _RailRowsHost()
+    async with app.run_test(size=size) as pilot:
+        media = app.query_one("#rail-media", Button)
+        conversations = app.query_one("#rail-conversations", Button)
+
+        media.focus()
+        await pilot.pause()
+        rows = _rail_rows(app)
+        assert _leftmost(rows, media) == _THICK_LEFT_GLYPH, rows[media.region.y]
+        assert _leftmost(rows, conversations) != _THICK_LEFT_GLYPH
+        assert media.styles.border_left[0]
+        assert not conversations.styles.border_left[0]
+
+        conversations.focus()
+        await pilot.pause()
+        rows = _rail_rows(app)
+        assert _leftmost(rows, conversations) == _THICK_LEFT_GLYPH
+        assert _leftmost(rows, media) != _THICK_LEFT_GLYPH
+        # The active row keeps its own treatment and its whole label.
+        assert "Conversations" in rows[conversations.region.y]
