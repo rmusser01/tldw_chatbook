@@ -413,18 +413,20 @@ async def test_database_notes_capability_inventory_and_modes(
 @pytest.mark.parametrize(
     ("authority", "state", "expected_content", "expected_authority", "safe"),
     (
-        ("database", "conflict", "Conflict", "Database Notes", "Review recovery"),
-        ("database", "read_only", "Read-only", "Database Notes", "Keep the draft"),
-        ("database", "failed", "Save failed", "Database Notes", "Retry Save"),
-        ("database", "saving", "Saving", "Database Notes", None),
-        ("database", "dirty", "Unsaved changes", "Database Notes", None),
-        ("database", "clean", "Saved", "Database Notes", None),
-        ("folder", "conflict", "Conflict", "Folder Files", "Save Copy"),
-        ("folder", "read_only", "Read-only", "Folder Files", "Open Manage"),
-        ("folder", "failed", "Save failed", "Folder Files", "Save Copy"),
-        ("folder", "saving", "Saving", "Folder Files", None),
-        ("folder", "dirty", "Unsaved changes", "Folder Files", None),
-        ("folder", "clean", "Saved", "Folder Files", None),
+        # task-32218: one noun per source -- "Database Notes" and
+        # "Folder Files" are retired spellings of these two.
+        ("database", "conflict", "Conflict", "Library notes", "Review recovery"),
+        ("database", "read_only", "Read-only", "Library notes", "Keep the draft"),
+        ("database", "failed", "Save failed", "Library notes", "Retry Save"),
+        ("database", "saving", "Saving", "Library notes", None),
+        ("database", "dirty", "Unsaved changes", "Library notes", None),
+        ("database", "clean", "Saved", "Library notes", None),
+        ("folder", "conflict", "Conflict", "Folder files", "Save Copy"),
+        ("folder", "read_only", "Read-only", "Folder files", "Open Manage"),
+        ("folder", "failed", "Save failed", "Folder files", "Save Copy"),
+        ("folder", "saving", "Saving", "Folder files", None),
+        ("folder", "dirty", "Unsaved changes", "Folder files", None),
+        ("folder", "clean", "Saved", "Folder files", None),
     ),
 )
 def test_notes_header_status_channels_follow_approved_precedence(
