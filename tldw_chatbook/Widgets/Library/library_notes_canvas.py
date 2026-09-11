@@ -789,6 +789,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 next_action = ""
             elif "failed" in f"{status} {state.transfer_status}".lower():
                 next_action = "Review the error, then keep editing."
+            elif not state.snapshot.body:
+                # Review F4: "Keep editing" presumes editing has started.
+                # The brief's "Start typing" belongs here -- this is the
+                # surface with the empty box on it.
+                next_action = "Start typing."
             else:
                 next_action = "Keep editing; changes save automatically."
             return line(
@@ -805,7 +810,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # task-32356: Blank note is the answer nearly every time,
                 # so the line names it as the default rather than posing
                 # the nine-way question the canvas no longer asks.
-                else "Start typing, or choose a template."
+                # Review F4: it names the two controls that are ON this
+                # canvas -- the brief's "Start typing" was written for the
+                # editor the key now goes to, and there is no box to type
+                # in here.
+                else "Press Blank note, or choose a template."
             )
             return line(status, f"Next: {next_action}" if next_action else "")
         if self.mode == "import":

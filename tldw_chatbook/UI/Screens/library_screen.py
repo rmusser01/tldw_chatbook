@@ -13774,7 +13774,10 @@ class LibraryScreen(BaseAppScreen):
                     "Create a local-only workspace and make it active. "
                     # task-32357 AC#1: same panel, same reader -- the
                     # sibling line's "WIP" went, this one goes with it.
-                    "Server sync and ACP handoff aren't available yet."
+                    # Review F7: and so does the bare acronym. The concept
+                    # is spelled; ACP stays in parentheses for the reader
+                    # who already knows it.
+                    "Server sync and agent hand-off (ACP) aren't available yet."
                 ),
             ),
             Static(

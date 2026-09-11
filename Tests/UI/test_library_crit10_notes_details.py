@@ -399,3 +399,69 @@ def test_the_split_browse_row_cannot_oscillate():
     assert browse_row_overflows(33, needed, already_split=False) is False
     # unmeasured panes keep the shape they have always had
     assert browse_row_overflows(0, needed, already_split=False) is False
+
+
+# --- review F4/F7 round 2: copy names what is on the surface it paints on ---
+
+
+@pytest.mark.asyncio
+async def test_each_next_step_names_a_control_that_is_on_that_surface():
+    """Review F4: the create canvas said "Next: Start typing" while its only
+    controls were Blank note and From a template… -- the brief's string,
+    written for the editor the key now goes to. Each surface names its own.
+    """
+    host = _notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_notes_list(screen, pilot)
+
+        screen.query_one("#library-notes-new", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        await pilot.pause()
+        # The create canvas paints in the WORK pane; the list pane keeps its
+        # own authority line beside it.
+        create_line = str(
+            screen.query_one("#library-note-work-authority", Static).renderable
+        )
+        assert create_line.endswith(
+            "Next: Press Blank note, or choose a template."
+        ), create_line
+
+        # …and the editor a fresh note lands in, whose body IS the surface,
+        # keeps the brief's wording.
+        await pilot.press("escape")
+        await _wait_for_selector(screen, pilot, "#library-notes-filter")
+        await pilot.press("ctrl+n")
+        await _wait_for_selector(screen, pilot, "#library-note-body")
+        await pilot.pause()
+        editor_line = str(
+            screen.query_one("#library-note-work-authority", Static).renderable
+        )
+        assert editor_line.endswith("Next: Start typing."), editor_line
+
+
+@pytest.mark.asyncio
+async def test_the_details_actions_carry_no_bare_acronym():
+    """Review F7: AC#1 retired "WIP" from this panel and left "ACP handoff"
+    standing, which is the same class of internal vocabulary for a
+    first-time reader. Spell the concept, keep the acronym in parentheses.
+    """
+    import re
+
+    host = _notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen._set_library_rail_section("details", True)
+        await pilot.pause()
+
+        tooltip = str(
+            screen.query_one("#library-create-local-workspace", Button).tooltip or ""
+        )
+        bare = [
+            match.group()
+            for match in re.finditer(r"\b[A-Z]{2,}\b", tooltip)
+            if f"({match.group()})" not in tooltip
+        ]
+        assert not bare, (bare, tooltip)
