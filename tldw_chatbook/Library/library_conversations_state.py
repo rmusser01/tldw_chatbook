@@ -64,6 +64,10 @@ class LibraryConversationsCanvasState:
     selection_notice: str = ""
     actions_disabled: bool = False
     title: str = "Conversations"
+    archive_scope: str = "active"
+    selected_archived: bool = False
+    receipt_copy: str = ""
+    undo_available: bool = False
 
 
 @dataclass(frozen=True)
@@ -105,7 +109,9 @@ def _validate_conversation_items(
     identities: set[str] = set()
     for item in items:
         if not isinstance(item, Mapping):
-            raise ValueError("item must be a mapping with a stable conversation identity")
+            raise ValueError(
+                "item must be a mapping with a stable conversation identity"
+            )
         identity = _stable_conversation_identity(item)
         if identity in identities:
             raise ValueError("page contains a duplicate stable conversation identity")
@@ -238,6 +244,7 @@ def build_library_conversations_state(
     select_mode: bool = False,
     selected_ids: frozenset[str] = frozenset(),
     selection_notice: str = "",
+    archive_scope: str = "active",
 ) -> LibraryConversationsCanvasState:
     """Build the Library Browse ▸ Conversations canvas display state.
 
@@ -314,6 +321,20 @@ def build_library_conversations_state(
     if resolved_selected_id not in displayed_ids:
         resolved_selected_id = entries[0].conversation_id if entries else ""
 
+    record_by_id = {_stable_conversation_identity(record): record for record in records}
+
+    def lifecycle_detail(entry: _ConversationEntry) -> str:
+        record = record_by_id[entry.conversation_id]
+        if "archived" not in record:
+            return ""
+        workspace = str(
+            record.get("workspace_name") or record.get("workspace_id") or "Default"
+        )
+        if record.get("workspace_archived"):
+            workspace += " (workspace archived)"
+        state = "Archived" if record.get("archived") else "Active"
+        return f" · {workspace} · {state}"
+
     rows = tuple(
         LibraryConversationRow(
             conversation_id=entry.conversation_id,
@@ -321,7 +342,8 @@ def build_library_conversations_state(
             secondary=_secondary_text(
                 entry.message_count,
                 format_console_relative_age(entry.updated_raw, now=reference_now),
-            ),
+            )
+            + lifecycle_detail(entry),
             selected=entry.conversation_id == resolved_selected_id,
             checked=entry.conversation_id in selected_ids,
         )
@@ -343,14 +365,14 @@ def build_library_conversations_state(
     elif normalized_query:
         empty_copy = f"No conversations match '{normalized_query}'."
     else:
-        empty_copy = LIBRARY_CONVERSATIONS_EMPTY_COPY
+        empty_copy = (
+            "No archived conversations. Archive saved chats from Active."
+            if archive_scope == "archived"
+            else LIBRARY_CONVERSATIONS_EMPTY_COPY
+        )
 
     selected_entry = next(
-        (
-            entry
-            for entry in entries
-            if entry.conversation_id == resolved_selected_id
-        ),
+        (entry for entry in entries if entry.conversation_id == resolved_selected_id),
         None,
     )
     if selected_entry is None:
@@ -368,7 +390,17 @@ def build_library_conversations_state(
             f"Updated: {age or 'unknown'}",
         )
 
+    selected_record = record_by_id.get(resolved_selected_id, {})
+    if selected_record and "archived" in selected_record:
+        preview_lines += (
+            lifecycle_detail(selected_entry).removeprefix(" · "),
+            f"Date: {selected_entry.updated_raw or 'unknown'}",
+        )
     return LibraryConversationsCanvasState(
+        archive_scope=archive_scope,
+        selected_archived=bool(
+            selected_record.get("archived") or selected_record.get("workspace_archived")
+        ),
         rows=rows,
         status_copy=status_copy,
         empty_copy=empty_copy,

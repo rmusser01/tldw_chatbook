@@ -41,10 +41,12 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
 from tldw_chatbook.Library.library_ingest_state import (
     WEB_LOCAL_SINGLE_PAGE_NOTE,
     validate_ingest_option_value,
+    IngestQueueRow,
     LibraryIngestCanvasState,
     build_intro_lines,
     build_web_scope_note,
     format_ingest_progress_line,
+    group_ingest_queue_rows,
     library_ingest_retry_label,
 )
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
@@ -487,17 +489,29 @@ class LibraryIngestPreflightSummary(Vertical):
             )
 
 
-class LibraryIngestQueuePanel(Vertical):
+class LibraryIngestQueuePanel(PostRecomposeCallback, Vertical):
     """Render-from-state queue block: counts, rows, actions, clear, recent.
 
     Its own widget so registry job ticks recompose ONLY the queue (task-2042):
     the whole-canvas recompose they used to trigger remounted the form
     widgets (swallowing in-flight clicks) and snapped the canvas scroll.
+
+    (task-32216) ...which is also why it needs ``PostRecomposeCallback``:
+    that recompose runs on THIS widget's message pump, so a follow-up queued
+    with the SCREEN's ``call_after_refresh`` has no ordering against it and
+    fires while the old children are still mounted. A row toggle that wants
+    focus back on the control it flipped queues here instead.
     """
 
     def __init__(self, state: LibraryIngestCanvasState, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.state = state
+        # (task-32231) Which collapsed outcome groups the user has opened,
+        # by group key. Panel-owned rather than canvas-state-owned because
+        # it is a transient disclosure, not a fact about the queue: job
+        # ticks recompose this panel's CHILDREN while the panel itself keeps
+        # identity, so an expansion survives every tick that matters.
+        self.expanded_groups: set[str] = set()
         self.styles.width = "1fr"
         self.styles.height = "auto"
 
@@ -543,204 +557,97 @@ class LibraryIngestQueuePanel(Vertical):
         for group in state.queue_groups:
             if group.header_line and group.job_ids:
                 headers_before[group.job_ids[0]] = group.header_line
-        for index, row in enumerate(state.queue_rows):
-            header_line = headers_before.get(row.job_id, "")
+        # (task-32231) One entry per OUTCOME group, not per row: a folder
+        # import with a single cause used to paint one identical row (and
+        # its three buttons) per file. A run of one renders exactly what it
+        # rendered before; a longer run collapses until the user asks.
+        index = 0
+        for group in group_ingest_queue_rows(
+            state.queue_rows, expanded=self.expanded_groups
+        ):
+            if len(group.members) == 1:
+                yield from self._compose_queue_row(
+                    index, group.members[0], headers_before
+                )
+                index += 1
+                continue
+            leader = group.members[0]
+            # The batch header belongs above the group, and only once --
+            # letting the leader's own row re-emit it on expansion painted
+            # "four-md — 4 files · now · 4 failed" twice (live-caught).
+            member_headers = dict(headers_before)
+            header_line = member_headers.pop(leader.job_id, "")
             if header_line:
                 yield Static(
                     header_line,
                     classes="library-ingest-batch-header",
                     markup=False,
                 )
-            # A source filename or error can contain markup syntax (a
-            # literal "[/bracket]" in the name, an error quoting config
-            # keys) -- ``markup=False`` below renders it verbatim, which
-            # both keeps a hostile filename from raising MarkupError at
-            # mount time (the L3a lesson) AND never leaks an escape
-            # backslash. The old ``escape_markup``-then-parse pairing did:
-            # rich's escape skips a bracket run that never closes as a tag
-            # while escaping the inner closed ones, and Textual's content
-            # markup then leaves the first escape's backslash literal --
-            # the live "\[web_security]" receipt (task-3312 #2).
-            row_classes = "library-ingest-row"
-            has_progress_line = row.state in (
-                IngestJobState.PARSING,
-                IngestJobState.WRITING,
-            ) or bool(row.progress)
-            if has_progress_line:
-                row_classes += " library-ingest-row-with-progress"
-            # (task-2230 a11y) Severity gets a colour IN ADDITION to the
-            # glyph+word it already carries -- failed and done rows were
-            # byte-identical in colour, so scanning a tall queue for the
-            # one failure was a linear read.
-            if row.state == IngestJobState.FAILED:
-                row_classes += " library-ingest-row-failed"
-            elif row.state == IngestJobState.SKIPPED:
-                row_classes += " library-ingest-row-skipped"
-            stt_actions = (
-                () if row.research_owned else _stt_recovery_actions(row.error_detail)
-            )
-            has_actions = (
-                row.can_open
-                or row.can_open_on_server
-                or row.can_retry
-                or row.can_dismiss
-                or row.can_cancel
-                or row.can_force_stop
-                or row.can_show_details
-                or bool(stt_actions)
-            )
-            if has_actions:
-                # A row with action buttons below it gets its own
-                # bottom-margin trimmed to 0 (A3) -- the actions row's own
-                # ``.library-ingest-row-actions`` margin supplies the "tight
-                # gap above, blank line below" spacing instead, so the
-                # button(s) read as belonging to THIS row rather than the
-                # one below it. Plain rows (queued/running, or a done row
-                # with no action) keep their own margin for row-to-row
-                # spacing.
-                row_classes += " library-ingest-row-with-actions"
+            group_classes = "library-ingest-row library-ingest-row-with-actions"
+            if leader.state == IngestJobState.FAILED:
+                group_classes += " library-ingest-row-failed"
+            elif leader.state == IngestJobState.SKIPPED:
+                group_classes += " library-ingest-row-skipped"
             yield Static(
-                row.line,
-                id=f"library-ingest-row-{index}",
-                classes=row_classes,
+                group.line,
+                id=f"library-ingest-group-{group.key}",
+                classes=group_classes,
                 markup=False,
             )
-            if has_progress_line and row.state is not None:
-                progress = row.progress
-                if progress is None and row.state is IngestJobState.WRITING:
-                    progress = {"phase": "writing"}
-                yield Static(
-                    format_ingest_progress_line(progress, state=row.state),
-                    id=f"library-ingest-progress-{row.job_id}",
-                    classes="library-ingest-progress",
-                    markup=False,
+            with Horizontal(classes="library-ingest-row-actions"):
+                yield Button(
+                    (
+                        f"Hide the {len(group.members)} files"
+                        if group.expanded
+                        else f"Show the {len(group.members)} files"
+                    ),
+                    id=f"library-ingest-group-expand-{group.key}",
+                    classes=(
+                        "library-canvas-action library-ingest-group-expand "
+                        "library-ingest-row-action"
+                    ),
+                    compact=True,
                 )
-            if row.details_expanded and row.detail_lines:
-                for line_index, detail_line in enumerate(row.detail_lines):
-                    yield Static(
-                        detail_line,
-                        id=(
-                            f"library-ingest-detail-{row.job_id}-{line_index}"
+                # (review finding 1) The SAME predicate the member rows use
+                # (`row.can_retry and not stt_actions`, below): an
+                # ``stt_failure`` offers "Choose another GGUF…" / "Retry
+                # with faster-whisper" INSTEAD of a bare Retry, because a
+                # plain requeue fails the same way against the same broken
+                # provider. A folder of audio files failing on one missing
+                # model is a contiguous run of identical failures, so it
+                # collapses -- and the collapsed row must not offer what the
+                # expanded rows withhold. Those recovery actions are
+                # per-file (a GGUF picker addresses one job), so they stay
+                # behind "Show the N files" rather than being lifted here.
+                if group.can_retry and not any(
+                    _stt_recovery_actions(member) for member in group.members
+                ):
+                    yield Button(
+                        "Retry all",
+                        id=f"library-ingest-group-retry-{group.key}",
+                        classes=(
+                            "library-canvas-action library-ingest-group-retry "
+                            "library-ingest-row-action"
                         ),
-                        classes="library-ingest-detail-line",
-                        markup=False,
+                        compact=True,
                     )
-            # Row-action buttons are keyed by the job's registry-assigned
-            # ``job_id`` -- these ARE click targets and the registry mutates
-            # asynchronously between a render and a click; an index-keyed id
-            # can silently point at a different job by the time it's pressed
-            # (PR #591 review, F1). One Horizontal per row so a failed row's
-            # actions sit on one line (L5, F1b).
-            if has_actions:
-                with Horizontal(classes="library-ingest-row-actions"):
-                    if row.can_open:
-                        yield Button(
-                            "Open in Library",
-                            id=f"library-ingest-open-{row.job_id}",
-                            classes=(
-                                "library-canvas-action library-ingest-open "
-                                "library-ingest-row-action"
-                            ),
-                            compact=True,
-                        )
-                    if row.can_open_on_server:
-                        # Its own action rather than a reworded "Open in
-                        # Library": that one resolves a LOCAL media row, and a
-                        # server ingest has none. The label says where the
-                        # content actually is. The id prefix must not collide
-                        # with ``library-ingest-open-`` (that handler strips
-                        # the prefix to recover a job id).
-                        yield Button(
-                            "View on server",
-                            id=f"library-ingest-view-server-{row.job_id}",
-                            classes=(
-                                "library-canvas-action "
-                                "library-ingest-view-server "
-                                "library-ingest-row-action"
-                            ),
-                            compact=True,
-                        )
-                    if row.can_show_details:
-                        yield Button(
-                            "Hide details"
-                            if row.details_expanded
-                            else "Show details",
-                            id=f"library-ingest-details-{row.job_id}",
-                            classes=(
-                                "library-canvas-action library-ingest-details "
-                                "library-ingest-row-action"
-                            ),
-                            compact=True,
-                        )
-                    if "choose_another_gguf" in stt_actions:
-                        yield Button(
-                            "Choose another GGUF…",
-                            id=f"library-ingest-choose-gguf-{row.job_id}",
-                            classes=(
-                                "library-canvas-action library-ingest-choose-gguf "
-                                "library-ingest-row-action"
-                            ),
-                            compact=True,
-                        )
-                    if "retry_faster_whisper" in stt_actions:
-                        yield Button(
-                            "Retry with faster-whisper",
-                            id=(
-                                "library-ingest-retry-faster-whisper-"
-                                f"{row.job_id}"
-                            ),
-                            classes=(
-                                "library-canvas-action "
-                                "library-ingest-retry-faster-whisper "
-                                "library-ingest-row-action"
-                            ),
-                            compact=True,
-                        )
-                    if row.can_retry and not stt_actions:
-                        yield Button(
-                            (
-                                "Retry Research source"
-                                if row.research_owned
-                                else "Retry"
-                            ),
-                            id=f"library-ingest-retry-{row.job_id}",
-                            classes=(
-                                "library-canvas-action library-ingest-retry "
-                                "library-ingest-row-action"
-                            ),
-                            compact=True,
-                        )
-                    if row.can_cancel:
-                        yield Button(
-                            "Cancel",
-                            id=f"library-ingest-cancel-{row.job_id}",
-                            classes=(
-                                "library-canvas-action library-ingest-cancel "
-                                "library-ingest-row-action"
-                            ),
-                            compact=True,
-                        )
-                    if row.can_force_stop:
-                        yield Button(
-                            "Force stop",
-                            id=f"library-ingest-force-stop-{row.job_id}",
-                            classes=(
-                                "library-canvas-action "
-                                "library-ingest-force-stop "
-                                "library-ingest-row-action"
-                            ),
-                            compact=True,
-                        )
-                    if row.can_dismiss:
-                        yield Button(
-                            "Dismiss",
-                            id=f"library-ingest-dismiss-{row.job_id}",
-                            classes=(
-                                "library-canvas-action library-ingest-dismiss "
-                                "library-ingest-row-action"
-                            ),
-                            compact=True,
-                        )
+                if group.can_dismiss:
+                    yield Button(
+                        "Dismiss all",
+                        id=f"library-ingest-group-dismiss-{group.key}",
+                        classes=(
+                            "library-canvas-action "
+                            "library-ingest-group-dismiss "
+                            "library-ingest-row-action"
+                        ),
+                        compact=True,
+                    )
+            for member in group.members:
+                if group.expanded:
+                    yield from self._compose_queue_row(
+                        index, member, member_headers
+                    )
+                index += 1
         if state.queue_show_clear_finished:
             yield Button(
                 state.queue_clear_finished_label,
@@ -791,13 +698,245 @@ class LibraryIngestQueuePanel(Vertical):
                         markup=False,
                     )
 
+    def _compose_queue_row(
+        self,
+        index: int,
+        row: IngestQueueRow,
+        headers_before: dict[str, str],
+    ) -> ComposeResult:
+        """Render one queue row: its line, progress, details and actions.
+
+        Split out of ``compose`` for task-32231 so a collapsed outcome group
+        can skip its members and an expanded one can render them unchanged.
+        The body below is the pre-existing per-row rendering, verbatim.
+
+        Args:
+            index: The row's position in ``state.queue_rows`` -- the id
+                suffix, kept global so collapsing never renumbers a row.
+            row: The row to render.
+            headers_before: Batch header line keyed by its run's first job id.
+
+        Returns:
+            The row's widgets.
+        """
+        header_line = headers_before.get(row.job_id, "")
+        if header_line:
+            yield Static(
+                header_line,
+                classes="library-ingest-batch-header",
+                markup=False,
+            )
+        # A source filename or error can contain markup syntax (a
+        # literal "[/bracket]" in the name, an error quoting config
+        # keys) -- ``markup=False`` below renders it verbatim, which
+        # both keeps a hostile filename from raising MarkupError at
+        # mount time (the L3a lesson) AND never leaks an escape
+        # backslash. The old ``escape_markup``-then-parse pairing did:
+        # rich's escape skips a bracket run that never closes as a tag
+        # while escaping the inner closed ones, and Textual's content
+        # markup then leaves the first escape's backslash literal --
+        # the live "\[web_security]" receipt (task-3312 #2).
+        row_classes = "library-ingest-row"
+        has_progress_line = row.state in (
+            IngestJobState.PARSING,
+            IngestJobState.WRITING,
+        ) or bool(row.progress)
+        if has_progress_line:
+            row_classes += " library-ingest-row-with-progress"
+        # (task-2230 a11y) Severity gets a colour IN ADDITION to the
+        # glyph+word it already carries -- failed and done rows were
+        # byte-identical in colour, so scanning a tall queue for the
+        # one failure was a linear read.
+        if row.state == IngestJobState.FAILED:
+            row_classes += " library-ingest-row-failed"
+        elif row.state == IngestJobState.SKIPPED:
+            row_classes += " library-ingest-row-skipped"
+        stt_actions = _stt_recovery_actions(row)
+        has_actions = (
+            row.can_open
+            or row.can_open_on_server
+            or row.can_retry
+            or row.can_dismiss
+            or row.can_cancel
+            or row.can_force_stop
+            or row.can_show_details
+            or bool(stt_actions)
+        )
+        if has_actions:
+            # A row with action buttons below it gets its own
+            # bottom-margin trimmed to 0 (A3) -- the actions row's own
+            # ``.library-ingest-row-actions`` margin supplies the "tight
+            # gap above, blank line below" spacing instead, so the
+            # button(s) read as belonging to THIS row rather than the
+            # one below it. Plain rows (queued/running, or a done row
+            # with no action) keep their own margin for row-to-row
+            # spacing.
+            row_classes += " library-ingest-row-with-actions"
+        yield Static(
+            row.line,
+            id=f"library-ingest-row-{index}",
+            classes=row_classes,
+            markup=False,
+        )
+        if has_progress_line and row.state is not None:
+            progress = row.progress
+            if progress is None and row.state is IngestJobState.WRITING:
+                progress = {"phase": "writing"}
+            yield Static(
+                format_ingest_progress_line(progress, state=row.state),
+                id=f"library-ingest-progress-{row.job_id}",
+                classes="library-ingest-progress",
+                markup=False,
+            )
+        if row.details_expanded and row.detail_lines:
+            for line_index, detail_line in enumerate(row.detail_lines):
+                yield Static(
+                    detail_line,
+                    id=(
+                        f"library-ingest-detail-{row.job_id}-{line_index}"
+                    ),
+                    classes="library-ingest-detail-line",
+                    markup=False,
+                )
+        # Row-action buttons are keyed by the job's registry-assigned
+        # ``job_id`` -- these ARE click targets and the registry mutates
+        # asynchronously between a render and a click; an index-keyed id
+        # can silently point at a different job by the time it's pressed
+        # (PR #591 review, F1). One Horizontal per row so a failed row's
+        # actions sit on one line (L5, F1b).
+        if has_actions:
+            with Horizontal(classes="library-ingest-row-actions"):
+                if row.can_open:
+                    yield Button(
+                        "Open in Library",
+                        id=f"library-ingest-open-{row.job_id}",
+                        classes=(
+                            "library-canvas-action library-ingest-open "
+                            "library-ingest-row-action"
+                        ),
+                        compact=True,
+                    )
+                if row.can_open_on_server:
+                    # Its own action rather than a reworded "Open in
+                    # Library": that one resolves a LOCAL media row, and a
+                    # server ingest has none. The label says where the
+                    # content actually is. The id prefix must not collide
+                    # with ``library-ingest-open-`` (that handler strips
+                    # the prefix to recover a job id).
+                    yield Button(
+                        "View on server",
+                        id=f"library-ingest-view-server-{row.job_id}",
+                        classes=(
+                            "library-canvas-action "
+                            "library-ingest-view-server "
+                            "library-ingest-row-action"
+                        ),
+                        compact=True,
+                    )
+                if row.can_show_details:
+                    yield Button(
+                        "Hide details"
+                        if row.details_expanded
+                        else "Show details",
+                        id=f"library-ingest-details-{row.job_id}",
+                        classes=(
+                            "library-canvas-action library-ingest-details "
+                            "library-ingest-row-action"
+                        ),
+                        compact=True,
+                    )
+                if "choose_another_gguf" in stt_actions:
+                    yield Button(
+                        "Choose another GGUF…",
+                        id=f"library-ingest-choose-gguf-{row.job_id}",
+                        classes=(
+                            "library-canvas-action library-ingest-choose-gguf "
+                            "library-ingest-row-action"
+                        ),
+                        compact=True,
+                    )
+                if "retry_faster_whisper" in stt_actions:
+                    yield Button(
+                        "Retry with faster-whisper",
+                        id=(
+                            "library-ingest-retry-faster-whisper-"
+                            f"{row.job_id}"
+                        ),
+                        classes=(
+                            "library-canvas-action "
+                            "library-ingest-retry-faster-whisper "
+                            "library-ingest-row-action"
+                        ),
+                        compact=True,
+                    )
+                if row.can_retry and not stt_actions:
+                    yield Button(
+                        (
+                            "Retry Research source"
+                            if row.research_owned
+                            else "Retry"
+                        ),
+                        id=f"library-ingest-retry-{row.job_id}",
+                        classes=(
+                            "library-canvas-action library-ingest-retry "
+                            "library-ingest-row-action"
+                        ),
+                        compact=True,
+                    )
+                if row.can_cancel:
+                    yield Button(
+                        "Cancel",
+                        id=f"library-ingest-cancel-{row.job_id}",
+                        classes=(
+                            "library-canvas-action library-ingest-cancel "
+                            "library-ingest-row-action"
+                        ),
+                        compact=True,
+                    )
+                if row.can_force_stop:
+                    yield Button(
+                        "Force stop",
+                        id=f"library-ingest-force-stop-{row.job_id}",
+                        classes=(
+                            "library-canvas-action "
+                            "library-ingest-force-stop "
+                            "library-ingest-row-action"
+                        ),
+                        compact=True,
+                    )
+                if row.can_dismiss:
+                    yield Button(
+                        "Dismiss",
+                        id=f"library-ingest-dismiss-{row.job_id}",
+                        classes=(
+                            "library-canvas-action library-ingest-dismiss "
+                            "library-ingest-row-action"
+                        ),
+                        compact=True,
+                    )
+
+
 _STT_RECOVERY_ACTIONS = frozenset(
     {"choose_another_gguf", "retry_faster_whisper"}
 )
 
 
-def _stt_recovery_actions(error_detail: dict[str, Any] | None) -> frozenset[str]:
-    """Return only the bounded STT recovery actions implemented here."""
+def _stt_recovery_actions(row: IngestQueueRow) -> frozenset[str]:
+    """Return the bounded STT recovery actions this row offers.
+
+    Takes the ROW, not its ``error_detail``, so the two conditions that
+    withhold a plain Retry live together (re-review finding A). They were
+    split across the two call sites -- the row applied the ``research_owned``
+    exemption, the grouped row did not -- and a run of research-owned STT
+    failures hid "Retry all" while every one of its own member rows offered
+    "Retry Research source". One owner, one rule, both callers.
+
+    A Research-Workspace-owned job is exempt: its recovery is the durable
+    source's own re-run, not a model this screen can pick for it.
+    """
+    if row.research_owned:
+        return frozenset()
+    error_detail = row.error_detail
     if not error_detail or error_detail.get("category") != "stt_failure":
         return frozenset()
     actions = error_detail.get("actions")

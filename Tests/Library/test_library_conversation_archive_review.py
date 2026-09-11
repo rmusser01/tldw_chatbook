@@ -1,0 +1,204 @@
+"""Conversation recovery owns IDs, bounded text and honest lifecycle copy."""
+
+from types import SimpleNamespace
+
+import pytest
+
+from tldw_chatbook.Library.library_conversations_state import (
+    build_library_conversations_state,
+)
+
+
+@pytest.mark.parametrize("archived", [False, True])
+@pytest.mark.parametrize("workspace_archived", [False, True])
+def test_row_distinguishes_conversation_and_workspace_archive_state(
+    archived, workspace_archived
+):
+    state = build_library_conversations_state(
+        [
+            {
+                "id": "c",
+                "title": "[red]Literal",
+                "archived": archived,
+                "version": 4,
+                "workspace_name": "Project",
+                "workspace_archived": workspace_archived,
+                "updated_at": "2026-09-10T12:00:00",
+                "message_count": 3,
+            }
+        ],
+        total_count=1,
+        archive_scope="archived",
+    )
+    assert state.archive_scope == "archived"
+    assert state.selected_archived == (archived or workspace_archived)
+    segments = state.rows[0].secondary.split(" · ")
+    assert ("Archived" if archived else "Active") in segments
+    assert ("Active" if archived else "Archived") not in segments
+    assert (
+        "Project (workspace archived)" if workspace_archived else "Project"
+    ) in segments
+    assert "2026-09-10" in " ".join(state.preview_lines)
+
+
+@pytest.mark.asyncio
+async def test_undo_uses_only_successful_ids_and_returned_versions(monkeypatch):
+    from tldw_chatbook.UI.Library_Modules import library_conversation_recovery as module
+
+    calls = []
+
+    async def change(app, ids, *, archived, expected_versions):
+        calls.append((tuple(ids), archived, dict(expected_versions)))
+        return (
+            {"changed": {"a": 8}, "failures": {"b": "Changed; refresh first."}}
+            if archived
+            else {"changed": {"a": 9}, "failures": {}}
+        )
+
+    monkeypatch.setattr(module, "change_conversation_archive", change)
+    screen = SimpleNamespace(
+        app_instance=object(),
+        _sync_library_conversation_canvas=lambda **kw: None,
+        _library_conversation_requested_page=1,
+        _library_conversation_requested_query="needle",
+        _start_library_conversation_page_request=lambda *a, **kw: None,
+    )
+    controller = module.LibraryConversationRecovery(screen)
+    await controller.change(
+        ("a", "b"), archived=True, expected_versions={"a": 7, "b": 4}
+    )
+    assert "b" in controller.receipt_copy
+    await controller.undo()
+    assert calls[-1] == (("a",), False, {"a": 8})
+
+
+@pytest.mark.parametrize(
+    "scope", ["active", "archived", "all", "invalid", "", None, []]
+)
+def test_recovery_scope_boundary_preserves_query_and_rejects_invalid_values(scope):
+    from unittest.mock import Mock
+
+    from tldw_chatbook.UI.Library_Modules.library_conversation_recovery import (
+        LibraryConversationRecovery,
+    )
+
+    request = Mock()
+    screen = SimpleNamespace(
+        _library_conversation_requested_query="needle",
+        _start_library_conversation_page_request=request,
+    )
+    recovery = LibraryConversationRecovery(screen)
+    recovery.set_scope(scope)
+    if isinstance(scope, str) and scope in ("active", "archived", "all"):
+        request.assert_called_once_with(
+            1, "needle", focus_after_apply=f"#library-conversations-scope-{scope}"
+        )
+        assert recovery.scope == scope
+    else:
+        request.assert_not_called()
+        assert recovery.scope == "active"
+
+
+@pytest.mark.parametrize(
+    "button_id",
+    [
+        "library-conversations-scope-active",
+        "library-conversations-scope-archived",
+        "library-conversations-scope-all",
+        "library-conversations-scope-deleted",
+        None,
+    ],
+)
+def test_scope_event_validates_before_changing_recovery(button_id):
+    from unittest.mock import Mock
+
+    from tldw_chatbook.UI.Library_Modules.library_conversations_controller import (
+        LibraryConversationsController,
+    )
+
+    recovery = Mock()
+    controller = SimpleNamespace(_conversation_recovery=lambda: recovery)
+    event = SimpleNamespace(button=SimpleNamespace(id=button_id), stop=Mock())
+    LibraryConversationsController.handle_library_conversation_scope(controller, event)
+    event.stop.assert_called_once()
+    if button_id and button_id.rsplit("-", 1)[-1] in ("active", "archived", "all"):
+        recovery.set_scope.assert_called_once_with(button_id.rsplit("-", 1)[-1])
+    else:
+        recovery.set_scope.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_failed_new_change_does_not_offer_previous_undo(monkeypatch):
+    from unittest.mock import AsyncMock, Mock
+
+    from tldw_chatbook.UI.Library_Modules import library_conversation_recovery as module
+
+    change = AsyncMock(side_effect=RuntimeError("unavailable"))
+    monkeypatch.setattr(module, "change_conversation_archive", change)
+    screen = SimpleNamespace(
+        app_instance=object(),
+        _sync_library_conversation_canvas=Mock(),
+        _library_conversation_requested_page=1,
+        _library_conversation_requested_query="",
+        _start_library_conversation_page_request=Mock(),
+    )
+    recovery = module.LibraryConversationRecovery(screen)
+    recovery.receipt_versions = {"old": 4}
+    recovery.receipt_archived = True
+    await recovery.change(("new",), archived=False, expected_versions={"new": 2})
+    assert recovery.receipt_versions == {}
+    await recovery.undo()
+    assert change.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_reader_discloses_workspace_restore_on_compose_and_sync():
+    from textual.app import App
+    from textual.widgets import Button
+
+    from tldw_chatbook.Library.library_conversation_reader_state import (
+        ConversationReaderState,
+    )
+    from tldw_chatbook.Widgets.Library.library_conversation_reader import (
+        LibraryConversationReader,
+    )
+
+    class Host(App):
+        def compose(self):
+            yield LibraryConversationReader(
+                ConversationReaderState(), loaded_metadata={"workspace_archived": True}
+            )
+
+    async with Host().run_test() as pilot:
+        reader = pilot.app.query_one(LibraryConversationReader)
+        button = reader.query_one("#library-conversation-open-console", Button)
+        assert str(button.label) == "Restore and resume"
+        reader.sync_state(reader.state, loaded_metadata={})
+        assert str(button.label) == "Resume conversation"
+        reader.sync_state(reader.state, loaded_metadata={"workspace_archived": True})
+        assert str(button.label) == "Restore and resume"
+
+
+@pytest.mark.asyncio
+async def test_annotate_supports_memory_workspace_storage():
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.UI.Library_Modules.library_conversation_recovery import (
+        LibraryConversationRecovery,
+    )
+    from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+
+    db = WorkspaceDB(":memory:", client_id="archive-memory")
+    registry = LocalWorkspaceRegistryService(db)
+    registry.create_workspace(workspace_id="w", name="Memory workspace")
+    registry.archive_workspace("w")
+    recovery = LibraryConversationRecovery(
+        SimpleNamespace(
+            app_instance=SimpleNamespace(workspace_registry_service=registry)
+        )
+    )
+    try:
+        rows = await recovery.annotate(({"id": "chat", "workspace_id": "w"},))
+        assert rows[0]["workspace_name"] == "Memory workspace"
+        assert rows[0]["workspace_archived"] is True
+    finally:
+        db.close()

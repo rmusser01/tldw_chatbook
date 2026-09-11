@@ -9,24 +9,24 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Library.library_conversations_state import (
+    LibraryConversationsCanvasState,
+)
+from tldw_chatbook.Library.library_pager_state import (
+    LibraryPagerDisplay,
+    library_pager_layout,
+)
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
     LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
     library_disabled_action_label,
 )
-from tldw_chatbook.Library.library_pager_state import (
-    LibraryPagerDisplay,
-    library_pager_layout,
-)
-from tldw_chatbook.Library.library_conversations_state import (
-    LibraryConversationsCanvasState,
-)
-from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
     library_row_button,
 )
+from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 
@@ -83,6 +83,34 @@ class LibraryConversationsCanvas(
             classes="destination-section",
             markup=False,
         )
+        if self.canvas.archive_scope:
+            with Horizontal(classes="ds-toolbar"):
+                for scope in ("active", "archived", "all"):
+                    yield Button(
+                        ("✓ " if scope == self.canvas.archive_scope else "")
+                        + scope.title(),
+                        id=f"library-conversations-scope-{scope}",
+                        compact=True,
+                        classes="library-conversation-scope",
+                    )
+        if self.canvas.receipt_copy:
+            yield Static(
+                self.canvas.receipt_copy,
+                markup=False,
+                id="library-conversations-receipt",
+            )
+            with Horizontal(classes="ds-toolbar"):
+                yield Button(
+                    "Undo",
+                    id="library-conversations-undo",
+                    compact=True,
+                    disabled=not self.canvas.undo_available,
+                )
+                yield Button(
+                    "View archived",
+                    id="library-conversations-view-archived",
+                    compact=True,
+                )
         if (
             pager is not None
             and title_count == 0
@@ -231,6 +259,20 @@ class LibraryConversationsCanvas(
                 )
                 yield export_selected
 
+            with Horizontal(classes="ds-toolbar"):
+                yield Button(
+                    "Archive selected",
+                    id="library-conversations-archive-selected",
+                    compact=True,
+                    disabled=export_disabled,
+                )
+                yield Button(
+                    "Restore selected",
+                    id="library-conversations-restore-selected",
+                    compact=True,
+                    disabled=export_disabled,
+                )
+
         # task-2859 item 1: the filter box now renders ABOVE the empty-state/
         # status text, matching Notes/Prompts (title -> filter -> toolbar ->
         # empty-or-rows) -- it used to sit below the empty-state Static,
@@ -286,7 +328,7 @@ class LibraryConversationsCanvas(
                 button.tooltip = (
                     stale_action_reason
                     if actions_disabled
-                    else escape_markup(row.title)
+                    else escape_markup(f"{row.title} · {row.secondary}")
                 )
                 button.set_class(row.selected, "library-conversation-row-selected")
                 button.disabled = actions_disabled

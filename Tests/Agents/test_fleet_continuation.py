@@ -84,6 +84,7 @@ from tldw_chatbook.Agents.fleet_coordinator import (
     DEFAULT_RETAINED_TRANSCRIPTS,
     FleetCoordinator,
 )
+from tldw_chatbook.Chat.local_reasoning import EXCHANGE_CONTINUATION_KEY
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 # LoopDeps plumbing shared with the Task 1 suite (one `make_deps`, one
@@ -421,7 +422,7 @@ def test_delivered_steering_rides_the_coherent_transcript():
         {"role": "user", "content": "hi"},
         {"role": "assistant", "content": fence_text},
         {"role": "user", "content": f"{FENCE_TOOL_RESULT_PREFIX}calculator: 42"},
-        {"role": "user", "content": labeled},
+        {"role": "user", "content": labeled, EXCHANGE_CONTINUATION_KEY: True},
         {"role": "assistant", "content": "done."},
     ]
 
@@ -841,7 +842,7 @@ def test_send_to_agent_to_a_finished_child_starts_a_resumed_seeded_run(db):
     resumed_payload = original_calls[2]["messages_payload"]
     assert resumed_payload[0]["role"] == "system"
     assert resumed_payload[1:] == retained_history + [
-        {"role": "user", "content": labeled}
+        {"role": "user", "content": labeled, EXCHANGE_CONTINUATION_KEY: True}
     ]
 
     # Lineage: a NEW row, resumed_from the OLD run, parented to the
@@ -1362,8 +1363,16 @@ def test_undelivered_queued_steering_rides_the_seed_with_original_labels(db):
     )
     # Original label, original position: queued remnant FIRST, the new
     # supervisor message LAST.
-    assert resumed_payload[-2] == {"role": "user", "content": user_labeled}
-    assert resumed_payload[-1] == {"role": "user", "content": supervisor_labeled}
+    assert resumed_payload[-2] == {
+        "role": "user",
+        "content": user_labeled,
+        EXCHANGE_CONTINUATION_KEY: True,
+    }
+    assert resumed_payload[-1] == {
+        "role": "user",
+        "content": supervisor_labeled,
+        EXCHANGE_CONTINUATION_KEY: True,
+    }
 
 
 def test_retained_live_send_preserves_its_cause_on_resumed_steering(db):

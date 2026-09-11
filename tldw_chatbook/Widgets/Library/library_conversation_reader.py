@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
@@ -110,6 +111,9 @@ class LibraryConversationReader(Vertical):
         self.loaded_metadata = dict(loaded_metadata or metadata or {})
         self.selected_metadata = dict(selected_metadata or {})
         self._message_sync_generation = 0
+        self._find_navigation_key = None
+        self._find_navigation_index = -1
+        self._pending_find_navigation_index: int | None = None
 
     def _workspace_block(self) -> str:
         """Return the short workspace refusal reason, or empty when eligible.
@@ -143,7 +147,7 @@ class LibraryConversationReader(Vertical):
         """Whether the Console hand-off may run right now."""
         return self.state.loaded_actions_eligible and not self._workspace_block()
 
-    def _open_console_label(self) -> str:
+    def _source_label(self) -> str:
         """Return the hand-off button label, marked when it is refused.
 
         (task-32101) The non-colour disabled marker belongs on the control
@@ -151,7 +155,7 @@ class LibraryConversationReader(Vertical):
         repeat that name to carry the marker.
         """
         return library_disabled_action_label(
-            "Open in Console", not self._actions_enabled()
+            "Use as source", not self._actions_enabled()
         )
 
     def _blocked_reason_line(self) -> str:
@@ -218,14 +222,43 @@ class LibraryConversationReader(Vertical):
         # verification) -- the exact failure this task exists to close.
         with Vertical(classes="ds-toolbar library-conversation-reader-actions"):
             open_console = Button(
-                self._open_console_label(),
+                "Restore and resume"
+                if (
+                    self.loaded_metadata.get("archived")
+                    or self.loaded_metadata.get("workspace_archived")
+                )
+                else "Resume conversation",
                 id="library-conversation-open-console",
                 classes="library-canvas-action",
                 compact=True,
             )
-            open_console.disabled = not self._actions_enabled()
-            open_console.tooltip = self._open_console_tooltip()
+            open_console.disabled = not self.state.loaded_actions_eligible
+            open_console.tooltip = _open_console_disabled_tooltip(self.state)
             yield open_console
+            source = Button(
+                self._source_label(),
+                id="library-conversation-use-source",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            source.disabled = not self._actions_enabled()
+            source.tooltip = self._open_console_tooltip()
+            yield source
+            for action, label in (
+                ("archive", "Archive conversation"),
+                ("restore", "Restore only"),
+            ):
+                button = Button(
+                    label,
+                    id=f"library-conversation-{action}",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                button.display = bool(self.loaded_metadata.get("archived")) == (
+                    action == "restore"
+                )
+                button.disabled = not self.state.loaded_actions_eligible
+                yield button
             blocked_reason = Static(
                 self._blocked_reason_line(),
                 id="library-conversation-open-console-blocked",
@@ -267,6 +300,20 @@ class LibraryConversationReader(Vertical):
         )
         find.display = self.state.mode == "read"
         yield find
+        with Horizontal(
+            classes="ds-toolbar", id="library-conversation-find-navigation"
+        ):
+            for direction, label in (
+                ("previous", "Find previous"),
+                ("next", "Find next"),
+            ):
+                yield Button(
+                    label,
+                    id=f"library-conversation-find-{direction}",
+                    compact=True,
+                    disabled=not self.state.find_matches,
+                )
+        yield Static("", id="library-conversation-find-position", markup=False)
         messages = VerticalScroll(id="library-conversation-reader-messages")
         messages.display = self.state.mode == "read"
         with messages:
@@ -462,6 +509,19 @@ class LibraryConversationReader(Vertical):
             )
             link = self.query_one("#library-conversation-link-workspace", Button)
             retry = self.query_one("#library-conversation-reader-retry", Button)
+            find_position = self.query_one(
+                "#library-conversation-find-position", Static
+            )
+            find_navigation = self.query_one("#library-conversation-find-navigation")
+            find_buttons = tuple(
+                self.query_one(f"#library-conversation-find-{direction}", Button)
+                for direction in ("previous", "next")
+            )
+            source = self.query_one("#library-conversation-use-source", Button)
+            archive_buttons = {
+                action: self.query_one(f"#library-conversation-{action}", Button)
+                for action in ("archive", "restore")
+            }
         except (NoMatches, QueryError):
             # A retained-reader recompose can briefly leave the mounted
             # parent with an incomplete child tree. State and metadata were
@@ -474,13 +534,41 @@ class LibraryConversationReader(Vertical):
         if find.value != state.find_query and not find.has_focus:
             find.value = state.find_query
         find.display = state.mode == "read"
+        find_key = (state.loaded_id, state.loaded_generation, state.find_query)
+        if find_key != self._find_navigation_key:
+            self._find_navigation_key = find_key
+            self._find_navigation_index = -1
+            self._pending_find_navigation_index = None
+            find_position.update("")
+        find_navigation.display = state.mode == "read"
+        for button in find_buttons:
+            button.disabled = not (
+                state.loaded_actions_eligible
+                and state.find_complete
+                and state.find_matches
+            )
         messages.display = state.mode == "read"
         info_body.update(self._metadata_text())
         info_body.display = state.mode == "info"
 
-        open_console.disabled = not self._actions_enabled()
-        open_console.label = self._open_console_label()
-        open_console.tooltip = self._open_console_tooltip()
+        open_console.label = (
+            "Restore and resume"
+            if (
+                self.loaded_metadata.get("archived")
+                or self.loaded_metadata.get("workspace_archived")
+            )
+            else "Resume conversation"
+        )
+        open_console.disabled = not state.loaded_actions_eligible
+        open_console.tooltip = _open_console_disabled_tooltip(state)
+        source.label = self._source_label()
+        source.disabled = not self._actions_enabled()
+        source.tooltip = self._open_console_tooltip()
+        for action, button in archive_buttons.items():
+            button.display = bool(self.loaded_metadata.get("archived")) == (
+                action == "restore"
+            )
+            button.disabled = not state.loaded_actions_eligible
         blocked_reason.update(self._blocked_reason_line())
         blocked_reason.display = bool(self._blocked_reason_line())
         link.display = self._workspace_link_offered()
@@ -488,6 +576,52 @@ class LibraryConversationReader(Vertical):
 
         self._message_sync_generation += 1
         self.call_later(self._sync_messages, self._message_sync_generation)
+
+    @on(Button.Pressed, "#library-conversation-find-previous")
+    @on(Button.Pressed, "#library-conversation-find-next")
+    def move_find_match(self, event: Button.Pressed) -> None:
+        """Cycle matches in the exact loaded transcript without changing sessions.
+
+        Args:
+            event: Previous/next press consumed by this Reader.
+        """
+        event.stop()
+        matches = self.state.find_matches
+        if (
+            not self.state.loaded_actions_eligible
+            or not self.state.find_complete
+            or not matches
+        ):
+            return
+        direction = -1 if (event.button.id or "").endswith("previous") else 1
+        previous = (
+            self._pending_find_navigation_index
+            if self._pending_find_navigation_index is not None
+            else self._find_navigation_index
+        )
+        self._pending_find_navigation_index = (
+            (len(matches) - 1 if direction < 0 else 0)
+            if previous < 0
+            else (previous + direction) % len(matches)
+        )
+        self._finish_find_navigation()
+
+    def _finish_find_navigation(self) -> None:
+        """Publish a position only after its current transcript row is revealed."""
+        index = self._pending_find_navigation_index
+        if index is None or not self.state.loaded_actions_eligible:
+            return
+        matches = self.state.find_matches
+        if not self.state.find_complete or index >= len(matches):
+            return
+        match = matches[index]
+        if not self.focus_find_match(match.message_id):
+            return
+        self._pending_find_navigation_index = None
+        self._find_navigation_index = index
+        self.query_one("#library-conversation-find-position", Static).update(
+            f"Match {index + 1} of {len(matches)} · message {match.message_index + 1}"
+        )
 
     async def _sync_messages(self, generation: int) -> None:
         """Mount or patch stable message rows after the current compose settles."""
@@ -517,6 +651,7 @@ class LibraryConversationReader(Vertical):
             else:
                 row.update(self._message_copy(message))
         if generation == self._message_sync_generation and self.is_mounted:
+            self._finish_find_navigation()
             self.post_message(
                 self.MessagesSynced(self.state.generation, self.state.find_query)
             )

@@ -272,7 +272,7 @@ async def test_conversations_user_content_evidence_requires_exact_saved_total():
         (
             "list_conversations",
             (),
-            {"scope_type": "all", "limit": 1, "offset": 0},
+            {"scope_type": "all", "limit": 1, "offset": 0, "archive_scope": "all"},
         )
     ]
 

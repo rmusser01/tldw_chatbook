@@ -693,6 +693,7 @@ _DEFAULT_PROVENANCE_KEYS = (
     "verbosity",
     "thinking_effort",
     "thinking_budget_tokens",
+    "chat_template_kwargs",
     "prompt_caching",
 )
 
@@ -729,7 +730,21 @@ def reconstruct_provider_gateway_kwargs(
         "response_format": _thaw(getattr(request, "response_format")),
         "prompt_caching": getattr(resolution, "prompt_caching"),
     }
-    if execution_key == "qwencloud":
+    from tldw_chatbook.Chat.local_reasoning import (
+        reasoning_template_kwargs,
+        supports_local_reasoning,
+    )
+
+    provider = execution_key or resolution.provider
+    template_options = reasoning_template_kwargs(
+        provider, getattr(resolution, "reasoning_replay", None)
+    )
+    if template_options:
+        kwargs["chat_template_kwargs"] = template_options
+    if supports_local_reasoning(provider, resolution.model or ""):
+        kwargs["api_base_url"] = resolution.base_url or None
+        kwargs["api_key_resolved"] = True
+    elif execution_key == "qwencloud":
         kwargs["api_mode"] = getattr(resolution, "api_mode")
         kwargs["api_base_url"] = getattr(resolution, "base_url") or None
     elif execution_key in {"moonshot", "zai"}:
