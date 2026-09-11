@@ -27203,7 +27203,8 @@ def test_library_landing_attention_prefers_recoverable_import_and_never_persists
     assert action is not None
     assert action.action_kind == "ingest-review"
     assert action.action_label == "Review"
-    assert action.message == "An import needs review."
+    # task-32351 AC#2: the card names the count it is asking about.
+    assert action.message == "Last import: 1 file failed."
     assert "PRIVATE" not in repr(action)
     persisted = screen.save_state()
     persisted_text = repr(persisted)
@@ -27268,7 +27269,7 @@ async def test_library_landing_attention_tracks_failed_import_and_opens_review()
         await _wait_for_selector(screen, pilot, "#library-hub-attention-action")
         button = screen.query_one("#library-hub-attention-action", Button)
         assert str(button.label) == "Review"
-        assert "An import needs review." in _visible_text(screen)
+        assert "Last import: 1 file failed." in _visible_text(screen)
 
         app.library_ingest_jobs.requeue(job.job_id)
         await _wait_for_condition(

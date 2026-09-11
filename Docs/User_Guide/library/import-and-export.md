@@ -120,9 +120,14 @@ In server mode the **Export** rail row is disabled, with the tooltip
   self-contradicted whenever every listed job was already done or
   failed), one line per job with action buttons underneath,
   "Clear finished", and a collapsed "Recent imports" fold listing the
-  last finished jobs. Batch headers use `active` plus exact state counts
+  last finished jobs. A batch's header names the folder you chose —
+  `inbox — 6 files` for an import of `inbox/`, whatever order the scan
+  walked its subfolders in — then `active` plus exact state counts
   (`1 queued · 1 done · 1 failed`) rather than adding a contradictory
   `running` synonym. Empty state: "No import jobs yet."
+  When jobs are left needing attention, the Library landing's card names
+  the counts rather than just flagging them: "Last import: 4 files
+  failed, 2 skipped." with a **Review** button back to the queue.
   Pressing "Start import" scrolls the Queue heading into view, so the
   freshly queued rows are the first thing you see after a submit.
 - **Fold indicator** — while the form is taller than the pane, a pinned
@@ -924,3 +929,8 @@ and the file dialogs' "File name" box takes a typed or pasted absolute/"~"
 path, jumping the listing to it, with Ctrl+A selecting the field.)*
 
 *Verified against fix/library-crit9-import — 2026-09-10 (task-32216: "Show details" leaves focus on the row action it toggled instead of the Keywords field 25 rows up; task-32231: a run of identical settled outcomes collapses into one "✗ failed · N files · reason" row with "Show the N files", "Retry all" and "Dismiss all"; a group whose members need a different transcription model offers no bare "Retry all", matching those rows' own actions; a group never spans two imports.)*
+
+*Verified against fix/library-crit10-onboarding-import — 2026-09-11
+(task-32351: a folder batch is named after the folder you chose, not after
+whichever subfolder the recursive scan reached first; the landing's
+needs-attention card states the failed and skipped counts.)*

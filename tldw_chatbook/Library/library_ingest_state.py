@@ -12,6 +12,7 @@ from __future__ import annotations
 import errno
 import hashlib
 import math
+import os
 import re
 import time
 from dataclasses import dataclass, field, replace
@@ -2681,7 +2682,18 @@ def build_ingest_queue_groups(
                     )
                 )
             return
-        source = PurePath(str(members[0].source_path)).parent.name or "batch"
+        # task-32351 AC#1 (critique #10, B D1): the first member's parent is
+        # whichever subdirectory the recursive scan enumerated first, so a
+        # six-file import of `inbox/` was labelled "nested" after its one
+        # nested file. The folder the USER chose is the common root of every
+        # member, which the members already carry -- no new field, no schema
+        # change. ``commonpath`` raises on mixed absolute/relative or
+        # non-path sources (URL imports), which keeps the old behaviour.
+        parents = [str(PurePath(str(job.source_path)).parent) for job in members]
+        try:
+            source = PurePath(os.path.commonpath(parents)).name or "batch"
+        except ValueError:
+            source = PurePath(str(members[0].source_path)).parent.name or "batch"
         count = len(members)
         # (Qodo round) A batch is "running" until EVERY member is
         # terminal -- a finished member's age on an in-progress batch

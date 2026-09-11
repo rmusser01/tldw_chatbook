@@ -13136,18 +13136,27 @@ class LibraryScreen(BaseAppScreen):
         registry = self._library_ingest_registry()
         jobs_fn = getattr(registry, "jobs", None)
         if callable(jobs_fn):
-            for job in jobs_fn():
-                if (
-                    job.state is IngestJobState.FAILED
-                    and not job.permanent
-                    and not job.dismissed
-                    and not job.superseded
-                ):
-                    return LibraryLandingAttentionAction(
-                        message="An import needs review.",
-                        action_label="Review",
-                        action_kind="ingest-review",
-                    )
+            live = tuple(
+                job
+                for job in jobs_fn()
+                if not job.permanent and not job.dismissed and not job.superseded
+            )
+            failed = sum(1 for job in live if job.state is IngestJobState.FAILED)
+            skipped = sum(1 for job in live if job.state is IngestJobState.SKIPPED)
+            if failed:
+                # task-32351 AC#2 (critique #10, B D2): after 4 of 6 files
+                # failed the landing said only "An import needs review." --
+                # neutral where the queue itself was exact. The counts are
+                # already in the registry snapshot this walks.
+                noun = "file" if failed == 1 else "files"
+                parts = [f"{failed} {noun} failed"]
+                if skipped:
+                    parts.append(f"{skipped} skipped")
+                return LibraryLandingAttentionAction(
+                    message=f"Last import: {', '.join(parts)}.",
+                    action_label="Review",
+                    action_kind="ingest-review",
+                )
 
         if (
             self._library_media_browse_controller.freshness == "stale"

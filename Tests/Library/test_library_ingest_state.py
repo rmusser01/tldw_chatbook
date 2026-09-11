@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 
 import pytest
 
@@ -26,6 +27,7 @@ from tldw_chatbook.Library.library_ingest_state import (
     group_ingest_queue_rows,
     _human_size,
     build_estimate_line,
+    build_ingest_queue_groups,
     build_library_ingest_state,
     build_type_breakdown_line,
     build_warning_lines,
@@ -4621,3 +4623,60 @@ def test_a_groups_key_survives_losing_its_leading_member():
 
     assert len(whole) == len(without_leader) == 1
     assert whole[0].key == without_leader[0].key
+
+
+# --- task-32351 AC#1: a batch is named after the folder the user chose ------
+#
+# critique #10 (B D1): importing <profile>/inbox produced "nested — 6 files",
+# after the one file in inbox/nested/ that the recursive scan happened to
+# enumerate first.
+
+NOW = datetime(2026, 9, 11, 12, 0, tzinfo=timezone.utc)
+
+
+def _queued_job(job_id: str, *, source_path: str, batch_id: str):
+    return _job(job_id=job_id, source_path=source_path, batch_id=batch_id)
+
+
+def test_a_recursive_folder_import_is_named_after_the_folder_the_user_chose():
+    """The nested file leads here, which is the order that produced the bug.
+
+    A recursive scan enumerates subdirectories in whatever order the walk
+    yields them, so the first member's parent is not the folder the user
+    pointed at -- the common root of every member is.
+    """
+    jobs = tuple(
+        _queued_job(f"job-{n}", source_path=path, batch_id="b1")
+        for n, path in enumerate(
+            (
+                "/tmp/inbox/nested/deep-note.md",
+                "/tmp/inbox/reading-notes.md",
+                "/tmp/inbox/article.html",
+                "/tmp/inbox/lecture-transcript.txt",
+                "/tmp/inbox/export.json",
+                "/tmp/inbox/weird.xyz",
+            )
+        )
+    )
+    groups, _latest = build_ingest_queue_groups(jobs, now=NOW)
+    assert len(groups) == 1
+    assert groups[0].header_line.startswith("inbox — 6 files"), groups[0].header_line
+
+
+def test_a_batch_whose_paths_share_no_root_falls_back_to_the_first_parent():
+    jobs = (
+        _queued_job("a", source_path="https://example.com/one", batch_id="b1"),
+        _queued_job("b", source_path="https://example.com/two", batch_id="b1"),
+    )
+    groups, _latest = build_ingest_queue_groups(jobs, now=NOW)
+    assert groups[0].header_line.startswith("example.com — 2 files")
+
+
+def test_a_mixed_absolute_and_relative_batch_keeps_the_old_name():
+    """``commonpath`` refuses this pairing; the first member's parent stands."""
+    jobs = (
+        _queued_job("a", source_path="/tmp/inbox/one.md", batch_id="b1"),
+        _queued_job("b", source_path="downloads/two.md", batch_id="b1"),
+    )
+    groups, _latest = build_ingest_queue_groups(jobs, now=NOW)
+    assert groups[0].header_line.startswith("inbox — 2 files")
