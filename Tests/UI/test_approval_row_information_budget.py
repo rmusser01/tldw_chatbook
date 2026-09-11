@@ -186,7 +186,160 @@ async def test_a_row_hugs_its_content_instead_of_ballooning():
         )
 
         row = app.query_one(".approval-row")
-        assert row.region.height <= 6, (
+        # 7 = header + arguments + the 4-line Select's controls row + the
+        # task-32278 scope line. The balloon this pins measured 15.
+        assert row.region.height <= 7, (
             f"a one-argument row is {row.region.height} lines tall; the "
             "headline is claiming an fr share instead of hugging its content"
         )
+
+
+# ---------------------------------------------------------------------------
+# task-32278: the decision's scope, and the risk reason, are on the card
+# ---------------------------------------------------------------------------
+
+MCP_ROW = {
+    "server_key": "srv",
+    "server_label": "Notes",
+    "tool_name": "search",
+    "llm_name": "search",
+    "arguments": {"query": "roadmap"},
+}
+
+
+def _text(widget) -> str:
+    """Return a Static's rendered text as a plain string."""
+    return str(widget.renderable)
+
+
+def _painted(app) -> str:
+    """Return what the compositor painted, as plain text.
+
+    `export_screenshot` returns SVG, where every space is `&#160;` and each
+    styled run is its own `<text>` element -- so a raw `in` check for a
+    sentence fails against a screen that paints it perfectly.
+    """
+    import html
+    import re
+
+    runs = re.findall(r">([^<>]*)</text>", app.export_screenshot())
+    return html.unescape("".join(runs)).replace("\xa0", " ")
+
+
+@pytest.mark.asyncio
+async def test_the_scope_line_states_the_selected_decision_and_follows_it():
+    """AC#2: the card must say how long the highlighted grant lasts."""
+    from textual.widgets import Select
+
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        DECISION_SCOPE_COPY,
+    )
+
+    app = _StyledCardHarness()
+    async with app.run_test(size=(80, 40)) as pilot:
+        await _show_batch(app, pilot, [dict(MCP_ROW)])
+
+        scope = app.query_one(".approval-row-scope", Static)
+        assert _text(scope) == DECISION_SCOPE_COPY["approve_once"]
+
+        app.query_one(".approval-row-decision", Select).value = "always_allow"
+        await pilot.pause()
+        assert _text(scope) == DECISION_SCOPE_COPY["always_allow"]
+        assert DECISION_SCOPE_COPY["always_allow"] in _painted(app), (
+            "the scope line is not painted at 80 columns"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_high_risk_row_explains_itself_without_hover():
+    """AC#3: "(high risk)" used to explain itself only in a tooltip.
+
+    The literal sentence, not `format_approval_reason(entry)` -- comparing
+    the widget to the function that filled it asserts nothing.
+    """
+    expected = "High risk: this tool changes local data and always asks first."
+
+    app = _StyledCardHarness()
+    async with app.run_test(size=(80, 40)) as pilot:
+        entry = {**MCP_ROW, "reason": "risk_floored", "effects": ["mutates_local"]}
+        await _show_batch(app, pilot, [entry])
+
+        assert _text(app.query_one(".approval-row-reason", Static)) == expected
+        assert expected in _painted(app)
+        # The header tooltip was the hover-only version of this line.
+        assert app.query_one(".approval-row-header", Static).tooltip is None
+
+
+@pytest.mark.asyncio
+async def test_the_longest_decision_label_paints_on_one_line():
+    """AC#1: measured, not counted -- a too-long label wraps the Select."""
+    from textual.widgets import Select
+
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        _DECISION_OPTIONS,
+    )
+
+    longest = max((label for label, _v in _DECISION_OPTIONS), key=len)
+    value = next(v for label, v in _DECISION_OPTIONS if label == longest)
+    app = _StyledCardHarness()
+    async with app.run_test(size=(80, 40)) as pilot:
+        await _show_batch(app, pilot, [dict(MCP_ROW)])
+        select = app.query_one(".approval-row-decision", Select)
+        select.value = value
+        await pilot.pause()
+        assert select.region.height <= 3, (
+            f"{longest!r} wraps the closed Select to "
+            f"{select.region.height} lines"
+        )
+        assert longest in _painted(app), (
+            f"{longest!r} is clipped by the closed Select"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_reused_single_row_keeps_a_live_scope_line_below_its_controls():
+    """`_update_mounted_single_row` rebuilds the controls in place.
+
+    It appends the replacement `Horizontal`, so an unhandled scope line ends
+    up ABOVE the controls it annotates -- and bound to the previous round's
+    Select, which no longer exists.
+    """
+    from textual.containers import Horizontal
+    from textual.widgets import Select
+
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        ChatApprovalCard,
+        DECISION_SCOPE_COPY,
+    )
+
+    app = _StyledCardHarness()
+    async with app.run_test(size=(80, 40)) as pilot:
+        await _show_batch(app, pilot, [{**MCP_ROW, "call_id": "a"}])
+        first_row = id(app.query_one(".approval-row"))
+        app.query_one(".approval-row-decision", Select).value = "deny"
+        await pilot.pause()
+
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(
+            [{**MCP_ROW, "call_id": "b", "arguments": {"query": "budget"}}],
+            timeout_seconds=45.0,
+        )
+        await pilot.pause()
+
+        row = app.query_one(".approval-row")
+        assert id(row) == first_row, "the in-place update path was not exercised"
+        kinds = [
+            "controls" if isinstance(child, Horizontal) else child.classes
+            for child in row.children
+        ]
+        controls_at = kinds.index("controls")
+        scope_at = next(
+            i for i, k in enumerate(kinds) if k != "controls" and "approval-row-scope" in k
+        )
+        assert scope_at > controls_at, f"scope line above the controls: {kinds}"
+
+        scope = app.query_one(".approval-row-scope", Static)
+        assert _text(scope) == DECISION_SCOPE_COPY["approve_once"]
+        app.query_one(".approval-row-decision", Select).value = "approve_session"
+        await pilot.pause()
+        assert _text(scope) == DECISION_SCOPE_COPY["approve_session"]

@@ -1928,7 +1928,13 @@ def build_summary_rows(
         SummaryRow(
             "Tools",
             ROW_CONFIGURED if tools_on else ROW_DEFAULT,
-            f"{len(tools_on)} enabled" if tools_on else "all off (default)",
+            f"{len(tools_on)} enabled"
+            if tools_on
+            # task-32289 AC#1: name the destination -- Quick setup never
+            # shows the Tools step, and a Full-setup user who left every
+            # switch off has the same "nothing is enabled" state, so one
+            # detail string covers both without threading `track` through.
+            else "all off; turn them on under MCP ▸ Servers ▸ Tool gates",
         ),
         SummaryRow(
             "Notes folder sync",

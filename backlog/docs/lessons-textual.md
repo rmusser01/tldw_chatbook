@@ -391,7 +391,6 @@ space changing around a capped child.
 
 ---
 
-
 ## A screen-owned worker must check the active category before updating shared chrome
 
 **TASK-32189 review, 2026-09-09.** The Web Search controller kept an explicit
@@ -945,3 +944,27 @@ with 2.5 s between steps can easily capture the toast on one step and miss it
 on the next. Reproducing the Summary case needed the step advances tightened to
 ~1.3 s. A single clean capture is not evidence the toast cannot reach a later
 screen.
+
+## A widget's BUNDLED_CSS cannot override an app-tier rule, and build_css.py will not put it in the screen sheet for you (task-32250, 2026-09-11)
+
+**What happened.** The Import once review collapses a run of interchangeable
+rows into one `Collapsible`, and the pager budgets a page by RENDERED rows, so
+that disclosure has to be one line. `tldw_cli_modular.tcss` styles every
+`Collapsible` app-wide (`min-height: 3`, a round border, a 3-row
+`CollapsibleTitle`, a bottom margin) — five lines of chrome for one summary.
+A `LibraryNoteImportCanvas .note-import-run { ... }` rule in the canvas's own
+`BUNDLED_CSS` changed nothing, despite far higher specificity: widget-tier CSS
+loses to app-tier CSS in Textual regardless of the selector.
+
+The obvious next move — "Library rules go in the screen-owned sheet" — does
+not work by hand either: `screen_agentic_library.tcss` is GENERATED, and
+`check_bundle_sync.py` fails the moment you edit it. Running `build_css.py`
+after adding the rule to a WIDGET's `BUNDLED_CSS` routes it to
+`widget_defaults_self.tcss`, i.e. straight back to the tier that already lost.
+Only a rule in the SCREEN's own `BUNDLED_CSS` reaches the screen sheet.
+
+**What to do.** To beat an app-wide type rule from inside a widget, either move
+the rule into the owning screen's `BUNDLED_CSS` and regenerate, or set the
+properties as inline styles on the instance (`widget.styles.min_height = 1`),
+which is the one tier above app CSS. Verify by rendering, not by reading the
+selector: the first attempt here looked correct and did nothing.

@@ -8,10 +8,12 @@ from typing import Any
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.content import Content
 from textual.message import Message
 from textual.widgets import Button, Collapsible, Input, Static
 
 from tldw_chatbook.Library.library_note_import_state import (
+    UNIFORM_RUN_MIN,
     LibraryNoteImportItemSnapshot,
     LibraryNoteImportSnapshot,
 )
@@ -21,6 +23,7 @@ from tldw_chatbook.Library.library_shell_state import (
 )
 from tldw_chatbook.Notes.note_import_plan_models import (
     NON_IMPORTABLE_CLASSIFICATIONS,
+    REVIEW_CLASSIFICATION_ORDER,
 )
 from tldw_chatbook.Utils.Utils import elide_path_middle
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
@@ -48,6 +51,11 @@ _NON_IMPORTABLE = frozenset(
     classification.value for classification in NON_IMPORTABLE_CLASSIFICATIONS
 )
 
+_REVIEW_ORDER = tuple(
+    classification.value for classification in REVIEW_CLASSIFICATION_ORDER
+)
+"""The pager's group order, which this canvas renders in (task-32250)."""
+
 
 def _choice_label(*, selected: bool, text: str) -> str:
     """Return a monochrome-readable selected/unselected action label.
@@ -61,9 +69,127 @@ def _choice_label(*, selected: bool, text: str) -> str:
     return f"{glyph} {text}"
 
 
-def _disabled_action_label(text: str, *, disabled: bool) -> str:
-    """Keep an unavailable action's reason discoverable without colour."""
-    return f"{text} unavailable" if disabled else text
+def _disabled_action_label(text: str, *, disabled: bool, reason: str = "") -> str:
+    """Keep an unavailable action's reason readable at the control itself.
+
+    task-32257: the reason was on the tooltip only, so the control stated
+    that it was unavailable and nothing else. The grammar is the one this
+    screen already uses four panels away ("Unavailable — server sync-folder
+    capability not installed"): the blocker is the label's own text.
+    """
+    if not disabled:
+        return text
+    if not reason:
+        return f"{text} unavailable"
+    return f"{text} unavailable — {reason.rstrip('.')}"
+
+
+_ROW_NAME_BUDGET = 56
+"""Display-width budget for the path at the head of one review row.
+
+task-32250: the row's job is to state the resulting title, its keywords and
+its link count. Those came last and were the first thing the row lost.
+"""
+
+# The threshold is the pager's (task-32250): it budgets a page by rendered
+# rows, and a collapsed run renders as one, so a second threshold here would
+# make every page count wrong.
+_UNIFORM_RUN_MIN = UNIFORM_RUN_MIN
+
+
+def _bounded_row_name(name: str) -> str:
+    """Keep a review row's path recognizable without spending the whole row."""
+    return elide_path_middle(name, budget=_ROW_NAME_BUDGET)
+
+
+def _group_heading(label: str, *, rendered: int, total: int) -> str:
+    """Name what a group heading's count means on this page.
+
+    task-32250: "New (23)" on page 1 and "New (22)" on page 2 were the same
+    words for different numbers, with the group's real size nowhere on screen.
+    """
+    if rendered >= total:
+        return f"{label} ({total})"
+    return f"{label} ({rendered} of {total} on this page)"
+
+
+def _run_key(item: LibraryNoteImportItemSnapshot) -> tuple[str, ...]:
+    """Return what makes two review rows interchangeable at a glance."""
+    folder, _, _ = item.name.rpartition("/")
+    return (
+        folder,
+        item.classification,
+        item.action,
+        item.reason if item.classification in _NON_IMPORTABLE else "",
+        item.membership_summary,
+    )
+
+
+def _uniform_runs(
+    items: tuple[LibraryNoteImportItemSnapshot, ...],
+) -> tuple[tuple[LibraryNoteImportItemSnapshot, ...], ...]:
+    """Split one rendered group into consecutive interchangeable runs."""
+    return tuple(tuple(run) for _, run in groupby(items, key=_run_key))
+
+
+def _run_disclosure(title: str, *, dom_token: str) -> Collapsible:
+    """Return a one-line disclosure for a collapsed run of identical rows.
+
+    The app-wide ``Collapsible`` rule (a round border, a 3-row title, a 3-row
+    floor and a bottom margin) is app-tier and beats this widget's own
+    BUNDLED_CSS whatever its specificity -- five lines of chrome for a summary
+    that has to cost the page one, because the pager budgets by rendered rows.
+    Inline styles are the one tier above it (task-32250).
+    """
+    disclosure = Collapsible(
+        # A vault folder name is untrusted text: `CollapsibleTitle` runs it
+        # through `Content.from_text`, whose markup parameter defaults to ON,
+        # so a folder called "[@click=app.quit]" turned the whole summary into
+        # an action link and dropped its own name from the row. A `Content`
+        # instance comes back from `from_text` unmodified -- this is the
+        # markup=False every other Static on this canvas already sets.
+        title=Content(title),
+        id=f"note-import-run-{dom_token}",
+        classes="note-import-run",
+        collapsed=True,
+    )
+    disclosure.styles.min_height = 1
+    disclosure.styles.margin = 0
+    disclosure.styles.padding = 0
+    disclosure.styles.border = ("none", "transparent")
+    return disclosure
+
+
+def _run_summary(
+    run: tuple[LibraryNoteImportItemSnapshot, ...],
+    total: int | None = None,
+) -> str:
+    """Return the one row that stands for a collapsed run of identical rows.
+
+    Args:
+        run: The rows of this run that are on the rendered page.
+        total: How many the whole run holds, when the page only shows part of
+            it. A run bigger than the mount ceiling is the one case a page
+            break falls inside one, and its summary then has to say which of
+            the two numbers it means -- "200 files" on one page and "50 files"
+            on the next is the shape task-32250 was filed about.
+
+    Returns:
+        The summary line for the collapsed disclosure's title.
+    """
+    first = run[0]
+    folder, _, _ = first.name.rpartition("/")
+    where = _bounded_row_name(folder) if folder else "the selection"
+    count = (
+        f"{len(run)} files"
+        if total is None or total <= len(run)
+        else f"{len(run)} of {total} files"
+    )
+    if first.classification in _NON_IMPORTABLE:
+        return f"{where} · {count} · {first.reason.rstrip(' .')}"
+    verb = "Skip" if first.action == "skip" else "Create"
+    destination = first.membership_summary.rstrip(" .")
+    return f"{where} · {count} · {verb} all · {destination}"
 
 
 _SOURCE_NAME_BUDGET = 48
@@ -352,7 +478,9 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
             check = self.query_one("#note-import-check", Button)
             check.disabled = not snapshot.can_check
             check.label = _disabled_action_label(
-                "Check selection", disabled=not snapshot.can_check
+                "Check selection",
+                disabled=not snapshot.can_check,
+                reason=snapshot.check_disabled_reason,
             )
             check.tooltip = snapshot.check_disabled_reason or (
                 "Check the selected sources without changing Notes."
@@ -369,9 +497,8 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                 snapshot.collision_reason
             )
             rename_input = self.query_one("#note-import-collision-name", Input)
-            visible_name = snapshot.collision_rename_input or snapshot.collision_name
-            if rename_input.value != visible_name:
-                rename_input.value = visible_name
+            if rename_input.value != snapshot.collision_rename_input:
+                rename_input.value = snapshot.collision_rename_input
             self.query_one("#note-import-collision-rename-error", Static).update(
                 snapshot.collision_rename_error
             )
@@ -390,7 +517,9 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
             submit = self.query_one("#note-import-import", Button)
             submit.disabled = not snapshot.can_import
             submit.label = _disabled_action_label(
-                "Import selected items", disabled=not snapshot.can_import
+                "Import selected items",
+                disabled=not snapshot.can_import,
+                reason=snapshot.import_disabled_reason,
             )
             submit.tooltip = snapshot.import_disabled_reason or (
                 "Import the exact choices shown in this review."
@@ -399,10 +528,18 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
             self.refresh(recompose=True)
 
     def on_mount(self) -> None:
+        self._tighten_run_disclosures()
         self.call_after_refresh(self._update_overflow_hint)
 
     def _after_recompose(self) -> None:
+        self._tighten_run_disclosures()
         self.call_after_refresh(self._update_overflow_hint)
+
+    def _tighten_run_disclosures(self) -> None:
+        """Keep a collapsed run's title one line, as the pager budgeted for."""
+        for title in self.query(".note-import-run > CollapsibleTitle"):
+            title.styles.height = 1
+            title.styles.padding = 0
 
     def _update_overflow_hint(self) -> None:
         try:
@@ -459,7 +596,11 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
     ) -> ComposeResult:
         if state.phase in {"select", "destination"}:
             check = Button(
-                _disabled_action_label("Check selection", disabled=not state.can_check),
+                _disabled_action_label(
+                    "Check selection",
+                    disabled=not state.can_check,
+                    reason=state.check_disabled_reason,
+                ),
                 id="note-import-check",
                 classes="library-canvas-action note-import-primary",
                 compact=True,
@@ -486,7 +627,9 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
         elif state.phase == "review":
             submit = Button(
                 _disabled_action_label(
-                    "Import selected items", disabled=not state.can_import
+                    "Import selected items",
+                    disabled=not state.can_import,
+                    reason=state.import_disabled_reason,
                 ),
                 id="note-import-import",
                 classes="library-canvas-action note-import-primary",
@@ -604,7 +747,9 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                     ),
                 )
             yield Input(
-                value=state.collision_rename_input or state.collision_name,
+                # task-32262: an untouched field carries its placeholder, not
+                # the colliding name with an error already painted under it.
+                value=state.collision_rename_input,
                 placeholder="New top-level folder name",
                 id="note-import-collision-name",
             )
@@ -633,7 +778,10 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                     markup=False,
                 )
 
-        order = tuple(_CLASSIFICATION_LABELS)
+        # The pager fills a page assuming THIS order (task-32250); a second
+        # hand-kept order here would put groups on a page in an order it did
+        # not plan for. One sequence, both readers.
+        order = _REVIEW_ORDER
         sorted_items = sorted(
             state.preview_items,
             key=lambda item: order.index(item.classification),
@@ -642,6 +790,8 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
             item.item_id: f"item-{index}"
             for index, item in enumerate(sorted_items, start=1)
         }
+        group_totals = dict(state.group_totals)
+        run_totals = dict(state.run_totals)
         for classification, grouped in groupby(
             sorted_items,
             key=lambda item: item.classification,
@@ -649,7 +799,11 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
             items = tuple(grouped)
             with Horizontal(classes="note-import-group-row ds-toolbar"):
                 yield Static(
-                    f"{_CLASSIFICATION_LABELS[classification]} ({len(items)})",
+                    _group_heading(
+                        _CLASSIFICATION_LABELS[classification],
+                        rendered=len(items),
+                        total=group_totals.get(classification, len(items)),
+                    ),
                     classes="note-import-group-heading",
                     markup=False,
                 )
@@ -677,16 +831,38 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                         ),
                         compact=True,
                     )
-            for item in items:
-                yield from self._compose_review_item(item, dom_tokens[item.item_id])
+            for run in _uniform_runs(items):
+                if len(run) < _UNIFORM_RUN_MIN:
+                    for item in run:
+                        yield from self._compose_review_item(
+                            item, dom_tokens[item.item_id]
+                        )
+                    continue
+                # task-32250: 23 near-identical rows are not a review. One
+                # summary row states the shared outcome; the disclosure keeps
+                # every individual decision one press away.
+                with _run_disclosure(
+                    _run_summary(run, run_totals.get(_run_key(run[0]))),
+                    dom_token=dom_tokens[run[0].item_id],
+                ):
+                    for item in run:
+                        yield from self._compose_review_item(
+                            item, dom_tokens[item.item_id]
+                        )
 
         if state.page_count > 1:
+            # task-32250: a disabled pager looked like an active one in
+            # monochrome, so it says which end of the review it is at.
+            at_start = state.page <= 1
+            at_end = state.page >= state.page_count
             previous = Button(
-                "Previous page",
+                _disabled_action_label(
+                    "Previous page", disabled=at_start, reason="this is the first page"
+                ),
                 id="note-import-page-previous",
                 classes="library-canvas-action",
                 compact=True,
-                disabled=state.page <= 1,
+                disabled=at_start,
             )
             yield previous
             yield Static(
@@ -695,21 +871,34 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                 markup=False,
             )
             next_button = Button(
-                "Next page",
+                _disabled_action_label(
+                    "Next page", disabled=at_end, reason="this is the last page"
+                ),
                 id="note-import-page-next",
                 classes="library-canvas-action",
                 compact=True,
-                disabled=state.page >= state.page_count,
+                disabled=at_end,
             )
             yield next_button
 
     @staticmethod
     def _review_row_summary(item: LibraryNoteImportItemSnapshot) -> str:
-        """Return one line: path, what happens, and where it lands."""
+        """Return one line: path, what happens, and where it lands.
+
+        task-32250: the path was spent first and in full, so a 120-character
+        filename pushed the whole outcome clause off the row and every other
+        row ended in "· ke…" -- hiding the keywords and link count the row
+        exists to state. The path middle-elides to a budget instead; the
+        decision-bearing half is what has to survive.
+        """
         parts = (
-            (item.name, item.reason)
+            (_bounded_row_name(item.name), item.reason)
             if item.classification in _NON_IMPORTABLE
-            else (item.name, item.effect_summary, item.membership_summary)
+            else (
+                _bounded_row_name(item.name),
+                item.effect_summary,
+                item.membership_summary,
+            )
         )
         return " · ".join(part.rstrip(" .") for part in parts if part)
 
@@ -842,8 +1031,13 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
 
     def _compose_importing(self, state: LibraryNoteImportSnapshot) -> ComposeResult:
         detail = f" · {state.progress_detail}" if state.progress_detail else ""
+        # task-32258: "67 of 67 complete" above a review that counted 66 read
+        # as a contradiction. The unit is named, because it is not the same
+        # unit: one planned change per note a source creates, one per skip.
+        noun = "planned change" if state.progress_total == 1 else "planned changes"
         yield Static(
-            f"{state.progress_completed} of {state.progress_total} complete{detail}",
+            f"{state.progress_completed} of {state.progress_total} {noun} complete"
+            f"{detail}",
             id="note-import-progress",
             markup=False,
         )

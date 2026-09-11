@@ -360,19 +360,38 @@ def test_a_full_canvas_notes_task_owns_the_pane_width():
     preferences = AdaptiveReaderLayoutPreferences()
     derive = LibraryNotesController._library_notes_work_first_preferences
 
-    for view in ("import", "lasting_add", "lasting_roots"):
+    def _fake(view: str, import_phase: str = "select"):
+        """A screen stub carrying the REAL sibling predicate, not a stand-in.
+
+        task-32250 (landed first) added `_import_review_owns_the_pane`, a
+        narrower and stronger rule checked ahead of this one. Binding the
+        real method is what makes this test see the ordering between them;
+        a stubbed `False` would pass while the two rules shadowed each
+        other.
+        """
         fake = SimpleNamespace(
             _library_notes_view=view,
             _library_notes_work_session_phase=None,
+            _library_note_import_snapshot=SimpleNamespace(phase=import_phase),
         )
-        assert derive(fake, preferences).items_open is False, view
+        fake._import_review_owns_the_pane = (
+            lambda: LibraryNotesController._import_review_owns_the_pane(fake)
+        )
+        return fake
+
+    for view in ("import", "lasting_add", "lasting_roots"):
+        resolved = derive(_fake(view), preferences)
+        assert resolved.items_open is False, view
+        # Only the review/importing phases take Library navigation too --
+        # that is task-32250's rule, and this one must not widen it.
+        assert resolved.library_open is True, view
 
     for view in ("list", "editor", "trash"):
-        fake = SimpleNamespace(
-            _library_notes_view=view,
-            _library_notes_work_session_phase=None,
-        )
-        assert derive(fake, preferences).items_open is True, view
+        assert derive(_fake(view), preferences).items_open is True, view
+
+    # The stronger rule still wins for the state it owns.
+    reviewing = derive(_fake("import", import_phase="review"), preferences)
+    assert (reviewing.items_open, reviewing.library_open) == (False, False)
 
 
 # -- task-32261: compact select strip, grip names -------------------------

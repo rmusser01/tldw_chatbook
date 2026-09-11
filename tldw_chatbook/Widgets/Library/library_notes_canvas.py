@@ -32,6 +32,7 @@ from tldw_chatbook.Notes.agent_lessons import (
     AGENT_LESSONS_FOLDER,
     AGENT_LESSONS_FOLDER_GLOSS,
 )
+from tldw_chatbook.Notes.note_import_plan_models import render_note_links
 from tldw_chatbook.Library.library_notes_tree_state import (
     LibraryNotesTreeProjection,
     LibraryNotesTreeRow,
@@ -199,6 +200,30 @@ def browse_row_overflows(pane_width: int, needed: int, *, already_split: bool) -
     if pane_width <= 0:
         return False
     return needed > pane_width - (_TOOLBAR_SPLIT_HYSTERESIS if already_split else 0)
+
+
+def render_preview_source(body: str) -> str:
+    """Return the note body as the Markdown Preview should render it.
+
+    ONE home for the order, because Preview renders from two places -- the
+    compose that mounts the widget and the in-place sync that refreshes it --
+    and the sync's staleness check compares against what compose produced. Two
+    call sites spelling the rewrites differently is a re-render on every sync
+    at best and a stale Preview at worst.
+
+    Args:
+        body: The note's stored Markdown source.
+
+    Returns:
+        The source with imported `[[Title]](note://<id>)` links reduced to
+        their display text (task-32263) and Obsidian callout headers turned
+        into plain blockquote headers (task-32249).
+    """
+    # Lazy, like the parser factory below it: this module is on the Library
+    # route's pre-import path (Tests/Performance/test_screen_preimport_payload_budget.py).
+    from tldw_chatbook.Utils.markdown_parsing import render_obsidian_callouts
+
+    return render_obsidian_callouts(render_note_links(body))
 
 
 def compose_note_row_label(
@@ -2081,10 +2106,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
         # File-synced notes may carry YAML front matter; consume it instead
         # of rendering the delimiter block as note content.
-        from tldw_chatbook.Utils.markdown_parsing import (
-            front_matter_parser_factory,
-            render_obsidian_callouts,
-        )
+        from tldw_chatbook.Utils.markdown_parsing import front_matter_parser_factory
 
         # task-32139: Edit/Preview said "‹ Notes", Info said "‹ Note" (two
         # wordings for the identical Back action, live-caught at 235x52),
@@ -2210,7 +2232,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 markup=False,
             )
             yield Markdown(
-                render_obsidian_callouts(content),
+                render_preview_source(content),
                 id="library-note-preview-body",
                 parser_factory=front_matter_parser_factory(),
             )
@@ -2534,8 +2556,6 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         idempotent. The screen owns the presentation-sync guard around calls
         that may assign ``Input`` or ``TextArea`` values.
         """
-        from tldw_chatbook.Utils.markdown_parsing import render_obsidian_callouts
-
         if self.mode != "editor" or not self.is_mounted:
             self.presentation_state = state
             self.compact = state.compact
@@ -2624,11 +2644,16 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # when Preview becomes the active surface so edits cannot queue an
         # unbounded hidden-render backlog.
         #
-        # task-32249: the rendered source is the callout-rewritten one, so
-        # the staleness comparison has to be against THAT -- comparing the
-        # raw body would re-render every sync on any note carrying a
-        # callout.
-        preview_source = render_obsidian_callouts(snapshot.body)
+        # task-32263: an imported body stores its links as
+        # `[[Title]](note://<id>)` -- a working Obsidian link this module's own
+        # parser reads back. Markdown does not know that spelling, so Preview
+        # renders the display text and leaves the identifier behind the link.
+        # task-32249: and an Obsidian callout header renders as a callout
+        # rather than printing its `[!note]` marker. Both rewrites run at
+        # compose time too, so the staleness comparison below has to be
+        # against the SAME rendered source -- comparing the raw body would
+        # re-render every sync on any note carrying a link or a callout.
+        preview_source = render_preview_source(snapshot.body)
         if show_preview and preview_body.source != preview_source:
             preview_body.update(preview_source)
         channels = state.status_channels or NotesStatusChannels(

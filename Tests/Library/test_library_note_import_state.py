@@ -319,7 +319,9 @@ def test_destination_input_retains_raw_text_and_exposes_inline_validation() -> N
 
 
 def test_review_page_is_bounded_and_clamps_after_plan_changes() -> None:
-    plan = _plan(*(_item(number) for number in range(1, 58)))
+    # Each source sits in its own folder, so each costs the page one rendered
+    # row (task-32250: the budget counts rows, not sources).
+    plan = _plan(*(_distinct_item(number) for number in range(1, 58)))
     state = _file_review(plan, page_size=10_000)
 
     assert state.page.page_size == MAX_IMPORT_REVIEW_PAGE_SIZE
@@ -334,6 +336,34 @@ def test_review_page_is_bounded_and_clamps_after_plan_changes() -> None:
     assert len(last.page.items) == 7
 
 
+def test_a_run_of_interchangeable_sources_is_never_cut_by_a_page_break() -> None:
+    """task-32250 AC#2/AC#4: one folder showed as two runs with two counts.
+
+    45 Archive notes used to straddle three pages as "New (23)", "New (22)"
+    and "New (13)". They render as one summary row, and the pager budgets by
+    rendered rows, so they arrive whole.
+    """
+    plan = _plan(*(_item(number) for number in range(1, 46)))
+    state = _file_review(plan)
+
+    assert state.page.page_count == 1
+    assert len(state.page.items) == 45
+    assert dict(state.page.group_totals) == {"new": 45}
+
+
+def _distinct_item(number: int) -> ImportPreviewItem:
+    """One review row that shares no folder with any other."""
+    item = _item(number)
+    return replace(
+        item,
+        source=replace(
+            item.source,
+            kind=ImportSourceKind.DIRECTORY_MEMBER,
+            display_path=f"vault/folder-{number}/record.md",
+        ),
+    )
+
+
 def test_unresolved_collision_blocks_approval_until_an_explicit_resolution() -> None:
     collision = RootCollisionState(proposed_label="Imported", collides=True)
     state = _file_review(_plan(collision=collision))
@@ -341,8 +371,12 @@ def test_unresolved_collision_blocks_approval_until_an_explicit_resolution() -> 
     assert state.can_approve is False
     assert state.approval_blocker == "Choose how to handle the folder name collision."
     projected = project_library_note_import_snapshot(state)
-    assert projected.collision_rename_input == "Imported"
-    assert "already exists" in projected.collision_rename_error
+    # task-32262: an untouched rename field carries no value and no error --
+    # the panel used to open with "That folder name already exists" painted
+    # against a name nobody had typed.
+    assert projected.collision_rename_input == ""
+    assert projected.collision_rename_error == ""
+    assert projected.collision_reason == "Choose how to handle the existing folder."
 
     resolved = set_root_collision_resolution(
         state,
@@ -667,14 +701,31 @@ def test_review_projection_exposes_relative_source_membership_and_bounded_effect
 
 
 @pytest.mark.parametrize(
-    ("receipt_state", "completed", "failed", "expected_status", "detail_fragment"),
     (
-        (ImportSessionState.COMPLETED, 4, 0, "Import completed.", "4 notes created"),
+        "receipt_state",
+        "completed",
+        "failed",
+        "expected_status",
+        "surface",
+        "fragment",
+    ),
+    (
+        # task-32258 put each of the three statements on its own surface, so
+        # the pin names WHICH one carries the fragment (review finding 10).
+        (
+            ImportSessionState.COMPLETED,
+            4,
+            0,
+            "Import completed.",
+            "receipt_line",
+            "4 notes created",
+        ),
         (
             ImportSessionState.CANCELLED,
             2,
             0,
             "Import cancelled after the current item.",
+            "receipt_detail",
             "not rolled back",
         ),
         (
@@ -682,7 +733,11 @@ def test_review_projection_exposes_relative_source_membership_and_bounded_effect
             4,
             1,
             "Import needs attention.",
-            "failed",
+            "receipt_detail",
+            # The caveat, not the bare word: "1 file failed" is a COUNT and
+            # belongs on the receipt line, which is exactly the split this
+            # pins.
+            "some items failed",
         ),
     ),
 )
@@ -691,7 +746,8 @@ def test_receipt_projection_distinguishes_durable_session_state(
     completed: int,
     failed: int,
     expected_status: str,
-    detail_fragment: str,
+    surface: str,
+    fragment: str,
 ) -> None:
     state = _file_review()
     approved = approve_note_import_plan(state.plan, approval_id=_APPROVAL_ID)
@@ -716,7 +772,10 @@ def test_receipt_projection_distinguishes_durable_session_state(
     projected = project_library_note_import_snapshot(settled)
 
     assert projected.status_line == expected_status
-    assert detail_fragment in projected.receipt_detail.casefold()
+    assert fragment in getattr(projected, surface).casefold()
+    # …and it is on that surface ALONE: the outcome is stated once.
+    other = "receipt_detail" if surface == "receipt_line" else "receipt_line"
+    assert fragment not in getattr(projected, other).casefold()
 
 
 # --- task-32130 / task-32134: honest receipt copy and selection changes ----
@@ -779,9 +838,10 @@ def test_completion_copy_says_what_happened_in_plain_words() -> None:
 
     projection = project_library_note_import_snapshot(state)
 
-    assert projection.receipt_detail == (
-        "Import finished · 61 notes created · 11 files skipped"
-    )
+    # task-32258: once, and on the primary line -- the header already says
+    # the session completed, so a second "Import finished" was a repeat.
+    assert projection.receipt_line == "61 notes created · 11 files skipped"
+    assert "Import finished" not in projection.receipt_detail
 
 
 def test_clear_selection_returns_to_an_empty_select_phase() -> None:
@@ -951,9 +1011,7 @@ def test_receipt_counts_the_links_the_import_resolved() -> None:
     projection = project_library_note_import_snapshot(_linked_settled_state())
 
     assert projection.resolved_links == 1
-    assert projection.receipt_detail == (
-        "Import finished · 2 notes created · 1 link resolved"
-    )
+    assert projection.receipt_line == "2 notes created · 1 link resolved"
 
 
 def test_a_revisited_receipt_keeps_its_resolved_link_count() -> None:
@@ -974,4 +1032,112 @@ def test_an_import_that_resolves_no_links_says_nothing_about_them() -> None:
     )
 
     assert projection.resolved_links == 0
-    assert "link" not in projection.receipt_detail
+    assert "link" not in projection.receipt_line
+
+
+# --- task-32262 (review fidelity) -----------------------------------------
+
+
+def _diff_effect(item_id: str = "item-1") -> NoteImportReviewEffect:
+    return NoteImportReviewEffect(
+        item_id=item_id,
+        target_title="Private 1",
+        target_version=7,
+        content_diff="--- Existing note\n+++ Imported source\n-old line\n+new line",
+    )
+
+
+def test_a_no_change_row_never_carries_a_changed_diff() -> None:
+    """"Content: no change." printed directly above a changed diff (32262).
+
+    The classification compares this source to the last import of it; the diff
+    compares the stored note to the raw source. Both were rendered on the same
+    row, answering different questions.
+    """
+    state = _file_review(
+        _plan(_item(classification=ImportClassification.UNCHANGED_REPEAT)),
+    )
+    state = replace(state, review_effects=(_diff_effect(),))
+
+    projected = project_library_note_import_snapshot(state)
+
+    assert projected.preview_items[0].effect_summary == "Content: no change."
+    assert projected.preview_items[0].content_diff == ""
+    # The matched note is still named, so the row is not silent about it.
+    assert projected.preview_items[0].target_label.startswith("Existing note:")
+
+
+def test_the_row_that_replaces_content_still_shows_what_it_replaces() -> None:
+    """The diff belongs on the one row it actually describes."""
+    state = _file_review(
+        _plan(
+            _item(
+                classification=ImportClassification.CHANGED_REPEAT,
+                selected_action=ImportAction.UPDATE_EXISTING,
+                replace_content=True,
+            )
+        ),
+    )
+    state = replace(state, review_effects=(_diff_effect(),))
+
+    projected = project_library_note_import_snapshot(state)
+
+    assert projected.preview_items[0].effect_summary == (
+        "Content: replace existing content."
+    )
+    assert "+new line" in projected.preview_items[0].content_diff
+
+
+def test_keeping_existing_content_shows_no_replacement_diff() -> None:
+    """"keep existing content" and a replacement diff cannot both be true."""
+    state = _file_review(
+        _plan(
+            _item(
+                classification=ImportClassification.CHANGED_REPEAT,
+                selected_action=ImportAction.UPDATE_EXISTING,
+                replace_content=False,
+                add_membership=True,
+            )
+        ),
+    )
+    state = replace(state, review_effects=(_diff_effect(),))
+
+    projected = project_library_note_import_snapshot(state)
+
+    assert projected.preview_items[0].content_diff == ""
+
+
+def test_a_resolved_collision_states_where_the_notes_will_go() -> None:
+    """A pre-selected default has to say what it does, not go quiet."""
+    state = _file_review(
+        _plan(
+            collision=RootCollisionState(
+                proposed_label="Imported",
+                collides=True,
+                choice=RootCollisionChoice.UNIQUE_SIBLING,
+                resolved_label="Imported 2",
+            )
+        )
+    )
+
+    projected = project_library_note_import_snapshot(state)
+
+    assert projected.collision_choice == "unique_sibling"
+    assert "Imported 2" in projected.collision_reason
+    assert projected.collision_rename_error == ""
+    assert state.can_approve is True
+
+
+def test_a_run_past_the_mount_ceiling_reports_its_whole_size_on_both_pages() -> None:
+    """The one case a page break can fall inside a run (review finding 9)."""
+    plan = _plan(*(_item(number) for number in range(1, 251)))
+    first = _file_review(plan)
+    second = set_review_page(first, 2)
+
+    assert first.page.page_count == 2
+    assert (len(first.page.items), len(second.page.items)) == (200, 50)
+    # Both halves carry the run's whole size, so the summary row can say
+    # "200 of 250 files" and then "50 of 250 files" instead of reading as two
+    # different runs with two different counts.
+    assert [total for _, total in first.page.run_totals] == [250]
+    assert dict(first.page.run_totals) == dict(second.page.run_totals)

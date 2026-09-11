@@ -181,3 +181,59 @@ def test_console_chat_message_has_parent_message_id_default_none():
     )
     assert msg2.parent_message_id == "p1"
     assert (msg2.sibling_index, msg2.sibling_count) == (1, 3)
+
+
+def test_pending_round_copy_names_the_kind_that_is_waiting():
+    """Qodo #4 (task-32345): one vocabulary for "what is waiting on you".
+
+    Approval wins any mix, because it is the only kind the Inspector's
+    pending-approval count can see -- picking anything else there would put
+    the chip and the Inspector back in disagreement. A lone question asks
+    for an answer; every other kind, present or future, asks for a
+    confirmation, so a sixth interrupt kind cannot silently inherit
+    approval wording.
+    """
+    from tldw_chatbook.Chat.console_chat_models import (
+        CONSOLE_PENDING_ROUND_DEFAULT_COPY,
+        console_pending_round_copy,
+    )
+
+    assert console_pending_round_copy({"approval"}) == "Waiting for your approval"
+    assert console_pending_round_copy({"question"}) == "Waiting for your answer"
+    assert (
+        console_pending_round_copy({"question", "approval"})
+        == "Waiting for your approval"
+    )
+    for kind in ("skill_install", "skill_script", "worktree_merge", "invented_later"):
+        assert console_pending_round_copy({kind}) == CONSOLE_PENDING_ROUND_DEFAULT_COPY
+    assert (
+        console_pending_round_copy({"question", "skill_script"})
+        == CONSOLE_PENDING_ROUND_DEFAULT_COPY
+    )
+    # No kinds at all -- the pre-kind behaviour every surface had.
+    assert console_pending_round_copy(()) == "Waiting for your approval"
+
+
+def test_pending_round_copy_survives_a_controller_that_cannot_answer():
+    """The three render surfaces reach the controller late-bound and are
+    driven by partial doubles, so the kind lookup must degrade, never
+    raise -- and must degrade to what they all said before kinds existed."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_chat_models import console_pending_round_copy_for
+
+    class _Angry:
+        def pending_round_kinds(self, session_id):
+            raise RuntimeError("no registry here")
+
+    assert (
+        console_pending_round_copy_for(SimpleNamespace(), "s1")
+        == "Waiting for your approval"
+    )
+    assert console_pending_round_copy_for(_Angry(), "s1") == "Waiting for your approval"
+    assert (
+        console_pending_round_copy_for(
+            SimpleNamespace(pending_round_kinds=lambda sid: {"question"}), "s1"
+        )
+        == "Waiting for your answer"
+    )
