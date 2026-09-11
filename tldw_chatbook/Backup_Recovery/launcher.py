@@ -155,6 +155,11 @@ def _parser() -> argparse.ArgumentParser:
     inspect = commands.add_parser("inspect", allow_abbrev=False)
     inspect.add_argument("archive", type=_path)
     inspect.add_argument("--ask-password", action="store_true")
+    extract = commands.add_parser("extract", allow_abbrev=False)
+    extract.add_argument("archive", type=_path)
+    extract.add_argument("--group", action="append", required=True, metavar="GROUP_ID")
+    extract.add_argument("--destination", type=_path, required=True)
+    extract.add_argument("--ask-password", action="store_true")
     restore = commands.add_parser("restore", allow_abbrev=False)
     restore.add_argument("archive", type=_path)
     mode = restore.add_mutually_exclusive_group(required=True)
@@ -224,14 +229,15 @@ def _pairs(values: Sequence[str], *, paths: bool = False) -> dict:
     return result
 
 
-def _wait(service, operation):
+def _wait(service, operation, *, show=True):
     while True:
         try:
             status = service.wait(operation)
             break
         except KeyboardInterrupt:
             service.cancel(operation)
-    _show(status)
+    if show:
+        _show(status)
     return status
 
 
@@ -290,6 +296,35 @@ def _restore(service, args) -> int:
     return 0 if _wait(service, operation)["state"] == "succeeded" else 1
 
 
+def _extract(service, args) -> int:
+    inspection = _inspect(service, args.archive, ask_password=args.ask_password)
+    if inspection is None:
+        return 1
+    preview = service.start_extraction_preview(
+        inspection, group_ids=tuple(args.group), destination=args.destination
+    )
+    status = _wait(service, preview, show=False)
+    if status["state"] != "succeeded":
+        _show(status)
+        return 1
+    plan = status["result"]["plan"]
+    _show(
+        {
+            "destination": plan.destination,
+            "groups": plan.group_ids,
+            "payload_bytes": plan.payload_bytes,
+            "unselected_dependencies": plan.unselected_dependencies,
+        }
+    )
+    print(
+        "Extracted files are inert bytes for manual recovery. This does not restore or open a profile."
+    )
+    if input("Type extract to copy these reviewed groups: ").strip() != "extract":
+        return 0
+    operation = service.start_extraction(inspection, plan)
+    return 0 if _wait(service, operation)["state"] == "succeeded" else 1
+
+
 def recovery_main(argv: Sequence[str] | None = None) -> int:
     """Run explicit recovery commands before normal configuration or services."""
     args = _parser().parse_args(argv)
@@ -305,6 +340,8 @@ def recovery_main(argv: Sequence[str] | None = None) -> int:
             )
         if args.command == "restore":
             return _restore(service, args)
+        if args.command == "extract":
+            return _extract(service, args)
         if args.command == "profiles":
             if args.profile is None:
                 _show(service.profiles())
