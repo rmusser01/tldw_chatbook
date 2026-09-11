@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
+
 import json
 import math
 import os
@@ -1065,6 +1067,7 @@ def normalize_qwencloud_response(
     raise _provider_error("QwenCloud response used an unknown API mode.")
 
 
+@_provider_recovery.unqualified
 def chat_with_qwencloud(
     input_data: list[dict[str, Any]],
     model: str | None = None,

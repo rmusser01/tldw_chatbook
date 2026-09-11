@@ -22,6 +22,7 @@ from tldw_chatbook.Chat.local_server_discovery import (
     UnsupportedModelResponseEncoding,
     read_bounded_model_response,
 )
+from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
 from tldw_chatbook.LLM_Calls.qwencloud_url import (
     QwenCloudBaseURLValidationError,
     normalize_qwencloud_base_url,
@@ -606,6 +607,7 @@ def _discovery_error(
     )
 
 
+@_provider_recovery.discovery_call
 async def discover_openai_compatible_models(
     *,
     provider: str,
@@ -672,12 +674,15 @@ async def discover_openai_compatible_models(
         )
         for _page in range(_ANTHROPIC_MAX_MODEL_PAGES if paginate else 1):
             try:
-                async with active_client.stream(
-                    "GET",
-                    models_url,
-                    headers=headers,
-                    params=params,
-                    follow_redirects=False,
+                async with _provider_recovery.discovery_native_context(
+                    active_client.stream(
+                        "GET",
+                        models_url,
+                        headers=headers,
+                        params=params,
+                        follow_redirects=False,
+                    ),
+                    response=True,
                 ) as response:
                     response.raise_for_status()
                     body = await read_bounded_model_response(response)
@@ -819,7 +824,11 @@ async def discover_openai_compatible_models(
         if client is not None:
             payloads, request_error = await _request_payloads(client)
         else:
-            async with httpx.AsyncClient(timeout=timeout_seconds) as active_client:
+            async with _provider_recovery.discovery_native_context(
+                httpx.AsyncClient(
+                    timeout=timeout_seconds, **_provider_recovery.discovery_client_options()
+                )
+            ) as active_client:
                 payloads, request_error = await _request_payloads(active_client)
     except httpx.HTTPError:
         return ModelDiscoveryResult(

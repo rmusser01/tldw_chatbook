@@ -16,6 +16,8 @@
 #
 ####################
 # Import necessary libraries
+from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
+
 import inspect
 import json
 import os
@@ -820,6 +822,7 @@ def analyze(
 # API Calls
 
 
+@_provider_recovery.unqualified
 def summarize_with_openai(
     api_key,
     input_data,
@@ -990,6 +993,7 @@ def summarize_with_openai(
         return f"Error: OpenAI unexpected error: {str(e)}"
 
 
+@_provider_recovery.unqualified
 def summarize_with_anthropic(
     api_key,
     input_data,
@@ -1232,6 +1236,7 @@ def summarize_with_anthropic(
 
 
 # Summarize with Cohere
+@_provider_recovery.unqualified
 def summarize_with_cohere(
     api_key,
     input_data,
@@ -1482,6 +1487,7 @@ def summarize_with_cohere(
 
 
 # https://console.groq.com/docs/quickstart
+@_provider_recovery.unqualified
 def summarize_with_groq(
     api_key,
     input_data,
@@ -1678,6 +1684,7 @@ def summarize_with_groq(
         return f"Groq: Error occurred while processing summary with Groq: {str(e)}"
 
 
+@_provider_recovery.unqualified
 def summarize_with_openrouter(
     api_key,
     input_data,
@@ -1914,6 +1921,7 @@ def summarize_with_openrouter(
             return f"openrouter: Error occurred while processing summary with openrouter: {str(e)}"
 
 
+@_provider_recovery.unqualified
 def summarize_with_huggingface(
     api_key,
     input_data,
@@ -2097,6 +2105,7 @@ def summarize_with_huggingface(
         return f"HuggingFace: Error occurred while processing summary with HuggingFace: {str(e)}"
 
 
+@_provider_recovery.unqualified
 def summarize_with_deepseek(
     api_key,
     input_data,
@@ -2281,6 +2290,7 @@ def summarize_with_deepseek(
         return f"DeepSeek: Error occurred while processing summary: {str(e)}"
 
 
+@_provider_recovery.unqualified
 def summarize_with_mistral(
     api_key,
     input_data,
@@ -2482,6 +2492,7 @@ def summarize_with_mistral(
         return f"Mistral: Error occurred while processing summary: {str(e)}"
 
 
+@_provider_recovery.unqualified
 def summarize_with_google(
     api_key,
     input_data,

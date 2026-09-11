@@ -2946,3 +2946,4 @@ hints without claiming durable dependency or recovery qualification.
 | tldw_chatbook/Backup_Recovery/control_records.py | _resume_activation_record | os.unlink | 1 | generic_boundary | backup_control |
 | tldw_chatbook/Backup_Recovery/publication.py | _reverse_native_move | open | 1 | generic_boundary | verified native rollback publication |
 | tldw_chatbook/Backup_Recovery/replacement.py | _rollback_replacement | os.unlink | 1 | generic_boundary | backup_control |
+| tldw_chatbook/LLM_Calls/recovery_review.py | _config | open | 1 | generic_boundary | bounded selected configuration read |

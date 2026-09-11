@@ -38,6 +38,8 @@ from urllib3.util.retry import Retry
 
 #
 # Import Local libraries
+from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
+
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAPIError,
     ChatAuthenticationError,
@@ -341,9 +343,9 @@ def _responses_stream_to_chat_sse(response, *, model: str):
             + "\n\n"
         )
     finally:
-        yield "data: [DONE]\n\n"
-        if response:
+        if response is not None:
             response.close()
+    yield "data: [DONE]\n\n"
 
 
 def _anthropic_uses_adaptive_thinking(model: object) -> bool:
@@ -441,6 +443,7 @@ def _anthropic_thinking_config(
     return {"type": "enabled", "budget_tokens": final_budget}, None, final_max_tokens
 
 
+@_provider_recovery.unqualified
 def get_openai_embeddings(input_data: str, model: str) -> List[float]:
     """
     Get embeddings for the input text from OpenAI API.
@@ -513,6 +516,7 @@ def get_openai_embeddings(input_data: str, model: str) -> List[float]:
         raise ValueError(f"OpenAI Embeddings: Unexpected error occurred: {str(e)}")
 
 
+@_provider_recovery.openai_call
 def chat_with_openai(
     input_data: List[Dict[str, Any]],  # Mapped from 'messages_payload'
     model: Optional[str] = None,  # Mapped from 'model'
@@ -574,7 +578,9 @@ def chat_with_openai(
         verbosity: Responses API text verbosity for GPT-5-style models.
         custom_prompt_arg: Legacy, largely ignored.
     """
-    loaded_config_data = load_settings()
+    loaded_config_data = _provider_recovery.recovered_settings()
+    if loaded_config_data is None:
+        loaded_config_data = load_settings()
     legacy_openai_config = loaded_config_data.get("openai_api", {})
     api_settings = loaded_config_data.get("api_settings", {})
     canonical_openai_config = (
@@ -790,7 +796,8 @@ def chat_with_openai(
                 session = session_context.__enter__()
                 response = None
                 try:
-                    response = session.post(
+                    response = _provider_recovery.openai_post(
+                        session,
                         api_url, headers=headers, json=payload, stream=True, timeout=180
                     )
                     if (
@@ -804,7 +811,8 @@ def chat_with_openai(
                         retry_payload = {
                             k: v for k, v in payload.items() if k != "stream_options"
                         }
-                        response = session.post(
+                        response = _provider_recovery.openai_post(
+                            session,
                             api_url,
                             headers=headers,
                             json=retry_payload,
@@ -850,12 +858,13 @@ def chat_with_openai(
                     )
                     yield f"data: {error_content}\n\n"  # Yield as SSE error
                 finally:
-                    # Ensure DONE is sent for the endpoint wrapper's logic
-                    if not use_responses_api:
-                        yield "data: [DONE]\n\n"
-                    if response:
-                        response.close()
-                    session_context.__exit__(None, None, None)
+                    try:
+                        if response is not None:
+                            response.close()
+                    finally:
+                        session_context.__exit__(None, None, None)
+                if not use_responses_api:
+                    yield "data: [DONE]\n\n"
 
             return stream_generator()
 
@@ -876,7 +885,8 @@ def chat_with_openai(
             with requests.Session() as session:
                 session.mount("https://", adapter)
                 session.mount("http://", adapter)  # Though OpenAI is https
-                response = session.post(
+                response = _provider_recovery.openai_post(
+                    session,
                     api_url,
                     headers=headers,
                     json=payload,
@@ -1163,6 +1173,7 @@ def _anthropic_tools_payload(tools: list) -> list:
     return converted
 
 
+@_provider_recovery.unqualified
 def chat_with_anthropic(
     input_data: List[Dict[str, Any]],  # Mapped from 'messages_payload'
     model: Optional[str] = None,
@@ -2209,6 +2220,7 @@ def _cohere_stream_event_index(event: dict, message_delta: dict, fallback: int) 
     return fallback
 
 
+@_provider_recovery.unqualified
 def chat_with_cohere(
     input_data: List[Dict[str, Any]],
     model: Optional[str] = None,
@@ -2920,6 +2932,7 @@ def chat_with_cohere(
             session.close()
 
 
+@_provider_recovery.unqualified
 def chat_with_deepseek(
     input_data: List[Dict[str, Any]],
     model: Optional[str] = None,
@@ -3247,6 +3260,7 @@ def _google_function_response(name: str, content) -> dict:
     return {"functionResponse": {"name": name, "response": response}}
 
 
+@_provider_recovery.unqualified
 def chat_with_google(
     input_data: List[Dict[str, Any]],
     model: Optional[str] = None,
@@ -3976,6 +3990,7 @@ def chat_with_google(
 
 
 # https://console.groq.com/docs/quickstart
+@_provider_recovery.unqualified
 def chat_with_groq(
     input_data: List[Dict[str, Any]],
     model: Optional[str] = None,
@@ -4235,6 +4250,7 @@ def chat_with_groq(
         raise ChatProviderError(provider="groq", message=f"Unexpected error: {e}")
 
 
+@_provider_recovery.unqualified
 def chat_with_huggingface(
     input_data: List[Dict[str, Any]],
     model: Optional[str] = None,  # This is the model_id like "Org/ModelName"
@@ -4755,6 +4771,7 @@ def chat_with_huggingface(
             raise  # Re-raise if it's already a ChatAPIError subtype
 
 
+@_provider_recovery.unqualified
 def chat_with_mistral(
     input_data: List[Dict[str, Any]],
     model: Optional[str] = None,
@@ -4996,6 +5013,7 @@ def chat_with_mistral(
         raise ChatProviderError(provider="mistral", message=f"Unexpected error: {e}")
 
 
+@_provider_recovery.unqualified
 def chat_with_openrouter(
     input_data: List[Dict[str, Any]],
     model: Optional[str] = None,
@@ -5252,6 +5270,7 @@ def chat_with_openrouter(
         raise ChatProviderError(provider="openrouter", message=f"Unexpected error: {e}")
 
 
+@_provider_recovery.unqualified
 def chat_with_moonshot(
     input_data: List[Dict[str, Any]],
     model: Optional[str] = None,
@@ -5329,6 +5348,7 @@ def chat_with_moonshot(
     return result
 
 
+@_provider_recovery.unqualified
 def chat_with_zai(
     input_data: List[Dict[str, Any]],
     model: Optional[str] = None,

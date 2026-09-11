@@ -169,6 +169,8 @@ from typing import Any
 
 from loguru import logger
 
+from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
+
 from .protocol import RealtimeCallbacks, RealtimeSessionConfig
 from .transport import WsTransport
 
@@ -244,6 +246,7 @@ class OpenAIRealtimeSession:
     # RealtimeSession protocol
     # ------------------------------------------------------------------
 
+    @_provider_recovery.unqualified
     async def connect(self) -> None:
         """Open the WebSocket connection and send the initial
         `session.update` handshake.
