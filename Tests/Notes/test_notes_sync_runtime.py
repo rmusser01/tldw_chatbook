@@ -3214,3 +3214,65 @@ async def test_root_discovery_refusal_names_its_count_and_dominant_reason(
     assert "unsupported_metadata" in raised.value.detail
     assert owner._root_paths == {}
     await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_setup_review_releases_the_lease_and_the_root_path(
+    tmp_path: Path,
+) -> None:
+    """TASK-32243: a cancelled Check must leave no residue either.
+
+    `except Exception` does not catch `CancelledError`, so a cancelled setup
+    review used to leak both `_root_paths` and the coordinator lease -- the
+    lock file stays held and the folder is then refused `passive_process` for
+    the rest of the session, which is worse than the bug this task fixed.
+    """
+
+    from tldw_chatbook.Notes.notes_sync_runtime import (
+        NotesSyncRootSetup,
+        NotesSyncRuntimeOwner,
+    )
+
+    store = NotesDeviceStateStore(tmp_path / "sync.sqlite3")
+    store.initialize()
+    store.set_setting(NotesSyncStoreSetting("cutover_marker", "notes-sync-cutover-v1"))
+    root_path = tmp_path / "setup-root"
+    root_path.mkdir()
+    coordinator = _Coordinator()
+    adapter = _MultiRootAdapter([_input(file_digest=_A, note_digest=_A)])
+    observing = asyncio.Event()
+
+    async def block_forever(_root: NotesSyncRootRecord) -> ReconciliationInput:
+        observing.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    adapter.observe_root = block_forever
+    owner = NotesSyncRuntimeOwner(
+        store=store,
+        migrate_legacy=lambda: None,
+        coordinator=coordinator,
+        adapter=adapter,
+        watcher_factory=lambda _schedule: _Watcher(),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+    )
+    await owner.start()
+    setup = NotesSyncRootSetup(
+        display_name="Research",
+        canonical_path=str(root_path),
+        note_scope_id="local_note",
+        direction=NotesSyncDirection.BIDIRECTIONAL,
+    )
+
+    review = asyncio.create_task(owner.review_setup(setup))
+    await observing.wait()
+    assert owner._root_paths != {}
+    review.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await review
+
+    assert owner._root_paths == {}
+    assert owner._leases == {}
+    assert coordinator.events[-1:] == ["lease-released"]
+    await owner.shutdown()

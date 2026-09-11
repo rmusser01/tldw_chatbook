@@ -1834,7 +1834,13 @@ class NotesSyncRuntimeOwner:
                 ):
                     raise self._refuse_lease(root_id)
                 plan = await self._review_candidate(root)
-            except Exception:
+            except BaseException:
+                # BaseException, not Exception: a cancelled Check used to skip
+                # this and leak both `_root_paths` and the coordinator lease,
+                # so the lock file stayed held and the folder was refused
+                # `passive_process` for the rest of the session. The release
+                # awaits safely here -- cancellation is delivered once, at the
+                # await it interrupted, not again inside the handler.
                 await self._release_setup_authority(root_id)
                 raise
             self._setup_reviews[root_id] = _SetupReview(setup, plan)
