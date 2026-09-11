@@ -765,3 +765,24 @@ def test_status_rows_carry_leading_status_glyphs():
     ok_state = project_environment_section(ok, frozenset(), now=_NOW)
     changes = next(r for r in ok_state.rows if r.row_id == ENV_ROW_CHANGES)
     assert not changes.primary_text.startswith(("●", "⚠", "✓", "✗"))
+
+
+def test_changed_files_overflow_tail_is_clickable():
+    """TASK-32333: "... N more — Review opens all" reads as an instruction;
+    it must actually be an activatable control (its neighbour already is)."""
+    files = tuple(
+        ChangedFile(path=f"f{i}.py", status="M", adds=1, dels=0)
+        for i in range(15)
+    )
+    snapshot = EnvironmentSnapshot(
+        git=GitEnvState(availability=EnvSourceAvailability.OK, files=files)
+    )
+    rows = project_environment_section(
+        snapshot, frozenset({ENV_ROW_CHANGES}), now=_NOW
+    ).rows
+    tail = next(r for r in rows if r.row_id == "env-file-more")
+    assert tail.primary_text.startswith("… ")
+    assert tail.clickable
+    # The inert per-file rows stay inert.
+    file_row = next(r for r in rows if r.row_id == "env-file-0")
+    assert not file_row.clickable

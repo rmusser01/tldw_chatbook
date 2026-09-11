@@ -199,7 +199,7 @@ the composer draft. A row with none of these is inert — Enter does nothing.
 
 | Row | Shows | Enter expands to | Actions |
 | --- | --- | --- | --- |
-| **Changes ▸** | `+adds −dels` for the working tree vs `HEAD` | one row per changed file with its own ± counts (long lists end with "… N more — Review opens all") | **Review in Change Review…** |
+| **Changes ▸** | `+adds −dels` for the working tree vs `HEAD` | one row per changed file with its own ± counts (long lists end with "… N more — Review opens all" — selecting that row opens Review) | **Review in Change Review…** |
 | **Local ▸** | the execution target for this instance | `Local instance ✓` and a greyed `Remote tldw_server — not configured` (both inert) | none — remote execution is a placeholder, not a feature |
 | **branch ▸** | the branch name, plus `↑n ↓n` divergence and a `wt:<name>` marker inside a linked worktree | the full branch name and `upstream <ref> (↑↓ vs last fetch)`, plus the worktree name and its path (inert) | none |
 | **Review & commit… · N files** | shown when the tree is dirty; `Push ↑n…` when it is only ahead — **absent when the tree is clean and in sync** | — | opens Change Review directly on its working-tree mode |

@@ -672,7 +672,11 @@ def project_environment_section(
         if len(git.files) > _MAX_FILE_ROWS:
             rows.append(InspectorSectionRow(
                 row_id="env-file-more",
+                # TASK-32333: phrased as an instruction, so it IS one --
+                # activating opens Change Review on the working tree (same
+                # destination as the "Review in Change Review" row below).
                 primary_text=f"… {len(git.files) - _MAX_FILE_ROWS} more — Review opens all",
+                clickable=True,
                 indent=1,
             ))
         rows.append(InspectorSectionRow(

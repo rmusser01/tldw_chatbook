@@ -9067,6 +9067,12 @@ class ChatScreen(BaseAppScreen):
         if row_id == ENV_ROW_COMMIT_PUSH:
             self._open_change_review_current_mode()
             return
+        if row_id == "env-file-more":
+            # TASK-32333: the Changes block's overflow tail ("… N more —
+            # Review opens all") opens the same working-tree view as its
+            # neighbours -- destination follows the surface that offers it.
+            self._open_change_review_current_mode()
+            return
         if row_id == ENV_ROW_PR_OPEN and snapshot.pr.url:
             try:
                 self.app.open_url(snapshot.pr.url)
