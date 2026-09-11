@@ -2076,6 +2076,19 @@ class TestSummaryThreeState:
         assert rows["Tools"].state == ROW_DEFAULT
         assert rows["RAG"].state == ROW_DEFAULT  # optional, not an error
 
+    def test_tools_row_off_detail_names_where_to_enable(self):
+        """task-32289 AC#1: the Summary's tools line names the destination
+        (MCP ▸ Servers ▸ Tool gates) instead of just calling it "default" --
+        both a Quick-track user (who never saw the Tools step) and a Full-
+        track user who left every switch off share this same empty-gates
+        condition, so one detail string covers both."""
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import build_summary_rows
+
+        rows = {r.label: r for r in build_summary_rows({}, {}, rag_deps_installed=False)}
+        assert rows["Tools"].detail == (
+            "all off; turn them on under MCP ▸ Servers ▸ Tool gates"
+        )
+
     def test_plaintext_keys_flag_encryption_as_attention(self):
         """Unencrypted stored keys make the encryption row a ✗ call to action."""
         from tldw_chatbook.UI.Wizards.first_run_setup_state import (

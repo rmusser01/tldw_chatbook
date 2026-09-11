@@ -134,8 +134,21 @@ def test_assistant_turn_stylesheet_contract_in_source_and_bundle() -> None:
     status_contract = {
         ".console-activity-status-success": "$ds-status-ready 10%",
         ".console-activity-status-blocked": "$ds-status-blocked 16%",
+        # task-32279: the three narrowed refusal states share the blocked
+        # tint -- the state itself is carried by the word, never the colour.
+        ".console-activity-status-denied": "$ds-status-blocked 16%",
+        ".console-activity-status-blocked_off": "$ds-status-blocked 16%",
+        ".console-activity-status-blocked_kill_switch": "$ds-status-blocked 16%",
         ".console-activity-status-failed": "$ds-status-error 16%",
         ".console-activity-status-done": "$ds-surface-panel",
+    }
+    # task-32279: refusal copy is longer than the standard nine-cell column,
+    # so each one widens it the way the proprietary-thinking state already
+    # does -- otherwise "blocked (kill switch)" renders clipped.
+    status_width_contract = {
+        ".console-activity-status-denied": 15,
+        ".console-activity-status-blocked_off": 15,
+        ".console-activity-status-blocked_kill_switch": 23,
     }
 
     for entry in _STYLESHEETS:
@@ -148,6 +161,10 @@ def test_assistant_turn_stylesheet_contract_in_source_and_bundle() -> None:
             block = _css_block(text, selector)
             assert f"background: {token};" in block
             assert "color: $ds-text-primary;" in block
+        for selector, width in status_width_contract.items():
+            block = _css_block(text, selector)
+            for declaration in ("width", "min-width", "max-width"):
+                assert f"{declaration}: {width};" in block
 
         focused_status = _css_block(
             text, ".console-activity-header:focus > .console-activity-status"

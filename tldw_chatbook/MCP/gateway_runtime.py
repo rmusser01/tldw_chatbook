@@ -42,6 +42,7 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_GATE_ERROR_REFUSAL,
     LOCAL_KILL_SWITCH_REFUSAL,
     LOCAL_TIMEOUT_REFUSAL,
+    LOCAL_USER_DENY_REFUSAL,
 )
 from tldw_chatbook.MCP.local_server_tools import EXTERNAL_NO_CALLBACK_REFUSAL
 
@@ -133,6 +134,15 @@ _LOCAL_FAILURES = {
     LOCAL_DENY_REFUSAL: (
         "tool_permission_denied",
         "This local tool is disabled by operator policy.",
+    ),
+    # Qodo #7: the operator's own Deny used to arrive as LOCAL_DENY_REFUSAL
+    # and borrow the row above. It now has its own string, which must keep
+    # naming a permission denial rather than degrading to the generic
+    # `_GENERIC_LOCAL_FAILURE` -- the remote caller's error code is the only
+    # thing it has to act on.
+    LOCAL_USER_DENY_REFUSAL: (
+        "tool_permission_denied",
+        "This local tool was denied by the operator.",
     ),
     LOCAL_KILL_SWITCH_REFUSAL: (
         "local_tools_disabled",
