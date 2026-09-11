@@ -12,13 +12,19 @@ Run it against the worktree holding the card you want pictured::
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
 from textual.app import ComposeResult
 
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+
+#: This script's own location fixes the allowed root regardless of cwd --
+#: the destination must stay under the repo's Docs/ tree (Qodo #2, task-32290).
+_DOCS_ROOT = Path(__file__).resolve().parent.parent / "Docs"
 
 CALL = {
     "llm_name": "search_notes",
@@ -41,7 +47,22 @@ class _CardApp(ConsolidatedCSSApp):
 
 
 def main() -> int:
-    out = Path(sys.argv[1]).resolve()
+    """Render the approval card and write its screenshot to the requested path.
+
+    Resolves ``sys.argv[1]`` and validates it stays under this repository's
+    ``Docs/`` directory (via ``path_validation.validate_path``) before mounting
+    the app and writing anything, so a traversal or out-of-tree destination is
+    rejected instead of silently escaping the docs tree.
+
+    Returns:
+        Process exit status: ``0`` on success, ``1`` when the requested
+        destination is outside the allowed ``Docs/`` root.
+    """
+    try:
+        out = validate_path(sys.argv[1], _DOCS_ROOT)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     async def _run() -> None:
         app = _CardApp()
@@ -52,8 +73,6 @@ def main() -> int:
             await pilot.pause()
             await pilot.pause()
             app.save_screenshot(str(out))
-
-    import asyncio
 
     asyncio.run(_run())
     print(f"wrote {out}")
