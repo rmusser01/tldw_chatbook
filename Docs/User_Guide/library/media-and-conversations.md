@@ -556,7 +556,7 @@ still spans the pane.
 
 | Button | What it does |
 |---|---|
-| "Find" | Opens the search bar for the tab you are reading — the transcript on Read, the analysis on Analysis — focused and ready to type; a second press or Escape closes it. Walking with `]`/`[` keeps an active query but never moves your cursor into the field. This never filters Items. `Ctrl+F` opens it from the keyboard. On Highlights and Info it is disabled and says so — those tabs have no text to search. |
+| "Find" | Opens the search bar for the tab you are reading — the transcript on Read, the analysis on Analysis — focused and ready to type; a second press or Escape closes it. Walking with `]`/`[` keeps an active query but never moves your cursor into the field. This never filters Items. `Ctrl+F` opens it from the keyboard. When the tab you are on has nothing to search — Highlights and Info have no text — it reads "○ Find" and prints that tab's own reason on the line directly under the toolbar, not only in a tooltip (task-32362). |
 | "Use in Console" | Stages this item as context for your next Console message. |
 | "Read later" ↔ "Remove later" | Toggles the loaded item's persisted reading-list state. |
 | "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. Opening it adds one toolbar row directly beneath this one — the tab row and the reading body shift down a single line (two on a Reader too narrow to fit all four actions side by side), never off the fold — the button reads "More ▴" while the row is open, and focus stays on it so a second press closes the row. |
@@ -1221,6 +1221,10 @@ loaded the conversation list takes the columns the empty Reader was holding).*
 (task-32228: the Conversations list takes entry focus on arrival like every
 other browse list, so Up/Down walks its rows and the Escape hop -- "focus
 Items", then "focus Library" -- is live and named from the first frame).*
+
+*Verified against fix/library-crit10-export — 2026-09-11 (task-32362: a
+blocked "○ Find" prints why on the line below the Reader toolbar, matching
+the blocked Generate action's own inline reason one pane over.)*
 
 *Verified against fix/library-crit10-viewer — 2026-09-11 (task-32348: Ctrl+F
 opens the Reader's Find bar and the footer names it, the Highlights and Info

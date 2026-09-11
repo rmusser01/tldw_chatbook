@@ -30,7 +30,7 @@ from textual.app import App
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
-from tldw_chatbook.Library.library_export_scope import ExportScope
+from tldw_chatbook.Library.library_export_scope import ExportPreview, ExportScope
 from tldw_chatbook.Library.library_export_state import (
     EXPORT_BUTTON_COUNTING_TOOLTIP,
     EXPORT_RETRY_BUTTON_COPY,
@@ -217,6 +217,8 @@ async def test_apply_library_export_counts_patches_tooltip_alongside_disabled():
             # fake-self" retarget precedent).
             _export_state=SimpleNamespace(
                 scope=scope,
+                # task-32353: the counts worker's sibling preview read.
+                preview=ExportPreview(),
                 counts=None,
                 counts_request_id=1,
                 form={
@@ -238,6 +240,7 @@ async def test_apply_library_export_counts_patches_tooltip_alongside_disabled():
                 last_bytes=None,
             ),
             query_one=pilot.app.query_one,
+            query=pilot.app.query,
         )
         fake._library_entry_route_key = lambda: (LIBRARY_ROW_INGEST_EXPORT,)
         fake._library_entry_reconcile_is_current = lambda *_args: True
@@ -298,6 +301,8 @@ async def test_update_library_export_canvas_after_run_patches_receipt_and_toolti
             # `_library_export_<field>` shim is gone.
             _export_state=SimpleNamespace(
                 scope=scope,
+                # task-32353: the counts worker's sibling preview read.
+                preview=ExportPreview(),
                 counts={"media": 1, "conversations": 0, "notes": 0},
                 form={
                     "name": "x",
@@ -321,6 +326,7 @@ async def test_update_library_export_canvas_after_run_patches_receipt_and_toolti
                 last_bytes=3072,
             ),
             query_one=pilot.app.query_one,
+            query=pilot.app.query,
         )
         fake._library_structural_waits = {}
         fake._library_export_status_line = (
