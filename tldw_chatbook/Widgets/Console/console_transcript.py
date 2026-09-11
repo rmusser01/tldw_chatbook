@@ -45,6 +45,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleCitationPhase,
     ConsoleMessageRole,
     ConsoleThinkingActivityRef,
+    console_activity_status_word,
 )
 from tldw_chatbook.Chat.console_context_compaction import (
     EffectiveMemoryKind,
@@ -5251,7 +5252,7 @@ class ConsoleTranscript(VerticalScroll):
                     else:
                         activity_header = (
                             f"{activity_presentation.label} · "
-                            f"{activity_presentation.status}"
+                            f"{console_activity_status_word(activity_presentation.status)}"
                         )
                     lines.append(activity_header)
                     activity_body = _message_body(activity)

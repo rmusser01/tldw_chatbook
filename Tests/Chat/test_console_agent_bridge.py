@@ -3958,17 +3958,20 @@ def test_successful_tool_payload_collisions_stay_success_live_and_resumed(
 
 
 @pytest.mark.parametrize(
-    ("result", "expected"),
+    ("result", "tool_outcome", "activity_status"),
     [
-        (ToolResult(ok=False, error="ordinary dispatch failure"), "failed"),
+        (ToolResult(ok=False, error="ordinary dispatch failure"), "failed", "failed"),
+        # task-32279: the protocol outcome stays "blocked" -- the DISPLAY
+        # status narrows to name the authority that refused.
         (
             ToolResult.blocked("tool execution is disabled by the kill switch"),
             "blocked",
+            "blocked_kill_switch",
         ),
     ],
 )
 def test_structured_tool_failure_status_has_live_resume_parity(
-    tmp_path, result: ToolResult, expected: str
+    tmp_path, result: ToolResult, tool_outcome: str, activity_status: str
 ) -> None:
     bridge, db, store, session, aid = _bridge(
         tmp_path,
@@ -3986,8 +3989,8 @@ def test_structured_tool_failure_status_has_live_resume_parity(
     live = _tool_messages(store, session.id)
     resumed = _resume_tool_messages(db)
     tool_step = next(step for step in outcome.steps if step.kind == STEP_TOOL_RESULT)
-    assert tool_step.tool_outcome == expected
-    assert live[-1].activity_presentation.status == expected
+    assert tool_step.tool_outcome == tool_outcome
+    assert live[-1].activity_presentation.status == activity_status
     assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
 
 

@@ -1873,7 +1873,13 @@ The other run-budget ceilings are unchanged.
 3. **Deny a risky tool call.** On the card, check the row's badges (e.g.
    "(high risk)"), set its select to **Deny** (or click the fast **Deny**
    button when it's the only row), then **Submit** if needed. The agent
-   continues without that tool result.
+   continues without that tool result. The transcript marker for that call
+   then reads `· denied by you` — a call refused by a permission set to Off
+   reads `· blocked (Off)` and one stopped by the kill switch reads
+   `· blocked (kill switch)`, so you can always tell your own decision from
+   a policy. Expanding the marker shows the refusal under **Sent to the
+   model**: that text is the instruction the agent received, not output from
+   the tool.
 4. **Check what a finished background run did.** Open its tab, expand the
    **Agent** rail section, skim the step and sub-agent lines, then click
    **View full log** for the untruncated record.

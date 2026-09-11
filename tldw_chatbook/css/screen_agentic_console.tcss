@@ -2406,6 +2406,27 @@ Button.console-inspector-action:disabled {
     color: $ds-text-primary;
 }
 
+/* task-32279: the three narrowed refusal states. They share the blocked
+   tint on purpose -- which authority refused is carried by the WORD, never
+   by colour -- and each widens the standard nine-cell column to fit that
+   word, the same way the proprietary-thinking state below already does. */
+.console-activity-status-denied,
+.console-activity-status-blocked_off {
+    background: $ds-status-blocked 16%;
+    color: $ds-text-primary;
+    width: 15;
+    min-width: 15;
+    max-width: 15;
+}
+
+.console-activity-status-blocked_kill_switch {
+    background: $ds-status-blocked 16%;
+    color: $ds-text-primary;
+    width: 23;
+    min-width: 23;
+    max-width: 23;
+}
+
 .console-activity-status-failed {
     background: $ds-status-error 16%;
     color: $ds-text-primary;

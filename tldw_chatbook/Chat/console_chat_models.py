@@ -266,7 +266,16 @@ ConsoleActivityKind = Literal[
     "activity",
 ]
 ConsoleActivityStatus = Literal[
-    "success", "blocked", "failed", "done", "live", "stopped", "unavailable"
+    "success",
+    "blocked",
+    "denied",
+    "blocked_off",
+    "blocked_kill_switch",
+    "failed",
+    "done",
+    "live",
+    "stopped",
+    "unavailable",
 ]
 
 PROPRIETARY_THINKING_NOTICE = "Proprietary thinking obfuscated - not available"
@@ -296,8 +305,51 @@ _CONSOLE_ACTIVITY_KINDS = frozenset(
     }
 )
 _CONSOLE_ACTIVITY_STATUSES = frozenset(
-    {"success", "blocked", "failed", "done", "live", "stopped", "unavailable"}
+    {
+        "success",
+        "blocked",
+        "denied",
+        "blocked_off",
+        "blocked_kill_switch",
+        "failed",
+        "done",
+        "live",
+        "stopped",
+        "unavailable",
+    }
 )
+
+#: task-32279: statuses whose marker body is the refusal text sent to the
+#: MODEL rather than anything a tool produced. ``blocked`` is the generic
+#: member (an approval timeout, an unresolved decision); the three beside it
+#: name WHO refused, which a single "blocked" word could not.
+CONSOLE_ACTIVITY_REFUSAL_STATUSES = frozenset(
+    {"blocked", "denied", "blocked_off", "blocked_kill_switch"}
+)
+
+#: task-32279: the one on-screen vocabulary for an activity status, shared by
+#: the marker row and the plain-text transcript. Live evidence on dev: a call
+#: the user had just denied by hand rendered `... · blocked` -- the same word
+#: an Off entry and the kill switch produce -- so the transcript contradicted
+#: the card the user had answered a second earlier. Only statuses whose
+#: identifier is not already the right word need an entry here.
+_CONSOLE_ACTIVITY_STATUS_WORDS: Mapping[str, str] = {
+    "denied": "denied by you",
+    "blocked_off": "blocked (Off)",
+    "blocked_kill_switch": "blocked (kill switch)",
+}
+
+
+def console_activity_status_word(status: str) -> str:
+    """Return the word one activity status shows the user.
+
+    Args:
+        status: A ``ConsoleActivityStatus`` value.
+
+    Returns:
+        The user-facing word; the status itself when it already is one.
+    """
+    return _CONSOLE_ACTIVITY_STATUS_WORDS.get(status, status)
 
 
 CONSOLE_DISPATCH_UNRECONSTRUCTABLE_REASON = (
