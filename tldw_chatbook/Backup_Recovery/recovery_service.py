@@ -651,7 +651,7 @@ class RecoveryService:
     def profiles(self):
         """Enumerate locally associated restored profiles and recheck launch evidence."""
         from . import bootstrap
-        from .isolated_restore import _launch_descriptor
+        from .isolated_restore import profile_requirements
         from .journal import _Prepared
         from .recovery_copies import _journal
 
@@ -672,9 +672,16 @@ class RecoveryService:
             )
             for entry in prepared.isolated_profiles:
                 try:
-                    _launch_descriptor(entry.profile_id, self.control_root)
+                    requirements = profile_requirements(entry.profile_id, self.control_root)
                 except (OSError, ValueError, RuntimeError):
                     status = "recovery_required"
+                    requirements = {
+                        "generation": None,
+                        "required_owners": None,
+                        "pending_owners": None,
+                        "requirements_checked": False,
+                        "needs_setup": None,
+                    }
                 else:
                     status = "restoration_validated"
                 profiles[entry.profile_id] = MappingProxyType(
@@ -683,6 +690,7 @@ class RecoveryService:
                         "config": entry.config,
                         "data": entry.data,
                         "status": status,
+                        **requirements,
                     }
                 )
         return tuple(profiles[key] for key in sorted(profiles))

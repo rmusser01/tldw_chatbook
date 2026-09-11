@@ -423,15 +423,25 @@ class BackupRestoreScreen(Screen):
                     ),
                 )
             else:
+                if not entry.get("requirements_checked"):
+                    setup = "Setup requirements unavailable. Recover this profile before opening it."
+                elif entry["needs_setup"]:
+                    setup = "Needs setup\nReview these features in their settings before enabling them:\n" + "\n".join(
+                        "• " + owner.replace(".", " / ").replace("_", " ")
+                        for owner in entry["pending_owners"]
+                    )
+                else:
+                    setup = "Owner reviews complete. Optional features may still require setup."
                 await listing.mount(
                     Static(
-                        f"{entry['profile_id']}\n{entry['config']}\n{entry['data']}\n{entry['status']}",
+                        f"{entry['profile_id']}\n{entry['config']}\n{entry['data']}\n{entry['status']}\n{setup}",
                         markup=False,
                     ),
                     Button(
                         "Open in new process",
                         name=entry["profile_id"],
                         classes="backup-open-profile",
+                        disabled=not entry.get("requirements_checked"),
                     ),
                 )
         for row, state in pending:

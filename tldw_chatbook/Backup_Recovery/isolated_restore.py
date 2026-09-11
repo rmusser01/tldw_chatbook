@@ -201,6 +201,11 @@ def _finish_isolated(
 
 
 def _launch_descriptor(profile_id: str, control_root: Path) -> _IsolatedProfile:
+    """Return the verified profile entry without changing its launch contract."""
+    return _launch_state(profile_id, control_root)[0]
+
+
+def _launch_state(profile_id: str, control_root: Path):
     """Read actual committed local association; a catalog is only a locator."""
     from . import bootstrap
     from .activation import ActivationStore, _private
@@ -268,7 +273,28 @@ def _launch_descriptor(profile_id: str, control_root: Path) -> _IsolatedProfile:
         data == Path(path) or Path(path) in data.parents for path in profile["roots"]
     ):
         raise ValueError("isolated_data_uncovered")
-    return entry
+    return entry, witness
+
+
+def profile_requirements(profile_id: str, control_root: Path) -> dict:
+    """Present checked owner requirements without granting or probing capabilities."""
+    from .activation import ActivationStore
+
+    entry, witness = _launch_state(profile_id, control_root)
+    required = tuple(witness["owners"])
+    store = ActivationStore(Path(witness["store_root"]))
+    pending = tuple(
+        owner for owner in required if not store.allowed(witness["generation"], owner)
+    )
+    if _launch_state(profile_id, control_root) != (entry, witness):
+        raise ValueError("isolated_activation_changed")
+    return {
+        "generation": witness["generation"],
+        "required_owners": required,
+        "pending_owners": pending,
+        "requirements_checked": True,
+        "needs_setup": bool(pending),
+    }
 
 
 def _launch_environment() -> dict[str, str]:
