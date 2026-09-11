@@ -13344,6 +13344,7 @@ had added for the new behaviour was green; only the whole FILE showed it.
 cursor. And when a change adds a write inside an existing method, run that
 method's whole test FILE, not just your new test: the tests that catch a
 clobbered out-parameter are the ones you did not write.
+
 ## A refusal path needs its own test, or it will lose both its name and its cleanup (task-32243, 2026-09-11)
 
 Library ▸ Notes lasting sync shipped on 2026-08-21 with a working happy path and

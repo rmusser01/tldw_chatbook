@@ -179,10 +179,14 @@ CONVERSATION_SCOPE_ALL = "all"
 # ships `[[target|title]]`), while the tail is what survived both and what any
 # further link-text change must keep.
 #
-# The target character class matches the importer's own link grammar
-# (`note_import_plan_models._NOTE_LINK_TAIL`: `note://[^()\s]*`), so what this
-# extracts and what the importer writes cannot drift apart. Ids are UUIDs or
-# validated opaque import ids, so the excluded characters never appear in one.
+# The target character class mirrors the importer's own link grammar
+# (`note_import_plan_models._NOTE_LINK_TAIL`: `note://[^()\s]*`). They are two
+# separate literals and nothing here stops them drifting; what does is
+# `Tests/Notes/test_note_backlink_query.py::
+# test_backlinks_find_the_display_text_link_form_the_importer_writes`, which
+# builds the link through the production `rewrite_wikilinks` and asserts this
+# extractor finds it. Ids are UUIDs or validated opaque import ids, so the
+# excluded characters never appear in one.
 _NOTE_LINK_TARGET_RE = re.compile(r"\(note://([^()\s]+)\)")
 
 

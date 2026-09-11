@@ -2570,6 +2570,7 @@ Echo the assembled escape once before sending it: a real SGR click is
 A click that "does nothing" is more often a malformed escape than a broken app,
 and if a text field has focus the malformed escape becomes input — check the
 note body before blaming the feature.
+
 ## A performance claim gets re-measured at the commit it was made on, before you go hunting (TASK-32260, 2026-09-11)
 
 **What happened.** The critique reported Library opening in 12.6 s on a
