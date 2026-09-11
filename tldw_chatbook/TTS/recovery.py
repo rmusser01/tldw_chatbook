@@ -1,10 +1,11 @@
 """Installed TTS profiles and voice inventory, without runtime constructors."""
 
+import hashlib
+import sqlite3
+import sys
 from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
-import sqlite3
-import hashlib
 from threading import Event
 
 from tldw_chatbook.Backup_Recovery.models import (
@@ -15,8 +16,8 @@ from tldw_chatbook.Backup_Recovery.models import (
 )
 from tldw_chatbook.Backup_Recovery.profile_paths import (
     database_path,
-    setting,
     lexical_path,
+    setting,
 )
 from tldw_chatbook.Backup_Recovery.recovery_files import _RawDeclaration
 from tldw_chatbook.DB.recovery_operations import _SQLiteDeclaration
@@ -66,10 +67,7 @@ class _Profiles(_SQLiteDeclaration):
         for payload, count, digest in connection.execute(
             "SELECT wav_bytes,byte_length,sha256 FROM tts_profile_clone_references"
         ):
-            if (
-                len(payload) != count
-                or hashlib.sha256(payload).hexdigest() != digest
-            ):
+            if len(payload) != count or hashlib.sha256(payload).hexdigest() != digest:
                 return ("tts_reference_digest_mismatch",)
         return ()
 
@@ -193,6 +191,32 @@ class _Voices(_RawDeclaration):
         ):
             value = setting(config, route, key, base)
             roots += (lexical_path(value) if value is not None else fallback,)
+        # Actual admitted constructor selections may differ from a saved
+        # configuration. Never expand reviewed roots from process-local state.
+        # A loaded finite owner can add refusal evidence only; cold discovery
+        # remains constructor-free and follows the installed configuration routes.
+        lifetime = sys.modules.get("tldw_chatbook.TTS.loose_voice_lifetime")
+        observed = (
+            () if lifetime is None else lifetime.observed_sources(context.config_path)
+        )
+        uncovered = tuple(
+            StorageItem(
+                self.owner_id,
+                storage_logical_id(
+                    context,
+                    self.owner_id,
+                    "uncovered_live_source-"
+                    + hashlib.sha256(str(root).encode()).hexdigest(),
+                ),
+                root,
+                "unsupported",
+                (),
+            )
+            for root, resolved, identity in observed
+            if not any(
+                root == declared or root.is_relative_to(declared) for declared in roots
+            )
+        )
         # Dedup only identical lexical roots; resolving symlink/hardlink aliases
         # here would hide the inventory's existing physical-alias diagnostics.
         entries = tuple(
@@ -250,6 +274,7 @@ class _Voices(_RawDeclaration):
             )
             for item in members.values()
         )
+        entries += uncovered
         if discovery_changed:
             entries += (
                 StorageItem(
@@ -260,22 +285,15 @@ class _Voices(_RawDeclaration):
                     (),
                 ),
             )
-        if any(item.status in {"included", "included_directory"} for item in entries):
-            entries += (
-                StorageItem(
-                    self.owner_id,
-                    storage_logical_id(context, self.owner_id, "participant_pending"),
-                    None,
-                    "unsupported",
-                    (),
-                ),
-            )
+        # Installed loose voice operations retain exact native source admission
+        # through their final publication. The live storage drain, not a blanket
+        # inventory marker, refuses accepted work that has not actually settled.
         # Migration journal/candidates/rollback slots are independently bounded
         # exact owner names. Their presence requires existing owner reconciliation;
         # discovery never replays or treats them as generic disposable outputs.
         from .profile_migration_journal import (
-            PROFILE_MIGRATION_JOURNAL_LEAF,
             PROFILE_MIGRATION_CANDIDATE_LEAVES,
+            PROFILE_MIGRATION_JOURNAL_LEAF,
             PROFILE_MIGRATION_ROLLBACK_LEAVES,
         )
 

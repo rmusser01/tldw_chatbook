@@ -33,7 +33,7 @@ items = voices.discover(config)
 included = {item.path for item in items if item.status == 'included'}
 assert set(files) <= included, ('actual saved voice sources omitted', set(files) - included)
 assert len([item.path for item in items if item.path]) == len({item.path for item in items if item.path})
-assert any(item.path is None and item.status == 'unsupported' for item in items)
+assert not any(item.status == 'unsupported' for item in items)
 assert all(path.read_text() == '{}' for path in files)
 assert 'tldw_chatbook.TTS.backends.higgs' not in sys.modules
 assert 'tldw_chatbook.TTS.backends.chatterbox' not in sys.modules

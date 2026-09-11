@@ -109,12 +109,12 @@ def test_probe_checks_shared_alias_group_and_leaves_disjoint_group_available(
     release(requester)
 
 
-def test_registry_contention_is_a_nonblocking_conservative_hint(registered):
+def test_registry_contention_defers_a_nonblocking_pause_observation(registered):
     authority, _ = registered
     with authority._directory() as parent:
         with authority._lock(parent, "registry.lock", fcntl.LOCK_EX):
             started = time.monotonic()
-            assert authority.pause_requested(("a",)) is True
+            assert authority.pause_requested(("a",)) is False
             assert time.monotonic() - started < 0.5
     assert authority.pause_requested(("a",)) is False
 

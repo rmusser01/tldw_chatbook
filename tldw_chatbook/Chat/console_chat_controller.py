@@ -2398,7 +2398,10 @@ class ConsoleChatController:
     async def _run_maintenance_agent_call(self, function, **kwargs):
         # The native bridge call survives caller cancellation. Keep its task
         # until it really returns, while the existing caller handles Stop.
-        task = self._retain_maintenance_task(asyncio.to_thread(function, **kwargs))
+        from tldw_chatbook.Agents.activation import worker_guard
+
+        worker = worker_guard(self._agent_bridge)(function)
+        task = self._retain_maintenance_task(asyncio.to_thread(worker, **kwargs))
         return await asyncio.shield(task)
 
     def lifecycle_impact(

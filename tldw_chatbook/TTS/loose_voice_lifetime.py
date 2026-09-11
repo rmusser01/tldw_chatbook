@@ -20,11 +20,27 @@ from weakref import WeakKeyDictionary
 
 from tldw_chatbook.Backup_Recovery import bootstrap
 from tldw_chatbook.Backup_Recovery import storage_admission as storage
-from tldw_chatbook.Backup_Recovery.profile_paths import lexical_path
+from tldw_chatbook.Backup_Recovery.profile_paths import (
+    effective_config_path,
+    lexical_path,
+)
 
 _current = ContextVar("tts_voice_operation", default=None)
 _sources = WeakKeyDictionary()
+# Retain the finite selected paths after short-lived catalog/manager objects go
+# away. These are refusal evidence, never additional discovery/capture authority.
+_observed_sources = {}
 _native = ContextVar("tts_voice_native", default=None)
+
+
+def observed_sources(config_path):
+    """Return immutable observations from actual admitted installed voice calls."""
+    with storage._lock:
+        return tuple(
+            (root, *binding)
+            for (profile, root), binding in _observed_sources.items()
+            if profile == lexical_path(config_path)
+        )
 
 
 def native():
@@ -84,6 +100,8 @@ class _Call:
                 _sources[self.receiver] = (root, resolved, identity)
             else:
                 raise bootstrap.RecoveryRequired("tts_voice_root_changed")
+        with storage._lock:
+            _observed_sources[(effective_config_path(), root)] = (resolved, identity)
         if root != self.source:
             raise bootstrap.RecoveryRequired("tts_voice_root_changed")
         selected = lexical_path(path)

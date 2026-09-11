@@ -553,8 +553,10 @@ class Admission:
     def pause_requested(self, namespaces: tuple[str, ...]) -> bool:
         """Probe native contention without waiting or granting capture authority.
 
-        Registry contention is conservatively a pause hint. Missing, unsafe,
-        replaced or pending evidence refuses. The holder must retain its normal
+        Registry contention defers this observation: registering source scopes
+        is not a request to retire a live app. Only a validated contended gate
+        requests pause. Missing, unsafe, replaced or pending evidence refuses.
+        The holder must retain its normal
         lease until its actual producers and resources retire; this observation
         never acknowledges drain and creates no durable request/ack records.
         """
@@ -565,7 +567,7 @@ class Admission:
             try:
                 fcntl.flock(registry_fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
             except BlockingIOError:
-                return True
+                return False
             registry = self._read(parent)
             group = self._groups(registry, names)
             if any(registry.entries[name].pending for name in group):
