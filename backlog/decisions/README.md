@@ -112,6 +112,8 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-145](145-reviewed-petdex-import-and-pinned-https.md) | Accepted; destination partially superseded by ADR-146 | Import reviewed Petdex artwork with pinned HTTPS and preserved native notices. |
 | [ADR-146](146-independent-buddy-petdex-publication-and-character-creation.md) | Accepted | Publish reviewed Petdex artwork to an independent Buddy and create durable characters through guarded management entry points. |
 | [ADR-147](147-conversation-archive-and-exact-resume.md) | Accepted | Preserve saved chat identity through reversible archive, scoped search, transcript review and exact Console resume. |
+| [ADR-148](148-network-chat-ircv3-and-tldw-pydle-boundary.md) | Accepted; ADR-149 amendments proposed | Preserve the approved Network Chat ownership and separately maintained Codeberg pydle fork boundary. |
+| [ADR-149](149-network-chat-handoff-reliability-amendments.md) | Proposed | Clarify bounded callback/transport delivery, late-reply isolation, current screen lifecycle and truthful release completion for the PTO handoff. |
 
 ## Historical Decision Material
 
