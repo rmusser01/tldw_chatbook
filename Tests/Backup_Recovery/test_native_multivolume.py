@@ -2,7 +2,7 @@
 
 Set TLDW_TEST_APFS_MOUNT to the mounted private test image. The surrounding
 fixture owns image attachment/detachment; these tests create only private children.
-Raw primitive success does not qualify destination publication.
+Raw primitive receipts precede the reviewed installed publication-only row.
 """
 
 import json
@@ -99,6 +99,12 @@ def test_actual_image_distinct_parent_barriers_and_lost_acknowledgement(tmp_path
 def test_actual_image_four_process_file_and_tree_races(tmp_path):
     evidence = _run_image_case(tmp_path, _RACES, "race-evidence.json")
     assert all(row["outcomes"].count("published") == 1 for row in evidence["cases"])
+
+
+def test_actual_image_normal_publication_wrappers(tmp_path):
+    evidence = _run_image_case(tmp_path, _WRAPPERS, "wrapper-evidence.json")
+    assert evidence["image_admission"] == "refused_before_creation"
+    assert len(evidence["existing_cases"]) == 27
 
 
 # Raw evidence uses the installed ungated primitives. It never replaces a
@@ -319,6 +325,122 @@ receipt('race-evidence.json',{'cases':facts})
 )
 
 
+_WRAPPERS = (
+    _PROTOCOL_SETUP
+    + r"""
+import select,subprocess,sys
+import pytest
+from Tests.Backup_Recovery import test_native_files as existing
+from tldw_chatbook.Backup_Recovery.qualification import qualified_for
+from tldw_chatbook.Backup_Recovery.admission import Admission,AdmissionError
+assert all(qualified_for(name,image)[0] for name in ('publish_new','publish_file','publish_directory'))
+assert qualified_for('admission',image)==(False,'operation_not_qualified')
+try:Admission(image/'control')
+except AdmissionError as error:assert str(error)=='operation_not_qualified'
+else:raise AssertionError('image admission granted')
+assert not (image/'control').exists()
+checks=[]
+def check(function,*args,patched=False):
+    path=image/('existing-'+str(len(checks)));path.mkdir(mode=0o700)
+    if patched:
+        with pytest.MonkeyPatch.context() as patch:function(path,patch,*args)
+    else:function(path,*args)
+    checks.append([function.__name__,*args])
+for kind in ('file','empty_directory','populated_directory'):check(existing.test_qualified_publication,kind)
+check(existing.test_unqualified_operations_and_symlink_storage_are_visible)
+for kind in ('symlink','hardlink','fifo'):check(existing.test_non_private_staged_objects_are_refused,kind)
+check(existing.test_publication_race_has_exactly_one_winner)
+check(existing.test_directory_publication_refuses_linked_payload)
+for kind in ('symlink','hardlink','directory'):check(existing.test_preexisting_target_of_any_type_is_preserved,kind)
+check(existing.test_native_directory_full_flush_supported)
+for kind in ('file','directory'):check(existing.test_full_flush_occurs_after_publication,kind,patched=True)
+check(existing.test_failed_post_publication_full_flush_preserves_published_evidence,patched=True)
+for invalid in ('missing_protocol','unsupported_protocol','previous_protocol','boolean_protocol','string_operations','mixed_operations','missing_operations','unknown_operation','unknown_field','boolean_schema','wrong_rows_type'):
+    check(existing.test_malformed_qualification_evidence_never_grants_capability,invalid,patched=True)
+assert len(checks)==27
+distinct=[]
+for kind in ('file','empty_directory','populated_directory'):
+    case=image/('distinct-'+kind);case.mkdir(mode=0o700)
+    a,b=case/'from',case/'to';a.mkdir(mode=0o700);b.mkdir(mode=0o700)
+    source,target=a/'candidate',b/'published'
+    if kind=='file':source.write_bytes(b'wrapper bytes')
+    else:
+        source.mkdir(mode=0o700)
+        if kind=='populated_directory':(source/'payload').write_bytes(b'wrapper bytes')
+    os.utime(source,ns=(1600000000000000000,1600000000000000000));before=source.stat()
+    events=[];real=fcntl.fcntl;parents=[b.stat().st_ino,a.stat().st_ino]
+    def observe(fd,command,*args):
+        result=real(fd,command,*args)
+        if command==fcntl.F_FULLFSYNC:events.append((os.fstat(fd).st_ino,source.exists(),target.exists()))
+        return result
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(native.fcntl,'fcntl',observe)
+        native.publish_new(source,target)
+    assert not source.exists() and target.stat().st_ino==before.st_ino and target.stat().st_mtime_ns==before.st_mtime_ns
+    assert stat.S_IMODE(target.stat().st_mode)==(0o600 if kind=='file' else 0o700)
+    parent_events=[event for event in events if event[0] in parents]
+    assert parent_events==[(parents[0],False,True),(parents[1],False,True)],events
+    assert (before.st_ino,True,False) in events
+    if kind=='file':assert target.read_bytes()==b'wrapper bytes'
+    if kind=='populated_directory':assert (target/'payload').read_bytes()==b'wrapper bytes'
+    distinct.append({'kind':kind,'events':events,'inode':target.stat().st_ino})
+cross=root/'host'/'cross-source';cross.write_bytes(b'host candidate')
+try:native.publish_new(cross,image/'cross-target')
+except OSError as error:assert str(error)=='cross_volume_publication_unqualified',error
+else:raise AssertionError('cross-device wrapper accepted')
+assert cross.read_bytes()==b'host candidate' and not (image/'cross-target').exists()
+changed=[]
+for side in ('source','target'):
+    case=image/('changed-'+side);case.mkdir(mode=0o700)
+    a,b=case/'from',case/'to';a.mkdir(mode=0o700);b.mkdir(mode=0o700)
+    source,target=a/'candidate',b/'published';source.write_bytes(b'preserved candidate')
+    identities=tuple((path.stat().st_dev,path.stat().st_ino) for path in (a,b))
+    moved=a if side=='source' else b;held=case/'held';moved.rename(held);moved.mkdir(mode=0o700)
+    try:native.publish_new(source,target,parent_identities=identities)
+    except OSError as error:assert str(error)=='publication_parent_changed',error
+    else:raise AssertionError('changed pinned parent accepted')
+    actual_source=held/'candidate' if side=='source' else source
+    assert actual_source.read_bytes()==b'preserved candidate' and not target.exists()
+    changed.append(side)
+race=image/'tree-race';race.mkdir(mode=0o700)
+sources=[race/str(i) for i in range(4)];target=race/'winner'
+for i,source in enumerate(sources):source.mkdir(mode=0o700);(source/'payload').write_text(str(i))
+inodes=[source.stat().st_ino for source in sources]
+code=r'''
+from Tests.network_guard import install
+install()
+import sys
+from pathlib import Path
+from tldw_chatbook.Backup_Recovery.native_files import publish_new
+source,target=map(Path,sys.argv[1:])
+print('ready',flush=True)
+assert sys.stdin.readline()=='go\n'
+try:publish_new(source,target)
+except FileExistsError:print('exists',flush=True)
+else:print('published',flush=True)
+'''
+children=[subprocess.Popen([sys.executable,'-u','-c',code,str(source),str(target)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True) for source in sources]
+try:
+    for child in children:
+        assert select.select([child.stdout],[],[],10)[0]
+        assert child.stdout.readline().strip()=='ready'
+    for child in children:child.stdin.write('go\n');child.stdin.flush()
+    outputs=[child.communicate(timeout=10) for child in children]
+    assert all(child.returncode==0 for child in children),outputs
+    outcomes=[out.strip() for out,error in outputs]
+    assert outcomes.count('published')==1 and outcomes.count('exists')==3,outcomes
+    winner=outcomes.index('published');assert target.stat().st_ino==inodes[winner] and not sources[winner].exists()
+    assert (target/'payload').read_text()==str(winner)
+    for index,source in enumerate(sources):
+        if index!=winner:assert source.stat().st_ino==inodes[index] and (source/'payload').read_text()==str(index)
+finally:
+    for child in children:
+        if child.poll() is None:child.kill();child.wait(timeout=3)
+receipt('wrapper-evidence.json',{'existing_cases':checks,'distinct_parent_cases':distinct,'changed_parents':changed,'cross_device':'refused_source_intact','tree_race':outcomes,'image_admission':'refused_before_creation'})
+"""
+)
+
+
 _RAW = r"""
 from Tests.network_guard import install, blocked_attempts
 install()
@@ -387,12 +509,11 @@ assert run.returncode==23 and not (death/'source').exists() and (death/'publishe
 facts['raw'].append('process_exit_after_raw_rename')
 candidate = raw/'gated-candidate'
 candidate.write_bytes(b'unqualified candidate');candidate.chmod(0o600)
-if not facts['qualification']['image']['publish_new'][0]:
-    try: publish_new(candidate,raw/'gated-target')
-    except OSError as error: assert str(error)==facts['qualification']['image']['publish_new'][1],error
-    else: raise AssertionError('unqualified publication accepted')
-    assert candidate.read_bytes()==b'unqualified candidate' and not (raw/'gated-target').exists()
-    facts['gated_publication']='refused_before_mutation'
+assert all(facts['qualification']['image'][name][0] for name in ('publish_new','publish_file','publish_directory'))
+publish_new(candidate,raw/'gated-target')
+assert not candidate.exists() and (raw/'gated-target').read_bytes()==b'unqualified candidate'
+facts['gated_publication']='qualified_publication_passed'
+assert not facts['qualification']['image']['admission'][0]
 if not facts['qualification']['image']['admission'][0]:
     try: Admission(raw/'control')
     except AdmissionError as error: assert str(error)==facts['qualification']['image']['admission'][1],error

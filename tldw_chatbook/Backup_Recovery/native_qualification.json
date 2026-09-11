@@ -23,6 +23,30 @@
       ],
       "date": "2026-09-07",
       "scope": "Native primitive and cooperative admission only; no isolated restore or replacement qualification."
+    },
+    {
+      "identity": {
+        "os": "Darwin",
+        "release": "25.5.0",
+        "arch": "arm64",
+        "python": "3.12.11",
+        "filesystem": "apfs",
+        "flags": 76583448
+      },
+      "operations": [
+        "publish_new",
+        "publish_file",
+        "publish_directory"
+      ],
+      "protocol": 2,
+      "tests": [
+        "Tests/Backup_Recovery/test_native_multivolume.py::test_actual_image_primitives_and_normal_qualification_boundary",
+        "Tests/Backup_Recovery/test_native_multivolume.py::test_actual_image_private_tree_flush_and_unsafe_topology",
+        "Tests/Backup_Recovery/test_native_multivolume.py::test_actual_image_distinct_parent_barriers_and_lost_acknowledgement",
+        "Tests/Backup_Recovery/test_native_multivolume.py::test_actual_image_four_process_file_and_tree_races"
+      ],
+      "date": "2026-09-11",
+      "scope": "Native publication primitives on the observed disposable APFS image identity only; no admission, isolated restore, replacement, or physical power-loss qualification."
     }
   ]
 }
