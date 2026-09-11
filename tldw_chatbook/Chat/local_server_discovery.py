@@ -30,6 +30,7 @@ from tldw_chatbook.Chat.provider_endpoint_contract import (
     normalize_provider_key_for_contract,
     resolve_provider_endpoint,
 )
+from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
 
 DISCOVERY_PROBE_TIMEOUT_SECONDS = 2.5
 MODEL_PROBE_RESPONSE_MAX_BYTES = 1024 * 1024
@@ -451,6 +452,7 @@ async def _get_models_payload(
     return model_ids, ""
 
 
+@_provider_recovery.unqualified
 async def probe_models_endpoint(
     base_url: str,
     *,
@@ -523,6 +525,7 @@ async def probe_models_endpoint(
     return LocalModelProbeResult(ok=True, base_url=normalized, model_ids=model_ids)
 
 
+@_provider_recovery.unqualified
 async def discover_local_servers(
     app_config: Mapping[str, object],
     *,
