@@ -47,6 +47,7 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 **Cause, proven.** Reproduced live at 235x52 on a seeded profile
 (`wave3-caps/list-tree/12-select-counters-before.txt`): the toolbar reads
 "1 selected" and the line below reads "0 selected". The Notes canvas
@@ -72,3 +73,4 @@ toggles a single row and asserts both labels, in both directions (RED:
 **Files.** `tldw_chatbook/UI/Library_Modules/canvas_sync.py`,
 `Tests/UI/test_library_multiselect_notes.py`,
 `Docs/User_Guide/library/notes.md`.
+<!-- SECTION:NOTES:END -->

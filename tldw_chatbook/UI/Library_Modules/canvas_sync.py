@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 from textual.widget import Widget
-from textual.widgets import Button, Static
+from textual.widgets import Button
 
 from ...Library.library_notes_state import LibraryNotesFocusIdentity
 from ...Library.library_shell_state import (
@@ -241,7 +241,6 @@ def _apply_library_row_toggle(
             else f"_library_{kind}_row_selection"
         )
         selection = operator.attrgetter(row_selection_attribute)(screen)
-        count_static = screen.query_one(f"#library-{kind}-selected-count", Static)
         export_button = screen.query_one(f"#library-{kind}-export-selected", Button)
         checked = selection.is_selected(row_id)
         marker = "☑" if checked else "☐"
@@ -271,13 +270,18 @@ def _apply_library_row_toggle(
         # and the status line under it -- and compose reads one field for
         # both. Patching only the toolbar one left the pane reading
         # "1 selected" above "0 selected" (reproduced live at 235x52,
-        # caps/12-select-counters-before.txt). One label string, written to
-        # every count this kind renders; the `query` is empty for the kinds
-        # that have only the toolbar counter.
+        # caps/12-select-counters-before.txt).
+        #
+        # One label string, written to every count this kind renders, found
+        # by CLASS rather than by a hand-listed set of ids: the next count
+        # renderer opts in by wearing `library-<kind>-selection-count` at
+        # compose time instead of by someone remembering this function
+        # exists -- which is the failure mode being fixed. The mounted-strip
+        # existence check the fallback depends on is the `export_button`
+        # lookup above; an empty class query would not raise.
         count_label = f"{selection.count} selected"
-        count_static.update(count_label)
-        for status_static in screen.query(f"#library-{kind}-selection-status"):
-            status_static.update(count_label)
+        for count_static in screen.query(f".library-{kind}-selection-count"):
+            count_static.update(count_label)
         export_button.disabled = selection.count == 0
         # F-018: the reason/action tooltip flips in place with `disabled`
         # (this patcher deliberately avoids a recompose, so the compose-

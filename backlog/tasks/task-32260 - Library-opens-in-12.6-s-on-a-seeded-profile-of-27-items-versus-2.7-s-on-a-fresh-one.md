@@ -46,6 +46,7 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 **Profiled before optimising, and there is nothing to optimise.** The
 critique's profile was rebuilt with the same seed script (10 notes, 11
 media, 6 conversations = 27 items) and the open was measured on an
@@ -83,3 +84,4 @@ budget the empty destination tour uses — which the reported 12.6 s would
 fail.
 
 **Files.** `Tests/Performance/test_ui_latency_guardrails.py`.
+<!-- SECTION:NOTES:END -->

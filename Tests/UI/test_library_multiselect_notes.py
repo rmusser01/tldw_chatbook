@@ -394,6 +394,7 @@ async def test_both_notes_selection_counts_move_together_on_one_toggle():
     app._notes_state = SimpleNamespace(row_selection=RowSelection("notes"))
 
     async with app.run_test() as pilot:
+
         def counts() -> list[str]:
             return [
                 str(app.query_one(selector).renderable).strip()

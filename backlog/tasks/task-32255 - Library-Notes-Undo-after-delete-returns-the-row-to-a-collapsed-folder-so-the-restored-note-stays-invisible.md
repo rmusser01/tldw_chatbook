@@ -45,6 +45,7 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 **What reproduced, and what did not.** The reported case — delete a note
 from a folder, collapse the folder, press Undo — was driven live at 235x52
 on a seeded profile at dev 4a14b3f36f and the row came back VISIBLE and
@@ -81,3 +82,4 @@ visible and selected).
 **Files.** `tldw_chatbook/UI/Screens/library_screen.py`,
 `Tests/UI/test_library_notes_wave_list.py`,
 `Docs/User_Guide/library/notes.md`.
+<!-- SECTION:NOTES:END -->

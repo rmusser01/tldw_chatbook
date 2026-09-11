@@ -242,7 +242,7 @@ def _point_config_at_seeded_databases(home: Path) -> None:
     data = home / "library-budget-data"
     config_file.write_text(
         config_file.read_text()
-        + "\n[general]\nusers_name = \"budget\"\n\n[database]\n"
+        + '\n[general]\nusers_name = "budget"\n\n[database]\n'
         + f'chachanotes_db_path = "{data / "chachanotes.db"}"\n'
         + f'media_db_path = "{data / "media.db"}"\n'
     )
@@ -271,26 +271,47 @@ async def test_library_opens_within_budget_on_a_seeded_profile(
         arrived, _ = await _wait_for_screen(
             pilot, "LibraryScreen", SCREEN_SWITCH_BUDGET_SECONDS
         )
-        elapsed = asyncio.get_running_loop().time() - started
-        # The seeding has to actually reach the app, or this pin measures an
-        # empty profile forever and says nothing about the case it names.
-        for _ in range(40):
+        arrival = asyncio.get_running_loop().time() - started
+        # The counts are the SLOW half -- 0.68 s to the painted shell against
+        # 1.01 s to resolved counts -- so the clock only stops once they are
+        # on screen. Waiting a fixed number of passes and billing none of it
+        # would leave the reported regression class unmeasured. They are also
+        # what proves this pin is not quietly measuring an empty profile.
+        counted: list[str] = []
+        deadline = started + SCREEN_SWITCH_BUDGET_SECONDS
+        while not counted and asyncio.get_running_loop().time() < deadline:
             await asyncio.sleep(_SETTLE_INTERVAL)
             await pilot.pause()
-        painted = [str(widget.renderable) for widget in app.screen.query(Static)]
-        counted = [text for text in painted if "Notes (" in text]
+            counted = [
+                str(widget.renderable)
+                for widget in app.screen.query(Static)
+                if "Notes (" in str(widget.renderable)
+            ]
+        settled = asyncio.get_running_loop().time() - started
+        stuck_on = type(app.screen).__name__
 
-    assert counted and (
+    item_count = (
+        SEEDED_PROFILE_NOTES + SEEDED_PROFILE_MEDIA + SEEDED_PROFILE_CONVERSATIONS
+    )
+    budget_note = (
+        f"budget {SCREEN_SWITCH_BUDGET_SECONDS}s; measured 1.1 s on an "
+        "M-series Mac at dev 4a14b3f36f, task-32260"
+    )
+    # Latency first, content second: a real overrun must report as an
+    # overrun, not as a seeding failure.
+    assert arrived, (
+        f"Library never opened on a {item_count}-item profile "
+        f"(stuck on {stuck_on}; {budget_note})"
+    )
+    assert counted, (
+        f"Library arrived in {arrival:.1f}s but its counts never resolved "
+        f"within the budget on a {item_count}-item profile ({budget_note})"
+    )
+    assert settled <= SCREEN_SWITCH_BUDGET_SECONDS, (
+        f"Library took {settled:.1f}s to open and settle (arrival "
+        f"{arrival:.1f}s) on a {item_count}-item profile ({budget_note})"
+    )
+    assert (
         f"Notes ({SEEDED_PROFILE_NOTES})" in counted[0]
         and f"Media ({SEEDED_PROFILE_MEDIA})" in counted[0]
     ), f"the seeded profile never reached the screen: {counted[:3]}"
-    assert arrived, (
-        "Library never opened on a seeded profile "
-        f"(stuck on {type(app.screen).__name__})"
-    )
-    assert elapsed <= SCREEN_SWITCH_BUDGET_SECONDS, (
-        f"Library took {elapsed:.1f}s to open on a "
-        f"{SEEDED_PROFILE_NOTES + SEEDED_PROFILE_MEDIA + SEEDED_PROFILE_CONVERSATIONS}"
-        f"-item profile (budget {SCREEN_SWITCH_BUDGET_SECONDS}s; measured "
-        "1.1 s on an M-series Mac at dev 4a14b3f36f, task-32260)"
-    )

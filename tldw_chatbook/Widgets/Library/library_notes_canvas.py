@@ -210,10 +210,18 @@ def compose_note_row_label(
 ) -> str:
     """Render one Notes list row label: title, folder, age, tie-break.
 
-    The single renderer for BOTH list paths (task-32137). The flat list used
+    The one renderer both list paths call (task-32137). The flat list used
     to put the age on a second line of its own -- a branch nothing reached
     once a folder tree existed -- while the tree rows carried no age at all,
     so two notes titled "Reading list" rendered as identical rows.
+
+    Calling it is not the same as feeding it: only the TREE path passes
+    ``folder_label`` and ``tiebreak_label``, so only the tree path tells
+    duplicates apart. The flat fallback runs solely when there is no tree
+    projection at all, and its row records carry neither a folder nor a
+    clock to disambiguate WITH -- widening it would mean widening
+    ``LibraryNotesListRow`` for a path no live visit reaches, so the flat
+    path deliberately keeps title-and-age (task-32254).
 
     Args:
         title: The note title, already markup-escaped.
@@ -233,7 +241,9 @@ def compose_note_row_label(
     )
 
 
-def note_row_tiebreak_labels(rows: Sequence[Any]) -> dict[str, str]:
+def note_row_tiebreak_labels(
+    rows: Sequence[LibraryNotesTreeRow],
+) -> dict[str, str]:
     """Return a third key per placement, for rows that still collide.
 
     task-32254: task-32137's folder-then-age discriminator is a no-op in
@@ -255,7 +265,7 @@ def note_row_tiebreak_labels(rows: Sequence[Any]) -> dict[str, str]:
     Returns:
         ``placement_id -> label``, holding only the colliding rows.
     """
-    groups: dict[tuple[str, str, str], list[Any]] = defaultdict(list)
+    groups: dict[tuple[str, str, str], list[LibraryNotesTreeRow]] = defaultdict(list)
     for row in rows:
         if row.kind == "note":
             groups[(row.folder_id or "", row.label, row.age_label)].append(row)
@@ -263,7 +273,7 @@ def note_row_tiebreak_labels(rows: Sequence[Any]) -> dict[str, str]:
     for group in groups.values():
         if len(group) < 2:
             continue
-        clocks = [getattr(row, "clock_label", "") for row in group]
+        clocks = [row.clock_label for row in group]
         if all(clocks) and len(set(clocks)) == len(group):
             for row, clock in zip(group, clocks, strict=True):
                 tiebreakers[row.placement_id] = clock
@@ -1274,7 +1284,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 yield Static(
                     f"{list_state.selected_count} selected",
                     id="library-notes-selected-count",
-                    classes="library-toolbar-count",
+                    classes="library-toolbar-count library-notes-selection-count",
                     markup=False,
                 )
                 yield Button(
@@ -1329,6 +1339,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             yield Static(
                 f"{list_state.selected_count} selected",
                 id="library-notes-selection-status",
+                # task-32272: the class, not the id, is what the in-place
+                # toggle patcher looks for -- a new count renderer opts in
+                # by wearing it rather than by someone remembering that
+                # `_apply_library_row_toggle` exists.
+                classes="library-notes-selection-count",
                 markup=False,
             )
         else:

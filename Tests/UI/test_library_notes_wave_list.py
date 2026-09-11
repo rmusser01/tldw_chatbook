@@ -717,6 +717,23 @@ async def test_undo_opens_the_restored_folder_even_when_its_reload_fails(
         "the restored note's folder stayed shut, so the row it holds is "
         "invisible and the failed reload says nothing"
     )
+    # ...and "says nothing" is the half that needs pinning: an open folder
+    # is only an improvement if what it opens onto names the failure and
+    # offers the retry. The guide promises this row by name. Proved to have
+    # teeth by letting the reload succeed, which drops the row and fails
+    # this assertion.
+    projection = LibraryScreen._build_library_notes_tree_projection(fake)
+    retries = [
+        row
+        for row in projection.rows
+        if row.kind == "pager"
+        and row.paging_action == "retry"
+        and row.parent_folder_id == "ideas"
+    ]
+    assert retries, (
+        "the folder opened onto silence: no retry row for the branch whose "
+        f"reload failed ({[(row.kind, row.label) for row in projection.rows]})"
+    )
 
 
 async def _passthrough_service_call(call, *, isolate_in_worker=False, **kwargs):
