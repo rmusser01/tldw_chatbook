@@ -56,6 +56,9 @@ from tldw_chatbook.Widgets.Console.console_edit_message_modal import (
     ConsoleEditMessageModal,
     ConsoleEditResult,
 )
+from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
+    ConsoleEndpointTemplateModal,
+)
 from tldw_chatbook.Widgets.Console.console_feedback_comment_modal import (
     ConsoleFeedbackCommentModal,
 )
@@ -862,6 +865,18 @@ TASK567_MODAL_CONTRACTS = (
         "staged-artifact discard confirmation",
         _RESTORE_OPENER,
     ),
+    # ADR-146 task 6: the Console Settings modal opens this creation modal
+    # itself (see the ConsoleSettingsModal launch edge below), so it rides
+    # the exceptional contracts but not the root-owned launch list.
+    _ExceptionalConsoleModalContract(
+        ConsoleEndpointTemplateModal,
+        "#console-endpoint-template-modal",
+        None,
+        "Console Settings New endpoint action",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
 )
 
 
@@ -887,8 +902,13 @@ _CONSOLE_ROOT_SOURCE_PATHS = (
 _CONSOLE_DIRECT_MODAL_TYPES = tuple(
     contract.modal_type
     for contract in (*TASK2_MODAL_CONTRACTS, *TASK3_MODAL_CONTRACTS)
-    if contract.modal_type is not ConsoleWorkspaceRenameModal
-) + tuple(contract.modal_type for contract in TASK567_MODAL_CONTRACTS)
+    if contract.modal_type
+    not in (ConsoleWorkspaceRenameModal, ConsoleEndpointTemplateModal)
+) + tuple(
+    contract.modal_type
+    for contract in TASK567_MODAL_CONTRACTS
+    if contract.modal_type is not ConsoleEndpointTemplateModal
+)
 _DIRECT_SHARED_MODAL_TYPES = tuple(
     contract.modal_type
     for contract in TASK4_MODAL_CONTRACTS
@@ -947,6 +967,13 @@ CONSOLE_MODAL_LAUNCH_EDGES = (
         TrajectoryScreen,
         (TrajectoryScreen, EnhancedFileOpen),
         ("tldw_chatbook/UI/Screens/trajectory_screen.py",),
+    ),
+    # ADR-146 task 6: Console Settings' "New endpoint…" action opens the
+    # registry's template-creation modal.
+    _ModalLaunchEdge(
+        ConsoleSettingsModal,
+        (ConsoleEndpointTemplateModal,),
+        ("tldw_chatbook/Widgets/Console/console_settings_modal.py",),
     ),
     _ModalLaunchEdge(
         ChangeReviewScreen,
@@ -1241,7 +1268,8 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     }
     # 43 after TASK-3070.6 removed the unreachable Console skill picker;
     # task-18810's WorkspaceCreateModal/SelectDirectory launches remain.
-    assert len(reachable_modal_types) == 43
+    # 44 with the Console Settings endpoint-template modal (ADR-146 task 6).
+    assert len(reachable_modal_types) == 44
     all_contract_types = console_contract_types | {
         contract.modal_type for contract in TASK4_MODAL_CONTRACTS
     } | {TrajectoryScreen}

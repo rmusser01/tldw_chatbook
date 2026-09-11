@@ -7399,6 +7399,86 @@ async def test_console_settings_save_default_persists_custom_endpoint_entry_prov
 
 
 @pytest.mark.asyncio
+async def test_console_settings_new_endpoint_button_creates_and_switches(
+    monkeypatch,
+) -> None:
+    """New endpoint… opens the template modal; Create switches the provider
+    Select to the fresh custom-ep id and kicks model discovery at its URL."""
+    from tldw_chatbook.Widgets.Console import (
+        console_endpoint_template_modal as template_module,
+    )
+    from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
+        ConsoleEndpointTemplateModal,
+    )
+
+    captured: list[dict[str, dict[str, object]]] = []
+
+    def fake_save(sections: dict[str, dict[str, object]]) -> bool:
+        captured.append(sections)
+        return True
+
+    monkeypatch.setattr(template_module, "save_settings_to_cli_config", fake_save)
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    prober = _RecordingProber(
+        LocalModelProbeResult(
+            ok=True,
+            base_url="http://192.168.1.9:8080",
+            model_ids=("srv-a", "srv-b"),
+        )
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+                model_prober=prober,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        # Same row as the Discover button: below the fold at this size, so
+        # press it directly like the discover tests do.
+        app.screen.query_one("#console-settings-endpoint-new", Button).press()
+        await pilot.pause()
+        assert isinstance(app.screen, ConsoleEndpointTemplateModal)
+
+        await pilot.click("#endpoint-template-name")
+        await pilot.press(*"GPU box 2")
+        await pilot.click("#endpoint-template-url")
+        # Unpacked chars: multi-char press strings type nothing in Textual.
+        await pilot.press("ctrl+a", *"http://192.168.1.9:8080")
+        await pilot.click("#endpoint-template-create")
+
+        await _wait_for_discover_status(
+            app, pilot, "Found 2 models at http://192.168.1.9:8080."
+        )
+        assert isinstance(app.screen, ConsoleSettingsModal)
+        provider_select = app.screen.query_one("#console-settings-provider", Select)
+        assert str(provider_select.value) == "custom-ep:gpu-box-2"
+        readiness = app.screen.query_one("#console-settings-readiness", Static)
+        assert "ready" in str(readiness.renderable).lower()
+
+    assert captured == [
+        {
+            "custom_endpoints.gpu-box-2": {
+                "display_name": "GPU box 2",
+                "family": "llama_cpp",
+                "base_url": "http://192.168.1.9:8080",
+                "models": ["model-a"],
+                "created_from": "llama_cpp",
+            }
+        }
+    ]
+    # The probe keys the entry's family execution key, not the raw id.
+    assert prober.calls == [("http://192.168.1.9:8080", "llama_cpp")]
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_save_as_default_failure_keeps_modal_open(
     monkeypatch,
 ) -> None:

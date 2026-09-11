@@ -41,6 +41,9 @@ from tldw_chatbook.Chat.console_provider_support import (
 )
 from tldw_chatbook.Chat.custom_endpoint_registry import (
     CUSTOM_ENDPOINT_ID_PREFIX,
+    entry_for,
+    family_execution_key,
+    load_custom_endpoints,
 )
 from tldw_chatbook.Chat.local_server_discovery import (
     normalize_probe_base_url,
@@ -78,6 +81,10 @@ from .console_context_controls import (
     build_console_context_control_state,
     format_context_tokens,
 )
+# Imports the endpoint-template modal for the EndpointCreated wiring; that
+# module imports ConsoleSettingsInput only lazily (inside compose) so this
+# edge cannot cycle.
+from .console_endpoint_template_modal import ConsoleEndpointTemplateModal
 from rich.markup import escape as escape_markup
 
 
@@ -90,6 +97,9 @@ MODEL_DISCOVER_BUTTON_ID = "console-settings-model-discover"
 MODEL_DISCOVER_STATUS_ID = "console-settings-model-discover-status"
 MODEL_DISCOVER_BUTTON_LABEL = "Discover models"
 MODEL_DISCOVER_BUTTON_WIDTH = 19
+ENDPOINT_NEW_BUTTON_ID = "console-settings-endpoint-new"
+ENDPOINT_NEW_BUTTON_LABEL = "New endpoint…"
+ENDPOINT_NEW_BUTTON_WIDTH = 17
 _NO_CONFIGURED_MODELS_VALUE = "__no_configured_models__"
 MODEL_DISCOVER_MISSING_URL_COPY = "Enter a base URL to discover models."
 MODEL_DISCOVER_INVALID_URL_COPY = (
@@ -456,6 +466,9 @@ class ConsoleSettingsModal(
         if initial_base_url:
             self._provider_base_url_drafts[settings.provider] = initial_base_url
         self._readiness_debounce_timer: Timer | None = None
+        # Entry-creation follow-up probe (provider, base_url, probe key),
+        # consumed by the provider switch that lands after EndpointCreated.
+        self._pending_entry_discovery: tuple[str, str, str] | None = None
         self._settings_close_guard_mode: str | None = None
         self._settings_close_guard_focus: Widget | None = None
         self._compaction_wait_worker: Any | None = None
@@ -636,6 +649,20 @@ class ConsoleSettingsModal(
                         )
                         base_url_input.display = uses_base_url
                         yield base_url_input
+                        new_endpoint = Button(
+                            ENDPOINT_NEW_BUTTON_LABEL,
+                            id=ENDPOINT_NEW_BUTTON_ID,
+                        )
+                        new_endpoint.tooltip = (
+                            "Create a custom endpoint entry from a template"
+                        )
+                        new_endpoint.styles.width = ENDPOINT_NEW_BUTTON_WIDTH
+                        new_endpoint.styles.min_width = ENDPOINT_NEW_BUTTON_WIDTH
+                        new_endpoint.styles.max_width = ENDPOINT_NEW_BUTTON_WIDTH
+                        new_endpoint.display = self._endpoint_new_button_visible(
+                            self._settings.provider
+                        )
+                        yield new_endpoint
 
                 with Vertical(
                     classes="console-settings-modal-section console-settings-model-view"
@@ -1870,6 +1897,19 @@ class ConsoleSettingsModal(
         provider = self._select_value_text(event.value)
         if provider == self._active_provider:
             return
+        self._apply_provider_switch(provider)
+        pending = self._pending_entry_discovery
+        if pending is not None and pending[0] == provider:
+            # Endpoint creation's follow-up probe: fire only once the
+            # switch onto the new entry provider has actually landed.
+            self._pending_entry_discovery = None
+            self._start_model_discovery(
+                provider, pending[1], provider_key=pending[2]
+            )
+
+    def _apply_provider_switch(self, provider: str) -> None:
+        """Sync every control to ``provider`` (shared by Select change and
+        endpoint creation; idempotent per provider)."""
         self._store_current_model_for_provider(self._active_provider)
         self._store_current_base_url_for_provider(self._active_provider)
         model = self._model_for_provider(provider)
@@ -1877,6 +1917,7 @@ class ConsoleSettingsModal(
         self._active_provider = provider
         self._sync_model_controls(provider, model)
         self._sync_base_url_control(provider, base_url)
+        self._sync_endpoint_new_button(provider)
         self._sync_model_discover_controls(provider)
         self._sync_provider_choice_placeholders()
         self._sync_readiness_display()
@@ -1988,22 +2029,44 @@ class ConsoleSettingsModal(
             self._set_model_discover_status(MODEL_DISCOVER_INVALID_URL_COPY)
             return
         event.button.disabled = True
+        self._start_model_discovery(provider, base_url)
+
+    def _start_model_discovery(
+        self, provider: str, base_url: str, provider_key: str | None = None
+    ) -> None:
+        """Run the model probe against an explicit URL and apply the outcome.
+
+        Args:
+            provider: Provider draft value the results apply to.
+            base_url: Endpoint to probe.
+            provider_key: Optional probe key override (e.g. the family
+                execution key for a registry entry whose raw id would not
+                normalize to a URL-based provider key).
+        """
         self._set_model_discover_status(f"Contacting {endpoint_display(base_url)}…")
         self.run_worker(
-            self._run_model_discovery(provider, base_url),
+            self._run_model_discovery(
+                provider, base_url, provider_key=provider_key
+            ),
             exclusive=True,
             group="console-settings-model-discovery",
         )
 
-    async def _run_model_discovery(self, provider: str, base_url: str) -> None:
+    async def _run_model_discovery(
+        self, provider: str, base_url: str, provider_key: str | None = None
+    ) -> None:
         """Run the model probe off the draft URL and apply the outcome.
 
         Args:
             provider: Provider draft value at press time.
             base_url: Base-URL draft at press time.
+            provider_key: Optional probe key override; defaults to the
+                provider's normalized config key.
         """
         try:
-            result = await self._model_prober(base_url, provider_config_key(provider))
+            result = await self._model_prober(
+                base_url, provider_key or provider_config_key(provider)
+            )
         except Exception:
             result = LocalModelProbeResult(
                 ok=False,
@@ -2073,6 +2136,64 @@ class ConsoleSettingsModal(
             return
         status.update(text)
         status.display = bool(text.strip())
+
+    @on(Button.Pressed, f"#{ENDPOINT_NEW_BUTTON_ID}")
+    async def _open_endpoint_template_modal(self, event: Button.Pressed) -> None:
+        """Open the registry's template-creation modal for a new endpoint."""
+        event.stop()
+        await self.app.push_screen(
+            ConsoleEndpointTemplateModal(
+                app_config=self._app_config,
+                providers_models=self._providers_models,
+                template_provider=self._active_provider or None,
+            )
+        )
+
+    @on(ConsoleEndpointTemplateModal.EndpointCreated)
+    def _endpoint_created(
+        self, event: ConsoleEndpointTemplateModal.EndpointCreated
+    ) -> None:
+        """Switch selection to the just-created entry and probe it for models."""
+        event.stop()
+        provider_id = event.provider_id
+        entry = entry_for(self._app_config, provider_id)
+        if entry is not None:
+            # Probe with the entry's family execution key: the raw
+            # custom-ep id does not normalize to a URL-based provider key.
+            self._pending_entry_discovery = (
+                provider_id,
+                entry.base_url,
+                family_execution_key(entry.family),
+            )
+        provider_select = self.query_one("#console-settings-provider", Select)
+        # The creation modal mirrored the persisted entry into the shared
+        # app_config mapping, so the rebuilt options include the new id.
+        # Assigning the value fires Select.Changed, which runs the same
+        # model/base-url/discover sync path a manual selection uses and
+        # consumes the pending entry discovery above (set_options itself
+        # first resets the value to blank, so the switch must be driven by
+        # the final Changed event, not inline here).
+        provider_select.set_options(self._provider_select_options())
+        provider_select.value = provider_id
+
+    def _sync_endpoint_new_button(self, provider: str) -> None:
+        """Show the New endpoint affordance for URL providers or any entries."""
+        try:
+            new_endpoint = self.query_one(f"#{ENDPOINT_NEW_BUTTON_ID}", Button)
+        except (NoMatches, QueryError):
+            return
+        new_endpoint.display = self._endpoint_new_button_visible(provider)
+
+    def _endpoint_new_button_visible(self, provider: str) -> bool:
+        """Return whether endpoint creation applies to the current provider.
+
+        Visible when the provider takes a base URL (the endpoint is part of
+        its setup) or any registry entries already exist (they are always
+        selectable providers, so creating siblings must stay reachable).
+        """
+        return self._provider_uses_base_url(provider) or bool(
+            load_custom_endpoints(self._app_config)
+        )
 
     def _sync_model_discover_controls(self, provider: str) -> None:
         """Show the discovery affordance only for URL-based providers."""
@@ -2237,14 +2358,16 @@ class ConsoleSettingsModal(
         rendered labels change, and the ``(WIP)`` marker from the underlying
         option builder is preserved. Registry entries (``custom-ep:<slug>``
         values, ADR-146) already carry their ``display_name`` label from the
-        option builder, so they bypass the shared-catalog relabel unchanged.
+        option builder, so they bypass the shared-catalog relabel -- escaping
+        the user-authored name so Rich-markup-like display names cannot
+        style or spoof the option label.
         """
         options: list[tuple[str, str]] = []
         for option in build_console_provider_options(
             self._providers_models, app_config=self._app_config
         ):
             if option.value.startswith(CUSTOM_ENDPOINT_ID_PREFIX):
-                options.append((option.label, option.value))
+                options.append((escape_markup(option.label), option.value))
                 continue
             label = provider_display_name(option.value)
             if option.label.endswith(" (WIP)"):
