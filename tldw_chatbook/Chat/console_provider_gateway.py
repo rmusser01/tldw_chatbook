@@ -21,8 +21,6 @@ import httpx
 from loguru import logger
 from rich.markup import escape as escape_markup
 
-from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
-from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAuthenticationError,
     ChatBadRequestError,
@@ -77,7 +75,6 @@ from tldw_chatbook.Chat.custom_endpoint_registry import (
     CustomEndpointEntry,
 )
 from tldw_chatbook.Chat.llamacpp_think_filter import StartAnchoredThinkFilter
-from tldw_chatbook.Chat.console_thinking import publish_thinking, thinking_display
 from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
@@ -89,7 +86,6 @@ from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatTurn
 from tldw_chatbook.config import (
     ProviderSettingsError,
     provider_settings_for_key,
-    coerce_bool_setting,
     resolve_provider_api_key,
 )
 from tldw_chatbook.Utils.input_validation import validate_url
@@ -98,18 +94,6 @@ from tldw_chatbook.Utils.sensitive_llm_logging import (
     sensitive_llm_request,
 )
 
-
-from tldw_chatbook.Chat.local_reasoning import (
-    LocalReasoningReplay,
-    project_reasoning_history,
-    ReasoningReplayPolicy,
-    reasoning_mode_setting,
-    resolve_reasoning_policy,
-    reasoning_replay_context,
-    reasoning_override_key,
-    supports_local_reasoning,
-    apply_local_reasoning_template_options,
-)
 
 PROBE_TIMEOUT_SECONDS = 5.0
 """Per-request timeout for readiness probes (``/health``, ``/v1/models``)."""
@@ -186,17 +170,6 @@ class ConsoleProviderStreamSignals:
     controller can distinguish provider content from locally synthesized
     fallback copy.
     """
-
-    thinking_callback: Callable[[str], None] | None = field(
-        default=None, repr=False, kw_only=True
-    )
-
-    local_reasoning_replay: LocalReasoningReplay | None = field(
-        default=None, repr=False, kw_only=True
-    )
-
-    # Trusted controller context; never derived from provider/tool payload text.
-    automatic_work_chain_id: str | None = field(default=None, repr=False, kw_only=True)
 
     _synthetic_fallback: threading.Event = field(
         default_factory=threading.Event,
@@ -275,19 +248,13 @@ class ConsoleProviderStreamSignals:
             )
             return payloads
 
-    def new_usage_call(
-        self, *, include_thinking: bool = True
-    ) -> "ConsoleProviderCallSignals":
+    def new_usage_call(self) -> "ConsoleProviderCallSignals":
         """Create an isolated usage recorder for one provider call.
 
         Returns:
             A call-scoped signal view publishing into this aggregate.
         """
-        return ConsoleProviderCallSignals(
-            self,
-            thinking_callback=self.thinking_callback if include_thinking else None,
-            publish_local_reasoning=include_thinking,
-        )
+        return ConsoleProviderCallSignals(self)
 
     def _record_scoped_usage_call(
         self,
@@ -320,13 +287,6 @@ class ConsoleProviderCallSignals:
         init=False,
         repr=False,
     )
-
-    thinking_callback: Callable[[str], None] | None = field(default=None, repr=False)
-    local_reasoning_replay: LocalReasoningReplay | None = field(
-        default=None, repr=False
-    )
-    publish_local_reasoning: bool = field(default=True, repr=False)
-    _local_reasoning_chunks: list[str] = field(default_factory=list, repr=False)
 
     @property
     def synthetic_fallback_emitted(self) -> bool:
@@ -376,91 +336,6 @@ class ConsoleProviderCallSignals:
 
 
 _ProviderStreamSignals = ConsoleProviderStreamSignals | ConsoleProviderCallSignals
-
-
-def _check_automatic_dispatch() -> None:
-    """Recheck live authority after waits, immediately before provider work."""
-    automatic = current_automatic_work()
-    if automatic is not None:
-        automatic.check()
-
-
-def _automatic_budget_tokens(
-    payload: Mapping[str, Any] | None, *, provider: str, model: str
-) -> int | None:
-    """Require complete usage before applying the existing budget weights."""
-    if not isinstance(payload, Mapping):
-        return None
-    fields = (
-        ("prompt_tokens", "completion_tokens")
-        if "prompt_tokens" in payload
-        else ("input_tokens", "output_tokens")
-        if "input_tokens" in payload
-        else ("total_tokens",)
-    )
-    if any(type(payload.get(name)) is not int or payload[name] < 0 for name in fields):
-        return None
-    for name in ("cache_read_input_tokens", "cache_creation_input_tokens"):
-        if name in payload and (type(payload[name]) is not int or payload[name] < 0):
-            return None
-    from tldw_chatbook.Agents.agent_service import _budget_weighted_tokens
-
-    return _budget_weighted_tokens(
-        {"usage": dict(payload)}, provider=provider, model=model
-    )
-
-
-@contextlib.contextmanager
-def _automatic_generation(
-    prepared: PreparedProviderRequest | None,
-    signals: ConsoleProviderCallSignals | None,
-) -> Iterator[None]:
-    """Fence one physical generation and conservatively settle its outcome."""
-    automatic = current_automatic_work()
-    if automatic is None:
-        yield
-        return
-    if prepared is None:
-        raise AutomaticWorkRefused("unprepared_call")
-    reservation = automatic.begin_call(
-        prepared.accounting.total_input_tokens,
-        prepared.capacity.effective_response_tokens,
-    )
-    completed = False
-    try:
-        yield
-        completed = True
-    finally:
-        actual = None
-        if completed and signals is not None:
-            try:
-                actual = _automatic_budget_tokens(
-                    signals.usage_snapshot(),
-                    provider=prepared.provider,
-                    model=prepared.model,
-                )
-            except Exception:  # noqa: BLE001 - keep uncertain accounting conservative
-                # A missing/malformed usage outcome keeps the full reservation.
-                actual = None
-        automatic.settle_call(reservation, actual)
-
-
-def _cap_automatic_prepared(
-    prepared: PreparedProviderRequest, output_cap: int
-) -> PreparedProviderRequest:
-    """Narrow output while retaining the exact validated and counted input."""
-    return replace(
-        prepared,
-        capacity=replace(
-            prepared.capacity,
-            requested_response_tokens=min(
-                prepared.capacity.requested_response_tokens, output_cap
-            ),
-            effective_response_tokens=min(
-                prepared.capacity.effective_response_tokens, output_cap
-            ),
-        ),
-    )
 
 
 def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
@@ -655,8 +530,6 @@ class ConsoleProviderResolution:
     request_timeout: float | None = None
     request_retries: int | None = None
     request_retry_delay: float | None = None
-    replay_thinking: bool = field(default=True, kw_only=True)
-    reasoning_replay: ReasoningReplayPolicy | None = field(default=None, kw_only=True)
 
 
 def _freeze_auxiliary_value(value: Any) -> Any:
@@ -1028,7 +901,6 @@ def build_llamacpp_chat_payload(
     frequency_penalty: float | None = None,
     reasoning_effort: str | None = None,
     thinking_budget_tokens: int | None = None,
-    reasoning_replay: ReasoningReplayPolicy | None = None,
 ) -> dict[str, Any]:
     """Build the OpenAI-compatible llama.cpp chat completion payload.
 
@@ -1109,9 +981,6 @@ def build_llamacpp_chat_payload(
         template_kwargs = dict(payload.get("chat_template_kwargs") or {})
         template_kwargs["enable_thinking"] = False
         payload["chat_template_kwargs"] = template_kwargs
-    apply_local_reasoning_template_options(
-        payload, provider="llama_cpp", model=model, policy=reasoning_replay
-    )
     return payload
 
 
@@ -1271,8 +1140,11 @@ class ConsoleProviderGateway:
             # Retained, not merely spared: the child's next
             # `_active_http_client()` must find the SAME pool rather than
             # build a fresh one per call for the rest of its life.
-            # Each lifeline calls aclose_current_loop before closing its
-            # loop, including when the child outlives this app teardown.
+            # Each is closed by its own owner's teardown -- a
+            # `_ModelCallLifeline` closes its loop when the child ends, at
+            # which point `_prune_closed_loops` drops the entry and the
+            # client's own finalizer releases the sockets (the same
+            # reasoning that method's docstring already relies on).
             for live_loop, live_client in still_live:
                 self._loop_clients[live_loop] = live_client
             self._client_loop = None
@@ -1282,22 +1154,6 @@ class ConsoleProviderGateway:
 
         if current_client is not None:
             await current_client.aclose()
-
-    async def aclose_current_loop(self) -> None:
-        """Release only the calling lifeline's owned HTTP client.
-
-        Called after that lifeline has stopped model submissions and drained
-        pending calls. Other loops and injected clients remain untouched.
-        """
-        if not self._owns_http_client:
-            return
-        loop = asyncio.get_running_loop()
-        with self._client_lock:
-            client = self._loop_clients.pop(loop, None)
-            if self._client_loop is loop:
-                self._client_loop = None
-        if client is not None:
-            await client.aclose()
 
     def prepare_chat_request(
         self,
@@ -1403,35 +1259,6 @@ class ConsoleProviderGateway:
                 tools=tools or (),
                 continuation_groups=continuation_groups,
             )
-
-        policy = resolution.reasoning_replay
-
-        def project(rows, *, active=False):
-            # Ownership comes from semantic units, not the last literal user role.
-            selected = policy
-            if policy is not None and policy.mode == "current":
-                selected = replace(policy, mode="all" if active else "off")
-            return tuple(
-                project_reasoning_history(
-                    rows,
-                    provider=resolution.provider,
-                    model=resolution.model or "",
-                    policy=selected,
-                    enabled=resolution.replay_thinking,
-                )
-            )
-
-        semantic = replace(
-            semantic,
-            system=project(semantic.system),
-            memory=project(semantic.memory),
-            mandatory=project(semantic.mandatory),
-            active_request=project(semantic.active_request, active=True),
-            compactable=tuple(
-                replace(unit, messages=project(unit.messages))
-                for unit in semantic.compactable
-            ),
-        )
 
         capabilities: Mapping[str, Any] = {}
         try:
@@ -1708,89 +1535,6 @@ class ConsoleProviderGateway:
             **self._resolution_settings(config),
         )
 
-    @staticmethod
-    def _replay_thinking_enabled(app_config: Mapping[str, object]) -> bool:
-        console = app_config.get("console", {})
-        return (
-            coerce_bool_setting(console.get("replay_thinking", True), True)
-            if isinstance(console, Mapping)
-            else True
-        )
-
-    async def _resolve_reasoning_history(
-        self, resolution: ConsoleProviderResolution, app_config: Mapping[str, object]
-    ) -> ConsoleProviderResolution:
-        """Read bounded optional template metadata; failure never blocks chat."""
-        console = app_config.get("console", {})
-        console = console if isinstance(console, Mapping) else {}
-        mode = reasoning_mode_setting(
-            console,
-            provider=resolution.provider,
-            endpoint=resolution.base_url,
-            model=resolution.model or "",
-        )
-        template = None
-        native_tools = False
-        if resolution.ready:
-            from .local_reasoning import _LOCAL_FAMILIES
-
-            family = _LOCAL_FAMILIES.get(resolution.provider.lower())
-            # Ollama exposes Go templates; until reviewed, use its server default.
-            route = {"llama_cpp": "/props", "vllm": "/tokenizer_info"}.get(family)
-            if route:
-                base = resolution.base_url.rstrip("/")
-                if base.endswith("/v1"):
-                    base = base[:-3]
-
-                async def read_template():
-                    async with self._active_http_client().stream(
-                        "GET",
-                        base + route,
-                        headers=self._authorization_headers(resolution.api_key),
-                        timeout=1.0,
-                    ) as response:
-                        response.raise_for_status()
-                        data = bytearray()
-                        async for chunk in response.aiter_bytes():
-                            data.extend(chunk)
-                            if len(data) > 262144:
-                                return {}
-                        payload = json.loads(data)
-                        return payload if isinstance(payload, dict) else {}
-
-                try:
-                    metadata = await asyncio.wait_for(read_template(), timeout=1.0)
-                    template = metadata.get("chat_template")
-                    caps = metadata.get("chat_template_caps", {})
-                    native_tools = (
-                        family == "llama_cpp"
-                        and isinstance(caps, Mapping)
-                        and caps.get("supports_tool_calls") is True
-                        and caps.get("supports_tools") is True
-                    )
-                except (httpx.HTTPError, ValueError, TimeoutError):
-                    pass
-        key = reasoning_override_key(
-            resolution.provider, resolution.base_url, resolution.model or ""
-        )
-        overrides = console.get("reasoning_native_tool_overrides", {})
-        if isinstance(overrides, Mapping) and overrides.get(key) is True:
-            native_tools = True
-        policy = resolve_reasoning_policy(
-            mode, template=template, native_tools=native_tools
-        )
-        if not hasattr(self, "reasoning_policies"):
-            self.reasoning_policies = {}
-        key = reasoning_override_key(
-            resolution.provider, resolution.base_url, resolution.model or ""
-        )
-        self.reasoning_policies[key] = policy
-        while len(self.reasoning_policies) > 32:
-            self.reasoning_policies.pop(next(iter(self.reasoning_policies)))
-        return replace(
-            resolution, reasoning_replay=policy, replay_thinking=policy.mode != "off"
-        )
-
     async def resolve_for_send(
         self, selection: ConsoleProviderSelection
     ) -> ConsoleProviderResolution:
@@ -1901,15 +1645,11 @@ class ConsoleProviderGateway:
                     streaming=selection.streaming,
                 )
             )
-            return await self._resolve_reasoning_history(
-                replace(
-                    resolved,
-                    replay_thinking=self._replay_thinking_enabled(app_config),
-                    provider=identity.execution_key,
-                    readiness_key=identity.readiness_key,
-                    execution_key=identity.execution_key,
-                ),
-                app_config,
+            return replace(
+                resolved,
+                provider=identity.execution_key,
+                readiness_key=identity.readiness_key,
+                execution_key=identity.execution_key,
             )
 
         if not identity.is_supported:
@@ -2154,78 +1894,42 @@ class ConsoleProviderGateway:
                     execution_key=identity.execution_key,
                 )
 
-        return await self._resolve_reasoning_history(
-            ConsoleProviderResolution(
-                provider=selection.provider,
-                base_url=effective_base_url or "",
-                model=model,
-                ready=True,
-                readiness_key=identity.readiness_key,
-                execution_key=identity.execution_key,
-                api_key=(
-                    entry_api_key if entry_api_key is not None else readiness.api_key
-                ),
-                api_key_source=(
-                    entry_api_key_source
-                    if entry_api_key is not None
-                    else readiness.api_key_source
-                ),
-                prompt_caching=prompt_caching,
-                api_mode=api_mode,
-                continuation_protocol=continuation_protocol,
-                request_timeout=request_timeout,
-                request_retries=request_retries,
-                request_retry_delay=request_retry_delay,
-                replay_thinking=self._replay_thinking_enabled(app_config),
-                temperature=selection.temperature,
-                top_p=selection.top_p,
-                min_p=selection.min_p,
-                top_k=selection.top_k,
-                max_tokens=selection.max_tokens,
-                seed=selection.seed,
-                presence_penalty=selection.presence_penalty,
-                frequency_penalty=selection.frequency_penalty,
-                reasoning_effort=selection.reasoning_effort,
-                reasoning_summary=selection.reasoning_summary,
-                verbosity=selection.verbosity,
-                thinking_effort=selection.thinking_effort,
-                thinking_budget_tokens=selection.thinking_budget_tokens,
-                streaming=selection.streaming,
+        return ConsoleProviderResolution(
+            provider=selection.provider,
+            base_url=effective_base_url or "",
+            model=model,
+            ready=True,
+            readiness_key=identity.readiness_key,
+            execution_key=identity.execution_key,
+            api_key=(
+                entry_api_key if entry_api_key is not None else readiness.api_key
             ),
-            app_config,
+            api_key_source=(
+                entry_api_key_source
+                if entry_api_key is not None
+                else readiness.api_key_source
+            ),
+            prompt_caching=prompt_caching,
+            api_mode=api_mode,
+            continuation_protocol=continuation_protocol,
+            request_timeout=request_timeout,
+            request_retries=request_retries,
+            request_retry_delay=request_retry_delay,
+            temperature=selection.temperature,
+            top_p=selection.top_p,
+            min_p=selection.min_p,
+            top_k=selection.top_k,
+            max_tokens=selection.max_tokens,
+            seed=selection.seed,
+            presence_penalty=selection.presence_penalty,
+            frequency_penalty=selection.frequency_penalty,
+            reasoning_effort=selection.reasoning_effort,
+            reasoning_summary=selection.reasoning_summary,
+            verbosity=selection.verbosity,
+            thinking_effort=selection.thinking_effort,
+            thinking_budget_tokens=selection.thinking_budget_tokens,
+            streaming=selection.streaming,
         )
-
-    def _automatic_local_request(
-        self,
-        *,
-        model: str,
-        base_url: str,
-        messages: list[Mapping[str, Any]],
-        max_tokens: int | None,
-        prepared: PreparedProviderRequest | None,
-    ) -> PreparedProviderRequest | None:
-        """Prepare a direct local helper, or keep a caller's exact artifact."""
-        automatic = current_automatic_work()
-        if automatic is None:
-            return None
-        cap = automatic.output_cap(max_tokens)
-        if prepared is None:
-            prepared = self.prepare_chat_request(
-                ConsoleProviderResolution(
-                    provider="llama_cpp",
-                    model=model,
-                    base_url=base_url,
-                    ready=True,
-                    max_tokens=cap,
-                ),
-                messages,
-                apply_safety_window=False,
-            )
-        if prepared.known_overflow:
-            raise ChatBadRequestError(
-                "Local request exceeds input capacity.", provider="llama_cpp"
-            )
-        return _cap_automatic_prepared(prepared, cap)
 
     async def stream_llamacpp_chat(
         self,
@@ -2240,11 +1944,7 @@ class ConsoleProviderGateway:
         max_tokens: int | None = None,
         reasoning_effort: str | None = None,
         thinking_budget_tokens: int | None = None,
-        thinking_callback: Callable[[str], None] | None = None,
         api_key: str | None = None,
-        reasoning_replay: ReasoningReplayPolicy | None = None,
-        _automatic_prepared: PreparedProviderRequest | None = None,
-        _automatic_signals: ConsoleProviderCallSignals | None = None,
     ) -> AsyncIterator[str]:
         """Stream OpenAI-compatible chat completion chunks from llama.cpp.
 
@@ -2269,22 +1969,7 @@ class ConsoleProviderGateway:
         if not validate_url(normalized_base_url):
             raise ValueError("invalid llama.cpp base URL")
 
-        prepared = self._automatic_local_request(
-            model=model,
-            base_url=base_url,
-            messages=messages,
-            max_tokens=max_tokens,
-            prepared=_automatic_prepared,
-        )
-        call_signals = _automatic_signals
-        if prepared is not None:
-            messages = [thaw_json(row) for row in prepared.messages]
-            max_tokens = prepared.capacity.effective_response_tokens
-            call_signals = (
-                call_signals or ConsoleProviderStreamSignals().new_usage_call()
-            )
         payload = build_llamacpp_chat_payload(
-            reasoning_replay=reasoning_replay,
             model=model,
             messages=messages,
             stream=True,
@@ -2296,58 +1981,30 @@ class ConsoleProviderGateway:
             reasoning_effort=reasoning_effort,
             thinking_budget_tokens=thinking_budget_tokens,
         )
-        thinking_callback = thinking_callback or getattr(
-            call_signals, "thinking_callback", None
-        )
-        if "kimi" in model.lower():
-            thinking_callback = None
-        think_filter = StartAnchoredThinkFilter(on_thinking=thinking_callback)
+        think_filter = StartAnchoredThinkFilter()
         emitted_content = False
         received_content = False
         stream_error: httpx.HTTPError | None = None
         try:
-            client = self._active_http_client()
-            with _automatic_generation(prepared, call_signals):
-                _check_automatic_dispatch()
-                async with client.stream(
-                    "POST",
-                    f"{normalized_base_url.rstrip('/')}/v1/chat/completions",
-                    json=payload,
-                    headers=self._authorization_headers(api_key),
-                ) as response:
-                    response.raise_for_status()
-                    async for line in response.aiter_lines():
-                        _check_automatic_dispatch()
-                        if (
-                            call_signals is not None or thinking_callback is not None
-                        ) and line.startswith("data:"):
-                            try:
-                                usage_payload = json.loads(line[5:].strip())
-                            except (ValueError, TypeError):
-                                pass
-                            else:
-                                if isinstance(usage_payload, Mapping):
-                                    _maybe_record_usage(usage_payload, call_signals)
-                                    with thinking_display(
-                                        thinking_callback,
-                                        provider="llama_cpp",
-                                        model=model,
-                                    ):
-                                        _publish_mapping_thinking(usage_payload)
-                        chunk = self._content_from_sse_line(line)
-                        if chunk:
-                            received_content = True
-                            visible = think_filter.feed(chunk)
-                            if visible:
-                                emitted_content = True
-                                yield visible
+            async with self._active_http_client().stream(
+                "POST",
+                f"{normalized_base_url.rstrip('/')}/v1/chat/completions",
+                json=payload,
+                headers=self._authorization_headers(api_key),
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    chunk = self._content_from_sse_line(line)
+                    if chunk:
+                        received_content = True
+                        visible = think_filter.feed(chunk)
+                        if visible:
+                            emitted_content = True
+                            yield visible
         except httpx.HTTPError as exc:
             if emitted_content:
                 raise
             stream_error = exc
-        finally:
-            if call_signals is not None:
-                call_signals.close_usage_call()
 
         if emitted_content:
             # flush() contractually returns "" (unterminated start-anchored
@@ -2361,10 +2018,7 @@ class ConsoleProviderGateway:
                 raise stream_error
             return
 
-        if isinstance(call_signals, ConsoleProviderCallSignals):
-            call_signals._local_reasoning_chunks.clear()
         fallback = await self.complete_llamacpp_chat(
-            reasoning_replay=reasoning_replay,
             base_url=normalized_base_url,
             model=model,
             messages=messages,
@@ -2376,15 +2030,6 @@ class ConsoleProviderGateway:
             reasoning_effort=reasoning_effort,
             thinking_budget_tokens=thinking_budget_tokens,
             api_key=api_key,
-            **({"thinking_callback": thinking_callback} if thinking_callback else {}),
-            **(
-                {
-                    "_automatic_prepared": prepared,
-                    "_automatic_signals": call_signals._aggregate.new_usage_call(),
-                }
-                if prepared is not None and call_signals is not None
-                else {}
-            ),
         )
         if fallback:
             yield fallback
@@ -2408,12 +2053,8 @@ class ConsoleProviderGateway:
         frequency_penalty: float | None = None,
         reasoning_effort: str | None = None,
         thinking_budget_tokens: int | None = None,
-        thinking_callback: Callable[[str], None] | None = None,
         strict_response: bool = False,
         api_key: str | None = None,
-        reasoning_replay: ReasoningReplayPolicy | None = None,
-        _automatic_prepared: PreparedProviderRequest | None = None,
-        _automatic_signals: ConsoleProviderCallSignals | None = None,
     ) -> str:
         """Request a non-streaming OpenAI-compatible chat completion.
 
@@ -2443,23 +2084,8 @@ class ConsoleProviderGateway:
         if not validate_url(normalized_base_url):
             raise ValueError("invalid llama.cpp base URL")
 
-        prepared = self._automatic_local_request(
-            model=model,
-            base_url=base_url,
-            messages=messages,
-            max_tokens=max_tokens,
-            prepared=_automatic_prepared,
-        )
-        call_signals = _automatic_signals
-        if prepared is not None:
-            messages = [thaw_json(row) for row in prepared.messages]
-            max_tokens = prepared.capacity.effective_response_tokens
-            call_signals = (
-                call_signals or ConsoleProviderStreamSignals().new_usage_call()
-            )
         request_url = f"{normalized_base_url.rstrip('/')}/v1/chat/completions"
         payload = build_llamacpp_chat_payload(
-            reasoning_replay=reasoning_replay,
             model=model,
             messages=messages,
             stream=False,
@@ -2475,49 +2101,29 @@ class ConsoleProviderGateway:
             thinking_budget_tokens=thinking_budget_tokens,
         )
         client = self._active_http_client()
-        try:
-            with _automatic_generation(prepared, call_signals):
-                _check_automatic_dispatch()
-                response = (
-                    await self._post_without_high_level_http_log(
-                        client,
-                        request_url,
-                        json_payload=payload,
-                        headers=self._authorization_headers(api_key),
-                    )
-                    if is_sensitive_llm_request()
-                    else await client.post(
-                        request_url,
-                        json=payload,
-                        headers=self._authorization_headers(api_key),
-                    )
-                )
-                response.raise_for_status()
-                if call_signals is not None:
-                    payload_response = response.json()
-                    if isinstance(payload_response, Mapping):
-                        _maybe_record_usage(payload_response, call_signals)
-                content = self._content_from_completion_response(response)
-                if content is None and strict_response:
-                    raise ChatProviderError(
-                        "Provider returned an unsupported auxiliary response.",
-                        provider="llama_cpp",
-                    )
-                with thinking_display(
-                    thinking_callback, provider="llama_cpp", model=model
-                ):
-                    payload_response = response.json()
-                    if isinstance(payload_response, Mapping):
-                        _publish_mapping_thinking(payload_response)
-                think_filter = StartAnchoredThinkFilter(
-                    on_thinking=thinking_callback
-                    if "kimi" not in model.lower()
-                    else None
-                )
-                return think_filter.feed(content or "") + think_filter.flush()
-        finally:
-            if call_signals is not None:
-                call_signals.close_usage_call()
+        response = (
+            await self._post_without_high_level_http_log(
+                client,
+                request_url,
+                json_payload=payload,
+                headers=self._authorization_headers(api_key),
+            )
+            if is_sensitive_llm_request()
+            else await client.post(
+                request_url,
+                json=payload,
+                headers=self._authorization_headers(api_key),
+            )
+        )
+        response.raise_for_status()
+        content = self._content_from_completion_response(response)
+        if content is None and strict_response:
+            raise ChatProviderError(
+                "Provider returned an unsupported auxiliary response.",
+                provider="llama_cpp",
+            )
+        think_filter = StartAnchoredThinkFilter()
+        return think_filter.feed(content or "") + think_filter.flush()
 
     @staticmethod
     async def _post_without_high_level_http_log(
@@ -2531,7 +2137,6 @@ class ConsoleProviderGateway:
 
         request = client.build_request("POST", url, json=json_payload, headers=headers)
         transport = client._transport_for_url(request.url)
-        _check_automatic_dispatch()
         response = await transport.handle_async_request(request)
         response.request = request
         try:
@@ -2553,16 +2158,6 @@ class ConsoleProviderGateway:
 
         if not isinstance(request, AuxiliaryCompletionRequest):
             raise TypeError("request must be an AuxiliaryCompletionRequest")
-        automatic = current_automatic_work()
-        if automatic is not None:
-            request = replace(
-                request,
-                max_output_tokens=automatic.output_cap(
-                    min(request.max_output_tokens, request.resolution.max_tokens)
-                    if request.resolution.max_tokens is not None
-                    else request.max_output_tokens
-                ),
-            )
         resolution = replace(
             request.resolution,
             streaming=False,
@@ -2573,27 +2168,6 @@ class ConsoleProviderGateway:
         messages = cast(
             list[Mapping[str, Any]], _thaw_auxiliary_value(request.messages)
         )
-        prepared = None
-        call_signals = None
-        if automatic is not None:
-            prepared = self.prepare_chat_request(
-                resolution,
-                messages,
-                apply_safety_window=False,
-                response_format=request.response_format,
-            )
-            if prepared.known_overflow:
-                raise ChatBadRequestError(
-                    "Auxiliary request exceeds input capacity.", provider=provider
-                )
-            prepared = _cap_automatic_prepared(prepared, request.max_output_tokens)
-            resolution = replace(
-                resolution,
-                max_tokens=prepared.capacity.effective_response_tokens,
-                request_retries=0,
-            )
-            request = replace(request, max_output_tokens=resolution.max_tokens)
-            call_signals = ConsoleProviderStreamSignals().new_usage_call()
         response: Any = _UNSUPPORTED_RESPONSE
         try:
             with sensitive_llm_request():
@@ -2604,7 +2178,6 @@ class ConsoleProviderGateway:
                     # thinking settings (documented parity with cloud
                     # providers).
                     text = await self.complete_llamacpp_chat(
-                        reasoning_replay=resolution.reasoning_replay,
                         base_url=resolution.base_url,
                         model=model,
                         messages=messages,
@@ -2620,32 +2193,15 @@ class ConsoleProviderGateway:
                         thinking_budget_tokens=resolution.thinking_budget_tokens,
                         strict_response=True,
                         api_key=resolution.api_key,
-                        **(
-                            {
-                                "_automatic_prepared": prepared,
-                                "_automatic_signals": call_signals,
-                            }
-                            if automatic is not None
-                            else {}
-                        ),
                     )
                 else:
-                    kwargs = (
-                        self._chat_api_kwargs_from_prepared(resolution, prepared)
-                        if prepared is not None
-                        else self._auxiliary_chat_api_kwargs(request, resolution)
+                    kwargs = self._auxiliary_chat_api_kwargs(request, resolution)
+                    context = copy_context()
+                    response = await asyncio.to_thread(
+                        context.run,
+                        self._complete_sensitive_sync,
+                        kwargs,
                     )
-                    with _automatic_generation(prepared, call_signals):
-                        context = copy_context()
-                        response = await asyncio.to_thread(
-                            context.run,
-                            self._complete_sensitive_sync,
-                            kwargs,
-                        )
-                        if call_signals is not None and isinstance(response, Mapping):
-                            _maybe_record_usage(response, call_signals)
-        except AutomaticWorkRefused:
-            raise
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -2655,9 +2211,6 @@ class ConsoleProviderGateway:
                 provider=provider,
                 status_code=status_code if isinstance(status_code, int) else 502,
             ) from None
-        finally:
-            if call_signals is not None:
-                call_signals.close_usage_call()
 
         usage: ProviderUsage | None = None
         if response is not _UNSUPPORTED_RESPONSE:
@@ -2685,7 +2238,6 @@ class ConsoleProviderGateway:
         """Invoke the final synchronous adapter under the sensitive policy."""
 
         with sensitive_llm_request():
-            _check_automatic_dispatch()
             return self._chat_api_call(**dict(kwargs))
 
     @staticmethod
@@ -2774,76 +2326,6 @@ class ConsoleProviderGateway:
         tools: list | None = None,
         signals: _ProviderStreamSignals | None = None,
     ) -> AsyncIterator[str | ProviderToolCalls]:
-        """Capture exact local reasoning at one completed provider-call boundary."""
-        if not supports_local_reasoning(resolution.provider, resolution.model or ""):
-            async for item in self._stream_chat(
-                resolution, messages, tools=tools, signals=signals
-            ):
-                yield item
-            return
-        aggregate = signals or ConsoleProviderStreamSignals()
-        call = (
-            aggregate
-            if isinstance(aggregate, ConsoleProviderCallSignals)
-            else aggregate.new_usage_call()
-        )
-        callback = call.thinking_callback
-        call._local_reasoning_chunks.clear()
-        call.local_reasoning_replay = None
-        if call.publish_local_reasoning:
-            call._aggregate.local_reasoning_replay = None
-
-        def collect(chunk: str) -> None:
-            call._local_reasoning_chunks.append(chunk)
-            if callback is not None:
-                callback(chunk)
-
-        call.thinking_callback = collect
-        content: list[str] = []
-        inline_filter = None
-        first_content = True
-        try:
-            async for item in self._stream_chat(
-                resolution, messages, tools=tools, signals=call
-            ):
-                if isinstance(item, str):
-                    if first_content:
-                        first_content = False
-                        if (
-                            resolution.provider not in {"llama_cpp", "local_llamacpp"}
-                            and not call._local_reasoning_chunks
-                        ):
-                            inline_filter = StartAnchoredThinkFilter(
-                                on_thinking=collect
-                            )
-                    if inline_filter is not None:
-                        item = inline_filter.feed(item)
-                    content.append(item)
-                    if not item:
-                        continue
-                yield item
-            reasoning = "".join(call._local_reasoning_chunks)
-            if reasoning and not call.synthetic_fallback_emitted:
-                call.local_reasoning_replay = LocalReasoningReplay.capture(
-                    model=resolution.model or "",
-                    content="".join(content),
-                    reasoning=reasoning,
-                )
-                if call.publish_local_reasoning:
-                    call._aggregate.local_reasoning_replay = call.local_reasoning_replay
-        finally:
-            call.thinking_callback = callback
-            call._local_reasoning_chunks.clear()
-
-    async def _stream_chat(
-        self,
-        resolution: ConsoleProviderResolution,
-        messages: list[Mapping[str, Any]]
-        | PreparedConsoleRequest
-        | PreparedProviderRequest,
-        tools: list | None = None,
-        signals: _ProviderStreamSignals | None = None,
-    ) -> AsyncIterator[str | ProviderToolCalls]:
         """Dispatch streaming for a resolved Console provider.
 
         Args:
@@ -2868,15 +2350,6 @@ class ConsoleProviderGateway:
         # so the in-flight usage payload is closed out here, at the only
         # seam that knows where a call ends -- never in the consumer, which
         # cannot see the boundary at all.
-        automatic = current_automatic_work()
-        if automatic is not None:
-            resolution = replace(
-                resolution,
-                max_tokens=automatic.output_cap(resolution.max_tokens),
-                request_retries=0,
-            )
-            if signals is None:
-                signals = ConsoleProviderStreamSignals()
         call_signals = (
             signals
             if isinstance(signals, ConsoleProviderCallSignals)
@@ -2892,8 +2365,6 @@ class ConsoleProviderGateway:
                 if isinstance(messages, PreparedProviderRequest)
                 else self.prepare_chat_request(resolution, messages, tools=tools)
             )
-            if automatic is not None:
-                prepared = _cap_automatic_prepared(prepared, resolution.max_tokens)
             if isinstance(messages, PreparedProviderRequest) and tools is not None:
                 raise ValueError("tools are already owned by PreparedProviderRequest")
             if prepared.provider and prepared.provider != resolution.provider:
@@ -2916,14 +2387,10 @@ class ConsoleProviderGateway:
                     else None
                 ),
             )
-            if (
-                resolution.provider in {"llama_cpp", "local_llamacpp"}
-                and not prepared.tools
-            ):
+            if resolution.provider in {"llama_cpp", "local_llamacpp"}:
                 wire_messages = [thaw_json(item) for item in prepared.messages]
                 if not resolution.streaming:
                     completion = await self.complete_llamacpp_chat(
-                        reasoning_replay=resolution.reasoning_replay,
                         base_url=resolution.base_url,
                         model=resolution.model,
                         messages=wire_messages,
@@ -2935,25 +2402,11 @@ class ConsoleProviderGateway:
                         reasoning_effort=resolution.reasoning_effort,
                         thinking_budget_tokens=resolution.thinking_budget_tokens,
                         api_key=resolution.api_key,
-                        **(
-                            {"thinking_callback": call_signals.thinking_callback}
-                            if getattr(call_signals, "thinking_callback", None)
-                            else {}
-                        ),
-                        **(
-                            {
-                                "_automatic_prepared": prepared,
-                                "_automatic_signals": call_signals,
-                            }
-                            if automatic is not None
-                            else {}
-                        ),
                     )
                     if completion:
                         yield completion
                     return
                 async for chunk in self.stream_llamacpp_chat(
-                    reasoning_replay=resolution.reasoning_replay,
                     base_url=resolution.base_url,
                     model=resolution.model,
                     messages=wire_messages,
@@ -2965,40 +2418,14 @@ class ConsoleProviderGateway:
                     reasoning_effort=resolution.reasoning_effort,
                     thinking_budget_tokens=resolution.thinking_budget_tokens,
                     api_key=resolution.api_key,
-                    **(
-                        {"thinking_callback": call_signals.thinking_callback}
-                        if getattr(call_signals, "thinking_callback", None)
-                        else {}
-                    ),
-                    **(
-                        {
-                            "_automatic_prepared": prepared,
-                            "_automatic_signals": call_signals,
-                        }
-                        if automatic is not None
-                        else {"_automatic_signals": call_signals}
-                        if supports_local_reasoning(
-                            resolution.provider, resolution.model
-                        )
-                        else {}
-                    ),
                 ):
                     yield chunk
                 return
             if resolution.execution_key:
-                with _automatic_generation(prepared, call_signals):
-                    async for chunk in self._stream_generic_chat(
-                        effective_resolution, prepared, signals=call_signals
-                    ):
-                        if (
-                            isinstance(chunk, ProviderToolCalls)
-                            and chunk.metadata is not None
-                            and call_signals is not None
-                        ):
-                            usage = chunk.metadata.usage
-                            if isinstance(usage, Mapping):
-                                call_signals.record_usage_payload(usage)
-                        yield chunk
+                async for chunk in self._stream_generic_chat(
+                    effective_resolution, prepared, signals=call_signals
+                ):
+                    yield chunk
                 return
         finally:
             if call_signals is not None:
@@ -3051,12 +2478,9 @@ class ConsoleProviderGateway:
             with contextlib.suppress(RuntimeError):
                 loop.call_soon_threadsafe(queue.put_nowait, item)
 
-        def consume_provider_inner() -> None:
+        def worker() -> None:
             try:
                 kwargs = self._chat_api_kwargs_from_prepared(resolution, request)
-                if stop_event.is_set():
-                    return
-                _check_automatic_dispatch()
                 response = self._chat_api_call(**kwargs)
                 provider_response = response
                 accumulator = _ToolCallAccumulator() if request.tools else None
@@ -3076,7 +2500,6 @@ class ConsoleProviderGateway:
                 )
                 while not stop_event.is_set():
                     try:
-                        _check_automatic_dispatch()
                         text = next(normalized_response)
                     except StopIteration:
                         break
@@ -3127,27 +2550,6 @@ class ConsoleProviderGateway:
             finally:
                 close_response()
                 enqueue(_QueueItem.done())
-
-        def consume_provider() -> None:
-            with reasoning_replay_context(resolution.reasoning_replay):
-                consume_provider_inner()
-
-        def worker() -> None:
-            # The existing one-shot policy disables adapter transport retries
-            # for automatic work, including lazily iterated provider streams.
-            with (
-                thinking_display(
-                    getattr(signals, "thinking_callback", None),
-                    provider=resolution.provider,
-                    model=resolution.model,
-                ),
-                (
-                    sensitive_llm_request()
-                    if current_automatic_work()
-                    else contextlib.nullcontext()
-                ),
-            ):
-                consume_provider()
 
         worker_task = asyncio.create_task(asyncio.to_thread(worker))
         try:
@@ -3287,9 +2689,7 @@ class ConsoleProviderGateway:
             ),
             "prompt_caching": resolution.prompt_caching,
         }
-        if supports_local_reasoning(resolution.execution_key, resolution.model or ""):
-            kwargs["api_base_url"] = resolution.base_url or None
-        elif resolution.execution_key == "qwencloud":
+        if resolution.execution_key == "qwencloud":
             kwargs["api_mode"] = resolution.api_mode
             kwargs["api_base_url"] = resolution.base_url or None
         elif resolution.execution_key in {"moonshot", "zai"}:
@@ -3638,17 +3038,7 @@ def _content_from_sse_data(
     return _EMPTY_RESPONSE if content is _UNSUPPORTED_RESPONSE else content
 
 
-def _publish_mapping_thinking(item: Mapping[str, Any]) -> None:
-    """Read only explicit wire thinking fields, never continuation metadata."""
-    choices = item.get("choices")
-    if isinstance(choices, list) and choices and isinstance(choices[0], Mapping):
-        row = choices[0].get("delta") or choices[0].get("message")
-        if isinstance(row, Mapping):
-            publish_thinking(row.get("reasoning_content") or row.get("reasoning"))
-
-
 def _content_from_provider_mapping(item: Mapping[str, Any]) -> str | object:
-    _publish_mapping_thinking(item)
     choices = item.get("choices")
     if isinstance(choices, list) and choices:
         first = choices[0]
@@ -3659,10 +3049,6 @@ def _content_from_provider_mapping(item: Mapping[str, Any]) -> str | object:
             message = first.get("message")
             if isinstance(message, Mapping) and isinstance(message.get("content"), str):
                 return message["content"]
-            if isinstance(delta, Mapping) and (
-                "reasoning_content" in delta or "reasoning" in delta
-            ):
-                return _EMPTY_RESPONSE
             text = first.get("text")
             if isinstance(text, str):
                 return text
