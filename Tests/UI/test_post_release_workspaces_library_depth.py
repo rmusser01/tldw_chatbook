@@ -279,7 +279,11 @@ async def test_library_workspaces_can_create_and_select_local_workspace() -> Non
         )
         assert active_workspace_row.renderable.plain == "Active · Workspace 1"
         assert "Create local workspace" in visible
-        assert "Server sync WIP · local only" in visible
+        # task-32357 AC#1: same two facts, said in the reader's terms.
+        assert (
+            "Everything here is stored on this machine · syncing to a server "
+            "isn't available yet." in visible
+        )
 
 
 @pytest.mark.asyncio

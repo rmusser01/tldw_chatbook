@@ -122,7 +122,8 @@ editor's own Back control returns to its list.
   title, body or keywords — takes effect before the next keystroke, so
   typing straight through a Tab puts the rest where you meant it.
 - **New note view** — opens from the rail's "New note": a "Blank note"
-  button plus a "From a template" list.
+  button and a "From a template…" row that unfolds the eight templates.
+  (**Ctrl+N** / **n** skip this view: they make the blank note itself.)
 - **Add from files…** — asks whether this is an **Import once** or a lasting
   **Keep a folder synced** relationship before reading a source. Both buttons
   sit together, each directly under its own description; the bar below holds
@@ -332,7 +333,7 @@ both stay closed until you choose to reopen one.
 | Control | What it does |
 |---|---|
 | "Filter notes… (Enter)" | Type and press Enter to filter; the status line then reads "filter: \<text\> · N results". |
-| "New" | Creates a note directly from the list — the same destination as the rail's **New note** row, without the template picker. Disabled while another notes operation is running. |
+| "New" | Opens the **New note** view — the same destination as the rail's **New note** row: **Blank note**, or **From a template…**. (**Ctrl+N** skips the view and makes the blank note itself.) Disabled while another notes operation is running. |
 | "New folder" | Creates a folder in the tree beneath the toolbar. Disabled, with the reason in its tooltip, when the selected folder is sync-managed ("This folder is managed by sync; change its sync root instead.") or its branch is stale ("This branch may be out of date; retry it before changing it."). |
 | Folder selected: "Rename" / "Move" / "Remove" | Act on the selected folder. Same two disabled reasons as **New folder**. |
 | Note selected: "Add to folder" / "Move note" / "Remove placement" | File the selected note into a folder, move its placement, or take it out again. A sync-managed placement is refused with "This placement is managed by sync; change its sync root instead."; a note sitting in the automatic **Unfiled** group cannot have its placement removed ("Unfiled is shown automatically; move the note into a folder."). |
@@ -351,6 +352,15 @@ first-time user is never left staring at one unexplained folder with no
 other cue. While the library holds zero notes, that folder row itself also
 carries a one-line gloss: "Agent_Lessons — where Console agents file
 reusable lessons (empty)".
+
+On a terminal narrower than 64 columns the list pane is narrow enough that
+two things used to be cut off mid-word: the status line lost its last word
+("…or add from", without "files."), and the toolbar's third action painted
+as "Sel". At that width — and only there; at 64 columns and up the line
+keeps its full wording — the status line drops its "Library notes ·"
+prefix, since the source strip above it already says which notes these
+are, and the toolbar moves the action that does not fit onto a row of its
+own. Nothing is ever painted as half a word.
 
 ### Edit, Preview, and Info
 
@@ -431,27 +441,34 @@ returns the row to the folder tree, not only the count).*
 
 ### New note view
 
+**Ctrl+N** (and the bare **n**) do not open this view at all: they create the
+blank note and drop you in its editor, because that is the answer nearly
+every time. The view below is the way to a template, and it opens from the
+rail's **Create ▸ New note** row or the Notes list's **New** button.
+
 "Blank note" drops you straight into the editor with an empty title (shown
-as an "Untitled" placeholder — just start typing) and an empty body. Its
-status reads "Draft — not saved yet" until you type the first character or
-press **Save**, rather than "Saved" before anything you have written is
-actually kept. If you leave again via "‹ Back to list" without typing
+as an "Untitled" placeholder — just start typing) and an empty body. The note
+itself already exists at that point — it is in the list and in the rail's
+count — so its status reads "Empty note — type to keep it" rather than
+"Saved": what is not yet safe is not the note, but the fact that you have
+written nothing in it. If you leave again via "‹ Back to list" without typing
 anything, the blank note is quietly discarded rather than left behind as a
 stray "Untitled" row.
 Pressing "Save" keeps it, and so does typing anything **that is not only
 whitespace** — a title of nothing but spaces, with an empty body and no
 keywords, still counts as blank and is discarded on the way out. That includes naming it "Untitled"
 yourself: once you have touched the title field the note is yours, and it
-is kept even with an empty body. The "From a template" list
-pre-fills title, body, and keywords instead; each row shows the template
-name with the title the note will get. Available templates: Brainstorming
-session, Bug report, Code review, Daily journal entry, Meeting notes,
-Project planning, Research notes, Todo list.
+is kept even with an empty body. **From a template…** unfolds eight template
+rows that pre-fill title, body, and keywords instead; each row shows the
+template name with the title the note will get. Available templates:
+Brainstorming session, Bug report, Code review, Daily journal entry, Meeting
+notes, Project planning, Research notes, Todo list. The rows stay folded
+until you ask for them, and fold again the next time you open the view.
 
 Opening this view parks keyboard focus on **Blank note**, so Enter creates
 a note straight away without tabbing to find it; ↑/↓ move between Blank
-note and the template rows, and the focused row carries the same left-edge
-bar the Notes list rows use. The footer's "enter create note" appears only
+note, **From a template…** and (once it is open) the template rows, and the
+focused row carries the same left-edge bar the Notes list rows use. The footer's "enter create note" appears only
 while one of those rows genuinely has focus — move to "‹ Notes" / "‹ Back to
 list" (the same compact-vs-wide wording as Edit/Preview/Info) and it drops,
 because Enter there goes back rather than creating anything.
@@ -710,12 +727,12 @@ permanent delete.
 
 | Key | Action |
 |---|---|
-| **Ctrl+N** | New note. Works on the Library landing (no row selected yet) as well as inside the Notes workflow — the landing's bare **n** still works too, but the footer advertises Ctrl+N in both places now. |
+| **Ctrl+N** | Makes a new blank note and opens it — no chooser in between. Works on the Library landing (no row selected yet) as well as inside the Notes workflow — the landing's bare **n** does the same, but the footer advertises Ctrl+N in both places now. |
 | **/** | Focus the note filter ("find note"), without typing a literal "/" into it. Once the filter has focus, "/" is an ordinary typeable character rather than an accelerator — a second "/" adds a literal slash, since a filter can legitimately target a folder-style path such as "Work/Q3". |
 | **Escape** | Focus the rail (in **Recently deleted**, go back to the list) |
 | **r** (in **Recently deleted**) | Restore the focused row |
 | Enter (in "Filter notes… (Enter)") | Apply the filter |
-| ↑ / ↓ (New note view) | Move between **Blank note** and the template rows |
+| ↑ / ↓ (New note view) | Move between **Blank note**, **From a template…** and the template rows it opens |
 | Enter (New note view) | Create from the focused row |
 
 The footer advertises these as `ctrl+n new note | / find note | esc focus
@@ -1073,3 +1090,14 @@ retired as user-visible names. task-32215: the three placement verbs (**Add to
 folder**, **Move note**, **Remove placement**) are pinned to a selected row;
 **Sort** on a populated list arrived with task-32172. task-32217: the note
 editor's Body box takes the height its pane has spare.)*
+
+*Verified against fix/library-crit10-notes-details — 2026-09-11 (task-32356:
+**Ctrl+N** and **n** create the blank note and open it instead of posing a
+nine-row chooser; the eight templates fold behind one **From a template…**
+row on the New note view, which is still where the rail's **New note** and
+the list's **New** go. task-32358: a fresh blank note's status reads "Empty
+note — type to keep it", which agrees with the list and the rail count it
+sits beside — it refines task-32133's wording, not its rule that an untouched
+blank note must never claim "Saved". task-32360 AC#2, handed over from the
+layout branch: below 64 columns the Notes status line and the browse toolbar
+no longer clip mid-word.)*

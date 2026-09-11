@@ -7137,9 +7137,11 @@ async def test_hub_accelerators_open_their_canvases_from_the_landing():
         await pilot.pause()
         await pilot.pause()
 
+        # task-32356: `n` makes the note itself now instead of opening the
+        # Create chooser; the accelerator still lands on the Notes route.
         await pilot.press("n")
-        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
-        assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE
+        await _wait_for_selector(screen, pilot, "#library-note-body")
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
 
 
 @pytest.mark.asyncio
@@ -22880,6 +22882,9 @@ async def test_library_shell_create_note_row_renders_blank_and_template_rows():
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
 
         assert screen.query_one("#library-notes-create-blank")
+        # task-32356: the template rows fold behind one row now.
+        screen.query_one("#library-note-from-template", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-template-0")
         template_row = screen.query_one("#library-notes-template-0")
         assert getattr(template_row, "template_key", None)
 
@@ -22937,6 +22942,11 @@ async def test_library_shell_create_is_single_flight_and_disables_all_choices():
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-create-note").press()
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+
+        # task-32356: open the templates first, so "every choice is
+        # disabled while a create runs" still has rows to be true of.
+        screen.query_one("#library-note-from-template", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-template-0")
 
         screen.query_one("#library-notes-create-blank").press()
         try:
@@ -23114,6 +23124,9 @@ async def test_library_shell_transforming_template_is_vetoed_before_create_servi
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-create-note").press()
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        # task-32356: the templates fold behind one row.
+        screen.query_one("#library-note-from-template", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-template-0")
         invalid = next(
             button
             for button in screen.query(".library-notes-template-row")
@@ -23177,6 +23190,9 @@ async def test_library_shell_malformed_template_shapes_never_reach_create_servic
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-create-note").press()
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        # task-32356: the templates fold behind one row.
+        screen.query_one("#library-note-from-template", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-template-0")
         malformed = next(
             button
             for button in screen.query(".library-notes-template-row")
@@ -24767,6 +24783,9 @@ async def test_library_shell_create_from_template_uses_template_fields():
 
         screen.query_one("#library-row-create-note").press()
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        # task-32356: the templates fold behind one row.
+        screen.query_one("#library-note-from-template", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-template-0")
 
         template_button = next(
             button
@@ -24869,9 +24888,14 @@ async def test_library_shell_create_view_groups_templates_without_blank_duplicat
         screen.query_one("#library-row-create-note").press()
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
 
-        # Group label between the Blank action and the template rows.
-        section = screen.query_one("#library-notes-template-section")
-        assert str(section.renderable) == "From a template"
+        # task-32356: the labelled boundary between the Blank action and the
+        # template rows is now the row that unfolds them -- a separate "From
+        # a template" heading directly under it would only repeat itself.
+        opener = screen.query_one("#library-note-from-template", Button)
+        assert str(opener.label) == "From a template…"
+        assert not screen.query(".library-notes-template-row")
+        opener.press()
+        await _wait_for_selector(screen, pilot, "#library-notes-template-0")
 
         template_rows = list(screen.query(".library-notes-template-row"))
         assert template_rows, "No template rows rendered."
@@ -32567,8 +32591,13 @@ async def test_library_note_breakpoint_round_trips_restore_every_region_focus_ro
         await pilot.press("escape")
         await pilot.press("escape")
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
-        await pilot.press("ctrl+n")
+        # task-32356: ctrl+n creates a note now, so the create canvas this
+        # round-trip is about opens from the list's New, and its template
+        # rows from the one row they fold behind.
+        screen.query_one("#library-notes-new", Button).press()
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        screen.query_one("#library-note-from-template", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-template-0")
         create_owner = screen._library_notes_scroll_owner("create")
         assert create_owner is not None
         assert int(create_owner.max_scroll_y) > 0
@@ -33021,11 +33050,25 @@ async def test_library_note_local_shortcuts_are_region_scoped_and_flush_guarded(
         body.text = "save before opening Create"
         await pilot.pause()
         saves_before = len(app.notes_scope_service.save_calls)
+        dirty_note_id = screen._library_note_session.snapshot.note_id
 
+        # task-32356: ctrl+n creates the note instead of opening Create.
+        # The invariant this pins is unchanged: the dirty editor is flushed
+        # BEFORE the key takes the route away from it.
         await pilot.press("ctrl+n")
-        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
-        assert len(app.notes_scope_service.save_calls) == saves_before + 1
-        assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_note_session.snapshot is not None
+                and screen._library_note_session.snapshot.note_id != dirty_note_id
+            ),
+            message="ctrl+n never opened a newly created note.",
+        )
+        assert any(
+            call.get("note_id") == dirty_note_id
+            for call in app.notes_scope_service.save_calls[saves_before:]
+        ), "ctrl+n left the dirty editor unflushed"
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
 
 
 @pytest.mark.asyncio
@@ -33217,7 +33260,9 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
         # (no Sort control there), so its footer state is covered by the
         # flat-list pin rather than from here.
 
-        await pilot.press("ctrl+n")
+        # task-32356: ctrl+n creates a note now; the Create canvas whose
+        # footer this pins opens from the list's New button.
+        screen.query_one("#library-notes-new", Button).press()
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
         await wait_footer("enter create | esc notes")
         await pilot.press("escape")
@@ -34138,6 +34183,10 @@ async def test_library_note_keyboard_capability_matrix(
         if capability == "create_discard":
             await _task10_open_notes_navigator(screen, pilot)
             await _task10_activate_with_keyboard(screen, pilot, "#library-notes-new")
+            # task-32356: the templates fold behind one row.
+            await _task10_activate_with_keyboard(
+                screen, pilot, "#library-note-from-template"
+            )
             await _wait_for_selector(screen, pilot, "#library-notes-template-0")
             await _task10_activate_with_keyboard(
                 screen, pilot, "#library-notes-template-0"

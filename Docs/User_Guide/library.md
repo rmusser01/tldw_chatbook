@@ -308,7 +308,7 @@ thing, so nothing on the screen relies on colour alone:
 | `≡` | already in your Library (a duplicate the import matched) | Import queue rows |
 | `⊘` | cancelled on purpose | Import queue rows |
 | `●` (leading a queue row) | still working | Import queue rows (queued, parsing, writing) |
-| `●` (inside a line) | not a state — it marks a count, or samples a colour | the blocked count on the Workspace ▸ Handoff row; a highlight's colour swatch in the Media reader |
+| `●` (inside a line) | not a state — it samples a colour | a highlight's colour swatch in the Media reader |
 | `▸` / `▾` | disclosure | trailing on a section header, leading on a folder-tree node |
 | `○` | a blocked or disabled action | any greyed action, always beside its reason or tooltip |
 | `✓` (leading, in a chooser) | the active value of a chooser | choice strips, kept toggles ("mode: ✓ Search ⇄ RAG Answer") |
@@ -433,18 +433,22 @@ import may skip intermediate updates and does not resume from an earlier percent
 
 Collapsed by default; click anywhere on the **Details** header — the label
 text or the **▾**/**▸** chip — to open it. Opening it recomputes the
-"DB sizes" line from disk (sidecars included), so the numbers you see are
-current as of that open, not a reading cached at some earlier repaint.
+"DB sizes" lines from disk (sidecars included), so the numbers you see are
+current as of that open, not a reading cached at some earlier repaint. Those
+sizes sit inside Details' own **Diagnostics** disclosure, closed until you
+open it (and closed again next time) — they are there when you want them and
+out of the way when you do not.
 
 | Group | Contents |
 |---|---|
-| **Status** | A "Source · Local" (or "Source · Server: \<label\>") line, a counts row ("Notes N · Media N · Conversations N"), and — once a reading exists — a "DB sizes" label with one line per database ("Prompts 180.0KB", "Chats/Notes 1.1MB", "Media 508.0KB"), a line each so no size is split across two rail lines. |
-| **Workspace** | "Active · \<workspace name\>" and a "Handoff" line. With nothing blocked it is a bare count ("0 eligible"). When something is blocked it names the reason and the next step: "2 eligible · 1 blocked · not in this workspace · Link it from the conversation's header". |
-| **Actions** | The buttons below, plus the note "Server sync WIP · local only". |
+| **Status** | A "Source · Local" (or "Source · Server: \<label\>") line and a counts row ("Notes N · Media N · Conversations N"). |
+| **Diagnostics** | A closed disclosure holding — once a reading exists — a "DB sizes" label with one line per database ("Prompts 180.0KB", "Chats/Notes 1.1MB", "Media 508.0KB"), a line each so no size is split across two rail lines. |
+| **Workspace** | "Active · \<workspace name\>" and a "Handoff" line. With nothing blocked it is a bare count ("0 eligible"). When something is blocked it says what you cannot do yet, why, and the next step: "1 item can't be used in Console yet · not in this workspace · Link it from the conversation's header". |
+| **Actions** | The buttons below, plus the note "Everything here is stored on this machine · syncing to a server isn't available yet." |
 
 | Action | What it does |
 |---|---|
-| **Create local workspace** | Opens the same "New Workspace" dialog Console and Settings use — a prefilled "Workspace N" name, optional folders to bind (validated as added, with a Browse… picker), and a "Switch to this workspace" checkbox (checked by default). Escape cancels with nothing created. Server sync and ACP handoff remain WIP. A bound folder containing a `.SKILLS/` project skills folder is annotated "— contains N project skill(s)" and, after Create, offers a chained import prompt — see [Project skills](library/skills.md#project-skills-skills). |
+| **Create local workspace** | Opens the same "New Workspace" dialog Console and Settings use — a prefilled "Workspace N" name, optional folders to bind (validated as added, with a Browse… picker), and a "Switch to this workspace" checkbox (checked by default). Escape cancels with nothing created. Server sync and agent hand-off (ACP) aren't available yet. A bound folder containing a `.SKILLS/` project skills folder is annotated "— contains N project skill(s)" and, after Create, offers a chained import prompt — see [Project skills](library/skills.md#project-skills-skills). |
 | **Import sources** | Shown only while you have no workspace-eligible sources: "Open Library Import/Export to add workspace-eligible sources." |
 | **Use in Console** | Stages a snapshot of your local Library sources ("Local Library Sources") into Console and takes you there. When it can't run yet, its tooltip says why — "Stage Library source context after Library finishes loading." or "Stage Library source context after adding notes, media, or conversations." |
 
@@ -909,6 +913,16 @@ list, and the landing hub is capped at 96 cells).*
 (task-32225: the return chip stands down wherever a canvas owns Escape itself,
 so the footer never names a return the key would not perform; task-32228:
 Conversations arrives with its first row focused like every other browse list).*
+
+*Verified against fix/library-crit10-notes-details — 2026-09-11 (task-32357:
+the Details panel says what a reader can do about it — the Handoff line reads
+"1 item can't be used in Console yet · \<reason\> · \<next step\>" with
+task-32230's counts and reason untouched, "Server sync WIP · local only" is
+now "Everything here is stored on this machine · syncing to a server isn't
+available yet.", and the DB sizes moved into a closed **Diagnostics**
+disclosure inside Details. The glyph table's claim that `●` marks the blocked
+count was already stale — task-32230 retired that dot — and is corrected
+here.)*
 
 *Verified against fix/library-crit10-viewer — 2026-09-11 (task-32346: with the
 caret in the Search/RAG query box the footer reads "typing in field | esc leave

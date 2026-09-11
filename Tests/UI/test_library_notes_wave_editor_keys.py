@@ -426,14 +426,17 @@ async def test_fresh_blank_note_reads_as_a_draft_until_first_save():
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
+        # task-32356: `n` creates the blank note itself now -- there is no
+        # chooser between the key and the editor.
         await pilot.press("n")
-        blank = await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
-        blank.press()
         await _wait_for_selector(screen, pilot, "#library-note-body")
         await pilot.pause()
 
         status = screen.query_one("#library-note-status", Static)
-        assert str(status.renderable) == "Draft — not saved yet", (
+        # task-32358 refines task-32133 AC#2's wording, not its intent: an
+        # untouched blank note still must not claim "Saved". The row is
+        # committed by now, so the chip says what is actually at stake.
+        assert str(status.renderable) == "Empty note — type to keep it", (
             f"A blank, untouched note claimed {status.renderable!r} before "
             "anything was typed or saved"
         )
@@ -444,7 +447,7 @@ async def test_fresh_blank_note_reads_as_a_draft_until_first_save():
         await pilot.pause()
         await pilot.pause()
 
-        assert str(status.renderable) != "Draft — not saved yet"
+        assert str(status.renderable) != "Empty note — type to keep it"
 
 
 @pytest.mark.asyncio
@@ -459,14 +462,14 @@ async def test_keyword_only_edit_through_info_clears_the_draft_status():
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
+        # task-32356: `n` creates the blank note itself now -- there is no
+        # chooser between the key and the editor.
         await pilot.press("n")
-        blank = await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
-        blank.press()
         await _wait_for_selector(screen, pilot, "#library-note-body")
         await pilot.pause()
 
         status = screen.query_one("#library-note-status", Static)
-        assert str(status.renderable) == "Draft — not saved yet"
+        assert str(status.renderable) == "Empty note — type to keep it"
 
         screen.query_one("#library-note-context", Button).press()
         await pilot.pause()
@@ -477,7 +480,7 @@ async def test_keyword_only_edit_through_info_clears_the_draft_status():
         await pilot.pause()
         await pilot.pause()
 
-        assert str(status.renderable) != "Draft — not saved yet", (
+        assert str(status.renderable) != "Empty note — type to keep it", (
             "A keyword-only edit through Info left the note reading as an "
             "unsaved draft"
         )
@@ -487,8 +490,14 @@ async def test_keyword_only_edit_through_info_clears_the_draft_status():
 
 
 @pytest.mark.asyncio
-async def test_ctrl_n_opens_create_from_the_landing():
-    """AC#1: ctrl+n was inert on the landing; it must now open Create."""
+async def test_ctrl_n_makes_a_note_from_the_landing():
+    """AC#1: ctrl+n was inert on the landing; it must now make a new note.
+
+    task-32356 kept the reach and changed the destination: the key used to
+    land on the Create chooser and now creates the blank note it was going
+    to choose. What this pin guards -- ctrl+n does the New note thing from
+    the landing -- is unchanged.
+    """
     host = _build_notes_host()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
@@ -496,11 +505,11 @@ async def test_ctrl_n_opens_create_from_the_landing():
         assert not screen._library_selected_row_id
 
         await pilot.press("ctrl+n")
-        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        await _wait_for_selector(screen, pilot, "#library-note-body")
 
 
 @pytest.mark.asyncio
-async def test_bare_n_still_opens_create_from_the_landing():
+async def test_bare_n_still_makes_a_note_from_the_landing():
     """Regression guard: the existing bare-`n` landing accelerator survives."""
     host = _build_notes_host()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -508,13 +517,18 @@ async def test_bare_n_still_opens_create_from_the_landing():
         await _wait_for_library_shell(screen, pilot)
 
         await pilot.press("n")
-        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        await _wait_for_selector(screen, pilot, "#library-note-body")
 
 
 @pytest.mark.asyncio
-async def test_bare_n_also_opens_create_from_inside_notes():
+async def test_bare_n_also_makes_a_note_from_inside_notes():
     """AC#1: `n` was landing-only; it must now also work inside Notes,
-    matching where ctrl+n already fires (the same ``check_action`` gate)."""
+    matching where ctrl+n already fires (the same ``check_action`` gate).
+
+    Both keys share ``library_notes_new``, so task-32356's change reached
+    both at once -- which is the point: one key creating while the other
+    posed a nine-way question is exactly the drift AC#1 closed.
+    """
     host = _build_notes_host()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
@@ -524,7 +538,7 @@ async def test_bare_n_also_opens_create_from_inside_notes():
         await pilot.pause()
 
         await pilot.press("n")
-        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        await _wait_for_selector(screen, pilot, "#library-note-body")
 
 
 # --- task-32139: one back-cue wording, sized by compact ---------------------
