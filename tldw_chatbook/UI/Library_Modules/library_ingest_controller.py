@@ -942,9 +942,30 @@ class LibraryIngestController:
     def _run_library_ingest_preflight(self) -> Any:
         return self._run_library_ingest_preflight_fn
 
-    @property
-    def _update_library_ingest_dynamic_regions(self) -> Any:
-        return self._update_library_ingest_dynamic_regions_fn
+    def _update_library_ingest_dynamic_regions(self, *args: Any, **kwargs: Any) -> Any:
+        """Repaint the in-place Ingest regions, then resync the footer.
+
+        Qodo review: the Enter hint is derived from the Start gate, so every
+        in-place gate update has to re-register it -- not just the
+        pre-flight seam. Clearing the path, editing an option, switching
+        backend and the rest all funnel through here, so one wrapper covers
+        them where twelve call-site edits would have covered the same
+        ground. (The three SCREEN-side callers of the underlying method are
+        outside this branch's ownership and stay uncovered; the resume pass
+        at ``library_screen.py:8703`` is one of them and re-registers on its
+        own.)
+
+        Args:
+            *args: Forwarded to the screen's repaint (``allow_screen_fallback``
+                / ``allow_structural_recompose``).
+            **kwargs: Forwarded unchanged.
+
+        Returns:
+            Whatever the screen's repaint returns.
+        """
+        result = self._update_library_ingest_dynamic_regions_fn(*args, **kwargs)
+        self._resync_library_ingest_footer()
+        return result
 
     @property
     def _update_library_ingest_gate(self) -> Any:
@@ -956,6 +977,20 @@ class LibraryIngestController:
     ) -> tuple[tuple[str, str], ...]:
         """Return prioritized Ingest hints, including Retry only when live."""
         shortcuts = list(self.LIBRARY_INGEST_SHORTCUTS)
+        # task-32364 AC#3: the first Enter validates the path and the second
+        # runs the queue; one label for two different actions taught the
+        # wrong thing at exactly the moment the user commits. The gate this
+        # reads is the SAME one Enter itself obeys
+        # (``handle_library_ingest_path_submitted``), so the footer can
+        # never promise an import the keypress will decline.
+        state_fn = getattr(self, "_build_library_ingest_state", None)
+        start_enabled = bool(
+            getattr(state_fn(), "start_enabled", False) if callable(state_fn) else False
+        )
+        shortcuts[0] = (
+            "enter",
+            "start import" if start_enabled else "check this path",
+        )
         if getattr(self, "_library_ingest_start_consent", None) is not None:
             shortcuts[1] = ("esc", "cancel")
         registry = getattr(
@@ -971,6 +1006,43 @@ class LibraryIngestController:
         ):
             shortcuts.insert(2, ("r", "retry"))
         return tuple(shortcuts)
+
+    def _resync_library_ingest_footer(self) -> None:
+        """Re-register the Ingest footer when its state-derived set changed.
+
+        task-32364 AC#3 (fix round 1): every other entry in this set turns on
+        a REGISTRY event, and the Enter label is the first one driven by FORM
+        state. Two things re-registered before this existed -- the registry
+        listener, which fires once the import is already running, and, by
+        side effect, the STRUCTURAL branch of the screen's in-place repaint,
+        which recomposes when the type-group set (or the unavailable /
+        backend lines) changes. The common blank-to-valid-path transition
+        happens to take that branch; every gate transition that did not left
+        the footer advertising "check this path" while Enter had already
+        started starting the import -- the same wrong-label defect this task
+        exists to remove, moved onto the more expensive press.
+
+        Called from ``_update_library_ingest_dynamic_regions`` above, the one
+        funnel every in-place gate update takes (Qodo review), so no caller
+        has to remember it.
+
+        Deduped on the registration tuple, so an unchanged set costs nothing.
+        """
+        if self._library_selected_row_id != LIBRARY_ROW_INGEST_MEDIA:
+            return
+        if self._library_screen_suspended:
+            # Re-review finding B: the registry listener LATCHES before it
+            # skips, and the resume pass re-registers only when that latch
+            # is set -- nothing else re-registers for a reused, resumed
+            # screen. A bare return here dropped a gate transition that
+            # happened on another tab, so the footer came back naming the
+            # previous step's action.
+            self._library_ingest_suspended_activity = True
+            return
+        shortcuts = self._library_ingest_shortcuts_for_current_state()
+        registration = ("library", tuple(shortcuts))
+        if self._footer_shortcut_registration != registration:
+            self.register_footer_shortcuts(source="library", shortcuts=shortcuts)
 
     def _sync_library_ingest_rail_for_width(self, width: int) -> None:
         """Auto-collapse the rail only while narrow Ingest needs the space."""
@@ -1138,12 +1210,6 @@ class LibraryIngestController:
                 self._library_ingest_suspended_activity = True
             else:
                 self._update_library_ingest_dynamic_regions()
-                shortcuts = self._library_ingest_shortcuts_for_current_state()
-                registration = ("library", tuple(shortcuts))
-                if self._footer_shortcut_registration != registration:
-                    self.register_footer_shortcuts(
-                        source="library", shortcuts=shortcuts
-                    )
         registry = self._library_ingest_registry()
         counts_fn = getattr(registry, "counts", None)
         counts = counts_fn() if callable(counts_fn) else {}
