@@ -740,7 +740,7 @@ async def test_real_inspector_producer_variants_are_strictly_owned(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_active_run_alone_never_produces_a_setup_recovery_row(monkeypatch):
-    """task-32276: an active turn is not a provider-configuration problem.
+    """task-32345: an active turn is not a provider-configuration problem.
 
     ``build_console_settings_readiness(..., active_run=True)`` blocks an
     OTHERWISE fully-configured provider with ``recovery_action=

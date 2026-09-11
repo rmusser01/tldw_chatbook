@@ -878,7 +878,7 @@ class ConsolePromptsController:
         cluster's whole fan-in, not a sprawl across many methods. The count
         was eighteen until task 2766 collapsed the post-apply re-sync trio
         (see `sync_console_system_prompt_surfaces` below) down to seventeen,
-        then back to eighteen when task-32276 added `console_run_active` --
+        then back to eighteen when task-32345 added `console_run_active` --
         Improve's own "a run is in flight" gate, split out of
         `console_provider_blocker_copy` once that copy stopped covering a
         merely-active run.
@@ -926,14 +926,14 @@ class ConsolePromptsController:
                 improvement service runs against.
             console_provider_blocker_copy: `ChatScreen._console_provider_
                 blocker_copy`, the "why Improve is unavailable" copy; a
-                CALL, evaluated at modal-build time. task-32276: this copy
+                CALL, evaluated at modal-build time. task-32345: this copy
                 is empty during a merely-active run (a turn in flight is
                 not a provider misconfiguration) -- `console_run_active`
                 below is the dedicated seam for "block Improve while a run
                 is active" instead, so that behavior does not depend on
                 blocker-copy internals.
             console_run_active: `ChatScreen._console_run_active` --
-                task-32276: Improve calls the provider gateway independently
+                task-32345: Improve calls the provider gateway independently
                 of the main turn, so it stays unavailable while a run is in
                 flight; checked directly rather than inferred from
                 `console_provider_blocker_copy`.
@@ -1205,7 +1205,7 @@ class ConsolePromptsController:
                 "reserved protected-placeholder text. Remove or rename that "
                 "literal token, then reopen Improve."
             )
-        # task-32276: Improve dispatches to the provider gateway independently
+        # task-32345: Improve dispatches to the provider gateway independently
         # of the main turn, so it stays unavailable while a run is active --
         # checked directly here (not inferred from `console_provider_blocker_
         # copy`, which no longer covers a merely-active, otherwise-healthy

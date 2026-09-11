@@ -1970,7 +1970,7 @@ def build_console_controllers(
             lambda: screen._ensure_console_provider_gateway()
         ),
         console_provider_blocker_copy=(lambda: screen._console_provider_blocker_copy()),
-        # task-32276: Improve's own "a run is in flight" gate, split out of
+        # task-32345: Improve's own "a run is in flight" gate, split out of
         # `console_provider_blocker_copy` (which stopped covering a merely-
         # active run) so that behavior does not depend on blocker-copy
         # internals.

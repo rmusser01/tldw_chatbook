@@ -372,7 +372,7 @@ async def test_run_chip_tracks_active_run_state_via_mode_bar_sync():
 
 @pytest.mark.asyncio
 async def test_run_chip_reads_waiting_for_approval_while_a_round_is_pending():
-    """task-32276: a card waiting on the user overrides the streaming copy.
+    """task-32345: a card waiting on the user overrides the streaming copy.
 
     ``run_state.visible_copy`` ("Agent running.") is set once at dispatch
     start and never updated when an approval round parks mid-turn -- the
@@ -418,7 +418,7 @@ async def test_run_chip_reads_waiting_for_approval_while_a_round_is_pending():
         await pilot.pause()
         assert chip.display is True
         assert str(chip.render()) == "Run: Waiting for your approval."
-        # task-32276 minor: the hidden compat mode-bar static must say the
+        # task-32345 minor: the hidden compat mode-bar static must say the
         # same thing as the visible chip -- two copies of one fact, never
         # allowed to disagree.
         assert "Waiting for your approval." in str(
