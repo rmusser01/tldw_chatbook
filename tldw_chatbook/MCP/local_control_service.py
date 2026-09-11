@@ -15,6 +15,7 @@ from tldw_chatbook.Library.library_tool_contract import (
     LibraryToolDescriptor,
 )
 
+from .activation import batch_guard, guarded, request_guard
 from .client import MCPClient
 from .local_runtime_delegate import LocalMCPRuntimeDelegate
 from .local_store import (
@@ -143,6 +144,10 @@ class LocalMCPControlService:
         self.runtime_delegate = runtime_delegate or LocalMCPRuntimeDelegate(
             manifest_provider=self.manifest_provider,
         )
+        if isinstance(self.client, MCPClient):
+            self.client._definition_store = self.store
+        if isinstance(self.runtime_delegate, LocalMCPRuntimeDelegate):
+            self.runtime_delegate._definition_store = self.store
         self._runtime_activity_limit = 50
 
     def get_overview(self) -> dict[str, Any]:
@@ -226,6 +231,7 @@ class LocalMCPControlService:
         record = LocalExternalMCPProfile.from_input_dict(strict_input)
         return self.store.save_profile(record).to_dict()
 
+    @guarded
     async def connect_profile(self, profile_id: str) -> dict[str, Any]:
         self._require_allowed("mcp.external_profiles.launch.local")
         profile = self.store.get_profile(profile_id)
@@ -257,6 +263,7 @@ class LocalMCPControlService:
         client = self._get_client()
         return await client.disconnect_from_server(profile_id)
 
+    @guarded
     async def test_external_profile(self, profile_id: str) -> dict[str, Any]:
         self._require_allowed("mcp.external_profiles.trigger.local")
         snapshot = await self._describe_profile(profile_id, keep_connected=False)
@@ -268,6 +275,7 @@ class LocalMCPControlService:
             "prompts": len(snapshot.get("prompts", [])),
         }
 
+    @guarded
     async def execute_external_tool(
         self,
         profile_id: str,
@@ -298,6 +306,7 @@ class LocalMCPControlService:
             raise RuntimeError(payload["error"])
         return payload
 
+    @guarded
     async def refresh_external_profile(self, profile_id: str) -> dict[str, Any]:
         self._require_allowed("mcp.external_profiles.observe.local")
         return await self._describe_profile(profile_id, keep_connected=True)
@@ -486,6 +495,7 @@ class LocalMCPControlService:
             "diagnostics": self.runtime_delegate.get_protocol_diagnostics(),
         }
 
+    @request_guard
     async def run_runtime_request(
         self, method: str, params: Mapping[str, Any] | None = None
     ) -> dict[str, Any]:
@@ -528,6 +538,7 @@ class LocalMCPControlService:
             "governance": self._compact_governance_preview(governance),
         }
 
+    @batch_guard
     async def run_runtime_batch(
         self, requests: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...]
     ) -> dict[str, Any]:
@@ -618,6 +629,7 @@ class LocalMCPControlService:
             "results": results,
         }
 
+    @guarded
     async def execute_tool(
         self, tool_name: str, arguments: Mapping[str, Any] | None = None
     ) -> dict[str, Any]:
@@ -659,6 +671,7 @@ class LocalMCPControlService:
             "governance": self._compact_governance_preview(governance),
         }
 
+    @guarded
     async def read_resource(self, resource_uri: str) -> dict[str, Any]:
         self._require_allowed("mcp.inventory.observe.local")
         normalized_resource_uri = str(resource_uri or "").strip()
@@ -695,6 +708,7 @@ class LocalMCPControlService:
             "governance": self._compact_governance_preview(governance),
         }
 
+    @guarded
     async def get_prompt(
         self, prompt_name: str, arguments: Mapping[str, Any] | None = None
     ) -> dict[str, Any]:
@@ -746,6 +760,7 @@ class LocalMCPControlService:
     def _get_client(self) -> MCPClient:
         if self.client is None:
             self.client = MCPClient()
+            self.client._definition_store = self.store
         return self.client
 
     def _build_spawn_env(self, profile: LocalExternalMCPProfile) -> dict[str, str]:

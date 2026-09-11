@@ -23,6 +23,8 @@ from urllib.parse import urlsplit
 
 from loguru import logger
 
+from .activation import client_guard, guarded
+
 _MCP_PROTOCOL_VERSION = "2025-03-26"
 _REQUEST_TIMEOUT_SECONDS = 10.0
 _TERMINATE_TIMEOUT_SECONDS = 2.0
@@ -444,6 +446,7 @@ class _StdioJSONRPCConnection:
 
         raise MCPClientError("MCP catalog page limit exceeded")
 
+    @guarded
     async def call_tool(
         self, tool_name: str, arguments: Dict[str, Any]
     ) -> SimpleNamespace:
@@ -456,6 +459,7 @@ class _StdioJSONRPCConnection:
         )
         return SimpleNamespace(content=result.get("content", []))
 
+    @guarded
     async def read_resource(self, resource_uri: str) -> SimpleNamespace:
         result = await self.request(
             "resources/read",
@@ -471,6 +475,7 @@ class _StdioJSONRPCConnection:
             _meta=_copy_resource_metadata(result.get("_meta")),
         )
 
+    @guarded
     async def get_prompt(
         self,
         prompt_name: str,
@@ -487,6 +492,7 @@ class _StdioJSONRPCConnection:
             ]
         )
 
+    @guarded
     async def request(
         self,
         method: str,
@@ -519,14 +525,80 @@ class _StdioJSONRPCConnection:
                     else timeout_seconds
                 ),
             )
+        except _JSONRPCError:
+            # A server error response completes this request like a result.
+            raise
         except asyncio.TimeoutError as exc:
+            await self._settle_failed_request()
             raise TimeoutError(
                 f"Timed out waiting for MCP response to '{method}'"
             ) from exc
+        except asyncio.CancelledError:
+            await self._settle_failed_request()
+            raise
+        except (OSError, RuntimeError, ValueError):
+            await self._settle_failed_request()
+            raise
         finally:
             self._pending_requests.pop(request_id, None)
             if not future.done():
                 future.cancel()
+
+    async def _settle_failed_request(self) -> None:
+        """Keep each interrupted request admitted until its child has exited.
+
+        Pending-future failure and cancelled callers do not settle native work.
+        Reuse existing teardown once for concurrent requests. If termination
+        fails, wait for actual exit rather than release their source leases.
+        """
+        process = getattr(self, "process", None)
+        if process is None:
+            return
+        settlement = getattr(self, "_request_settlement", None)
+        if settlement is None:
+            self._reader_unavailable = True
+
+            async def stop_and_settle() -> None:
+                try:
+                    cleanup = getattr(self, "_on_transport_failure", None)
+                    if cleanup is not None:
+                        await cleanup()
+                    else:
+                        await self.close()
+                finally:
+                    # asyncio's child watcher sets returncode on actual exit.
+                    # Teardown can fail or lose its waiter; neither is exit.
+                    while process.returncode is None:
+                        await asyncio.sleep(0.05)
+
+            settlement = asyncio.create_task(stop_and_settle())
+            self._request_settlement = settlement
+        cancelled = False
+        while not settlement.done() or process.returncode is None:
+            try:
+                if settlement.done():
+                    # Normal loop shutdown can cancel settlement itself. Each
+                    # request still owns its leases until the child exits.
+                    await asyncio.sleep(0.05)
+                else:
+                    await asyncio.shield(settlement)
+            except asyncio.CancelledError:
+                cancelled = True
+            except (OSError, RuntimeError):
+                # A failed settlement cannot release a live native child.
+                if process.returncode is not None:
+                    break
+        try:
+            settlement.result()
+        except asyncio.CancelledError:
+            cancelled = True
+        except (OSError, RuntimeError):
+            # Preserve the original timeout/transport error after settlement.
+            if cancelled:
+                raise asyncio.CancelledError from None
+            return
+        if cancelled:
+            raise asyncio.CancelledError
 
     async def notify(
         self, method: str, params: Optional[Dict[str, Any]] = None
@@ -812,6 +884,7 @@ class MCPClient:
 
         logger.info("MCP Client '{}' initialized", name)
 
+    @client_guard
     async def connect_to_server(
         self,
         server_id: str,
@@ -885,12 +958,14 @@ class MCPClient:
                     )
 
             session = _StdioJSONRPCConnection(process, client_name=self.name)
+            session._definition_store = getattr(self, "_definition_store", None)
             pending.session = session
             session._on_transport_failure = cleanup_failed_transport
             initialize_timeout = _remaining(
                 deadline, "MCP connection deadline exceeded"
             )
-            await asyncio.wait_for(session.initialize(), timeout=initialize_timeout)
+            async with asyncio.timeout(initialize_timeout):
+                await session.initialize()
 
             pending.server = {
                 "command": command,
@@ -913,10 +988,8 @@ class MCPClient:
             }
 
             discovery_timeout = _remaining(deadline, "MCP connection deadline exceeded")
-            await asyncio.wait_for(
-                self._discover_server_capabilities(server_id),
-                timeout=discovery_timeout,
-            )
+            async with asyncio.timeout(discovery_timeout):
+                await self._discover_server_capabilities(server_id)
             if (
                 self._connect_reservations.get(server_id) is not reservation
                 or self._pending_connections.get(server_id) is not pending
@@ -1012,6 +1085,7 @@ class MCPClient:
                 f"Server {server_id} returned no discoverable capabilities"
             )
 
+    @client_guard
     async def call_tool(
         self, server_id: str, tool_name: str, arguments: Dict[str, Any]
     ) -> Dict[str, Any]:
@@ -1041,6 +1115,7 @@ class MCPClient:
             logger.error("Error calling tool {} on {}: {}", tool_name, server_id, e)
             return {"error": str(e)}
 
+    @client_guard
     async def read_resource(self, server_id: str, resource_uri: str) -> Dict[str, Any]:
         """Read a resource from a connected server.
 
@@ -1073,6 +1148,7 @@ class MCPClient:
             )
             return {"error": str(e)}
 
+    @client_guard
     async def get_prompt(
         self,
         server_id: str,

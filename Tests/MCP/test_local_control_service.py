@@ -1671,7 +1671,13 @@ async def test_local_control_service_rejects_empty_capability_snapshots():
         store=store, client=client, manifest_provider=lambda: {}
     )
 
-    with patch.dict(os.environ, {"API_KEY": "resolved-api-key"}, clear=True):
+    # Keep the disposable profile selected while isolating spawn credentials.
+    selectors = {
+        key: os.environ[key]
+        for key in ("HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "TLDW_CONFIG_PATH")
+        if key in os.environ
+    }
+    with patch.dict(os.environ, {**selectors, "API_KEY": "resolved-api-key"}, clear=True):
         with pytest.raises(RuntimeError):
             await service.connect_profile("profile-a")
 
@@ -1686,8 +1692,14 @@ async def test_local_control_service_tests_refreshes_disconnects_and_deletes_ext
         store=store, client=client, manifest_provider=lambda: {}
     )
 
+    # Keep the disposable profile selected while isolating spawn credentials.
+    selectors = {
+        key: os.environ[key]
+        for key in ("HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "TLDW_CONFIG_PATH")
+        if key in os.environ
+    }
     with patch.dict(
-        os.environ, {"API_KEY": "resolved-api-key", "PATH": "/usr/bin"}, clear=True
+        os.environ, {**selectors, "API_KEY": "resolved-api-key", "PATH": "/usr/bin"}, clear=True
     ):
         test_result = await service.test_external_profile("profile-a")
         await service.connect_profile("profile-a")

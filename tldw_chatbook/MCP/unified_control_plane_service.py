@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .activation import action_guard, guarded
+
 import asyncio
 import inspect
 import time
@@ -1110,6 +1112,7 @@ class UnifiedMCPControlPlaneService:
             ),
         )
 
+    @action_guard
     async def run_action(
         self, action_name: str, payload: dict[str, Any] | None = None
     ) -> Any:
@@ -2178,7 +2181,8 @@ class UnifiedMCPControlPlaneService:
     async def _run_local_lifecycle(self, action: str, profile_id: str, coro):
         timeout = self._lifecycle_timeout()
         try:
-            result = await asyncio.wait_for(coro, timeout=timeout)
+            async with asyncio.timeout(timeout):
+                result = await coro
         except asyncio.TimeoutError:
             message = f"Timed out after {timeout:.0f}s"
             self._record_local_attempt(profile_id, action, ok=False, error=message)
@@ -2192,6 +2196,7 @@ class UnifiedMCPControlPlaneService:
         self._record_local_attempt(profile_id, action, ok=True, error=None)
         return result
 
+    @guarded
     async def connect_local_profile(self, profile_id: str) -> dict:
         return await self._run_local_lifecycle(
             "connect", profile_id, self.local_service.connect_profile(profile_id)
@@ -2202,11 +2207,13 @@ class UnifiedMCPControlPlaneService:
             "disconnect", profile_id, self.local_service.disconnect_profile(profile_id)
         )
 
+    @guarded
     async def test_local_profile(self, profile_id: str) -> dict:
         return await self._run_local_lifecycle(
             "test", profile_id, self.local_service.test_external_profile(profile_id)
         )
 
+    @guarded
     async def refresh_local_profile(self, profile_id: str) -> dict:
         return await self._run_local_lifecycle(
             "refresh",
@@ -2309,6 +2316,7 @@ class UnifiedMCPControlPlaneService:
                 type(exc).__name__,
             )
 
+    @guarded
     async def execute_hub_tool(
         self,
         server_key: str,
@@ -2393,7 +2401,8 @@ class UnifiedMCPControlPlaneService:
         )
         started = time.monotonic()
         try:
-            result = await asyncio.wait_for(coro, timeout=timeout)
+            async with asyncio.timeout(timeout):
+                result = await coro
         except asyncio.TimeoutError:
             duration_ms = int((time.monotonic() - started) * 1000)
             message = f"Timed out after {timeout:.0f}s"
@@ -2507,6 +2516,7 @@ class UnifiedMCPControlPlaneService:
         )
         return result
 
+    @guarded
     async def test_hub_tool(
         self,
         server_key: str,
@@ -2648,6 +2658,7 @@ class UnifiedMCPControlPlaneService:
             # share one type the same way they already share one message.
             raise RawToolCallRefusedError(_RAW_TOOL_CALL_REFUSED_MESSAGE)
 
+    @guarded
     async def execute_advanced_tool(
         self, tool_name: str, arguments: dict[str, Any] | None = None
     ) -> Any:
