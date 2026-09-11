@@ -2606,7 +2606,7 @@ async def test_console_empty_transcript_stays_neutral_when_setup_blocked(monkeyp
         assert "Get started" in text
         assert "Send your first message" in text
         assert "Choose model" in text
-        assert "Attach context" in text
+        assert "Context rail" in text
         assert "Search Library" in text
 
 

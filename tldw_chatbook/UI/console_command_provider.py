@@ -50,6 +50,16 @@ class ConsoleCommandProvider(Provider):
                 "Open a chat that is never saved locally",
             ),
             (
+                "Console: Toggle Context rail",
+                screen.action_toggle_console_context_rail,
+                "Open or close the left context rail (Alt+C)",
+            ),
+            (
+                "Console: Toggle Inspector rail",
+                screen.action_toggle_console_inspector_rail,
+                "Open or close the right Inspect rail (Alt+I)",
+            ),
+            (
                 "Console: Focus composer",
                 screen.action_focus_console_composer_home,
                 "Return focus to the composer (Esc)",

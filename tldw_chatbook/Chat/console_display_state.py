@@ -11,7 +11,7 @@ from typing import Any, Literal, Mapping, Optional, Sequence
 
 from rich.cells import cell_len
 
-from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
+from tldw_chatbook.Chat.citation_evidence_models import reference_can_deliver, EvidenceBundle
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.console_library_policy import (
@@ -824,7 +824,17 @@ class ConsoleStagedContextState:
             ConsoleSourcePrimaryRow(
                 source_id=_safe_display_text(reference.source_id, "unknown"),
                 status=(
-                    "ready"
+                    # TASK-32330: an "available" reference whose source
+                    # kind the send-side normalizer rejects (skills,
+                    # watchlists snapshots, ...) renders "Listed" rather
+                    # than "Ready" -- it cannot reach the model on send
+                    # (verified: normalize_console_evidence_references
+                    # drops it). The truthfulness rule (TASK-2154 FR-06)
+                    # applies to the tray's own vocabulary.
+                    "listed"
+                    if reference.status == "available"
+                    and not reference_can_deliver(reference)
+                    else "ready"
                     if reference.status == "available"
                     else (
                         "blocked"

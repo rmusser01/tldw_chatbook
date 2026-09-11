@@ -1258,3 +1258,97 @@ async def test_the_view_all_tail_tooltip_names_the_section_in_both_halves():
         section.set_view_all_busy(False)
         await pilot.pause()
         assert str(tail.tooltip) == "Refresh — Environment"
+
+
+# --- TASK-32335: full-text tooltips on truncated section rows ------------------
+
+
+@pytest.mark.asyncio
+async def test_row_tooltip_carries_full_primary_and_secondary_text():
+    """TASK-32335: the secondary line is a truncated last-step summary and
+    the primary can ellipsize; the untruncated pair must be recoverable via
+    tooltip, matching the changed-files convention."""
+    rows = (
+        InspectorSectionRow(
+            row_id="alpha",
+            primary_text="Agent alpha - running a very long label that will ellipsize",
+            secondary_text="step 1 of many with detail",
+            status="running",
+        ),
+        InspectorSectionRow(
+            row_id="beta",
+            primary_text="Agent beta - plain",
+            secondary_text="",
+            status="done",
+        ),
+    )
+    section = ConsoleInspectorSection(
+        title="Agents",
+        section_id="agents",
+        rows=rows,
+        summary="2",
+        id="section-tooltip",
+    )
+
+    class SectionApp(App):
+        def compose(self) -> ComposeResult:
+            yield section
+
+    app = SectionApp()
+    async with app.run_test():
+        row_widgets = list(section.query(ConsoleInspectorSectionRow))
+        assert len(row_widgets) == 2
+        first_tooltip = str(row_widgets[0].tooltip)
+        assert "Agent alpha - running a very long label" in first_tooltip
+        assert "step 1 of many with detail" in first_tooltip
+        second_tooltip = str(row_widgets[1].tooltip)
+        assert "Agent beta - plain" in second_tooltip
+
+
+@pytest.mark.asyncio
+async def test_row_tooltip_survives_in_place_patch_and_escapes_markup():
+    """TASK-32335: the tooltip is refreshed by the in-place patch path (a
+    stale tooltip would survive row text changes), and user text carrying
+    Rich markup is escaped so setting the tooltip cannot raise."""
+    rows = (
+        InspectorSectionRow(
+            row_id="alpha",
+            primary_text="Agent alpha - running",
+            secondary_text="step 1",
+            status="running",
+        ),
+    )
+    section = ConsoleInspectorSection(
+        title="Agents",
+        section_id="agents",
+        rows=rows,
+        summary="1",
+        id="section-tooltip-patch",
+    )
+
+    class SectionApp(App):
+        def compose(self) -> ComposeResult:
+            yield section
+
+    app = SectionApp()
+    async with app.run_test():
+        row_widget = section.query_one(ConsoleInspectorSectionRow)
+        state = ConsoleInspectorSectionState(
+            rows=(
+                InspectorSectionRow(
+                    row_id="alpha",
+                    primary_text="Agent alpha - done [/] [bold]weird[/bold]",
+                    secondary_text="final step 2",
+                    status="done",
+                ),
+            ),
+            summary="1",
+        )
+        section.sync_state(state)
+        tooltip = str(row_widget.tooltip)
+        assert "final step 2" in tooltip
+        # Escaped, not raw: rich.markup.escape backslash-escapes the
+        # opening brackets, so the tags render literally instead of being
+        # parsed as markup.
+        assert r"\[/]" in tooltip
+        assert r"\[bold]" in tooltip

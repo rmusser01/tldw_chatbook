@@ -202,8 +202,13 @@ async def test_staged_context_empty_shows_guidance() -> None:
 
 
 @pytest.mark.asyncio
-async def test_staged_context_row_renders_name_and_normalized_status() -> None:
-    """Each source renders its value and a normalized status line."""
+async def test_staged_context_row_renders_name_and_user_facing_status() -> None:
+    """Each legacy-row source renders its value and sentence-case status copy.
+
+    The status Static's TEXT is user-facing copy ("Ready", "Blocked"); the
+    normalized status survives as the CSS CLASS only (TASK-32332: the raw
+    class token -- "ready"/"muted" -- used to BE the text).
+    """
 
     class TestApp(App):
         def compose(self):
@@ -214,6 +219,7 @@ async def test_staged_context_row_renders_name_and_normalized_status() -> None:
                     rows=(
                         ConsoleDisplayRow("Source", "readme.md", status="available"),
                         ConsoleDisplayRow("Source", "missing.txt", status="missing"),
+                        ConsoleDisplayRow("Source", "unknown.bin", status=""),
                     ),
                 )
             )
@@ -224,12 +230,18 @@ async def test_staged_context_row_renders_name_and_normalized_status() -> None:
         name = tray.query_one("#console-staged-source-name-0", Static)
         status = tray.query_one("#console-staged-source-status-0", Static)
         assert str(name.renderable) == "readme.md"
-        assert str(status.renderable) == "ready"
+        assert str(status.renderable) == "Ready"
         assert status.has_class("ready")
 
         blocked_status = tray.query_one("#console-staged-source-status-1", Static)
-        assert str(blocked_status.renderable) == "blocked"
+        assert str(blocked_status.renderable) == "Blocked"
         assert blocked_status.has_class("blocked")
+
+        # The unclassifiable catch-all no longer shows the developer token
+        # "muted"; it reads as plain-language "Off" while keeping the class.
+        muted_status = tray.query_one("#console-staged-source-status-2", Static)
+        assert str(muted_status.renderable) == "Off"
+        assert muted_status.has_class("muted")
 
 
 @pytest.mark.asyncio
@@ -272,7 +284,11 @@ async def test_staged_context_tray_counts_sources_not_display_rows() -> None:
 
 @pytest.mark.asyncio
 async def test_staged_context_tray_counts_zero_when_genuinely_empty() -> None:
-    """The genuinely-empty state (nothing staged at all) still renders '0'."""
+    """The genuinely-empty state renders the word 'none', not the digit '0'.
+
+    The header title already names the noun ("Sources — next send"); a bare
+    '0' beside it reads as a broken counter to first-time users (TASK-32329).
+    """
     state = ConsoleStagedContextState.empty()
     assert state.source_count == 0
 
@@ -284,7 +300,7 @@ async def test_staged_context_tray_counts_zero_when_genuinely_empty() -> None:
     async with app.run_test():
         tray = app.query_one(ConsoleStagedContextTray)
         count = tray.query_one("#console-staged-context-count", Static)
-        assert str(count.renderable) == "0"
+        assert str(count.renderable) == "none"
 
 
 @pytest.mark.asyncio
