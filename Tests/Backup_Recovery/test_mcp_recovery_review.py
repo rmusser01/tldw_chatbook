@@ -63,7 +63,8 @@ def plane():
  local=LocalMCPControlService(store=LocalMCPStore(user/'local_mcp_store.json'),client=MCPClient(),manifest_provider=lambda:{})
  return UnifiedMCPControlPlaneService(target_store=ConfiguredServerTargetStore(user/'mcp_server_targets.json'),context_store=UnifiedMCPContextStore(user/'unified_mcp_context.json'),local_service=local,server_service=SimpleNamespace())
 _,profiles,_=bootstrap._control_records(bootstrap.default_bootstrap_root());witness=next(p['activation'] for p in profiles if p['selector']==str(destination/'config'/'config.toml'))
-activation=ActivationStore(Path(witness['store_root']));activation.approve(witness['generation'],'config')
+activation=ActivationStore(Path(witness['store_root']))
+assert not activation.allowed(witness['generation'],'config')
 """
 
 _APPROVED_SETUP = (
@@ -71,6 +72,7 @@ _APPROVED_SETUP = (
     + r"""
 from tldw_chatbook.Backup_Recovery.control_records import admission_authority
 plane=plane();plane.approve_recovery_review(plane.capture_recovery_review())
+assert not activation.allowed(witness['generation'],'config')
 local=plane.local_service;local_store=local.store;client=local.client;delegate=local.runtime_delegate
 root=bootstrap.default_bootstrap_root();authority=admission_authority(root)
 startup=storage._startups.pop((os.getpid(),str(root)),None)
@@ -125,6 +127,7 @@ assert not service.local_service.store.list_governance_rules()
 assert not service.local_service.store.list_approval_requests()
 assert [p.profile_id for p in service.local_service.store.list_profiles()]==['demo']
 assert service.selected_source=='local'
+assert not activation.allowed(witness['generation'],'config')
 with execution(service):pass
 assert all(activation.allowed(witness['generation'],o) for o in ('mcp.local','mcp.permissions','mcp.context','mcp.targets'))
 assert not activation.allowed(witness['generation'],'skills')
@@ -638,7 +641,7 @@ from tldw_chatbook.Backup_Recovery import activation as activation_module
 from tldw_chatbook.MCP.recovery_activation import observed,_record_name
 service=plane()
 with observed(user/'local_mcp_store.json') as witnesses:assert len(witnesses)==2
-for item in witnesses:ActivationStore(Path(item['store_root'])).approve(item['generation'],'config')
+assert all(not ActivationStore(Path(item['store_root'])).allowed(item['generation'],'config') for item in witnesses)
 review=service.capture_recovery_review();original=activation_module._write;written=[]
 def stop(parent,name,record):
  if name.startswith('mcp-root-'):

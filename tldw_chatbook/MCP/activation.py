@@ -73,6 +73,7 @@ def execution(service, *, sources=()):
     copied contexts cannot borrow another execution's accepted leases.
     """
     from tldw_chatbook.Backup_Recovery.activation import execution_scope
+    from tldw_chatbook.Backup_Recovery.generation_witnesses import _witnesses
     from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
 
     identity = _identity()
@@ -91,8 +92,10 @@ def execution(service, *, sources=()):
                 if path not in leases:
                     leases[path] = acquire_storage(path)
                     stack.callback(leases[path].close)
-                if not stack.enter_context(
-                    execution_scope(("config", owner), path, retained=leases[path])
+                if owner == "config":
+                    _witnesses(path, leases[path])
+                elif not stack.enter_context(
+                    execution_scope((owner,), path, retained=leases[path])
                 ):
                     raise MCPActivationRequired()
             from .recovery_activation import allowed
