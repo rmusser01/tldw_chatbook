@@ -152,9 +152,6 @@ from ...Chat.console_chat_controller import (
     ConsoleChatController,
     ConsoleSubmitResult,
 )
-from ...Chat.console_context_compaction import (
-    complete_durable_units,
-)
 from ...Chat.console_runtime import ensure_console_runtime
 from ...Widgets.Console.console_canvas_card import (
     ConsoleCanvasCardOpenRequested,

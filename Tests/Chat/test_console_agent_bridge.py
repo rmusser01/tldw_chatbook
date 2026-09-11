@@ -172,9 +172,32 @@ from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapt
 from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Workspaces.change_turn_tracker import TurnChangeRecord
+from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+from tldw_chatbook.Tools import workspace_file_roots as wfr
+from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 
 from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
+from Tests.app_thread_resource_fixtures import OwnedAppExecutor
 from Tests.console_provider_doubles import provider_resolution
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+)
+
+
+@pytest.fixture(autouse=True)
+async def _owned_workspace_registry(
+    monkeypatch, tmp_path, close_owned_console_resources
+):
+    """Own real workspace lookups and close worker handles on their creator thread."""
+    database = WorkspaceDB(tmp_path / "workspace.sqlite", client_id="bridge-tests")
+    close_owned_console_resources.callback(database.close)
+    registry = LocalWorkspaceRegistryService(database)
+    registry.ensure_default_workspace()
+    executor = OwnedAppExecutor([database])
+    asyncio.get_running_loop().set_default_executor(executor)
+    close_owned_console_resources.before_close.append(executor.drain)
+    monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
+    yield registry
 
 
 class _InProcessWorkspaceExecutor:
@@ -1587,22 +1610,14 @@ class _RecordingGateway:
 
 
 def test_run_reply_appends_workspace_note_for_a_non_default_workspace(
-    tmp_path, monkeypatch
+    tmp_path, _owned_workspace_registry
 ):
     """A session bound to a non-default workspace must carry the workspace
     note into the primary agent's system prompt -- even on the fast path with
     no builtin_gate, since run_reply resolves the workspace up front rather
     than only inside the provider-gated branch."""
-    from tldw_chatbook.Tools import workspace_file_roots as wfr
-    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
-    from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
-
-    ws_registry = LocalWorkspaceRegistryService(
-        WorkspaceDB(tmp_path / "ws.sqlite", client_id="bridge-note-test")
-    )
-    ws_registry.ensure_default_workspace()
+    ws_registry = _owned_workspace_registry
     ws_registry.create_workspace(workspace_id="ws-note-1", name="Notes Workspace")
-    monkeypatch.setattr(wfr, "_registry_factory", lambda: ws_registry)
 
     gateway = _RecordingGateway()
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")

@@ -29,7 +29,14 @@ from dataclasses import replace
 import pytest
 from textual.widgets import Input, Static
 
-from Tests.UI.test_console_dictation import _mounted_console, _ready_host
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
+from Tests.UI.test_console_dictation import (
+    _mounted_console,
+    _ready_host as _build_ready_host,
+)
 from Tests.UI.test_console_native_chat_flow import (
     CapturingGateway,
     _configure_native_ready_console,
@@ -49,6 +56,11 @@ from tldw_chatbook.Widgets.Console.console_composer_bar import (
     _DraftHistorySnapshot,
     _snapshot_fingerprint,
 )
+
+
+def _ready_host():
+    return _build_ready_host(_build_test_app)
+
 
 # ---------------------------------------------------------------------------
 # Pure composer-level tests: typed-run coalescing, mutation-kind boundaries,

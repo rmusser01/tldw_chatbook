@@ -330,7 +330,10 @@ def _tree(path):
 
 def test_private_delegate_inventory_keeps_exact_approved_count_and_command_owners() -> None:
     """Keep the approved delegate census and command-owner assignments exact."""
-    assert len(DELEGATES) == 64
+    assert len(DELEGATES) == 60
+    assert len(RETIRED_SUBMISSION_METHODS) == 4
+    assert set(DELEGATES).isdisjoint(RETIRED_SUBMISSION_METHODS)
+    assert len(set(DELEGATES) | RETIRED_SUBMISSION_METHODS) == 64
     expected_command_owners = {
         "_console_command_generate_image": "image",
         "_console_command_generate_video": "video",

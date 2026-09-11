@@ -188,6 +188,7 @@ def test_canvas_runtime_callbacks_keep_view_identity_across_store_reads() -> Non
         chat_store=store,
         canvas_controller=object(),
         bind_canvas_native_view=MagicMock(),
+        snapshot_console_staged_evidence=lambda: (None, 0, None),
     )
     screen._console_runtime = lambda: runtime
     screen._ensure_console_chat_store()

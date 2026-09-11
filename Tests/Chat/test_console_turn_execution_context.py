@@ -2592,6 +2592,7 @@ async def test_summarize_and_rag_capture_receive_the_owning_turn_context(tmp_pat
     from Tests.console_provider_doubles import with_destination
     from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
     from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
+    from tldw_chatbook.Chat.console_trace_provenance import ConsoleRequestRoute
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
     from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
@@ -2600,6 +2601,10 @@ async def test_summarize_and_rag_capture_receive_the_owning_turn_context(tmp_pat
         def __init__(self):
             super().__init__()
             self.selections = []
+
+        async def complete_auxiliary(self, request, *, route=None):
+            assert route is ConsoleRequestRoute.MANUAL_SUMMARY
+            return await super().complete_auxiliary(request)
 
         async def resolve_for_send(self, selection):
             self.selections.append(selection)
@@ -2908,12 +2913,6 @@ def test_screen_selection_builder_targets_session_without_switching_view():
     from tldw_chatbook.UI.Console_Modules.wiring import (
         build_console_provider_selection_controller,
     )
-    fake_screen._build_console_provider_selection_from_settings = (
-        lambda *args, **kwargs: ChatScreen._build_console_provider_selection_from_settings(
-            fake_screen, *args, **kwargs
-        )
-    )
-
     fake_screen.app_instance = SimpleNamespace(
         app_config=fake_screen._provider_readiness_app_config()
     )

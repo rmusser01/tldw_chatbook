@@ -170,6 +170,16 @@ handles with the unchanged native descriptor observer.
 all construction aliases and prove their identity. Route identical factories
 through the existing owner; do not replace exact ownership with global cleanup.
 
+**PR #2427 dev934 follow-up, 2026-09-11.** Imported helper functions also keep
+their defining module's globals: adding the fixture locally does not intercept
+a foreign helper's builder. Three Console test modules retained 392 SQLite and
+30 instance-lock handles through that path. Routing the snapshot helper through
+its local builder and passing undo's local builder through the existing host
+injection seam, plus importing the existing owner fixtures, preserved all 102
+test bodies. The complete 313-case Console/cleanup run passed with zero final
+SQLite or instance-lock handles. Inventory helper call chains, not only names
+bound in the importing module.
+
 ## Import deferral must pass both startup and screen-preload budgets
 
 **TASK-32160, 2026-09-08.** Deferring pure TTS profile-repository construction

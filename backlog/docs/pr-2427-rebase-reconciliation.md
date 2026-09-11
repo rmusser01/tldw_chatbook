@@ -4512,3 +4512,77 @@ This does not close the separately recorded journey86/Console493 SQLite-owner
 findings,13 size ceilings, preload504/500, or seven unconsolidated CSS declarations.
 Newest-dev integration, current-head PR review/checks and normal protected merge
 also remain open. No cap, ownership policy or merge protection was changed.
+
+## 2026-09-11: dev934 replay and exact-owner fixture qualification
+
+All 272 PR commits replayed onto dev
+`934b28f39a5c386ca95de49a67abdf16a54251a8`, yielding
+`b5f8d0d7c96c4b39c5daad75ee3dd4d7436f9616` before this repair checkpoint.
+The recoverable published predecessor is `ab59e4684ab25d2f5771effebd5ffa325ad00f4b`.
+The detailed reconciliation map, immutable IDs, reviews and scope are in
+`Docs/superpowers/plans/2026-09-11-pr2427-dev934-reconciliation.md`.
+
+Preserved incoming runtime-owned Console custody in the existing controllers,
+shared runtime prompt history, exact cancellation receipts and generation guards,
+and Library Handoff/import/Media behavior. Post-rebase runtime edits remove only
+one newly introduced unused import. Fixture corrections retain exact identity,
+authority, provenance, payload and admission assertions; the delegate census is
+60 live owner routes plus four separately enforced retired APIs, not a weakened
+64-name check. The Handoff tests pin the complete accepted copy and raw state.
+
+The initial 943-case integration census found 18 failures and separately retained
+392 Console SQLite / 30 instance-lock handles and 14 backend SQLite handles.
+Reuse of the established importing-module app owner eliminates all Console
+handles. Backend cleanup drains owned controllers/databases and gives workspace
+lookup a real test-owned registry and its existing thread-aware executor.
+A logging-only attempt did not remove the remaining workspace handles; an actual
+constructor stack identified earlier workspace-context lookup. That unnecessary
+fixture and its four tests were removed before final qualification. No production
+logging, global registry, forced collection or cleanup policy changed.
+
+Final complete-file native cohorts:
+
+| Scope | Result | Native report directory |
+| --- | --- | --- |
+| Eight Console files plus existing cleanup controls | 313 passed, 301.72s | `/private/tmp/pr2427-dev934-console-verified.LDwaIV` |
+| Three backend files plus existing worker-fault controls | 382 passed, 60.16s | `/private/tmp/pr2427-dev934-backend-final.UOHQh7` |
+| Complete Handoff workspace-depth file | 13 passed, 19.89s | `/private/tmp/pr2427-dev934-library-verified.7SCiFm` |
+
+All three report zero final SQLite and instance-lock handles. Native inventories
+retain seven/six/six descriptors respectively: redirected stdio, event-loop
+descriptors, and the Console run's intentional process-lifetime faulthandler log.
+Each directory has `pytest.log` and `fd_identity.jsonl`; the latter records exact
+test arguments for the unchanged observation-only runner
+`/private/tmp/pr2427-fd-identity.OTL9up/native_fd_identity.py`.
+
+The initially timed-out 1,000-turn case completed unchanged, alone, in 287.52s
+under its original 300-second deadline, with zero SQLite/locks:
+`/private/tmp/pr2427-dev934-tombstone-isolated.jeddw2`. The first run persisted
+988 complete turns; bounded probes measured substantial repeated diagnostics
+shutdown cost. No workload, timeout or retention assertion was changed; timing
+margin remains small. All seven derived checks pass in
+`/private/tmp/pr2427-dev934-closeout-preflight.log`, using the established offline
+Mermaid input cache. Fatal affected-file Ruff and whitespace pass; this is not
+a claim that all pre-existing full-lint findings are resolved. Independent spec
+and quality reviews approve each final repair slice.
+
+An additional current-head run of the original/regression 44 cases finished
+**38 passed / 6 failed**, 121.75s, zero final SQLite/locks:
+`/private/tmp/pr2427-dev934-original-regressions.G1FiDJ`. Open cases:
+
+- `test_wide_files_source_switch_restores_database_browse_receipt`: returned
+  list scroll 0 instead of the captured 5.
+- Two `test_library_note_60x20_editor_state_allocation` parameters: compact
+  authority text no longer includes the expected `Library notes` prefix.
+- `test_library_note_footer_covers_navigator_create_sync_and_exit` and
+  `test_notes_footer_registration_preserves_media_route_typing_hints`: actual
+  typing footer includes the new after-Escape search/selection guidance.
+- `test_library_note_pilot_delete_pending_locks_and_cancel_restores_context`:
+  exact comparison observes 7 versus a captured 7.000000010566575.
+
+These six need diagnosis and verification, not an assertion relaxation. The
+unchanged architecture cohort separately reports 86 passed / 15 size failures;
+the prior journey/Console resource cohorts, preload 504/500 and seven CSS
+declarations are not requalified by this batch. TASK-31932 stays In Progress,
+AC1/3/4 open. Publish this reviewed progress without resolving the outstanding
+size thread or bypassing normal final-head review, CI or merge protection.

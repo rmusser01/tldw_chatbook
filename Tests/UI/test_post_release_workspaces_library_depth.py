@@ -157,8 +157,11 @@ async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cr
         # reader has a "Link to workspace" header button (PR #2581 review),
         # so the remedy is the one both of them actually support.
         assert handoff_row.renderable.plain == (
-            "Handoff · 2 eligible · 2 blocked · in another workspace · "
-            "Copy or link them into this workspace"
+            "Handoff · 2 items can't be used in Console yet · "
+            "in another workspace · Copy or link them into this workspace"
+        )
+        assert screen._library_workspace_depth_state().handoff_label == (
+            "Console/RAG handoff: 2 eligible, 2 blocked"
         )
         assert "Collections: browse and organize; staging is read-only" not in visible
         assert "Import/Export: copy or reference sources" not in visible
@@ -524,12 +527,16 @@ async def test_library_details_section_renders_grouped_headers_and_drops_policy_
         assert screen.query_one("#library-create-local-workspace", Button)
         assert screen.query_one("#library-use-in-console", Button)
 
-        # The Handoff row is the single surviving source of the
-        # eligible/blocked counts.
+        # The row states the actionable blocker; state retains both counts.
         handoff_row = screen.query_one("#library-workspaces-handoff", Static)
         handoff_text = handoff_row.renderable.plain
-        assert "2 eligible" in handoff_text
-        assert "2 blocked" in handoff_text
+        assert handoff_text == (
+            "Handoff · 2 items can't be used in Console yet · "
+            "in another workspace · Copy or link them into this workspace"
+        )
+        assert screen._library_workspace_depth_state().handoff_label == (
+            "Console/RAG handoff: 2 eligible, 2 blocked"
+        )
 
 
 @pytest.mark.asyncio
