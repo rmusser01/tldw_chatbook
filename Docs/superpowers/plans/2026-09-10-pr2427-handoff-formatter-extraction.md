@@ -42,12 +42,14 @@ Files: record evidence in the spec/plan, TASK31932 notes and `backlog/docs/pr-24
 - [x] Run complete Screen and Library-module size/private-owner guards. Baseline126 passed/13 size failures; preserve all caps and report remaining failures explicitly. Expected LibraryScreen reduction approximately60 lines, not a green size gate.
 - [x] Run scoped Ruff and whitespace checks. Do not autoformat unrelated code or change the moved body's bytes. Run `PYTHON=.venv/bin/python bash scripts/preflight.sh` using an existing verified Mermaid input cache if needed; all seven derived checks must pass.
 - [x] Obtain sequential independent spec-compliance and code-quality reviews. Address actual regressions within this move; separately record unrelated baseline failures without fixing them in this commit.
-- [ ] Commit exact owned paths and save to existing PR using a normal push if remote still equals02597164ff. If concurrent remote changes exist, stop rather than overwrite. Do not rebase during frozen verification; any later dev update requires its own qualification.
+- [x] Commit exact owned paths and save to existing PR using a normal push if remote still equals02597164ff. If concurrent remote changes exist, stop rather than overwrite. Do not rebase during frozen verification; any later dev update requires its own qualification.
 - [ ] Update existing weekly automation with the new checkpoint and blockers. Do not merge while size, resource, preload or final-head review/check gates remain open.
 
 ## Evidence
 
 Implementation eca8c083e7 is reviewed and qualified:153 native UI passed with zero SQLite/lock retention; support10, selectedHandoff6 and private87 passed. Guard group50 passed/14 existing failures (13 size, preload504/500); all7preflight pass. Screen32724->32664 (-60),975 above unchanged cap. No new lint findings. Exact terminal logs and parity evidence are in the reconciliation report. Publication/automation checkpoint pending.
+
+Publication confirmed: normal push02597164ff->8d7fdf68485bf4b293033c6af4ea7c39243754d6. TASK31932 step160 separately covers newly fetched devd80d85d971 and its composer-width overlap; the formatter qualification was terminal before this integration.
 
 Known baseline logs:
 `/private/tmp/pr2427-formatter-review-tests.log` (9 passed,1 preload failure),
