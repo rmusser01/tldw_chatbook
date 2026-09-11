@@ -410,6 +410,12 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 analysis=self.viewer.analysis,
                 generating=self.generating_analysis,
                 editing=self.editing_analysis,
+                # Qodo 4 on #2602: an external detail composes the READ body
+                # whatever mode the session carried in, so the gate needs to
+                # know -- without this the KEY opened Find on a server
+                # document while this button stayed disabled, the exact
+                # key/control divergence one shared gate exists to prevent.
+                external=self.external_detail,
             )
             find = Button(
                 library_disabled_action_label("Find", bool(find_reason)),

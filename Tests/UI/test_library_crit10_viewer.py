@@ -449,3 +449,37 @@ async def test_pressing_raw_during_a_search_does_not_outlive_the_search():
             ).active_mode == "rendered",
             message="Clearing the query never restored the Rendered view.",
         )
+
+
+@pytest.mark.asyncio
+async def test_the_find_button_matches_the_key_on_an_external_document():
+    """Coordinator ruling after Qodo 4: the button's own gate call had not
+    learned ``external``, so for a server document opened while the session
+    carried "info"/"highlights" the KEY worked and the BUTTON stayed
+    disabled -- the exact key/control divergence
+    ``_toggle_library_media_find`` exists to prevent. Both read one call now.
+
+    Composed directly: an external detail is a server round trip the Library
+    harness has no fixture for, and the divergence is entirely in what the
+    toolbar passes to the gate.
+    """
+    from tldw_chatbook.Library.library_media_viewer_state import (
+        build_library_media_viewer_state,
+    )
+
+    viewer = LibraryMediaViewer(
+        build_library_media_viewer_state(
+            {
+                "media_id": "server:1",
+                "title": "Server document",
+                "type": "article",
+                "content": "Searchable body text.",
+            }
+        ),
+        reader_mode="info",
+        external_detail=True,
+    )
+    async with _media_host().run_test(size=(235, 52)) as pilot:
+        await pilot.app.screen.mount(viewer)
+        await pilot.pause()
+        assert viewer.query_one("#library-media-reader-find", Button).disabled is False
