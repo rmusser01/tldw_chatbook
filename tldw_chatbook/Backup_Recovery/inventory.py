@@ -456,6 +456,25 @@ def _fixed_control_exclusion() -> tuple[StorageItem, ...]:
     )
 
 
+def _service_control_exclusion() -> tuple[StorageItem, ...]:
+    """Exclude recognized local service work, keeping unknown/damaged roots visible."""
+    from .service_storage import default_control_root, verify_default_storage
+
+    root = default_control_root().parent
+    try:
+        root.lstat()
+    except FileNotFoundError:
+        return ()
+    try:
+        verify_default_storage()
+        status = "intentionally_excluded"
+    except (OSError, ValueError, TypeError, RuntimeError):
+        status = "unavailable"
+    return (
+        StorageItem("recovery.control", "recovery.control:service", root, status, ()),
+    )
+
+
 def discover(
     config_paths: tuple[Path, ...], *, selections: DiscoverySelections | None = None
 ) -> Inventory:
@@ -604,6 +623,7 @@ def discover(
         )
     )
     items.extend(_fixed_control_exclusion())
+    items.extend(_service_control_exclusion())
     items.extend(
         _unknown_children(
             profile_paths.default_config_path().parent,
