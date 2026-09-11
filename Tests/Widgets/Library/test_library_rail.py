@@ -726,13 +726,16 @@ async def test_search_rag_query_input_gets_the_same_click_select_all_fix():
 async def test_a_collections_count_failure_never_evicts_the_db_sizes_row(
     widget_pilot,
 ) -> None:
-    """task-32103 AC#3 (fix round 2): the failure sentence needs a slot of its own.
+    """task-32103 AC#3 (fix round 2): the failure sentence must not be its own entry.
 
-    ``details_lines`` is a positional three-slot contract -- Source, body,
-    DB sizes -- and nothing renders a fourth entry. The Collections failure
-    sentence was appended as one, so it landed in the DB-sizes slot: the
-    rail painted "DB sizes · Collections count unavailable (waited 5 s) …"
-    and the real "Prompts … · Chats/Notes … · Media …" line vanished.
+    ``details_lines`` is positional: Source, then the counts body, then --
+    since task-32230 -- everything from index 2 onward is a DB size, one
+    entry per source. So a failure sentence appended as its own entry is
+    rendered AS a size; folding it into the counts value is what keeps each
+    size on its own row. (Before task-32230 the sizes shared a single slot,
+    and the appended sentence evicted them outright: the rail painted
+    "DB sizes · Collections count unavailable (waited 5 s) …" and the real
+    "Prompts … · Chats/Notes … · Media …" line vanished.)
 
     Driven through the SCREEN's own ``_library_details_lines`` and the
     rail's shipped compose, because the defect is the shape the screen
@@ -767,10 +770,22 @@ async def test_a_collections_count_failure_never_evicts_the_db_sizes_row(
         preferences=LibraryRailPreferences(details_open=True),
     ) as pilot:
         await pilot.pause()
-        sizes = str(pilot.app.query_one("#library-details-db-sizes", Static).renderable)
+        # task-32230: the sizes take a row EACH now (joined on one line they
+        # wrapped mid-value at the rail's 22-cell column), so the block is
+        # read across every `#library-details-db-sizes*` row. The property
+        # this test pins is unchanged and un-weakened -- all three sizes
+        # present, the failure sentence nowhere among them -- it is only the
+        # number of widgets carrying them that moved.
+        size_rows = [
+            widget
+            for widget in pilot.app.query(".library-details-row")
+            if str(widget.id or "").startswith("library-details-db-sizes")
+        ]
+        assert size_rows, "the DB-sizes block was evicted entirely"
+        sizes = " ".join(str(widget.renderable) for widget in size_rows)
         body = str(pilot.app.query_one("#library-details-body", Static).renderable)
 
-        # The sizes row still carries the sizes, and only the sizes. (The
+        # The sizes rows still carry the sizes, and only the sizes. (The
         # values render with a non-breaking join, "1.0KB" -- see
         # ``_unbreakable_size_text``.)
         assert "Prompts" in sizes and "1.0" in sizes

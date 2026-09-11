@@ -753,6 +753,15 @@ class LibraryRagSearchController:
         idempotent.
         """
         event.stop()
+        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH:
+            # task-32226 (critique #9 row 25): task-32069 empties the BOX off
+            # the Search/RAG canvas, but every keystroke still landed in
+            # ``_rag_search_state.query`` -- so a word typed into the rail on
+            # Media and abandoned was waiting in the Search/RAG query box the
+            # next time that canvas opened. Off the canvas the query drives,
+            # the keystrokes stay in the widget; only a SUBMIT (which selects
+            # the Search/RAG row first) commits them.
+            return
         self._library_rag_query = event.value
         # task-4023 AC#6 (RC-08): mirror into the Search canvas's query box
         # when it is mounted, so the two visible inputs can never disagree
