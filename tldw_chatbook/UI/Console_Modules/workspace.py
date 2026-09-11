@@ -139,11 +139,10 @@ if TYPE_CHECKING:
 
 logger = logger.bind(module="ChatScreen")
 
-CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
-# PR #2480 review (#7): the batched appearance map is cached on the same
-# order as the persisted-rows cache -- short enough that an appearance
-# change made elsewhere shows up promptly, long enough that the several
-# merges inside one state build share one read.
+CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 10.0
+# PR #2480 review (#7): keep the appearance map cache short so changes
+# made elsewhere show up promptly, while the several merges inside one
+# state build share one read.
 CONSOLE_APPEARANCE_MAP_CACHE_TTL_SECONDS = 2.0
 CONSOLE_SAVED_CONVERSATION_RESUME_FAILURE_COPY = (
     "Couldn't resume this saved conversation: it was deleted or couldn't be read.\n"
@@ -3366,6 +3365,16 @@ class ConsoleWorkspaceController:
                     group="console-persisted-browser-cache",
                     exclusive=True,
                 )
+        # TTL expiry schedules a refresh; it does not mean the rows vanished.
+        # Keep the same query/selection visible while that worker runs so the
+        # rail does not collapse and restore its scroll position on every refresh.
+        # Explicit invalidation clears this entry; another key never reuses it.
+        if (
+            self._console_persisted_rows_cache is not None
+            and self._console_persisted_rows_cache_key
+            == (query, current_conversation_id)
+        ):
+            return self._console_persisted_rows_cache
         return [], None, ""
 
     async def _refresh_console_persisted_rows_cache(

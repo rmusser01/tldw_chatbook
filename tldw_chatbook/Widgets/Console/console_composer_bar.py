@@ -1867,7 +1867,21 @@ class ConsoleComposerBar(Horizontal):
             # next resize re-derives the cap against a real width.
             return self.SEND_REASON_MAX_WIDTH
         reserved = self.LEFT_CLUSTER_WIDTH + self._actions_row_width()
-        budget = row_width - reserved - self.DRAFT_MIN_RENDER_WIDTH
+        # TASK-24620: a displayed voice chip draws from the same spare
+        # space; the chip (live dictation state) has priority, so the
+        # reason strip budgets around whatever the chip currently holds.
+        # The CACHED chip width, deliberately -- `chip.region` is stale
+        # until the next layout pass, and this cap runs in the same turn
+        # that just resized the chip. Without this, the two advisory strips
+        # each budgeted the full remainder independently and jointly
+        # starved the draft.
+        budget = (
+            row_width
+            - reserved
+            - self.ADVISORY_MARGIN_ALLOWANCE
+            - self.DRAFT_MIN_RENDER_WIDTH
+            - self._voice_chip_last_width
+        )
         if budget < self.SEND_REASON_MIN_LEGIBLE_WIDTH:
             return 0
         return min(self.SEND_REASON_MAX_WIDTH, budget)
@@ -3675,12 +3689,36 @@ class ConsoleComposerBar(Horizontal):
             )
 
     def on_resize(self, event: Any) -> None:
-        # TASK-24415: the reason strip's width cap is a function of the live
-        # row width -- a resize must re-derive it, or a strip sized for the
-        # old width keeps starving the draft at the new one.
+        """Re-derive the advisory-strip budgets against the new row width.
+
+        TASK-24415/24620: the reason strip's and voice chip's width caps are
+        functions of the LIVE row width -- a resize must re-derive them, or
+        strips sized for the old width keep starving the draft at the new
+        one. The chip replays its cached status so the same budget rule
+        applies on the shrink.
+
+        Args:
+            event: Textual resize event (unused beyond the handler
+                signature; the layout has already settled when it fires).
+        """
         self._sync_send_disabled_reason(
             self._send_disabled_reason, muted=not self._send_blocked
         )
+        if self._voice_status_last is not None:
+            (
+                voice_state,
+                voice_partial,
+                voice_elapsed,
+                voice_message,
+                voice_segment_transcribing,
+            ) = self._voice_status_last
+            self.set_voice_status(
+                voice_state,
+                partial=voice_partial,
+                elapsed_seconds=voice_elapsed,
+                message=voice_message,
+                segment_transcribing=voice_segment_transcribing,
+            )
         self._refresh_visible_draft()
 
     def on_focus(self) -> None:
@@ -5812,6 +5850,63 @@ class ConsoleComposerBar(Horizontal):
         if self._voice_full_width_preparing:
             self._sync_full_width_voice_presentation(True)
 
+    #: TASK-24620: the voice chip's own legibility floor, mirroring
+    #: `SEND_REASON_MIN_LEGIBLE_WIDTH` -- below it the chip hides (the
+    #: Dictate button's label still carries the mic-live state).
+    VOICE_CHIP_MIN_LEGIBLE_WIDTH = 12
+    #: TASK-24620: cells the row spends on separator margins OUTSIDE the
+    #: widgets' own widths -- the chip's normal one-cell right margin plus
+    #: the one before the actions row (measured on the laid-out row: gaps
+    #: at draft|chip and reason|actions). Budgets that ignore these deliver
+    #: a draft two cells under its floor when both advisory strips show.
+    ADVISORY_MARGIN_ALLOWANCE = 2
+
+    #: TASK-24620: last `set_voice_status` inputs, replayed from
+    #: `on_resize` so the chip's row-width budget is re-derived on resize. A
+    #: CLASS attribute, deliberately, so hand-built `__new__` fixtures never
+    #: see an AttributeError (the `_console_popup_synced_draft` lesson).
+    _voice_status_last: tuple | None = None
+
+    #: TASK-24620: the chip width last APPLIED by `set_voice_status` (0 when
+    #: hidden). The reason strip's cap subtracts this; `region` cannot be
+    #: used for that because it is stale until the next layout pass.
+    _voice_chip_last_width: int = 0
+
+    def _voice_chip_width_cap(self) -> int:
+        """Return the max cells the voice chip may take (0 = hide it).
+
+        TASK-24620: mirrors `_send_reason_width_cap` (TASK-24415). The chip
+        sized itself against the composer's FULL width with only
+        `VOICE_CHIP_MIN_WIDTH` reserved, so a long state message took up to
+        53 cells and the ``1fr`` draft (``min_width: 0``) starved beside it
+        -- the same starvation class the reason strip had. The budget is
+        whatever the live row can spare after the fixed furniture and the
+        draft floor; below a legible remainder the chip hides rather than
+        blind the composer (the Dictate button's own label still says
+        "Dictating", so the mic-live state survives).
+
+        Returns:
+            0 when the row cannot spare a legible chip (hide it), else a
+            cap of at most ``VOICE_CHIP_MAX_WIDTH`` cells.
+        """
+        try:
+            row = self.query_one("#console-composer-expanded", Horizontal)
+        except NoMatches:
+            return self.VOICE_CHIP_MAX_WIDTH
+        row_width = int(row.content_region.width)
+        if row_width <= 0:
+            # Not laid out yet; the next resize re-derives the cap.
+            return self.VOICE_CHIP_MAX_WIDTH
+        reserved = (
+            self.LEFT_CLUSTER_WIDTH
+            + self._actions_row_width()
+            + self.ADVISORY_MARGIN_ALLOWANCE
+        )
+        budget = row_width - reserved - self.DRAFT_MIN_RENDER_WIDTH
+        if budget < self.VOICE_CHIP_MIN_LEGIBLE_WIDTH:
+            return 0
+        return min(self.VOICE_CHIP_MAX_WIDTH, budget)
+
     def set_voice_status(
         self,
         state: str,
@@ -5858,8 +5953,24 @@ class ConsoleComposerBar(Horizontal):
             chip = self.query_one("#console-voice-status", Static)
         except NoMatches:
             return
+        # TASK-24620: cache the inputs so `on_resize` can re-derive the
+        # chip against the new row width (a shrink must retract the chip,
+        # not the draft).
+        self._voice_status_last = (
+            state,
+            partial,
+            elapsed_seconds,
+            message,
+            segment_transcribing,
+        )
 
         if state in ("idle", "unavailable"):
+            # PR-2230 review f2: clear the chip-width cache BEFORE the
+            # presentation sync -- `_sync_full_width_voice_presentation`
+            # re-derives the disabled-reason strip, which subtracts the
+            # cache; clearing it after left the strip capped as though the
+            # chip were still displayed.
+            self._voice_chip_last_width = 0
             self._sync_full_width_voice_presentation(False)
             chip.styles.display = "none"
             chip.styles.width = 0
@@ -5867,11 +5978,35 @@ class ConsoleComposerBar(Horizontal):
             chip.update(Content(""))
             return
 
-        # `size` is (0, 0) before the first layout; fall back to the ceiling
-        # rather than computing a zero width and rendering an invisible chip.
-        total_width = self.size.width or self.VOICE_CHIP_MAX_WIDTH * 2
-        available = max(0, total_width - self.VOICE_CHIP_MIN_WIDTH)
-        width = min(self.VOICE_CHIP_MAX_WIDTH, available)
+        # TASK-24620 / PR-2230 review f3: PREPARING selects its sizing
+        # BEFORE the ordinary cap -- it is action feedback for a Dictate
+        # press, and its full-width presentation exempts it at every width,
+        # not only where the budget hits zero (the 80-column busy-parakeet
+        # tests require the WHOLE copy, and intermediate budgets used to
+        # truncate it while the presentation collapsed space the chip could
+        # have used). The non-listening branch below still shrinks the
+        # final width to the message's own length, so short preparing copy
+        # does not balloon.
+        if state == STATE_PREPARING:
+            total_width = self.size.width or self.VOICE_CHIP_MAX_WIDTH * 2
+            width = min(
+                self.VOICE_CHIP_MAX_WIDTH,
+                max(0, total_width - self.VOICE_CHIP_MIN_WIDTH),
+            )
+        else:
+            # The chip's width is a live-row budget like the send-disabled
+            # reason strip's (see `_voice_chip_width_cap`) -- the draft
+            # floor wins, and below a legible remainder the chip hides
+            # rather than starve it.
+            width = self._voice_chip_width_cap()
+        if width == 0:
+            self._voice_chip_last_width = 0
+            self._sync_full_width_voice_presentation(False)
+            chip.styles.display = "none"
+            chip.styles.width = 0
+            chip.styles.min_width = 0
+            chip.update(Content(""))
+            return
 
         if state == "listening":
             head = f"{resolve_glyph(GLYPH_VOICE_RECORDING)} {elapsed_seconds // 60}:{elapsed_seconds % 60:02d}"
@@ -5928,7 +6063,8 @@ class ConsoleComposerBar(Horizontal):
         else:
             chip.tooltip = None
         chip.styles.display = "block"
-        chip.styles.width = max(width, 1)
+        self._voice_chip_last_width = max(width, 1)
+        chip.styles.width = self._voice_chip_last_width
         chip.styles.min_width = 0
         chip.styles.height = 1
         chip.styles.min_height = 1
@@ -5940,6 +6076,11 @@ class ConsoleComposerBar(Horizontal):
         chip.styles.margin = None
         chip.set_class(state == "error", "console-voice-status-error")
         chip.update(Content(body))
+        # TASK-24620: the chip just moved; re-derive the reason strip so it
+        # yields whatever the chip now holds (chip has priority).
+        self._sync_send_disabled_reason(
+            self._send_disabled_reason, muted=not self._send_blocked
+        )
 
     def _sync_full_width_voice_presentation(self, active: bool) -> None:
         """Make room for the persistent executor-wait copy without data loss."""
