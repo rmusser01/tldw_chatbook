@@ -13283,11 +13283,6 @@ class SettingsScreen(BaseAppScreen):
             self._custom_endpoint_edit_slug = None
             self._refresh_custom_endpoints_section()
             return
-        if action == "detach-cancel":
-            self._custom_endpoint_detach_slug = None
-            self._custom_endpoints_status_update("")
-            self._refresh_custom_endpoints_section()
-            return
         for prefix, handler in (
             ("rename-", self._custom_endpoint_open_rename),
             ("edit-", self._custom_endpoint_open_edit),

@@ -5,7 +5,7 @@ outside ``api_settings``, so provider-key iteration surfaces never see
 registry plumbing. This module owns load/validate/mutate helpers only:
 writes go through ``save_settings_to_cli_config`` (fed the mapping returned
 by :func:`build_entry_mutation`) and removals through
-``delete_settings_from_cli_config("custom_endpoints.<slug>", [...])`` --
+``delete_settings_from_cli_config("custom_endpoints", [slug])`` --
 both invoked by callers off-thread, never here.
 """
 
@@ -210,7 +210,7 @@ def build_entry_mutation(
     """Build the config mutation section for persisting ``entry``.
 
     Feed the result to ``save_settings_to_cli_config``; delete an entry with
-    ``delete_settings_from_cli_config("custom_endpoints.<slug>", ...)``.
+    ``delete_settings_from_cli_config("custom_endpoints", [entry.slug])``.
 
     Args:
         entry: The entry to persist.

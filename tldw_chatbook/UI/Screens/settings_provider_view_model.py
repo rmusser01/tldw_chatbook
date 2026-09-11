@@ -309,6 +309,26 @@ def conversations_referencing_endpoint(
     return referencing
 
 
+def _detach_base_url(
+    entry: CustomEndpointEntry, settings: CustomEndpointSessionSettings
+) -> str | None:
+    """Return the ``base_url`` a detached session keeps.
+
+    A session that already carries its own ``base_url`` keeps it
+    untouched; a blank one (the registry entry was its only endpoint
+    source) takes the entry's ``base_url``, which ``load_custom_endpoints``
+    already family-normalized (llama families through the same llama
+    normalization the load path uses). Without this, a blank session URL
+    would fall back to the family default endpoint, losing the
+    conversation's current endpoint — contradicting the detach copy,
+    status text, and user guide.
+    """
+    current = getattr(settings, "base_url", None)
+    if isinstance(current, str) and current.strip():
+        return current
+    return entry.base_url
+
+
 def detach_and_delete_entry(
     app_config: Mapping[str, object],
     store: CustomEndpointReferenceStore | None,
@@ -317,12 +337,15 @@ def detach_and_delete_entry(
     """Detach every referencing session, then delete the registry entry.
 
     Detach re-points each referencing session's ``settings.provider`` at the
-    entry's family execution key while leaving its current ``base_url``
-    untouched, so the endpoint survives as a session-only override. The
-    session settings are frozen dataclasses replaced wholesale through the
-    store's ``replace_session_settings`` path (the settings-modal apply
-    seam). The entry is then removed from config via
-    ``delete_settings_from_cli_config("custom_endpoints", [slug])``.
+    entry's family execution key. A session that already carries a
+    ``base_url`` keeps it untouched; a blank one (the registry entry was
+    its only endpoint source) takes the entry's ``base_url`` — already
+    family-normalized by ``load_custom_endpoints`` — so in both cases the
+    endpoint survives as a session-only override instead of falling back
+    to the family default. The session settings are frozen dataclasses
+    replaced wholesale through the store's ``replace_session_settings``
+    path (the settings-modal apply seam). The entry is then removed from
+    config via ``delete_settings_from_cli_config("custom_endpoints", [slug])``.
 
     Args:
         app_config: The full CLI config mapping (entry family source).
@@ -349,7 +372,12 @@ def detach_and_delete_entry(
             if settings is None:
                 continue
             store.replace_session_settings(
-                session_id, replace(settings, provider=family_provider)
+                session_id,
+                replace(
+                    settings,
+                    provider=family_provider,
+                    base_url=_detach_base_url(entry, settings),
+                ),
             )
     if not delete_settings_from_cli_config("custom_endpoints", [slug]):
         logger.warning(

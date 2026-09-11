@@ -53,18 +53,33 @@ def _registry_config() -> dict:
     }
 
 
-def _store_with_session(provider: str) -> ConsoleChatStore:
+#: Llama-family entry whose raw URL carries the ``/v1`` suffix that load
+#: normalization strips — proves detach writes the normalized origin.
+_REGISTRY_LLAMA_V1_TOML = """\
+[custom_endpoints.gpu]
+display_name = "GPU llama"
+family = "llama_cpp"
+base_url = "http://192.168.1.5:8080/v1"
+models = ["model-a"]
+"""
+
+
+def _store_with_session(
+    provider: str, base_url: str | None = "http://192.168.1.5:8080"
+) -> ConsoleChatStore:
     """Minimal store with one session pinned to ``provider``.
 
     A real ``ConsoleChatStore`` (not a stub): detach must flow through the
-    store's own settings mutation path.
+    store's own settings mutation path. ``base_url`` defaults to the GPU
+    endpoint; pass ``None`` for a session that never carried its own URL
+    (the registry entry was its only endpoint source).
     """
     store = ConsoleChatStore()
     store.create_session(
         title="GPU chat",
         settings=ConsoleSessionSettings(
             provider=provider,
-            base_url="http://192.168.1.5:8080",
+            base_url=base_url,
         ),
     )
     return store
@@ -110,6 +125,33 @@ def test_delete_after_detach_removes_entry(tmp_path, monkeypatch):
             store.session_settings(store.sessions()[0].id).base_url
             == "http://192.168.1.5:8080"
         )
+    finally:
+        _reload_config()
+
+
+def test_detach_preserves_entry_url_for_blank_session_base_url(tmp_path, monkeypatch):
+    _activate_temp_config(tmp_path, monkeypatch, _REGISTRY_LLAMA_V1_TOML)
+    app_config = {
+        "custom_endpoints": {
+            "gpu": {
+                "display_name": "GPU llama",
+                "family": "llama_cpp",
+                "base_url": "http://192.168.1.5:8080/v1",
+                "models": ["model-a"],
+            }
+        }
+    }
+    store = _store_with_session(provider="custom-ep:gpu", base_url=None)
+    try:
+        detach_and_delete_entry(app_config, store, "custom-ep:gpu")
+        settings = store.session_settings(store.sessions()[0].id)
+        assert settings.provider == "llama_cpp"
+        # The blank session URL takes the entry's family-normalized URL
+        # (llama normalization strips the /v1 suffix), so the conversation
+        # keeps its current endpoint as conversation-only instead of
+        # falling back to the family default.
+        assert settings.base_url == "http://192.168.1.5:8080"
+        assert load_custom_endpoints(load_settings()) == {}
     finally:
         _reload_config()
 
