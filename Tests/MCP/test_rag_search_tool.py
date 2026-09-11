@@ -214,9 +214,95 @@ class TestKeywordScoreIsHonest:
             tools = MCPTools.__new__(MCPTools)
             tools.rag_service = service
 
-            results = await tools.perform_rag_search("anything")  # use_semantic defaults True
+            results = await tools.perform_rag_search(
+                "anything"
+            )  # use_semantic defaults True
 
             assert len(results) == 1
             assert results[0]["score"] == 0.42
         finally:
             media_db.close_connection()
+
+
+# ===================================================================
+# TASK-1077: perform_rag_search validates its MCP-caller inputs like
+# its sibling search_conversations (the TASK-985 convention). The
+# caller is a model (potentially off-machine on a hub-connected setup),
+# so the handler is a boundary: query and limit must be rejected in
+# plain error dicts without reaching the search backends.
+# ===================================================================
+
+
+@pytest.mark.asyncio
+async def test_rejected_query_returns_error_without_reaching_backend():
+    tools, stub = _make_tools()
+
+    too_long = await tools.perform_rag_search(query="x" * 2001, limit=5)
+    assert isinstance(too_long, list) and "error" in too_long[0]
+    assert "2000" in too_long[0]["error"]
+
+    blank = await tools.perform_rag_search(query="   ", limit=5)
+    assert "error" in blank[0]
+
+    not_a_string = await tools.perform_rag_search(query=12345, limit=5)  # type: ignore[arg-type]
+    assert "error" in not_a_string[0]
+
+    assert stub.calls == [], "invalid queries must not reach the search backend"
+
+
+@pytest.mark.asyncio
+async def test_rejected_limit_returns_error_without_reaching_backend():
+    tools, stub = _make_tools()
+
+    too_small = await tools.perform_rag_search(query="dragons", limit=0)
+    assert "error" in too_small[0] and "1" in too_small[0]["error"]
+
+    too_big = await tools.perform_rag_search(query="dragons", limit=101)
+    assert "error" in too_big[0] and "100" in too_big[0]["error"]
+
+    assert stub.calls == [], "invalid limits must not reach the search backend"
+
+
+@pytest.mark.asyncio
+async def test_valid_inputs_still_reach_the_backend():
+    tools, stub = _make_tools()
+
+    results = await tools.perform_rag_search(query="dragons", limit=5)
+
+    assert stub.calls == [("profile", "dragons", 5, None)]
+    assert results[0]["title"] == "Semantic Result"
+
+
+def test_every_query_taking_tool_validates_its_query():
+    """AC#4: no tool in MCP/tools.py accepts an unvalidated query string."""
+    import ast
+    import pathlib
+
+    import tldw_chatbook.MCP.tools as mcp_tools_module
+
+    tree = ast.parse(
+        pathlib.Path(mcp_tools_module.__file__).read_text(encoding="utf-8")
+    )
+
+    unvalidated = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not any(
+            isinstance(arg, ast.arg) and arg.arg == "query"
+            for arg in getattr(node.args, "args", [])
+        ):
+            continue
+        if not any(
+            isinstance(call.func, ast.Name)
+            and call.func.id == "validate_text_input"
+            or (
+                isinstance(call.func, ast.Attribute)
+                and call.func.attr == "validate_text_input"
+            )
+            for call in ast.walk(node)
+            if isinstance(call, ast.Call)
+        ):
+            unvalidated.append(node.name)
+
+    assert not unvalidated, f"tools taking a query without validating: {unvalidated}"

@@ -287,8 +287,37 @@ class MCPTools:
                 follows the active RAG profile.
 
         Returns:
-            List of search results with content and metadata
+            List of search results with content and metadata. A
+            single-item list with an ``error`` key if ``query``/``limit``
+            fail validation (TASK-1077: an MCP tool handler is a boundary
+            -- the caller is a model -- so inputs are validated here like
+            every other tool in this module).
         """
+        if not isinstance(query, str) or not query.strip():
+            return [{"error": "query must be a non-empty string"}]
+        if not validate_text_input(
+            query, max_length=MAX_SEARCH_QUERY_LENGTH, allow_html=False
+        ):
+            return [
+                {
+                    "error": (
+                        "query must be plain text of at most "
+                        f"{MAX_SEARCH_QUERY_LENGTH} characters"
+                    )
+                }
+            ]
+        if not validate_number_range(
+            limit, min_val=1, max_val=MAX_SEARCH_RESULTS_LIMIT
+        ):
+            return [
+                {
+                    "error": (
+                        f"limit must be between 1 and {MAX_SEARCH_RESULTS_LIMIT}"
+                    )
+                }
+            ]
+        limit = int(limit)
+
         try:
             if use_semantic:
                 results = await self.rag_service.profile_search(
