@@ -2507,3 +2507,23 @@ Retaining the same-key cached rows during refresh stopped the motion. Actual
 browser screenshots taken 23 seconds apart then had identical left-rail pixels.
 Use a populated profile and observe across refresh intervals; a single screenshot
 or an empty harness cannot establish that a layout stays still.
+## A shell cwd reset between commands split my patch across two checkouts — the wrong tree's green run looked like progress (TASK-24620, 2026-08-30)
+
+**What happened.** Mid-verification, one command ended with a `cd` into a
+throwaway `/tmp` worktree; the shell reset cwd back to the MAIN checkout.
+Every later `python3` patch and `pytest` invocation with relative paths then
+ran against the main checkout (a pre-feature branch), not the feature
+worktree: a test-file update landed in the wrong tree, and two pytest runs
+"passed"/"failed" against code that had none of the changes under test. It
+was caught only because an assertion referenced an attribute the wrong tree
+could not have (`AttributeError: _voice_chip_last_width`) — a greppable
+smell, since the feature code demonstrably defined it.
+
+**What to do.** In multi-worktree sessions, anchor EVERY patch script and
+pytest invocation with an explicit absolute `cd <worktree> && ...` in the
+same command — never rely on cwd persisting. When a test failure names a
+symbol your feature defines, grep BOTH trees for the symbol before
+believing either result: a zero count in the tree you thought you were
+testing means you are testing the wrong tree, not that the code is missing.
+After any suspicious run, `pwd` plus `git -C <tree> status` is one second
+of insurance against a split-brain patch.
