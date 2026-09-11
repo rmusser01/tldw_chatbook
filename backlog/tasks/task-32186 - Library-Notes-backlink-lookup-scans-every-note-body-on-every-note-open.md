@@ -139,7 +139,10 @@ this task's own Description predicted and why the fix is about vault scale.
 Live: the dev-built profile was copied and opened with this branch; it
 migrated v72 -> v73 on open and Info ▸ Linked from read "Linked from (40)"
 with the Slip rows listed, no re-import
-(`scratchpad/wave3-caps/backlinks-table/live-info-linked-from-40.txt`).
+(`scratchpad/wave3-caps/backlinks-table/live-info-linked-from-40.txt`,
+235x52). Compact size, same profile at 100x30: the same note's Info reads
+"Linked from (40)" with the Slip rows
+(`scratchpad/wave3-caps/backlinks-table/live-info-linked-from-40-100x30.txt`).
 
 Also fixed here, as originally assigned: **task-32467**, the app-killing
 `NoMatches` from this worker's paint. It was briefly reassigned to the
