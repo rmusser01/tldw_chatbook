@@ -1,8 +1,9 @@
 """Library ▸ Notes critique wave -- editor-keys group.
 
-Tasks 32131, 32132, 32133, 32138, 32139, 32142. See
-``backlog/tasks/task-32131*.md`` through ``task-32142*.md`` for the full
-acceptance criteria; each test below is named after the task it pins.
+Tasks 32131, 32132, 32133, 32138, 32139, 32142, and the wave-3 round
+32246, 32247, 32252, 32253, 32267, 32268. See ``backlog/tasks/task-<id>*.md``
+for the full acceptance criteria; each test below is named after the task
+it pins.
 """
 
 from __future__ import annotations
@@ -27,14 +28,20 @@ from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Library.library_notes_state import LibraryNoteDeleteReceipt
 
 
-def _build_notes_host() -> LibraryHarness:
+def _build_notes_host(body: str | None = None) -> LibraryHarness:
     app = _build_test_app()
-    _seed_conversations(
-        app,
-        _two_conversations(),
-        notes=[{"title": "Research Note", "id": "note-1"}],
-    )
+    note = {"title": "Research Note", "id": "note-1"}
+    if body is not None:
+        note["content"] = body
+    _seed_conversations(app, _two_conversations(), notes=[note])
     return LibraryHarness(app)
+
+
+#: ~35 KB over 1200 lines -- the size of the note task-32247 was measured on.
+_LONG_NOTE_BODY = "\n".join(
+    f"line {number:05d} alpha budget line for the long note repro"
+    for number in range(1200)
+)
 
 
 async def _open_notes_list(screen, pilot):
@@ -760,4 +767,319 @@ async def test_delete_receipt_is_dismissed_leaving_the_list_for_folder_files():
         )
         assert screen._notes_state.delete_receipt is None, (
             "The delete receipt survived leaving the list for Folder files"
+        )
+
+
+# --- wave 3 --------------------------------------------------------------
+# task-32246 Tab focus order, 32247 Ctrl+End, 32252 slash, 32253 Shift+Tab,
+# 32267 Escape from Info, 32268 the delete prompt's position.
+
+
+async def _open_first_note(screen, pilot):
+    """Open Notes and press the first row into the editor."""
+    await _open_notes_list(screen, pilot)
+    _first_note_row(screen).press()
+    await _wait_for_selector(screen, pilot, "#library-note-body")
+    await pilot.pause()
+
+
+# --- task-32246: Tab out of the body stays in the editor -------------------
+
+
+@pytest.mark.asyncio
+async def test_tab_out_of_the_body_lands_on_an_editor_control():
+    """AC#1: Tab from the body must not leave the note editor.
+
+    Live at dev 4a14b3f36f (caps 10/11): the body is the LAST focusable in
+    ``#screen-content``, so one Tab wrapped the cycle round to its first --
+    ``#library-notes-source-database``, the browse chrome's "Library notes"
+    source switch, two panes away above the editor. It is a ``Button``, so
+    every character typed next was swallowed, and its focus treatment is
+    the same background-and-bold it already wears for ``-selected``, which
+    is why the reconciler read the pane as having no focused control at all
+    (this task's AC#4 -- ruled out as a separate defect, not reproduced as
+    one).
+    """
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_note(screen, pilot)
+
+        body = screen.query_one("#library-note-body", TextArea)
+        body.focus()
+        await pilot.pause()
+
+        await pilot.press("tab")
+        await pilot.pause()
+
+        work_pane = screen.query_one("#library-note-work-pane")
+        landed = screen.focused
+        assert landed is not None, "Tab out of the body left nothing focused"
+        assert work_pane in landed.ancestors_with_self, (
+            f"Tab out of the body left the note editor and landed on "
+            f"{landed.id!r}"
+        )
+        assert landed.id == "library-note-back"
+
+
+@pytest.mark.asyncio
+async def test_typing_after_a_tab_out_of_the_body_is_named_by_the_footer():
+    """AC#2: the characters must land visibly, or the footer must say where
+    focus is. The landing control is a Button, so the footer carries it --
+    through ``_library_focus_enter_label``, the same seam the delete prompt
+    and the New-note canvas already use.
+    """
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_note(screen, pilot)
+
+        body = screen.query_one("#library-note-body", TextArea)
+        body.focus()
+        await pilot.pause()
+        await pilot.press("tab")
+        await pilot.pause()
+
+        shortcuts = dict(screen._library_notes_footer_shortcuts())
+        assert shortcuts.get("enter") == "back to list", (
+            f"The footer said nothing about the control Tab landed on: "
+            f"{shortcuts!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_shift_tab_from_the_first_editor_control_returns_to_the_body():
+    """The cycle closes both ways: Shift+Tab off the first editor control
+    comes back to the body rather than walking into the browse chrome.
+    """
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_note(screen, pilot)
+
+        screen.query_one("#library-note-back", Button).focus()
+        await pilot.pause()
+        await pilot.press("shift+tab")
+        await pilot.pause()
+
+        assert getattr(screen.focused, "id", None) == "library-note-body"
+
+
+# --- task-32247: a document-end key that reaches the end -------------------
+
+
+def test_every_ctrl_end_encoding_resolves_to_one_key_name():
+    """AC#1's "in any encoding": the three sequences the critique tried are
+    the SAME Textual key, so one binding covers all of them. Pinned against
+    Textual's own table so an upgrade that renames the key fails here.
+    """
+    from textual._ansi_sequences import ANSI_SEQUENCES_KEYS
+    from textual.keys import Keys
+
+    assert ANSI_SEQUENCES_KEYS["\x1b[1;5F"] == (Keys.ControlEnd,)
+    assert Keys.ControlEnd.value == "ctrl+end"
+
+
+@pytest.mark.asyncio
+async def test_ctrl_end_moves_the_caret_to_the_end_of_a_long_note():
+    """AC#1/#3: on a 1200-line body, Ctrl+End must land at the document end.
+
+    Live at dev 4a14b3f36f (cap 08): `\\x1b[1;5F` then "TAILEDIT" put the
+    text at character 0 of 37,099. Cause PROVEN, not the inferred one --
+    Textual 8.2.8's ``TextArea`` has no ``ctrl+end`` binding and no
+    ``cursor_document_end`` action at all, so nothing upstream was
+    swallowing anything: there was never a key to swallow.
+    """
+    host = _build_notes_host(_LONG_NOTE_BODY)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_note(screen, pilot)
+
+        body = screen.query_one("#library-note-body", TextArea)
+        assert len(body.text) > 30_000, "This pin needs a genuinely long note"
+        body.focus()
+        body.move_cursor((0, 0))
+        await pilot.pause()
+
+        await pilot.press("ctrl+end")
+        await pilot.pause()
+        assert body.cursor_location == body.document.end, (
+            f"Ctrl+End left the caret at {body.cursor_location} of "
+            f"{body.document.end}"
+        )
+
+        await pilot.press("ctrl+home")
+        await pilot.pause()
+        assert body.cursor_location == (0, 0), (
+            f"Ctrl+Home left the caret at {body.cursor_location}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_editor_footer_advertises_the_document_end_key():
+    """AC#2: the key has to be on the footer beside the other editor keys."""
+    host = _build_notes_host(_LONG_NOTE_BODY)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_note(screen, pilot)
+
+        shortcuts = dict(screen._library_notes_footer_shortcuts())
+        assert shortcuts.get("ctrl+end") == "end of note", shortcuts
+
+
+# --- task-32253: Shift+Tab into the Title must not select it ---------------
+
+
+@pytest.mark.asyncio
+async def test_shift_tab_into_the_title_keeps_the_title():
+    """AC#1/#3: Shift+Tab into the Title then one character must leave the
+    title intact apart from that character.
+
+    Live at dev 4a14b3f36f (caps 33/34): "Ideas for study decks" became "!"
+    on one keypress and the status line read "Saved 15:23" a moment later.
+    """
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_note(screen, pilot)
+
+        body = screen.query_one("#library-note-body", TextArea)
+        body.focus()
+        await pilot.pause()
+
+        await pilot.press("shift+tab")
+        await pilot.pause()
+
+        title = screen.query_one("#library-note-title", Input)
+        assert screen.focused is title
+        assert title.selection.start == title.selection.end, (
+            f"Shift+Tab selected the title: {title.selection!r}"
+        )
+        assert title.cursor_position == len("Research Note"), (
+            "The caret should stand at the end of the title, ready to extend it"
+        )
+
+        await pilot.press("!")
+        await pilot.pause()
+        assert title.value == "Research Note!", (
+            f"One keystroke rewrote the title to {title.value!r}"
+        )
+
+
+# --- task-32252: "/" from a canvas with nothing focused --------------------
+
+
+@pytest.mark.asyncio
+async def test_slash_from_an_unfocused_notes_canvas_leaves_the_filter_empty():
+    """AC#1/#3, reproducing the live STARTING STATE the sibling green test
+    never constructs: no control focused anywhere (``set_focus(None)``), and
+    an empty filter.
+
+    ``test_slash_focuses_the_notes_filter_without_inserting_itself`` passes
+    today because it focuses a note ROW first, so ``LibraryScreen.on_key``
+    runs with a non-text focus and stops the key after focusing the filter.
+    This test removes focus entirely, which is the state R/caps/61 shows.
+    """
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_notes_list(screen, pilot)
+
+        screen.set_focus(None)
+        await pilot.pause()
+        assert screen.focused is None, "This pin needs a genuinely unfocused canvas"
+
+        await pilot.press("/")
+        await pilot.pause()
+
+        filter_input = screen.query_one("#library-notes-filter", Input)
+        assert screen.focused is filter_input
+        assert filter_input.value == "", (
+            f"'/' leaked into the filter it focused from an unfocused canvas: "
+            f"{filter_input.value!r}"
+        )
+
+        # AC#2: the task-32131 ruling holds -- once focused, "/" is a
+        # literal character, so folder-style filters stay typeable.
+        await pilot.press("W", "o", "r", "k", "/", "Q", "3")
+        await pilot.pause()
+        assert filter_input.value == "Work/Q3"
+
+
+# --- task-32267: one Escape leaves Info ------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [LIBRARY_TEST_SIZE, (100, 30)])
+async def test_one_escape_from_info_returns_to_the_editor(size):
+    """AC#1/#2: a single Escape from the Info pane returns to the editor.
+
+    Regression pin. The reported two-press behaviour did not reproduce at
+    dev 4a14b3f36f from any of five entry states (see the task notes); the
+    ladder step exists in ``action_library_notes_escape`` and this holds it
+    at one press, wide and compact.
+    """
+    host = _build_notes_host()
+    async with host.run_test(size=size) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_note_in_info(screen, pilot)
+        assert screen.query_one("#library-note-context-region").display
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert not screen.query_one("#library-note-context-region").display, (
+            "Info survived the first Escape"
+        )
+        assert screen.query_one("#library-note-editor-region").display
+        assert screen._notes_state.view == "editor"
+
+
+# --- task-32268: the delete prompt sits with the control that raised it ----
+
+
+@pytest.mark.asyncio
+async def test_the_delete_prompt_renders_inside_info_beside_delete():
+    """AC#1/#3: the prompt must render inside the Info border, adjacent to
+    the Delete control that raised it.
+
+    Live at dev 4a14b3f36f (cap 22): Info's border closed at row 31, Delete
+    sat at row 27 inside it, and the prompt painted at rows 32-34 -- five
+    rows below the button and outside the box.
+    """
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_note_in_info(screen, pilot)
+
+        info = screen.query_one("#library-note-context-region")
+        delete_button = screen.query_one("#library-note-context-delete", Button)
+        delete_button.press()
+        await pilot.pause()
+        await pilot.pause()
+
+        prompt = screen.query_one("#library-note-delete-confirmation")
+        assert info in prompt.ancestors, (
+            f"The prompt renders outside the Info border, under "
+            f"{prompt.parent!r}"
+        )
+        children = list(info.children)
+        assert children.index(prompt) == children.index(delete_button) + 1, (
+            "The prompt must be the next thing after Delete, not further down"
+        )
+        assert info.region.contains_region(prompt.region), (
+            f"The prompt at {prompt.region} escapes the Info box at "
+            f"{info.region}"
+        )
+        assert prompt.region.y >= delete_button.region.y, (
+            "The prompt must follow the control that raised it"
         )
