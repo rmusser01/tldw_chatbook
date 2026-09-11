@@ -115,13 +115,11 @@ def _checked_originals(plan, journal, session):
                 for root in binding["roots"]
             ):
                 raise ValueError("rollback_source_binding_unverified")
-            if (
-                item.status not in {"included", "included_directory"}
-                and item.owner != "sqlite.transient"
-            ):
+            if item.status not in {
+                "included",
+                "included_directory",
+            } and item.owner not in {"sqlite.transient", "rag.projections"}:
                 raise ValueError("rollback_original_unavailable")
-            if item.owner == "rag.projections":
-                raise ValueError("rollback_projection_group_validation_required")
             entries.append(item)
         if not entries:
             raise ValueError("rollback_originals_required")
@@ -141,6 +139,11 @@ def _checked_originals(plan, journal, session):
         )
         if expected != [row.model_dump() for row in prepared.rollback_sources]:
             raise ValueError("rollback_owner_mapping_changed")
+        from .projection_publication import normalized_originals
+
+        entries = normalized_originals(
+            Inventory(tuple(entries), True, plan.target_fingerprint, ())
+        ).items
         directories = {
             item.path: item for item in entries if item.status == "included_directory"
         }
@@ -153,7 +156,13 @@ def _checked_originals(plan, journal, session):
                 if path == item.path or path in item.path.parents
             ]
             meta = None
-            if ancestors:
+            if item.owner == "rag.projections":
+                meta = replace(
+                    item.metadata,
+                    mode=stat.S_IMODE(info.st_mode),
+                    mtime_ns=info.st_mtime_ns,
+                )
+            elif ancestors:
                 root = min(ancestors, key=lambda path: len(path.parts))
                 meta = FileMetadata(
                     1,
@@ -316,6 +325,12 @@ def capture_verify_rollback(
             ):
                 raise ValueError("rollback_capture_limit")
             require_capacity({stage: total, destination.parent: total * 5})
+        from .rag_projection_validation import validate_groups
+
+        candidates = {item.logical_id: path for item, path in staged}
+        validate_groups(
+            inventory.items, candidates, stage, cancel, limits, limits.expanded_bytes
+        )
         rebound = replace(
             inventory, items=tuple(replace(item, path=path) for item, path in staged)
         )
@@ -436,6 +451,24 @@ def capture_verify_rollback(
                     "payload_digest": payload.sha256,
                 }
             )
+        projection_candidates = {}
+        for item in inventory.items:
+            if item.owner != "rag.projections" or item.status != "included":
+                continue
+            payload = by_id.get(item.logical_id)
+            if payload is None or payload.owner_id != item.owner:
+                raise ValueError("rollback_projection_coverage_mismatch")
+            private = verified / hashlib.sha256(item.logical_id.encode()).hexdigest()
+            _copy_verified_payload(archive, payload, private, cancel)
+            projection_candidates[item.logical_id] = private
+        validate_groups(
+            inventory.items,
+            projection_candidates,
+            verified,
+            cancel,
+            limits,
+            limits.expanded_bytes,
+        )
         reader.verify_sealed(archive, cancel)
     # Positive scope retirement (including source/WAL rechecks) precedes proof.
     checked, _ = _checked_originals(plan, journal, session)
@@ -477,6 +510,13 @@ def capture_verify_rollback(
                 "manifest_digest": hashlib.sha256(encoded).hexdigest(),
                 "coverage": coverage,
                 "sqlite_groups": groups,
+                "projection_groups": list(
+                    {
+                        row.path: row.model_dump()
+                        for artifact in prepared.artifacts
+                        for row in artifact.rollback_projection_roots
+                    }.values()
+                ),
                 "credential_issues": sorted(set(issues)),
             },
         )

@@ -263,6 +263,24 @@ def plan_restore(
     )
     producer = {row.logical_id: row for row in doc.producer_inventory}
     payloads = {row.logical_id: row for row in doc.files}
+    projection_roots = {
+        row.root_id
+        for row in doc.files
+        if row.logical_id in selected and row.owner_id == "rag.projections"
+    }
+    for key in projection_roots:
+        owner = producer.get(key)
+        if (
+            owner is None
+            or owner.owner_id != "rag.projections"
+            or roots[key].synthetic
+            or any(
+                row.owner_id != "rag.projections"
+                for row in doc.files
+                if row.root_id == key
+            )
+        ):
+            raise ValueError("projection_root_incomplete")
     deferred_selected = {
         row.owner_id
         for row in doc.files
@@ -462,7 +480,7 @@ def plan_restore(
             }:
                 raise ValueError("target_owner_unclassified")
             archived_item = producer.get(item.logical_id)
-            if (
+            if item.owner != "rag.projections" and (
                 item.status == "intentionally_excluded"
                 or archived_item is not None
                 and archived_item.status == "intentionally_excluded"
@@ -528,6 +546,21 @@ def plan_restore(
                 and any(child not in declared for child in item.path.iterdir())
             ):
                 raise ValueError("target_owner_unclassified")
+    projection_issues = ()
+    if mode == "replace" and target is not None:
+        from .projection_publication import dependent_retirements
+
+        retire, preserve, projection_issues = dependent_retirements(
+            target, restore, retire, preserve
+        )
+    projection_issues += tuple(
+        "projection_reconciliation_required:" + row.logical_id
+        for row in doc.directories
+        if row.logical_id in selected
+        and row.logical_id in producer
+        and producer[row.logical_id].owner_id == "rag.projections"
+        and row.parent_id is None
+    )
     plan = RestorePlan(
         archive.digest,
         mode,
@@ -544,7 +577,8 @@ def plan_restore(
 
     metadata, issues = (
         [],
-        ["owner_setup_required:" + owner for owner in sorted(deferred_selected)],
+        ["owner_setup_required:" + owner for owner in sorted(deferred_selected)]
+        + sorted(set(projection_issues)),
     )
     restored_ids = {key for key, _ in restore}
     for record in records:

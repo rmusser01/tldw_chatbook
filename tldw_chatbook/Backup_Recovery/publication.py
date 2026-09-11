@@ -202,7 +202,7 @@ def finalize_candidate(candidate: Path, plan: RestorePlan, journal, *, session) 
             {
                 str(item.path)
                 for item in _items(doc, plan).values()
-                if item.owner == "config"
+                if item.owner == "config" and item.status == "included"
             }
         )
         if not selectors or not set(selectors) <= set(context.selectors):
@@ -744,8 +744,23 @@ def _prepare(
         retained_roots = {}
         artifacts = []
         rows = [dict(row, action="container") for row in document.get("containers", [])]
+        # A restored projection replaces its complete reviewed root as one unit.
+        projection_units = {
+            item.path
+            for item in (plan.target.items if plan.target else ())
+            if item.owner == "rag.projections"
+            and item.metadata
+            and item.logical_id == item.metadata.root_id
+            and (item.logical_id, item.path) in plan.retire
+        }
+        restored_paths = {path for _, path in plan.restore}
+        projection_replacements = projection_units & restored_paths
         # Retire only maximal reviewed objects; their exact subtrees are verified.
         for key, path in sorted(plan.retire, key=lambda row: len(row[1].parts)):
+            if any(
+                path == root or root in path.parents for root in projection_replacements
+            ):
+                continue
             if any(
                 Path(row["destination"]) in path.parents
                 for row in rows
@@ -763,7 +778,14 @@ def _prepare(
         rows.extend(
             dict(row, action="publish")
             for row in document["artifacts"]
-            if row["publication_unit"]
+            if (
+                row["publication_unit"]
+                or Path(row["destination"]) in projection_replacements
+            )
+            and not any(
+                root in Path(row["destination"]).parents
+                for root in projection_replacements
+            )
         )
         for row in rows:
             target = Path(row["destination"])
@@ -773,6 +795,7 @@ def _prepare(
                 raise ValueError("publication_preserved_overlap")
             previous = metadata = retained = None
             requires_owner = False
+            projection_roots = []
             try:
                 target.lstat()
             except FileNotFoundError:
@@ -807,6 +830,22 @@ def _prepare(
                 owner = owners.get(source.owner) if source else None
                 if owner is None:
                     raise ValueError("rollback_owner_unavailable")
+                from .projection_publication import projection_groups
+
+                projection_items = [
+                    item
+                    for item in plan.target.items
+                    if item.path is not None
+                    and (item.path == target or target in item.path.parents)
+                    and item.owner == "rag.projections"
+                ]
+                for key, group in projection_groups(projection_items).items():
+                    projection_root = next(
+                        item.path for item in group if item.logical_id == key
+                    )
+                    evidence = observe_artifact(projection_root, metadata=True)
+                    if evidence not in projection_roots:
+                        projection_roots.append(evidence)
                 for local_path, local_item in target_items.items():
                     if local_path == target or target in local_path.parents:
                         main = _sidecar_main(local_item, plan.target.items, owners)
@@ -827,6 +866,7 @@ def _prepare(
                     "retained": retained,
                     "previous_metadata": metadata,
                     "rollback_requires_owner": requires_owner,
+                    "rollback_projection_roots": projection_roots,
                     "parents": [
                         _parent_evidence(path, containers)
                         for path in sorted(
@@ -949,6 +989,8 @@ def _verify_rollback(journal, path, password, work_root, cancel, coverage):
         }
         if set(coverage) != set(previous) | set(directory_metadata):
             raise ValueError("rollback_coverage_mismatch")
+        if any(item.rollback_projection_roots for item in previous.values()):
+            raise ValueError("rollback_projection_held_capture_required")
         if any(item.rollback_requires_owner for item in previous.values()):
             raise ValueError("rollback_sqlite_owner_receipt_required")
         before = observe_artifact(path)
@@ -1056,6 +1098,13 @@ def publish_candidate(
                     item.previous_metadata, item.target, metadata=True
                 ):
                     raise ValueError("publication_objects_changed")
+            # Only extant services have caches. Importing RAG here would try to
+            # start a new participant while the native publication fence is held.
+            import sys
+
+            generation = sys.modules.get("tldw_chatbook.RAG_Search.generation")
+            if generation is not None:
+                generation._clear_caches()
             journal._append(parent, "publication_started", {})
         _pending(
             journal,

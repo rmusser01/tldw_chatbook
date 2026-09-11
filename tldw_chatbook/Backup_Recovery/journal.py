@@ -87,6 +87,9 @@ class _Artifact(_Evidence):
     previous_metadata: _Object | None = None
     action: Literal["publish", "retire", "container"] = "publish"
     rollback_requires_owner: bool = False
+    rollback_projection_roots: list[_Object] = Field(
+        default_factory=list, max_length=MAX_EVENTS
+    )
     parents: list[_Directory] = Field(default_factory=list, max_length=3)
 
     @field_validator("target", "retained")
@@ -132,6 +135,9 @@ class _Rollback(_Evidence):
     manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     coverage: dict[str, str]
     sqlite_groups: list[_SqliteRollback] = Field(
+        default_factory=list, max_length=MAX_EVENTS
+    )
+    projection_groups: list[_Object] = Field(
         default_factory=list, max_length=MAX_EVENTS
     )
     credential_issues: list[str] = Field(default_factory=list, max_length=4096)
@@ -476,13 +482,29 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
         validated = model.model_validate(dict(evidence))
         if isinstance(validated, _Rollback):
             prepared = _Prepared.model_validate(prepared_record.evidence)
-            if validated.sqlite_groups:
+            expected_projections = {
+                row.path: row
+                for artifact in prepared.artifacts
+                for row in artifact.rollback_projection_roots
+            }
+            observed_projections = {
+                row.path: row for row in validated.projection_groups
+            }
+            if (
+                len(observed_projections) != len(validated.projection_groups)
+                or observed_projections != expected_projections
+            ):
+                raise ValueError("rollback_projection_coverage_mismatch")
+            if validated.sqlite_groups or validated.projection_groups:
                 coverage = {
                     row.logical_id
                     for row in prepared.artifacts
                     if row.previous is not None
                 } | {row.logical_id for row in prepared.directory_metadata}
-                if set(validated.coverage) != coverage or not prepared.rollback_sources:
+                if set(validated.coverage) != coverage:
+                    raise ValueError("rollback_coverage_mismatch")
+            if validated.sqlite_groups:
+                if not prepared.rollback_sources:
                     raise ValueError("rollback_sqlite_coverage_mismatch")
                 expected = {row.logical_id: row for row in prepared.rollback_sources}
                 observed = {
@@ -790,7 +812,9 @@ class Journal:
 
     def record(self, event: str, evidence: Mapping[str, object]) -> None:
         """Flush one strictly typed exclusive record; failed writes remain evidence."""
-        if event == "rollback_verified" and evidence.get("sqlite_groups"):
+        if event == "rollback_verified" and (
+            evidence.get("sqlite_groups") or evidence.get("projection_groups")
+        ):
             raise ValueError("rollback_held_capture_required")
         with self._locked(exclusive=True) as parent:
             self._append(parent, event, evidence)
