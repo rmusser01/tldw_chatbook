@@ -190,7 +190,7 @@ _BY_DESTINATION_ID: Mapping[str, ShellDestination] = {
 # Shortcut ownership is a destination contract, not a position in the
 # navigation strip. New destinations therefore cannot silently reassign an
 # established shortcut by changing ``SHELL_DESTINATION_ORDER``.
-# task-32306 (explicit reassignment, not a silent one): the shortcut set
+# task-32458 (explicit reassignment, not a silent one): the shortcut set
 # follows one left-to-right keyboard walk so the strip reads in order --
 # ctrl+1..ctrl+9, ctrl+0 across the number row for the first ten
 # destinations, then the F-row from its left end (f2, f3, f4, f5, then f7)

@@ -72,7 +72,7 @@ def nav_button_label(destination_id: str, label: str) -> str:
 def nav_button_label_text(destination_id: str, label: str) -> Text:
     """Renderable form of :func:`nav_button_label` with the key prefix dimmed.
 
-    task-32306: the dimmed prefix parses as a key hint rather than an
+    task-32458: the dimmed prefix parses as a key hint rather than an
     ordinal number. The plain-string contract stays with
     ``nav_button_label``:
     ``str(nav_button_label_text(d, l)) == nav_button_label(d, l)``, so
@@ -135,7 +135,7 @@ def navigation_destination_label(
 def navigation_destination_label_text(
     destination_id: str, label: str, *, console_needs_attention: bool
 ) -> Text:
-    """task-32306: :func:`navigation_destination_label` as dim-prefixed ``Text``.
+    """task-32458: :func:`navigation_destination_label` as dim-prefixed ``Text``.
 
     Same geometry-stable contract -- Console's reserved trailing glyph cell
     is preserved and ``str()`` equals ``navigation_destination_label(...)`` --

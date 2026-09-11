@@ -973,7 +973,7 @@ selector: the first attempt here looked correct and did nothing.
 
 ## User-visible hotkeys live in four places, not one — sweep all of them
 
-**TASK-32306, 2026-09-10 (nav renumbering).** Rebinding the shell-destination
+**TASK-32458, 2026-09-10 (nav renumbering).** Rebinding the shell-destination
 F-key tail (F7–F11 → F2/F3/F4/F5/F7) and re-seating Artifacts touched the
 shortcut map in `shell_destinations.py`, the label scheme in
 `UI/Navigation/main_navigation.py`, and the strip order — the easy part. A

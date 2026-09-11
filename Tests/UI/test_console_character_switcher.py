@@ -1479,7 +1479,7 @@ async def test_failed_character_owner_is_released_when_selection_context_changes
 
 @pytest.mark.asyncio
 async def test_plain_f3_is_inert_under_open_switcher_and_logs_after_dismiss():
-    """task-32306 / review: the switcher no longer hijacks plain F3.
+    """task-32458 / review: the switcher no longer hijacks plain F3.
 
     The switcher's mode toggle moved to shift+f3, so plain f3 with the modal
     open neither cycles modes (the old conflict) nor mis-fires: like every
@@ -1520,7 +1520,7 @@ async def test_plain_f3_is_inert_under_open_switcher_and_logs_after_dismiss():
         assert modal._mode is SwitcherMode.ACTIVE
 
         # Under the open modal, plain f3 is inert -- it must NOT cycle the
-        # switcher mode (the pre-task-32306 conflict Qodo flagged).
+        # switcher mode (the pre-task-32458 conflict Qodo flagged).
         await pilot.press("f3")
         await pilot.pause()
         assert modal._mode is SwitcherMode.ACTIVE

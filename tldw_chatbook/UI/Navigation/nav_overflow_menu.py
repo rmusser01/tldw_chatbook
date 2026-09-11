@@ -78,7 +78,7 @@ class NavOverflowMenu(ModalScreen[None]):
         with Vertical(id="nav-overflow-menu"):
             yield Static("All destinations", id="nav-overflow-menu-title")
             for destination in SHELL_DESTINATION_ORDER:
-                # Same dimmed key-prefix label the strip shows (task-32306),
+                # Same dimmed key-prefix label the strip shows (task-32458),
                 # so the menu doubles as shortcut teaching; the "(current)"
                 # marker is appended in plain style.
                 label = navigation_destination_label_text(

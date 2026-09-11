@@ -498,11 +498,11 @@ async def test_folded_screen_boxes_owning_destination_button():
 
 
 def test_shell_destination_hotkeys_keep_existing_destination_owners():
-    """The shortcut map is an explicit destination contract (task-32306).
+    """The shortcut map is an explicit destination contract (task-32458).
 
     Inserting a destination cannot move any existing destination's shortcut;
     the only way keys move is an explicit edit of SHELL_DESTINATION_SHORTCUTS
-    -- which task-32306 did once, deliberately, to restore the left-to-right
+    -- which task-32458 did once, deliberately, to restore the left-to-right
     keyboard walk (number row ctrl+1..ctrl+0, then the F-row from F2,
     skipping reserved f1/f6) and to seat Research/Meetings in the tail
     instead of stranding F10/F11 mid-strip.
@@ -1151,7 +1151,7 @@ async def test_click_on_ghosted_nav_button_via_border_route_is_a_no_op():
     `active="home"` at 80 cols reliably straddles/ghosts `nav-artifacts`
     (`Region(x=63, y=0, width=14, height=3)`, the "⌃6 Art" fragment), the
     same defect class as the review's own probe
-    (`nav-watchlists_collections`, `x=62-71, y=2`, before the task-32306
+    (`nav-watchlists_collections`, `x=62-71, y=2`, before the task-32458
     reorder moved Artifacts behind Watchlists).
     """
     events_seen = []

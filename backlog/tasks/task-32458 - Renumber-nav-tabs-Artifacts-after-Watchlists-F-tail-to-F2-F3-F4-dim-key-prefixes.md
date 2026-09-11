@@ -1,5 +1,5 @@
 ---
-id: TASK-32306
+id: TASK-32458
 title: >-
   Renumber nav tabs: Artifacts after Watchlists, F-tail to F2/F3/F4, dim key
   prefixes
@@ -71,7 +71,7 @@ The top nav bar's key prefixes read haphazardly: the digit layer runs 1-9 then 0
   since you are already there; ctrl+5–ctrl+0 keep navigating away.
 - Docs: 15 User Guide files updated (index nav map + shortcut table,
   artifacts/watchlists/lab/logs/settings/rag/home/console/chat-basics/tts,
-  three roleplay pages). ADR-031 gained the task-32306 refinement recording
+  three roleplay pages). ADR-031 gained the task-32458 refinement recording
   the hotkey-layer convention. Deliberately left stale: dated qa/ UAT SVG
   captures, the 2026-08-11 latency audit, RAG-Documentation.md's pre-existing
   wrong Ctrl+5 mention, and Docs/User_Guide/images/settings/overview.svg
@@ -86,13 +86,13 @@ The top nav bar's key prefixes read haphazardly: the digit layer runs 1-9 then 0
   "Import / Export" copy / startup-settle before any nav assertion. Ruff:
   no new violations on edited lines (pre-existing I001/UP035 debt left
   as-is).
-- ADR: no new ADR; ADR-031 refinement added (task-32306).
+- ADR: no new ADR; ADR-031 refinement added (task-32458).
 <!-- SECTION:NOTES:END -->
 
 
 ## Port note (dev PR)
 
-Ported to `dev` in worktree branch `task-32306-nav-renumber`. Dev had evolved
+Ported to `dev` in worktree branch `task-32458-nav-renumber`. Dev had evolved
 the hotkey layer since the original implementation: shortcuts became a
 destination contract (`SHELL_DESTINATION_SHORTCUTS`) and two new destinations
 (`research` at f10, `meetings` at f11, with F10/F11 stranded mid-strip) landed.

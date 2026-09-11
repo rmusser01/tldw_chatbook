@@ -49,7 +49,7 @@ def test_fkey_labels_on_late_destinations() -> None:
 
 
 def test_nav_label_text_dims_only_the_key_prefix() -> None:
-    """task-32306: the key prefix renders dimmed so it parses as a key hint,
+    """task-32458: the key prefix renders dimmed so it parses as a key hint,
     not an ordinal -- while the plain-string contract (and the bar's width
     math, which reads cell length) stays identical to ``nav_button_label``.
     """
