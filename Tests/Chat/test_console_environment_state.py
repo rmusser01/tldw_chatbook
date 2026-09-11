@@ -146,7 +146,9 @@ def test_errored_git_tier_gets_its_own_row_not_the_no_workspace_copy():
         git=GitEnvState(availability=EnvSourceAvailability.ERROR))
     state = project_environment_section(errored, frozenset(), now=_NOW)
     assert [r.row_id for r in state.rows] == [ENV_ROW_ERROR]
-    assert state.rows[0].primary_text == "Environment unavailable — Refresh to retry"
+    assert state.rows[0].primary_text == (
+        "⚠ Environment unavailable — Refresh to retry"  # TASK-32334 status glyph
+    )
     assert state.rows[0].status == "blocked"
     # ... and the NOT_APPLICABLE copy is unchanged (negative control).
     not_applicable = project_environment_section(
@@ -436,7 +438,7 @@ def test_pr_rows_absent_without_pr_and_present_with_actions_when_expanded():
     collapsed = project_environment_section(snapshot, frozenset(), now=_NOW)
     by_id = {r.row_id: r for r in collapsed.rows}
     assert by_id[ENV_ROW_PR].primary_text == "PR #2281 · Open ▸"
-    assert by_id[ENV_ROW_CHECKS].primary_text == "1 failing check ▸"
+    assert by_id[ENV_ROW_CHECKS].primary_text == "✗ 1 failing check ▸"
     expanded = project_environment_section(
         snapshot, frozenset({ENV_ROW_PR, ENV_ROW_CHECKS}), now=_NOW)
     by_id_expanded = {r.row_id: r for r in expanded.rows}
@@ -446,7 +448,7 @@ def test_pr_rows_absent_without_pr_and_present_with_actions_when_expanded():
     # AC #1: expanded rows flip the chevron, and the composer-insert rows
     # carry the "+ " marker, distinct from the "…" navigation marker.
     assert by_id_expanded[ENV_ROW_PR].primary_text == "PR #2281 · Open ▾"
-    assert by_id_expanded[ENV_ROW_CHECKS].primary_text == "1 failing check ▾"
+    assert by_id_expanded[ENV_ROW_CHECKS].primary_text == "✗ 1 failing check ▾"
     assert by_id_expanded[ENV_ROW_PR_OPEN].primary_text == "Open in browser…"
     assert by_id_expanded[ENV_ROW_PR_ADD].primary_text == "+ Add to chat"
     assert by_id_expanded[ENV_ROW_CHECKS_FIX].primary_text == (
@@ -554,11 +556,11 @@ def test_branch_task_headline_with_ac_progress():
     snapshot = EnvironmentSnapshot(tasks=_tasks_state())
     head = project_tasks_section(snapshot, frozenset()).rows[0]
     assert head.row_id == TASKS_ROW_HEAD
-    assert head.primary_text == "task-3401 · In Progress ▸"
+    assert head.primary_text == "● task-3401 · In Progress ▸"
     assert head.secondary_text == "3/6 ACs · Video gen foundation"
     assert head.clickable
     expanded_head = project_tasks_section(snapshot, frozenset({TASKS_ROW_HEAD})).rows[0]
-    assert expanded_head.primary_text == "task-3401 · In Progress ▾"
+    assert expanded_head.primary_text == "● task-3401 · In Progress ▾"
 
 
 def test_head_row_without_a_branch_task_names_the_list_not_the_counts():
@@ -617,7 +619,7 @@ def test_expansion_lists_entries_in_progress_first_and_add_action():
     assert by_id[TASKS_ROW_ADD].primary_text == "+ Add task to chat"
     assert by_id[TASKS_ROW_HEAD].primary_text.endswith(" ▾")
     entry_rows = [r for r in rows if r.row_id.startswith("task-entry-")]
-    assert entry_rows[0].primary_text.startswith("task-3401")
+    assert entry_rows[0].primary_text.startswith("● task-3401")
     assert entry_rows[0].status == "running"
 
 
@@ -742,3 +744,24 @@ def test_tasks_count_summary_fits_the_narrowest_rail_at_realistic_counts():
     """The whole reason the compact form is allowed here: it fits."""
     assert len(tasks_count_summary(62, 586)) <= TASKS_SUMMARY_BUDGET
     assert "…" not in tasks_count_summary(62, 586)
+
+
+def test_status_rows_carry_leading_status_glyphs():
+    """TASK-32334: section-row status is colour-class only in the widget;
+    the Environment/Tasks projections prefix the fleet's status-glyph
+    vocabulary so low-colour terminals can still read the status."""
+    errored = EnvironmentSnapshot(
+        git=GitEnvState(availability=EnvSourceAvailability.ERROR))
+    state = project_environment_section(errored, frozenset(), now=_NOW)
+    assert state.rows[0].primary_text.startswith("⚠ ")
+
+    # In-progress branch task -> running glyph.
+    snapshot = EnvironmentSnapshot(tasks=_tasks_state())
+    head = project_tasks_section(snapshot, frozenset()).rows[0]
+    assert head.primary_text.startswith("● ")
+
+    # Fresh (non-stale) git carries no status and therefore no glyph.
+    ok = EnvironmentSnapshot(git=GitEnvState(availability=EnvSourceAvailability.OK))
+    ok_state = project_environment_section(ok, frozenset(), now=_NOW)
+    changes = next(r for r in ok_state.rows if r.row_id == ENV_ROW_CHANGES)
+    assert not changes.primary_text.startswith(("●", "⚠", "✓", "✗"))

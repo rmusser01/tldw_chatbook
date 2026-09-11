@@ -55,3 +55,25 @@ GLYPH_APPEARANCE_PLACEHOLDER = "▢"
 #: without any font-dependent glyph.
 GLYPH_APPEARANCE_ASCII_SET = "*"
 GLYPH_APPEARANCE_ASCII_UNSET = "+"
+
+#: Section-row status -> glyph, the ONE vocabulary every Console rail
+#: section shares (TASK-32334; the fleet panel's own map moved here).
+#: Unknown/empty statuses get no glyph from ``status_glyph``; call sites
+#: that need a running default use ``STATUS_GLYPHS.get(status, GLYPH_IN_PROGRESS)``.
+STATUS_GLYPHS = {
+    "done": GLYPH_DONE,
+    "running": GLYPH_IN_PROGRESS,
+    "error": "✗",  # the fleet's failure mark (NOT GLYPH_CLOSE ✕, the
+    "cancelled": "✗",  # close-button glyph); ASCII fallback "[X]"
+    "stuck": "⚠",
+    "blocked": "⚠",
+}
+
+
+def status_glyph(status: str) -> str:
+    """Return the shared glyph for a section-row status, "" when none.
+
+    Args:
+        status: Row status class ("" means no status -> no glyph).
+    """
+    return STATUS_GLYPHS.get(str(status or ""), "")

@@ -155,6 +155,7 @@ from ...Chat.console_chat_models import (
     ConsoleMessageRole,
     console_pending_round_copy_for,
 )
+from ...Chat.console_glyphs import STATUS_GLYPHS
 from ...Widgets.Console.console_agent_steering_bar import (
     STEERING_STATE_HIDDEN,
     ConsoleAgentSteeringState,
@@ -178,13 +179,11 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: below -- one vocabulary, one place (agent.py:354/:457-463 in the PR2b
 #: seam map). Unknown/future statuses fall back to "●" wherever this is
 #: consulted via `.get(status, "●")`.
-_AGENT_STATUS_GLYPHS: Dict[str, str] = {
-    "done": "✓",
-    "running": "●",
-    "stuck": "⚠",
-    "error": "✗",
-    "cancelled": "✗",
-}
+#: TASK-32334: the fleet's status glyphs moved to the shared Console
+#: vocabulary (``Chat/console_glyphs.STATUS_GLYPHS``) so every rail section
+#: renders statuses with one glyph language. Same keys, same marks; the
+#: shared map additionally covers "blocked" (Environment/Tasks rows).
+_AGENT_STATUS_GLYPHS: Dict[str, str] = dict(STATUS_GLYPHS)
 
 #: TASK-31429: the rail's Agent status line ("Agent: running · step 3",
 #: "Sub-agent · done") carries its run status as the first word after the
