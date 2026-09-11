@@ -412,6 +412,7 @@ from tldw_chatbook.Agents.session_todo_store import (
     TodoChangeCallback,
 )
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolExecutionPolicy
+from tldw_chatbook.Agents.tool_refusals import TOOL_KILL_SWITCH_REFUSAL
 
 # task-24458: these two providers pull the whole workspace tool-execution
 # cluster (`Tools.workspace_tool_executor` -> `Tools.{git,local,patch,
@@ -442,6 +443,7 @@ from tldw_chatbook.Library.library_rag_service import (
 from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
     build_library_rag_evidence_bundle,
 )
+from tldw_chatbook.MCP.execution_log import UNRESOLVED_DENIED_DECISION
 from tldw_chatbook.MCP.permission_store import BUILTIN_TOOL_SERVER_KEY
 from tldw_chatbook.runtime_policy.bootstrap import (
     load_default_runtime_source_state,
@@ -1604,7 +1606,17 @@ AGENT_LESSON_DENIED = "foreground approval denied for Agent Lesson save"
 #: find_tools, load_tools) that previously ran normally with the switch on.
 #: Deliberately names the switch so the model (and a user reading the
 #: transcript) can tell this from a per-call denial.
-KILL_SWITCH_REFUSAL = "tool call blocked: chat tool calls are disabled (kill switch)"
+#: task-32285: wording unified across every kill-switch refusal path
+#: (this controller, `Agents.mcp_tool_provider`, `Agents.
+#: local_tool_provider`, and the builtin gate's own copy hand-duplicated
+#: in `Chat.console_agent_bridge` -- see that module's
+#: `_BUILTIN_KILL_SWITCH_REFUSAL` docstring) -- four differently worded
+#: strings used to exist for the same event, and a downstream classifier
+#: (lane B's transcript status table, `console_agent_bridge.py`'s own
+#: `_refusal_statuses()`-style tables) keys on these by identity/prefix.
+#: Qodo #2597 #2: the sentence now has exactly ONE definition, the
+#: import-free leaf `Agents.tool_refusals`; every NAME below stays put.
+KILL_SWITCH_REFUSAL = TOOL_KILL_SWITCH_REFUSAL
 
 #: TASK-1861: how broad each approval scope is. A session/always grant is
 #: recorded against a tool NAME, so when per-call rows of one tool are
@@ -1616,6 +1628,56 @@ _APPROVAL_SCOPE_RANK: dict[str, int] = {
     "approve_session": 2,
     "always_allow": 3,
 }
+
+
+class ApprovalDecisions(dict):
+    """One approval round's verdict map, plus the keys nobody actually answered.
+
+    task-32280 fix round (R23). A round the user never answered -- Stop
+    mid-card, or a revoked round -- fails CLOSED: every undecided key
+    defaults to ``"deny"`` and the runtime must keep seeing exactly that,
+    so the tool does not run. But an unanswered card is not a refusal, and
+    ``request_mcp_approvals`` already writes the honest
+    ``denied-unresolved`` audit row for it. The review hooks, seeing only
+    ``"deny"``, then recorded a SECOND row that Audit renders as "Denied by
+    you" -- a decision nobody made.
+
+    This is a plain ``dict`` (every consumer keeps treating it as the
+    verdict map it always was) carrying one extra attribute so the two
+    hooks can tell the two cases apart at the one place it matters:
+    ``record_user_denial``. Deliberately NOT a distinct verdict string --
+    that would have to be taught to `_apply_verdict`, `apply_batch_
+    decisions`, `apply_promotion_decisions`, `builtin_gate.stamp` and the
+    refusal loop, and any one of them missing it would let a denied tool
+    run.
+
+    Attributes:
+        unresolved_keys: The verdict keys (``call_id`` where the runtime
+            can address the call, else ``llm_name`` -- the same keying
+            ``request_mcp_approvals`` uses) that were defaulted to deny by
+            cancellation or revocation rather than chosen by the user.
+    """
+
+    unresolved_keys: frozenset[str] = frozenset()
+
+
+def approval_was_unanswered(row: "MCPPendingCall", decisions: Mapping[str, str]) -> bool:
+    """True when ``row``'s deny came from a Stop/revoke, not from the user.
+
+    Args:
+        row: The pending call whose verdict is being recorded.
+        decisions: The map ``request_mcp_approvals`` returned -- an
+            `ApprovalDecisions` in production, a bare dict in tests and in
+            any other `request_approvals` shape (which then reports
+            "answered", the pre-fix behaviour).
+
+    Returns:
+        Whether the verdict for ``row`` was defaulted by an unresolved round.
+    """
+    unresolved = getattr(decisions, "unresolved_keys", ())
+    if not unresolved:
+        return False
+    return (str(getattr(row, "call_id", "") or "") or row.llm_name) in unresolved
 
 
 CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
@@ -2446,6 +2508,25 @@ def build_tool_review_hook(
         for name, decision in _stamps_for(builtin_pending).items():
             builtin_gate.stamp(run_id, name, decision)
 
+        # task-32280: because the runtime turns the refusal below into the
+        # call's result and never dispatches it, `MCPToolProvider.invoke` --
+        # which records every refusal IT reaches -- never runs for a denied
+        # call. Live on dev 3315241674 that left three approvals of one tool
+        # in the execution log and no row at all for the Deny. Record at the
+        # point the denial becomes final, through the provider's own audit
+        # seam. Built-in rows are left alone: nothing records their
+        # approvals either, so a denial-only trail would be worse than none.
+        # R23: skip rows whose "deny" was DEFAULTED by a Stop/revoke --
+        # `request_mcp_approvals` already logged those as
+        # `denied-unresolved`, and recording them again here claimed the
+        # user pressed Deny on a card they never saw resolved.
+        if mcp_provider is not None:
+            for row in mcp_pending:
+                if _decision_for(row) == "deny" and not approval_was_unanswered(
+                    row, decisions
+                ):
+                    mcp_provider.record_user_denial(row.llm_name)
+
         # The refusal half, enforced HERE rather than through the stamps.
         # The runtime resolves `call_id` before name and turns any
         # non-"proceed" verdict string into that call's result without
@@ -2580,10 +2661,22 @@ def build_local_review_hook(
             decisions,
         )
 
+        # task-32280 fix round (Critical): mirrors the MCP hook's own
+        # record_user_denial call a few hundred lines up. `run_agent_loop`
+        # turns any non-"proceed" verdict straight into the call's result
+        # and skips dispatch entirely, so `LocalToolProvider.invoke_detailed`
+        # -- the only thing that otherwise records a local refusal -- never
+        # runs for a hook-level denied call. Record at the point the denial
+        # becomes final, through the provider's own audit seam.
         verdicts: dict[str, str] = {row.llm_name: "proceed" for row in pending}
         for row in pending:
             if _decision_for(row) != "deny":
                 continue
+            # R23: as in the MCP hook -- a deny the user never chose (Stop
+            # mid-card) is already logged as `denied-unresolved`; only the
+            # REFUSAL below applies to it, not a second audit row.
+            if not approval_was_unanswered(row, decisions):
+                provider.record_user_denial(row.llm_name)
             key = str(getattr(row, "call_id", "") or "") or row.llm_name
             verdicts[key] = USER_DENIED_REFUSAL.format(name=row.llm_name)
         return verdicts
@@ -13038,9 +13131,13 @@ class ConsoleChatController:
                 session is active at ROUND-key time; no parking).
 
         Returns:
-            A decision string (``approve_once``/``approve_session``/
-            ``always_allow``/``deny``/``timeout``) for every addressable
-            call-id-or-name verdict key in ``pending``.
+            An `ApprovalDecisions` (a plain verdict `dict` carrying
+            ``unresolved_keys``) holding a decision string
+            (``approve_once``/``approve_session``/``always_allow``/
+            ``deny``/``timeout``) for every addressable call-id-or-name
+            verdict key in ``pending``. Keys listed in ``unresolved_keys``
+            hold the fail-closed ``"deny"`` default of a round nobody
+            answered, not a user refusal -- see that class.
         """
         unique_keys: list[str] = []
         seen: set[str] = set()
@@ -13054,7 +13151,20 @@ class ConsoleChatController:
         if not unique_keys:
             return {}
         if self.app is None:
-            return {key: "deny" for key in unique_keys}
+            # Qodo #2597 #8: no UI is wired, so no card can be shown and
+            # nobody can answer -- this fails CLOSED, but it is NOT a user
+            # denial. Returned as a bare dict it looked exactly like one to
+            # `approval_was_unanswered()`, and both review hooks then wrote
+            # a `record_user_denial()` audit row claiming a person picked
+            # Deny. Every key here is unresolved, by construction.
+            # No `denied-unresolved` audit row is written (or possible)
+            # here: the execution log is reached through
+            # `self.app.unified_mcp_service`, and this branch exists
+            # precisely because there is no app. `unresolved_keys` is what
+            # keeps the hooks from inventing a user decision instead.
+            headless = ApprovalDecisions({key: "deny" for key in unique_keys})
+            headless.unresolved_keys = frozenset(unique_keys)
+            return headless
         event = threading.Event()
         decisions: dict[str, str] = {}
         round_id = str(uuid4())
@@ -13102,11 +13212,19 @@ class ConsoleChatController:
             self.store.active_session_id or ""
         )
         approved_values = {"approve_once", "approve_session", "always_allow"}
+        # task-32280 fix round (R23): the keys whose "deny" below is a
+        # fail-closed DEFAULT, not a user decision. `_record_cancelled_
+        # approval_decisions` already wrote the honest `denied-unresolved`
+        # audit row for exactly these; carried out on the returned map so
+        # the review hooks can skip recording a second, dishonest "Denied
+        # by you" row for the same call. See `ApprovalDecisions`.
+        unresolved_keys: set[str] = set()
 
         def _on_cancelled() -> None:
             cancelled_keys = [key for key in unique_keys if key not in decisions]
             for key in unique_keys:
                 decisions.setdefault(key, "deny")
+            unresolved_keys.update(cancelled_keys)
             self._record_cancelled_approval_decisions(cancelled_keys, call_by_key)
 
         def _on_timeout() -> None:
@@ -13124,6 +13242,9 @@ class ConsoleChatController:
                 self._record_cancelled_approval_decisions(
                     list(unique_keys), call_by_key
                 )
+                # Same as cancellation: the card was pulled, so NO key here
+                # carries a user decision.
+                unresolved_keys.update(unique_keys)
                 result["map"] = {key: "deny" for key in unique_keys}
                 return
             for key in unique_keys:
@@ -13195,7 +13316,11 @@ class ConsoleChatController:
             on_teardown=_on_teardown,
             on_outcome=_on_outcome,
         )
-        return result.get("map") or {key: "deny" for key in unique_keys}
+        verdicts_out = ApprovalDecisions(
+            result.get("map") or {key: "deny" for key in unique_keys}
+        )
+        verdicts_out.unresolved_keys = frozenset(unresolved_keys)
+        return verdicts_out
 
     def _record_cancelled_approval_decisions(
         self,
@@ -13231,7 +13356,12 @@ class ConsoleChatController:
                 record(
                     call.server_key,
                     call.tool_name,
-                    decision="denied",
+                    # task-32280 fix round: the turn was stopped WHILE the
+                    # card was up -- the user never answered it. Recording
+                    # this as the bare "denied" made Audit report an
+                    # explicit "Denied by you" for a question nobody got to
+                    # answer.
+                    decision=UNRESOLVED_DENIED_DECISION,
                     initiator="agent",
                     error="run stopped while approval pending",
                 )
@@ -14925,6 +15055,21 @@ class ConsoleChatController:
                 initiator="agent",
             )
 
+        def persist_arg_rule(hub: "HubTool", args: Mapping[str, Any]) -> None:
+            # task-32281: same shape as `MCPToolProvider._apply_verdict()`'s
+            # own "allow_matching" handling -- persist scoped to EXACTLY
+            # the displayed arguments, never a whole-tool allow.
+            service.add_tool_arg_rule(
+                hub.server_key,
+                hub.name,
+                args=dict(args),
+                tool=hub,
+                **profile_kwargs,
+            )
+
+        def arg_rule_allows(hub: "HubTool", args: Mapping[str, Any]) -> bool:
+            return service.arg_rule_allows_call(hub, dict(args), **profile_kwargs)
+
         from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
 
         provider = VirtualCliProvider(
@@ -14939,6 +15084,8 @@ class ConsoleChatController:
                 hub.server_key, hub.name, **profile_kwargs
             ),
             persist_approval=persist,
+            persist_arg_rule=persist_arg_rule,
+            arg_rule_allows=arg_rule_allows,
             record_decision=record,
             root_guard=root_guard,
             authority_scope=authority_scope,

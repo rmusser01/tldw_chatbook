@@ -18,7 +18,13 @@ from loguru import logger
 from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
-from .execution_log import MCPExecutionLog, build_record
+from .execution_log import (
+    KILL_SWITCH_DENIED_DECISION,
+    MCPExecutionLog,
+    POLICY_DENIED_DECISION,
+    UNRESOLVED_DENIED_DECISION,
+    build_record,
+)
 from .hub_tool_catalog import (
     HubTool,
     builtin_tools_from_inventory,
@@ -224,6 +230,58 @@ class _ResolvedHubTest:
 _RAW_TOOL_CALL_REFUSED_MESSAGE = RAW_TOOL_CALL_REFUSED_MESSAGE
 
 
+#: task-32280 fix round: `LocalToolInvocationReason` values (the local
+#: provider's OWN word for why a call never ran), mapped to the refuser they
+#: name. The provider already computes this per call; the Hub test path used
+#: to throw it away and record a flat "denied" -- which Audit now renders as
+#: "Denied by you", a claim about a person for refusals no person made.
+_HUB_REFUSAL_DECISION_BY_REASON: dict[str, str] = {
+    "permission_off": POLICY_DENIED_DECISION,
+    "permission_denied": POLICY_DENIED_DECISION,
+    "permission_unresolved": UNRESOLVED_DENIED_DECISION,
+    "approval_refused": "denied",
+    "approval_timeout": "denied-timeout",
+}
+
+
+def _refusal_decision_for_hub_test(reason: str | None, final_gate: str | None) -> str:
+    """Name WHO refused a local-Hub test that never dispatched.
+
+    The provider's `reason_code` is the authority when there is one -- the
+    `final_gate` string is NOT reliable on its own: providers report values
+    outside the Hub's own vocabulary (``"off"``, say) which
+    `_local_hub_outcome_from_detail` normalizes to ``"unresolved"``, so
+    reading the gate alone would relabel a genuine configured Off as "nobody
+    decided". The gate is the fallback for the synthetic terminals, which
+    carry no reason at all.
+
+    task-32280 fix round: ONE exception to "reason is the authority" --
+    `LocalToolProvider.invoke_detailed()`'s kill-switch branch has no
+    ``LocalToolInvocationReason`` member for the switch, so it tags its
+    result ``PERMISSION_OFF`` (a typing convenience) while ``final_gate``
+    truthfully says ``"kill_switch"``. Trusting the reason there would
+    record the switch's refusal as "Blocked (Off)". The gate is checked
+    first for this one value; every other reason this dict knows about
+    never pairs with ``final_gate == "kill_switch"``, so this cannot
+    shadow a real permission-Off.
+    """
+    if final_gate == "kill_switch":
+        return KILL_SWITCH_DENIED_DECISION
+    mapped = _HUB_REFUSAL_DECISION_BY_REASON.get(reason or "")
+    if mapped is not None:
+        return mapped
+    if final_gate == "deny":
+        return POLICY_DENIED_DECISION
+    if final_gate == "ask":
+        return "denied"
+    if final_gate in ("timeout", "no_callback"):
+        return "denied-timeout"
+    # Everything else (a gate that raised, an ineligible tool, a cancelled
+    # or crashed test): nothing resolved, so neither a person nor a setting
+    # refused this.
+    return UNRESOLVED_DENIED_DECISION
+
+
 class UnifiedMCPControlPlaneService:
     """Destination-local orchestration for local/server Unified MCP browse flows."""
 
@@ -255,6 +313,15 @@ class UnifiedMCPControlPlaneService:
         # empty, and `clear_session_approvals()` is the only other way
         # entries leave this set.
         self._session_approvals: set[tuple[str, str, str]] = set()
+        #: Qodo #2597 #9 / #2600 #16: the ONE lock guarding
+        #: `_session_approvals`. Agent worker threads grant while the UI
+        #: thread lists, and `tuple(a_set)` is not an atomic snapshot --
+        #: a mutation mid-copy raises `RuntimeError`, which the workbench
+        #: swallows into an EMPTY listing, blanking every " (session)"
+        #: marker and Revoke row for that render. Every read and every
+        #: mutation below holds it; snapshots are copied under it and
+        #: filtered/sorted after release.
+        self._session_approvals_lock = threading.Lock()
 
     def _ensure_hub_test_state(
         self,
@@ -2554,7 +2621,10 @@ class UnifiedMCPControlPlaneService:
                 registered_argument_names=registered_argument_names,
                 result=None,
                 initiator=initiator,
-                decision="denied",
+                # task-32280 fix round: governance refused this; no card was
+                # ever shown, so the row must not read "Denied by you".
+                # `error_category` still carries the precise mechanism.
+                decision=POLICY_DENIED_DECISION,
             )
             raise
         except Exception as exc:
@@ -3130,13 +3200,14 @@ class UnifiedMCPControlPlaneService:
             approval_consumed = (
                 approval_callback.consumed if approval_callback is not None else False
             )
+            _gate = fresh_gate
             return LocalHubExecutionOutcome(
                 decision=(
                     "approved"
                     if approval_consumed
                     else "allowed"
                     if handler_started.is_set()
-                    else "denied"
+                    else _refusal_decision_for_hub_test(category, _gate)
                 ),
                 status=cast(LocalHubStatus, status),
                 error_category=category,
@@ -3358,13 +3429,14 @@ class UnifiedMCPControlPlaneService:
         ) -> LocalHubExecutionOutcome:
             callback = approval_state["callback"]
             approval_consumed = callback.consumed if callback is not None else False
+            _gate = gate_state["value"]
             return LocalHubExecutionOutcome(
                 decision=(
                     "approved"
                     if approval_consumed
                     else "allowed"
                     if handler_started.is_set()
-                    else "denied"
+                    else _refusal_decision_for_hub_test(category, _gate)
                 ),
                 status=cast(LocalHubStatus, status),
                 error_category=category,
@@ -3551,7 +3623,9 @@ class UnifiedMCPControlPlaneService:
         owner = execution.start(key, _owner())
         if owner is None:
             outcome = LocalHubExecutionOutcome(
-                decision="denied",
+                # task-32280 fix round: refused because another test held
+                # the slot -- nobody decided anything about this one.
+                decision=UNRESOLVED_DENIED_DECISION,
                 status="blocked",
                 error_category="already_active",
                 final_gate=public.rendered_gate,
@@ -3804,7 +3878,7 @@ class UnifiedMCPControlPlaneService:
             if approval_consumed
             else "allowed"
             if dispatch_started
-            else "denied"
+            else _refusal_decision_for_hub_test(reason, final_gate)
         )
         return LocalHubExecutionOutcome(
             decision=decision,
@@ -4203,10 +4277,19 @@ class UnifiedMCPControlPlaneService:
     def _record_prepared_hub_block(
         self, public: ToolTestAdmissionPreview, reason: str
     ) -> None:
+        # task-32280 fix round: two kinds of `reason` arrive here. A gate
+        # one ("permission_denied" = the tool is Off) names a refuser; the
+        # rest are ADMISSION failures -- the two-press confirm went stale
+        # (identity_changed, profile_changed, definition_changed,
+        # authority_changed, arguments_changed, gate_changed,
+        # intent_mismatch, intent_invalid, preview_unavailable) and the run
+        # was abandoned before anyone decided. Neither kind is a person
+        # pressing Deny, which is what the bare "denied" this used to write
+        # now means. `error_category` still keeps the exact reason.
         self.record_tool_decision(
             public.server_key,
             public.tool_name,
-            decision="denied",
+            decision=_refusal_decision_for_hub_test(reason, None),
             initiator="test",
             error_category=reason,
         )
@@ -4708,10 +4791,18 @@ class UnifiedMCPControlPlaneService:
             # rejected alternative -- naming it would have falsely cross-
             # referenced the unrelated `runtime_policy` engine's own
             # `PolicyDeniedError`.
+            # task-32280 fix round: these two `error_category` tokens were
+            # already the honest distinction; the DECISION column now makes
+            # it too. A genuine Off is "Blocked (Off)"; a gate that raised
+            # resolved nothing, so nobody -- user or policy -- decided.
             self.record_tool_decision(
                 BUILTIN_SERVER_KEY,
                 normalized_tool_name,
-                decision="denied",
+                decision=(
+                    UNRESOLVED_DENIED_DECISION
+                    if is_gate_error
+                    else POLICY_DENIED_DECISION
+                ),
                 initiator="test",
                 error_category="gate_error" if is_gate_error else "gate_denied",
             )
@@ -4794,13 +4885,15 @@ class UnifiedMCPControlPlaneService:
         if expected_profile_digest is None and expected_revision is None:
             # Compatibility seam for non-UI callers. Captured UI approvals
             # always supply the digest (and imported revision) below.
-            self._session_approvals.add((profile_id, server_key, tool_name))
+            with self._session_approvals_lock:
+                self._session_approvals.add((profile_id, server_key, tool_name))
             return
         store = self.permission_store
         if store is None:
             if expected_profile_digest is not None or expected_revision is not None:
                 raise ProfileMutationError("stale_profile")
-            self._session_approvals.add((profile_id, server_key, tool_name))
+            with self._session_approvals_lock:
+                self._session_approvals.add((profile_id, server_key, tool_name))
             return
         with store.mutation_fence():
             snapshot = store.read_snapshot_strict()
@@ -4823,7 +4916,8 @@ class UnifiedMCPControlPlaneService:
             )
             if expected_revision is not None and revision != expected_revision:
                 raise ProfileMutationError("stale_revision")
-            self._session_approvals.add((profile_id, server_key, tool_name))
+            with self._session_approvals_lock:
+                self._session_approvals.add((profile_id, server_key, tool_name))
 
     def is_session_approved(
         self,
@@ -4847,18 +4941,91 @@ class UnifiedMCPControlPlaneService:
             ``False`` otherwise. Always ``False`` on a fresh instance or
             after an app restart -- the grant is not persisted.
         """
-        return (profile_id, server_key, tool_name) in self._session_approvals
+        with self._session_approvals_lock:
+            return (profile_id, server_key, tool_name) in self._session_approvals
+
+    def list_session_approvals(
+        self, *, profile_id: str = "default"
+    ) -> list[tuple[str, str]]:
+        """Every live session approval held for one profile (task-32291).
+
+        The review surface's read: until now a session grant was invisible
+        (and, with no caller of :meth:`clear_session_approvals`, revocable
+        only by restarting the app). Sorted so the UI's row order -- and
+        its Revoke buttons' index alignment -- is stable across renders.
+
+        The built-in tool gate writes into this SAME set under
+        ``BUILTIN_TOOL_SERVER_KEY`` (see ``BuiltinToolGate.stamp()``), so
+        one listing already covers both MCP and built-in grants.
+
+        Args:
+            profile_id: Exact permission profile whose approvals to list.
+
+        Returns:
+            Sorted ``(server_key, tool_name)`` pairs approved under
+            ``profile_id``. Empty on a fresh instance -- grants are never
+            persisted.
+        """
+        # R24 / Qodo #2597 #9: copy under the lock -- `tuple(a_set)` is
+        # NOT an atomic snapshot, and a concurrent `approve_for_session`
+        # from an agent worker thread raises `RuntimeError` mid-copy, which
+        # the caller (`MCPWorkbench._session_approvals_for_row`) swallows
+        # into an empty listing: every " (session)" suffix and Revoke row
+        # vanishes for that render. Filter and sort AFTER release -- the
+        # independent copy needs no lock.
+        with self._session_approvals_lock:
+            snapshot = tuple(self._session_approvals)
+        return sorted(
+            (server_key, tool_name)
+            for approved_profile, server_key, tool_name in snapshot
+            if approved_profile == profile_id
+        )
+
+    def revoke_session_approval(
+        self, server_key: str, tool_name: str, *, profile_id: str = "default"
+    ) -> bool:
+        """Drop one session approval (task-32291).
+
+        The per-entry counterpart to :meth:`clear_session_approvals`:
+        afterwards :meth:`is_session_approved` is ``False`` for this exact
+        triple, so the next call falls back through to the approval card.
+        No permission-store fence here -- unlike
+        :meth:`approve_for_session`, revoking only ever *removes* a
+        permission, so a stale profile digest cannot make it unsafe.
+
+        Args:
+            server_key: Prefixed server key the tool belongs to.
+            tool_name: Name of the tool whose approval to drop.
+            profile_id: Exact permission profile holding the approval.
+
+        Returns:
+            ``True`` if an approval was held and is now gone, ``False`` if
+            there was nothing to revoke (never granted, already revoked,
+            or granted under a different profile).
+        """
+        key = (profile_id, server_key, tool_name)
+        with self._session_approvals_lock:
+            if key not in self._session_approvals:
+                return False
+            self._session_approvals.discard(key)
+        return True
 
     def clear_session_approvals(self, *, profile_id: str | None = None) -> None:
         """Discard approvals for one profile, or all approvals when omitted."""
-        if profile_id is None:
-            self._session_approvals.clear()
-            return
-        self._session_approvals = {
-            approval
-            for approval in self._session_approvals
-            if approval[0] != profile_id
-        }
+        with self._session_approvals_lock:
+            if profile_id is None:
+                self._session_approvals.clear()
+                return
+            # Mutate IN PLACE: rebinding the attribute would leave a
+            # concurrent reader holding the old set (and the lock guarding
+            # a set nobody writes to any more).
+            self._session_approvals.difference_update(
+                {
+                    approval
+                    for approval in self._session_approvals
+                    if approval[0] == profile_id
+                }
+            )
 
     def record_tool_decision(
         self,
@@ -4934,10 +5101,27 @@ class UnifiedMCPControlPlaneService:
                     else (
                         "approval_timeout"
                         if "timeout" in decision
+                        # task-32280 fix round (Minor 2): the kill switch had
+                        # no branch of its own here, so a call site that
+                        # relies on this derivation (rather than passing an
+                        # explicit error_category) fell all the way through
+                        # to the generic "blocked" -- losing the one fact
+                        # that made the row worth its own decision token.
+                        else "kill_switch"
+                        if decision == KILL_SWITCH_DENIED_DECISION
                         else "approval_cancelled"
-                        if decision == "denied" and error
+                        # task-32280 fix round: the cancelled-mid-approval
+                        # row moved to "denied-unresolved" (nobody answered
+                        # the card), and it is still exactly this category.
+                        if error
+                        and decision in ("denied", UNRESOLVED_DENIED_DECISION)
                         else "denied"
-                        if decision == "denied"
+                        # task-32280 split the permissions-Off refusal out of
+                        # plain "denied" into its own decision token; it is
+                        # still the same CATEGORY of row, so keep deriving
+                        # the same category rather than silently demoting
+                        # those rows to the generic "blocked".
+                        if decision in ("denied", POLICY_DENIED_DECISION)
                         else "execution_bridge_failed"
                         if error
                         else "blocked"
@@ -5206,6 +5390,66 @@ class UnifiedMCPControlPlaneService:
         if store is None:
             return False
         return arg_rule_allows(store.load(), tool, args, profile_id=profile_id)
+
+    def list_tool_arg_rules(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        profile_id: str = "default",
+    ) -> list[dict[str, Any]]:
+        """List the exact-input allow rules in force for one tool (task-32281).
+
+        Args:
+            server_key: Prefixed server key the tool belongs to.
+            tool_name: Name of the tool whose rules to list.
+            profile_id: Permission profile being reviewed. Its inheritance
+                chain is walked, so a rule stored on an ancestor profile is
+                listed here too (Qodo #2597 #1) -- the same chain
+                ``arg_rule_allows_call`` authorizes against.
+
+        Returns:
+            One dict per rule, oldest first, each carrying ``rule_id``,
+            ``args_json``, ``created_at``, and ``profile_id`` (the OWNING
+            profile, which :meth:`remove_tool_arg_rule` must be pointed
+            at). Empty when no permission store is configured.
+        """
+        store = self.permission_store
+        if store is None:
+            return []
+        return store.list_tool_arg_rules(server_key, tool_name, profile_id=profile_id)
+
+    def remove_tool_arg_rule(
+        self,
+        server_key: str,
+        tool_name: str,
+        rule_id: str,
+        *,
+        profile_id: str = "default",
+    ) -> bool:
+        """Delete one exact-input allow rule (task-32281).
+
+        Args:
+            server_key: Prefixed server key the tool belongs to.
+            tool_name: Name of the tool the rule belongs to.
+            rule_id: The rule's canonical ``args_json`` -- the ``rule_id``
+                :meth:`list_tool_arg_rules` returned for it.
+            profile_id: The rule's OWNING profile, i.e. the ``profile_id``
+                listing reported for that rule. For an inherited rule that
+                is an ancestor of the profile under review, not the
+                reviewed profile.
+
+        Returns:
+            ``True`` when a rule was actually removed. ``False`` for an
+            unknown or already-removed ``rule_id`` (a no-op, not an
+            error), and when no permission store is configured.
+        """
+        store = self.permission_store
+        if store is None:
+            return False
+        return store.remove_tool_arg_rule(
+            server_key, tool_name, rule_id, profile_id=profile_id
+        )
 
     def gate_tool_test(
         self, tool: HubTool, *, profile_id: str = "default"

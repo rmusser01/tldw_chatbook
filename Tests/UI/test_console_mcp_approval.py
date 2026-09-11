@@ -2599,7 +2599,12 @@ def test_request_mcp_approvals_cancellation_records_denied_decision_to_execution
     assert records, "the stop-mid-approval path left no audit record at all"
     assert records[0]["server_key"] == "local:docs"
     assert records[0]["tool_name"] == "search"
-    assert records[0]["decision"] == "denied"
+    # task-32280 fix round: the turn was stopped WHILE the card was up, so
+    # nobody answered it. The bare "denied" Audit now renders as "Denied by
+    # you" claimed a decision the user never got to make; the category the
+    # row already carried (`approval_cancelled`) is unchanged, so the
+    # precise mechanism survives the retarget.
+    assert records[0]["decision"] == "denied-unresolved"
     assert records[0]["ok"] is False
     assert records[0]["error_category"] == "approval_cancelled"
     assert "error" not in records[0]
@@ -4670,6 +4675,82 @@ def test_human_prompt_defaults_pin_no_deadline():
     assert cc_module._DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS == 0.0
 
 
+# --- task-32280 (Qodo #2597 #8): a no-UI round is not a user's decision ----
+
+
+def test_a_no_app_round_reports_every_key_as_unanswered():
+    """`request_mcp_approvals` fails CLOSED with no app wired -- no card can
+    be shown, so nothing runs. But it returned a BARE dict, which
+    `approval_was_unanswered()` reads as "the user answered": both review
+    hooks then wrote `record_user_denial()`, so MCP and local audit rows
+    claimed a person pressed Deny on a card that was never displayed.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import (
+        ApprovalDecisions,
+        approval_was_unanswered,
+    )
+
+    controller, _ = _build_controller()
+    assert controller.app is None  # the branch under test
+
+    rows = [_pending(call_id="call-1"), _pending(llm_name="mcp__srv__other")]
+    decisions = controller.request_mcp_approvals(rows)
+
+    # Still fails closed -- the verdicts themselves are unchanged.
+    assert decisions == {"call-1": "deny", "mcp__srv__other": "deny"}
+    assert isinstance(decisions, ApprovalDecisions)
+    assert decisions.unresolved_keys == frozenset({"call-1", "mcp__srv__other"})
+    assert all(approval_was_unanswered(row, decisions) for row in rows)
+
+
+def test_a_no_app_round_does_not_record_a_user_denial_on_the_mcp_hook():
+    """The MCP review hook's end of the same bug: an unanswered round must
+    not reach `MCPToolProvider.record_user_denial`."""
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Chat.console_chat_controller import (
+        USER_DENIED_REFUSAL,
+        build_tool_review_hook,
+    )
+
+    controller, _ = _build_controller()
+    assert controller.app is None  # the branch under test
+
+    denials: list[str] = []
+
+    class _McpProvider:
+        def apply_batch_decisions(self, run_id, stamps):
+            pass
+
+        def pending_gate_for(self, name, args, call_id="", *, rationale=""):
+            return _pending(llm_name=name, call_id=call_id)
+
+        def record_user_denial(self, llm_name):
+            denials.append(llm_name)
+
+    class _BuiltinGate:
+        def begin_turn(self, run_id):
+            pass
+
+        def stamp(self, run_id, name, decision):
+            pass
+
+    class _BuiltinProvider:
+        def tool_for(self, name):
+            return None
+
+    hook = build_tool_review_hook(
+        _BuiltinGate(),
+        _BuiltinProvider(),
+        _McpProvider(),
+        controller.request_mcp_approvals,
+        workspace_id=None,
+    )
+    verdicts = hook(
+        [ToolCall(name="mcp__srv__tool", args={"a": 1}, call_id="call-1")], RUN
+    )
+
+    assert verdicts["call-1"] == USER_DENIED_REFUSAL.format(name="mcp__srv__tool")
+    assert denials == [], "a headless fail-closed deny was audited as the user's"
 @pytest.mark.asyncio
 async def test_the_approval_route_reaches_a_pending_skill_install_card():
     """Qodo #5: the ◆ marker and the Alt+A / Review-approval route cover ALL

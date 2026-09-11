@@ -4460,17 +4460,15 @@ Button.mcp-callout {
     width: 28;
 }
 
-/* TASK-14807: the bundle carries an app-wide Checkbox width/height rule
-   for legacy conversation forms. Widget DEFAULT_CSS cannot outrank a
-   CSS_PATH rule, so keep this Tools-mode escape in the source bundle: a
-   compact, readable toggle with one content row instead of a full-width
-   border-only box. The adjacent Enabled/Disabled word remains the primary
-   state label. */
-MCPToolsMode #mcp-tools-local-enabled {
-    width: 8;
-    height: auto;
-    min-height: 1;
-}
+/* task-32286: the TASK-14807 `MCPToolsMode #mcp-tools-local-enabled`
+   Checkbox width/height escape hatch that used to live here is retired --
+   the master control is now a toggle Button (mcp_tools_mode.py's
+   `_local_tools_toggle_label()`, matching `mcp_servers_mode._gate_button()`
+   since task-32284), which sizes to its own label (Button's own
+   DEFAULT_CSS `width: auto`) and needs no bundle override. The app-wide
+   unscoped `Checkbox { width: 100%; height: 2; }` rule this escape hatch
+   was fighting was itself retired in TASK-18960, so nothing was left for
+   it to win against. */
 
 /* Kept in lockstep with the baseline copy in MCPServersMode.DEFAULT_CSS
    (mcp_servers_mode.py) -- without an explicit height override here too,
@@ -7637,12 +7635,14 @@ Select {
  *   escape hatch already fighting this exact rule elsewhere in the bundle
  *   (`.settings-imagegen-backend-row Checkbox`, `MCPSchemaForm Checkbox`,
  *   `PromptBlockEditor #prompt-editor-lane-options Checkbox`,
- *   `MCPToolsMode #mcp-tools-local-enabled`, `LibraryIngestCanvas
- *   .type-group-contents Checkbox`, `#evals-bench-capture-continuations`
- *   (features/_evals.tcss) -- see their own comments, e.g.
- *   components/_agentic_terminal.tcss and features/_evals.tcss) drops
- *   `width: 100%` too, standardizing on `width: auto` alongside
- *   `height: auto`. That six-deep precedent, plus the sweep below,
+ *   `LibraryIngestCanvas .type-group-contents Checkbox`,
+ *   `#evals-bench-capture-continuations` (features/_evals.tcss) -- see
+ *   their own comments, e.g. components/_agentic_terminal.tcss and
+ *   features/_evals.tcss) drops `width: 100%` too, standardizing on
+ *   `width: auto` alongside `height: auto`. (A sixth,
+ *   `MCPToolsMode #mcp-tools-local-enabled`, was in this list until
+ *   task-32286 turned that row into a toggle Button and retired it.)
+ *   That five-deep precedent, plus the sweep below,
  *   is why this is a full retirement and not a narrower height-only fix.
  * - The sweep this retirement was checked against (grepping every
  *   `Checkbox(` call app-wide for one relying on this rule with no escape

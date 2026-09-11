@@ -232,9 +232,9 @@ appears above the transcript:
 ![The "Approval required" card with a pending tool call](../images/console/approval-card.svg)
 
 - Each pending tool call gets a row with a decision select: **Approve once**
-  (the default), **Approve for session**, **Always allow**, or **Deny**.
-  Built-in tools don't offer "Always allow" — decisions for them last at most
-  the session.
+  (the default), **Approve for session**, **Always allow this exact input**,
+  **Always allow**, or **Deny** — some rows narrow that set (built-in tools
+  don't offer "Always allow"; decisions for them last at most the session).
 - Bulk controls: **Approve all** sets every row to Approve once, **Submit**
   applies each row's selected decision and resumes the run, **Deny all** sets
   every row to Deny.
@@ -285,6 +285,11 @@ retroactively cancel a mutation that already started.
 current definition — if the server later changes the tool, the approval card
 comes back with a "(definition changed)" badge. Review or change a remembered
 allow from the tool's row on the [MCP screen](../mcp.md) 🚧.
+
+**Always allow this exact input** is narrower: it remembers only the exact
+arguments shown on that card, not the whole tool — the same tool called
+again with different arguments still asks. See [Exact-input allow
+rules](../mcp.md#exact-input-allow-rules) for where to review or remove one.
 
 With sub-agents running in parallel (see below), more than one approval card
 can be pending at once — cards aren't merged across sub-agents: each is
@@ -2322,3 +2327,12 @@ rail keeps the run status/steps lines, the drilled-in single-child view, and
 **Cancel all agents**. Code-level pass against the shipped rail and controller;
 the live 80x24/200x50 run for this task exercised the sibling Environment and
 Tasks sections, not a real sub-agent fleet.*
+
+*"Always allow this exact input" named in the decision-option list, and its
+own short paragraph added, for TASK-32281 — 2026-09-10. Docs-only pass
+against code and tests, not a live screen: the option previously persisted
+an argument-scoped rule with no UI to list or remove it, and the Virtual CLI
+provider's verdict path silently dropped or denied it; both gaps are now
+closed (see [Exact-input allow rules](../mcp.md#exact-input-allow-rules) for
+the review/remove surface). The rest of this page is unchanged from the
+prior stamp.*

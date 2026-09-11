@@ -10265,17 +10265,15 @@ Button.mcp-callout {
     width: 28;
 }
 
-/* TASK-14807: the bundle carries an app-wide Checkbox width/height rule
-   for legacy conversation forms. Widget DEFAULT_CSS cannot outrank a
-   CSS_PATH rule, so keep this Tools-mode escape in the source bundle: a
-   compact, readable toggle with one content row instead of a full-width
-   border-only box. The adjacent Enabled/Disabled word remains the primary
-   state label. */
-MCPToolsMode #mcp-tools-local-enabled {
-    width: 8;
-    height: auto;
-    min-height: 1;
-}
+/* task-32286: the TASK-14807 `MCPToolsMode #mcp-tools-local-enabled`
+   Checkbox width/height escape hatch that used to live here is retired --
+   the master control is now a toggle Button (mcp_tools_mode.py's
+   `_local_tools_toggle_label()`, matching `mcp_servers_mode._gate_button()`
+   since task-32284), which sizes to its own label (Button's own
+   DEFAULT_CSS `width: auto`) and needs no bundle override. The app-wide
+   unscoped `Checkbox { width: 100%; height: 2; }` rule this escape hatch
+   was fighting was itself retired in TASK-18960, so nothing was left for
+   it to win against. */
 
 /* Kept in lockstep with the baseline copy in MCPServersMode.DEFAULT_CSS
    (mcp_servers_mode.py) -- without an explicit height override here too,

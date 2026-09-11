@@ -138,6 +138,48 @@ class FakeHubService:
             selected_source="local", selected_section="overview"
         )
         self.disconnect_calls: list[str] = []
+        # In-memory session approvals, keyed exactly as the real service
+        # keys them: (profile_id, server_key, tool_name).
+        self.session_approvals: set[tuple[str, str, str]] = set()
+
+    def approve_for_session(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        profile_id: str = "default",
+        expected_profile_digest: str | None = None,
+        expected_revision: int | None = None,
+    ) -> None:
+        self.session_approvals.add((profile_id, server_key, tool_name))
+
+    def is_session_approved(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        profile_id: str = "default",
+    ) -> bool:
+        return (profile_id, server_key, tool_name) in self.session_approvals
+
+    def list_session_approvals(
+        self, *, profile_id: str = "default"
+    ) -> list[tuple[str, str]]:
+        # task-32291: same shape as the real service -- sorted, profile-scoped.
+        return sorted(
+            (server_key, tool_name)
+            for approved_profile, server_key, tool_name in self.session_approvals
+            if approved_profile == profile_id
+        )
+
+    def revoke_session_approval(
+        self, server_key: str, tool_name: str, *, profile_id: str = "default"
+    ) -> bool:
+        key = (profile_id, server_key, tool_name)
+        if key not in self.session_approvals:
+            return False
+        self.session_approvals.discard(key)
+        return True
 
     async def disconnect_local_profile(self, profile_id):
         self.disconnect_calls.append(profile_id)
@@ -313,16 +355,18 @@ async def test_workbench_at_100x30_keeps_server_master_switch_reachable(monkeypa
         await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}1")
         await pilot.pause()
 
-        checkbox = app.query_one("#mcp-gate-local_tools_enabled", Checkbox)
-        assert str(checkbox.label) == (
-            "Local workspace, web, and Watchlists tools (master switch)"
+        master_row = app.query_one("#mcp-gate-local_tools_enabled", Button)
+        # task-32284: the row is a toggle Button whose label carries the
+        # state in text, so the label is the name plus ": on ▸"/": off ▸".
+        assert str(master_row.label) == (
+            "Local workspace, web, and Watchlists tools (master switch): on ▸"
         )
-        checkbox.scroll_visible(animate=False, force=True, immediate=True)
-        checkbox.focus()
+        master_row.scroll_visible(animate=False, force=True, immediate=True)
+        master_row.focus()
         await pilot.pause()
         await pilot.pause()
-        assert checkbox.is_on_screen
-        assert app.focused is checkbox
+        assert master_row.is_on_screen
+        assert app.focused is master_row
 
         rendered = "\n".join(
             "".join(segment.text for segment in strip)
@@ -330,8 +374,8 @@ async def test_workbench_at_100x30_keeps_server_master_switch_reachable(monkeypa
         )
         assert "Local workspace, web, and Watchlists tools" in rendered
 
-        original = checkbox.value
-        await pilot.press("space")
+        original = str(master_row.label).endswith(": on ▸")
+        await pilot.press("enter")  # a Button activates on Enter, not Space
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -340,11 +384,18 @@ async def test_workbench_at_100x30_keeps_server_master_switch_reachable(monkeypa
         workbench = app.query_one(MCPWorkbench)
         workbench.set_mode("tools")
         await pilot.pause()
-        title = app.query_one("#mcp-tools-local-config-title", Static)
-        title.scroll_visible(animate=False)
+        # task-32286: the Tools-mode master control is now one toggle
+        # Button (no separate title Static) -- reuses the SAME
+        # `[console] local_tools_enabled` gate the Servers-mode row above
+        # just flipped, so its label should already read the new state.
+        tools_toggle = app.query_one("#mcp-tools-local-enabled", Button)
+        tools_toggle.scroll_visible(animate=False)
         await pilot.pause()
-        assert title.is_on_screen
-        assert str(title.renderable) == "Local workspace, web, and Watchlists tools"
+        assert tools_toggle.is_on_screen
+        assert str(tools_toggle.label) == (
+            f"Local workspace, web, and Watchlists tools: "
+            f"{'off' if original else 'on'} ▸"
+        )
 
 
 class ProblemRecordsService(FakeHubService):
@@ -1071,39 +1122,40 @@ async def test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog(monke
         # through end to end rather than hardcoded anywhere on the path.
         # Turned ON first (Important 1): web_deep_search is disabled below
         # it until this happens.
-        master_checkbox = app.query_one("#mcp-gate-local_tools_enabled", Checkbox)
-        assert master_checkbox.value is False
+        master_button = app.query_one("#mcp-gate-local_tools_enabled", Button)
+        assert str(master_button.label).endswith(": off ▸")
         await pilot.click("#mcp-gate-local_tools_enabled")
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert ("console", "local_tools_enabled", True) in save_calls
-        master_checkbox = app.query_one("#mcp-gate-local_tools_enabled", Checkbox)
-        assert master_checkbox.value is True
+        master_button = app.query_one("#mcp-gate-local_tools_enabled", Button)
+        assert str(master_button.label).endswith(": on ▸")
 
-        checkbox_id = f"#mcp-gate-{WEB_DEEP_SEARCH_GATE_KEY}"
-        checkbox = app.query_one(checkbox_id, Checkbox)
-        assert checkbox.value is False  # nothing overridden yet -> default off
-        assert checkbox.disabled is False  # master is now on
+        gate_id = f"#mcp-gate-{WEB_DEEP_SEARCH_GATE_KEY}"
+        gate_row = app.query_one(gate_id, Button)
+        # nothing overridden yet -> default off, and said in text (task-32284)
+        assert str(gate_row.label).endswith(": off ▸")
+        assert gate_row.disabled is False  # master is now on
 
-        await pilot.click(checkbox_id)
+        await pilot.click(gate_id)
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
 
         assert ("tools", WEB_DEEP_SEARCH_GATE_KEY, True) in save_calls
-        reloaded_checkbox = app.query_one(checkbox_id, Checkbox)
-        assert reloaded_checkbox.value is True
+        reloaded_row = app.query_one(gate_id, Button)
+        assert str(reloaded_row.label).endswith(": on ▸")
 
         # Bidirectional (Minor 3): flip it back OFF and confirm the reload
         # reflects that too -- not just the off->on direction.
-        await pilot.click(checkbox_id)
+        await pilot.click(gate_id)
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert ("tools", WEB_DEEP_SEARCH_GATE_KEY, False) in save_calls
-        reloaded_again = app.query_one(checkbox_id, Checkbox)
-        assert reloaded_again.value is False
+        reloaded_again = app.query_one(gate_id, Button)
+        assert str(reloaded_again.label).endswith(": off ▸")
 
         # Bidirectional for the master switch too.
         await pilot.click("#mcp-gate-local_tools_enabled")
@@ -1111,8 +1163,8 @@ async def test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog(monke
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert ("console", "local_tools_enabled", False) in save_calls
-        master_checkbox_again = app.query_one("#mcp-gate-local_tools_enabled", Checkbox)
-        assert master_checkbox_again.value is False
+        master_again = app.query_one("#mcp-gate-local_tools_enabled", Button)
+        assert str(master_again.label).endswith(": off ▸")
 
 
 def _fake_tool_gate_config_seam(monkeypatch):
@@ -1161,8 +1213,9 @@ async def test_focus_is_preserved_across_a_gate_toggle_save_and_resync(monkeypat
     (`_GATEABLE_BUILTINS[0]`), that is `#mcp-builtin-expose-prompts` (the
     LAST `[mcp]` toggle, immediately preceding it in the DOM): a live,
     actionable Checkbox belonging to a completely different settings
-    group. Driven with a real keyboard Space (`pilot.press`), matching how
-    the reviewer measured the regression -- not `pilot.click`.
+    group. Driven with a real keypress (`pilot.press`), matching how the
+    reviewer measured the regression -- not `pilot.click`. task-32284 made
+    the gate rows Buttons, which activate on Enter, not Space.
     """
     from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
 
@@ -1175,12 +1228,12 @@ async def test_focus_is_preserved_across_a_gate_toggle_save_and_resync(monkeypat
         await pilot.pause()
 
         first_gate_id = f"mcp-gate-{_GATEABLE_BUILTINS[0].gate_key}"
-        checkbox = app.query_one(f"#{first_gate_id}", Checkbox)
-        checkbox.focus()
+        gate_row = app.query_one(f"#{first_gate_id}", Button)
+        gate_row.focus()
         await pilot.pause()
         assert app.focused is not None and app.focused.id == first_gate_id
 
-        await pilot.press("space")
+        await pilot.press("enter")
         await pilot.pause()
         await app.workers.wait_for_complete()
         # `Widget.focus()` only SCHEDULES the change (`app.call_later`) --
@@ -1192,16 +1245,18 @@ async def test_focus_is_preserved_across_a_gate_toggle_save_and_resync(monkeypat
         assert focused is not None, "focus must not be dropped by the resync"
         assert focused.id == first_gate_id, (
             f"focus drifted to {focused.id!r} instead of staying on the "
-            "toggled gate checkbox"
+            "toggled gate row"
         )
 
 
 @pytest.mark.asyncio
-async def test_double_space_on_a_gate_checkbox_never_writes_an_mcp_key(monkeypatch):
-    """Fix round 1 (Critical 1), the reviewer's exact repro: Space on a
-    gate checkbox, then Space again. Before the fix, the SECOND Space hit
-    whatever checkbox focus had drifted to post-resync -- for the first
-    gate checkbox, `#mcp-builtin-expose-prompts` -- silently writing
+async def test_double_activation_of_a_gate_row_never_writes_an_mcp_key(monkeypatch):
+    """Fix round 1 (Critical 1), the reviewer's exact repro: activate a
+    gate row, then activate it again (Enter since task-32284 made these
+    rows Buttons; Space back when they were Checkboxes). Before the fix,
+    the SECOND keypress hit whatever checkbox focus had drifted to
+    post-resync -- for the first gate row, `#mcp-builtin-expose-prompts`
+    -- silently writing
     `[mcp] expose_prompts = false` instead of toggling the gate a second
     time. Asserts against the REAL persisted config (`flags`) and the
     save-call list: only the gate's own `[tools]` key is ever written,
@@ -1220,17 +1275,17 @@ async def test_double_space_on_a_gate_checkbox_never_writes_an_mcp_key(monkeypat
 
         gate_key = _GATEABLE_BUILTINS[0].gate_key
         first_gate_id = f"mcp-gate-{gate_key}"
-        checkbox = app.query_one(f"#{first_gate_id}", Checkbox)
-        checkbox.focus()
+        gate_row = app.query_one(f"#{first_gate_id}", Button)
+        gate_row.focus()
         await pilot.pause()
 
-        await pilot.press("space")
+        await pilot.press("enter")
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
         await pilot.pause()
 
-        await pilot.press("space")
+        await pilot.press("enter")
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -1241,8 +1296,8 @@ async def test_double_space_on_a_gate_checkbox_never_writes_an_mcp_key(monkeypat
             ("tools", gate_key, False),
         ], save_calls
         assert all(section != "mcp" for section, _, _ in save_calls), (
-            "a second Space wrote an unrelated [mcp] key -- focus drifted "
-            f"off the gate checkbox: {save_calls}"
+            "a second activation wrote an unrelated [mcp] key -- focus "
+            f"drifted off the gate row: {save_calls}"
         )
         assert flags[("tools", gate_key)] is False
 
@@ -3541,28 +3596,6 @@ class ToolTestHubService(FakeHubService):
         self.preview_profile_calls: list[tuple[str, str | None, int | None]] = []
         self.lease_observer = None
         self.lease_observations: list[int] = []
-        self.session_approvals: set[tuple[str, str, str]] = set()
-
-    def approve_for_session(
-        self,
-        server_key: str,
-        tool_name: str,
-        *,
-        profile_id: str = "default",
-        expected_profile_digest: str | None = None,
-        expected_revision: int | None = None,
-    ) -> None:
-        self.session_approvals.add((profile_id, server_key, tool_name))
-
-    def is_session_approved(
-        self,
-        server_key: str,
-        tool_name: str,
-        *,
-        profile_id: str = "default",
-    ) -> bool:
-        return (profile_id, server_key, tool_name) in self.session_approvals
-
     def gate_tool_test(
         self, tool: Any, *, profile_id: str = "default"
     ) -> EffectiveToolState:
@@ -6300,12 +6333,26 @@ class PermissionsHubService(FakeHubService):
         self.session_approval_calls.append(
             (profile_id, server_key, tool_name, expected_revision)
         )
+        # task-32291: the grant this override records is also a LIVE grant --
+        # `list_session_approvals()`/`revoke_session_approval()` (inherited
+        # from FakeHubService) read the same set the real service does.
+        self.session_approvals.add((profile_id, server_key, tool_name))
 
     def get_kill_switch(self):
         return self._store.get_kill_switch()
 
     def set_kill_switch(self, value):
         self._store.set_kill_switch(value)
+
+    def list_tool_arg_rules(self, server_key, tool_name, *, profile_id="default"):
+        return self._store.list_tool_arg_rules(
+            server_key, tool_name, profile_id=profile_id
+        )
+
+    def remove_tool_arg_rule(self, server_key, tool_name, rule_id, *, profile_id="default"):
+        return self._store.remove_tool_arg_rule(
+            server_key, tool_name, rule_id, profile_id=profile_id
+        )
 
     async def load_section(self, section=None):
         effective_section = section or self.context.selected_section or "overview"
@@ -6692,6 +6739,73 @@ def test_tool_state_label_marker_precedence():
     )
 
 
+def test_tool_has_arg_rules_reads_the_raw_payload_directly(tmp_path):
+    """task-32281 AC#2: `_tool_has_arg_rules()` -- the raw-payload read
+    `_build_permission_rows()`/`_builtin_permission_matrix_rows()` both
+    check to append the matrix's ``≡`` marker -- reuses the caller's own
+    already-loaded `servers_payload` slice rather than a fresh store
+    round-trip, mirroring `_raw_tool_state()`'s own precedent."""
+    store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
+    tool = HubTool(
+        server_key="srv",
+        server_label="Server",
+        source="mcp",
+        name="search",
+        description="A tool.",
+        input_schema={"type": "object"},
+        tags=(),
+        stale=False,
+        executable=True,
+    )
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+    servers_payload = store.load()["profiles"]["default"]["servers"]
+    has_rules = MCPWorkbench._tool_has_arg_rules
+
+    assert has_rules(servers_payload, "srv", "search") is True
+    assert has_rules(servers_payload, "srv", "other-tool") is False
+    assert has_rules(servers_payload, "other-server", "search") is False
+    assert has_rules({}, "srv", "search") is False
+
+    # Regression: `_tool_policy_inventory()` feeds `_build_permission_rows()`
+    # a FROZEN snapshot (`read_profile_inventory_snapshot()`, via
+    # `permission_store._freeze_snapshot()`), which turns every stored
+    # list -- `arg_rules` included -- into a tuple. An `isinstance(...,
+    # list)` check here would silently never mark a real matrix row (only
+    # ever exercised through `store.load()`'s plain-list payload above).
+    frozen_payload = store.read_profile_inventory_snapshot().payload
+    frozen_servers = frozen_payload["profiles"]["default"]["servers"]
+    assert isinstance(frozen_servers["srv"]["tools"]["search"]["arg_rules"], tuple)
+    assert has_rules(frozen_servers, "srv", "search") is True
+
+
+def test_tool_has_arg_rules_ignores_hand_written_glob_rules(tmp_path):
+    """Review round 1 (Minor 1): the marker must agree with what the
+    inspector's list actually shows -- `MCPPermissionStore.
+    list_tool_arg_rules()` returns only `args_json`-shaped rules, never a
+    hand-written `{"field": ..., "pattern": ...}` glob rule, so the ``≡``
+    marker must not fire for a tool that carries only a glob rule (it
+    would advertise a Remove-able row that doesn't exist)."""
+    store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
+    payload = store.load()
+    entry = (
+        payload["profiles"]["default"]
+        .setdefault("servers", {})
+        .setdefault("srv", {})
+        .setdefault("tools", {})
+        .setdefault("search", {})
+    )
+    entry["arg_rules"] = [{"field": "query", "pattern": "docs *"}]
+    store.save(payload)
+    servers_payload = store.load()["profiles"]["default"]["servers"]
+
+    assert MCPWorkbench._tool_has_arg_rules(servers_payload, "srv", "search") is False
+
+
 @pytest.mark.asyncio
 async def test_permissions_mode_renders_pinned_grouped_sorted_matrix(tmp_path):
     app = PermissionsApp(tmp_path / "mcp_permissions.json")
@@ -6827,20 +6941,34 @@ class _FakeLocalServiceWithInventory:
     `agent:builtin` section this task adds, letting a test assert the two
     render as genuinely distinct groups rather than merely both existing."""
 
+    def __init__(self, tool_names: tuple[str, ...] = ("search_web",)) -> None:
+        self._tool_names = tool_names
+
     def get_inventory(self):
-        return {"tools": [{"name": "search_web", "description": "Search the web."}]}
+        return {
+            "tools": [
+                {"name": name, "description": f"{name} description."}
+                for name in self._tool_names
+            ]
+        }
 
 
 class BuiltinDistinctHubService(PermissionsHubService):
-    def __init__(self, store_path: Path) -> None:
+    def __init__(
+        self, store_path: Path, inventory_names: tuple[str, ...] = ("search_web",)
+    ) -> None:
         super().__init__(store_path)
-        self.local_service = _FakeLocalServiceWithInventory()
+        self.local_service = _FakeLocalServiceWithInventory(inventory_names)
 
 
 class BuiltinDistinctApp(ConsolidatedCSSApp):
-    def __init__(self, store_path: Path) -> None:
+    def __init__(
+        self, store_path: Path, inventory_names: tuple[str, ...] = ("search_web",)
+    ) -> None:
         super().__init__()
-        self.unified_mcp_service = BuiltinDistinctHubService(store_path)
+        self.unified_mcp_service = BuiltinDistinctHubService(
+            store_path, inventory_names
+        )
 
     def compose(self) -> ComposeResult:
         yield MCPWorkbench(app_instance=self, id="mcp-workbench")
@@ -6876,6 +7004,188 @@ async def test_builtin_section_is_distinct_from_the_builtin_mcp_server(tmp_path)
         # Neither tool list bleeds into the other's row-key namespace.
         assert "builtin:tldw_chatbook::calculator" not in row_keys
         assert "agent:builtin::search_web" not in row_keys
+
+
+@pytest.mark.asyncio
+async def test_builtin_server_inventory_renders_tools_mode_rows(tmp_path):
+    """task-32283 AC#1 (Tools mode): the built-in MCP *server*'s own
+    inventory reaches `#mcp-tools-table` as rows under its own
+    `tldw_chatbook` server label, keyed in the `builtin:tldw_chatbook`
+    namespace, each with a resolved State cell.
+
+    `MCPWorkbench._collect_hub_tools()` and
+    `MCPToolProvider._compose_catalog()` read the SAME seam
+    (`service.local_service.get_inventory()` -> `builtin_tools_from_
+    inventory()`), so a tool the Console just raised an approval card for
+    is always pre-configurable in the hub. Nothing else covered the hub
+    half of that seam at the TABLE level.
+    """
+    app = BuiltinDistinctApp(
+        tmp_path / "mcp_permissions.json",
+        inventory_names=("list_characters", "search_notes"),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        table = app.query_one("#mcp-tools-table", DataTable)
+        rows = {}
+        for index in range(table.row_count):
+            key = table.coordinate_to_cell_key((index, 0))[0].value
+            cells = table.get_row_at(index)
+            # Columns are Tool, State, Server (then Tags only when some
+            # tool in the catalog carries one, then Schema).
+            rows[key] = (cells[0].plain, cells[1].plain, cells[2].plain)
+
+        assert rows["builtin:tldw_chatbook::list_characters"] == (
+            "list_characters",
+            "Ask",
+            "tldw_chatbook",
+        )
+        assert rows["builtin:tldw_chatbook::search_notes"] == (
+            "search_notes",
+            "Ask",
+            "tldw_chatbook",
+        )
+
+
+@pytest.mark.asyncio
+async def test_space_cycle_on_builtin_server_tool_row_round_trips_through_store(
+    tmp_path,
+):
+    """task-32283 AC#2: cycling a built-in-*server* row writes the
+    `builtin:tldw_chatbook` / `list_characters` key -- the exact key the
+    Console's own permission resolution reads for that tool -- and the
+    resolved state the hub re-renders from changes with it."""
+    app = BuiltinDistinctApp(
+        tmp_path / "mcp_permissions.json",
+        inventory_names=("list_characters", "search_notes"),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        row = _perm_row_keys(app).index("builtin:tldw_chatbook::list_characters")
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=row)
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        payload = app.unified_mcp_service.permission_store.load()
+        entry = payload["profiles"]["default"]["servers"]["builtin:tldw_chatbook"][
+            "tools"
+        ]["list_characters"]
+        assert entry["state"] == "allow"
+
+        # Resolving that same key (what the next Console approval round
+        # does) returns the new state, not just the row's rendered label.
+        tool = next(
+            t
+            for t in workbench._last_hub_tools
+            if t.server_key == "builtin:tldw_chatbook" and t.name == "list_characters"
+        )
+        resolved = app.unified_mcp_service.effective_tool_states([tool])
+        assert resolved[("builtin:tldw_chatbook", "list_characters")].state == "allow"
+
+        assert _perm_table_texts(app, row) == ["  list_characters", "Allow •"]
+        # The sibling built-in tool is untouched by the single-row cycle.
+        sibling = _perm_row_keys(app).index("builtin:tldw_chatbook::search_notes")
+        assert _perm_table_texts(app, sibling) == ["  search_notes", "Ask"]
+
+
+@pytest.mark.asyncio
+async def test_permissions_matrix_puts_the_selected_servers_group_first(tmp_path):
+    """task-32283 fix round: the rail's selected server leads the matrix,
+    directly under the pinned Global default row.
+
+    The flat `(server_label, key)` server sort put `tldw_chatbook` behind
+    every other server, so selecting the built-in server in the rail and
+    opening Permissions showed another server's rows for the whole first
+    screen -- the contradiction (footer summarising `tldw_chatbook`, rows
+    describing something else) that got this filed as a missing-inventory
+    bug. Non-selected servers keep their existing relative order.
+    """
+    app = BuiltinDistinctApp(
+        tmp_path / "mcp_permissions.json",
+        inventory_names=("list_characters",),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        def server_order() -> list[str]:
+            return [
+                row.server_key
+                for row in app.query_one(MCPPermissionsMode)._all_rows
+                if row.kind == "server"
+            ]
+
+        unselected = server_order()
+        assert unselected.index("local:docs") < unselected.index(
+            "builtin:tldw_chatbook"
+        )
+
+        workbench._selected_server_key = "builtin:tldw_chatbook"
+        await workbench._sync_children()
+        await pilot.pause()
+
+        selected = server_order()
+        assert selected[0] == "builtin:tldw_chatbook"
+        # The first data row after the pinned global row is that group's
+        # server-default row.
+        assert _perm_row_keys(app)[1] == "__server__::builtin:tldw_chatbook"
+        # Every other server keeps the order it already had.
+        assert [k for k in selected if k != "builtin:tldw_chatbook"] == [
+            k for k in unselected if k != "builtin:tldw_chatbook"
+        ]
+
+
+@pytest.mark.asyncio
+async def test_open_tool_catalog_scopes_the_tools_filter_to_that_server(tmp_path):
+    """task-32283 fix round: the Servers-mode inspector's "Open tool
+    catalog" drill lands in Tools mode already scoped to the server the
+    inspector was showing. It used to only switch modes, so drilling from
+    the built-in server's row showed an unfiltered catalog whose first
+    screenful was some other server."""
+    app = BuiltinDistinctApp(
+        tmp_path / "mcp_permissions.json",
+        inventory_names=("list_characters", "search_notes"),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+
+        workbench.post_message(
+            MCPInspector.HubActionRequested(
+                HubAction.OPEN_TOOL_CATALOG, "builtin:tldw_chatbook"
+            )
+        )
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench.active_mode == "tools"
+        canvas = app.query_one(MCPToolsMode)
+        assert (
+            canvas.query_one("#mcp-tools-filter-server", Select).value
+            == "builtin:tldw_chatbook"
+        )
+        table = app.query_one("#mcp-tools-table", DataTable)
+        assert {
+            table.coordinate_to_cell_key((i, 0))[0].value.split("::")[0]
+            for i in range(table.row_count)
+        } == {"builtin:tldw_chatbook"}
 
 
 @pytest.mark.asyncio
@@ -7390,6 +7700,66 @@ async def test_preview_scoped_to_rail_selection(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_preview_counts_recompute_on_every_cycle_not_cached(tmp_path):
+    """task-32285: live evidence on dev showed that after Space set a tool
+    to Allow, the scoped preview kept reading "0 allow · 30 ask · 0 off"
+    -- only the mutation echo prefix updated, the counts underneath it did
+    not. `_build_permission_preview()` derives its counts from the SAME
+    `effective` dict `_sync_permissions_mode()` freshly resolves on every
+    standalone resync (Space-cycle/kill-switch/re-allow always pass
+    `effective=None`, forcing `_capture_permission_render_state()` to
+    re-read the store), so this pins that the counts are recomputed --
+    not a snapshot taken before the cycle -- on a 30-tool server matching
+    the live evidence's own scale."""
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        thirty_tools = [
+            HubTool(
+                server_key="local:many",
+                server_label="many",
+                source="local",
+                name=f"tool_{i:02d}",
+                description="d",
+                input_schema=None,
+                tags=(),
+                stale=False,
+                executable=True,
+            )
+            for i in range(30)
+        ]
+        workbench._last_hub_tools = thirty_tools
+        workbench._selected_server_key = "local:many"
+        await workbench._sync_permissions_mode()
+        await pilot.pause()
+
+        preview = app.query_one("#mcp-perm-preview", Static)
+        assert str(preview.renderable) == (
+            "many: 0 allow · 30 ask · 0 off — global default: ask"
+        )
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        # task-32283: the selected server's group leads the matrix, so row
+        # 0 is Global default, row 1 is many's own server-default row, and
+        # row 2 is `tool_00` -- the FIRST of the 30 tools this test just
+        # injected.
+        table.move_cursor(row=2)
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert str(preview.renderable) == (
+            "tool_00 → Allow · many: 1 allow · 29 ask · 0 off — global default: ask"
+        )
+
+
+@pytest.mark.asyncio
 async def test_preview_shows_override_count_when_no_server_selected(tmp_path):
     """UX batch item 9: with no rail selection, the preview is just the
     global default -- plus an override-count suffix once at least one
@@ -7685,6 +8055,66 @@ async def test_permissions_mode_tool_row_selection_shows_permission_block(tmp_pa
         # Routed through show_permission(), NOT show_tool() -- the full
         # tool-detail-plus-Test-Tool block is Tools mode's own surface.
         assert not list(app.query("#mcp-inspector-tool-name"))
+
+
+# -- task-32281: exact-input allow rules, end to end -------------------------
+
+
+@pytest.mark.asyncio
+async def test_matrix_marks_and_inspector_lists_and_removes_arg_rules(tmp_path):
+    """AC#1/#2 end to end: a tool with a stored exact-input allow rule
+    gets the matrix's ``≡`` marker; selecting its row lists the rule in
+    the inspector with a Remove button; pressing Remove deletes the store
+    entry AND clears both the marker and the inspector row -- proving
+    the next identical call would ask again (the store-level mechanism is
+    pinned separately in `Tests/MCP/test_permission_store.py`)."""
+    store_path = tmp_path / "mcp_permissions.json"
+    store = MCPPermissionStore(store_path)
+    store.add_tool_arg_rule(
+        "local:docs", "search", args={"query": "x"}, definition_hash="a" * 64
+    )
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        tool_cells = {row[0].strip(): row[1] for row in _perm_all_rows(app)}
+        assert "≡" in tool_cells["search"]
+        assert "≡" not in tool_cells["fetch"]
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)  # local:docs::search
+        await pilot.press("enter")
+        await pilot.pause()
+
+        rule_row = app.query_one("#mcp-inspector-arg-rule-0", Static)
+        assert "Exact-input allow" in str(rule_row.renderable)
+        assert '"query": "x"' in str(rule_row.renderable)
+
+        await pilot.click("#mcp-inspector-arg-rule-remove-0")
+        await pilot.pause()
+
+        assert store.list_tool_arg_rules("local:docs", "search") == []
+        assert not list(app.query("#mcp-inspector-arg-rule-0"))
+        assert not list(app.query("#mcp-inspector-arg-rule-remove-0"))
+        tool_cells_after = {row[0].strip(): row[1] for row in _perm_all_rows(app)}
+        assert "≡" not in tool_cells_after["search"]
+        # Review round 1 (Critical): removing the LAST rule used to leave
+        # `{}` behind for a state-less tool entry, which the strict-read
+        # seam `_tool_policy_inventory()` uses rejected as `invalid_shape`
+        # -- collapsing `profiles={} options=[] ctx=None` and closing the
+        # inspector instead of just clearing the rule row. It must stay
+        # open on the SAME tool.
+        assert app.query_one("#mcp-inspector-permission").display is True
+        assert (
+            str(
+                app.query_one("#mcp-inspector-permission-tool", Static).renderable
+            )
+            == "search — docs"
+        )
 
 
 @pytest.mark.asyncio
@@ -9197,6 +9627,16 @@ def test_audit_entry_detail_payload_is_metadata_only():
 
     assert payload["tool"] == "local:docs::search"
     assert payload["duration"] == "1.5s"
+    # R24: the detail carries the Audit table's own humanised label beside
+    # the raw token, so one row no longer reads two different ways.
+    assert payload["decision"] == "allowed"
+    assert payload["decision_label"] == "Allowed"
+    assert (
+        audit_entry_detail_payload({"decision": "denied-killswitch"})[
+            "decision_label"
+        ]
+        == "Blocked (kill switch)"
+    )
     assert payload["argument_names"] == ["query"]
     assert payload["unknown_argument_count"] == 1
     assert payload["result_type"] == "list"
@@ -10412,7 +10852,9 @@ async def test_hub_local_group_stays_visible_but_disabled_when_master_flag_off(
             tool.server_key == "local:docs" for tool in workbench._last_hub_tools
         )
         assert app.query_one("#mcp-tools-local-config").display is True
-        assert app.query_one("#mcp-tools-local-enabled", Checkbox).value is False
+        assert str(app.query_one("#mcp-tools-local-enabled", Button).label) == (
+            "Local workspace, web, and Watchlists tools: off ▸"
+        )
 
 
 @pytest.mark.asyncio
@@ -10462,16 +10904,23 @@ async def test_tools_mode_local_controls_round_trip_master_and_workspace(
         workbench.set_mode("tools")
         await pilot.pause()
 
-        checkbox = app.query_one("#mcp-tools-local-enabled", Checkbox)
-        assert checkbox.value is True
-        checkbox.value = False
+        # task-32286: the master switch is a toggle Button whose label
+        # carries the state in text -- a press asks for the OPPOSITE of
+        # what it's currently showing (see `on_button_pressed()`).
+        toggle = app.query_one("#mcp-tools-local-enabled", Button)
+        assert str(toggle.label) == (
+            "Local workspace, web, and Watchlists tools: on ▸"
+        )
+        toggle.press()
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert ("console", "local_tools_enabled", False) in save_calls
-        assert app.query_one("#mcp-tools-local-enabled", Checkbox).value is False
+        assert str(app.query_one("#mcp-tools-local-enabled", Button).label) == (
+            "Local workspace, web, and Watchlists tools: off ▸"
+        )
 
-        checkbox.value = True
+        toggle.press()
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -10517,14 +10966,18 @@ async def test_tools_mode_failed_master_save_restores_persisted_truth(monkeypatc
         workbench = app.query_one(MCPWorkbench)
         await workbench._mount_deferred_canvases()
         await workbench._sync_children()
-        checkbox = app.query_one("#mcp-tools-local-enabled", Checkbox)
-        assert checkbox.value is True
-        checkbox.value = False
+        toggle = app.query_one("#mcp-tools-local-enabled", Button)
+        assert str(toggle.label) == (
+            "Local workspace, web, and Watchlists tools: on ▸"
+        )
+        toggle.press()
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-        assert app.query_one("#mcp-tools-local-enabled", Checkbox).value is True
+        assert str(app.query_one("#mcp-tools-local-enabled", Button).label) == (
+            "Local workspace, web, and Watchlists tools: on ▸"
+        )
         status = app.query_one("#mcp-tools-local-config-status", Static)
         assert "persisted setting is shown" in str(status.renderable)
         assert status.has_class("is-error")
@@ -10840,3 +11293,118 @@ async def test_virtual_cli_permission_cycle_remains_independent_of_raw_shell(
         )
         assert entry is not None and entry["state"] == "allow"
         assert _tools_table_state(app, "ls").startswith("Allow")
+
+
+# -- task-32291: session approvals, reviewed and revoked ---------------------
+
+
+@pytest.mark.asyncio
+async def test_matrix_marks_and_inspector_revokes_session_approvals(tmp_path):
+    """AC#1/#2 end to end: a live "Approve for session" grant marks its
+    tool's State cell ` (session)`; selecting any tool row lists every
+    grant in the inspector with a Revoke button; pressing Revoke drops that
+    grant (so `is_session_approved()` -- the read every provider's
+    short-circuit uses -- goes False and the next call asks again) AND
+    clears both the inspector row and the matrix suffix, with the
+    permission block still open on the same tool."""
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    # Granted before the app builds its first matrix -- a session approval
+    # is in-memory service state, the same way the arg-rule test seeds the
+    # store before `run_test()`.
+    service = app.unified_mcp_service
+    service.session_approvals.add(("default", "local:docs", "search"))
+    service.session_approvals.add(("default", "agent:builtin", "calculator"))
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        tool_cells = {row[0].strip(): row[1] for row in _perm_all_rows(app)}
+        assert "(session)" in tool_cells["search"]
+        assert "(session)" in tool_cells["calculator"]
+        assert "(session)" not in tool_cells["fetch"]
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)  # local:docs::search
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert (
+            str(app.query_one("#mcp-inspector-session-approvals", Static).renderable)
+            == "Session approvals"
+        )
+        rows = [
+            str(s.renderable)
+            for s in app.query(Static)
+            if (s.id or "").startswith("mcp-inspector-session-approval-")
+        ]
+        assert rows == ["agent:builtin · calculator", "local:docs · search"]
+
+        await pilot.click("#mcp-inspector-session-approval-revoke-1")
+        await pilot.pause()
+
+        assert service.is_session_approved("local:docs", "search") is False
+        assert service.is_session_approved("agent:builtin", "calculator") is True
+        rows_after = [
+            str(s.renderable)
+            for s in app.query(Static)
+            if (s.id or "").startswith("mcp-inspector-session-approval-")
+        ]
+        assert rows_after == ["agent:builtin · calculator"]
+        tool_cells_after = {row[0].strip(): row[1] for row in _perm_all_rows(app)}
+        assert "(session)" not in tool_cells_after["search"]
+        assert "(session)" in tool_cells_after["calculator"]
+        # The block must stay open on the SAME tool (mirrors the arg-rule
+        # Remove flow's own no-stale-panel regression).
+        assert app.query_one("#mcp-inspector-permission").display is True
+        assert (
+            str(app.query_one("#mcp-inspector-permission-tool", Static).renderable)
+            == "search — docs"
+        )
+
+
+def test_tool_has_arg_rules_marks_an_inherited_rule(tmp_path):
+    """Qodo #2597 #1: the matrix's ``≡`` marker read the SELECTED profile's
+    `servers` slice only, so a rule inherited from `default` -- live, because
+    `arg_rule_allows()` walks the chain -- left the row unmarked while
+    quieting real calls. The rest of the chain travels as `ancestor_servers`.
+    """
+    store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
+    tool = HubTool(
+        server_key="srv",
+        server_label="Server",
+        source="mcp",
+        name="search",
+        description="A tool.",
+        input_schema={"type": "object"},
+        tags=(),
+        stale=False,
+        executable=True,
+    )
+    store.ensure_profile("child")
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+    payload = store.load()["profiles"]
+    child_servers = payload["child"]["servers"]
+    default_servers = payload["default"]["servers"]
+    has_rules = MCPWorkbench._tool_has_arg_rules
+
+    # The child stores nothing of its own.
+    assert has_rules(child_servers, "srv", "search") is False
+    assert (
+        has_rules(
+            child_servers, "srv", "search", ancestor_servers=(default_servers,)
+        )
+        is True
+    )
+    # An ancestor that carries nothing for this tool changes nothing.
+    assert (
+        has_rules(child_servers, "srv", "other", ancestor_servers=(default_servers,))
+        is False
+    )
