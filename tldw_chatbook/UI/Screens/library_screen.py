@@ -9749,7 +9749,7 @@ class LibraryScreen(BaseAppScreen):
             "#library-media-empty-import",
             "#library-media-retry",
         )
-        applied = self._library_media_browse_controller.applied_scope
+        applied = self._library_media_browse_controller.state.applied_scope
         if applied is not None and applied.query:
             selectors = ("#library-media-filter", *selectors)
         for selector in selectors:

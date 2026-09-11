@@ -336,7 +336,7 @@ async def consume_conversation_resume(screen: Any) -> None:
 async def archive_current_conversation(screen: Any) -> None:
     """Archive one saved idle conversation and offer version-checked Undo."""
     app = screen.app_instance
-    conversation_id = screen._current_console_conversation_id()
+    conversation_id = screen._session._current_console_conversation_id()
     if not conversation_id:
         app.notify(
             "Send and save this conversation before archiving it.",

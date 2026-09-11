@@ -32586,10 +32586,8 @@ async def test_library_note_editor_back_restores_exact_wide_browse_context(
 
         assert screen._notes_state.source == "database"
         assert screen._notes_state.filter == "scope"
-        # The untouched default: the round trip must not scramble the sort
-        # key, which is all this assertion can still pin now that Sort is
-        # unreachable in tree mode (task-32175, review round 1).
-        assert screen._notes_state.sort == "newest"
+        # Preserve the persisted title sort used by this browse pager.
+        assert screen._notes_state.sort == "title"
         assert screen._notes_state.tree_selected_placement_id == placement_id
         assert screen.query_one("#library-notes-filter", Input).value == "scope"
         assert (
