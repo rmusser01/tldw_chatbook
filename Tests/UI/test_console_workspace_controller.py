@@ -101,6 +101,16 @@ class _NoMountScreen:
         self.size = SimpleNamespace(width=120, height=40)
         self.app = SimpleNamespace(push_screen=lambda _modal: None)
 
+    def _build_console_provider_selection(self, _session_id):
+        # The resume flow's token-preparation step reads (and re-reads, for
+        # its change guard) the screen's provider selection; a stable,
+        # equal-to-itself snapshot is all the unmounted fixture needs.
+        return SimpleNamespace(
+            explicit_model=None,
+            configured_model=None,
+            provider="fixture",
+        )
+
     def call_after_refresh(self, callback) -> None:
         self.after_refresh.append(callback)
 
