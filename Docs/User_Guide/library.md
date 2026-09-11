@@ -212,7 +212,11 @@ readable measure rather than stretched across the whole canvas.
   - a **Navigation** heading with **Collapse** at the opposite edge. Collapse
     hides the rail without changing the selected destination, search query,
     section disclosures, or canvas. The slim **Nav** handle expands it again;
-    it is keyboard-focusable and remains part of the **F6** pane cycle;
+    it is keyboard-focusable and remains part of the **F6** pane cycle. The
+    handle is five cells wide, so it spells its name **downwards** —
+    `N`/`a`/`v` down the column, with the collapse arrows below it. The
+    handle beside the list pane does the same with that pane's name
+    (**Items**, **Prompts**, **Skills**, **Folder files**);
   - the **Import…** button ("Add files, links, and transcripts to
     your Library.");
   - the **Search Library…** box — submitting it lands on the
@@ -275,6 +279,13 @@ visible stage so its controls remain on-screen. Escape (or the
 **Library notes** link) returns to the notes list — see
 [File Notes](library/file-notes.md).
 
+Opening a **note for editing** is the one place the rail steps aside on a
+wide terminal, deliberately: at 120 columns and more of editor width the
+rail collapses to its **Nav** handle so the note gets the room, and Escape
+(or **Nav**) brings it straight back. Expanding it by hand ends that for the
+rest of the visit — the rail then stays put while you open one note after
+another.
+
 ## Features & controls
 
 ### State glyphs
@@ -305,7 +316,7 @@ leading `▸` uses cannot collide on one control.
 | Control | What it does |
 |---|---|
 | **Collapse** | Hides the wide navigation rail in place and gives the canvas the reclaimed width. The choice lasts for the current Library screen session. |
-| **Nav** | Expands a manually collapsed rail and returns focus to **Search Library…**. On compact terminals, Library's existing one-pane routing takes precedence and the manual collapse returns when the terminal is wide again. |
+| **Nav** | Expands a collapsed rail and returns focus to **Search Library…**. The handle spells `Nav` down its five-cell column, so it is readable without hovering. On compact terminals, Library's existing one-pane routing takes precedence and the manual collapse returns when the terminal is wide again. Used on the rail a note editor collapsed, it also ends that editor's claim on the width for the rest of the visit. |
 | **Import…** | Opens the Import media canvas — see [Import & export](library/import-and-export.md). |
 | **New note** | Opens the production note-creation canvas. It is shown directly in the Get started rail. |
 | **Explore all tools** | Reveals and remembers the complete Library without changing section disclosures. |
@@ -884,3 +895,9 @@ list, and the landing hub is capped at 96 cells).*
 (task-32225: the return chip stands down wherever a canvas owns Escape itself,
 so the footer never names a return the key would not perform; task-32228:
 Conversations arrives with its first row focused like every other browse list).*
+
+*Verified against fix/library-crit10-layout — 2026-09-11 (task-32355: both
+pane handles paint their own name down the column, and the note editor's
+deliberate claim on the rail's width is stated where the rail is described;
+task-32359: a focused rail row carries the house `█` bar, so it is no longer
+the same picture as the active destination).*
