@@ -411,3 +411,137 @@ def test_list_cache_is_not_repopulated_with_a_pre_write_snapshot(tmp_path):
     # ...but the SERVICE must now answer with post-write truth, not the
     # reader's stale snapshot resurrected into the cache.
     assert service.list_marked_conversation_ids() == ("conv-a",)
+
+
+# ---------------------------------------------------------------------------
+# TASK-22514 Task 6: exact terminal-attention receipts.
+# ---------------------------------------------------------------------------
+
+
+_RECEIPT_A = "11111111-1111-4111-8111-111111111111"
+_RECEIPT_B = "22222222-2222-4222-8222-222222222222"
+
+
+def test_console_unseen_mark_constructs_and_parses_one_exact_opaque_receipt(tmp_path):
+    service = ConversationLocalMarksService(_db(tmp_path))
+
+    mark_type = service.console_unseen_mark_type(_RECEIPT_A)
+
+    assert mark_type == f"console_unseen:{_RECEIPT_A}"
+    assert service.parse_console_unseen_mark_type(mark_type) == _RECEIPT_A
+    assert service.parse_console_unseen_mark_type(service.FLEET_UNSEEN) is None
+
+
+@pytest.mark.parametrize(
+    "receipt_id",
+    [
+        "",
+        "result-one",
+        "11111111111141118111111111111111",
+        "11111111-1111-4111-8111-11111111111x",
+        "11111111-1111-4111-8111-111111111111-extra",
+        "11111111-1111-4111-8111-111111111111/secret",
+    ],
+)
+def test_console_unseen_mark_rejects_nonopaque_or_malformed_receipt_ids(
+    tmp_path, receipt_id
+):
+    service = ConversationLocalMarksService(_db(tmp_path))
+
+    with pytest.raises(ValueError, match="terminal receipt"):
+        service.console_unseen_mark_type(receipt_id)
+
+
+def test_console_unseen_prefix_queries_are_uncached_and_exact(tmp_path):
+    db = _db(tmp_path)
+    service = ConversationLocalMarksService(db)
+    assert service.has_console_unseen_marks() is False
+    assert service.list_console_unseen_marks() == ()
+
+    # Simulate another repository writing the receipt through an existing
+    # transaction after the service performed its first query. Prefix reads
+    # must observe this immediately rather than consulting the exact-mark cache.
+    mark_type = service.console_unseen_mark_type(_RECEIPT_A)
+    with db.transaction(immediate=True) as cursor:
+        cursor.execute(
+            "INSERT INTO conversation_local_marks "
+            "(conversation_id, mark_type, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("conv-a", mark_type, "2026-08-28T00:00:00Z", "2026-08-28T00:00:00Z"),
+        )
+
+    assert service.has_console_unseen_marks() is True
+    assert service.list_console_unseen_marks() == (
+        ("conv-a", _RECEIPT_A),
+    )
+
+
+def test_acknowledge_console_unseen_deletes_only_the_exact_receipt(tmp_path):
+    service = ConversationLocalMarksService(_db(tmp_path))
+    service.star_conversation("conv-a")
+    service.set_mark("conv-a", service.FLEET_UNSEEN)
+    service.set_mark("conv-a", service.console_unseen_mark_type(_RECEIPT_A))
+    service.set_mark("conv-a", service.console_unseen_mark_type(_RECEIPT_B))
+
+    assert service.acknowledge_console_unseen("conv-a", _RECEIPT_A) is True
+    assert service.acknowledge_console_unseen("conv-a", _RECEIPT_A) is False
+    assert service.list_console_unseen_marks() == (("conv-a", _RECEIPT_B),)
+    assert service.is_starred("conv-a") is True
+    assert service.has_mark("conv-a", service.FLEET_UNSEEN) is True
+
+
+@pytest.mark.parametrize("outcome", ["complete", "failed"])
+def test_console_terminal_outcome_companion_is_exact_local_and_acknowledged_atomically(
+    tmp_path, outcome
+):
+    db = _db(tmp_path)
+    service = ConversationLocalMarksService(db)
+    now = "2026-08-28T00:00:00Z"
+
+    with db.transaction(immediate=True) as cursor:
+        service.set_console_terminal_with_cursor(
+            cursor,
+            "conv-a",
+            _RECEIPT_A,
+            outcome,
+            created_at=now,
+            updated_at=now,
+        )
+        service.set_console_terminal_with_cursor(
+            cursor,
+            "conv-a",
+            _RECEIPT_B,
+            "failed" if outcome == "complete" else "complete",
+            created_at=now,
+            updated_at=now,
+        )
+
+    assert service.console_terminal_outcome("conv-a", _RECEIPT_A) == outcome
+    assert service.list_console_unseen_marks() == (
+        ("conv-a", _RECEIPT_A),
+        ("conv-a", _RECEIPT_B),
+    )
+
+    assert service.acknowledge_console_unseen("conv-a", _RECEIPT_A) is True
+    assert service.console_terminal_outcome("conv-a", _RECEIPT_A) is None
+    assert service.console_terminal_outcome("conv-a", _RECEIPT_B) is not None
+    assert service.list_console_unseen_marks() == (("conv-a", _RECEIPT_B),)
+
+
+@pytest.mark.parametrize("outcome", ["", "stopped", "complete:private-body"])
+def test_console_terminal_outcome_companion_rejects_nonterminal_or_body_values(
+    tmp_path, outcome
+):
+    db = _db(tmp_path)
+    service = ConversationLocalMarksService(db)
+
+    with db.transaction(immediate=True) as cursor:
+        with pytest.raises(ValueError, match="terminal outcome"):
+            service.set_console_terminal_with_cursor(
+                cursor,
+                "conv-a",
+                _RECEIPT_A,
+                outcome,
+                created_at="2026-08-28T00:00:00Z",
+                updated_at="2026-08-28T00:00:00Z",
+            )

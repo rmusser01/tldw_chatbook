@@ -216,6 +216,7 @@ def test_run_video_generation_carries_webm_request_into_store_and_metadata(tmp_p
     )
 
     assert [request.format for request in captured_requests] == ["webm"]
+    assert "terminal_receipt_id" not in vars(captured_requests[0])
     assert path.suffix == ".webm"
     assert path.read_bytes() == b"vid-bytes"
     assert meta.container == "webm"

@@ -120,14 +120,33 @@ class ConsoleLifecycleImpact:
     live_run_count: int
     queued_session_count: int
     unsent_prompt_count: int
+    delegated_child_count: int = 0
 
     @property
     def has_loss_risk(self) -> bool:
         """Return whether leaving would discard or cancel Console work."""
 
         return bool(
-            self.live_run_count or self.queued_session_count or self.unsent_prompt_count
+            self.live_run_count
+            or self.queued_session_count
+            or self.unsent_prompt_count
+            or self.delegated_child_count
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleSessionCloseTicket:
+    """Opaque controller authorization for one two-phase session close."""
+
+    close_id: str
+    session_id: str
+    conversation_id: str
+    expected_revision: int
+    generation: int
+
+
+class ConsoleLifecycleRevisionChanged(RuntimeError):
+    """Raised when destructive consent no longer matches live activity."""
 
 
 class ConsoleRunMarker(str, Enum):

@@ -44,8 +44,9 @@ Documented blind spots (what a start-record census cannot see):
   can beat four heavy simultaneous ones; only a latency probe (22215's
   before/after AC) sees the difference. A listed worker that grows a bigger
   payload is invisible here.
-* The settle window is ``_ui_ready`` + 1.0 s. A boot-adjacent worker first
-  started later than that (or one gated off ``TLDW_TEST_MODE=1``, which
+* The settle window is at least ``_ui_ready`` + 1.0 s, then waits up to
+  10 s for the same required starts. A boot-adjacent worker first
+  started after the window (or one gated off ``TLDW_TEST_MODE=1``, which
   every boot guard sets) is not censused. Members that only START sometimes
   (stall-triggered persistence, fresh-profile one-offs) are allowlisted but
   not asserted present, so their absence never fails and their growth is
@@ -61,11 +62,13 @@ Documented blind spots (what a start-record census cannot see):
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -152,6 +155,7 @@ import json
 import threading
 
 records = {"workers": [], "threads": []}
+EXPECTED_BOOT_WORKERS = __EXPECTED_BOOT_WORKERS__
 
 import textual.worker_manager as _wm
 
@@ -195,14 +199,71 @@ async def main() -> None:
     async with app.run_test(size=(120, 40)):
         while not getattr(app, "_ui_ready", False):
             await asyncio.sleep(0.005)
-        # Settle window: the deferred-startup timers (0.1-0.2 s) fire inside
-        # it, so their workers are censused too.
-        await asyncio.sleep(1.0)
+        # Keep the original minimum observation window, then condition-wait
+        # for serially gated workers (FTS follows both actor-pack workers).
+        loop = asyncio.get_running_loop()
+        started_at = loop.time()
+        while loop.time() - started_at < 10.0:
+            observed = {(w["name"], w["group"]) for w in records["workers"]}
+            if loop.time() - started_at >= 1.0 and EXPECTED_BOOT_WORKERS <= observed:
+                break
+            await asyncio.sleep(0.01)
         print("CENSUS_JSON:" + json.dumps(records), flush=True)
 
 
 asyncio.run(main())
-"""
+""".replace("__EXPECTED_BOOT_WORKERS__", repr(EXPECTED_BOOT_WORKERS))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("arrives", [True, False])
+async def test_census_waits_for_the_serially_delayed_required_worker(monkeypatch, arrives):
+    """Run the actual probe main with a clock and a 1.5-second queued starter."""
+    import tldw_chatbook.app as app_module
+
+    now = 0.0
+    required = sorted(EXPECTED_BOOT_WORKERS)
+    # Delay a required sentinel; staggered FTS is only allowlisted on current dev.
+    delayed = required[0]
+    records = {"workers": [dict(name=n, group=g) for n, g in required if (n, g) != delayed]}
+
+    async def sleep(seconds):
+        nonlocal now
+        now += seconds
+        if arrives and now >= 1.5:
+            records["workers"].append(dict(name=delayed[0], group=delayed[1]))
+
+    class App:
+        _ui_ready = True
+
+        def run_test(self, **kwargs):
+            return self
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+    monkeypatch.setattr(app_module, "TldwCli", App)
+    probe = ast.parse(_CENSUS_SCRIPT)
+    main = next(node for node in probe.body if isinstance(node, ast.AsyncFunctionDef) and node.name == "main")
+    namespace = {
+        "asyncio": SimpleNamespace(sleep=sleep, get_running_loop=lambda: SimpleNamespace(time=lambda: now)),
+        "json": json,
+        "records": records,
+        "EXPECTED_BOOT_WORKERS": EXPECTED_BOOT_WORKERS,
+        "print": lambda *args, **kwargs: None,
+    }
+    exec(compile(ast.Module(body=[main], type_ignores=[]), "<census-main>", "exec"), namespace)
+    await namespace["main"]()
+    observed = {(w["name"], w["group"]) for w in records["workers"]}
+    if arrives:
+        assert EXPECTED_BOOT_WORKERS <= observed
+        assert 1.5 <= now < 2.0, "return once the required delayed starter arrives"
+    else:
+        assert delayed not in observed
+        assert 1.5 < now <= 10.1, "missing required work must stop at a bounded deadline"
 
 
 def _normalize_thread_name(name: str) -> str:
@@ -294,7 +355,8 @@ def test_boot_worker_and_thread_starts_stay_within_the_allowlist(
     assert not missing, (
         f"census looks degenerate -- boot workers that always start were "
         f"not recorded: {sorted(missing)}. Either the boot never mounted "
-        "the Chat screen or the probe's instrumentation seam moved."
+        "the Chat screen or the probe's instrumentation seam moved. "
+        f"Observed workers: {sorted(started_workers)}"
     )
     assert started_threads, (
         "census looks degenerate -- a real boot starts at least the "

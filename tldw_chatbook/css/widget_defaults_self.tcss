@@ -2399,26 +2399,11 @@
 
 /* ===== WIDGET: ConsoleMessageHeader (Widgets/Console/console_transcript.py) ===== */
 
-    ConsoleMessageHeader {
-        width: 100%;
-        height: 1;
-        min-height: 1;
-    }
-
+    ConsoleMessageHeader {width:100%;height:1;min-height:1;}
     ConsoleMessageHeader > .console-transcript-speaker-label {
-        width: 1fr;
-        height: 1;
-        min-height: 1;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
+        width:1fr;height:1;min-height:1;overflow:hidden;text-overflow:ellipsis;}
     ConsoleMessageHeader > .console-message-speech-presentation {
-        width: 14;
-        min-width: 14;
-        height: 1;
-        min-height: 1;
-    }
+        width:14;min-width:14;height:1;min-height:1;}
 
 
 /* ===== WIDGET: ConsoleTurnFileCard (Widgets/Console/console_turn_file_card.py) ===== */
@@ -2483,6 +2468,9 @@
         width: 100%;
     }
 
+
+/* ===== WIDGET: ConsoleVoicePreview (Widgets/Console/console_voice_preview.py) ===== */
+ConsoleVoicePreview{margin:0 1 1 1;padding:0 1;border-left:thick $accent 45%;background:$surface-lighten-1 55%;color:$text-muted;&,.console-voice-preview-user,.console-voice-preview-assistant{height:auto;}.console-voice-preview-status{color:$accent-lighten-1;text-style:italic;}}
 
 /* ===== WIDGET: ConsoleWorkspaceActionMenu (Widgets/Console/console_workspace_action_menu.py) ===== */
 

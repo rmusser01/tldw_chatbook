@@ -1,7 +1,7 @@
 """Mounted Console feedback and failed-regenerate recovery regressions.
 
-TASK-343: the transcript sync timer used to start only on the send path
-(`_submit_console_native_draft`); the regenerate/retry/continue handlers
+The transcript sync timer used to start only on the send path
+(runtime custody); the regenerate/retry/continue handlers
 awaited the whole generation with zero UI sync, so nothing on screen changed
 until the provider finished (75s+ against a slow local model — UX review
 finding j6-regenerate-zero-feedback). These tests hold the fake provider
@@ -168,8 +168,8 @@ async def test_console_failed_regenerate_auto_restores_previous_answer():
         )
         await _wait_until(
             pilot,
-            lambda: store.active_leaf(session.id) == source.id,
-            f"active leaf {source.id!r}",
+            lambda: source.id in store.active_path_message_ids(session.id),
+            f"restored original branch {source.id!r}",
         )
         await _wait_until(
             pilot,
@@ -177,6 +177,13 @@ async def test_console_failed_regenerate_auto_restores_previous_answer():
             f"{run_group} worker completion",
         )
         assert run_worker.state is WorkerState.SUCCESS
+        active_path = store.active_path_message_ids(session.id)
+        assert active_path[-2] == source.id
+        failure_row = store.get_message(active_path[-1])
+        assert failure_row.role is ConsoleMessageRole.SYSTEM
+        assert failure_row.content == controller.run_state.visible_copy
+        assert failure_row.content.startswith("Provider stream failed:")
+        assert pending_replacement.id not in active_path
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.query_one(f"#console-message-{source.id}")

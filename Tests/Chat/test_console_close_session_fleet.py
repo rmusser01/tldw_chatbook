@@ -28,8 +28,11 @@ All three were committed RED at the pre-fix branch (`cancel_all_calls
 
 from __future__ import annotations
 
+import pytest
+
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 
 from Tests.Chat.test_console_chat_controller import StreamingGateway
 
@@ -54,6 +57,9 @@ class _RecordingFleetBridge:
         self.sessions_present_at_call.append(bool(self._store.sessions()))
         return 1
 
+    async def await_fleet_terminal(self, _conversation_id: str) -> bool:
+        return True
+
 
 def _controller_with_bridge(store: ConsoleChatStore):
     bridge = _RecordingFleetBridge(store)
@@ -62,18 +68,26 @@ def _controller_with_bridge(store: ConsoleChatStore):
         provider_gateway=StreamingGateway(),
         agent_bridge=bridge,
     )
-    return controller, bridge
+    runtime = ConsoleRuntime(app=None)
+    runtime.set_chat_store(store)
+    runtime.set_agent_bridge(bridge)
+    runtime.set_chat_controller(controller)
+    return runtime, controller, bridge
 
 
-def test_closing_a_session_cancels_its_fleet_through_cancel_all():
+@pytest.mark.asyncio
+async def test_closing_a_session_cancels_its_fleet_through_cancel_all():
     """The active-close path: one close, one whole-fleet cancel, keyed by
     the session's own conversation id, issued while the session still
     exists in the store."""
     store = ConsoleChatStore()
     session = store.ensure_session()
-    controller, bridge = _controller_with_bridge(store)
+    runtime, controller, bridge = _controller_with_bridge(store)
 
-    controller.close_session(session.id)
+    await runtime.close_session(
+        session.id,
+        expected_revision=controller.lifecycle_impact(session_id=session.id).revision,
+    )
 
     assert bridge.cancel_all_calls == [session.id]
     assert bridge.sessions_present_at_call == [True], (
@@ -83,22 +97,27 @@ def test_closing_a_session_cancels_its_fleet_through_cancel_all():
     assert store.sessions() == []
 
 
-def test_closing_an_ephemeral_session_cancels_its_fleet_too():
+@pytest.mark.asyncio
+async def test_closing_an_ephemeral_session_cancels_its_fleet_too():
     """The ephemeral-teardown path: a temporary session's close is the
     same destruction (nothing was ever persisted to return to), so its
     fleet dies with it identically."""
     store = ConsoleChatStore()
     session = store.create_session(title="temp", ephemeral=True)
     assert store.session_is_ephemeral(session.id)
-    controller, bridge = _controller_with_bridge(store)
+    runtime, controller, bridge = _controller_with_bridge(store)
 
-    controller.close_session(session.id)
+    await runtime.close_session(
+        session.id,
+        expected_revision=controller.lifecycle_impact(session_id=session.id).revision,
+    )
 
     assert bridge.cancel_all_calls == [session.id]
     assert store.sessions() == []
 
 
-def test_close_cancel_targets_the_persisted_conversation_id_when_set():
+@pytest.mark.asyncio
+async def test_close_cancel_targets_the_persisted_conversation_id_when_set():
     """The bridge keys fleets by the DURABLE conversation id
     (`_agent_conversation_id`: persisted id when set, else the session
     id). A close must cancel under that key, or a persisted
@@ -106,14 +125,18 @@ def test_close_cancel_targets_the_persisted_conversation_id_when_set():
     store = ConsoleChatStore()
     session = store.ensure_session()
     session.persisted_conversation_id = "conv-durable"
-    controller, bridge = _controller_with_bridge(store)
+    runtime, controller, bridge = _controller_with_bridge(store)
 
-    controller.close_session(session.id)
+    await runtime.close_session(
+        session.id,
+        expected_revision=controller.lifecycle_impact(session_id=session.id).revision,
+    )
 
     assert bridge.cancel_all_calls == ["conv-durable"]
 
 
-def test_close_survives_a_bridge_without_the_cancel_all_seam():
+@pytest.mark.asyncio
+async def test_close_survives_a_bridge_without_the_cancel_all_seam():
     """A bare bridge double (or none at all) must never break a close --
     the fleet cancel degrades to a no-op, exactly like every other
     getattr-guarded bridge read on the controller."""
@@ -124,6 +147,18 @@ def test_close_survives_a_bridge_without_the_cancel_all_seam():
         provider_gateway=StreamingGateway(),
         agent_bridge=object(),  # no cancel_all_subagents at all
     )
+    runtime = ConsoleRuntime(app=None)
+    runtime.set_chat_store(store)
+    runtime.set_agent_bridge(controller._agent_bridge)
+    runtime.set_chat_controller(controller)
 
-    assert controller.close_session(session.id) is None
+    assert (
+        await runtime.close_session(
+            session.id,
+            expected_revision=controller.lifecycle_impact(
+                session_id=session.id
+            ).revision,
+        )
+        is None
+    )
     assert store.sessions() == []

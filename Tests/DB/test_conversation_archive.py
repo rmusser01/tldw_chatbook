@@ -163,7 +163,7 @@ def test_v70_migration_preserves_existing_rows_and_adds_archive_index(
             conn.execute(
                 "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
             ).fetchone()[0]
-            == 71
+            == 72
         )
         assert any(
             row[2] == "archived"

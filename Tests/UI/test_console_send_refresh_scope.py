@@ -69,6 +69,8 @@ async def test_waiting_send_does_not_repaint_unchanged_status(
                 await asyncio.wait_for(entered.wait(), timeout=2)
                 await pilot.pause(0.5)
                 assert controller.run_state.status is ConsoleRunStatus.VALIDATING
+                runtime = console._console_runtime()
+                (turn_id,) = runtime._turn_custody
                 assert console._console_transcript_sync_timer is not None
                 regions = {
                     widget_id: console.query_one(f"#{widget_id}").content_region
@@ -108,12 +110,22 @@ async def test_waiting_send_does_not_repaint_unchanged_status(
                 assert not painted, painted
 
                 release.set()
+                result = await asyncio.wait_for(
+                    runtime.wait_for_turn(turn_id), timeout=10
+                )
+                assert result.accepted
                 await asyncio.wait_for(host.workers.wait_for_complete(), timeout=10)
-                await pilot.pause(0.3)
+                async with asyncio.timeout(5):
+                    while console._console_transcript_sync_timer is not None:
+                        await pilot.pause(0.05)
                 assert controller.run_state.status is ConsoleRunStatus.COMPLETED
                 assert console._console_transcript_sync_timer is None
         finally:
             release.set()
             if console is not None:
                 await console._console_runtime().dispose()
-            await asyncio.to_thread(app.ui_responsiveness_monitor.close)
+            try:
+                with database.quiesce_connections(timeout_seconds=5):
+                    assert database.registered_connection_count() == 0
+            finally:
+                await asyncio.to_thread(app.ui_responsiveness_monitor.close)

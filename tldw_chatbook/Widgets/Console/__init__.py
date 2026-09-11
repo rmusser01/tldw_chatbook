@@ -92,6 +92,15 @@ from .console_workspace_switcher_modal import (
 
 def __getattr__(name: str):
     """Load deferred Console widgets when their public export is first used."""
+    if name in {
+        "ConsoleVoicePreview",
+        "VoicePreviewProjection",
+        "VoiceStatusAnnouncementThrottle",
+        "voice_status_label",
+    }:
+        from . import console_voice_preview
+
+        return getattr(console_voice_preview, name)
     if name == "ConsoleSettingsModal":
         from . import console_settings_modal
 
@@ -167,6 +176,10 @@ __all__ = [
     "TerminalViewport",
     "ConsoleTranscript",
     "ConsoleTranscriptSurface",
+    "ConsoleVoicePreview",
+    "VoicePreviewProjection",
+    "VoiceStatusAnnouncementThrottle",
+    "voice_status_label",
     "ConsoleWorkspaceContextTray",
     "ConsoleWorkspaceTree",
     "ConsoleWorkspaceRenameModal",

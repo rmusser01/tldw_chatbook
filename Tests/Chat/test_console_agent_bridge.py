@@ -37,6 +37,7 @@ from tldw_chatbook.Chat.console_agent_bridge import (
     format_agent_step_marker,
     format_todo_marker,
     inject_resume_agent_markers,
+    intersect_console_run_budget,
     _BridgeSkillRunner,
     _compose_run_allowed_tools,
     _compose_run_registry_and_allowed,
@@ -61,6 +62,7 @@ from tldw_chatbook.Chat.console_chat_controller import (
     USER_DENIED_REFUSAL as CONTROLLER_USER_DENIED_REFUSAL,
 )
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_display_state import format_diff_feedback_disclosure
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleDispatchCheckpointState,
@@ -97,6 +99,7 @@ from tldw_chatbook.Chat.console_turn_preparation import (
     ConsoleTurnPreparationState,
     preparation_actions,
 )
+from tldw_chatbook.Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
     ContinuationRestoreTarget,
@@ -131,6 +134,7 @@ from tldw_chatbook.Agents.agent_models import (
     AgentStep,
     AgentDefinition,
     RunOutcome,
+    RunBudget,
     SkillFileBindings,
     ToolCatalogEntry,
     ToolResult,
@@ -165,6 +169,7 @@ from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedErr
 from tldw_chatbook.Workspaces.change_turn_tracker import TurnChangeRecord
 
 from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
+from Tests.console_provider_doubles import provider_resolution
 
 
 class _InProcessWorkspaceExecutor:
@@ -1880,26 +1885,37 @@ def test_native_kill_switch_off_stays_on_fence_path(tmp_path):
     assert bridge._gateway.tools_seen[0] is None  # no tools= despite groq
 
 
-def test_captured_native_tools_override_beats_later_callback_change(tmp_path):
-    enabled = True
+@pytest.mark.parametrize("captured", (False, True))
+@pytest.mark.parametrize("supported", (False, True))
+def test_captured_native_tools_override_beats_later_callback_change(
+    tmp_path, captured, supported
+):
+    enabled = captured
     bridge, _db, store, session, aid = _bridge(
         tmp_path,
-        [[_native_calls("get_current_datetime", {})], ["Done."]],
+        [
+            [
+                _native_calls("get_current_datetime", {})
+                if captured and supported
+                else _fence("get_current_datetime", {})
+            ],
+            ["Done."],
+        ],
         native_tools_enabled=lambda: enabled,
     )
-    enabled = False
+    enabled = not captured
 
     outcome = _run(
         bridge,
         store,
         session,
         aid,
-        resolution=_native_resolution(),
-        native_tools_enabled=True,
+        resolution=_native_resolution() if supported else _test_resolution(),
+        native_tools_enabled=captured,
     )
 
     assert outcome.status == "done"
-    assert bridge._gateway.tools_seen[0] is not None
+    assert (bridge._gateway.tools_seen[0] is not None) is (captured and supported)
 
 
 def test_multi_turn_run_reuses_one_event_loop_across_chat_call_turns(tmp_path):
@@ -5306,8 +5322,15 @@ class _FakeSkillsService:
         self.skill_name = skill_name
         self.allowed_tools = allowed_tools
         self.blocked = blocked
+        self.digest = "digest-a"
+        self.bundle_body = "bundle-a"
+        self.trust_service = self
         self.execute_calls = []
+        self.read_calls = []
         self.get_context_calls = 0
+
+    def current_fingerprint_digest(self, _name):
+        return self.digest
 
     async def get_context(self, *, mode="local"):
         self.get_context_calls += 1
@@ -5319,6 +5342,7 @@ class _FakeSkillsService:
                     "argument_hint": "[diff]",
                     "trust_blocked": False,
                     "disable_model_invocation": False,
+                    "definition_digest": self.digest,
                 },
             ],
             "blocked_skills": [],
@@ -5338,6 +5362,10 @@ class _FakeSkillsService:
             "allowed_tools": self.allowed_tools,
             "execution_mode": "inline",
         }
+
+    async def read_skill_file(self, skill_name, path, *, mode="local"):
+        self.read_calls.append((skill_name, path, self.bundle_body))
+        return {"content": self.bundle_body, "size": len(self.bundle_body)}
 
 
 def test_skill_tool_call_routes_through_run_scoped_spawn(tmp_path):
@@ -5476,6 +5504,7 @@ def test_bridge_skill_runner_grants_own_name_and_appends_bundle_block_before_spa
         skill_names=frozenset({"code-review"}),
         builtin_names=(),
         skill_file_bindings=bindings,
+        definition_digests={"code-review": "digest-a"},
     )
     spawn_calls = []
 
@@ -5495,6 +5524,9 @@ def test_bridge_skill_runner_grants_own_name_and_appends_bundle_block_before_spa
         "references/api.md (120 bytes), assets/logo.png (2048 bytes, binary)"
     ]
     assert "code-review" in bindings.authorized
+    assert getattr(bindings, "definition_digests", {}) == {
+        "code-review": "digest-a"
+    }
 
 
 def test_bridge_skill_runner_no_reference_files_body_unchanged_still_authorizes():
@@ -5505,6 +5537,7 @@ def test_bridge_skill_runner_no_reference_files_body_unchanged_still_authorizes(
         skill_names=frozenset({"code-review"}),
         builtin_names=(),
         skill_file_bindings=bindings,
+        definition_digests={"code-review": "digest-a"},
     )
     spawn_calls = []
 
@@ -5516,6 +5549,9 @@ def test_bridge_skill_runner_no_reference_files_body_unchanged_still_authorizes(
 
     assert spawn_calls == ["Review this: the diff"]
     assert "code-review" in bindings.authorized
+    assert getattr(bindings, "definition_digests", {}) == {
+        "code-review": "digest-a"
+    }
 
 
 def test_bridge_skill_runner_bindings_none_is_byte_identical_legacy_behavior():
@@ -5537,6 +5573,148 @@ def test_bridge_skill_runner_bindings_none_is_byte_identical_legacy_behavior():
     runner.run("code-review", "the diff", spawn)
 
     assert spawn_calls == ["Review this: the diff"]
+
+
+def test_bridge_skill_runner_rejects_changed_definition_and_uses_next_snapshot():
+    class MutableSkills:
+        def __init__(self):
+            self.digest = "digest-a"
+            self.body = "body-a"
+            self.allowed_tools = ["calculator"]
+            self.reference_files = [
+                {"path": "references/a.md", "size": 1, "is_text": True}
+            ]
+            self.trust_service = self
+            self.execute_calls = 0
+
+        def current_fingerprint_digest(self, _name):
+            return self.digest
+
+        async def execute_skill(self, name, *, mode="local", args=None):
+            self.execute_calls += 1
+            return {
+                "skill_name": name,
+                "rendered_prompt": self.body,
+                "allowed_tools": self.allowed_tools,
+                "execution_mode": "inline",
+                "reference_files": self.reference_files,
+            }
+
+    skills = MutableSkills()
+    old_runner = _BridgeSkillRunner(
+        skills_service=skills,
+        skill_names=frozenset({"review"}),
+        builtin_names=("calculator", "datetime"),
+        skill_file_bindings=SkillFileBindings(authorized=set()),
+        definition_digests={"review": "digest-a"},
+    )
+    skills.digest = "digest-b"
+    skills.body = "body-b"
+    skills.allowed_tools = ["datetime"]
+    skills.reference_files = [
+        {"path": "references/b.md", "size": 2, "is_text": True}
+    ]
+    spawn_calls = []
+
+    refused = old_runner.run(
+        "review",
+        "",
+        lambda body, *, allowed_tools: spawn_calls.append((body, allowed_tools)),
+    )
+
+    assert refused.ok is False
+    assert "skill_definition_changed" in refused.error
+    assert skills.execute_calls == 0
+    assert spawn_calls == []
+
+    new_runner = _BridgeSkillRunner(
+        skills_service=skills,
+        skill_names=frozenset({"review"}),
+        builtin_names=("calculator", "datetime"),
+        skill_file_bindings=SkillFileBindings(authorized=set()),
+        definition_digests={"review": "digest-b"},
+    )
+
+    accepted = new_runner.run(
+        "review",
+        "",
+        lambda body, *, allowed_tools: (
+            spawn_calls.append((body, allowed_tools))
+            or ToolResult(ok=True, content="done")
+        ),
+    )
+
+    assert accepted.ok is True
+    assert skills.execute_calls == 1
+    assert spawn_calls == [
+        (
+            "body-b\n\nBundled files (readable via skill_file): "
+            "references/b.md (2 bytes)",
+            ("datetime",),
+        )
+    ]
+
+
+def test_bridge_skill_file_grant_stays_pinned_after_retrusted_mutation():
+    skills = _FakeSkillsServiceWithRefs(skill_name="review")
+    old_bindings = SkillFileBindings(
+        authorized=set(),
+        reader=lambda _name, _path: (
+            skills.read_calls.append(skills.bundle_body)
+            or {"content": skills.bundle_body}
+        ),
+        current_definition_digest=skills.current_fingerprint_digest,
+    )
+    old_runner = _BridgeSkillRunner(
+        skills_service=skills,
+        skill_names=frozenset({"review"}),
+        builtin_names=(),
+        skill_file_bindings=old_bindings,
+        definition_digests={"review": "digest-a"},
+    )
+
+    admitted = old_runner.run(
+        "review",
+        "",
+        lambda _body, *, allowed_tools: ToolResult(ok=True, content="done"),
+    )
+    skills.digest = "digest-b"
+    skills.bundle_body = "bundle-b"
+
+    with pytest.raises(PermissionError, match="skill_definition_changed"):
+        old_bindings.read("review", "references/api.md")
+
+    assert admitted.ok is True
+    assert skills.read_calls == []
+    assert "review" not in old_bindings.authorized
+
+    new_bindings = SkillFileBindings(
+        authorized=set(),
+        reader=lambda _name, _path: (
+            skills.read_calls.append(skills.bundle_body)
+            or {"content": skills.bundle_body}
+        ),
+        current_definition_digest=skills.current_fingerprint_digest,
+    )
+    new_runner = _BridgeSkillRunner(
+        skills_service=skills,
+        skill_names=frozenset({"review"}),
+        builtin_names=(),
+        skill_file_bindings=new_bindings,
+        definition_digests={"review": "digest-b"},
+    )
+
+    accepted = new_runner.run(
+        "review",
+        "",
+        lambda _body, *, allowed_tools: ToolResult(ok=True, content="done"),
+    )
+
+    assert accepted.ok is True
+    assert new_bindings.read("review", "references/api.md") == {
+        "content": "bundle-b"
+    }
+    assert skills.read_calls == ["bundle-b"]
 
 
 def test_run_reply_wires_one_skill_file_bindings_to_both_service_and_runner(
@@ -5622,7 +5800,7 @@ def test_run_reply_seeds_turn_bindings_into_shared_object(tmp_path):
     bridge = ConsoleAgentBridge(
         agent_runs_db=db,
         store=store,
-        provider_gateway=_ChunkGateway([["Tokyo."]]),
+        provider_gateway=_ChunkGateway([["Tokyo."], ["Kyoto."]]),
         skills_service=skills_service,
     )
 
@@ -5637,11 +5815,73 @@ def test_run_reply_seeds_turn_bindings_into_shared_object(tmp_path):
             assistant.id,
             conversation_id="conv-turn-bindings",
             turn_skill_bindings=("code-review",),
+            skills_context={
+                "available_skills": [
+                    {
+                        "name": "code-review",
+                        "description": "Review a diff",
+                        "trust_blocked": False,
+                        "disable_model_invocation": False,
+                        "definition_digest": "digest-a",
+                    }
+                ],
+                "blocked_skills": [],
+                "backend": "local",
+            },
         )
+
+        old_bindings = captured["runner_bindings"]
+        assert old_bindings.definition_digests == {"code-review": "digest-a"}
+        skills_service.digest = "digest-b"
+        skills_service.bundle_body = "bundle-b"
+        with pytest.raises(PermissionError, match="skill_definition_changed"):
+            old_bindings.read("code-review", "references/api.md")
+        assert "code-review" not in old_bindings.authorized
+
+        store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="again"
+        )
+        later_assistant = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+        )
+        later_outcome = _run(
+            bridge,
+            store,
+            session,
+            later_assistant.id,
+            conversation_id="conv-turn-bindings-b",
+            turn_skill_bindings=("code-review",),
+            skills_context={
+                "available_skills": [
+                    {
+                        "name": "code-review",
+                        "description": "Review a diff",
+                        "trust_blocked": False,
+                        "disable_model_invocation": False,
+                        "definition_digest": "digest-b",
+                    }
+                ],
+                "blocked_skills": [],
+                "backend": "local",
+            },
+        )
+        new_bindings = captured["runner_bindings"]
 
     assert outcome.status == "done"
     assert captured["runner_bindings"] is not None
     assert "code-review" in captured["runner_bindings"].authorized
+    assert getattr(captured["runner_bindings"], "definition_digests", {}) == {
+        "code-review": "digest-b"
+    }
+    assert later_outcome.status == "done"
+    assert skills_service.read_calls == []
+    assert new_bindings.read("code-review", "references/api.md") == {
+        "content": "bundle-b",
+        "size": 8,
+    }
+    assert skills_service.read_calls == [
+        ("code-review", "references/api.md", "bundle-b")
+    ]
     # Seeded onto the ONE shared object -- never two independently-seeded
     # copies (Task 4's invariant, re-verified here under a non-empty seed).
     assert captured["runner_bindings"] is captured["service_bindings"]
@@ -5868,6 +6108,92 @@ def test_compose_run_allowed_tools_includes_eligible_skill_names():
 def test_compose_run_allowed_tools_empty_context_is_builtins_plus_spawn():
     allowed = _compose_run_allowed_tools({}, ("calculator",))
     assert allowed == ("calculator", SPAWN_TOOL_NAME)
+
+
+def test_bridge_uses_captured_local_empty_until_a_later_successful_snapshot(
+    tmp_path,
+    monkeypatch,
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_chat_controller import (
+        capture_skill_context_maximum,
+    )
+
+    class FailingLocal:
+        def _load_index(self):
+            raise RuntimeError("capture unavailable")
+
+    failed_capture = capture_skill_context_maximum(
+        SimpleNamespace(
+            skills_scope_service=SimpleNamespace(local_service=FailingLocal())
+        )
+    )
+    skills = _FakeSkillsService(skill_name="new")
+    gateway = _ChunkGateway([["first"], ["second"]])
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="first")
+    first_assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=gateway,
+        skills_service=skills,
+    )
+    catalogs = []
+    real_compose = bridge_module._compose_run_registry_and_allowed
+
+    def capture_catalog(*args, **kwargs):
+        result = real_compose(*args, **kwargs)
+        catalogs.append(
+            {
+                entry.name
+                for entry in result[0].list_catalog()
+                if entry.source == "skill"
+            }
+        )
+        return result
+
+    monkeypatch.setattr(
+        bridge_module, "_compose_run_registry_and_allowed", capture_catalog
+    )
+
+    first = _run(
+        bridge,
+        store,
+        session,
+        first_assistant.id,
+        conversation_id="capture-failed",
+        skills_context=(
+            failed_capture if failed_capture.get("backend") == "local" else None
+        ),
+    )
+
+    assert first.status == "done"
+    assert skills.get_context_calls == 0
+    assert "new" not in catalogs[0]
+
+    later_context = asyncio.run(skills.get_context(mode="local"))
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="later")
+    later_assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    later = _run(
+        bridge,
+        store,
+        session,
+        later_assistant.id,
+        conversation_id="capture-succeeded",
+        skills_context=later_context,
+    )
+
+    assert later.status == "done"
+    assert skills.get_context_calls == 1
+    assert "new" in catalogs[1]
 
 
 def test_compose_run_allowed_tools_builtin_shadows_same_named_skill():
@@ -7044,6 +7370,45 @@ def test_console_run_budget_is_raised_above_the_bare_engine_default(tmp_path):
     assert run["budget"]["max_wall_seconds"] > 240.0
 
 
+def test_admitted_run_budget_is_intersected_with_later_live_narrowing():
+    admitted = RunBudget(
+        max_steps=20,
+        max_wall_seconds=300.0,
+        max_subagents=4,
+        max_model_retries=1,
+        max_subagent_result_chars=8_000,
+        max_tool_result_chars=0,
+        max_model_turns=18,
+        max_total_tokens=1_000,
+        max_tool_call_seconds=0,
+    )
+    live = RunBudget(
+        max_steps=10,
+        max_wall_seconds=600.0,
+        max_subagents=2,
+        max_model_retries=3,
+        max_subagent_result_chars=4_000,
+        max_tool_result_chars=9_000,
+        max_model_turns=30,
+        max_total_tokens=0,
+        max_tool_call_seconds=15.0,
+    )
+
+    resolved = intersect_console_run_budget(admitted, live)
+
+    assert resolved == RunBudget(
+        max_steps=10,
+        max_wall_seconds=300.0,
+        max_subagents=2,
+        max_model_retries=1,
+        max_subagent_result_chars=4_000,
+        max_tool_result_chars=9_000,
+        max_model_turns=18,
+        max_total_tokens=1_000,
+        max_tool_call_seconds=15.0,
+    )
+
+
 def _make_bridge() -> ConsoleAgentBridge:
     store = MagicMock()
     store.messages_for_session.return_value = []
@@ -7726,6 +8091,162 @@ def test_resumed_sidecars_reach_normal_prepared_gateway_once(tmp_path) -> None:
         )
         == 1
     )
+    forbidden_transport_keys = {
+        "_native_message_id",
+        "turn_id",
+        "attention_id",
+        "queue_entry_id",
+        "terminal_receipt_id",
+        "runtime_id",
+    }
+
+    def assert_no_runtime_keys(value):
+        if isinstance(value, dict):
+            assert forbidden_transport_keys.isdisjoint(value)
+            for nested in value.values():
+                assert_no_runtime_keys(nested)
+        elif isinstance(value, (list, tuple)):
+            for nested in value:
+                assert_no_runtime_keys(nested)
+
+    assert_no_runtime_keys(prepared.messages_payload)
+
+
+@pytest.mark.asyncio
+async def test_controller_agent_transport_preserves_vision_filtering_and_privacy(
+    tmp_path,
+) -> None:
+    class CapturingGateway(ConsoleProviderGateway):
+        def __init__(self) -> None:
+            super().__init__(config_provider=lambda: {}, environ={})
+            self.dispatched: list[object] = []
+
+        async def resolve_for_send(self, _selection):
+            return provider_resolution(
+                provider="moonshot",
+                model="kimi-k3",
+                base_url="https://api.moonshot.ai/v1",
+                execution_key="moonshot",
+                streaming=True,
+                continuation_protocol="chat_completions",
+            )
+
+        async def stream_chat(self, _resolution, messages, **_kwargs):
+            self.dispatched.append(messages)
+            yield "finished"
+
+    gateway = CapturingGateway()
+    store = ConsoleChatStore()
+    session = store.create_session(ephemeral=True)
+    image_attachment = PendingAttachment(
+        file_path="private-image.png",
+        display_name="private-image.png",
+        file_type="image",
+        insert_mode="attachment",
+        data=b"PNG-ALLOWED",
+        mime_type="image/png",
+    )
+    context_attachment = PendingAttachment(
+        file_path="private-document.txt",
+        display_name="private-document.txt",
+        file_type="document",
+        insert_mode="context",
+        data=b"FILE-MUST-NOT-LEAVE",
+        mime_type="text/plain",
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=AgentRunsDB(tmp_path / "agent-transport.db", client_id="t"),
+        store=store,
+        provider_gateway=gateway,
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+        provider="moonshot",
+        model="kimi-k3",
+    )
+    base = controller.resolve_runtime_turn_configuration_snapshot(session.id)
+    configuration = ConsoleTurnConfigurationSnapshot.capture(
+        session_id=session.id,
+        provider_selection=base.provider_selection,
+        scratch_space=base.scratch_space,
+        session_settings=base.session_settings,
+        workspace_roots=base.workspace_roots,
+        presentation_context=base.presentation_context,
+        library_policy_maximum=base.library_policy_maximum,
+        library_scope_maximum=base.library_scope_maximum,
+        project_authority=base.project_authority,
+        character_authority=base.character_authority,
+        prompt_transform_inputs=base.prompt_transform_inputs,
+        skill_context_maximum=base.skill_context_maximum,
+        mcp_tool_maximum=base.mcp_tool_maximum,
+        mcp_definition_maximum=base.mcp_definition_maximum,
+        capabilities={"vision": True, "max_history_images": 1},
+        rag_defaults=base.rag_defaults,
+        tool_configuration={
+            **base.tool_configuration,
+            "agent_runtime_enabled": True,
+        },
+        provider_payload_settings=base.provider_payload_settings,
+    )
+
+    await controller.submit_draft(
+        "describe",
+        session_id=session.id,
+        configuration=configuration,
+        accepted_attachments=(image_attachment, context_attachment),
+    )
+
+    nonvision_configuration = ConsoleTurnConfigurationSnapshot.capture(
+        session_id=session.id,
+        provider_selection=base.provider_selection,
+        scratch_space=base.scratch_space,
+        session_settings=base.session_settings,
+        project_authority=base.project_authority,
+        capabilities={"vision": False, "max_history_images": 0},
+        tool_configuration={
+            **base.tool_configuration,
+            "agent_runtime_enabled": True,
+        },
+    )
+    await controller.submit_draft(
+        "follow up",
+        session_id=session.id,
+        configuration=nonvision_configuration,
+        accepted_attachments=(),
+    )
+
+    assert len(gateway.dispatched) == 2
+    vision_request, nonvision_request = gateway.dispatched
+    assert isinstance(vision_request, list)
+    assert isinstance(nonvision_request, list)
+    assert "data:image/png;base64," in repr(vision_request)
+    assert "image_url" not in repr(nonvision_request)
+    assert "private-document.txt" not in repr(gateway.dispatched)
+    assert "FILE-MUST-NOT-LEAVE" not in repr(gateway.dispatched)
+
+    forbidden = {
+        "_native_message_id",
+        "turn_id",
+        "attention_id",
+        "queue_entry_id",
+        "terminal_receipt_id",
+        "runtime_id",
+    }
+
+    def assert_private_ids_absent(value):
+        if isinstance(value, dict):
+            assert forbidden.isdisjoint(value)
+            for nested in value.values():
+                assert_private_ids_absent(nested)
+        elif isinstance(value, (list, tuple)):
+            for nested in value:
+                assert_private_ids_absent(nested)
+
+    assert_private_ids_absent(vision_request)
+    assert_private_ids_absent(nonvision_request)
 
 
 def test_run_reply_returns_runoutcome_error():

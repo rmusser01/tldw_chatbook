@@ -28,6 +28,7 @@ These tests protect the test session's own I/O: fd 1/2 are ``os.dup()``-
 backed up before each test and unconditionally ``os.dup2()``-restored in a
 ``finally``, regardless of whether the bug reproduces.
 """
+
 import os
 import subprocess
 import sys
@@ -44,6 +45,19 @@ from tldw_chatbook.Utils.fd_protection import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_bounded_guard_does_not_mutate_streams_or_steal_another_owner():
+    original = (sys.stdout, sys.stderr, sys.stdin, os.environ.copy())
+    with _fd_protection_lock:
+        with pytest.raises(TimeoutError, match="fd_protection_busy"):
+            with protect_file_descriptors(timeout=0):
+                pytest.fail("busy guard must not enter")
+        assert _fd_protection_lock.locked()
+        assert (sys.stdout, sys.stderr, sys.stdin, os.environ.copy()) == original
+    with protect_file_descriptors(timeout=0):
+        assert _fd_protection_lock.locked()
+    assert not _fd_protection_lock.locked()
 
 
 class _NonFdBackedStream:
@@ -186,7 +200,9 @@ def test_protect_file_descriptors_restores_original_sys_streams(monkeypatch):
         assert sys.stderr is fake_stderr
 
 
-def test_protect_file_descriptors_is_a_noop_when_streams_are_already_fd_backed(tmp_path):
+def test_protect_file_descriptors_is_a_noop_when_streams_are_already_fd_backed(
+    tmp_path,
+):
     """When sys.stdout/sys.stderr already have valid, real file descriptors
     (the common non-Textual case, e.g. a plain script or pytest itself), the
     except-branch must never trigger and nothing should be touched."""
@@ -396,7 +412,9 @@ def test_lock_is_held_for_the_full_context_manager_body(monkeypatch):
     # After the context manager has fully exited, the lock must be free
     # again (no leak).
     reacquired = _fd_protection_lock.acquire(timeout=1)
-    assert reacquired, "the lock was not released after protect_file_descriptors() exited"
+    assert reacquired, (
+        "the lock was not released after protect_file_descriptors() exited"
+    )
     _fd_protection_lock.release()
 
 

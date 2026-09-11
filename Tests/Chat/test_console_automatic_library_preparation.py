@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.Chat.console_close_helpers import close_controller_session
 from tldw_chatbook.Agents.agent_models import RUN_DONE, RunOutcome
 from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
@@ -38,6 +39,7 @@ from tldw_chatbook.Chat.console_library_policy import (
     AUTOMATIC_LIBRARY_SOURCE_TYPES,
     ConsoleAssistantLibraryAccess,
     ConsoleAutoRetrieve,
+    ConsoleLibraryPolicyDefaults,
     ConsoleLibraryPolicySnapshot,
 )
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
@@ -69,7 +71,21 @@ from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
 
 
 class ConsoleChatStore(_ConsoleChatStore):
-    """Test store whose intentionally db-less sessions are explicitly ephemeral."""
+    """Ephemeral test store with an automatic-retrieval authority ceiling."""
+
+    def __init__(self, **kwargs):
+        # The fake policy coordinator below is the live policy under test.
+        # Runtime custody now also freezes each session holder as the turn's
+        # maximum authority; keep that maximum permissive so AUTOMATIC/NEVER
+        # test cases continue to be selected by the fake's live snapshot.
+        kwargs.setdefault(
+            "library_policy_defaults",
+            ConsoleLibraryPolicyDefaults(
+                auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+                assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+            ),
+        )
+        super().__init__(**kwargs)
 
     def create_session(self, **kwargs):
         kwargs.setdefault("ephemeral", self.persistence is None)
@@ -913,7 +929,7 @@ async def test_close_during_provider_attempt_settles_live_preparation_without_le
     assert session_id in controller._active_stream_tasks
     assert session_id in controller._active_assistant_message_ids
 
-    controller.close_session(session_id)
+    close_controller_session(controller, session_id)
     await asyncio.gather(task, return_exceptions=True)
     await asyncio.sleep(0)
 
@@ -1054,7 +1070,7 @@ def test_controller_close_removes_cancellable_preparation_sidecars():
     )
     controller._prepared_send_continuations[paused.preparation_id] = object()
 
-    controller.close_session(paused.session_id)
+    close_controller_session(controller, paused.session_id)
 
     assert store.preparation_for_session(paused.session_id) is None
     assert controller._preparation_outcomes == {}
@@ -1259,7 +1275,7 @@ async def test_skill_refusal_cleans_preparation_and_allows_next_send(monkeypatch
     gateway = _StreamingFence()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
 
-    async def refuse(_messages):
+    async def refuse(_messages, _turn_context):
         return _messages, "skill refused", (), (), None
 
     monkeypatch.setattr(controller, "_apply_skill_substitution", refuse)
@@ -1963,7 +1979,7 @@ async def test_close_drops_accepted_owner_before_cancelled_task_finally_settles(
     preparation = store.preparation_for_session(session_id)
     assert preparation is not None
 
-    controller.close_session(session_id)
+    close_controller_session(controller, session_id)
 
     assert not task.done()
     live = store.preparation_by_id(preparation.preparation_id)
@@ -2173,7 +2189,7 @@ async def test_close_drops_submit_owner_before_cancelled_task_finalizer(
     preparation = store.preparation_for_session(session_id)
     assert preparation is not None and preparation.state is expected_state
 
-    controller.close_session(session_id)
+    close_controller_session(controller, session_id)
     for _ in range(10):
         await asyncio.sleep(0)
         if held.cancelled.is_set():
@@ -2243,7 +2259,7 @@ async def test_explicit_evidence_lease_survives_preaccept_failure(monkeypatch):
         _capture_staged_evidence,
     )
 
-    async def fail_dictionary(_messages, _session_id):
+    async def fail_dictionary(_messages, _session_id, _turn_context):
         raise RuntimeError("dictionary failed")
 
     monkeypatch.setattr(controller, "_apply_chat_dictionaries", fail_dictionary)
@@ -2975,7 +2991,7 @@ async def test_ready_close_removes_echo_idempotently_and_preserves_evidence_laun
     assert preparation is not None
     assert preparation.state is ConsoleTurnPreparationState.READY
 
-    controller.close_session(session.id)
+    close_controller_session(controller, session.id)
     (result,) = await asyncio.gather(submit, return_exceptions=True)
 
     assert isinstance(result, ConsoleSubmitResult)

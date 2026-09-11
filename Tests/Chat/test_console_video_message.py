@@ -195,8 +195,12 @@ def test_append_video_message_persists_namespaced_payload(store_with_session):
     # Never provenance keys, and never the v25 sidecar kwarg.
     assert '"interrupted"' not in payload
     assert "generation_metadata" not in created
-    # The persisted payload round-trips back to the original facts.
-    assert VideoGenerationMetadata.from_json(payload) == _video_meta()
+    # The persisted payload preserves the original facts plus its local-only
+    # exact terminal-attention receipt.
+    assert VideoGenerationMetadata.from_json(payload) == msg.video_metadata
+    assert msg.video_metadata is not None
+    assert msg.video_metadata.terminal_receipt_id
+    assert created["terminal_receipt_id"] == msg.video_metadata.terminal_receipt_id
 
 
 def test_failed_video_create_does_not_publish_ghost_store_state():
@@ -273,7 +277,8 @@ def test_content_update_rewrites_video_payload_not_provenance(store_with_session
     msg = store.append_video_message(sid, video_metadata=_video_meta(), persist=True)
     store._persist_existing_message(msg)
     update = persistence.content_updates[-1]
-    assert update["metadata_json"] == _video_meta().to_json()
+    assert msg.video_metadata is not None
+    assert update["metadata_json"] == msg.video_metadata.to_json()
 
 
 def test_metadata_flush_prefers_video_payload(store_with_session):
@@ -281,7 +286,8 @@ def test_metadata_flush_prefers_video_payload(store_with_session):
     msg = store.append_video_message(sid, video_metadata=_video_meta(), persist=True)
     store._persist_metadata_only(msg)
     flush = persistence.metadata_updates[-1]
-    assert flush["metadata_json"] == _video_meta().to_json()
+    assert msg.video_metadata is not None
+    assert flush["metadata_json"] == msg.video_metadata.to_json()
 
 
 def test_screen_state_round_trip_preserves_video_metadata(store_with_session):
@@ -438,6 +444,9 @@ def test_webm_video_message_reload_round_trip_and_image_reader_isolation(tmp_pat
         )
         conversation_id = session.persisted_conversation_id
         assert conversation_id is not None
+        assert msg.video_metadata is not None
+        terminal_receipt_id = msg.video_metadata.terminal_receipt_id
+        assert terminal_receipt_id
 
         # ---- Simulate reload: persist -> DROP the store -> fresh store ----
         screen, reloaded = _reload_video_messages(db, conversation_id)
@@ -457,7 +466,10 @@ def test_webm_video_message_reload_round_trip_and_image_reader_isolation(tmp_pat
         assert specs[video_msg.id].file_path == str(stored_path)
 
         # The named card's facts and still-within-TTL bytes survive reload.
-        assert video_msg.video_metadata == _video_meta(container="webm")
+        assert video_msg.video_metadata == _video_meta(
+            container="webm",
+            terminal_receipt_id=terminal_receipt_id,
+        )
         assert video_msg.metadata is None
         assert parse_video_marker(video_msg.content) == "dusk-over-neon-tokyo"
 
@@ -470,9 +482,9 @@ def test_webm_video_message_reload_round_trip_and_image_reader_isolation(tmp_pat
         # renders the marker+metadata with no byte access and no error.
         payload = ConsoleMessageController._serialize_console_message(video_msg)
         assert payload["content"] == "[video] dusk-over-neon-tokyo"
-        assert VideoGenerationMetadata.from_json(
-            payload["metadata_json"]
-        ) == _video_meta(container="webm")
+        assert VideoGenerationMetadata.from_json(payload["metadata_json"]) == (
+            video_msg.video_metadata
+        )
     finally:
         db.close_connection()
 

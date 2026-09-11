@@ -116,22 +116,22 @@ class ConsoleProviderIntent:
 class ConsoleTurnLibraryAuthority:
     """Immutable maximum Library authority for one turn and its subagents."""
 
-    policy: ConsoleLibraryPolicySnapshot
-    direct_library_tools: bool
-    source_types: tuple[str, ...]
-    scope_snapshot: ConsoleLibraryItemScopeSnapshot
-    provider_intent: ConsoleProviderIntent
-    attempt_id: str
+    policy: ConsoleLibraryPolicySnapshot = field(repr=False)
+    direct_library_tools: bool = field(repr=False)
+    source_types: tuple[str, ...] = field(repr=False)
+    scope_snapshot: ConsoleLibraryItemScopeSnapshot = field(repr=False)
+    provider_intent: ConsoleProviderIntent = field(repr=False)
+    attempt_id: str = field(repr=False)
 
 
 @dataclass(frozen=True, slots=True)
 class ConsoleResolvedDestination:
     """Credential-free effective provider destination."""
 
-    provider: str
-    model: str | None
-    endpoint_identity: str
-    egress_class: ConsoleEgressClass
+    provider: str = field(repr=False)
+    model: str | None = field(repr=False)
+    endpoint_identity: str = field(repr=False)
+    egress_class: ConsoleEgressClass = field(repr=False)
     endpoint_provenance: ConsoleEndpointProvenance = (
         ConsoleEndpointProvenance.DURABLE_CONFIGURATION
     )
@@ -217,6 +217,7 @@ class ConsoleAssistantSettlement:
     terminal_state: Literal["complete", "stopped", "failed", "discarded"]
     content: str
     metadata_json: str | None
+    terminal_receipt_id: str | None = None
     usage_json: str | None = None
     provider_continuation_json: str | None = None
     thinking_blocks_json: str | None = field(default=None, repr=False)

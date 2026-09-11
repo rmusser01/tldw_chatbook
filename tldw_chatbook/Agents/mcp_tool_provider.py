@@ -209,6 +209,8 @@ class MCPToolProvider:
         builtin_raw_name_exclusions: Any = None,
         profile_id_provider: Callable[[], str] | None = None,
         persona_policy_provider: Callable[[], "PersonaToolPolicy | None"] | None = None,
+        maximum_tool_ids: frozenset[str] | None = None,
+        maximum_definition_hashes: Mapping[str, str] | None = None,
     ) -> None:
         """Build an uncomposed provider; call `compose_catalog()` before use.
 
@@ -260,6 +262,16 @@ class MCPToolProvider:
         # Persona require_confirmation floor (final review): read fresh per
         # gate resolution; None keeps every pre-feature call identical.
         self._persona_policy_provider = persona_policy_provider
+        self._maximum_tool_ids = (
+            frozenset(str(value) for value in maximum_tool_ids)
+            if maximum_tool_ids is not None
+            else None
+        )
+        self._maximum_definition_hashes = (
+            {str(key): str(value) for key, value in maximum_definition_hashes.items()}
+            if maximum_definition_hashes is not None
+            else None
+        )
         self._catalog: list[ToolCatalogEntry] = []
         # llm_name -> (HubTool, EffectiveToolState as resolved at composition
         # time). Built ONCE by compose_catalog() so list_catalog()/
@@ -375,11 +387,21 @@ class MCPToolProvider:
         effective = self._service.effective_tool_states(
             hub_tools, **self._profile_kwargs()
         )
+        from tldw_chatbook.MCP.permission_store import definition_hash
         eligible = [
             tool
             for tool in hub_tools
             if effective.get((tool.server_key, tool.name), _FAIL_CLOSED_STATE).state
             != "deny"
+            and (
+                self._maximum_tool_ids is None
+                or tool.tool_id in self._maximum_tool_ids
+            )
+            and (
+                self._maximum_definition_hashes is None
+                or self._maximum_definition_hashes.get(tool.tool_id)
+                == definition_hash(tool.description, tool.input_schema)
+            )
         ]
 
         # Distinct servers (not tools) among the eligible, non-denied set

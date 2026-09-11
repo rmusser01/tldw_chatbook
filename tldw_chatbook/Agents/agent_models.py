@@ -221,13 +221,51 @@ MAX_LOOP_PERIOD = 4
 class SkillFileBindings:
     """Per-run authorization + reader for the skill_file runtime tool.
 
-    Mutable by design: seeded with the turn's $skill names; SkillRunner adds
-    each spawned skill's name before spawn so a skill can always read its own
-    bundle. Authorization lives here, never in config.allowed_tools.
+    Mutable by design: seeded with the turn's admitted skill definitions;
+    SkillRunner adds each spawned definition before spawn so a skill can read
+    only that exact bundle. Authorization lives here, never in
+    config.allowed_tools.
     """
 
     authorized: set[str]
-    reader: Callable[[str, str], dict] | None = None
+    reader: Callable[[str, str], dict] | None = field(default=None, repr=False)
+    definition_digests: dict[str, str] = field(default_factory=dict, repr=False)
+    current_definition_digest: Callable[[str], str | None] | None = field(
+        default=None, repr=False
+    )
+
+    def authorize(self, skill_name: str, definition_digest: str | None) -> None:
+        """Grant one exact admitted skill definition, or fail closed."""
+        digest = str(definition_digest or "")
+        if not digest:
+            self.revoke(skill_name)
+            return
+        self.definition_digests[skill_name] = digest
+        self.authorized.add(skill_name)
+
+    def revoke(self, skill_name: str) -> None:
+        """Remove both the name and its exact admitted definition."""
+        self.authorized.discard(skill_name)
+        self.definition_digests.pop(skill_name, None)
+
+    def read(self, skill_name: str, path: str) -> dict:
+        """Revalidate the exact admitted definition before reading bytes."""
+        expected = self.definition_digests.get(skill_name)
+        resolver = self.current_definition_digest
+        if skill_name not in self.authorized or not expected or resolver is None:
+            self.revoke(skill_name)
+            raise PermissionError("skill_definition_changed")
+        try:
+            current = resolver(skill_name)
+        except Exception:  # noqa: BLE001 -- uncertainty revokes old authority
+            self.revoke(skill_name)
+            raise PermissionError("skill_definition_changed") from None
+        if current != expected:
+            self.revoke(skill_name)
+            raise PermissionError("skill_definition_changed")
+        if self.reader is None:
+            raise RuntimeError("no reader configured")
+        return self.reader(skill_name, path)
 
 
 @dataclass(frozen=True)

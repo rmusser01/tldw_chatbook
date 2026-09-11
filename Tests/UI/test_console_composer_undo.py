@@ -769,6 +769,9 @@ async def test_console_undo_redo_empty_stack_is_silent_noop_via_screen():
         composer.load_draft("untouched")
         composer.focus()
         await pilot.pause()
+        # Attach reconciliation may still have an idle full-sync queued.
+        # Settle the same-owner draft before observing the no-op key action.
+        console._session._sync_console_session_draft()
         draft_before = store.session_draft(session_id)
 
         await pilot.press("ctrl+z")
@@ -1175,9 +1178,7 @@ async def test_console_refused_send_preserves_undo_history(monkeypatch):
 
         monkeypatch.setattr(controller, "submit_draft", _refused)
 
-        await console._submit_console_native_draft(
-            "attempted body", session_id=session_a.id
-        )
+        await console._dispatch_console_draft_send("attempted body")
 
         # The refusal must NOT have dropped A's banked history.
         assert session_a.id in console._console_undo_histories

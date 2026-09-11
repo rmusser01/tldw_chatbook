@@ -1466,8 +1466,9 @@ async def test_conversation_settings_return_real_navigation_restores_fresh_conso
             ]
             if (
                 consoles
-                and consoles[-1] is not original_console
+                and consoles[-1] is original_console
                 and isinstance(app.screen_stack[-1], ConsoleSettingsModal)
+                and app.current_tab == "chat"
             ):
                 returned_console = consoles[-1]
                 returned_modal = app.screen_stack[-1]
@@ -1476,7 +1477,8 @@ async def test_conversation_settings_return_real_navigation_restores_fresh_conso
 
         assert returned_console is not None
         assert returned_modal is not None
-        assert returned_console is not original_console
+        assert returned_modal is not original_modal
+        assert returned_console is original_console
         assert app.current_tab == "chat"
         await _wait_for_selector(
             returned_modal,
@@ -1573,7 +1575,7 @@ async def test_warm_console_resume_consumes_staged_chat_handoff():
 
 
 @pytest.mark.asyncio
-async def test_conversation_settings_return_real_router_unmount_after_transfer_does_not_replay_stale_handoff(
+async def test_conversation_settings_return_real_router_suspend_after_transfer_does_not_replay_stale_handoff(
     monkeypatch,
 ):
     """Forced dismissal after modal transfer cannot turn A back into pending work."""
@@ -1640,7 +1642,7 @@ async def test_conversation_settings_return_real_router_unmount_after_transfer_d
         returned_console = app._navigation_outgoing_screen()
         returned_modal = app.screen
         assert isinstance(returned_console, ChatScreen)
-        assert returned_console is not original_console
+        assert returned_console is original_console
         assert isinstance(returned_modal, ConsoleSettingsModal)
         assert returned_console._suspended_conversation_settings is None
         assert (
@@ -1652,16 +1654,14 @@ async def test_conversation_settings_return_real_router_unmount_after_transfer_d
             target.return_revision,
         )
 
-        # The production router dismisses the modal before replacing and
-        # unmounting its content Console. The accepted lifecycle does not
+        # The production router dismisses the modal before suspending its
+        # cached Console. The accepted lifecycle does not
         # persist the force-dismissed modal draft; it only keeps the already
         # completed handoff from becoming retry work again.
         await app.handle_screen_navigation(NavigateToScreen("home"))
-        await wait_for_signal(
-            status_cancelled,
-            what="post-transfer status worker cancellation",
-        )
-        status_after_unmount = app.pending_handoffs.exact_revision_status(
+        assert not status_cancelled.is_set()
+        allow_status.set()
+        status_after_suspend = app.pending_handoffs.exact_revision_status(
             HandoffChannel.CONVERSATION_SETTINGS_RETURN,
             target.return_revision,
         )
@@ -1674,14 +1674,14 @@ async def test_conversation_settings_return_real_router_unmount_after_transfer_d
         await app.handle_screen_navigation(NavigateToScreen("chat"))
         fresh_console = app._navigation_outgoing_screen()
         assert isinstance(fresh_console, ChatScreen)
-        assert fresh_console is not returned_console
+        assert fresh_console is returned_console
         for _ in range(80):
             if not fresh_console._conversation_settings_return_restore_in_progress:
                 break
             await pilot.pause(0.05)
 
         assert status_at_transfer == "settled"
-        assert status_after_unmount == "settled"
+        assert status_after_suspend == "settled"
         saved_native_console_state = saved_console_state["native_console_state"]
         assert saved_native_console_state["suspended_conversation_settings"] is None
         assert (
@@ -1814,6 +1814,12 @@ async def test_conversation_settings_return_status_fault_blocks_replacement_unti
 
     app = _build_test_app()
     _configure_native_ready_console(app)
+    # Isolate A's exact-status/finally contract from independent mount/resume
+    # retry consumers. Those are legitimate retries, covered by router tests.
+    consume_return = ChatScreen._consume_pending_conversation_settings_return
+    monkeypatch.setattr(
+        ChatScreen, "_consume_pending_conversation_settings_return", lambda self: None
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -1896,6 +1902,7 @@ async def test_conversation_settings_return_status_fault_blocks_replacement_unti
         )
 
         console.apply_navigation_context(first_target.to_context())
+        consume_return(console)
         deadline = time.monotonic() + _ASYNC_SETTLE_TIMEOUT
         while time.monotonic() < deadline:
             if (
@@ -1922,7 +1929,7 @@ async def test_conversation_settings_return_status_fault_blocks_replacement_unti
             == "pending"
         )
 
-        console._consume_pending_conversation_settings_return()
+        consume_return(console)
         deadline = time.monotonic() + _ASYNC_SETTLE_TIMEOUT
         while time.monotonic() < deadline:
             if (
@@ -2460,10 +2467,10 @@ async def test_conversation_settings_return_rapid_unmount_before_consumer_keeps_
 
 
 @pytest.mark.asyncio
-async def test_conversation_settings_return_unmount_releases_acquired_exact_claim(
+async def test_conversation_settings_return_suspend_releases_acquired_exact_claim(
     monkeypatch,
 ):
-    """Unmount is a settlement boundary even when restore suppresses cancellation."""
+    """Suspend releases the exact claim without relying on worker cancellation."""
 
     app = _build_production_app(configured_default="chat")
     _configure_native_ready_console(app)
@@ -2505,31 +2512,26 @@ async def test_conversation_settings_return_unmount_releases_acquired_exact_clai
         monkeypatch.setattr(console, "_open_console_settings", hold_restore)
         console.apply_navigation_context(target.to_context())
         console._consume_pending_conversation_settings_return()
-        await wait_for_signal(restore_started, what="Conversation settings restore claim")
-        assert (
-            app.pending_handoffs.exact_revision_status(
-                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-                target.return_revision,
-            )
-            == "in_flight"
-        )
-        replacement_revision = app.pending_handoffs.stage(
-            HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-            ConversationSettingsReturnIntent(
-                session.id,
-                store.session_settings_revision(session.id),
-                "model",
-                None,
-            ),
-        )
-
-        await app.handle_screen_navigation(NavigateToScreen("settings"))
-        await wait_for_signal(
-            restore_cancelled,
-            what="Conversation settings restore worker cancellation",
-        )
-
         try:
+            await wait_for_signal(restore_started, what="Conversation settings restore claim")
+            assert (
+                app.pending_handoffs.exact_revision_status(
+                    HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                    target.return_revision,
+                )
+                == "in_flight"
+            )
+            replacement_revision = app.pending_handoffs.stage(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                ConversationSettingsReturnIntent(
+                    session.id,
+                    store.session_settings_revision(session.id),
+                    "model",
+                    None,
+                ),
+            )
+            await app.handle_screen_navigation(NavigateToScreen("settings"))
+            assert not restore_cancelled.is_set()
             assert console not in app.screen_stack
             assert (
                 app.pending_handoffs.exact_revision_status(
@@ -6447,7 +6449,11 @@ async def test_console_unsupported_provider_block_renders_one_normalized_system_
         )
         await console._sync_native_console_chat_ui()
 
-        await console._submit_console_native_draft("hello")
+        # The rendering contract is below the queue's setup-admission gate.
+        await console._ensure_console_chat_controller().submit_draft(
+            "hello", session_id=session.id
+        )
+        await console._sync_native_console_chat_ui()
         await _wait_for_text(console, pilot, "Provider blocked")
 
         messages = store.messages_for_session(store.active_session_id)
@@ -6464,6 +6470,30 @@ async def test_console_unsupported_provider_block_renders_one_normalized_system_
             console._ensure_console_chat_controller().run_state.visible_copy
             == system_messages[0]
         )
+
+
+@pytest.mark.asyncio
+async def test_console_unsupported_provider_dispatch_refuses_before_custody():
+    app = _build_console_send_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="wip_provider", model="test-model"),
+        )
+        await console._sync_native_console_chat_ui()
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("keep unsupported draft")
+        assert not await console._dispatch_console_draft_send(composer.draft_text())
+        assert composer.draft_text() == "keep unsupported draft"
+        messages = store.messages_for_session(session.id)
+        assert [(message.role, message.content) for message in messages] == [
+            (ConsoleMessageRole.SYSTEM, "Finish provider setup before sending.")
+        ]
 
 
 @pytest.mark.asyncio
@@ -7186,13 +7216,12 @@ async def test_console_failed_send_does_not_record_first_send_flag():
 
 @pytest.mark.asyncio
 async def test_console_accepted_send_clears_composer_before_run_end():
-    """The composer clears when the submit is accepted, not only at run end."""
-    app = _build_test_app()
+    """Runtime admission clears the composer while the run is still live."""
+    gateway = WaitingGateway()
+    app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
-    app.console_provider_gateway_factory = lambda: CapturingGateway(
-        chunks=("accepted",)
-    )
+    app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -7200,15 +7229,18 @@ async def test_console_accepted_send_clears_composer_before_run_end():
         await _wait_for_selector(console, pilot, "#console-native-composer")
         _select_llamacpp_console(console)
         controller = console._ensure_console_chat_controller()
-        assert controller.on_submission_accepted is not None
+        assert controller.on_submission_accepted is None
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("clear me on accept")
-        # Invoke the acceptance hook exactly as the controller does the moment
-        # the user message is persisted; the composer must clear immediately.
-        controller.on_submission_accepted()
-        await pilot.pause()
+        console.query_one("#console-send-message", Button).press()
+        await asyncio.wait_for(gateway.started.wait(), timeout=_ASYNC_SETTLE_TIMEOUT)
+
         assert composer.draft_text() == ""
+        assert controller.run_state.status is ConsoleRunStatus.STREAMING
+
+        gateway.release.set()
+        await _wait_for_text(console, pilot, "partial done")
 
 
 @pytest.mark.asyncio

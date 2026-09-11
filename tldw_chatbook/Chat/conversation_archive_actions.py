@@ -114,6 +114,9 @@ def _session_refusal(app: Any, session: Any) -> str | None:
     ):
         return "Wait for the current send to finish before archiving."
     runtime = getattr(app, "console_runtime", None)
+    voice = getattr(runtime, "_voice_process_supervisor", None)
+    if voice is not None and voice.has_live_session(session.id):
+        return "Stop Hands-free and wait for its work to finish before archiving."
     controller = getattr(runtime, "chat_controller", None)
     if (
         controller is not None

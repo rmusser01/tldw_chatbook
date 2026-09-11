@@ -616,3 +616,14 @@ deleted siblings, gaps, unknown owners and over-limit chains remain ineligible.
 Historical calls, request heads and reconstructed requests stay immutable. This adds
 only bounded transient identity evidence to the existing witness; no schema, durable
 registry, retention change or general history-replacement permission is introduced.
+
+### Integration recorded 2026-09-10: local terminal receipts
+
+The closed-history proof composes with ADR-094 terminal publication. In addition
+to its existing empty metadata forms, it permits exactly the serialized
+`MessageMetadata` defaults plus one canonical, validated terminal receipt ID.
+Compare JSON field types as well as values; numeric zero is not a false boolean.
+The receipt is local control metadata, not provider content or delivery evidence.
+Nonempty provider, engine, model, media, unknown fields and malformed receipts
+remain ineligible. All parent, revision, sidecar, checkpoint and final-binding
+revalidation requirements above remain unchanged.

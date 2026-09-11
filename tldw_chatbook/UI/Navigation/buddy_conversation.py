@@ -272,20 +272,40 @@ class BuddyConversationCoordinator:
         if session is None or controller is None:
             return {}
         host = controller._interrupt_host
-        return {
+        payloads = {
             kind: dict(payload)
-            for kind in host.payloads
+            for kind in ("question", "worktree_merge")
             if (payload := host.head_round_payload(kind, session.id)) is not None
         }
+        projection = controller.pending_decision_projection(session.id)
+        if projection is not None:
+            payloads[projection.decision_type] = dict(projection.payload)
+        return payloads
 
-    def show_decisions(self, owner: object, binding: BuddyBinding | None) -> None:
+    def show_decisions(
+        self,
+        owner: object,
+        binding: BuddyBinding | None,
+        *,
+        decision_id: str | None = None,
+    ) -> None:
         controller = self.controller
         if controller is not None:
             session = self.resolve(binding) if binding is not None else None
+            projection = (
+                controller.pending_decision_projection(session.id) if session else None
+            )
+            if (
+                projection is None
+                or projection.decision_id != decision_id
+                or projection.payload.get("phase") == "finishing"
+            ):
+                decision_id = None
             controller._interrupt_host.set_decision_view(
                 owner,
                 session.id if session else None,
                 kinds=("approval", "question", "skill_install", "skill_script"),
+                decision_id=decision_id,
             )
 
     def request_send(self, binding: BuddyBinding, text: str) -> None:
@@ -349,7 +369,18 @@ class BuddyConversationCoordinator:
         ):
             return False
         host = controller._interrupt_host
-        payload = host.head_round_payload(kind, session.id)
+        if kind == "question":
+            payload = host.head_round_payload(kind, session.id)
+        else:
+            projection = controller.pending_decision_projection(session.id)
+            if (
+                projection is None
+                or projection.decision_type != kind
+                or projection.decision_id != round_id
+                or projection.payload.get("phase") == "finishing"
+            ):
+                return False
+            payload = projection.payload
         if (
             payload is None
             or (payload.get("round_id") or payload.get("request_id")) != round_id
@@ -361,6 +392,7 @@ class BuddyConversationCoordinator:
                 state is None
                 or state.get("session_id") != session.id
                 or state.get("revoked")
+                or state.get("settled")
             ):
                 return False
         if kind == "approval":

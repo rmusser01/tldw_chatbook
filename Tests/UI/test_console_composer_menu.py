@@ -249,7 +249,6 @@ def test_caption_entry_requires_an_IMAGE_attachment():
 @pytest.mark.unit
 def test_attachment_kind_reads_the_staged_records():
     """The screen classifies real staged attachments, not the chip label."""
-    from Tests.UI.console_controller_stubs import stub_fleet_controller
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     class _A:
@@ -309,7 +308,6 @@ def test_impersonate_appends_then_replaces_its_own_text():
     appended on a new line after existing text, and a second suggestion
     replaces the first rather than stacking.
     """
-    from Tests.UI.console_controller_stubs import stub_fleet_controller
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     class _Composer:
@@ -350,7 +348,6 @@ def test_impersonate_appends_then_replaces_its_own_text():
 @pytest.mark.unit
 def test_impersonate_appends_when_the_user_edited_our_text():
     """If the user changed our suggestion, appending beats rewriting it."""
-    from Tests.UI.console_controller_stubs import stub_fleet_controller
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     class _Composer:
@@ -393,7 +390,6 @@ def test_draft_addition_never_doubles_a_newline():
 
     That put inserted text after a blank line instead of on the next one.
     """
-    from Tests.UI.console_controller_stubs import stub_fleet_controller
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     assert ChatScreen._draft_addition("", "x") == "x"
@@ -490,6 +486,9 @@ def _fake_controller_with(messages):
     from tldw_chatbook.Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
 
     class _Store:
+        def sessions(self):
+            return ()
+
         def messages_for_session(self, session_id):
             # The REAL transcript row type, not a three-attribute stand-in:
             # the hand-rolled one drifted twice (`metadata`, read by
@@ -548,13 +547,17 @@ async def test_impersonate_payload_obeys_the_provider_contract():
     async def _resolve(_selection):
         return _Resolution()
 
-    async def _collect(_resolution, messages):
+    async def _capture(_session_id, _configuration):
+        return _Resolution(), object()
+
+    async def _collect(_resolution, messages, **_kwargs):
         captured["messages"] = messages
         return "drafted reply"
 
     controller.provider_gateway = type(
         "_G", (), {"resolve_for_send": staticmethod(_resolve)}
     )()
+    controller._capture_and_resolve_turn_execution_context = _capture
     controller._collect_summary_completion = _collect
     # `_seeded_greeting_text` used to be a @staticmethod(session_messages),
     # which is why it was re-bound onto the instance here; commit c2038dfe3
@@ -610,7 +613,6 @@ def test_temporary_tab_has_no_chord_but_keeps_the_palette_entry():
     and that both remaining paths (palette entry, underlying action) are
     still wired, so nobody re-adds a chord that doesn't work.
     """
-    from Tests.UI.console_controller_stubs import stub_fleet_controller
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
     from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
 
@@ -685,6 +687,8 @@ def test_console_active_session_is_ephemeral_reads_the_active_flag():
         # session controller only.
         app_instance=NO_APP,
     )
+    # This store-only shell has no mounted decision/projection controls.
+    screen.console_view_hooks = lambda: {}
     screen._console_chat_store = None
     session = ConsoleSessionController.__new__(ConsoleSessionController)
     session._current_chat_store_accessor = lambda: screen._console_chat_store
@@ -1013,6 +1017,9 @@ def _bare_promote_screen(store):
         # scenarios touch no library-activity seam.
         app_instance=NO_APP,
     )
+    # Promotion is tested through the real session controller below; this
+    # unmounted shell has no view callbacks to bind during store assignment.
+    screen.console_view_hooks = lambda: {}
     screen._console_chat_store = store
     screen._ensure_console_chat_store = lambda: store
 
@@ -1226,7 +1233,6 @@ def test_save_chat_menu_choice_dispatches_to_the_promote_handler():
     dispatch path (F5: now a worker-kicking wrapper, not the save coroutine
     itself)."""
     from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
-    from Tests.UI.console_controller_stubs import stub_fleet_controller
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = ChatScreen.__new__(ChatScreen)
@@ -1244,7 +1250,6 @@ def test_save_chat_menu_choice_dispatches_to_the_promote_handler():
 @pytest.mark.unit
 def test_prompts_menu_choice_opens_exactly_one_browse_modal():
     """The existing callback dispatch owns the one modal entry point."""
-    from Tests.UI.console_controller_stubs import stub_fleet_controller
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = ChatScreen.__new__(ChatScreen)
@@ -1261,7 +1266,6 @@ def test_temporary_chip_save_requested_reaches_the_promote_handler():
     """The chip's activation message (task-7) drives the same save
     dispatch path (F5: now a worker-kicking wrapper)."""
     from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
-    from Tests.UI.console_controller_stubs import stub_fleet_controller
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
     from tldw_chatbook.Widgets.Console.console_status_chips import (
         ConsoleTemporaryChip,
@@ -1295,7 +1299,6 @@ def test_dispatch_promote_console_temporary_session_uses_its_own_worker_group():
     cancelled by an overlapping sync kick).
     """
     from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
-    from Tests.UI.console_controller_stubs import stub_fleet_controller
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = ChatScreen.__new__(ChatScreen)

@@ -97,6 +97,16 @@ async def test_failed_enter_restores_draft_without_blink_text_movement(
                 console = host.screen
                 await _wait_for_selector(console, pilot, "#console-native-composer")
                 controller = console._ensure_console_chat_controller()
+                runtime = console._console_runtime()
+                accepted_tasks = []
+                accept_turn = runtime.accept_turn
+
+                def capture_turn(request, **kwargs):
+                    turn_id = accept_turn(request, **kwargs)
+                    accepted_tasks.append(runtime._turn_custody[turn_id].task)
+                    return turn_id
+
+                monkeypatch.setattr(runtime, "accept_turn", capture_turn)
 
                 async def fail_resolution(selection):
                     raise ValueError("Synthetic validation interruption")
@@ -113,11 +123,29 @@ async def test_failed_enter_restores_draft_without_blink_text_movement(
                 await pilot.pause()
                 await pilot.press("enter")
                 await asyncio.wait_for(host.workers.wait_for_complete(), timeout=10)
-                # Worker completion precedes the poller's final UI reconcile.
-                # Wait for that lifecycle edge, not a fixed number of milliseconds.
+                assert len(accepted_tasks) == 1
+                with pytest.raises(
+                    ValueError, match="Synthetic validation interruption"
+                ):
+                    await asyncio.wait_for(accepted_tasks[0], timeout=10)
+                # Runtime custody owns completion; the disposable poller then
+                # reconciles the retained recovery without overwriting the draft.
                 async with asyncio.timeout(5):
                     while console._console_transcript_sync_timer is not None:
                         await pilot.pause(0.05)
+                assert composer.draft_text() == ""
+                session_id = controller.store.active_session_id
+                (recovery,) = runtime.recoveries_for_session(session_id)
+                assert recovery.session_id == session_id
+                assert recovery.draft == draft
+                await console._prompt_queue.handle_primary_intent(
+                    session_id,
+                    action=f"turn-recovery:restore:{recovery.turn_id}",
+                    expected_revision=controller.lifecycle_impact(
+                        session_id=session_id
+                    ).revision,
+                )
+                assert runtime.recoveries_for_session(session_id) == ()
                 composer._cursor_blink_timer.pause()
                 assert composer.draft_text() == draft
                 assert controller.run_state.is_send_allowed
@@ -165,4 +193,8 @@ async def test_failed_enter_restores_draft_without_blink_text_movement(
         finally:
             if console is not None:
                 await console._console_runtime().dispose()
-            await asyncio.to_thread(app.ui_responsiveness_monitor.close)
+            try:
+                with database.quiesce_connections(timeout_seconds=5):
+                    assert database.registered_connection_count() == 0
+            finally:
+                await asyncio.to_thread(app.ui_responsiveness_monitor.close)
