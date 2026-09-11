@@ -5,6 +5,7 @@ stamps, ONE approval round trip per batch, verdicts only ever "proceed".
 """
 
 import asyncio
+import contextlib
 import json
 import threading
 import time
@@ -475,9 +476,18 @@ def test_stop_mid_approval_records_only_the_unresolved_row(tmp_path):
     )
     controller.set_pending_approval = lambda payload: None
     controller.mcp_approval_timeout_seconds = lambda: 30.0
-    stopper = threading.Thread(
-        target=lambda: (time.sleep(0.05), controller.begin_shutdown())
-    )
+
+    def _stop_soon() -> None:
+        time.sleep(0.05)
+        # begin_shutdown() runs its owner-thread queue teardown inline when
+        # no owner loop is bound (none is, in this synchronous test), which
+        # trips the queue's cross-thread guard -- it still denies the
+        # unresolved approval first (in begin_shutdown's `finally`), so the
+        # assertions below hold; only the thread-local exception is noise.
+        with contextlib.suppress(Exception):
+            controller.begin_shutdown()
+
+    stopper = threading.Thread(target=_stop_soon)
     stopper.start()
     hook = build_local_review_hook(provider, controller.request_mcp_approvals)
     with use_run_id(RUN):
