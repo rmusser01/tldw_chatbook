@@ -7018,7 +7018,9 @@ async def test_builtin_section_is_distinct_from_the_builtin_mcp_server(tmp_path)
         server_row_labels = {
             row[0] for row in rows if row[0].startswith("Server default")
         }
-        mcp_builtin_label = "Server default — tldw_chatbook"
+        # ADR-148 Wave D (TASK-32459): the external-MCP inventory group now
+        # names its surface explicitly.
+        mcp_builtin_label = "Server default — tldw_chatbook (external MCP)"
         agent_builtin_label = "Server default — Built-in (agent runtime)"
         assert mcp_builtin_label in server_row_labels
         assert agent_builtin_label in server_row_labels
@@ -10802,7 +10804,9 @@ async def test_tools_catalog_includes_local_agent_tools_as_own_group(monkeypatch
         # The full ordinary catalog remains the inspection source. Only
         # descriptor-approved shared identities gain the executable flag.
         assert all(
-            t.server_label == "Local workspace, web, and Watchlists" for t in local
+            t.server_label
+                == "Local workspace, web, and Watchlists (Console agents)"
+                for t in local
         )
         assert all(t.source == "local" for t in local)
         assert all(
@@ -10824,7 +10828,10 @@ async def test_tools_catalog_includes_local_agent_tools_as_own_group(monkeypatch
             for row in permission_rows
             if row.kind == "server" and row.server_key == "local:__local__"
         )
-        assert local_server_row.server_label == "Local workspace, web, and Watchlists"
+        assert (
+            local_server_row.server_label
+            == "Local workspace, web, and Watchlists (Console agents)"
+        )
         labels_by_tool = {
             row.tool_name: row.server_label
             for row in permission_rows
@@ -10834,7 +10841,7 @@ async def test_tools_catalog_includes_local_agent_tools_as_own_group(monkeypatch
             labels_by_tool["fs_list"],
             labels_by_tool["web_fetch"],
             labels_by_tool["watchlists_search_items"],
-        } == {"Local workspace, web, and Watchlists"}
+        } == {"Local workspace, web, and Watchlists (Console agents)"}
         # The pre-existing sources are untouched: the fake's "docs" profile
         # tool still lists under its own key.
         assert any(t.server_key == "local:docs" for t in workbench._last_hub_tools)
@@ -11901,3 +11908,59 @@ async def test_bulk_clear_reverts_only_overridden_rows(tmp_path):
             assert "fetch" not in docs_tools
         preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
         assert preview.startswith("docs: 1 visible overrides cleared · ")
+
+
+# -- TASK-32459 (ADR-148 Wave D spec deferral): duplicate-row surface labels
+
+
+@pytest.mark.asyncio
+async def test_same_tool_under_both_surfaces_renders_both_labels():
+    """ADR-148's pinned disambiguation test: the same tool name legitimately
+    exists under TWO permission domains -- the external-MCP inventory group
+    (builtin:tldw_chatbook) and the Console agent group (local:__local__).
+    The matrix must render both sections with labels naming the surfaces,
+    so a user allowing fs_read on one path can see the other exists."""
+    from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench as WB
+
+    class BothSurfacesService(HubLocalProjectionService):
+        class LocalService(HubLocalProjectionService.LocalService):
+            def get_inventory(self):
+                # fs_read exists in BOTH the inventory (external MCP server
+                # catalog) and local_hub_tools (Console agents).
+                return {
+                    "tools": [
+                        {
+                            "name": "fs_read",
+                            "description": "Overlapping name, external copy.",
+                        }
+                    ]
+                }
+
+    class BothSurfacesApp(ConsolidatedCSSApp):
+        def __init__(self) -> None:
+            super().__init__()
+            self.unified_mcp_service = BothSurfacesService()
+
+        def compose(self) -> ComposeResult:
+            yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+    app = BothSurfacesApp()
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        rows = _perm_all_rows(app)
+        section_labels = [
+            cells[0].strip() for cells in rows if cells[0].startswith("Server default")
+        ]
+        external = "Server default — tldw_chatbook (external MCP)"
+        console = "Server default — Local workspace, web, and Watchlists (Console agents)"
+        assert external in section_labels
+        assert console in section_labels
+        # And fs_read itself renders under BOTH sections.
+        tool_rows = [cells[0].strip() for cells in rows]
+        assert tool_rows.count("fs_read") == 2
