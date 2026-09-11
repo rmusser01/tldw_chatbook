@@ -18666,6 +18666,7 @@ class LibraryScreen(BaseAppScreen):
             quality_choices_visible=self._export_state.quality_choices_visible,
             titles=self._export_state.preview.titles,
             approx_bytes=self._export_state.preview.approx_bytes,
+            item_count=self._export_state.preview.item_count,
         )
 
     # ----- Export canvas: execution (Task 3) ------------------------------

@@ -543,3 +543,80 @@ def test_preview_raises_so_its_wrapper_can_log_the_failure():
     assert any("category=RuntimeError" in line for line in warnings), warnings
     # A missing seam is not an error -- there is simply nothing to read.
     assert preview_export_scope(ExportScope(kind="media"), None).approx_bytes is None
+
+
+# --- Qodo review on PR #2601 -------------------------------------------------
+
+
+def test_preview_reports_how_many_active_rows_it_actually_found(media_db):
+    """Qodo #7: a selection counted by ``len(scope.ids)`` promised items the
+    archive would not hold. The preview resolves the selection against the
+    same active-row filter the collector applies and reports that count."""
+    kept, _, _ = media_db.add_media_with_keywords(
+        title="Kept", content="k" * 1024, media_type="article"
+    )
+    trashed, _, _ = media_db.add_media_with_keywords(
+        title="Trashed", content="t" * 2048, media_type="article"
+    )
+    media_db.mark_as_trash(trashed)
+
+    preview = preview_export_scope(
+        ExportScope(kind="media", ids=(str(kept), str(trashed))), media_db
+    )
+
+    # Two selected, one still exportable.
+    assert preview.item_count == 1
+    assert preview.titles == ("Kept",)
+    assert preview.approx_bytes == 1024
+
+
+def test_preview_counts_past_the_render_cap(media_db):
+    """The item count covers every matching row, not just the fetched page."""
+    for index in range(25):
+        media_db.add_media_with_keywords(
+            title=f"Item {index:02d}",
+            content=f"{index:02d}" + "x" * 1022,
+            media_type="article",
+        )
+
+    preview = preview_export_scope(ExportScope(kind="media"), media_db)
+
+    assert preview.item_count == 25
+    assert len(preview.titles) == 21
+
+
+def test_preview_reads_the_whole_estimate_in_one_statement(media_db):
+    """Qodo #2/#3: titles, count and bytes came from two statements, so a
+    write landing between them could mix snapshots, and two cursors were
+    left to garbage collection. One windowed statement, one closed cursor."""
+    media_db.add_media_with_keywords(
+        title="Only", content="o" * 1024, media_type="article"
+    )
+    seen: list[str] = []
+    real = media_db.execute_query
+
+    def record(query, params=None, **kwargs):
+        seen.append(query)
+        return real(query, params, **kwargs)
+
+    media_db.execute_query = record
+    try:
+        preview = preview_export_scope(ExportScope(kind="media"), media_db)
+    finally:
+        media_db.execute_query = real
+
+    assert len(seen) == 1, seen
+    assert preview.item_count == 1
+    assert preview.approx_bytes == 1024
+
+
+def test_preview_of_an_empty_scope_reports_zero_not_none(media_db):
+    """Zero bytes is a known fact; ``None`` means "could not find out". The
+    canvas renders them differently, so the query must not conflate them."""
+    preview = preview_export_scope(
+        ExportScope(kind="media", media_type="video"), media_db
+    )
+
+    assert preview.item_count == 0
+    assert preview.approx_bytes == 0
+    assert preview.titles == ()

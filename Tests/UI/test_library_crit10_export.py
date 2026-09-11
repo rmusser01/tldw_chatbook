@@ -45,6 +45,7 @@ def _state(**overrides):
         destination="/tmp/out.zip",
         titles=("Attention Is All You Need", "Deep Residual Learning"),
         approx_bytes=4096,
+        item_count=2,
     )
     base.update(overrides)
     return build_library_export_form_state(**base)
@@ -70,23 +71,13 @@ async def test_the_export_canvas_says_what_the_bundle_will_contain():
     async with app.run_test(size=(235, 52)) as pilot:
         line = pilot.app.query_one("#library-export-consequence-line", Static)
         assert (
-            str(line.renderable) == "Bundle: 2 media items · full files · about 4 KB before compression"
+            str(line.renderable) == "Bundle: 2 media items · text only · about 4 KB before compression"
         ), str(line.renderable)
         assert line.display is True
         contents = pilot.app.query_one("#library-export-contents", Static)
         assert "Attention Is All You Need" in str(contents.renderable)
         assert "Deep Residual Learning" in str(contents.renderable)
         assert contents.display is True
-
-
-@pytest.mark.asyncio
-async def test_the_consequence_line_names_the_chosen_fidelity():
-    """The fidelity is the knob's consequence, not its label -- a lossy
-    bundle says so where the user is about to press."""
-    app = _ExportHost(_state(media_quality="thumbnail"))
-    async with app.run_test(size=(235, 52)) as pilot:
-        line = pilot.app.query_one("#library-export-consequence-line", Static)
-        assert "previews only" in str(line.renderable)
 
 
 def test_an_unsizeable_scope_says_so_instead_of_guessing():
@@ -96,9 +87,10 @@ def test_an_unsizeable_scope_says_so_instead_of_guessing():
         counts={"media": 11, "conversations": 6, "notes": 7, "prompts": 5},
         titles=(),
         approx_bytes=None,
+        item_count=None,
     )
     assert state.consequence_line == (
-        "Bundle: 29 items · full files · size known once it runs"
+        "Bundle: 29 items · text only · size known once it runs"
     )
     assert state.contents_lines == ()
 
@@ -110,6 +102,7 @@ def test_a_long_contents_list_is_capped_and_says_how_many_it_hid():
         scope=ExportScope(kind="media"),
         counts={"media": 250, "conversations": 0, "notes": 0, "prompts": 0},
         titles=tuple(f"Item {n}" for n in range(21)),
+        item_count=250,
     )
     assert len(state.contents_lines) == 21
     assert state.contents_lines[:20] == tuple(f"Item {n}" for n in range(20))
@@ -121,6 +114,7 @@ def test_a_contents_list_that_exactly_fills_the_cap_hides_nothing():
         scope=ExportScope(kind="media"),
         counts={"media": 20, "conversations": 0, "notes": 0, "prompts": 0},
         titles=tuple(f"Item {n}" for n in range(20)),
+        item_count=20,
     )
     assert len(state.contents_lines) == 20
     assert not any(line.startswith("+ ") for line in state.contents_lines)
@@ -246,3 +240,91 @@ async def test_an_available_find_mounts_no_reason_line():
     async with app.run_test(size=(235, 52)) as pilot:
         assert pilot.app.query_one("#library-media-reader-find", Button).disabled is False
         assert not pilot.app.query("#library-media-reader-find-reason")
+
+
+# --- Qodo review on PR #2601 -------------------------------------------------
+
+
+def test_the_bundle_phrase_never_claims_a_fidelity_the_writer_does_not_apply():
+    """Qodo #1 (High): ``ChatbookCreator._collect_media`` reads ``quality``
+    exactly once -- to stamp it into the manifest -- and otherwise writes the
+    same text payload for every option. A line saying "previews only" or
+    "compressed files" described an artifact that is never written, so the
+    phrase states what the archive actually holds and does not vary."""
+    phrases = {
+        _state(media_quality=quality).consequence_line
+        for quality in ("thumbnail", "compressed", "original")
+    }
+    assert len(phrases) == 1, phrases
+    assert "text only" in phrases.pop()
+    for absent in ("previews only", "compressed files", "full files"):
+        assert absent not in _state(media_quality="thumbnail").consequence_line
+
+
+def test_an_empty_scope_states_no_bundle_at_all():
+    """Qodo #6 (Bug): ``format_export_bytes`` floors at 1 KB, so an empty
+    media scope rendered "Bundle: 0 media items · … · about 1 KB" directly
+    above "Nothing to export in this scope." One of those was a lie."""
+    state = _state(
+        counts={"media": 0, "conversations": 0, "notes": 0, "prompts": 0},
+        titles=(),
+        approx_bytes=0,
+        item_count=0,
+    )
+    assert state.consequence_line == ""
+    assert state.contents_lines == ()
+    assert state.empty_scope_line == "Nothing to export in this scope."
+
+
+def test_the_bundle_counts_the_items_the_preview_actually_found():
+    """Qodo #7 (Bug): ``count_export_scope`` returns ``len(scope.ids)`` for an
+    explicit selection without checking the rows are still active, so a
+    selection whose item was trashed underneath promised more than the
+    archive would hold. The bundle line counts what the preview resolved."""
+    state = _state(
+        scope=ExportScope(kind="media", ids=("1", "2")),
+        counts={"media": 2, "conversations": 0, "notes": 0, "prompts": 0},
+        titles=("Attention Is All You Need",),
+        item_count=1,
+        approx_bytes=2048,
+    )
+    assert state.consequence_line.startswith("Bundle: 1 media item ·")
+    assert state.contents_lines == ("Attention Is All You Need",)
+
+
+def test_the_remainder_counts_from_the_preview_not_the_selection():
+    state = _state(
+        scope=ExportScope(kind="media"),
+        counts={"media": 250, "conversations": 0, "notes": 0, "prompts": 0},
+        titles=tuple(f"Item {n}" for n in range(21)),
+        item_count=200,
+        approx_bytes=4096,
+    )
+    assert state.consequence_line.startswith("Bundle: 200 media items ·")
+    assert state.contents_lines[-1] == "+ 180 more"
+
+
+def test_starting_generation_is_not_an_unchanged_viewer_sync():
+    """Qodo #8 (Bug): ``_sync_library_media_viewer_state``'s unchanged
+    comparison omitted ``generating_analysis``, although the else-branch
+    assigns it. A generation that started with nothing else changing took
+    the unchanged path, so the Reader kept saying "No analysis to search
+    yet." while one was generating -- and, before this branch made the
+    reason visible, kept a stale ``○`` label and tooltip too."""
+    import inspect
+
+    from tldw_chatbook.UI.Library_Modules.library_media_controller import (
+        LibraryMediaController,
+    )
+
+    source = inspect.getsource(
+        LibraryMediaController._sync_library_media_viewer_state
+    )
+    unchanged = source[source.index("unchanged = ("):source.index("if unchanged:")]
+    assert (
+        "viewer.generating_analysis == self._library_media_generating_analysis"
+        in unchanged
+    ), (
+        "generating_analysis is assigned on the changed path but not compared "
+        "on the unchanged one, so a generation transition never recomposes"
+    )

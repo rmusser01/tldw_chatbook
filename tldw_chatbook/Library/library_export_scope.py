@@ -18,6 +18,7 @@ handles are passed in by the caller and never constructed here.
 
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import dataclass
 from typing import Any, Mapping, NamedTuple, Protocol
 
@@ -172,7 +173,24 @@ _CONTENTS_PREVIEW_LIMIT = 20
 class MediaContentSource(Protocol):
     """The read seam ``preview_export_scope`` needs off ``MediaDatabase``."""
 
-    def execute_query(self, query: str, params: tuple = ...) -> Any: ...
+    def execute_query(self, query: str, params: tuple = ...) -> Any:
+        """Execute one parameterised read and return its cursor.
+
+        Args:
+            query: A single SQL statement with ``?`` placeholders.
+            params: The values to bind, positionally.
+
+        Returns:
+            The ``sqlite3.Cursor`` the statement produced. The caller owns
+            it and must close it (``preview_export_scope`` does, via
+            ``contextlib.closing``).
+
+        Raises:
+            Exception: Whatever the implementation raises for a bad
+                statement, a missing table, or a closed connection --
+                ``MediaDatabase`` raises its own ``DatabaseError``.
+        """
+        ...
 
 
 class ExportPreview(NamedTuple):
@@ -188,13 +206,22 @@ class ExportPreview(NamedTuple):
         approx_bytes: Those items' stored content in bytes, or ``None``
             when the scope's media set is not enumerable up front (an
             ``everything`` export spans four sources, only one of which
-            this query can size) or the query failed. ``None`` is what
-            drives the canvas's honest "size known once it runs" copy --
-            never a zero standing in for "unknown".
+            this query can size). ``None`` is what drives the canvas's
+            honest "size known once it runs" copy -- never a zero
+            standing in for "unknown", and a real zero (an empty scope)
+            is reported as ``0``.
+        item_count: How many ACTIVE rows the scope resolved to, or
+            ``None`` when it was not enumerable. Not the same number as
+            ``count_export_scope``'s: that one trusts ``len(scope.ids)``
+            for an explicit selection, while this one applies the
+            deleted/trashed filter the collector will apply, so a
+            selection whose item was trashed underneath counts here as
+            what the archive will actually hold.
     """
 
     titles: tuple[str, ...] = ()
     approx_bytes: int | None = None
+    item_count: int | None = None
 
 
 def preview_export_scope(
@@ -216,11 +243,14 @@ def preview_export_scope(
     doubled figure: the archive is then zipped, and the user's own
     reference point is how much of their library is going in.
 
-    Two statements, not one: the ``SUM`` has to visit every matching row,
-    but the canvas renders at most ``_CONTENTS_PREVIEW_LIMIT`` titles, so
-    the title query is capped rather than materialising one string per
-    item in a whole-source scope. The caller derives "+ N more" from the
-    counts it already has.
+    One statement, not three: ``COUNT(*) OVER ()`` and ``SUM(...) OVER
+    ()`` are evaluated over every row the ``WHERE`` matched, BEFORE the
+    ``LIMIT`` trims the rows returned -- so a single cursor yields the
+    true count, the true byte total, and just the handful of titles the
+    canvas renders. That also means the three facts come from one
+    snapshot (a concurrent write cannot land between them) and there is
+    one cursor to close, deterministically, rather than two left to the
+    garbage collector (Qodo #2/#3 on PR #2601).
 
     Raises rather than degrading: the quiet-degrade AND its log line live
     in ``LibraryExportController._compute_library_export_preview``,
@@ -235,8 +265,9 @@ def preview_export_scope(
         media_db: The media database read seam, or ``None``.
 
     Returns:
-        The byte total plus at most ``_CONTENTS_PREVIEW_LIMIT + 1``
-        titles, or ``ExportPreview()`` when the scope is not sizeable.
+        The active-row count and byte total plus at most
+        ``_CONTENTS_PREVIEW_LIMIT + 1`` titles, or ``ExportPreview()``
+        when the scope is not sizeable.
 
     Raises:
         Exception: Whatever the media seam raises -- a missing table, a
@@ -256,23 +287,33 @@ def preview_export_scope(
         if media_type is not None:
             where.append("type = ?")
             params.append(media_type)
-    clause = " AND ".join(where)
     # LENGTH(CAST(... AS BLOB)) is the UTF-8 BYTE count; a bare LENGTH()
     # on TEXT counts characters and under-reports any non-ASCII library.
-    total = media_db.execute_query(
-        "SELECT COALESCE(SUM(LENGTH(CAST(content AS BLOB))), 0) AS size "
-        f"FROM Media WHERE {clause}",
-        tuple(params),
-    ).fetchone()
     # One row past the render limit is all the caller needs to know the
-    # list was truncated; the true remainder comes from the counts.
-    titles = media_db.execute_query(
-        f"SELECT title FROM Media WHERE {clause} ORDER BY id ASC LIMIT ?",
-        (*params, _CONTENTS_PREVIEW_LIMIT + 1),
-    ).fetchall()
+    # list was truncated; the true remainder comes from ``item_count``.
+    query = (
+        # No COALESCE around the SUM: SQLite rejects it in window
+        # position. SUM skips NULL content (it contributes no bytes), and
+        # an all-NULL scope yields NULL, which the `or 0` below floors.
+        "SELECT title, COUNT(*) OVER () AS items, "
+        "SUM(LENGTH(CAST(content AS BLOB))) OVER () AS size "
+        f"FROM Media WHERE {' AND '.join(where)} "
+        "ORDER BY id ASC LIMIT ?"
+    )
+    with closing(
+        media_db.execute_query(
+            query, (*params, _CONTENTS_PREVIEW_LIMIT + 1)
+        )
+    ) as cursor:
+        rows = cursor.fetchall()
+    if not rows:
+        # An empty scope is a KNOWN zero, not an unknown -- the canvas
+        # renders the two differently.
+        return ExportPreview((), 0, 0)
     return ExportPreview(
-        tuple(str(row["title"] or "Untitled") for row in titles),
-        int(total["size"] or 0) if total is not None else 0,
+        tuple(str(row["title"] or "Untitled") for row in rows),
+        int(rows[0]["size"] or 0),
+        int(rows[0]["items"] or 0),
     )
 
 

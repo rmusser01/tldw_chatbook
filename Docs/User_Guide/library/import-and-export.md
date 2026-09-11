@@ -146,10 +146,15 @@ only loses content when you ask it to (task-32353).
 
 Directly above the submit button, two quiet lines say what pressing it
 will write, before you press it (task-32353): a **bundle line** —
-"Bundle: 2 media items · full files · about 4 KB before compression" —
-naming the item count, the fidelity the chooser is set to, and how much
-content is going in (the written `.zip` is smaller; the receipt after the
-run reports that file's own size); and a
+"Bundle: 2 media items · text only · about 4 KB before compression" —
+naming how many items are going in, what the archive holds for each of
+them, and how much content that is (the written `.zip` is smaller; the
+receipt after the run reports that file's own size). "text only" is not a
+summary of the quality chooser: whatever that control is set to, a bundle
+holds each item's stored text plus its details, never the original media
+file — the Library does not keep a path to one. The line is absent when
+the scope is empty, where "Nothing to export in this scope." is the only
+thing worth saying. And a
 **contents list** naming the items themselves, up to 20 of them, then
 "+ N more". Where the size cannot be known up front (an "Everything"
 export spans four sources, only one of which can be measured beforehand)
@@ -276,7 +281,7 @@ destination, or leaving the Import canvas cancels pending consent.
 |---|---|
 | "Export name" | Pre-filled "Library export 2026-07-31" (today's date); becomes the bundle's display name. |
 | "quality: original" | Opens on "original" (full fidelity, task-32353). Press to open a one-row strip of thumbnail / compressed / original (✓ on the active one) right under the button; pick one directly, or press the button again / Escape to close without changing. The helper line underneath always describes the option currently showing. Only "original" copies full media files into the zip; the others keep the package small. |
-| "Bundle: N media items · full files · about X KB before compression" | What pressing Export will actually write: the item count, the fidelity the quality chooser is set to, and how much content is going in. The archive itself is smaller — the receipt after the run stats the written `.zip`. Reads "size known once it runs" when the scope's size cannot be measured up front. Appears once counting finishes. |
+| "Bundle: N media items · text only · about X KB before compression" | What pressing Export will actually write: how many items go in, what the archive holds for each (stored text and details — never the original media file, whatever the quality chooser says), and how much content that is. The archive itself is smaller — the receipt after the run stats the written `.zip`. Reads "size known once it runs" when the scope's size cannot be measured up front. The count is the items still exportable, so a selection whose item was trashed underneath reports what will really be written. Absent for an empty scope. Appears once counting finishes. |
 | The contents list | The titles of the items going into the bundle, up to 20, then "+ N more". Absent when the scope's items cannot be enumerated before the run. |
 | "Choose destination…" | Opens "Choose Export Destination". Whatever you pick is normalized to end in `.zip`; if that file already exists, an "Overwrites <name>" note appears (informational — exporting proceeds and replaces it). |
 | "Export bundle (.zip)" | Enabled once counting has finished, the scope is non-empty, and a destination is chosen. "Nothing to export in this scope." appears when the scope is empty; either way, the reason is printed on the line directly below the button AND repeated in its tooltip (or "Write the bundle to the chosen destination." once it's ready) — a disabled press can never look like it silently did nothing. |
@@ -956,3 +961,11 @@ the export will write — count, fidelity, estimated size, and the item titles
 cannot be read as contradicting the receipt's smaller written-archive figure;
 task-32362: a blocked "Export bundle (.zip)"
 prints its reason on the line below it, not only in a tooltip.)*
+
+*Verified against fix/library-crit10-export — 2026-09-11, review round 2
+(Qodo on PR #2601: the bundle line no longer names the quality chooser's
+value — the exporter writes the same stored text for all three options, so
+"previews only"/"compressed files"/"full files" described an archive that is
+never produced; an empty scope shows no bundle line rather than "0 items …
+about 1 KB"; and the count is the items still exportable, not the raw size
+of a selection that may have gone stale.)*

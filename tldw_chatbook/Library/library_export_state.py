@@ -79,16 +79,22 @@ _MEDIA_QUALITY_HELPER_COPY: dict[str, str] = {
 }
 
 
-# task-32353 AC#2: the consequence line's fidelity phrase -- the same three
-# options ``_MEDIA_QUALITY_HELPER_COPY`` captions, said in the two words the
-# bundle summary has room for. Unknown values degrade to "full files" for the
-# same reason the helper copy degrades to "original": it is the conservative
-# (most-content) description.
-_MEDIA_QUALITY_BUNDLE_COPY: dict[str, str] = {
-    "thumbnail": "previews only",
-    "compressed": "compressed files",
-    "original": "full files",
-}
+# task-32353 AC#2, corrected by Qodo #1 on PR #2601: this phrase used to name
+# the quality chooser's value ("previews only" / "compressed files" / "full
+# files"). It cannot. ``ChatbookCreator._collect_media`` reads ``quality``
+# exactly ONCE -- to stamp it into the manifest -- and otherwise writes the
+# same payload for every option: each item's stored ``content`` as a .txt plus
+# a metadata JSON. The original media file is never in the archive at all (the
+# Media table holds no file path; see that method's own comment). So the line
+# states what the archive actually holds, and says it the same way whichever
+# option is selected -- a bundle summary must not describe an artifact the
+# writer never produces.
+# ponytail: quality-invariant because the knob is inert downstream. If
+# ``_collect_media`` ever implements thumbnail/compressed for real, this goes
+# back to varying by option -- and the chooser's own helper captions
+# (``_MEDIA_QUALITY_HELPER_COPY`` above), which describe the same absent
+# behaviour, must be corrected in the SAME change.
+_BUNDLE_PAYLOAD_COPY = "text only"
 
 
 def format_export_bytes(size_bytes: int) -> str:
@@ -270,6 +276,7 @@ def build_library_export_form_state(
     quality_choices_visible: bool = False,
     titles: tuple[str, ...] = (),
     approx_bytes: int | None = None,
+    item_count: int | None = None,
 ) -> LibraryExportFormState:
     """Build the export canvas's full display state.
 
@@ -299,6 +306,11 @@ def build_library_export_form_state(
         approx_bytes: Their total stored size in bytes
             (``ExportPreview.approx_bytes``), or ``None`` when unknown --
             ``None`` is rendered as honest copy, never as a zero.
+        item_count: How many ACTIVE rows the preview resolved
+            (``ExportPreview.item_count``), or ``None`` where no preview
+            ran. Where present it, not ``counts``, is the bundle's count:
+            ``count_export_scope`` trusts an explicit selection's length
+            without re-checking the rows still exist.
 
     Returns:
         The canvas's full display state.
@@ -324,11 +336,7 @@ def build_library_export_form_state(
     # a name and then wrote a bundle nobody had seen the contents of, at a
     # fidelity chosen by a control rendered at the same weight as "sort".
     # This states the consequence in one line, above the button.
-    fidelity = (
-        f" · {_MEDIA_QUALITY_BUNDLE_COPY.get(media_quality, 'full files')}"
-        if show_media_fields
-        else ""
-    )
+    payload = f" · {_BUNDLE_PAYLOAD_COPY}" if show_media_fields else ""
     # "before compression" is load-bearing, not padding: this counts the
     # content going IN, while the receipt after the run stats the zip that
     # came OUT (live check: a 9 KB estimate wrote a 4 KB archive). Without
@@ -340,16 +348,27 @@ def build_library_export_form_state(
     )
     # A media-only scope counts media items; a mixed scope counts items.
     noun = "media item" if scope.kind == "media" else "item"
+    # Qodo #7: ``count_export_scope`` trusts ``len(scope.ids)`` for an
+    # explicit selection without checking those rows are still active, so a
+    # selection whose item was trashed underneath promised more than the
+    # archive would hold. The preview applies the collector's own
+    # deleted/trashed filter, so where it ran, IT is the bundle's count.
+    bundle_total = total if item_count is None else item_count
     consequence_line = (
         ""
-        if counts_loading
-        else f"Bundle: {_count_phrase(total, noun)}{fidelity}{size}"
+        # Qodo #6: an empty scope has no bundle to describe, and
+        # ``format_export_bytes`` floors at 1 KB -- "Bundle: 0 media items
+        # ... about 1 KB" used to sit directly above "Nothing to export in
+        # this scope." ``empty_scope_line`` is the only line that case needs.
+        if counts_loading or bundle_total <= 0
+        else f"Bundle: {_count_phrase(bundle_total, noun)}{payload}{size}"
     )
     # The preview lands with the counts, so neither line renders before them.
     # ``titles`` is capped at the limit + 1 by the query, so its length only
     # says WHETHER the list was truncated -- the remainder comes from the
-    # counts, which is the only place the true total lives.
-    extra = total - _CONTENTS_PREVIEW_LIMIT
+    # preview's own active-row count (Qodo #7), falling back to the counts
+    # where no preview ran.
+    extra = bundle_total - _CONTENTS_PREVIEW_LIMIT
     contents_lines = (
         ()
         if counts_loading
