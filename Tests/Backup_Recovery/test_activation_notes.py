@@ -58,7 +58,7 @@ if state not in ('ordinary', 'unqualified'):
         bind_activation(root, 'restore', selector, 'generation', owners, session=session)
     (root / ('pending-' + bootstrap._key('restore') + '.json')).unlink()
     for owner in owners:
-        if state in ('approved', 'shared') or (state == 'config_only' and owner == 'config'):
+        if state in ('owner_flag_only', 'shared') or (state == 'config_only' and owner == 'config'):
             ActivationStore(control / 'activation').approve('generation', owner)
 if state == 'shared':
     other = selector.parent.parent / 'other.toml'
@@ -66,7 +66,7 @@ if state == 'shared':
     os.environ['TLDW_CONFIG_PATH'] = str(other)
 if state == 'unqualified':
     storage.qualified_for = lambda *args: (False, 'native_unqualified')
-denied = state not in ('ordinary', 'approved', 'unqualified')
+denied = state not in ('ordinary', 'unqualified')
 events = []
 def process_sentry(event, args):
     if event in ('subprocess.Popen', 'os.posix_spawn', 'os.system'):
@@ -125,7 +125,7 @@ print('retired and reopened')
 )
 @pytest.mark.parametrize(
     "state",
-    ["inactive", "ordinary", "approved", "config_only", "shared", "unqualified"],
+    ["inactive", "ordinary", "owner_flag_only", "config_only", "shared", "unqualified"],
 )
 def test_notes_execution_and_safe_inspection(tmp_path, route, state):
     _run(tmp_path, route, state, script=_SCRIPT)
@@ -219,4 +219,6 @@ print('retired and reopened')
 
 
 def test_cancelled_reconcile_waiter_keeps_native_execution_admitted(tmp_path):
-    _run(tmp_path, "cancel", "approved", script=_CANCEL_SCRIPT)
+    from Tests.Backup_Recovery.test_notes_recovery_review import _CANCEL
+
+    _run(tmp_path, "cancel", "approved", script=_CANCEL)

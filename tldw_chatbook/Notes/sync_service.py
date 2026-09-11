@@ -4,7 +4,7 @@
 # Imports
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple, Callable
+from typing import Dict, List, Optional, Any, Tuple, Callable, TYPE_CHECKING
 from datetime import datetime
 
 #
@@ -21,6 +21,10 @@ from .sync_engine import (
 )
 from .Notes_Library import NotesInteropService
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
+
+if TYPE_CHECKING:
+    from .recovery_review import NotesRecoveryReview
+
 #
 ########################################################################################################################
 #
@@ -45,6 +49,24 @@ class NotesSyncService:
         self.notes_service = notes_service
         self.db = db
         self.sync_engine = NotesSyncEngine(notes_service, db)
+
+    def preview_recovery(self, root_folder: Path, user_id: str) -> "NotesRecoveryReview":
+        """Compare the actual local folder and notes before restoring pairing."""
+        from .recovery_review import review_pairing
+
+        return review_pairing(
+            "notes.sync_bindings", self.sync_engine, root_folder, user_id
+        )
+
+    def approve_recovery(
+        self, review: "NotesRecoveryReview", user_id: str
+    ) -> "NotesRecoveryReview":
+        """Recheck an explicit complete review and approve only Notes sync."""
+        from .recovery_review import review_pairing
+
+        return review_pairing(
+            "notes.sync_bindings", self.sync_engine, review.root, user_id, expected=review
+        )
 
     async def sync_folder(
         self,
@@ -157,6 +179,24 @@ class NotesSyncService:
             ("config", "notes.sync_bindings", "db.chachanotes.primary"), db_path
         ) as allowed:
             if not allowed:
+                return False
+            from .recovery_review import require_pairing, sync_paths
+
+            row = self.db.get_connection().execute(
+                "SELECT c.session_id,s.sync_root_folder FROM sync_conflicts c "
+                "JOIN sync_sessions s ON s.session_id=c.session_id WHERE c.id=?",
+                (conflict_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            try:
+                nonce = require_pairing(
+                    "notes.sync_bindings",
+                    sync_paths(self.sync_engine, Path(row[1]), user_id),
+                )
+            except (PermissionError, ValueError):
+                return False
+            if nonce is not None and not row[0].startswith(nonce + ":"):
                 return False
             return self._resolve_conflict(conflict_id, resolution, user_id)
 

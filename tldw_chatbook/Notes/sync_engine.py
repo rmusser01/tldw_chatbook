@@ -70,6 +70,11 @@ def _sync_execution(method):
             ]
             if not all(allowed):
                 raise PermissionError("notes_sync_activation_required")
+            from .recovery_review import require_pairing, sync_paths
+
+            require_pairing(
+                "notes.sync_bindings", sync_paths(self, root_path, user_id)
+            )
             return await method(self, root_path, user_id, *args, **kwargs)
 
     return call
@@ -330,6 +335,7 @@ class NotesSyncEngine:
         *,
         lexical_root: Path | None = None,
         progress: SyncProgress | None = None,
+        strict: bool = False,
     ) -> Dict[Path, Dict[str, Any]]:
         """Get all notes that are synced to the given root folder."""
         db_notes_map = {}
@@ -382,6 +388,12 @@ class NotesSyncEngine:
                     note_data["content_hash"] = self._calculate_hash(
                         note_data["content"]
                     )
+                    if strict and rel_path in db_notes_map:
+                        if progress is not None:
+                            progress.skipped_items.append(
+                                (str(rel_path), "duplicate_sync_path")
+                            )
+                        continue
                     db_notes_map[rel_path] = note_data
 
         logger.info(
@@ -389,6 +401,14 @@ class NotesSyncEngine:
             len(db_notes_map),
         )
         return db_notes_map
+
+    def _recovery_memberships(self):
+        """Disclose retained managed identities without activating or rewriting them."""
+        rows = self.db.get_connection().execute(
+            "SELECT id,owner_id,folder_id,note_id,owner_active,version FROM note_folder_memberships "
+            "WHERE ownership='managed' AND deleted=0 ORDER BY owner_id,id"
+        )
+        return tuple(tuple(row) for row in rows)
 
     def _create_sync_session(
         self,
@@ -398,7 +418,12 @@ class NotesSyncEngine:
         user_id: str,
     ) -> str:
         """Create a new sync session in the database."""
-        session_id = str(uuid.uuid4())
+        from .recovery_review import require_pairing, sync_paths
+
+        nonce = require_pairing(
+            "notes.sync_bindings", sync_paths(self, sync_root, user_id)
+        )
+        session_id = (nonce + ":" if nonce else "") + str(uuid.uuid4())
 
         with self.db.transaction() as conn:
             conn.execute(

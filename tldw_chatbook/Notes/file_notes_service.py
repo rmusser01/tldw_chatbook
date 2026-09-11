@@ -13,7 +13,7 @@ from dataclasses import dataclass, replace
 from functools import wraps
 from pathlib import Path
 from threading import RLock, current_thread
-from typing import Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Literal, TypeVar, cast
 
 from loguru import logger
 
@@ -24,6 +24,9 @@ from tldw_chatbook.Notes.file_notes_session_owner import (
     SessionChange,
 )
 from tldw_chatbook.Utils.path_validation import get_safe_relative_path
+
+if TYPE_CHECKING:
+    from .recovery_review import NotesRecoveryReview
 
 MAX_FILE_BYTES = 8_000_000
 MAX_FILE_CHARS = 2_000_000
@@ -232,7 +235,29 @@ class FileNotesService:
             execution_scope(owners, self.root) as root_allowed,
             execution_scope(owners, replica_path) as replica_allowed,
         ):
-            yield root_allowed and replica_allowed
+            allowed = root_allowed and replica_allowed
+            if allowed:
+                from .recovery_review import file_paths, require_pairing
+
+                try:
+                    require_pairing("notes.file_notes", file_paths(self))
+                except (PermissionError, ValueError):
+                    allowed = False
+            yield allowed
+
+    @_serialized
+    def preview_recovery(self) -> NotesRecoveryReview:
+        """Compare current disk bytes and the retained replica without refreshing it."""
+        from .recovery_review import review_pairing
+
+        return review_pairing("notes.file_notes", self, self.root)
+
+    @_serialized
+    def approve_recovery(self, review: NotesRecoveryReview) -> NotesRecoveryReview:
+        """Recheck complete pairing evidence and approve only File Notes."""
+        from .recovery_review import review_pairing
+
+        return review_pairing("notes.file_notes", self, self.root, expected=review)
 
     @property
     @_serialized
