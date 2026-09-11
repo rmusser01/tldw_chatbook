@@ -434,6 +434,12 @@ def _capture_under_maintenance(
                 require_capacity(
                     {stage: total, Path(destination): total * (5 if encrypted else 3)}
                 )
+            from .config_adapter import _ChatbookRegistry
+
+            for item, path in staged:
+                adapter = adapters[item.owner]
+                if type(adapter) is _ChatbookRegistry:
+                    adapter.prepare_capture(item, path, entries)
             candidates = {item.logical_id: path for item, path in staged}
             from .rag_projection_validation import validate_groups
 

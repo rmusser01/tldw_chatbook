@@ -41,6 +41,7 @@ async def main():
  assert result['success'],result
  await books.create_chatbook(name='captured',file_path=archive)
  parsed=await books.preview_chatbook(archive);assert parsed.get('success'),parsed
+ live_registry=books.registry_path.read_bytes()
  options={'staging_parent':home}
  preview=preview_capture((selector,),options=options)
  bad=[(i.owner,str(i.path),i.status) for i in preview.items if i.status in ('unsupported','unavailable','missing_required')]
@@ -75,7 +76,14 @@ async def main():
   paths={i.logical_id:i.path for i in captured.inventory.items}
   files={paths[row['logical_id']]:captured.root/row['payload'] for row in manifest['files']}
   originals={p:p.read_bytes() for p in skills.store_dir.rglob('*') if p.is_file()}
-  originals.update({books.registry_path:books.registry_path.read_bytes(),archive:archive.read_bytes(),output:output.read_bytes()})
+  originals.update({archive:archive.read_bytes(),output:output.read_bytes()})
+  assert books.registry_path.read_bytes()==live_registry
+  staged_registry=files[books.registry_path].read_bytes()
+  record=json.loads(staged_registry)['records'][0]
+  archive_id=next(i.logical_id for i in captured.inventory.items if i.path==archive)
+  assert record['file_path'] is None
+  assert record['__chatbook_archive_reference']=={'logical_id':archive_id}
+  assert str(archive).encode() not in staged_registry
   assert all(files[path].read_bytes()==body for path,body in originals.items())
   historical=json.loads(files[trust.trust_store.manifest_path].read_text())
   assert historical['manifest']['generation']==2
@@ -89,6 +97,7 @@ async def main():
   await books.create_chatbook(name='after capture')
   app.chachanotes_db.add_note('After capture','Resumed native writer.')
   assert all(files[path].read_bytes()==body for path,body in originals.items())
+  assert files[books.registry_path].read_bytes()==staged_registry
   assert not destination.exists()
   sealed=await asyncio.to_thread(write_archive,captured,destination,password=None,cancel=threading.Event())
   assert sealed.path==destination and destination.is_file()
@@ -98,7 +107,7 @@ async def main():
   await accepted
   for task in (finishing,monitoring):task.cancel()
   await asyncio.gather(finishing,monitoring,return_exceptions=True)
-  await app._shutdown_app_owned_lifecycles();await app.tts_service.close()
+  await app._shutdown_app_owned_lifecycles();await app.tts_service.close();await app.tts_service.wait_closed()
 asyncio.run(main())
 print('retired and reopened')
 """

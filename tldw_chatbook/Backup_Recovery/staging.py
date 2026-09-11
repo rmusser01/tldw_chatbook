@@ -451,6 +451,14 @@ def stage_restore(
                     )
                     # Replace only this exclusively created private working file.
                     candidate.write_text(toml.dumps(data), encoding="utf-8")
+                from .config_adapter import _ChatbookRegistry
+
+                if type(owner) is _ChatbookRegistry:
+                    owner.validate_restore_reference_owners(
+                        item,
+                        candidate,
+                        {row.logical_id: row.owner_id for row in doc.files},
+                    )
                 relocate = getattr(owner, "relocate_restore", None)
                 if callable(relocate):
                     relocate(item, candidate, selected)

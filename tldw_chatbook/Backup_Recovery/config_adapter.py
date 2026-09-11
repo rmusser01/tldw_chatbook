@@ -224,6 +224,135 @@ class _Definition(_RawDeclaration):
 
 
 class _ChatbookRegistry(_Definition):
+    _reference_key = "__chatbook_archive_reference"
+
+    @staticmethod
+    def _reference_path(value, *, live=False):
+        if (
+            not isinstance(value, str)
+            or not value
+            or "\x00" in value
+            or (not live and not Path(value).is_absolute())
+            or ".." in Path(value).parts
+        ):
+            raise ValueError("invalid_chatbook_reference")
+        # Native create/update retain relative strings; native preview uses cwd.
+        # Only live sources receive that interpretation, never imported records.
+        return Path(value).absolute() if live else Path(value)
+
+    @classmethod
+    def _document(cls, data, *, live=False):
+        import json
+
+        def unique(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate_chatbook_key")
+                result[key] = value
+            return result
+
+        document = json.loads(data, object_pairs_hook=unique)
+        if not isinstance(document, dict) or not isinstance(
+            document.get("records"), list
+        ):
+            raise TypeError("invalid_chatbook_records")
+        for record in document["records"]:
+            if not isinstance(record, dict):
+                raise TypeError("invalid_chatbook_record")
+            value = record.get("file_path")
+            if cls._reference_key in record:
+                marker = record[cls._reference_key]
+                if value is not None or "file_path" not in record:
+                    raise ValueError("invalid_chatbook_reference")
+                if marker == {"status": "unresolved"}:
+                    continue
+                if (
+                    not isinstance(marker, dict)
+                    or set(marker) != {"logical_id"}
+                    or not isinstance(marker["logical_id"], str)
+                ):
+                    raise ValueError("invalid_chatbook_reference")
+            elif value is not None and value != "":
+                cls._reference_path(value, live=live)
+        return document
+
+    @classmethod
+    def _archive_reference(cls, item, record):
+        marker = record.get(cls._reference_key)
+        if marker is None or marker == {"status": "unresolved"}:
+            return None
+        key = marker["logical_id"]
+        profile = item.logical_id.split(":")
+        prefix = ":".join(profile[:2]) + ":chatbooks.archives:"
+        if (
+            len(profile) != 3
+            or profile[0] != "profile"
+            or profile[2] != "chatbooks.registry"
+            or not key.startswith(prefix)
+            or not key[len(prefix) :]
+            or key not in item.dependencies
+        ):
+            raise ValueError("invalid_chatbook_archive_dependency")
+        return key
+
+    def prepare_capture(self, item, candidate, source_items):
+        """Replace only staged locators using this capture's declared sources."""
+        import json
+
+        from .credentials import _read, _write
+
+        document = self._document(_read(candidate), live=True)
+        sources = {
+            source.path: source.logical_id
+            for source in source_items
+            if source.owner == "chatbooks.archives"
+            and source.status == "included"
+            and source.path is not None
+            and source.logical_id in item.dependencies
+        }
+        for record in document["records"]:
+            if self._reference_key in record:
+                if record[self._reference_key] != {"status": "unresolved"}:
+                    raise ValueError("live_chatbook_archive_marker")
+                continue
+            value = record.get("file_path")
+            if value is None or value == "":
+                continue
+            key = sources.get(self._reference_path(value, live=True))
+            record["file_path"] = None
+            record[self._reference_key] = (
+                {"logical_id": key} if key is not None else {"status": "unresolved"}
+            )
+            self._archive_reference(item, record)
+        _write(candidate, json.dumps(document, ensure_ascii=False, indent=2))
+
+    def validate_restore_reference_owners(self, item, candidate, payload_owners):
+        """Check authenticated payload ownership before any path relocation."""
+        from .credentials import _read
+
+        for record in self._document(_read(candidate))["records"]:
+            key = self._archive_reference(item, record)
+            if key is not None and payload_owners.get(key) != "chatbooks.archives":
+                raise ValueError("invalid_chatbook_archive_owner")
+
+    def relocate_restore(self, item, candidate, mapping):
+        import json
+
+        from .credentials import _read, _write
+
+        document = self._document(_read(candidate))
+        for record in document["records"]:
+            key = self._archive_reference(item, record)
+            if key is not None:
+                if key not in mapping:
+                    raise ValueError("chatbook_archive_mapping_required")
+                record["file_path"] = str(self._reference_path(str(mapping[key])))
+                del record[self._reference_key]
+            elif record.get("file_path") not in (None, ""):
+                raise ValueError("chatbook_archive_reference_required")
+        _write(candidate, json.dumps(document, ensure_ascii=False, indent=2))
+
     def _definition_path(self, config):
         from .profile_paths import database_path
 
@@ -234,10 +363,7 @@ class _ChatbookRegistry(_Definition):
         )
 
     def discover(self, config):
-        import json
-
         from .file_inventory import _inventory_root
-        from .profile_paths import lexical_path
         from .recovery_files import _tree_member_id
         from .storage_admission import _read_recovery_file
 
@@ -257,8 +383,11 @@ class _ChatbookRegistry(_Definition):
         dependencies = set(catalog.dependencies)
         archive_root = user_data_dir(config) / "chatbooks"
         try:
-            document = json.loads(
-                _read_recovery_file(self.owner_id, catalog.path, max_bytes=16 * 1024**2)
+            document = self._document(
+                _read_recovery_file(
+                    self.owner_id, catalog.path, max_bytes=16 * 1024**2
+                ),
+                live=True,
             )
             records = document["records"]
             if not isinstance(records, list):
@@ -267,12 +396,16 @@ class _ChatbookRegistry(_Definition):
             for record in records:
                 if not isinstance(record, dict):
                     raise TypeError("invalid_chatbook_record")
+                if self._reference_key in record:
+                    if record[self._reference_key] != {"status": "unresolved"}:
+                        raise ValueError("live_chatbook_archive_marker")
+                    continue
                 value = record.get("file_path")
                 if value is None or value == "":
                     continue  # A metadata-only registry entry has no archive.
                 if not isinstance(value, str):
                     raise TypeError("invalid_chatbook_reference")
-                path = lexical_path(value)
+                path = self._reference_path(value, live=True)
                 # User-selected external destinations remain inert historical
                 # locators. A registry string never adopts an external tree.
                 if path != archive_root and archive_root not in path.parents:

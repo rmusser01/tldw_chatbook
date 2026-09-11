@@ -444,6 +444,7 @@ class LocalChatbookService:
             if "description" in fields:
                 record["description"] = str(fields["description"] or "")
             if "file_path" in fields:
+                record.pop("__chatbook_archive_reference", None)
                 file_path = fields["file_path"]
                 record["file_path"] = str(file_path) if file_path is not None else None
             if "tags" in fields:
