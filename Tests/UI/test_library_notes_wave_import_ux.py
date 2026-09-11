@@ -893,7 +893,7 @@ async def test_one_import_leaves_review_progress_and_receipt_reconciled(
     (vault / "picture.png").write_bytes(b"not a note")
 
     (tmp_path / "profile").mkdir()
-    controller, published = _real_import_controller(tmp_path / "profile")
+    controller, _published = _real_import_controller(tmp_path / "profile")
     controller.accept_selected_path(vault, is_folder=True)
     await controller.check()
 
@@ -1262,13 +1262,13 @@ def test_the_pager_and_the_canvas_find_the_same_runs() -> None:
     from itertools import groupby
 
     from tldw_chatbook.Library.library_note_import_state import (
+        add_selected_file,
+        begin_checking,
+        initial_note_import_snapshot,
         project_library_note_import_snapshot,
         review_run_key,
-        show_review,
-        begin_checking,
-        add_selected_file,
-        initial_note_import_snapshot,
         set_destination_segments,
+        show_review,
     )
     from tldw_chatbook.Notes.note_import_plan_models import (
         ImportAction,

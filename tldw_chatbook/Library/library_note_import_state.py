@@ -595,9 +595,6 @@ def show_review(
     if type(plan) is not NoteImportPlan:
         raise TypeError("plan must be a NoteImportPlan.")
     collision = plan.root_collision
-    unresolved_collision = bool(
-        collision is not None and collision.collides and collision.choice is None
-    )
     renamed_root = bool(
         collision is not None
         and collision.choice is RootCollisionChoice.RENAMED_ROOT
