@@ -130,6 +130,7 @@ _TRUST_SETUP_EXPLANATION_COPY = (
 # (``library_skills_state.py``); the "" key never renders a button (see
 # ``_compose_list``).
 _TRUST_HEADER_ACTION_LABELS = {
+    "recovery_review": "Review restored skills",
     "setup": "Set up skill trust",
     "resetup": "Set up skill trust",
     "retry": "Retry",
@@ -1007,7 +1008,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         # with zero skills installed there is nothing to review/trust yet,
         # so the header (and its escape-hatch reset button) stays hidden
         # entirely rather than greeting an empty list with a trust prompt.
-        if state.rows:
+        if state.rows or self.trust_posture == "recovery_review":
             blocked_count = sum(
                 1 for row in state.rows if getattr(row, "blocked", False)
             )

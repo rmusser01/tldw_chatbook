@@ -359,6 +359,18 @@ class SkillTrustService:
             return None, False
 
     @content_call(_content_sources)
+    def recovery_posture(self) -> str:
+        """Distinguish an explicit restored-root review from ordinary unlocking."""
+        from .recovery_activation import needs_review
+
+        try:
+            if needs_review(self):
+                return "recovery_review"
+        except (OSError, ValueError, RuntimeError):
+            return "unavailable"
+        return self.trust_posture()
+
+    @content_call(_content_sources)
     def trust_posture(self):
         """Report inactive restored trust without automatic credential probes."""
         with _execution_scope(self) as allowed:

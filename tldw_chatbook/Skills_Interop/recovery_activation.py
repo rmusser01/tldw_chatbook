@@ -190,6 +190,23 @@ def require_write(service):
         raise ValueError("skills_recovery_root_review_required")
 
 
+def needs_review(service) -> bool:
+    """Read only the current local root binding and Skills review requirement."""
+    with observed(_sources(service)) as witnesses:
+        if not witnesses:
+            return False
+        try:
+            _records(service, witnesses)
+        except (OSError, ValueError):
+            return True
+        return any(
+            not ActivationStore(Path(witness["store_root"])).allowed(
+                witness["generation"], "skills"
+            )
+            for witness in witnesses
+        )
+
+
 @dataclass(frozen=True)
 class RecoveryReview:
     """Actual current bundles and inactive historical grants for local review."""

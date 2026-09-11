@@ -480,7 +480,11 @@ from ..Navigation.main_navigation import NavigateToScreen
 from ..Views.RAGSearch.search_handoff import build_library_rag_console_live_work_payload
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
 from .model_browser_state import install_failure_message
-from .skills_screen import SkillTrustBootstrapModal, SkillTrustPassphraseModal
+from .skills_screen import (
+    SkillRecoveryReviewModal,
+    SkillTrustBootstrapModal,
+    SkillTrustPassphraseModal,
+)
 from .study_scope_models import (
     MATERIAL_SOURCE_LIBRARY,
     MATERIAL_TITLE_LIBRARY_SOURCES,
@@ -12070,7 +12074,9 @@ class LibraryScreen(BaseAppScreen):
         header for ``""``.
         """
         service = getattr(self.app_instance, "local_skill_trust_service", None)
-        posture_fn = getattr(service, "trust_posture", None)
+        posture_fn = getattr(service, "recovery_posture", None)
+        if not callable(posture_fn):
+            posture_fn = getattr(service, "trust_posture", None)
         if not callable(posture_fn):
             self._library_skills_trust_posture = ""
             return
@@ -20753,7 +20759,13 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         action = getattr(event.button, "trust_action", "")
-        if action in ("setup", "resetup"):
+        if action == "recovery_review":
+            self.run_worker(
+                self._review_restored_skill_trust(),
+                exclusive=True,
+                group="library_skill_trust",
+            )
+        elif action in ("setup", "resetup"):
             self._begin_library_skill_trust_setup()
         elif action == "unlock":
             self.run_worker(
@@ -20765,6 +20777,45 @@ class LibraryScreen(BaseAppScreen):
             self._refresh_library_skills_trust_posture()
         elif action == "review":
             self._open_first_blocked_skill()
+
+    async def _review_restored_skill_trust(self) -> None:
+        """Review exact restored bundles before the existing fresh-passphrase flow."""
+        service = getattr(self.app_instance, "local_skill_trust_service", None)
+        if service is None:
+            return
+        route = self._library_entry_route_key()
+        paths = (service.skills_dir, service.trust_store.store_dir)
+
+        def current() -> bool:
+            return (
+                self.is_mounted
+                and getattr(self.app_instance, "local_skill_trust_service", None) is service
+                and self._library_entry_route_key() == route
+                and (service.skills_dir, service.trust_store.store_dir) == paths
+            )
+
+        review, ok = await self._call_library_skill_trust_service("capture_recovery_review")
+        if not ok or not current():
+            return
+        confirmed = await self.app.push_screen_wait(
+            SkillRecoveryReviewModal(review, paths[1], current)
+        )
+        if confirmed is not True or not current():
+            return
+        passphrase = await self._request_library_skill_trust_bootstrap_passphrase()
+        if passphrase is None or not current():
+            return
+        _, ok = await self._call_library_skill_trust_service(
+            "trust_reviewed_recovery", review, passphrase,
+            failure_copy={
+                "skills_recovery_review_changed": "Skills changed after review. Capture a fresh review before setting up trust.",
+                "skills_recovery_root_changed": "The selected trust root changed. Reopen the profile and review again.",
+                "skills_recovery_binding_changed": "The local trust binding cannot be verified. The retained trust files were not reset.",
+            },
+        )
+        if ok and current():
+            self._refresh_library_skills_trust_posture()
+            self._refresh_local_source_snapshot()
 
     def _begin_library_skill_trust_setup(self) -> None:
         self.run_worker(
