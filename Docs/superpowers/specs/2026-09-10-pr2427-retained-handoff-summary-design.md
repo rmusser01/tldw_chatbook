@@ -1,6 +1,7 @@
 # PR2427 retained Handoff summary repair
 
-Status: user approved the in-place design on2026-09-10; written-spec review pending.
+Status: user approved the in-place design on2026-09-10; independent spec review
+approved; user review of this written spec is pending.
 Task: TASK-31932, latest-dev integration.
 
 ## Evidence and scope
@@ -53,7 +54,8 @@ Before implementation, add a retained-label regression to the existing
 RED. Exercise empty, eligible/blocked, and empty-again owner state; assert exact
 summary plus current action tooltip/class, unchanged Static/Button identity,
 unchanged focus/scroll, and no extra body-factory call. Cover omitted summary
-and absent optional Static without remount. Add a mounted source-arrival
+and absent optional Static without remount; explicitly assert a supplied empty
+string is not treated as omission. Add a mounted source-arrival
 regression using the existing entry snapshot reconciliation harness, preserving
 rail identity and focus. Verify all three Screen callsites supply the value.
 
@@ -75,6 +77,6 @@ owner refresh boundary; no new owner, lifetime, policy or service authority.
 - [x] Compare in-place update with Details replacement and explain trade-offs.
 - [x] Obtain user approval of the in-place design.
 - [x] Write this bounded spec.
-- [ ] Independent spec review.
+- [x] Independent spec review (approved, no planning blockers).
 - [ ] User review of written spec.
 - [ ] Write the implementation plan before code changes.

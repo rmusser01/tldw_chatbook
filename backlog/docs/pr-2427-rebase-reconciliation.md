@@ -3820,3 +3820,48 @@ Fresh GitHub read still reports OPEN at published
 (pagination complete). Its external reviewer statuses are not current-head CI
 clearance. Publication, remaining affected tests/size repairs, final-head review
 and normal protected merge remain open.
+
+### September10 second latest-dev checkpoint
+
+Published c61962cfa437c7ca7907fc436e898e8dad43185e with an exact lease on the
+previous PR head, then replayed all253 review commits onto fetched
+a5486ad4d4b070a7ee09cf592894a1844a21f4c9. Result31d32d9d2c1d9773592d3ae17b38c4dd6998e457
+includes the additional60 commits/49 files. The only conflict areas preserved
+dev's task32237 measured17/17 More columns and unioned rail-heading/fold-cue
+CSS with the reviewed search-focus rules; the generated sheet was rebuilt.
+All28 newly changed Python/JSON files parse; integrated whitespace passes.
+Independent fixed-ref review verifies identical Notes locator/reconciliation
+and Media fallback ASTs, all six plan142 guards, original callback arity and
+focus veto, and no resurrected private delegate. Upstream's new retry handle
+retains generation fencing and cancellation on re-arm/disarm.
+
+Latest native qualification selects complete Notes Reader, Media side-by-side,
+Media render fixes, crit9 Media reader/rail/shell, rail widget and media viewer
+state files plus both exact Notes Back cases:337 passed,1 non-strict XPASS,
+5 warnings,486.26s (`/private/tmp/pr2427-latest-dev-native.log`). The XPASS is the
+unchanged upstream Conversations arrival pin (TASK32302); one successful run
+does not resolve its documented intermittency. Final native7 descriptors match
+the earlier measured baseline:stdio3, intended faulthandler1, runner kqueue1
+and socketpair2. No SQLite/instance-lock retention. Exact report:
+`/private/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-latest-dev-native.bLVHvI/fd_identity.jsonl`.
+
+Companion complete collections reader, honesty/accessibility, Media scroller,
+Skills reader and post-release workspace-depth files:78 passed,2 failed,
+3 warnings,104.59s (`/private/tmp/pr2427-latest-reader-contracts.log`). Native
+final6 descriptors arestdio plus the same runner baseline, with no database
+or lock retention. Both failures demonstrate a retained Handoff summary that
+does not receive the source-arrival update, while its action button already
+uses current policy. No assertion or readiness delay was substituted. User
+approved passing owner-formatted text through the existing in-place rail
+refresh; written spec0516e9def6 awaits its required review gate before code.
+
+Latest CSS/budget/Watchlists35 tests pass,5 warnings,44.85s
+(`/private/tmp/pr2427-latest-css.log`); official boot census is unchanged755,513.
+All seven cached-input derived checks pass
+(`/private/tmp/pr2427-latest-dev-preflight.log`). Size/private-owner suite:
+126 passed,13 failed,2 warnings,3.32s
+(`/private/tmp/pr2427-latest-dev-size.log`). All failures are original size
+ceilings; new dev adds Collections and Skills overruns. LibraryScreen32715 is
+1026 over31689; import628 remains41 over587. No budget is raised. Remaining
+ownership decomposition, Handoff repair, final-head Qodo/checks and normal
+protected merge are open. Every process mentioned in this checkpoint is terminal.
