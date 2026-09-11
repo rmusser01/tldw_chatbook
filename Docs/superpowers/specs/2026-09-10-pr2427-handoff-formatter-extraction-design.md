@@ -1,6 +1,6 @@
 # PR 2427: pure Handoff formatter extraction
 
-Status: approach approved; written-spec review pending.
+Status: approach and independent spec review approved; user written-spec review pending.
 Task: TASK-31932, step 159. Baseline: `02597164ff` on dev `3afa68f1b9`.
 
 ## Scope and decision
@@ -73,6 +73,7 @@ Console SQLite handles and other size failures remain separately tracked.
 - [x] Inspect current function, callers, target module and governing doctrine.
 - [x] Compare alternatives and obtain approval of the bounded approach.
 - [x] Record this written design; visual companion is not applicable.
-- [ ] Complete independent spec review.
+- [x] Complete independent spec review: no planning blockers; free names,
+  type-only import, wrapper compatibility and retained Screen imports checked.
 - [ ] Obtain user review of the written spec before implementation planning.
 - [ ] Write and execute the bounded implementation plan after that approval.
