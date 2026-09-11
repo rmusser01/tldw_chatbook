@@ -310,6 +310,7 @@ NOTE_SINGULAR_STATE_FIELDS: frozenset[str] = frozenset(
         "create_token",
         "delete_origin_context",
         "delete_origin_preview",
+        "delete_origin_scroll",
         "delete_receipt",
         "editor_armed",
         "import_snapshot",
@@ -497,6 +498,11 @@ class LibraryNotesState:
     context: bool = False
     delete_origin_context: bool = False
     delete_origin_preview: bool = False
+    #: task-32268: Info's scroll offset when the delete prompt was
+    #: raised. The prompt renders inside that pane now, so focusing its
+    #: Cancel button scrolls it; cancelling puts the reader back where
+    #: they were rather than where the prompt happened to sit.
+    delete_origin_scroll: float | None = None
 
     #: ``(note_id, title)`` for each note whose body links to the open one
     #: (task-32145). Loaded by its own worker after the note opens and reset

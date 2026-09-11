@@ -2240,6 +2240,16 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 classes="library-canvas-action library-media-action-danger",
                 compact=True,
             )
+            # task-32268: the prompt belongs to the button above it. It used
+            # to compose as a sibling of every region, below the (hidden)
+            # wide utilities and the conflict callout -- live at dev
+            # 4a14b3f36f it painted five rows under Delete and OUTSIDE the
+            # Info border, which closed above it, so the guide's "renders
+            # where Delete was pressed" was not what the screen showed. It is
+            # the next child of Danger now, which is also the only place it
+            # can be: Delete is reachable from Info alone (task-32132), and
+            # ``apply_session_state`` keeps Info open while confirming.
+            yield from self._compose_delete_confirmation()
         yield Static(
             presentation_state.transfer_status,
             id="library-note-transfer-status",
@@ -2308,6 +2318,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     compact=True,
                 )
 
+    def _compose_delete_confirmation(self) -> ComposeResult:
+        """Mount the delete prompt where task-32268 requires it: in Danger."""
         with Vertical(id="library-note-delete-confirmation"):
             yield Static(
                 "Delete this note? Undo will be available in the Notes list.",
@@ -2500,8 +2512,15 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # "delete this note?" painted 14 rows away, under a body editor the
         # user never opened. Info stays put while confirming; only Preview
         # (which never hosts a Delete button) still yields to Edit.
+        # task-32268: the prompt is now a child of Info's Danger section, so
+        # Info has to be the surface whenever it is up -- otherwise a
+        # confirmation could be raised into a hidden pane. In production this
+        # is what already happened (Delete is Info-only), and task-32132's
+        # own rule was "Info stays put while confirming"; stating it as a
+        # condition makes the invariant the prompt's placement depends on
+        # explicit rather than incidental.
         show_context = (
-            state.region == "context"
+            (state.region == "context" or confirming_delete)
             and not conflict
             and not bulk_read_only
         )
