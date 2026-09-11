@@ -81,7 +81,9 @@ exist for the many-file case.
 
 Live GREEN: Trust -> Down -> Tab -> Enter staged README.md (`git status`:
 `M  README.md`), and the keyboard journey reached a real commit --
-`git log`: `5da59ec w3 keyboard commit`, clean tree.
+`git log`: `e69848b w3 round2 commit`, clean tree. (That is the SHIPPED
+code's run; the first cut's `5da59ec` was produced by code changed twice
+afterwards -- review F9.)
 
 Files: `Widgets/Library/library_file_notes_git_panel.py`,
 `Tests/UI/test_library_file_notes_git.py`,

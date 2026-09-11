@@ -19,7 +19,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen
-from tldw_chatbook.Third_Party.textual_fspicker.base_dialog import Dialog, InputBar
+from tldw_chatbook.Third_Party.textual_fspicker.base_dialog import InputBar
 from tldw_chatbook.Third_Party.textual_fspicker.parts import DirectoryNavigation
 
 

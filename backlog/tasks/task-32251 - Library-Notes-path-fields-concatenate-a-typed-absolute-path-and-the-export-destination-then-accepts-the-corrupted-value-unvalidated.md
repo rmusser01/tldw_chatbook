@@ -65,10 +65,15 @@ Four ACs at one seam plus the export half.
 differently from Tab-to-focus is that `Input._on_mouse_down` collapses the
 selection to the click point, and Textual dispatches `_on_*` to every class
 in the MRO with the BASE LAST. So the shared `PathInput` in `base_dialog.py`
-arms on the `Focus` that immediately precedes a `MouseDown` (an exact test
-for "this click focused me"; `self.has_focus` inside `_on_mouse_down` is
-always True and tells you nothing) and defers the select-all past the
-dispatch with `call_next`. task-32229's `FileNameInput` became an alias, so
+reconstructs "was this the click that focused me?" from event order --
+`self.has_focus` inside `_on_mouse_down` is always True, because
+`Screen._forward_event` focuses before it forwards -- and defers the
+select-all past the dispatch with `call_next`. `Focus` then `MouseDown` is
+necessary but NOT sufficient (review F2: a Tab focus followed much later by
+a deliberate click-to-place-the-caret has the same shape), so the arm is
+disarmed by a keystroke and by a `MouseMove`: a deliberate click needs the
+pointer to cross the field after the focus, and a genuine click-to-focus
+cannot, because there the move precedes the focus. task-32229's `FileNameInput` became an alias, so
 the vendored SelectDirectory/FileOpen/FileSave fields, the Ctrl+L path bar
 and the three EnhancedFileDialog fields all get one behaviour.
 

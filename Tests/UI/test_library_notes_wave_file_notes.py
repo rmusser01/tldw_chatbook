@@ -10,6 +10,7 @@ explain the mode before it asks for a folder.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from textual.widgets import Button, Static
@@ -396,3 +397,21 @@ async def test_a_file_without_frontmatter_says_nothing(tmp_path) -> None:
         assert not workspace.query_one("#file-notes-preview-status", Static).display
     await workspace.shutdown()
     replica.close()
+
+
+def test_the_frontmatter_disclosure_agrees_with_a_one_line_block() -> None:
+    """Review F8: "1 lines … are hidden" was hard-coded.
+
+    Unreachable through `open_file` today -- a terminated block is at least
+    two lines -- so the copy builder is called directly rather than faked
+    into a fixture that cannot exist on disk.
+    """
+    copy_for = LibraryFileNotesWorkspace._frontmatter_disclosure_copy
+
+    one = copy_for(SimpleNamespace(frontmatter_lines=1))
+    assert one.startswith("1 line of YAML frontmatter")
+    assert " is hidden here" in one and " as it is on disk" in one
+
+    many = copy_for(SimpleNamespace(frontmatter_lines=4))
+    assert many.startswith("4 lines of YAML frontmatter")
+    assert " are hidden here" in many and " as they are on disk" in many

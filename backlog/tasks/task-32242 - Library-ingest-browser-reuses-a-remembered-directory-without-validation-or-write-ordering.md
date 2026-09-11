@@ -47,8 +47,14 @@ a two-line reuse of an existing shared module rather than new code.
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 A relative, traversing or vanished `[library.ingest] last_directory`
-  never reaches the ingest `FileOpen`; the browser opens at the user's home
-  directory instead
+  never reaches the ingest `FileOpen`; the browser falls back to the shared
+  start-directory chain instead -- the folder `[notes] sync_directory` names
+  when it exists, else the user's home directory. (Amended: this criterion
+  originally said "opens at the user's home directory". task-32251 AC#5,
+  landed on the same branch, inserted the configured-notes-folder step for
+  every picker, so the original wording became literally false for a
+  configured profile while the guarantee it exists to state -- the unusable
+  value never reaches the picker -- is unchanged.)
 - [x] #2 Of two ingest selections made before the first config write finishes,
   the later one is the directory the browser reopens at
 - [x] #3 Both are pinned by tests that fail without the fix, and the ingest

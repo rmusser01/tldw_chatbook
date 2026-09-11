@@ -573,4 +573,4 @@ rows instead of ~24 rows below them at 235x52. The pre-commit disclosure says
 editor discloses hidden-but-preserved YAML frontmatter. The folder picker now
 falls back to `[notes] sync_directory` before your home directory. Verified
 live against a real git-backed vault: keyboard staging and a real commit
-(`git log`: `5da59ec w3 keyboard commit`).)*
+(`git log`: `e69848b w3 round2 commit`).)*

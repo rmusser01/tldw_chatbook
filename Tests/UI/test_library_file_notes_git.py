@@ -7576,26 +7576,88 @@ async def test_stage_renders_next_to_the_row_it_acts_on() -> None:
 
 @pytest.mark.asyncio
 async def test_a_later_status_refresh_does_not_steal_focus() -> None:
-    """The entry focus is an ENTRY focus: Refresh must not yank it back."""
+    """The entry focus is an ENTRY focus: Refresh must not yank it back.
+
+    The wait below is on the render-rows WORKER draining, not on the rows
+    being queryable: the rows are extended into the list before
+    ``_render_rows``'s ``finally`` decides about focus, so waiting on the
+    query left the first render's deferred focus move still in flight and
+    this test was 3-in-10 red against its own fix (review F1).
+    """
     panel = LibraryFileNotesGitPanel()
     panel.styles.display = "block"
     app = _PanelHarness(panel)
 
     async with app.run_test(size=(120, 40)) as pilot:
         panel.render_status(_status(_row("unstaged", stage_action="stage")))
-        await _wait_until(
-            pilot,
-            lambda: len(panel.query(".file-notes-git-row")) == 1,
-            "Git row did not mount",
-        )
+        await _drain_git_row_render(pilot, panel)
+
         back = panel.query_one("#file-notes-git-back", Button)
         back.focus()
         await pilot.pause()
 
         panel.render_status(_status(_row("unstaged", stage_action="stage")))
-        await _wait_for_current_git_row_projection_panel(panel)
-        await pilot.pause()
+        await _drain_git_row_render(pilot, panel)
         assert back.has_focus
+
+
+@pytest.mark.asyncio
+async def test_focus_moved_inside_the_panel_while_rows_mount_is_not_stolen() -> None:
+    """AC#1 is an ENTRY focus, and only for a focus nobody has touched.
+
+    Review F1: the first re-check asked "is focus anywhere inside this
+    panel", which cannot tell "the user Tabbed to Refresh while the rows
+    were mounting" apart from "nothing moved". Identity can.
+    """
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _PanelHarness(panel)
+    render_rows = panel._render_rows
+    render_started = asyncio.Event()
+    release_rows = asyncio.Event()
+
+    async def blocked_render_rows(generation, group_id, rows) -> None:
+        render_started.set()
+        await release_rows.wait()
+        await render_rows(generation, group_id, rows)
+
+    panel._render_rows = blocked_render_rows
+    async with app.run_test(size=(120, 40)) as pilot:
+        # Enter through CHECKING, not through Trust: trust landing hides the
+        # trust button, and Textual then moves focus itself -- to Back, which
+        # is also where this test moves it, so the two are indistinguishable.
+        # From checking, this render hides nothing.
+        panel.render_checking("/canonical/repository")
+        await pilot.pause()
+        panel.query_one("#file-notes-git-refresh", Button).focus()
+        await pilot.pause()
+
+        panel.render_status(_status(_row("unstaged", stage_action="stage")))
+        await _wait_until(
+            pilot,
+            render_started.is_set,
+            "Git row replacement did not start",
+        )
+        # The user moves focus INSIDE Session Git while the rows mount.
+        back = panel.query_one("#file-notes-git-back", Button)
+        back.focus()
+        await pilot.pause()
+
+        release_rows.set()
+        await _drain_git_row_render(pilot, panel)
+        assert back.has_focus, repr(panel.screen.focused)
+
+
+async def _drain_git_row_render(pilot, panel) -> None:
+    """Wait until the row-render worker has finished, `finally` included."""
+    await pilot.app.workers.wait_for_complete()
+    await pilot.pause()
+    for _ in range(_ASYNC_POLL_ATTEMPTS):
+        if not panel._replacing_rows:
+            await pilot.pause()
+            return
+        await asyncio.sleep(_ASYNC_POLL_INTERVAL_SECONDS)
+    raise AssertionError("Git row render did not settle")
 
 
 async def _wait_for_current_git_row_projection_panel(panel) -> None:

@@ -35,6 +35,7 @@ from tldw_chatbook.Library.library_shell_state import (
     library_disabled_action_label,
 )
 from tldw_chatbook.Notes.file_notes_git_commit import (
+    session_note_count as _session_note_count,
     CommitIncludedNote,
     CommitOutcome,
     CommitRecoveryProjection,
@@ -310,15 +311,6 @@ def _branch_for_display(ref: str) -> str:
     every place a branch is shown.
     """
     return _repository_path_for_display(ref.removeprefix("refs/heads/"))
-
-
-def _session_note_count(count: int) -> str:
-    """Pluralise the session-note count, including the one-note case.
-
-    task-32265: "1 session notes will be committed" / "Committed 1 session
-    notes as bd746be6...".
-    """
-    return f"{count} session note{'' if count == 1 else 's'}"
 
 
 def _grapheme_spans(text: str) -> list[tuple[int, int, int]]:
@@ -1223,6 +1215,12 @@ class LibraryFileNotesGitPanel(Vertical):
         #: Set by the FIRST ready status, consumed once the rows mount
         #: (task-32248 AC#1).
         self._entry_focus_pending = False
+        #: The exact widget that held focus when `_entry_focus_pending` was
+        #: armed. The rows mount on a worker, and the user can move focus
+        #: while they do -- including to another control INSIDE this panel,
+        #: which a containment check cannot tell apart from not having moved
+        #: at all. Identity can.
+        self._entry_focus_anchor: Widget | None = None
         self._commit_list_preferred_group_id: int | None = None
         self._commit_list_focus_selector: str | None = None
         self._commit_entry_focus: tuple[object, str] | None = None
@@ -2894,6 +2892,7 @@ class LibraryFileNotesGitPanel(Vertical):
             self._rows = status.rows
             if not was_ready and status.rows and self._focus_is_inside():
                 self._entry_focus_pending = True
+                self._entry_focus_anchor = self.screen.focused
             self._replace_rows(prior_group_id)
             stage_count = sum(row.stage_eligible for row in self._rows)
             unstage_count = sum(row.unstage_eligible for row in self._rows)
@@ -3214,11 +3213,15 @@ class LibraryFileNotesGitPanel(Vertical):
                 self._update_actions()
                 if self._entry_focus_pending:
                     self._entry_focus_pending = False
-                    # Re-checked HERE, not only when the status landed: the
-                    # rows mount on a worker, and the user can reclaim focus
-                    # (pressing Edit, say) while they do. An entry focus that
-                    # fires after that is a focus THEFT.
-                    if self._focus_is_inside():
+                    anchor = self._entry_focus_anchor
+                    self._entry_focus_anchor = None
+                    # Checked HERE, and by IDENTITY: this runs on the far
+                    # side of a worker, and any focus move during the mount
+                    # -- to the editor, or to another control in this panel
+                    # -- was the user's. Only an untouched focus is still
+                    # ours to place.
+                    import os
+                    if self._entry_focus_is_still_ours(anchor):
                         self._commit_list_focus_pending = True
                 if self._commit_list_focus_pending:
                     self._settle_commit_list_focus()
@@ -3339,7 +3342,7 @@ class LibraryFileNotesGitPanel(Vertical):
                 target = refresh
             else:
                 target = back
-            self.screen.set_focus(target, scroll_visible=False)
+            self._repair_focus_to(target)
             self.call_after_refresh(partial(self._settle_action_focus, target))
             focused = target
         if not bulk_available:
@@ -3377,14 +3380,68 @@ class LibraryFileNotesGitPanel(Vertical):
     def _focus_is_inside(self) -> bool:
         """Return whether focus currently sits on this panel.
 
-        Guards the entry-focus move (task-32248 AC#1): a status result
-        that lands while the user is somewhere else entirely must not
-        pull focus into Session Git.
+        Guards ARMING the entry-focus move (task-32248 AC#1): a status
+        result that lands while the user is somewhere else entirely must
+        not pull focus into Session Git. Consuming the arm is guarded by
+        identity instead -- see `_entry_focus_anchor`.
         """
         focused = self.screen.focused
         return focused is not None and (
             focused is self or self in focused.ancestors
         )
+
+    def _entry_focus_is_still_ours(self, anchor: Widget | None) -> bool:
+        """Return whether the armed entry focus may still be taken.
+
+        Two ways it is still ours, and no third (review F1):
+
+        * nothing moved -- the exact widget focus was on when the status
+          landed still holds it; or
+        * the panel took that widget away. Trust landing hides the trust
+          button, and Textual moves focus itself the moment the focused
+          widget stops being focusable. The user's focus was yanked by US,
+          so there is no deliberate choice left to protect. Asked HERE and
+          not when the control was hidden, because Textual does not
+          guarantee it moves focus inside the same call that flipped
+          ``display`` -- and when it did not, AC#1 silently stopped firing
+          (measured: 8 of 10 runs).
+
+        Anything else -- the user Tabbed away, pressed Edit, focused
+        another control in this panel -- is a focus move we must not undo.
+        """
+        if anchor is None:
+            return False
+        if self.screen.focused is anchor:
+            return True
+        # NOT `Widget.focusable`: it consults `visible` (the `visibility`
+        # style) and never `display`, and this panel hides controls with
+        # `display`, so a hidden button still reports focusable=True. The
+        # ancestors walk is the idiom `_repair_hidden_focus` and
+        # `_focus_push_list_control` already use here for exactly this.
+        return any(
+            isinstance(node, Widget) and not node.display
+            for node in anchor.ancestors_with_self
+        )
+
+    def _repair_focus_to(self, target: Widget) -> None:
+        """Move focus for the PANEL's own reasons, keeping the anchor true.
+
+        Trust landing hides the trust button, and this panel's repair then
+        moves focus to Refresh -- but `_repair_hidden_focus` defers that
+        while the rows mount, so it lands BETWEEN the entry focus being
+        armed and the re-check that consumes it. A repair is not the user
+        moving focus, so it must not read as one (review F1): re-point the
+        anchor at whatever we just focused.
+
+        Not merely a nicety over ``_entry_focus_is_still_ours``'s
+        hidden-anchor branch: re-pointing at a LIVE widget is what keeps a
+        user move made AFTER a repair detectable. Left on the hidden one,
+        that branch would answer "still ours" for the rest of the mount,
+        whatever the user did next.
+        """
+        self.screen.set_focus(target, scroll_visible=False)
+        if self._entry_focus_pending:
+            self._entry_focus_anchor = target
 
     def _settle_action_focus(self, target: Button) -> None:
         """Finish action focus repair without stealing focus outside the panel."""
@@ -3392,7 +3449,7 @@ class LibraryFileNotesGitPanel(Vertical):
         if focused is not None and self not in focused.ancestors:
             return
         if target.display and not target.disabled:
-            self.screen.set_focus(target, scroll_visible=False)
+            self._repair_focus_to(target)
 
     def _repair_hidden_focus(
         self,
@@ -3421,7 +3478,7 @@ class LibraryFileNotesGitPanel(Vertical):
             target = refresh
         else:
             target = back
-        self.screen.set_focus(target, scroll_visible=False)
+        self._repair_focus_to(target)
 
     @on(ListView.Highlighted, "#file-notes-git-rows")
     def _row_highlighted(self, event: ListView.Highlighted) -> None:

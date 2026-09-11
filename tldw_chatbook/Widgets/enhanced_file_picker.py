@@ -2415,7 +2415,7 @@ class EnhancedFileOpen(EnhancedFileDialog):
 
     def _input_bar(self) -> ComposeResult:
         """Provide input widgets for file selection"""
-        from textual.widgets import Input, Select
+        from textual.widgets import Select
 
         if not self.multi_select:
             yield PathInput(placeholder=self._filename_placeholder(), id="filename-input")
@@ -2461,7 +2461,7 @@ class EnhancedFileSave(EnhancedFileDialog):
 
     def _input_bar(self) -> ComposeResult:
         """Provide input widgets for file saving"""
-        from textual.widgets import Input, Select
+        from textual.widgets import Select
 
         yield PathInput(
             value=self.default_filename,
@@ -2553,7 +2553,7 @@ class EnhancedSelectDirectory(EnhancedFileDialog):
         AC#2 (task-32122): a persistent "Folder path" label, not just a
         placeholder that vanishes the moment the user types.
         """
-        from textual.widgets import Input, Label
+        from textual.widgets import Label
 
         yield Label("Folder path:", id="dir-path-label")
         # `PathInput`: `_sync_dir_path_input` pre-fills this with the

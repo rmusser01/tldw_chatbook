@@ -186,14 +186,26 @@ class PathInput(Input):
 
     BINDINGS = [Binding("ctrl+a", "select_all", show=False)]
 
-    #: Armed by the ``Focus`` event, consumed by the ``MouseDown`` that
-    #: caused it, disarmed by any keystroke. ``Screen._forward_event``
-    #: focuses a widget BEFORE forwarding the mouse-down to it, and
-    #: ``set_focus`` only posts ``Focus`` when focus actually moves, so a
-    #: ``Focus`` immediately followed by a ``MouseDown`` is exactly the
-    #: click that focused this field -- and nothing else is. Without the
-    #: keystroke disarm, a Tab-focus followed much later by a deliberate
-    #: click-to-position would re-select instead of placing the cursor.
+    #: Armed by the ``Focus`` event and consumed by the next ``MouseDown``.
+    #: ``Screen._forward_event`` focuses a widget BEFORE forwarding the
+    #: mouse-down to it, and ``set_focus`` only posts ``Focus`` when focus
+    #: actually moves, so the focusing click always arrives as ``Focus``
+    #: then ``MouseDown``. That ORDER is necessary but not sufficient: the
+    #: flag is sticky, so without the disarms below, a ``Focus`` from Tab
+    #: and a much later deliberate click-to-place-the-caret look the same
+    #: (review F2 reproduced exactly that: Tab in, click at offset 3, the
+    #: whole path selected, next keystroke wipes it).
+    #:
+    #: Two disarms narrow it to the real thing. A keystroke means the user
+    #: is typing, not pointing. A ``MouseMove`` means the pointer has
+    #: crossed the field since the focus -- which a deliberate click needs
+    #: and a genuine click-to-focus does not, because there the move
+    #: PRECEDES the focus (Textual forwards ``MouseMove`` without touching
+    #: focus; only ``MouseDown`` focuses).
+    #:
+    #: Residual, accepted: a pointer already resting on the field when Tab
+    #: focuses it, clicked without moving, still re-selects. That needs a
+    #: hover-position check the terminal does not reliably give us.
     _select_on_focusing_click: bool = False
 
     # NOTE for all three handlers: Textual dispatches `_on_*` to EVERY class
@@ -208,6 +220,9 @@ class PathInput(Input):
         self._select_on_focusing_click = True
 
     async def _on_key(self, event: Any) -> None:
+        self._select_on_focusing_click = False
+
+    async def _on_mouse_move(self, event: Any) -> None:
         self._select_on_focusing_click = False
 
     async def _on_mouse_down(self, event: Any) -> None:

@@ -928,11 +928,24 @@ been invoked. `call_after_refresh` works too where a layout pass is wanted.
 **Corollaries.**
 - A subclass `_on_focus` / `_on_key` that only records state is safe (nothing
   to undo) and still must not call `super()`.
-- `Screen._forward_event` focuses a clicked widget BEFORE forwarding the
-  `MouseDown` to it, and `set_focus` only posts `Focus` when focus actually
-  moves — so "a `Focus` immediately followed by a `MouseDown`" is an exact
-  test for "this click is the one that focused me", which is what armed the
-  select-all here. `self.has_focus` inside `_on_mouse_down` is always `True`
-  and tells you nothing.
+- `self.has_focus` inside `_on_mouse_down` is always `True` and tells you
+  nothing: `Screen._forward_event` focuses a clicked widget BEFORE forwarding
+  the `MouseDown` to it. So "was this the click that focused me?" has to be
+  reconstructed from event ORDER — `set_focus` only posts `Focus` when focus
+  actually moves, so the focusing click always arrives as `Focus` then
+  `MouseDown`.
+- **Necessary is not sufficient, and the first cut shipped the difference.**
+  A flag armed on `Focus` and consumed by the next `MouseDown` also fires for
+  a Tab focus followed much later by a deliberate click-to-place-the-caret —
+  the review reproduced it: Tab in, click at offset 3, whole value selected,
+  next keystroke wipes it. What separates them is the pointer: a deliberate
+  click needs a `MouseMove` across the widget AFTER the focus, and a genuine
+  click-to-focus cannot have one, because there the move PRECEDES the focus
+  (Textual forwards `MouseMove` without touching focus; only `MouseDown`
+  focuses). So disarm on `_on_mouse_move` as well as on `_on_key`.
+- `Pilot.click` posts `[MouseDown, MouseUp, Click]` and **no** `MouseMove`,
+  while `Pilot.mouse_down`/`mouse_up` each post one. A test that only clicks
+  is therefore not exercising the terminal's own event shape — `pilot.hover`
+  first, or the pointer-derived half of your logic is untested.
 - `Input.select_on_focus` defaults to `True` already; the reason click-to-
   focus behaved differently from Tab-to-focus is entirely this ordering.

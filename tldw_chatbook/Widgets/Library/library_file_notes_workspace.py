@@ -62,6 +62,7 @@ from tldw_chatbook.Notes.file_notes_conflict_compare import (
     build_conflict_comparison,
 )
 from tldw_chatbook.Notes.file_notes_git_commit import (
+    session_note_count,
     CommitOutcome,
     CommitRecoveryProjection,
     CommitReviewHandle,
@@ -1932,6 +1933,14 @@ class LibraryFileNotesWorkspace(Vertical):
         answer is that they do; this says so.
         """
         lines = opened.frontmatter_lines
+        # Two whole sentences rather than interpolated fragments: three
+        # words have to agree (line/lines, is/are, it/they), and the
+        # plural wording is the one that ships (review F8).
+        if lines == 1:
+            return (
+                "1 line of YAML frontmatter above this body is hidden here "
+                "and kept exactly as it is on disk."
+            )
         return (
             f"{lines} lines of YAML frontmatter above this body are hidden "
             "here and kept exactly as they are on disk."
@@ -7302,8 +7311,7 @@ class LibraryFileNotesWorkspace(Vertical):
         count = 0 if review is None else review.review.included_note_count
         self._commit_view_phase = "executing"
         self._git_panel_widget.render_commit_executing(CommitExecutionProjection(count))
-        note_label = "note" if count == 1 else "notes"
-        self._set_action_status(f"Committing {count} session {note_label}…")
+        self._set_action_status(f"Committing {session_note_count(count)}…")
 
     async def _observe_commit_outcome(
         self,
@@ -7369,14 +7377,14 @@ class LibraryFileNotesWorkspace(Vertical):
             self._clear_commit_draft_after_success()
             snapshot = self._session_owner.snapshot(key.binding)
             if snapshot.trusted_repository == key.repository:
-                note_label = "note" if result.committed_note_count == 1 else "notes"
                 self._git_last_action = _GitLastAction(
                     binding=key.binding,
                     repository=key.repository,
                     changes=snapshot.changes,
                     text=(
-                        f"Committed {result.committed_note_count} session "
-                        f"{note_label}; unrelated changes untouched."
+                        "Committed "
+                        f"{session_note_count(result.committed_note_count)}; "
+                        "unrelated changes untouched."
                     ),
                 )
                 self._sync_git_last_action()
@@ -7767,16 +7775,16 @@ class LibraryFileNotesWorkspace(Vertical):
             message += "."
 
         if result.state == "success" and affected:
-            note = "session note" if affected == 1 else "session notes"
+            note = session_note_count(affected)
             if result.action == "stage":
                 core = (
-                    f"{affected} {note} staged; Chatbook targeted only "
+                    f"{note} staged; Chatbook targeted only "
                     "eligible session paths."
                 )
             else:
                 entry = "entry" if affected == 1 else "entries"
                 core = (
-                    f"{affected} {note} unstaged; Chatbook restored only its "
+                    f"{note} unstaged; Chatbook restored only its "
                     f"owned session {entry}."
                 )
             return " ".join(part for part in (core, message, counts_text) if part)
