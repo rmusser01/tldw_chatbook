@@ -994,6 +994,31 @@ def test_tree_rows_carry_a_relative_age() -> None:
     assert note_rows and note_rows[0].age_label == "2h"
 
 
+def _duplicate_row(note_id: str, age_label: str, clock_label: str = ""):
+    return LibraryNotesTreeRow(
+        placement_id=FolderPlacementId.unfiled(note_id),
+        kind="note",
+        label="Reading list",
+        depth=0,
+        note_id=note_id,
+        breadcrumb="Unfiled / Reading list",
+        age_label=age_label,
+        clock_label=clock_label,
+    )
+
+
+async def _rendered_tree_labels(projection) -> list[str]:
+    app = _CanvasApp(
+        pane_width=100, list_state=_list_state(), tree_projection=projection
+    )
+    async with app.run_test(size=WIDE) as pilot:
+        await pilot.pause()
+        return [
+            str(button.label).strip()
+            for button in app.query(".library-notes-tree-note-row")
+        ]
+
+
 @pytest.mark.asyncio
 async def test_duplicate_titles_render_folder_and_age_suffixes() -> None:
     """task-32137 AC#2: two "Reading list" rows are told apart at render time."""
@@ -1033,6 +1058,100 @@ async def test_duplicate_titles_render_folder_and_age_suffixes() -> None:
         "Reading list · Unfiled · 2h",
         "Reading list · Unfiled · 5d",
     ]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_titles_of_the_same_age_get_a_third_key() -> None:
+    """task-32254 AC#2: folder and age tie, so the time of day breaks it.
+
+    The case task-32137's discriminator could not reach, and the one it
+    was needed for most: two notes titled "Reading list", both unfiled,
+    both minutes old, rendered as the same string.
+    """
+    labels = await _rendered_tree_labels(
+        LibraryNotesTreeProjection(
+            rows=(
+                _duplicate_row("n1", "2m", clock_label="09:14"),
+                _duplicate_row("n2", "2m", clock_label="09:16"),
+            )
+        )
+    )
+
+    assert labels == [
+        "Reading list · Unfiled · 2m · 09:14",
+        "Reading list · Unfiled · 2m · 09:16",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_duplicates_from_the_same_minute_fall_back_to_a_short_id() -> None:
+    """task-32254 AC#2: a shared minute is not an identity; the id is.
+
+    Two notes written in the same minute (a seeding script, a double
+    press) share the clock too, so the group falls back to a stable short
+    id rather than to a third identical string.
+    """
+    labels = await _rendered_tree_labels(
+        LibraryNotesTreeProjection(
+            rows=(
+                _duplicate_row("0f3a-one", "2m", clock_label="09:14"),
+                _duplicate_row("b71c-two", "2m", clock_label="09:14"),
+            )
+        )
+    )
+
+    assert labels == [
+        "Reading list · Unfiled · 2m · #0f3a",
+        "Reading list · Unfiled · 2m · #b71c",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_title_that_does_not_repeat_keeps_its_plain_row() -> None:
+    """task-32254: the third key is spent only where rows actually tie."""
+    labels = await _rendered_tree_labels(
+        LibraryNotesTreeProjection(
+            rows=(
+                _duplicate_row("n1", "2m", clock_label="09:14"),
+                LibraryNotesTreeRow(
+                    placement_id=FolderPlacementId.unfiled("n2"),
+                    kind="note",
+                    label="Groceries",
+                    depth=0,
+                    note_id="n2",
+                    breadcrumb="Unfiled / Groceries",
+                    age_label="2m",
+                    clock_label="09:14",
+                ),
+            )
+        )
+    )
+
+    assert labels == ["Reading list · 2m", "Groceries · 2m"]
+
+
+def test_tree_rows_carry_the_local_time_of_day() -> None:
+    """task-32254 AC#2: the third key comes off the note's own timestamp."""
+    from dataclasses import replace
+
+    from tldw_chatbook.Library.library_notes_tree_paging import empty_notes_slice
+
+    now = datetime(2026, 9, 9, 12, 0, tzinfo=timezone.utc)
+    modified = now - timedelta(minutes=2)
+    key = NotesBranchKey(None, "placements")
+    state = replace(
+        empty_notes_slice(key),
+        items=(_placement("n1", "Reading list", None, modified.isoformat()),),
+        item_ids=(FolderPlacementId.unfiled("n1"),),
+        total=1,
+    )
+
+    projection = build_paged_library_notes_tree(
+        branch_states={key: state}, expanded_folder_ids=set(), now=now
+    )
+
+    note_rows = [row for row in projection.rows if row.kind == "note"]
+    assert note_rows[0].clock_label == modified.astimezone().strftime("%H:%M")
 
 
 @pytest.mark.asyncio
