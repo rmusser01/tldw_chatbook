@@ -1,6 +1,6 @@
 # ADR-149: Offer-first Canvas guide and inline skill
 
-Status: Accepted — design sections approved on 2026-09-10; written-spec review pending
+Status: Accepted — written spec approved by the user on 2026-09-10
 Date: 2026-09-10
 Related Task: [TASK-32312](../tasks/task-32312%20-%20Design-offer-first-Canvas-guidance-and-companion-skill.md)
 Extends: [ADR-121](121-local-versioned-canvas-artifacts-and-browser-sandbox.md),
@@ -64,6 +64,8 @@ should change merely to deliver authoring instructions.
 
 The [design spec](../../Docs/superpowers/specs/2026-09-10-canvas-guidance-skill-design.md)
 defines the full behavior, error handling, content, and verification contract.
+The [implementation plan](../../Docs/superpowers/plans/2026-09-10-canvas-guidance-skill-implementation.md)
+maps the accepted decision to concrete provider, guide, skill, and verification work.
 
 ## Alternatives considered
 

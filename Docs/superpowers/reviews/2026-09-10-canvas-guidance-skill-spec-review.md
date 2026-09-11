@@ -29,6 +29,6 @@ by this documentation review; those are implementation acceptance requirements.
 
 ## User gate
 
-The user approved each design section and authorized writing the spec. Review of
-the written file remains pending. Implementation planning and product changes have
-not started.
+The user approved each design section and authorized writing the spec, then
+approved the written file on 2026-09-10. The written-spec gate is satisfied and
+implementation planning may proceed. This record claims no product implementation.

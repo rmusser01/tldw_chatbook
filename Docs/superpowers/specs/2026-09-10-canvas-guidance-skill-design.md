@@ -1,11 +1,12 @@
 # Offer-first Canvas guidance and companion skill
 
 Date: 2026-09-10 (America/Los_Angeles)
-Status: Design sections approved; written-spec review pending
+Status: Written spec approved by the user on 2026-09-10
 Baseline: locally available `origin/dev`, `3afa68f1b9`
 Scope: design only; implementation planning follows written-spec approval.
 Task: [TASK-32312](../../../backlog/tasks/task-32312%20-%20Design-offer-first-Canvas-guidance-and-companion-skill.md)
 Decision: [ADR-149](../../../backlog/decisions/149-offer-first-canvas-guide-and-inline-skill.md)
+Implementation plan: [Canvas guidance and skill](../plans/2026-09-10-canvas-guidance-skill-implementation.md)
 
 ## Purpose
 
@@ -286,5 +287,5 @@ tests, and preserve the existing immutable runtime assets. This document is the
 behavior and contract specification, not authorization to begin implementation.
 
 Independent [spec review](../reviews/2026-09-10-canvas-guidance-skill-spec-review.md)
-approved the design without blocking or advisory findings. The written spec is
-still awaiting the user's review before implementation planning.
+approved the design without blocking or advisory findings. The user subsequently
+approved the written spec on 2026-09-10, authorizing implementation planning.
