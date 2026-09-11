@@ -13136,13 +13136,21 @@ class LibraryScreen(BaseAppScreen):
         registry = self._library_ingest_registry()
         jobs_fn = getattr(registry, "jobs", None)
         if callable(jobs_fn):
+            # (Qodo 2) ``jobs()`` already hides superseded and dismissed jobs
+            # and NOTHING else, so this is exactly the set the Review queue
+            # renders -- permanent failures included. The card is still
+            # offered only when something in it can actually be retried (the
+            # pre-existing trigger), but once offered it must count what the
+            # queue shows, or the sentence disagrees with the screen it sends
+            # the user to.
             live = tuple(
-                job
-                for job in jobs_fn()
-                if not job.permanent and not job.dismissed and not job.superseded
+                job for job in jobs_fn() if not job.dismissed and not job.superseded
             )
-            failures = [job for job in live if job.state is IngestJobState.FAILED]
-            if failures:
+            if any(
+                job.state is IngestJobState.FAILED and not job.permanent
+                for job in live
+            ):
+                failures = [job for job in live if job.state is IngestJobState.FAILED]
                 # task-32351 AC#2 (critique #10, B D2): after 4 of 6 files
                 # failed the landing said only "An import needs review." --
                 # neutral where the queue itself was exact. The counts are
@@ -13157,7 +13165,18 @@ class LibraryScreen(BaseAppScreen):
                 # trigger above is unchanged); only what it counts is scoped.
                 # A job submitted on its own carries no batch id, so it is
                 # its own import.
-                newest = max(failures, key=lambda job: job.submitted_at)
+                #
+                # (Qodo 3) Ordered by ``finished_at_wall``, not
+                # ``submitted_at``: the latter is a ``time.monotonic()`` float
+                # with no fixed epoch, so a job restored from before a reboot
+                # can outrank one submitted after it. ``finished_at_wall`` is
+                # the ISO-8601 UTC stamp ``mark_failed`` writes for exactly
+                # this ordering; it is "" only on a row that never reached a
+                # terminal state, which cannot be in ``failures``, so
+                # ``submitted_at`` stays as the tiebreaker.
+                newest = max(
+                    failures, key=lambda job: (job.finished_at_wall, job.submitted_at)
+                )
                 last_import = newest.batch_id or newest.job_id
                 members = [
                     job for job in live if (job.batch_id or job.job_id) == last_import

@@ -19,9 +19,15 @@ asking about.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from textual.widgets import Button
 
+from tldw_chatbook.Library.library_ingest_jobs import (
+    IngestJobState,
+    LibraryIngestJob,
+)
 from tldw_chatbook.Library.library_content_evidence import (
     LibraryContentEvidence,
     LibraryEvidenceStatus,
@@ -299,3 +305,100 @@ async def test_the_card_counts_the_last_import_not_every_unreviewed_one() -> Non
 
         assert action is not None
         assert action.message == "Last import: 1 file failed."
+
+
+def _failed(job_id, *, batch_id=None, wall, monotonic, permanent=False):
+    return LibraryIngestJob(
+        job_id=job_id,
+        source_path=f"/tmp/{job_id}.pdf",
+        state=IngestJobState.FAILED,
+        submitted_at=monotonic,
+        finished_at_wall=wall,
+        permanent=permanent,
+        batch_id=batch_id,
+    )
+
+
+def _skipped(job_id, *, batch_id, wall, monotonic):
+    return LibraryIngestJob(
+        job_id=job_id,
+        source_path=f"/tmp/{job_id}.pdf",
+        state=IngestJobState.SKIPPED,
+        submitted_at=monotonic,
+        finished_at_wall=wall,
+        batch_id=batch_id,
+    )
+
+
+def _attention_for(jobs):
+    """Drive the landing card off an exact job snapshot.
+
+    ``jobs()`` is the whole contract the card reads, so a stub registry pins
+    ordering and tallies without forging registry internals -- neither
+    ``finished_at_wall`` nor ``permanent`` can be set through the real
+    registry's public API at the values these cases need.
+    """
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_ingest_registry = lambda: SimpleNamespace(jobs=lambda: jobs)
+    return screen._library_landing_attention_action()
+
+
+def test_the_count_matches_what_the_review_queue_shows() -> None:
+    """(Qodo 2) ``jobs()`` hides only dismissed/superseded, so a permanent
+    failure is still a row in the queue. Excluding it from the tally made the
+    card's count disagree with the queue it sends the user to."""
+    action = _attention_for(
+        (
+            _failed("a", batch_id="b1", wall="2026-09-11T10:00:02Z", monotonic=2.0),
+            _failed("b", batch_id="b1", wall="2026-09-11T10:00:01Z", monotonic=1.0),
+            _failed(
+                "c",
+                batch_id="b1",
+                wall="2026-09-11T10:00:03Z",
+                monotonic=3.0,
+                permanent=True,
+            ),
+            _skipped("d", batch_id="b1", wall="2026-09-11T10:00:04Z", monotonic=4.0),
+        )
+    )
+
+    assert action is not None
+    assert action.message == "Last import: 3 files failed, 1 skipped."
+
+
+def test_a_permanent_only_import_still_offers_no_retry() -> None:
+    """The pre-existing trigger is unchanged: nothing here can be retried."""
+    assert (
+        _attention_for(
+            (
+                _failed(
+                    "a",
+                    batch_id="b1",
+                    wall="2026-09-11T10:00:01Z",
+                    monotonic=1.0,
+                    permanent=True,
+                ),
+            )
+        )
+        is None
+    )
+
+
+def test_the_last_import_is_the_one_that_finished_last_by_the_clock() -> None:
+    """(Qodo 3) ``submitted_at`` is ``time.monotonic()`` with no fixed epoch,
+    so a job restored from before a reboot can carry a HIGHER value than one
+    submitted afterwards. ``finished_at_wall`` is the real UTC stamp the model
+    documents for exactly this ordering."""
+    action = _attention_for(
+        (
+            # restored from a previous boot: newer monotonic, older wall clock
+            _failed("old-1", batch_id="old", wall="2026-09-10T08:00:00Z", monotonic=900.0),
+            _failed("old-2", batch_id="old", wall="2026-09-10T08:00:01Z", monotonic=901.0),
+            # submitted after the reboot: the real last import
+            _failed("new-1", batch_id="new", wall="2026-09-11T10:00:00Z", monotonic=3.0),
+        )
+    )
+
+    assert action is not None
+    assert action.message == "Last import: 1 file failed."
