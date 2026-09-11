@@ -8,6 +8,7 @@ legacy Chat window are deprecated parallels; new settings belong here.
 import asyncio
 import copy
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 import logging
 import os
@@ -2316,6 +2317,25 @@ class SettingsRegion(Vertical):
     def compose(self) -> ComposeResult:
         """Yield this region's children from the screen's builder."""
         yield from self._builder()
+
+
+@contextmanager
+def _workspace_worker_connection(screen):
+    """Retire only this Settings worker's new installed workspace connection."""
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+    registry = getattr(screen.app_instance, "workspace_registry_service", None)
+    database = getattr(registry, "db", None)
+    owned = (
+        type(database) is WorkspaceDB
+        and not database.is_memory_db
+        and getattr(database._thread_local, "conn", None) is None
+    )
+    try:
+        yield
+    finally:
+        if owned:
+            WorkspaceDB.close(database)
 
 
 class SettingsScreen(BaseAppScreen):
@@ -7776,22 +7796,23 @@ class SettingsScreen(BaseAppScreen):
         snapshots, whereas sharing the group would let a solo refresh CANCEL
         an in-flight combined pass and silently drop the handoff update.
         """
-        try:
-            handoff_rows = self._server_sync_workspace_handoff_rows()
-        except Exception:
-            logger.warning(
-                "Failed to refresh Settings server/sync/workspace/handoff rows.",
-                exc_info=True,
-            )
-            handoff_rows = self._server_sync_workspace_handoff_loading_rows()
-        try:
-            manual_rows = self._manual_sync_rows()
-        except Exception:
-            logger.warning(
-                "Failed to refresh Settings manual sync rows.", exc_info=True
-            )
-            manual_rows = self._manual_sync_loading_rows()
-        self.app.call_from_thread(self._apply_sync_rows, handoff_rows, manual_rows)
+        with _workspace_worker_connection(self):
+            try:
+                handoff_rows = self._server_sync_workspace_handoff_rows()
+            except Exception:
+                logger.warning(
+                    "Failed to refresh Settings server/sync/workspace/handoff rows.",
+                    exc_info=True,
+                )
+                handoff_rows = self._server_sync_workspace_handoff_loading_rows()
+            try:
+                manual_rows = self._manual_sync_rows()
+            except Exception:
+                logger.warning(
+                    "Failed to refresh Settings manual sync rows.", exc_info=True
+                )
+                manual_rows = self._manual_sync_loading_rows()
+            self.app.call_from_thread(self._apply_sync_rows, handoff_rows, manual_rows)
 
     def _apply_sync_rows(
         self,
@@ -7857,14 +7878,15 @@ class SettingsScreen(BaseAppScreen):
 
     @work(exclusive=True, thread=True, group="settings-manual-sync-preview")
     def _refresh_manual_sync_rows(self) -> None:
-        try:
-            rows = self._manual_sync_rows()
-        except Exception:
-            logger.warning(
-                "Failed to refresh Settings manual sync rows.", exc_info=True
-            )
-            rows = self._manual_sync_loading_rows()
-        self.app.call_from_thread(self._apply_manual_sync_rows, rows)
+        with _workspace_worker_connection(self):
+            try:
+                rows = self._manual_sync_rows()
+            except Exception:
+                logger.warning(
+                    "Failed to refresh Settings manual sync rows.", exc_info=True
+                )
+                rows = self._manual_sync_loading_rows()
+            self.app.call_from_thread(self._apply_manual_sync_rows, rows)
 
     @work(exclusive=True, group="settings-manual-sync-run")
     async def _manual_sync_run_worker(self, run_token: int) -> None:

@@ -54,6 +54,34 @@ async def _settle_stage(hooks, closed, deadline):
             raise RecoveryRequired("runtime_work_not_settled")
 
 
+def _readmit_native_holds(holds):
+    """Wait on actual ordinary gates without nesting native admission contexts."""
+    for hold in holds:
+        # Existing source leases remain owned during each native wait.
+        with hold.authority.normal(hold.names):
+            pass
+
+
+async def _wait_for_native_readmission():
+    """Retain refused producers until their existing native gates reopen."""
+    from . import storage_admission as storage
+
+    with storage._lock:
+        holds = tuple(set(storage._holds.values()) | storage._retiring_holds)
+    # Ordinary admission validates the actual gate and pending state. A
+    # deferred pause probe cannot establish that a refused request ended.
+    completion = asyncio.create_task(asyncio.to_thread(_readmit_native_holds, holds))
+    cancellation = None
+    while not completion.done():
+        try:
+            await asyncio.shield(completion)
+        except asyncio.CancelledError as error:
+            cancellation = cancellation or error
+    completion.result()
+    if cancellation is not None:
+        raise cancellation
+
+
 async def _resume_hooks(closed):
     """Resume in dependency order, preserving failed owners for explicit recovery."""
     cancellation = None
@@ -518,6 +546,13 @@ class RuntimeMaintenance:
         """Reopen producers only after ordinary storage admission is restored."""
         self._check()
         cancellation = None
+        if not getattr(self.pause, "_startup_retired", False):
+            # Refusal may precede startup retirement or even the local pause.
+            # Keep every producer closed through the native request's release.
+            try:
+                await _wait_for_native_readmission()
+            except asyncio.CancelledError as error:
+                cancellation = error
         if self.pause is not None:
             try:
                 await self.pause.reacquire_startup()
