@@ -235,7 +235,7 @@ async def test_between_tool_calls_the_row_says_thinking_not_a_stale_tool_name():
 
 @pytest.mark.asyncio
 async def test_a_pending_approval_says_waiting_not_thinking_or_generating():
-    """task-32276: a parked approval round outranks the derived tool state.
+    """task-32345: a parked approval round outranks the derived tool state.
 
     Same shape as the "between tool calls" case above -- a completed tool
     round with the model between steps, which today reads ``Thinking…`` --
@@ -751,7 +751,7 @@ def test_a_bare_run_state_double_without_a_round_registry_is_never_pending():
 
 
 def test_an_outstanding_approval_round_overrides_the_bound_methods_own_line():
-    """task-32276: the bound ``console_turn_activity`` reads the flag off
+    """task-32345: the bound ``console_turn_activity`` reads the flag off
     ``controller.has_pending_approval_round(store.active_session_id)`` --
     a real round registry, not a tool name."""
 

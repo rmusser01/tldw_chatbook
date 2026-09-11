@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.Chat.console_close_helpers import close_controller_session
 from tldw_chatbook.Agents.agent_models import (
     RUN_CANCELLED,
     RUN_DONE,
@@ -87,6 +88,7 @@ from tldw_chatbook.Chat.console_library_policy import (
     AUTOMATIC_LIBRARY_SOURCE_TYPES,
     ConsoleAssistantLibraryAccess,
     ConsoleAutoRetrieve,
+    ConsoleLibraryPolicyDefaults,
     ConsoleLibraryPolicySnapshot,
 )
 from tldw_chatbook.Chat.console_turn_context import (
@@ -102,7 +104,22 @@ from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 class ConsoleChatStore(_ConsoleChatStore):
-    """Test store whose intentionally db-less sessions are explicitly ephemeral."""
+    """Ephemeral test store with a permissive frozen policy ceiling."""
+
+    def __init__(self, **kwargs):
+        # Individual tests replace the live coordinator to select ALLOWED,
+        # BLOCKED, AUTOMATIC, or NEVER. Runtime custody intersects that live
+        # selection with the session's frozen maximum, so keep the maximum
+        # permissive here rather than accidentally overriding the fake under
+        # test with the production fail-closed defaults.
+        kwargs.setdefault(
+            "library_policy_defaults",
+            ConsoleLibraryPolicyDefaults(
+                auto_retrieve=ConsoleAutoRetrieve.NEVER,
+                assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+            ),
+        )
+        super().__init__(**kwargs)
 
     def create_session(self, **kwargs):
         kwargs.setdefault("ephemeral", self.persistence is None)
@@ -1019,10 +1036,19 @@ async def test_interrupted_validation_releases_only_its_session(interruption):
             with pytest.raises(asyncio.CancelledError):
                 await task
         elif interruption == "close":
-            controller.close_session(session.id)
+            ticket = controller.begin_session_close(
+                session.id,
+                expected_revision=controller.lifecycle_impact(
+                    session_id=session.id
+                ).revision,
+            )
+            # ADR-094 drains cancellation before deleting the session.
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=1)
+            assert task.cancelled()
             closed_state = controller.run_state_for(session.id)
-            result = await asyncio.wait_for(task, timeout=1)
-            assert result.session_closed
+            assert closed_state.status is ConsoleRunStatus.STOPPED
+            controller.finalize_session_close(ticket)
             assert all(item.id != session.id for item in store.sessions())
             assert controller.run_state_for(session.id) == closed_state
         else:
@@ -1081,7 +1107,7 @@ async def test_skill_refuse_after_preparation_removes_transient_echo():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
 
-    async def _refuse(messages):
+    async def _refuse(messages, _turn_context):
         return messages, "Refused: untrusted skill.", (), (), ""
 
     controller._apply_skill_substitution = _refuse
@@ -1100,7 +1126,7 @@ async def test_dictionary_apply_raise_after_preparation_removes_transient_echo()
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
 
-    async def _boom(messages, session_id):
+    async def _boom(messages, session_id, _turn_context):
         raise RuntimeError("dict boom")
 
     controller._apply_chat_dictionaries = _boom
@@ -1448,16 +1474,11 @@ async def test_character_retry_without_chunks_preserves_prior_emote_metadata():
 
 
 @pytest.mark.asyncio
-async def test_character_snapshot_retries_when_actor_changes_during_pack_read():
-    started = threading.Event()
-    release = threading.Event()
-
-    class BlockingRepository:
+async def test_character_snapshot_blocks_when_actor_changes_after_handoff():
+    class Repository:
         def get_active_actor_pack(self, actor_kind, actor_id):
             assert actor_kind == "character"
             if actor_id == 7:
-                started.set()
-                assert release.wait(2)
                 state = "old_state"
                 identity = 70
             else:
@@ -1474,6 +1495,18 @@ async def test_character_snapshot_retries_when_actor_changes_during_pack_read():
                 ],
             }
 
+    class BlockingResolutionGateway(CharacterEmoteStreamingGateway):
+        def __init__(self):
+            super().__init__("Emote: new_state\nHello")
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def resolve_for_send(self, selection):
+            resolution = await super().resolve_for_send(selection)
+            self.started.set()
+            await self.release.wait()
+            return resolution
+
     store = ConsoleChatStore()
     session = store.create_session(
         settings=ConsoleSessionSettings(provider="llama_cpp"),
@@ -1481,31 +1514,24 @@ async def test_character_snapshot_retries_when_actor_changes_during_pack_read():
         assistant_id="7",
         character_id=7,
     )
-    gateway = CharacterEmoteStreamingGateway("Emote: new_state\nHello")
+    gateway = BlockingResolutionGateway()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    controller._visual_identity_repository = BlockingRepository()
+    controller._visual_identity_repository = Repository()
 
     task = asyncio.create_task(controller.submit_draft("hello", session_id=session.id))
-    for _attempt in range(100):
-        if started.is_set():
-            break
-        await asyncio.sleep(0)
-    assert started.is_set()
+    await gateway.started.wait()
     session.assistant_id = "8"
     session.character_id = 8
     session.identity_revision += 1
-    release.set()
+    gateway.release.set()
 
     result = await task
 
     assert result.accepted is True
-    prompt = gateway.messages_seen[0]["content"]
-    assert "new_state" in prompt
-    assert "old_state" not in prompt
-    completed = store.messages_for_session(session.id)[-1]
-    assert completed.content == "Hello"
-    assert completed.metadata.character_emote.actor_id == 8
-    assert completed.metadata.character_emote.pack_id == 80
+    assert result.visible_copy == "Character context changed before dispatch; try again."
+    assert gateway.messages_seen is None
+    failed = _last_failed_assistant(store, session.id)
+    assert failed.content == ""
 
 
 @pytest.mark.asyncio
@@ -1849,7 +1875,7 @@ async def test_close_streaming_session_stops_run_without_key_error():
     assert session_id is not None
     assert controller.run_state.status is ConsoleRunStatus.STREAMING
 
-    controller.close_session(session_id)
+    close_controller_session(controller, session_id)
     gateway.release.set()
     result = await asyncio.wait_for(task, timeout=0.5)
 
@@ -1898,7 +1924,7 @@ async def test_close_streaming_session_result_does_not_set_dispatch_gap_toast_fl
     await asyncio.wait_for(gateway.started.wait(), timeout=1)
     session_id = store.active_session_id
 
-    controller.close_session(session_id)
+    close_controller_session(controller, session_id)
     gateway.release.set()
     result = await asyncio.wait_for(task, timeout=0.5)
 
@@ -1923,7 +1949,7 @@ async def test_submit_draft_dispatch_gap_session_closed_sets_toast_flag_with_inf
     session_a = store.ensure_session(title="A")
     closed_session_id = session_a.id
     controller.new_session(title="B")
-    controller.close_session(closed_session_id)
+    close_controller_session(controller, closed_session_id)
 
     result = await controller.submit_draft("hello", session_id=closed_session_id)
 
@@ -5778,6 +5804,7 @@ async def test_real_canvas_controller_allows_exact_failed_assistant_retry(
 ):
     from tldw_chatbook.Agents.run_context import use_run_id, use_tool_call_id
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.Chat.conversation_local_marks_service import ConversationLocalMarksService
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
     db = CharactersRAGDB(
@@ -5837,6 +5864,9 @@ async def test_real_canvas_controller_allows_exact_failed_assistant_retry(
 
         assert first.accepted is True
         assert assistant.status == "failed"
+        marks = ConversationLocalMarksService(db)
+        first_marks = marks.list_console_unseen_marks()
+        assert first_marks == ((session.persisted_conversation_id, assistant.metadata.terminal_receipt_id),)
         first_metadata_json = db.get_message_by_id(assistant.persisted_message_id)[
             "metadata_json"
         ]
@@ -5879,6 +5909,7 @@ async def test_real_canvas_controller_allows_exact_failed_assistant_retry(
             ):
                 await controller.retry_message(assistant.id)
             assert canvas.settlement_for_assistant(assistant.id).state.value == "ready"
+            assert marks.list_console_unseen_marks() == first_marks
             uncommitted_row = db.get_message_by_id(assistant.persisted_message_id)
             assert [
                 card["status"]
@@ -5906,6 +5937,11 @@ async def test_real_canvas_controller_allows_exact_failed_assistant_retry(
         assert settlement is not None
         assert settlement.state.value == "committed"
         durable_assistant = store.get_message(assistant.id)
+        assert set(marks.list_console_unseen_marks()) == {
+            *first_marks,
+            (session.persisted_conversation_id, durable_assistant.metadata.terminal_receipt_id),
+        }
+        assert durable_assistant.metadata.terminal_receipt_id != first_marks[0][1]
         if successful_retry_uses_canvas:
             assert invoke_results[-1].ok is True
         rows = db.execute_query(
@@ -6068,7 +6104,7 @@ async def test_agent_path_applies_dictionary_before_bridge_sees_messages():
     gateway = RecordingStreamingGateway()
     events: list[str] = []
 
-    def applier(conversation_id, content):
+    def applier(conversation_id, content, _frozen_inputs):
         events.append("dictionary_applied")
         return content.replace("Warden", "grim jailer")
 
@@ -6124,7 +6160,7 @@ async def test_stream_assistant_response_owner_lookup_survives_closed_session():
     # Simulate the session closing while a caller (e.g. retry_message) was
     # still awaiting earlier stages of the pipeline: this purges
     # `_message_session_index` for `assistant.id` before the gate runs.
-    controller.close_session(session.id)
+    close_controller_session(controller, session.id)
 
     resolution = type(
         "Resolution",
@@ -7212,7 +7248,7 @@ async def test_baseline_ignores_dispatch_time_substitution_and_stays_comparable(
     )
     session = store.ensure_session(title="Chat 1")
 
-    async def _substitute_final_turn(provider_messages):
+    async def _substitute_final_turn(provider_messages, _turn_context):
         # Stand-in for skill/chat-dictionary/world-info substitution: the
         # ephemeral payload for this turn differs from what the store
         # actually holds (the raw text the user typed is what's persisted).
@@ -7819,8 +7855,8 @@ async def test_two_saved_turns_keep_history_references_through_production_trace(
         if change_history:
             substitute = controller._apply_skill_substitution
 
-            async def changed_history(rows):
-                result = await substitute(rows)
+            async def changed_history(rows, turn_context=None):
+                result = await substitute(rows, turn_context)
                 result[0][0] = {**result[0][0], "content": "Different history."}
                 return result
 
@@ -9219,6 +9255,8 @@ async def test_agent_provider_composition_captures_one_named_profile_for_mcp_and
     context = SimpleNamespace(
         tool_policy_profile_id="research",
         persona_policy_rules=None,
+        mcp_tool_maximum=None,
+        mcp_definition_maximum={},
     )
 
     await controller._compose_agent_request_providers(
@@ -9788,6 +9826,17 @@ class _CountingGenerationPersistence:
         self.writer_release.clear()
 
     def replace_assistant_generation_projection(self, **kwargs):
+        return self._write_generation(
+            self._delegate.replace_assistant_generation_projection, kwargs
+        )
+
+    def replace_assistant_generation_projection_with_contributions(self, **kwargs):
+        return self._write_generation(
+            self._delegate.replace_assistant_generation_projection_with_contributions,
+            kwargs,
+        )
+
+    def _write_generation(self, writer, kwargs):
         with self._count_lock:
             self.projection_attempts += 1
             should_block = self._block_next
@@ -9795,7 +9844,7 @@ class _CountingGenerationPersistence:
         if should_block:
             self.writer_entered.set()
             assert self.writer_release.wait(timeout=3)
-        version = self._delegate.replace_assistant_generation_projection(**kwargs)
+        version = writer(**kwargs)
         with self._count_lock:
             self.projection_commits += 1
         return version

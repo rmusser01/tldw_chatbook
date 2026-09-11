@@ -1361,7 +1361,7 @@ class ConsoleInspectorState:
                 ``run_active`` -- a running generation always reads
                 "Generating…" -- and ignored while ``approval_count`` is
                 non-zero, which reads "Waiting for your approval" instead
-                (task-32276: outranks ``run_active`` too).
+                (task-32345: outranks ``run_active`` too).
             provider_label: Active provider name for the run-recipe line.
             model_label: Active model name for the run-recipe line.
             provider_ready: Whether the provider can be sent to. ``False``
@@ -1440,7 +1440,7 @@ class ConsoleInspectorState:
             ConsoleDisplayRow("Run recipe", run_recipe),
             ConsoleDisplayRow(
                 "Live work",
-                # task-32276: a pending approval outranks everything below
+                # task-32345: a pending approval outranks everything below
                 # -- it is a fact about the USER (a card is waiting on
                 # them), more current than "a generation is in flight".
                 # TASK-347: else a running generation shows "Generating…";

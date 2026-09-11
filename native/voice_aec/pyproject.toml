@@ -1,0 +1,67 @@
+[build-system]
+requires = [
+  "scikit-build-core>=0.10,<1",
+  "pybind11==3.1.0",
+]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "tldw-voice-aec"
+version = "0.2.0"
+description = "Pinned WebRTC AEC3 binding for tldw_chatbook"
+requires-python = ">=3.11"
+license = "BSD-3-Clause"
+license-files = [
+  "THIRD_PARTY_NOTICES.md",
+  "PYBIND11_LICENSE.txt",
+  "vendor/webrtc/LICENSE",
+  "vendor/webrtc/OOURA_LICENSE",
+  "vendor/webrtc/PATENTS",
+]
+authors = [{ name = "tldw_chatbook contributors" }]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: C++",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+]
+
+[tool.scikit-build]
+cmake.version = ">=3.20"
+wheel.packages = ["tldw_voice_aec"]
+# Do not force-include vendor/webrtc/**: scikit-build-core documents that
+# sdist.include overrides sdist.exclude. Tracked vendor sources are included by
+# default and qualification verifies the final source set byte-for-byte.
+sdist.include = [
+  "THIRD_PARTY_NOTICES.md",
+  "PYBIND11_LICENSE.txt",
+]
+sdist.exclude = [
+  "dist/**",
+  "**/dist/**",
+  "build/**",
+  "**/build/**",
+  "_skbuild/**",
+  "**/_skbuild/**",
+  "wheelhouse/**",
+  "**/wheelhouse/**",
+  "cmake-build-*/**",
+  "**/cmake-build-*/**",
+  "CMakeFiles/**",
+  "**/CMakeFiles/**",
+  "**/__pycache__/**",
+  "**/.pytest_cache/**",
+  "**/.mypy_cache/**",
+  "**/.ruff_cache/**",
+  "**/*.egg-info/**",
+  "**/*.pyc",
+  "**/*.pyo",
+  "**/*.whl",
+  "**/*.tar.gz",
+  "**/CMakeCache.txt",
+  "**/cmake_install.cmake",
+  "**/build.ninja",
+  "**/.ninja_deps",
+  "**/.ninja_log",
+]

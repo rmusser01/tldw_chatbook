@@ -75,6 +75,60 @@ async def test_pre_trace_commit_failure_reaches_file_and_both_copy_actions(sinks
     assert "phase=provider_entry" not in text
 
 
+async def test_durable_custody_is_accepted_before_success_diagnostic(
+    monkeypatch, tmp_path, sinks
+):
+    from Tests.Chat.test_console_durable_commit_diagnostics import ReadyGateway
+    from tldw_chatbook.Chat import console_send_diagnostics
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(tmp_path / "custody.sqlite", "diagnostic-custody")
+    store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    session = store.create_session(title="Durable custody")
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=ReadyGateway(),
+        provider="llama_cpp",
+        model="test-model",
+        agent_runtime_enabled=False,
+    )
+    accepted = []
+    succeeded = []
+    record_stage = console_send_diagnostics.record_send_stage
+
+    def accept():
+        user = store.messages_for_session(session.id)[0]
+        # The commit owns this ID before later projection sets persisted_message_id.
+        assert db.get_message_by_id(user.id) is not None
+        accepted.append(True)
+
+    def observe(phase, status="entered", **kwargs):
+        if (phase, status) == ("durable_commit", "succeeded"):
+            assert accepted == [True]
+            succeeded.append(True)
+        record_stage(phase, status, **kwargs)
+
+    monkeypatch.setattr(console_send_diagnostics, "record_send_stage", observe)
+    try:
+        result = await controller.submit_draft(
+            "PRIVATE-DRAFT-31977",
+            session_id=session.id,
+            configuration=controller.resolve_runtime_turn_configuration_snapshot(
+                session.id
+            ),
+            accepted_attachments=(),
+            custody_acceptance_hook=accept,
+        )
+        assert result.accepted
+        assert accepted == succeeded == [True]
+        assert_export(sinks, "phase=durable_commit", "status=succeeded")
+    finally:
+        db.close()
+
+
 async def test_send_and_refresh_keep_the_same_visible_correlation_id(sinks):
     import re
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 
+from Tests.Chat.console_close_helpers import close_controller_session
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunMarker,
     ConsoleRunState,
@@ -89,7 +90,7 @@ def test_closing_active_session_clears_new_active_neighbors_marker(
 
     # Closing the ACTIVE session (session_b) leaves session_a as the only
     # remaining session, so the store auto-activates it.
-    controller.close_session(session_b)
+    close_controller_session(controller, session_b)
     assert controller.store.active_session_id == session_a
     assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
 

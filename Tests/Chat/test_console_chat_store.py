@@ -3616,6 +3616,7 @@ def test_store_enqueues_streaming_assistant_only_after_completion():
     assert sync_producer.enqueued[-1]["message_id"] == "msg-2"
     assert sync_producer.enqueued[-1]["role"] == "assistant"
     assert sync_producer.enqueued[-1]["content"] == "hello"
+    assert sync_producer.enqueued[-1]["assistant_generation_state"] == "complete"
     assert sync_producer.enqueued[-1]["parent_message_id"] == "msg-1"
     assert sync_producer.enqueued[-1]["sequence"] == 2
 
@@ -4444,7 +4445,11 @@ def test_failed_generation_attachment_write_does_not_mutate_memory(route):
     assert _store_route_state(store, session.id) == before_store
 
 
-def test_failed_variant_finalization_restores_exact_streaming_state():
+@pytest.mark.parametrize(
+    "terminal_method",
+    ["finalize_variant_stream", "mark_message_complete", "mark_message_failed"],
+)
+def test_failed_variant_finalization_restores_exact_streaming_state(terminal_method):
     persistence = ExplodingGenerationPersistence()
     store = ConsoleChatStore(persistence=persistence)
     session = store.create_session(title="Atomic regeneration")
@@ -4467,7 +4472,7 @@ def test_failed_variant_finalization_restores_exact_streaming_state():
     before_tokens = dict(store._generation_attempt_tokens)
 
     with pytest.raises(RuntimeError, match="durable generation failed"):
-        store.finalize_variant_stream(message.id)
+        getattr(store, terminal_method)(message.id)
 
     assert store._message_or_raise(message.id) == before_message
     assert _store_route_state(store, session.id) == before_store
@@ -4511,7 +4516,9 @@ def test_failed_variant_restore_preserves_concurrent_identity_increment(
         baseline_identity = session.identity_revision
         entered = Event()
         release = Event()
-        original_writer = persistence.replace_assistant_generation_projection
+        original_writer = (
+            persistence.replace_assistant_generation_projection_with_contributions
+        )
 
         def controlled_writer(**kwargs):
             if kwargs["message_id"] == failing.persisted_message_id:
@@ -4521,7 +4528,9 @@ def test_failed_variant_restore_preserves_concurrent_identity_increment(
             return original_writer(**kwargs)
 
         monkeypatch.setattr(
-            persistence, "replace_assistant_generation_projection", controlled_writer
+            persistence,
+            "replace_assistant_generation_projection_with_contributions",
+            controlled_writer,
         )
         failure: list[BaseException] = []
 
@@ -4551,8 +4560,16 @@ def test_failed_variant_restore_preserves_concurrent_identity_increment(
         db.close_connection()
 
 
-@pytest.mark.parametrize("route", ["finalize", "add", "select"])
-@pytest.mark.parametrize("sidecar", ["metadata", "sync"])
+@pytest.mark.parametrize(
+    ("sidecar", "route"),
+    [
+        ("metadata", "add"),
+        ("metadata", "select"),
+        ("sync", "finalize"),
+        ("sync", "add"),
+        ("sync", "select"),
+    ],
+)
 def test_committed_variant_sidecar_failure_reconciles_live_owner_without_second_revision(
     tmp_path, monkeypatch: pytest.MonkeyPatch, route: str, sidecar: str
 ) -> None:
@@ -4655,6 +4672,62 @@ def test_committed_variant_sidecar_failure_reconciles_live_owner_without_second_
             )
         assert store.persist_selected_generation(assistant.id)
         assert semantic_stats() == (before_revisions + 1, before_epoch + 1)
+    finally:
+        db.close_connection()
+
+
+def test_variant_atomic_metadata_failure_restores_receipt_and_generation(tmp_path):
+    """Finalization metadata is transactional, unlike add/select sidecars."""
+    db = CharactersRAGDB(tmp_path / "variant-metadata-atomic.sqlite", "variant")
+    try:
+        persistence = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = store.create_session(title="Atomic metadata")
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="original",
+            metadata=MessageMetadata(engine="original"),
+            persist=True,
+        )
+        store.begin_variant_stream(assistant.id)
+        store.append_stream_chunk(assistant.id, "replacement")
+        before_live = deepcopy(store._message_or_raise(assistant.id))
+        before_route = _store_route_state(store, session.id)
+        before_row = db.get_message_by_id(assistant.persisted_message_id)
+        before_identity = session.identity_revision
+        before_marks = persistence.local_marks.list_console_unseen_marks()
+        with db.transaction() as cursor:
+            cursor.execute(
+                "CREATE TEMP TRIGGER fail_variant_metadata "
+                "BEFORE UPDATE OF metadata_json ON messages "
+                "BEGIN SELECT RAISE(ABORT, 'variant atomic metadata failed'); END"
+            )
+        with pytest.raises(
+            Exception, match="Database error replacing assistant generation projection"
+        ) as failure:
+            store.finalize_variant_stream(assistant.id)
+        assert "variant atomic metadata failed" in str(failure.value.__cause__)
+        assert store._message_or_raise(assistant.id) == before_live
+        assert _store_route_state(store, session.id) == before_route
+        assert session.identity_revision == before_identity
+        assert db.get_message_by_id(assistant.persisted_message_id) == before_row
+        assert persistence.local_marks.list_console_unseen_marks() == before_marks
+        receipt = store._pending_terminal_receipts[assistant.id]
+        with db.transaction() as cursor:
+            cursor.execute("DROP TRIGGER fail_variant_metadata")
+        finished = store.finalize_variant_stream(assistant.id)
+        row = db.get_message_by_id(assistant.persisted_message_id)
+        assert row["version"] == before_row["version"] + 1
+        assert row["content"] == finished.content == "replacement"
+        assert row["assistant_generation_state"] == finished.status == "complete"
+        assert finished.metadata.terminal_receipt_id == receipt
+        assert MessageMetadata.from_json(row["metadata_json"]) == finished.metadata
+        assert set(persistence.local_marks.list_console_unseen_marks()) == {
+            *before_marks,
+            (session.persisted_conversation_id, receipt),
+        }
+        assert assistant.id not in store._pending_terminal_receipts
     finally:
         db.close_connection()
 
@@ -7640,7 +7713,9 @@ def test_set_message_metadata_flushes_locally_and_leaves_the_version_alone():
         persisted_id = store.get_message(message.id).persisted_message_id
         assert persisted_id is not None
         row_before = db.get_message_by_id(persisted_id)
-        assert row_before["metadata_json"] is None
+        terminal_metadata = MessageMetadata.from_json(row_before["metadata_json"])
+        assert terminal_metadata is not None
+        assert terminal_metadata.terminal_receipt_id
         change_id = db.get_latest_sync_log_change_id()
 
         store.set_message_metadata(

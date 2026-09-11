@@ -29,6 +29,9 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from tldw_chatbook.Chat.conversation_local_marks_service import (
+    ConversationLocalMarksService,
+)
 from tldw_chatbook.Video_Generation.video_formats import canonical_video_extension
 
 #: Top-level key namespacing this payload inside ``metadata_json``.
@@ -59,6 +62,8 @@ class VideoGenerationMetadata:
         is_unavailable_tombstone: Process-local/persisted proof that this row
             is a fork's canonical unavailable-video tombstone rather than a
             live generated-video marker.
+        terminal_receipt_id: Opaque local-only receipt for exact Console
+            terminal attention, or ``""`` before durable terminal creation.
 
     Raises:
         ValueError: If ``name`` or ``backend`` is empty -- refused at
@@ -80,6 +85,7 @@ class VideoGenerationMetadata:
     source_image_message_id: str | None = None
     container: str = "mp4"
     is_unavailable_tombstone: bool = False
+    terminal_receipt_id: str = ""
 
     def __post_init__(self) -> None:
         if not str(self.name).strip():
@@ -91,6 +97,13 @@ class VideoGenerationMetadata:
         if type(self.is_unavailable_tombstone) is not bool:
             raise ValueError("is_unavailable_tombstone must be a bool")
         canonical_video_extension(self.container)
+        if self.terminal_receipt_id:
+            try:
+                ConversationLocalMarksService.validate_terminal_receipt_id(
+                    self.terminal_receipt_id
+                )
+            except ValueError as exc:
+                raise ValueError("terminal receipt id must be a canonical UUID") from exc
 
     def to_json(self) -> str:
         """Serialize for the ``messages.metadata_json`` column.
@@ -114,6 +127,7 @@ class VideoGenerationMetadata:
             "ratio": self.ratio,
             "source_image_message_id": self.source_image_message_id,
             "is_unavailable_tombstone": self.is_unavailable_tombstone,
+            "terminal_receipt_id": self.terminal_receipt_id,
         }
         return json.dumps({VIDEO_METADATA_TOP_KEY: payload}, sort_keys=True)
 
@@ -168,6 +182,9 @@ class VideoGenerationMetadata:
                     payload.get("source_image_message_id")
                 ),
                 is_unavailable_tombstone=tombstone,
+                terminal_receipt_id=_as_terminal_receipt_id(
+                    payload.get("terminal_receipt_id")
+                ),
             )
         except ValueError:
             return None
@@ -210,3 +227,12 @@ def _as_optional_float(value: Any) -> float | None:
         except ValueError:
             return None
     return None
+
+
+def _as_terminal_receipt_id(value: Any) -> str:
+    if type(value) is not str or not value:
+        return ""
+    try:
+        return ConversationLocalMarksService.validate_terminal_receipt_id(value)
+    except ValueError:
+        return ""

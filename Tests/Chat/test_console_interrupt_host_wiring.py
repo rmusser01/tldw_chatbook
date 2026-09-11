@@ -6,6 +6,11 @@ historical per-kind names; the host must be the single owner behind them.
 
 from __future__ import annotations
 
+import threading
+from types import SimpleNamespace
+
+import pytest
+
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_interrupt_rounds import KIND_SETTER_ATTRS
@@ -59,3 +64,135 @@ def test_approvals_register_the_permission_summary_as_the_after_remount_hook():
     hook = controller._interrupt_host.after_remount["approval"]
     assert hook.__func__ is ConsoleChatController._maybe_fire_permission_summary
     assert set(controller._interrupt_host.after_remount) == {"approval"}
+
+
+@pytest.mark.parametrize("kind", ["approval", "skill_install", "skill_script"])
+def test_host_orders_custodied_decisions_without_reentering_its_lock(kind):
+    controller = ConsoleChatController(store=ConsoleChatStore(), provider_gateway=None)
+    session = controller.store.ensure_session()
+    controller.app = SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args))
+    host = controller._interrupt_host
+    state = {"event": threading.Event(), "session_id": session.id}
+    state["event"].set()
+    payload = {"session_id": session.id, "timeout_seconds": 5.0}
+    observed = []
+
+    def observe():
+        projection = controller.pending_decision_projection(session.id)
+        observed.append(projection)
+        assert controller.set_answerable_decision(session.id, "exact-round")
+        assert controller.set_answerable_decision(session.id, None)
+
+    errors = []
+
+    def run():
+        try:
+            host.run_round(
+                kind, "exact-round", payload, state,
+                session_id=session.id, owning_session_id=session.id,
+                deadline=None, is_parked=False, before_wait=observe,
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(2)
+    assert not worker.is_alive(), "decision mutation reentered the host lock"
+    assert errors == []
+    assert observed[0].decision_id == "exact-round"
+    assert host.registries[kind] == {}
+    assert host.payloads[kind] == {}
+
+
+def test_finishing_approval_remains_projected_after_its_waiter_exits():
+    controller = ConsoleChatController(store=ConsoleChatStore(), provider_gateway=None)
+    session = controller.store.ensure_session()
+    controller._parked_approval_payloads["finished-wait"] = {
+        "session_id": session.id, "phase": "finishing", "calls": [],
+        "_decision_type": "approval", "_decision_id": "finished-wait",
+        "_decision_order": 1,
+    }
+    projection = controller.pending_decision_projection(session.id)
+    assert projection is not None
+    assert projection.payload["phase"] == "finishing"
+    assert not controller.set_answerable_decision(session.id, "finished-wait")
+
+
+@pytest.mark.parametrize("kind", ["skill_install", "skill_script"])
+def test_hidden_skill_notice_uses_one_host_lock_and_retries_failed_delivery(kind):
+    controller = ConsoleChatController(store=ConsoleChatStore(), provider_gateway=None)
+    notices = []
+
+    def notify(message, **_kwargs):
+        notices.append(message)
+        if len(notices) == 1:
+            raise RuntimeError("notification unavailable")
+
+    controller.app = SimpleNamespace(notify=notify)
+    controller._interrupt_host.registries[kind]["exact"] = {
+        "session_id": "owner",
+        "decision_type": kind,
+        "decision_id": "exact",
+    }
+
+    def announce():
+        controller._announce_hidden_decision(kind, "wrong-owner", "exact")
+        controller._announce_hidden_decision(kind, "owner", "exact")
+        controller._announce_hidden_decision(kind, "owner", "exact")
+        controller._announce_hidden_decision(kind, "owner", "exact")
+
+    worker = threading.Thread(target=announce, daemon=True)
+    worker.start()
+    worker.join(2)
+    assert not worker.is_alive(), "hidden notice reentered the shared host lock"
+    assert len(notices) == 2
+    assert controller._announced_pending_decision_ids == {"exact"}
+    controller._forget_hidden_decision("exact")
+    controller._interrupt_host.registries[kind]["exact"]["settled"] = True
+    controller._announce_hidden_decision(kind, "owner", "exact")
+    assert len(notices) == 2
+
+
+def test_stable_router_does_not_suppress_detached_interrupt_bell():
+    controller = ConsoleChatController(store=ConsoleChatStore(), provider_gateway=None)
+    bells = []
+    controller.app = SimpleNamespace(
+        call_from_thread=lambda fn, *args: fn(*args),
+        is_headless=False, bell=lambda: bells.append("bell"),
+    )
+    controller.set_pending_decision = lambda projection: False
+    controller._interrupt_bell_enabled = lambda: True
+    controller.on_pending_rounds_changed(1, "question", True)
+    assert bells == ["bell"]
+
+
+def test_cached_hidden_view_cannot_start_an_answerable_clock():
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    controller = ConsoleChatController(store=ConsoleChatStore(), provider_gateway=None)
+    session = controller.store.ensure_session()
+    app = SimpleNamespace(screen=object())
+    runtime = ConsoleRuntime(app)
+    runtime.set_chat_store(controller.store)
+    runtime.set_chat_controller(controller)
+    projections = []
+    view = SimpleNamespace(
+        app=app,
+        console_view_hooks=lambda: {"set_pending_decision": lambda item: projections.append(item) or True},
+    )
+    runtime.view = runtime._reconciled_view = view
+    state = {"event": threading.Event(), "session_id": session.id}
+    controller._pending_approval_rounds["r1"] = state
+    controller._publish_pending_decision(
+        round_state=state, payload={"session_id": session.id},
+        decision_type="approval", decision_id="r1", timeout_seconds=5,
+        retained_store=controller._parked_approval_payloads,
+    )
+    assert not controller.project_pending_decision_for_active_session()
+    assert state["active_since"] is None
+    assert projections == []
+    app.screen = view
+    assert controller.project_pending_decision_for_active_session()
+    assert state["active_since"] is not None
+    assert len(projections) == 1

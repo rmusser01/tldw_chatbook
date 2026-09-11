@@ -10,7 +10,7 @@ import threading
 import time
 from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -730,7 +730,10 @@ async def test_controller_preview_uses_live_destination_fresh_tools_and_raw_admi
     )
     gateway.resolve_for_send.assert_awaited_once()
     controller._compose_mcp_provider.assert_awaited_once_with(
-        session.id, publish_counts=False
+        session.id,
+        publish_counts=False,
+        maximum_tool_ids=frozenset(),
+        maximum_definition_hashes=MappingProxyType({}),
     )
     controller._compose_local_provider.assert_called_once()
 
@@ -1034,7 +1037,15 @@ async def test_parked_session_preview_does_not_publish_global_mcp_counts(
         lambda **_kwargs: True,
     )
 
-    async def compose_mcp(_session_id, *, publish_counts=True):
+    async def compose_mcp(
+        _session_id,
+        *,
+        publish_counts=True,
+        maximum_tool_ids=None,
+        maximum_definition_hashes=None,
+    ):
+        assert maximum_tool_ids == frozenset()
+        assert maximum_definition_hashes == MappingProxyType({})
         if publish_counts:
             controller._publish_mcp_inspector_counts(1, 2)
         return None
@@ -1051,7 +1062,10 @@ async def test_parked_session_preview_does_not_publish_global_mcp_counts(
     assert app.console_mcp_tool_count == 41
     assert app.console_mcp_not_connected_count == 7
     controller._compose_mcp_provider.assert_awaited_once_with(
-        parked.id, publish_counts=False
+        parked.id,
+        publish_counts=False,
+        maximum_tool_ids=frozenset(),
+        maximum_definition_hashes=MappingProxyType({}),
     )
 
 

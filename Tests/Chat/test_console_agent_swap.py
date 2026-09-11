@@ -1,12 +1,14 @@
 """The controller send path runs the agent loop when the bridge is wired."""
 
 import asyncio
+import functools
 import json
 import threading
 from types import SimpleNamespace
 
 import pytest
 
+from Tests.Chat.console_close_helpers import close_controller_session
 from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
@@ -109,7 +111,7 @@ def test_close_session_tombstones_scratch_before_store_removal(tmp_path):
         agent_bridge=RecordingBridge(),
     )
 
-    controller.close_session(session.id)
+    close_controller_session(controller, session.id)
 
     assert events[:3] == ["scratch-close", "authority-forget", "store-close"]
     assert scratch_spaces.wait_for_cleanup(timeout_seconds=2.0)
@@ -231,7 +233,7 @@ class _SignalGateway:
     async def resolve_for_send(self, _selection):
         return self.resolution
 
-    async def stream_chat(self, resolution, messages, tools=None, signals=None):
+    async def stream_chat(self, resolution, messages, tools=None, signals=None, **_route):
         system = str(messages[0].get("content", "")) if messages else ""
         is_child = system.startswith(SUBAGENT_PROMPT_PREFIX)
         self.calls.append(
@@ -643,29 +645,45 @@ async def test_stopped_run_records_persisted_id_not_stale_native(tmp_path):
 
     original = controller._agent_bridge.run_reply
 
+    bridge_returned = threading.Event()
+    allow_finalize = threading.Event()
+
     def stop_after_real_run(**kwargs):
         # Run the REAL bridge (creates the run row via create_run, streams the
-        # reply into the placeholder), then simulate a Stop landing in the
-        # post-outcome / pre-finalize window: mark the message stopped (which
-        # persists it) exactly as stop_active_run would.
+        # reply into the placeholder), then hold the worker in the
+        # post-outcome / pre-finalize window. The test loop owns the durable
+        # terminal transition, matching the UI-thread ownership of a real
+        # Stop; calling the store from this worker bypasses that contract.
         run_id, outcome = original(**kwargs)
-        store.mark_message_stopped(kwargs["assistant_message_id"])
+        bridge_returned.set()
+        allow_finalize.wait(timeout=30)
         return run_id, outcome
 
     controller._agent_bridge.run_reply = stop_after_real_run
-    result = await controller.submit_draft("capital of Japan?")
-    assert result.accepted is True
+    send_task = asyncio.create_task(controller.submit_draft("capital of Japan?"))
+    for _ in range(3000):
+        if bridge_returned.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert bridge_returned.is_set(), "bridge did not reach the pre-finalize window"
 
     session_id = store.active_session_id
-    assistant = _first(
-        (
-            m
-            for m in store.messages_for_session(session_id)
-            if m.role is ConsoleMessageRole.ASSISTANT
-        ),
-        what="ASSISTANT message",
+    assistant_message_id = controller._active_assistant_message_ids[session_id]
+    controller._signal_stop(session_id=session_id)
+    controller._mark_stream_stopped(
+        assistant_message_id,
+        visible_copy="Response stopped.",
     )
-    assert assistant.status == "stopped"
+    allow_finalize.set()
+    result = await send_task
+    assert result.accepted is True
+
+    assistant = _first((
+        m
+        for m in store.messages_for_session(session_id)
+        if m.role is ConsoleMessageRole.ASSISTANT
+    ), what="ASSISTANT message")
+    assert assistant.status == "stopped", result
     assert assistant.persisted_message_id is not None
 
     primary = _first(
@@ -1527,8 +1545,10 @@ async def test_agent_runtime_gate_refreshes_without_screen_teardown():
 
     fake_bridge = _FakeBridge()
     screen = ChatScreen(app)
-    store = ConsoleChatStore()
-    store.create_session(ephemeral=True)
+    # The app factory deliberately omits the conversation database. Install a
+    # real durable Console store so this test reaches provider dispatch and
+    # remains focused on refreshing the runtime gate.
+    store = persisted_console_store()
     screen._console_chat_store = store
     screen._ensure_console_agent_bridge = lambda: fake_bridge
 
@@ -1573,7 +1593,19 @@ async def test_agent_runtime_gate_refreshes_without_screen_teardown():
 
 def _fake_app(service=None):
     """`controller.app`-shaped stand-in: `call_from_thread` (needed by
-    `request_mcp_approvals`) plus, when given, `unified_mcp_service`."""
+    `request_mcp_approvals`) plus, when given, `unified_mcp_service`.
+
+    The production service exposes the same external records through both
+    its synchronous pre-acceptance snapshot and async provider composition.
+    The narrow provider test double predates that snapshot seam, so complete
+    it here rather than letting accepted turns freeze an empty MCP maximum.
+    """
+    if service is not None:
+        local_service = getattr(service, "local_service", None)
+        if local_service is not None and not hasattr(
+            local_service, "get_external_servers"
+        ):
+            local_service.get_external_servers = lambda: service.catalog_records
     kwargs = {} if service is None else {"unified_mcp_service": service}
     return SimpleNamespace(call_from_thread=lambda fn, *a, **kw: fn(*a, **kw), **kwargs)
 
@@ -1584,6 +1616,16 @@ def _capturing_run_reply(captured, *, final_text="ok."):
         return "run-test", RunOutcome(status=RUN_DONE, steps=[], final_text=final_text)
 
     return run_reply
+
+
+def _mount_timeout_card(controller, payload):
+    """Model a successful attached-view card mount for timeout tests."""
+    if payload is None:
+        return
+    controller.set_answerable_decision(
+        payload["session_id"],
+        payload["round_id"],
+    )
 
 
 @pytest.mark.asyncio
@@ -1698,7 +1740,7 @@ async def test_review_hook_and_run_reply_share_one_builtin_gate(tmp_path, monkey
 
     sentinel = _SentinelBuiltinGate()
     monkeypatch.setattr(
-        controller_module, "build_builtin_gate", lambda service=None: sentinel
+        controller_module, "build_builtin_gate", lambda service=None, **_policy: sentinel
     )
 
     result = await controller.submit_draft("hi")
@@ -1761,7 +1803,7 @@ async def test_review_precheck_and_dispatch_share_captured_scratch(
     }
     gate = ScratchReviewGate()
     monkeypatch.setattr(config, "get_cli_setting", enable_read_file)
-    monkeypatch.setattr(controller_module, "build_builtin_gate", lambda _=None: gate)
+    monkeypatch.setattr(controller_module, "build_builtin_gate", lambda _=None, **_policy: gate)
     monkeypatch.setattr(controller_module, "path_precheck_failed", record_precheck)
 
     result = await controller.submit_draft("hi")
@@ -1951,6 +1993,9 @@ async def test_mcp_tool_call_ask_state_times_out_denies(tmp_path):
     )
     controller.app = _fake_app(service)
     controller.mcp_approval_timeout_seconds = lambda: 0.05
+    controller.set_pending_approval = functools.partial(
+        _mount_timeout_card, controller
+    )
 
     result = await controller.submit_draft("please run it")
 
@@ -2094,6 +2139,9 @@ async def test_mcp_tool_call_gates_subagent_call_same_as_primary(tmp_path):
     )
     controller.app = _fake_app(service)
     controller.mcp_approval_timeout_seconds = lambda: 0.05
+    controller.set_pending_approval = functools.partial(
+        _mount_timeout_card, controller
+    )
 
     result = await controller.submit_draft("please delegate it")
 
@@ -2173,7 +2221,6 @@ async def test_stopped_via_cancel_records_persisted_id_on_run(tmp_path):
     ``run_reply``, which made this gap invisible. RED pre-fix: the run row
     stays NULL and falls to the ordinal fallback on resume.
     """
-
     class _YieldThenParkGateway(_ParkingGateway):
         """Streams ONE chunk before parking: a zero-chunk stop never persists
         (empty rows defer -- the AC#3 NULL case, covered separately below), so

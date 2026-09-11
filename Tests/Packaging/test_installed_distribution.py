@@ -1170,7 +1170,7 @@ def _copy_build_inputs(destination: Path) -> None:
         "dist",
         "*.egg-info",
     )
-    for name in ("tldw_chatbook", "Packaging", "packages"):
+    for name in ("tldw_chatbook", "Packaging", "packages", "scripts"):
         shutil.copytree(REPO_ROOT / name, destination / name, ignore=ignored)
 
     seen_test_trees: set[tuple[int, int]] = set()
@@ -1760,6 +1760,9 @@ def test_built_artifacts_match_distribution_contract(
     } | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
     assert not required_sdist - sdist_members
     assert not required_wheel - wheel_members
+    development_launcher = "scripts/run_speculative_voice_dev.py"
+    assert development_launcher not in sdist_members
+    assert development_launcher not in wheel_members
     for members in (sdist_members, wheel_members):
         assert {
             name for name in members if name.startswith(f"{SAMIRA_RESOURCE_ROOT}/")

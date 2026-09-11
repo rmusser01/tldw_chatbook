@@ -388,7 +388,7 @@ async def test_transcript_sync_timer_keeps_ticking_for_background_run_while_view
 
     Reproduces the real ordering: the background session is active at the
     moment its (fake) send starts the timer -- exactly what
-    `_submit_console_native_draft` does for whichever session is active at
+    runtime custody does for whichever session is active at
     dispatch -- and only THEN does the user switch away to the idle
     `viewed` session, matching the reviewer's live repro.
     """
@@ -403,7 +403,7 @@ async def test_transcript_sync_timer_keeps_ticking_for_background_run_while_view
         viewed = store.active_session_id
         background = controller.new_session().id  # background is active here
 
-        # Same start call `_submit_console_native_draft` makes as its first
+        # Same start call runtime custody makes as its first
         # action, for whichever session is active at dispatch (background).
         console._start_console_transcript_sync_timer()
         assert console._console_transcript_sync_timer is not None
@@ -1128,7 +1128,6 @@ class _TallStepsFleetBridge:
 
     def subagent_runs(self, conversation_id: str) -> list:
         return []
-
 
 async def _setup_tall_steps_and_parked_fleet(
     console, *, collapse_session_and_model: bool

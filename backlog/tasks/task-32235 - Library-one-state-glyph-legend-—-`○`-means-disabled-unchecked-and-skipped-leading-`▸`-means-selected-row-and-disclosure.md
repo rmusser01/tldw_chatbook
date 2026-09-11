@@ -26,7 +26,7 @@ priority: high
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 A documented legend: `▸/▾` trailing for disclosure, `█` leading for the keyboard cursor, `☐/☑` for selection, `✓/✗/–` for settled outcomes; blocked actions keep their inline reason and drop the glyph
-- [ ] #2 Every Library canvas uses the legend; the guide's glyph sentences match
+- [x] #2 Every Library canvas uses the legend; the guide's glyph sentences match
 - [x] #3 Captures at 235x52 and 100x30 pin one meaning per glyph
 <!-- AC:END -->
 
@@ -97,4 +97,18 @@ claim omitted three glyphs the Import queue paints, so `●` (still
 working), `≡` (already in your Library) and `⊘` (cancelled) are now rows in
 it. The carve-out import at `library_ingest_state.py:325` is relative and
 98 chars instead of 190, still one line.
+
+### AC#2 close-out (hand-off to the critique-9 `notes` branch)
+
+The one canvas Task 5 could not reach was the note-import review, whose
+`_choice_label` (`library_note_import_canvas.py`) still rendered a selection
+as `✓`/`○` -- colliding with the settled-outcome `✓` one row above it in the
+same receipt and with the blocked-action `○` on the buttons beside it. It now
+uses `LIBRARY_GLYPH_SELECTED`/`LIBRARY_GLYPH_UNSELECTED`, so every Library
+canvas is on the legend. The guide's legend row already named "Import type
+toggles" under `☐`/`☑`, so no guide sentence needed changing.
+
+Pins updated: `Tests/Widgets/Library/test_library_note_import_canvas.py` and
+`Tests/UI/test_library_note_import_flow.py` (both now assert the constants,
+not a literal).
 <!-- SECTION:NOTES:END -->

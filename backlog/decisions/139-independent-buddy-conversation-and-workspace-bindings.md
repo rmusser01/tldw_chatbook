@@ -43,8 +43,11 @@ keeps an explicit Open Console recovery action; it never selects another convers
 Opening a Buddy interaction also retains decision availability for that exact live
 session object and binding revision. This amends the existing no-view question posture
 only for explicitly opened Buddy targets: their questions, approvals and confirmations
-remain parked and recoverable after the modal closes. Wake-only sessions with no
-Console view or retained Buddy interaction keep their existing fail-closed posture.
+remain parked and recoverable after the modal closes. Wake-only questions with no
+Console view or retained Buddy interaction keep their existing immediate refusal.
+ADR-094's approval/install/script decisions instead remain pending under their
+app-owned domain routers, without hidden-time consumption or execution authority;
+the absence of a view is not an implicit approval or a reason to drop those rounds.
 This capability neither supplies fake UI setters nor approves actions. Existing
 per-round owner checks, permissions, Stop and shutdown cancellation remain authoritative.
 Finite decision clocks count only visible, answerable cards; the worktree review link
@@ -98,3 +101,15 @@ copies own new pack/version rows and private file copies. Legacy selection migra
 uses a unique source key, publishes first, and writes preferences before changing the
 selected owner; failed attempts keep the old selection. Built-in and import records
 preserve public artwork notices, and unknown license statements remain null.
+
+### Retained typed-decision integration (2026-09-08)
+
+Buddy approval/install/script cards consume the existing controller's single
+mixed-type FIFO projection, including non-answerable finishing approvals. A
+successfully rendered exact bound-session/head claim joins Console visibility
+against that same active-time allowance; hiding either view cannot pause a head
+still answerable in the other. Resolve only the current typed kind/ID through
+the existing strict resolver after validating the live Buddy binding. Questions
+and worktree reviews retain their host path; a review link is not answerability.
+This composes existing ADR-094/139 owners without another ledger or expiry clock,
+changing active Console selection, or weakening ordinary visible-owner guards.

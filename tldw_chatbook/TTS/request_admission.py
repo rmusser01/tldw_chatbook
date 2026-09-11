@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias, cast
 from uuid import UUID
 
@@ -16,6 +16,8 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSAudioResponse,
     TTSConfigurationRevisionError,
     TTSNativeCapabilitySnapshot,
+    TTSModelInfo,
+    TTSProviderCatalog,
     TTSProviderUnavailableError,
     TTSRequest,
 )
@@ -63,6 +65,15 @@ _VALID_AUDIO_FORMATS = frozenset({"mp3", "opus", "aac", "flac", "wav", "pcm"})
 TTSAdmissionAuthorizer = Callable[[str, str], bool]
 
 
+class TTSHandsFreeAudioUnavailableError(RuntimeError):
+    """Recoverable speech-only failure for adapters without PCM or WAV."""
+
+    recoverable = True
+
+    def __init__(self) -> None:
+        super().__init__("TTS provider has no hands-free PCM-compatible format")
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class _ResolvedTTSCloneExecution:
     """Exact profile/reference authority frozen with effective selection."""
@@ -104,6 +115,18 @@ class TTSProfileReferenceResolver(Protocol):
         repository_generation: int,
         profile_revision: int,
     ) -> Awaitable[TTSCloneReference]: ...
+
+
+def _with_response_format(
+    explicit: TTSSelectionOverrides | None,
+    response_format: str | None,
+) -> TTSSelectionOverrides | None:
+    if response_format is None:
+        return explicit
+    return replace(
+        explicit or TTSSelectionOverrides(),
+        response_format=response_format,
+    )
 
 
 class _WriterPreferredGate:
@@ -241,6 +264,7 @@ class TTSRequestAdmissionCoordinator:
         profile_reference_resolver: TTSProfileReferenceResolver | None = None,
         progress_sink: ProgressSink | None = None,
         admission_authorizer: TTSAdmissionAuthorizer | None = None,
+        response_format_override: Literal["prefer_pcm"] | None = None,
     ) -> tuple[TTSAudioResponse, TTSEffectiveSelectionSnapshot]:
         """Resolve and synthesize while preserving the established public API."""
 
@@ -256,8 +280,41 @@ class TTSRequestAdmissionCoordinator:
             profile_reference_resolver=profile_reference_resolver,
             progress_sink=progress_sink,
             admission_authorizer=admission_authorizer,
+            response_format_override=response_format_override,
         )
         return response, selection
+
+    async def synthesize_hands_free(
+        self,
+        *,
+        text: str,
+        explicit: TTSSelectionOverrides | None = None,
+        character_profile: TTSCharacterProfileSelection | None = None,
+        default_profile: TTSDefaultProfileSelection | None = None,
+        progress_sink: ProgressSink | None = None,
+        admission_authorizer: TTSAdmissionAuthorizer | None = None,
+    ) -> TTSAudioResponse:
+        """Synthesize one phrase as declared PCM, or declared WAV fallback."""
+
+        response, selection = await self.synthesize_effective(
+            text=text,
+            explicit=explicit,
+            character_profile=character_profile,
+            default_profile=default_profile,
+            progress_sink=progress_sink,
+            admission_authorizer=admission_authorizer,
+            response_format_override="prefer_pcm",
+        )
+        if response.audio_format != selection.response_format:
+            mismatch = TTSHandsFreeAudioUnavailableError()
+            try:
+                await response.aclose()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass
+            raise mismatch
+        return response
 
     async def synthesize_effective_with_evidence(
         self,
@@ -273,6 +330,7 @@ class TTSRequestAdmissionCoordinator:
         profile_reference_resolver: TTSProfileReferenceResolver | None = None,
         progress_sink: ProgressSink | None = None,
         admission_authorizer: TTSAdmissionAuthorizer | None = None,
+        response_format_override: Literal["prefer_pcm"] | None = None,
     ) -> tuple[
         TTSAudioResponse,
         TTSEffectiveSelectionSnapshot,
@@ -315,10 +373,14 @@ class TTSRequestAdmissionCoordinator:
             raise TypeError("Profile reference resolver is invalid")
         if admission_authorizer is not None and not callable(admission_authorizer):
             raise TypeError("TTS admission authorizer is invalid")
+        if response_format_override not in (None, "prefer_pcm"):
+            raise ValueError("TTS response format override is invalid")
         if clone_audition is not None and profile_preview is not None:
             raise TypeError("Clone audition and profile preview are mutually exclusive")
 
         studio_request = studio_draft is not None or studio_preferences is not None
+        if studio_request and response_format_override is not None:
+            raise TypeError("Hands-free format override is unavailable for Studio TTS")
         if studio_request and (
             explicit is not None
             or character_profile is not None
@@ -378,6 +440,10 @@ class TTSRequestAdmissionCoordinator:
 
         reservation: _OperationCapacityReservation | None = None
         operation: _AdmittedTTSOperation | None = None
+        format_candidates: tuple[str | None, ...] = (
+            ("pcm", "wav") if response_format_override == "prefer_pcm" else (None,)
+        )
+        format_index = 0
         try:
             self._service._require_operation_admission_open()
             if profile_preview is not None:
@@ -397,9 +463,13 @@ class TTSRequestAdmissionCoordinator:
                 await self._service._preflight_audio_cpp_clone_dependency(requirement)
             reservation = await self._service._reserve_operation_capacity()
             while True:
+                effective_explicit = _with_response_format(
+                    explicit,
+                    format_candidates[format_index],
+                )
                 projected_provider = self._effective_settings.project_provider(
                     global_preferences=self._preferences,
-                    explicit=explicit,
+                    explicit=effective_explicit,
                     character_profile=character_profile,
                     default_profile=default_profile,
                     studio_preferences=studio_preferences,
@@ -433,7 +503,7 @@ class TTSRequestAdmissionCoordinator:
                         if (
                             self._effective_settings.project_provider(
                                 global_preferences=preferences,
-                                explicit=explicit,
+                                explicit=effective_explicit,
                                 character_profile=character_profile,
                                 default_profile=default_profile,
                                 studio_preferences=studio_preferences,
@@ -500,7 +570,7 @@ class TTSRequestAdmissionCoordinator:
                         else:
                             selection = (
                                 await self._effective_settings.resolve_non_studio(
-                                    explicit=explicit,
+                                    explicit=effective_explicit,
                                     character_profile=character_profile,
                                     default_profile=default_profile,
                                     global_preferences=preferences,
@@ -517,6 +587,15 @@ class TTSRequestAdmissionCoordinator:
                                         self._read_native_capability
                                     ),
                                 )
+                            )
+                        if (
+                            response_format_override == "prefer_pcm"
+                            and not await self._hands_free_format_is_declared(selection)
+                        ):
+                            raise TTSEffectiveResolutionError(
+                                code="unsupported_selection",
+                                axis="response_format",
+                                source=TTSSelectionSource.EXPLICIT,
                             )
                         request = self._build_request(selection, text=text)
                         clone_execution = self._resolve_clone_execution(
@@ -539,6 +618,19 @@ class TTSRequestAdmissionCoordinator:
                     break
                 except _AudioCppGenerationChanged:
                     continue
+                except TTSEffectiveResolutionError as error:
+                    is_format_rejection = bool(
+                        response_format_override == "prefer_pcm"
+                        and error.code == "unsupported_selection"
+                        and error.axis == "response_format"
+                        and error.source is TTSSelectionSource.EXPLICIT
+                    )
+                    if not is_format_rejection:
+                        raise
+                    if format_index + 1 < len(format_candidates):
+                        format_index += 1
+                        continue
+                    raise TTSHandsFreeAudioUnavailableError() from None
         except BaseException as error:
             if operation is None:
                 if reservation is not None:
@@ -553,6 +645,51 @@ class TTSRequestAdmissionCoordinator:
         assert operation is not None
         response, evidence = await operation.synthesize_with_evidence(progress_sink)
         return response, selection, evidence
+
+    async def _hands_free_format_is_declared(
+        self,
+        selection: TTSEffectiveSelectionSnapshot,
+    ) -> bool:
+        try:
+            catalog = await self._service._get_catalog_already_prepared(
+                selection.provider_id
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            raise TTSEffectiveResolutionError(
+                code="catalog_unavailable",
+                axis="provider_catalog",
+                source=TTSSelectionSource.EXPLICIT,
+            ) from None
+        if (
+            type(catalog) is not TTSProviderCatalog
+            or catalog.provider_id != selection.provider_id
+            or not catalog.health.fresh
+            or catalog.health.state != "available"
+            or catalog.approximate
+        ):
+            raise TTSEffectiveResolutionError(
+                code="catalog_unavailable",
+                axis="provider_catalog",
+                source=TTSSelectionSource.EXPLICIT,
+            )
+        model = next(
+            (
+                candidate
+                for candidate in catalog.models
+                if type(candidate) is TTSModelInfo
+                and candidate.model_id == selection.model_id
+            ),
+            None,
+        )
+        if model is None:
+            raise TTSEffectiveResolutionError(
+                code="missing_exact",
+                axis="model_id",
+                source=TTSSelectionSource.EXPLICIT,
+            )
+        return selection.response_format in model.formats
 
     @staticmethod
     async def _resolve_profile_preview_reference(

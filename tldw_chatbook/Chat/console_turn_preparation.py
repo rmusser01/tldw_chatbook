@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence
@@ -103,8 +103,8 @@ class ConsoleTurnPreparation:
     session_id: str
     origin: Literal["manual", "queued"]
     queue_entry_id: str | None
-    executed_draft: str
-    execution_context: ConsoleTurnExecutionContext
+    executed_draft: str = field(repr=False)
+    execution_context: ConsoleTurnExecutionContext = field(repr=False)
     transient_user_message_id: str | None
     attachment_ids: tuple[str, ...]
     evidence_ids: tuple[str, ...]
@@ -345,11 +345,18 @@ def build_console_request_for_preparation(
         )
     from tldw_chatbook.Chat.console_prepared_request import build_console_request
 
-    return build_console_request(
+    request = build_console_request(
         messages,
         capture_mode=preparation.capture_mode,
         metadata_provenance=metadata,
         **request_kwargs,
+    )
+    return replace(
+        request,
+        capture_durability=(
+            ("temporary" if preparation.ephemeral else "durable")
+            if preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON else None
+        ),
     )
 
 

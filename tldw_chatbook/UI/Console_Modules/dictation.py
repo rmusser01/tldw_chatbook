@@ -1281,7 +1281,12 @@ class ConsoleDictationController:
                     # `_request_console_dictation_stop()` here would only
                     # do the first half, leaving the FSM believing it is
                     # still running.
-                    self._console_hands_free.controller.on_exit_request()
+                    controller = self._console_hands_free.controller
+                    stop = getattr(controller, "on_stop_request", None)
+                    if callable(stop):
+                        stop()
+                    else:
+                        controller.on_exit_request()
                 else:
                     self._request_console_dictation_stop()
             elif event.name == "discard":
@@ -2062,7 +2067,12 @@ class ConsoleDictationController:
             # state, exactly like Esc/spoken "stop" -- superseding the
             # ordinary one-shot toggle below for as long as the loop is
             # running.
-            self._console_hands_free.controller.on_exit_request()
+            controller = self._console_hands_free.controller
+            microphone_disabled = getattr(controller, "on_microphone_disabled", None)
+            if callable(microphone_disabled):
+                microphone_disabled()
+            else:
+                controller.on_exit_request()
             return
         if self._console_realtime is not None:
             # V4 task 5 (final review C1): the SAME rule for the

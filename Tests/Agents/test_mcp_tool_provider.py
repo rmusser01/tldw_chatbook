@@ -30,7 +30,7 @@ from tldw_chatbook.Agents.mcp_tool_provider import (
 from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.MCP.execution_log import POLICY_DENIED_DECISION
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
-from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.MCP.permission_store import EffectiveToolState, definition_hash
 
 
 def _catalog_record(
@@ -255,6 +255,52 @@ def test_compose_catalog_filters_deny_state():
     names = {e.name for e in provider.list_catalog()}
     assert any("keep" in n for n in names)
     assert not any("drop" in n for n in names)
+
+
+def test_compose_catalog_rejects_same_id_with_changed_definition():
+    original_schema = {
+        "type": "object",
+        "properties": {"path": {"type": "string"}},
+    }
+    changed_schema = {
+        "type": "object",
+        "properties": {"path": {"type": "string"}, "write": {"type": "boolean"}},
+    }
+    tool_id = "local:srv::run"
+    maximum = {
+        tool_id: definition_hash("original", original_schema),
+    }
+    service = FakeMCPService(
+        catalog_records=[
+            _catalog_record("srv", [_tool_dict("run", "changed", changed_schema)])
+        ],
+        default_state=EffectiveToolState(state="allow", origin="tool_override"),
+    )
+    provider = MCPToolProvider(
+        service=service,
+        main_loop=asyncio.new_event_loop(),
+        maximum_tool_ids=frozenset(maximum),
+        maximum_definition_hashes=maximum,
+    )
+
+    _compose(provider)
+
+    assert provider.list_catalog() == []
+
+    service.catalog_records = [
+        _catalog_record("srv", [_tool_dict("run", "original", original_schema)])
+    ]
+    exact_provider = MCPToolProvider(
+        service=service,
+        main_loop=asyncio.new_event_loop(),
+        maximum_tool_ids=frozenset(maximum),
+        maximum_definition_hashes=maximum,
+    )
+    _compose(exact_provider)
+
+    assert [entry.name for entry in exact_provider.list_catalog()] == [
+        "mcp__srv__run"
+    ]
 
 
 def test_compose_catalog_includes_builtin_inventory():
@@ -1807,7 +1853,10 @@ def test_compose_catalog_without_exclusions_keeps_every_builtin_name():
     assert "mcp__tldw_chatbook__library_list_media" in names
     assert "mcp__tldw_chatbook__search_rag" in names
     assert "mcp__tldw_chatbook__chat_with_llm" in names
-    assert len(names) == 30  # 29 shadowed + the unrelated built-in
+    assert names == {
+        f"mcp__tldw_chatbook__{tool['name']}"
+        for tool in service.inventory["tools"]
+    }
 
 
 def test_compose_catalog_builtin_exclusions_scoped_to_builtin_source():
@@ -1815,7 +1864,10 @@ def test_compose_catalog_builtin_exclusions_scoped_to_builtin_source():
     disappear; the unrelated built-in and same-named local-profile tools
     remain, and the inventory mapping is left untouched."""
     exclusions = _console_exclusion_set()
-    assert len(exclusions) == 29  # 24 descriptors + 5 legacy, no overlap
+    from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
+
+    assert set(LIBRARY_TOOL_DESCRIPTORS).isdisjoint(_LEGACY_SHADOWED_NAMES)
+    assert exclusions == frozenset((*LIBRARY_TOOL_DESCRIPTORS, *_LEGACY_SHADOWED_NAMES))
     service = FakeMCPService(
         inventory=_mixed_library_inventory(),
         catalog_records=[

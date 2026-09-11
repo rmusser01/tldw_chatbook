@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
+from loguru import logger
+
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleProviderSelection,
     ConsoleStagedSource,
@@ -25,9 +27,123 @@ from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleTurnLibraryAuthority,
 )
 from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryPolicySnapshot
+from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.Chat.console_roleplay_identity import ConsolePresentationContext
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSnapshot
 from tldw_chatbook.Workspaces.change_review_consent import SkippedReviewRoot
+from tldw_chatbook.Character_Chat.emote_directives import CharacterEmoteRunSnapshot
+
+
+def capture_change_review_admission(
+    app: Any, workspace_id: str | None
+) -> tuple[tuple[Any, ...], tuple[str, ...], tuple[SkippedReviewRoot, ...]]:
+    """Read only consent-admitted roots for the owning workspace."""
+    service = getattr(app, "change_review_consent_service", None)
+    if service is not None:
+        try:
+            admission = service.admit_turn(workspace_id)
+            return (
+                tuple(admission.ready_roots),
+                tuple(getattr(admission, "ready_aliases", ())),
+                tuple(admission.skipped_roots),
+            )
+        except Exception:  # noqa: BLE001 -- review never blocks a send
+            pass
+    return (), (), ()
+
+
+def resolve_turn_tool_policy_profile_id(app: Any, workspace_id: str | None) -> str:
+    """Read the owning workspace's named profile, preserving legacy defaults."""
+    try:
+        registry = getattr(app, "workspace_registry_service", None)
+        if not workspace_id or registry is None:
+            return "default"
+        record = registry.get_workspace(workspace_id)
+        defaults = getattr(record, "assistant_defaults", None) if record else None
+        profile_id = getattr(defaults, "tool_policy_profile_id", None)
+        if isinstance(profile_id, str) and profile_id.strip():
+            return profile_id.strip()
+    except Exception as exc:  # noqa: BLE001 -- preserve existing fallback
+        logger.warning(
+            "Console turn context: tool policy profile resolution failed; "
+            "using the default profile; error_type={}",
+            type(exc).__name__,
+        )
+    return "default"
+
+
+def resolve_turn_persona_policy_rules(
+    app: Any, session: Any
+) -> tuple[Mapping[str, Any], ...]:
+    """Read rules from the owning session's durable persona identity."""
+    try:
+        if session is None or session.assistant_kind != "persona":
+            return ()
+        assistant_id = str(session.assistant_id or "").strip()
+        service = getattr(app, "local_character_persona_service", None)
+        if not assistant_id or service is None:
+            return ()
+        profile = service.get_persona_profile(assistant_id)
+        rules = profile.get("policy_rules") if isinstance(profile, Mapping) else None
+        if isinstance(rules, (list, tuple)):
+            return tuple(rule for rule in rules if isinstance(rule, Mapping))
+    except Exception as exc:  # noqa: BLE001 -- preserve existing fallback
+        logger.warning(
+            "Console turn context: persona policy rules resolution failed; "
+            "running with no persona rules; error_type={}",
+            type(exc).__name__,
+        )
+    return ()
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleProjectBindingSnapshot:
+    """Detached local-folder authority for one accepted turn."""
+
+    binding_id: str
+    workspace_id: str
+    display_name: str
+    root: str = field(repr=False)
+    locator_fingerprint: str = field(repr=False)
+    allow_write: bool = False
+    root_identity: tuple[tuple[str, int, int, int], ...] = field(
+        default=(),
+        repr=False,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleProjectAuthoritySnapshot:
+    """Maximum project authority and setup choices frozen at handoff."""
+
+    workspace_id: str
+    enabled: bool
+    working_folder_binding_id: str | None = None
+    working_folder_locator_fingerprint: str | None = field(
+        default=None,
+        repr=False,
+    )
+    project_instruction_notice_key: str | None = field(default=None, repr=False)
+    selected: ConsoleProjectBindingSnapshot | None = field(default=None, repr=False)
+    options: tuple[ConsoleProjectBindingSnapshot, ...] = field(
+        default=(),
+        repr=False,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleCharacterAuthoritySnapshot:
+    """Maximum character/emote identity accepted for one turn."""
+
+    identity_revision: int
+    runtime_backend: str
+    assistant_id: str | None
+    assistant_authority_id: str | None
+    local_character_id: int | None
+    emote_snapshot: CharacterEmoteRunSnapshot | None = field(
+        default=None, repr=False
+    )
 
 
 def _freeze(value: Any) -> Any:
@@ -99,23 +215,59 @@ class ConsoleTurnConfigurationSnapshot:
     """Immutable provider-input configuration captured before gateway resolution."""
 
     session_id: str
-    provider_selection: ConsoleProviderSelection
-    scratch_space: ConsoleScratchSnapshot | None = None
-    session_settings: ConsoleSessionSettings | None = None
-    workspace_roots: tuple[str, ...] = ()
-    change_review_root_aliases: tuple[str, ...] = ()
-    change_review_skipped_roots: tuple[SkippedReviewRoot, ...] = ()
+    provider_selection: ConsoleProviderSelection = field(repr=False)
+    scratch_space: ConsoleScratchSnapshot | None = field(default=None, repr=False)
+    session_settings: ConsoleSessionSettings | None = field(default=None, repr=False)
+    workspace_roots: tuple[str, ...] = field(default=(), repr=False)
+    presentation_context: ConsolePresentationContext | None = field(
+        default=None,
+        repr=False,
+    )
+    library_policy_maximum: ConsoleLibraryPolicySnapshot | None = field(
+        default=None,
+        repr=False,
+    )
+    library_scope_maximum: ConsoleLibraryItemScopeSnapshot | None = field(
+        default=None,
+        repr=False,
+    )
+    project_authority: ConsoleProjectAuthoritySnapshot | None = field(
+        default=None,
+        repr=False,
+    )
+    character_authority: ConsoleCharacterAuthoritySnapshot | None = field(
+        default=None,
+        repr=False,
+    )
+    prompt_transform_inputs: Mapping[str, Any] = field(
+        default_factory=lambda: MappingProxyType({}),
+        repr=False,
+    )
+    skill_context_maximum: Mapping[str, Any] = field(
+        default_factory=lambda: MappingProxyType({}),
+        repr=False,
+    )
+    mcp_tool_maximum: frozenset[str] | None = field(default=None, repr=False)
+    mcp_definition_maximum: Mapping[str, str] = field(
+        default_factory=lambda: MappingProxyType({}), repr=False
+    )
+    change_review_root_aliases: tuple[str, ...] = field(default=(), repr=False)
+    change_review_skipped_roots: tuple[SkippedReviewRoot, ...] = field(default=(), repr=False)
     capabilities: Mapping[str, Any] = field(
-        default_factory=lambda: MappingProxyType({})
+        default_factory=lambda: MappingProxyType({}),
+        repr=False,
     )
     rag_defaults: Mapping[str, Any] = field(
-        default_factory=lambda: MappingProxyType({})
+        default_factory=lambda: MappingProxyType({}),
+        repr=False,
     )
     tool_configuration: Mapping[str, Any] = field(
-        default_factory=lambda: MappingProxyType({})
+        default_factory=lambda: MappingProxyType({}),
+        repr=False,
     )
     provider_payload_settings: Mapping[str, Any] = field(
-        default_factory=lambda: MappingProxyType({})
+        default_factory=lambda: MappingProxyType({}),
+        repr=False,
     )
     #: Workspace assistant defaults (Task 7): the owning session's persona
     #: policy rules (already normalized by the persona service); ``()`` is
@@ -153,7 +305,44 @@ class ConsoleTurnConfigurationSnapshot:
             "change_review_skipped_roots",
             tuple(deepcopy(self.change_review_skipped_roots)),
         )
+        object.__setattr__(
+            self,
+            "presentation_context",
+            deepcopy(self.presentation_context),
+        )
+        object.__setattr__(
+            self,
+            "library_policy_maximum",
+            deepcopy(self.library_policy_maximum),
+        )
+        object.__setattr__(
+            self,
+            "library_scope_maximum",
+            deepcopy(self.library_scope_maximum),
+        )
+        object.__setattr__(self, "project_authority", deepcopy(self.project_authority))
+        object.__setattr__(
+            self,
+            "character_authority",
+            deepcopy(self.character_authority),
+        )
+        object.__setattr__(
+            self,
+            "mcp_tool_maximum",
+            (
+                frozenset(str(value) for value in self.mcp_tool_maximum)
+                if self.mcp_tool_maximum is not None
+                else None
+            ),
+        )
+        object.__setattr__(
+            self,
+            "mcp_definition_maximum",
+            _freeze(self.mcp_definition_maximum),
+        )
         for field_name in (
+            "prompt_transform_inputs",
+            "skill_context_maximum",
             "capabilities",
             "rag_defaults",
             "tool_configuration",
@@ -184,6 +373,15 @@ class ConsoleTurnConfigurationSnapshot:
         workspace_roots: Sequence[object] = (),
         change_review_root_aliases: Sequence[str] = (),
         change_review_skipped_roots: Sequence[SkippedReviewRoot] = (),
+        presentation_context: ConsolePresentationContext | None = None,
+        library_policy_maximum: ConsoleLibraryPolicySnapshot | None = None,
+        library_scope_maximum: ConsoleLibraryItemScopeSnapshot | None = None,
+        project_authority: ConsoleProjectAuthoritySnapshot | None = None,
+        character_authority: ConsoleCharacterAuthoritySnapshot | None = None,
+        prompt_transform_inputs: Mapping[str, Any] | None = None,
+        skill_context_maximum: Mapping[str, Any] | None = None,
+        mcp_tool_maximum: Sequence[object] | None = None,
+        mcp_definition_maximum: Mapping[str, str] | None = None,
         capabilities: Mapping[str, Any] | None = None,
         rag_defaults: Mapping[str, Any] | None = None,
         tool_configuration: Mapping[str, Any] | None = None,
@@ -200,6 +398,19 @@ class ConsoleTurnConfigurationSnapshot:
             workspace_roots=tuple(workspace_roots),
             change_review_root_aliases=tuple(change_review_root_aliases),
             change_review_skipped_roots=tuple(change_review_skipped_roots),
+            presentation_context=presentation_context,
+            library_policy_maximum=library_policy_maximum,
+            library_scope_maximum=library_scope_maximum,
+            project_authority=project_authority,
+            character_authority=character_authority,
+            prompt_transform_inputs=prompt_transform_inputs or {},
+            skill_context_maximum=skill_context_maximum or {},
+            mcp_tool_maximum=(
+                frozenset(str(value) for value in mcp_tool_maximum)
+                if mcp_tool_maximum is not None
+                else None
+            ),
+            mcp_definition_maximum=mcp_definition_maximum or {},
             capabilities=capabilities or {},
             rag_defaults=rag_defaults or {},
             tool_configuration=tool_configuration or {},
@@ -217,6 +428,23 @@ class ConsoleTurnConfigurationSnapshot:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ConsoleTurnCustodyRequest:
+    """Sensitive, detached inputs retained by the app-owned turn runtime."""
+
+    turn_id: str
+    session_id: str
+    draft: str = field(repr=False)
+    configuration: ConsoleTurnConfigurationSnapshot = field(repr=False)
+    attachment_ids: tuple[str, ...] = ()
+    one_shot_prefill: str | None = field(default=None, repr=False)
+    one_shot_prefill_revision: int | None = field(default=None, repr=False)
+    staged_evidence_launch: ConsoleLiveWorkLaunch | None = field(
+        default=None,
+        repr=False,
+    )
+
+
 def _detached_configuration(
     configuration: ConsoleTurnConfigurationSnapshot,
 ) -> ConsoleTurnConfigurationSnapshot:
@@ -229,6 +457,15 @@ def _detached_configuration(
         workspace_roots=configuration.workspace_roots,
         change_review_root_aliases=configuration.change_review_root_aliases,
         change_review_skipped_roots=configuration.change_review_skipped_roots,
+        presentation_context=configuration.presentation_context,
+        library_policy_maximum=configuration.library_policy_maximum,
+        library_scope_maximum=configuration.library_scope_maximum,
+        project_authority=configuration.project_authority,
+        character_authority=configuration.character_authority,
+        prompt_transform_inputs=configuration.prompt_transform_inputs,
+        skill_context_maximum=configuration.skill_context_maximum,
+        mcp_tool_maximum=configuration.mcp_tool_maximum,
+        mcp_definition_maximum=configuration.mcp_definition_maximum,
         capabilities=configuration.capabilities,
         rag_defaults=configuration.rag_defaults,
         tool_configuration=configuration.tool_configuration,
@@ -293,9 +530,9 @@ def _detached_destination(
 class ConsoleTurnExecutionContext:
     """Complete immutable execution authority constructed after the gateway."""
 
-    configuration: ConsoleTurnConfigurationSnapshot
-    library_authority: ConsoleTurnLibraryAuthority
-    resolved_destination: ConsoleResolvedDestination
+    configuration: ConsoleTurnConfigurationSnapshot = field(repr=False)
+    library_authority: ConsoleTurnLibraryAuthority = field(repr=False)
+    resolved_destination: ConsoleResolvedDestination = field(repr=False)
 
     def __post_init__(self) -> None:
         """Reject incomplete contexts and detach every constructor input."""
@@ -360,6 +597,51 @@ class ConsoleTurnExecutionContext:
     def change_review_skipped_roots(self) -> tuple[SkippedReviewRoot, ...]:
         """Return roots skipped by Change Review admission for this turn."""
         return self.configuration.change_review_skipped_roots
+
+    @property
+    def presentation_context(self) -> ConsolePresentationContext | None:
+        """Return the identity frozen before runtime acceptance."""
+        return self.configuration.presentation_context
+
+    @property
+    def library_policy_maximum(self) -> ConsoleLibraryPolicySnapshot | None:
+        """Return the Library policy maximum frozen before acceptance."""
+        return self.configuration.library_policy_maximum
+
+    @property
+    def library_scope_maximum(self) -> ConsoleLibraryItemScopeSnapshot | None:
+        """Return the Library item scope maximum frozen before acceptance."""
+        return self.configuration.library_scope_maximum
+
+    @property
+    def project_authority(self) -> ConsoleProjectAuthoritySnapshot | None:
+        """Return the project authority maximum frozen before acceptance."""
+        return self.configuration.project_authority
+
+    @property
+    def character_authority(self) -> ConsoleCharacterAuthoritySnapshot | None:
+        """Return the character/emote identity maximum frozen at handoff."""
+        return self.configuration.character_authority
+
+    @property
+    def prompt_transform_inputs(self) -> Mapping[str, object]:
+        """Return frozen dictionary/world-info inputs."""
+        return self.configuration.prompt_transform_inputs
+
+    @property
+    def skill_context_maximum(self) -> Mapping[str, object]:
+        """Return the maximum local skill context frozen at handoff."""
+        return self.configuration.skill_context_maximum
+
+    @property
+    def mcp_tool_maximum(self) -> frozenset[str] | None:
+        """Return exact MCP tool identities eligible at handoff."""
+        return self.configuration.mcp_tool_maximum
+
+    @property
+    def mcp_definition_maximum(self) -> Mapping[str, str]:
+        """Exact admitted MCP definition hashes keyed by raw tool ID."""
+        return self.configuration.mcp_definition_maximum
 
     @property
     def capabilities(self) -> Mapping[str, object]:

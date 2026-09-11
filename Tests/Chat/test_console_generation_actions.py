@@ -153,10 +153,13 @@ def _bare_generation_screen(store: ConsoleChatStore) -> ChatScreen:
         # generation branches touch no library-activity seam.
         app_instance=NO_APP,
     )
-    screen._console_chat_store = store
     screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
     screen._session._chat_store_accessor = lambda: screen._console_chat_store
     screen._session._current_chat_store_accessor = lambda: screen._console_chat_store
+    # Task 3 attachment inventories project-decision projection hooks while
+    # the runtime claim is created, so the session projection owner must
+    # exist before this property setter attaches the bare screen.
+    screen._console_chat_store = store
     screen.app_instance = SimpleNamespace(notify=lambda *a, **k: None)
     screen._sync_native_console_chat_ui = AsyncMock()
     # `_clear_console_composer_draft` now also syncs the slash-command popup;

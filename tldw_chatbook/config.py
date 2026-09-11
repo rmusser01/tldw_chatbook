@@ -5286,6 +5286,12 @@ voice_match_min_seconds = 4
 # improve the stored voiceprint (at most one offer per meeting).
 voice_learn_offer = true
 
+[dictation]
+# Speculative pipeline only. Safe range: 500-3000 milliseconds.
+response_eagerness_ms = 700
+# Troubleshooting-only false forces half duplex. Realtime voice is unaffected.
+pipeline_aec_enabled = true
+
 [transcription]
 # Default transcription provider
 # Options: "faster-whisper", "parakeet-onnx", "qwen2audio", "parakeet", "canary", "parakeet-mlx", "lightning-whisper-mlx", "remote-whisper"
@@ -6680,6 +6686,16 @@ def get_atomic_config_snapshot() -> AtomicConfigSnapshot:
             generation=_CONFIG_GENERATION,
             values=_atomic_config_values_from_raw(raw),
         )
+
+
+def get_runtime_config_generation() -> int:
+    """Read the publication counter without locks, I/O, or copying config.
+
+    This is a baseline, not an acceptance fence. Callers must finish with
+    ``run_if_runtime_config_generation_current``; a concurrent publication
+    conservatively invalidates the captured baseline.
+    """
+    return _CONFIG_GENERATION
 
 
 def get_runtime_config_snapshot(

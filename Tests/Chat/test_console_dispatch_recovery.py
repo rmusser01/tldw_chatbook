@@ -23,12 +23,15 @@ from tldw_chatbook.Chat.console_chat_store import (
     ConsoleChatStore,
     ConsoleDispatchSettlementError,
 )
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleAssistantSettlement,
     ConsoleDispatchCheckpoint,
     ConsoleDispatchCheckpointState,
     ConsoleDispatchReconstructability,
+    ConsoleDispatchResultStatus,
     ConsoleDispatchTransition,
+    ConsoleDispatchWriteResult,
     ConsoleDurableTurnAcceptance,
     ConsoleEgressClass,
     ConsoleLibraryItemScopeSnapshot,
@@ -36,7 +39,13 @@ from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleResolvedDestination,
     ConsoleTurnLibraryAuthority,
 )
-from tldw_chatbook.Chat.console_dispatch_repository import ConsoleDispatchRepository
+from tldw_chatbook.Chat.console_dispatch_repository import (
+    ConsoleDispatchCheckpointValidationError,
+    ConsoleDispatchRepository,
+)
+from tldw_chatbook.Chat.conversation_local_marks_service import (
+    ConversationLocalMarksService,
+)
 from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAssistantLibraryAccess,
     ConsoleAutoRetrieve,
@@ -46,7 +55,9 @@ from tldw_chatbook.Chat.provider_continuation import (
     dump_provider_continuation_json,
     parse_provider_continuation_json,
 )
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 
 
 UNRECONSTRUCTABLE_REASON = (
@@ -54,6 +65,7 @@ UNRECONSTRUCTABLE_REASON = (
     "cannot be reconstructed exactly."
 )
 DISCARD_COPY = "Response discarded."
+TERMINAL_RECEIPT = "44444444-4444-4444-8444-444444444444"
 
 
 def _recovery_symbols():
@@ -796,6 +808,7 @@ def _assert_terminal_fault_retained(
         == gateway.checkpoint_before_terminal
     )
     assert connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 2
+    assert ConversationLocalMarksService(db).list_console_unseen_marks() == ()
     recovery = store.dispatch_recovery_for_session(session_id)
     assert recovery is not None
     assert recovery.assistant_message_id == "assistant-1"
@@ -840,6 +853,13 @@ async def test_accepted_retry_cas_precedes_provider_and_reuses_exact_owners(
         .fetchall()
     )
     assert [tuple(row) for row in after] == [tuple(row) for row in before]
+    stored_assistant = db.get_message_by_id("assistant-1")
+    metadata = MessageMetadata.from_json(stored_assistant["metadata_json"])
+    assert metadata is not None
+    assert metadata.terminal_receipt_id
+    assert ConversationLocalMarksService(db).list_console_unseen_marks() == (
+        (conversation_id, metadata.terminal_receipt_id),
+    )
 
 
 @pytest.mark.asyncio
@@ -913,7 +933,10 @@ def test_terminal_settlement_preserves_local_metadata_and_usage_atomically(
         repository,
         _insert(db, repository, _acceptance(conversation_id)),
     )
-    metadata_json = '{"origin":"task15-test"}'
+    metadata_json = MessageMetadata(
+        engine="task15-test",
+        terminal_receipt_id=TERMINAL_RECEIPT,
+    ).to_json()
     usage_json = '{"uncached_input":7,"output":3}'
 
     result = repository.settle_with_assistant(
@@ -927,6 +950,7 @@ def test_terminal_settlement_preserves_local_metadata_and_usage_atomically(
             content="settled",
             metadata_json=metadata_json,
             usage_json=usage_json,
+            terminal_receipt_id=TERMINAL_RECEIPT,
         )
     )
 
@@ -941,6 +965,9 @@ def test_terminal_settlement_preserves_local_metadata_and_usage_atomically(
         .fetchone()
     )
     assert tuple(row) == ("settled", "complete", metadata_json, usage_json)
+    assert ConversationLocalMarksService(db).list_console_unseen_marks() == (
+        (conversation_id, TERMINAL_RECEIPT),
+    )
     assert (
         db.get_connection()
         .execute("SELECT COUNT(*) FROM console_dispatch_checkpoints")
@@ -979,7 +1006,11 @@ def test_terminal_settlement_commits_canvas_revision_with_assistant_message(
             expected_assistant_message_version=started.assistant_message_version,
             terminal_state="complete",
             content="",
-            metadata_json=staged.metadata_json,
+            metadata_json=replace(
+                MessageMetadata.from_json(staged.metadata_json),
+                terminal_receipt_id=TERMINAL_RECEIPT,
+            ).to_json(),
+            terminal_receipt_id=TERMINAL_RECEIPT,
             contributions=(staged.contribution,),
         )
     )
@@ -1029,7 +1060,11 @@ def test_canvas_revision_failure_rolls_back_terminal_message(
                 expected_assistant_message_version=started.assistant_message_version,
                 terminal_state="complete",
                 content="settled",
-                metadata_json=staged.metadata_json,
+                metadata_json=replace(
+                    MessageMetadata.from_json(staged.metadata_json),
+                    terminal_receipt_id=TERMINAL_RECEIPT,
+                ).to_json(),
+                terminal_receipt_id=TERMINAL_RECEIPT,
                 contributions=(staged.contribution,),
             )
         )
@@ -1078,7 +1113,11 @@ def test_terminal_message_failure_never_writes_canvas_revision(
                 expected_assistant_message_version=started.assistant_message_version,
                 terminal_state="complete",
                 content="settled",
-                metadata_json=staged.metadata_json,
+                metadata_json=replace(
+                    MessageMetadata.from_json(staged.metadata_json),
+                    terminal_receipt_id=TERMINAL_RECEIPT,
+                ).to_json(),
+                terminal_receipt_id=TERMINAL_RECEIPT,
                 contributions=(staged.contribution,),
             )
         )
@@ -1293,6 +1332,41 @@ def test_post_commit_dispatch_owner_change_reconciles_terminal_message(
     )
 
 
+def test_terminal_dispatch_settlement_commits_receipt_mark_and_checkpoint_delete(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id, repository = _database(tmp_path / "terminal-receipt.sqlite")
+    started = _start(repository, _insert(db, repository, _acceptance(conversation_id)))
+    metadata_json = MessageMetadata(
+        terminal_receipt_id=TERMINAL_RECEIPT
+    ).to_json()
+
+    result = repository.settle_with_assistant(
+        ConsoleAssistantSettlement(
+            assistant_message_id=started.assistant_message_id,
+            expected_checkpoint_state=started.state,
+            expected_checkpoint_revision=started.checkpoint_revision,
+            expected_user_message_version=started.user_message_version,
+            expected_assistant_message_version=started.assistant_message_version,
+            terminal_state="complete",
+            content="settled",
+            metadata_json=metadata_json,
+            terminal_receipt_id=TERMINAL_RECEIPT,
+        )
+    )
+
+    assert result.status.value == "committed"
+    assert ConversationLocalMarksService(db).list_console_unseen_marks() == (
+        (conversation_id, TERMINAL_RECEIPT),
+    )
+    assert (
+        db.get_connection()
+        .execute("SELECT COUNT(*) FROM console_dispatch_checkpoints")
+        .fetchone()[0]
+        == 0
+    )
+
+
 def test_dispatch_reconcile_read_apply_is_atomic_with_new_durable_publish(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1310,7 +1384,7 @@ def test_dispatch_reconcile_read_apply_is_atomic_with_new_durable_publish(
             expected_checkpoint_revision=first.checkpoint_revision,
             expected_user_message_version=first.user_message_version,
             expected_assistant_message_version=first.assistant_message_version,
-            terminal_state="complete",
+            terminal_state="stopped",
             content="first answer",
             metadata_json=None,
         )
@@ -1410,6 +1484,314 @@ def test_dispatch_reconcile_read_apply_is_atomic_with_new_durable_publish(
         .fetchone()
     )
     assert checkpoint_row["assistant_message_id"] == assistant.id
+
+
+@pytest.mark.parametrize(
+    ("terminal_state", "expected_severity"),
+    [("complete", "information"), ("failed", "error")],
+)
+def test_terminal_dispatch_attention_reopens_with_authoritative_severity(
+    tmp_path: Path,
+    terminal_state: str,
+    expected_severity: str,
+) -> None:
+    path = tmp_path / f"terminal-severity-{terminal_state}.sqlite"
+    db, conversation_id, repository = _database(path)
+    started = _start(repository, _insert(db, repository, _acceptance(conversation_id)))
+    receipt_id = TERMINAL_RECEIPT
+    result = repository.settle_with_assistant(
+        ConsoleAssistantSettlement(
+            assistant_message_id=started.assistant_message_id,
+            expected_checkpoint_state=started.state,
+            expected_checkpoint_revision=started.checkpoint_revision,
+            expected_user_message_version=started.user_message_version,
+            expected_assistant_message_version=started.assistant_message_version,
+            terminal_state=terminal_state,
+            content="settled",
+            metadata_json=MessageMetadata(
+                terminal_receipt_id=receipt_id
+            ).to_json(),
+            terminal_receipt_id=receipt_id,
+        )
+    )
+    assert result.status is ConsoleDispatchResultStatus.COMMITTED
+    db.close_connection()
+
+    reopened = CharactersRAGDB(path, client_id="dispatch-attention-reopen")
+    notifications: list[tuple[str, str]] = []
+    app = SimpleNamespace(
+        chachanotes_db=reopened,
+        conversation_local_marks_service=ConversationLocalMarksService(reopened),
+        notify=lambda message, *, severity="information": notifications.append(
+            (message, severity)
+        ),
+    )
+    runtime = ConsoleRuntime(app)
+
+    assert runtime.recompute_console_attention() is True
+    assert len(notifications) == 1
+    assert notifications[0][1] == expected_severity
+
+
+@pytest.mark.parametrize(
+    ("terminal_state", "metadata_json"),
+    [
+        ("stopped", MessageMetadata(terminal_receipt_id=TERMINAL_RECEIPT).to_json()),
+        (
+            "complete",
+            MessageMetadata(
+                terminal_receipt_id="55555555-5555-4555-8555-555555555555"
+            ).to_json(),
+        ),
+    ],
+)
+def test_terminal_dispatch_rejects_receipt_on_nonattention_or_mismatched_metadata(
+    tmp_path: Path,
+    terminal_state: str,
+    metadata_json: str,
+) -> None:
+    db, conversation_id, repository = _database(
+        tmp_path / f"terminal-receipt-invalid-{terminal_state}.sqlite"
+    )
+    started = _start(repository, _insert(db, repository, _acceptance(conversation_id)))
+
+    with pytest.raises(
+        ConsoleDispatchCheckpointValidationError,
+        match="Invalid terminal receipt settlement",
+    ):
+        repository.settle_with_assistant(
+            ConsoleAssistantSettlement(
+                assistant_message_id=started.assistant_message_id,
+                expected_checkpoint_state=started.state,
+                expected_checkpoint_revision=started.checkpoint_revision,
+                expected_user_message_version=started.user_message_version,
+                expected_assistant_message_version=started.assistant_message_version,
+                terminal_state=terminal_state,  # type: ignore[arg-type]
+                content="terminal",
+                metadata_json=metadata_json,
+                terminal_receipt_id=TERMINAL_RECEIPT,
+            )
+        )
+
+    assert ConversationLocalMarksService(db).list_console_unseen_marks() == ()
+    assert (
+        db.get_connection()
+        .execute("SELECT COUNT(*) FROM console_dispatch_checkpoints")
+        .fetchone()[0]
+        == 1
+    )
+
+
+@pytest.mark.parametrize(
+    ("terminal_state", "metadata_json"),
+    [
+        ("complete", MessageMetadata(engine="ordinary").to_json()),
+        ("failed", MessageMetadata(engine="ordinary").to_json()),
+        (
+            "complete",
+            MessageMetadata(terminal_receipt_id=TERMINAL_RECEIPT).to_json(),
+        ),
+        (
+            "stopped",
+            MessageMetadata(terminal_receipt_id=TERMINAL_RECEIPT).to_json(),
+        ),
+        (
+            "discarded",
+            MessageMetadata(terminal_receipt_id=TERMINAL_RECEIPT).to_json(),
+        ),
+    ],
+)
+def test_terminal_dispatch_requires_exact_receipt_symmetry(
+    tmp_path: Path,
+    terminal_state: str,
+    metadata_json: str,
+) -> None:
+    db, conversation_id, repository = _database(
+        tmp_path / f"terminal-receipt-symmetry-{terminal_state}.sqlite"
+    )
+    started = _start(repository, _insert(db, repository, _acceptance(conversation_id)))
+
+    with pytest.raises(
+        ConsoleDispatchCheckpointValidationError,
+        match="Invalid terminal receipt settlement",
+    ):
+        repository.settle_with_assistant(
+            ConsoleAssistantSettlement(
+                assistant_message_id=started.assistant_message_id,
+                expected_checkpoint_state=started.state,
+                expected_checkpoint_revision=started.checkpoint_revision,
+                expected_user_message_version=started.user_message_version,
+                expected_assistant_message_version=started.assistant_message_version,
+                terminal_state=terminal_state,  # type: ignore[arg-type]
+                content="terminal",
+                metadata_json=metadata_json,
+            )
+        )
+
+    assert ConversationLocalMarksService(db).list_console_unseen_marks() == ()
+    assert db.get_message_by_id(started.assistant_message_id)[
+        "assistant_generation_state"
+    ] == "dispatch_started"
+    assert (
+        db.get_connection()
+        .execute("SELECT COUNT(*) FROM console_dispatch_checkpoints")
+        .fetchone()[0]
+        == 1
+    )
+
+
+@pytest.mark.parametrize("metadata_kind", ["ordinary", "video"])
+@pytest.mark.parametrize("first_outcome", ["raise", "conflict"])
+def test_store_restores_speculative_receipt_and_reuses_it_for_exact_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    metadata_kind: str,
+    first_outcome: str,
+) -> None:
+    action_id, _kind, _state = _recovery_symbols()
+    db, conversation_id, repository = _database(
+        tmp_path / f"speculative-{metadata_kind}-{first_outcome}.sqlite"
+    )
+    _insert(db, repository, _acceptance(conversation_id))
+    store, session_id = _restored_store(db, conversation_id)
+    claimed = store.claim_dispatch_recovery_action(
+        session_id,
+        action_id.RETRY_RESPONSE,
+    )
+    assert claimed is not None
+    message = store._message_or_raise("assistant-1")
+    if metadata_kind == "ordinary":
+        message.metadata = MessageMetadata(engine="prior")
+    else:
+        message.video_metadata = VideoGenerationMetadata(
+            name="prior-video",
+            prompt="prior prompt",
+            backend="test",
+        )
+    prior = (message.metadata, message.video_metadata)
+    store_repository = store.persistence.console_dispatch_repository
+    real_settle = store_repository.settle_with_assistant
+    receipts: list[str | None] = []
+
+    def fail_once(settlement: ConsoleAssistantSettlement):
+        receipts.append(settlement.terminal_receipt_id)
+        if len(receipts) == 1:
+            if first_outcome == "raise":
+                raise RuntimeError("settlement unavailable")
+            return ConsoleDispatchWriteResult(
+                ConsoleDispatchResultStatus.CONFLICT,
+                None,
+                None,
+                None,
+            )
+        return real_settle(settlement)
+
+    monkeypatch.setattr(store_repository, "settle_with_assistant", fail_once)
+
+    assert store.settle_dispatch_recovery(
+        session_id,
+        assistant_message_id="assistant-1",
+        terminal_state="failed",
+        content="failed",
+    ) is False
+    assert (message.metadata, message.video_metadata) == prior
+    assert ConversationLocalMarksService(db).list_console_unseen_marks() == ()
+    assert store.dispatch_recovery_for_session(session_id) is not None
+
+    assert store.settle_dispatch_recovery(
+        session_id,
+        assistant_message_id="assistant-1",
+        terminal_state="failed",
+        content="failed",
+    ) is True
+    assert receipts[0] == receipts[1]
+    assert receipts[0]
+    assert ConversationLocalMarksService(db).list_console_unseen_marks() == (
+        (conversation_id, receipts[0]),
+    )
+
+
+def test_store_refuses_attention_settlement_without_live_assistant_owner(
+    tmp_path: Path,
+) -> None:
+    action_id, _kind, _state = _recovery_symbols()
+    db, conversation_id, repository = _database(tmp_path / "missing-live.sqlite")
+    _insert(db, repository, _acceptance(conversation_id))
+    store, session_id = _restored_store(db, conversation_id)
+    claimed = store.claim_dispatch_recovery_action(
+        session_id,
+        action_id.RETRY_RESPONSE,
+    )
+    assert claimed is not None
+    store._nodes_by_session[session_id].pop("assistant-1")
+
+    assert store.settle_dispatch_recovery(
+        session_id,
+        assistant_message_id="assistant-1",
+        terminal_state="complete",
+        content="must not commit",
+    ) is False
+    assert db.get_message_by_id("assistant-1")["assistant_generation_state"] == (
+        "accepted"
+    )
+    assert _reconcile(repository, conversation_id) is not None
+    assert ConversationLocalMarksService(db).list_console_unseen_marks() == ()
+
+
+def test_terminal_dispatch_mark_failure_rolls_back_row_mark_and_checkpoint(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id, repository = _database(
+        tmp_path / "terminal-receipt-rollback.sqlite"
+    )
+    started = _start(repository, _insert(db, repository, _acceptance(conversation_id)))
+    connection = db.get_connection()
+    assistant_before = tuple(
+        connection.execute(
+            "SELECT * FROM messages WHERE id = ?", (started.assistant_message_id,)
+        ).fetchone()
+    )
+    checkpoint_before = tuple(
+        connection.execute(
+            "SELECT * FROM console_dispatch_checkpoints WHERE assistant_message_id = ?",
+            (started.assistant_message_id,),
+        ).fetchone()
+    )
+    connection.execute(
+        "CREATE TRIGGER fail_dispatch_terminal_mark BEFORE INSERT ON "
+        "conversation_local_marks BEGIN SELECT RAISE(ABORT, 'mark failure'); END"
+    )
+    connection.commit()
+
+    with pytest.raises(Exception, match="mark failure"):
+        repository.settle_with_assistant(
+            ConsoleAssistantSettlement(
+                assistant_message_id=started.assistant_message_id,
+                expected_checkpoint_state=started.state,
+                expected_checkpoint_revision=started.checkpoint_revision,
+                expected_user_message_version=started.user_message_version,
+                expected_assistant_message_version=started.assistant_message_version,
+                terminal_state="failed",
+                content="failed",
+                metadata_json=MessageMetadata(
+                    terminal_receipt_id=TERMINAL_RECEIPT
+                ).to_json(),
+                terminal_receipt_id=TERMINAL_RECEIPT,
+            )
+        )
+
+    assert tuple(
+        connection.execute(
+            "SELECT * FROM messages WHERE id = ?", (started.assistant_message_id,)
+        ).fetchone()
+    ) == assistant_before
+    assert tuple(
+        connection.execute(
+            "SELECT * FROM console_dispatch_checkpoints WHERE assistant_message_id = ?",
+            (started.assistant_message_id,),
+        ).fetchone()
+    ) == checkpoint_before
+    assert ConversationLocalMarksService(db).list_console_unseen_marks() == ()
 
 
 @pytest.mark.asyncio
