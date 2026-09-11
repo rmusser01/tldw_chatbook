@@ -498,7 +498,8 @@ separate memory, see [File notes](file-notes.md).
 (not a link to one) on a local disk, outside Chatbook's own data directory,
 not already connected as a sync folder, not the Folder files root, and you
 must be able to write every file in it. **Check changes** refuses anything
-else and names which of those it was, at the control, with the next action —
+else and names which of those it was, in the setup pane's status line, with
+the next action —
 for example "That folder is inside Chatbook's own data directory. Pick a
 folder outside it, then Check again", "Another Chatbook window is using that
 folder", "That folder is already connected", or "Some files there use a
@@ -692,9 +693,9 @@ outside the batch stayed as text and are not counted.
    away). Choose a direction and local destination. Server sync remains
    unavailable until its separate capability is installed.
 4. Choose **Check changes** and review the exact safe, attention, skipped, and
-   deletion-like effects. If the folder cannot be used, the line above the
-   button says which rule it broke and what to do; choose **Choose folder…**
-   again and check the new one.
+   deletion-like effects. If the folder cannot be used, the status line under
+   the pane's "Add files to Library notes" heading says which rule it broke
+   and what to do; choose **Choose folder…** again and check the new one.
 5. Choose **Activate reviewed root**. If the review is stale, choose **Check
    again** instead. **Manage sync folders** appears in the notes toolbar once
    a root is active.
