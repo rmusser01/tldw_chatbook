@@ -13302,3 +13302,42 @@ never skip the implementer-run RED step — it is the only checkpoint that
 reveals whether the plan's code or its tests encode the wrong API. When a
 RED failure contradicts the plan, check the *test-side* API usage for
 version rot before hunting a bug in code that follows the plan.
+
+## Reproduce geometry UNDER pytest — a bare probe reads the real user config
+
+**task-32184, 2026-09-11.** The Library width matrix was 16/24 red on dev. A
+standalone async probe that mirrored the test body exactly (same harness, same
+helpers, same waits) reported values that matched the test's expectations and
+contradicted the failures — it "proved" there was nothing to fix. The
+difference: run as a script it loaded the developer's real
+`~/.config/tldw_cli/config.toml`, where `items_width` is 40; under pytest the
+config is isolated and the default `ITEMS_TARGET_WIDTH` (50) applies, and 50 is
+what makes the Items pane stop fitting beside a 48-cell work floor at 100
+columns. Two of the six parametrised widths hinge on exactly that.
+
+**What to do.** Any probe whose answer depends on configuration — geometry,
+widths, feature gates, provider readiness — must run through pytest (a
+throwaway `Tests/UI/test_zz_*.py` you delete afterwards, `-s` and a `print`)
+rather than as a script. If a bare probe disagrees with a pytest failure,
+believe pytest and look for the config seam.
+
+## A fake missing a seam fails SILENTLY behind a `callable()` guard
+
+**task-32201, 2026-09-11.** Three tests reported "the filter never reaches the
+search service", and the task was filed as a product defect. The product was
+fine: since the Notes folder tree, the filter submits through
+`search_note_tree_placements`, and the shared fake
+(`StaticLibraryNotesScopeService`) still carried only `search_notes`.
+`_run_library_notes_filter` starts with
+`method = getattr(service, "search_note_tree_placements", None)` /
+`if not callable(method): return` — so with that fake the filter returned
+before calling anything, silently. Every filter assertion in every Library
+suite had been measuring a filter that did nothing, and the tests that passed
+did so because they asserted on state the no-op happened to leave alone.
+
+**What to do.** When a test says "X never reached the service", check FIRST
+which service method the current code calls and whether the fake has it —
+`grep` the production route for `getattr(service, ...)` guards. A fake is a
+contract copy; when production moves to a new seam, the fake keeps passing
+whatever it still implements. And treat a production `if not callable(...):
+return` as a place where a missing seam becomes invisible, not as a safety net.
