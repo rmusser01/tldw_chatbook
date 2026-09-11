@@ -375,7 +375,7 @@ own. Nothing is ever painted as half a word.
 | **Edit** | Shows the editable title and body. This is the default view when you open a note. |
 | **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. |
 | **Info** | Shows Properties (including comma-separated keywords, note dates/version, and **Linked from**), Reuse & Export, and Danger sections. |
-| **Linked from (N)** (Info → Properties) | Lists the notes whose bodies link to this one, newest import or not — the `[title](note://…)` links Import once writes for an Obsidian vault's `[[wikilinks]]` (see "Obsidian vaults"). Click an entry to open that note. While the lookup runs the line reads "Linked from — checking…", and "Linked from — couldn't check" if it failed, so a count is only claimed once the answer is in. When nothing points here the line reads "Linked from (0) — no notes link here yet". The list is capped at 50 entries; past that the count reads "50+". Links you type by hand in the body count too, as long as they use the same `note://` form. |
+| **Linked from (N)** (Info → Properties) | Lists the notes whose bodies link to this one, newest import or not — the `[[target\|title]](note://…)` links Import once writes for an Obsidian vault's `[[wikilinks]]` (see "Obsidian vaults"). Click an entry to open that note. While the lookup runs the line reads "Linked from — checking…", and "Linked from — couldn't check" if it failed, so a count is only claimed once the answer is in. When nothing points here the line reads "Linked from (0) — no notes link here yet". The list is capped at 50 entries; past that the count reads "50+". Links you type by hand in the body count too, as long as they use the same `note://` form. |
 | Status line | Shows the autosave state: "Saved", "Saving…", "Unsaved changes", "Conflict — …", "Save failed — …", or "Unavailable — …". It does not carry a word count. Created/Modified/version details are under Info → Properties, each with an absolute local timestamp beside its relative age and the word count (e.g. "Created 2026-09-08 21:14 · 3m ago · Modified … · v1 · 6 words"). "Saved" appears once per view, not repeated in Info. |
 | **Save** | Saves immediately, without waiting for autosave. It remains visible beside the mode controls. |
 | **Use in Console** | Hands the note to the Console as staged context, with the suggested prompt "Use this note as context and help me work with it." It remains visible beside **Save**. |
@@ -596,14 +596,46 @@ dialog open. Once a folder is picked, the confirmation line shows its full path
 (elided in the middle for long paths, keeping the folder name itself visible),
 not just its name.
 
-Choose **Check selection** to build a read-only review. Each source is one
-line — path · what will happen · where it lands — with its **Skip** and
-**Create new** controls beside the path. Rows are grouped by outcome (**New**,
-**Unchanged repeat**, **Changed repeat**, **Uncertain match**, **Unsupported**,
-**Skipped**, **Empty**, **Failed**) and each group header carries **Skip all
-on this page** and, where the group can create notes, **Create all on this
-page** — both act on exactly the rows that page's heading counts, so a later
-page keeps its own choices.
+Choose **Check selection** to build a read-only review. The review takes the
+pane while it is open — the Notes list steps aside and comes back when you
+leave. The status line above it states the total ("Review 66 sources before
+import.") before you approve anything.
+
+Each source is one line — path · what will happen · where it lands — with its
+**Skip** and **Create new** controls beside the path. The path gives way
+first if the line is too long (elided in the middle), because the half that
+decides anything is the outcome: the resulting title, its keywords and its
+link count.
+
+Rows are grouped by outcome (**New**, **Unchanged repeat**, **Changed
+repeat**, **Uncertain match**, **Unsupported**, **Skipped**, **Empty**,
+**Failed**) and each group header carries **Skip all on this page** and, where
+the group can create notes, **Create all on this page** — both act on exactly
+the rows that page's heading counts, so a later page keeps its own choices.
+A group's header states its whole size ("New (58)"); only when the group is
+too big for one page does it read "New (25 of 58 on this page)", so the count
+on a page always says which number it means.
+
+A run of interchangeable rows — forty-five archived notes in one folder, all
+headed for the same place — collapses to one summary row with a disclosure
+("▶ vault/Archive · 45 files · Create all · Create in vault / Archive").
+Open it to reach every individual **Skip** / **Create new**; the group's own
+bulk actions settle the whole run without opening it. Pages are filled by the
+rows they *show*, so a collapsed run costs a page one line and never has a
+page break through the middle of it. When there is more than one page,
+**Previous page** and **Next page** say which end you are at rather than
+merely greying out.
+A `.git` folder is never walked, whatever the source and whatever the Obsidian
+toggle says: it is listed once under **Skipped** as "Git repository data —
+skipped. Nothing in it becomes a note." A git-backed vault would otherwise
+review its own repository internals — several hundred sources that can never
+be notes.
+
+A file type that cannot become a note is named rather than dismissed: an
+Obsidian canvas reads "Obsidian canvas — not a note.", and an image, document
+or media file points at where it does belong ("Image — not a note. Add it in
+Library ▸ Media."). Anything else keeps the plain "This file type is not
+supported."
 An empty or whitespace-only file is reported as "Empty file — nothing to
 import." and an application configuration file (a JSON or YAML document with no
 note body) as "Not a note file (app configuration)." A well-formed document
@@ -622,16 +654,33 @@ content and/or add its folder placement; **Confirm this match**, **Replace note
 content** and **Add folder placement** sit on their own line under the row, so
 they stay reachable in a narrow pane. **Update existing** works on an unchanged
 repeat too — it replaces the note's content and leaves its folder placement
-alone. Uncertain matches must be confirmed. If
-the imported top-level folder already exists, choose whether to use it, create
-a unique sibling, or enter another name.
+alone. The difference between the stored note and the file is shown on the one
+row that would write it: choose **Update existing** with **Replace note
+content** to see it. A row that says "Content: no change." never carries a
+diff, because the two answer different questions — whether this *file* changed
+since it was last imported, and whether the *note* now differs from it. Uncertain matches must be confirmed. If
+the imported top-level folder already exists, the review opens with the
+non-destructive default already chosen — a unique sibling — and says where the
+notes will go ("A folder with this name already exists. These notes will go
+into Imported (2) instead — choose another option to change that."). Choose
+**Use existing folder** or **Use another name** to change it; the name field
+starts empty, with no error painted against a name you have not typed.
 
 Only **Import selected items** approves and executes the exact choices shown.
+While it is unavailable it carries its reason as its own text ("Import
+selected items unavailable — Choose how to handle the folder name
+collision."), as **Check selection** does before a source is chosen.
+
 Progress remains visible and **Cancel import** stops cooperatively after the
-current item; completed items are not rolled back. The receipt states what
-happened in plain words — "Import finished · 61 notes created · 11 files
-skipped" — and a **Skipped (N)** disclosure lists each skipped path with its
-reason. A file the app skipped for you — an unchanged repeat, an empty or
+current item; completed items are not rolled back. Progress counts *planned
+changes* — one per note a source creates, one per source otherwise — so a
+two-note CSV is two of them; the line says so ("67 of 67 planned changes
+complete").
+
+The receipt states what happened once, in plain words — "59 notes created ·
+8 files skipped · 54 links resolved" — with the two counts reconciled in the
+line beneath it ("67 planned changes from 66 reviewed sources."), and a
+**Skipped (N)** disclosure lists each skipped path with its reason. A file the app skipped for you — an unchanged repeat, an empty or
 unsupported source — keeps its own reason there; only a row you set to Skip
 yourself reads "Skipped by you." A partial receipt states what finished. Retryable failures show
 **Retry N failures**; a cancelled batch with unfinished items shows **Retry
@@ -659,10 +708,17 @@ With it on:
   Info you can tell the two apart, and searching for the name still finds the
   note. The frontmatter block is removed from the note body — unless it is the
   whole file, in which case the note keeps it and still takes its title and
-  keywords from it.
+  keywords from it. Any other property in that block (`mood`, `status`,
+  `rating`) is not imported, and the review row says which ones ("… · not
+  imported: status"), so nothing disappears silently.
 - `[[wikilinks]]` and `[[link|alias]]` whose target is imported in the same
   batch become note links; a link to anything else stays as plain text, and a
-  `[[link]]` written inside a code block or backticks is left alone.
+  `[[link]]` written inside a code block or backticks is left alone. A linked
+  note keeps its wikilink and shows the linked note's title, with the
+  identifier behind it — `[[Reading/Zettelkasten|Zettelkasten — overview]]`
+  followed by `(note://…)`. Preview renders it as the title alone, an exported
+  file is still a working Obsidian link, and importing that file again
+  recovers the same link rather than stacking a second identifier on it.
 
 Turn the toggle off to import the vault exactly as any other folder — every
 directory walked, frontmatter left in the body, links left as text. The config
@@ -677,8 +733,8 @@ so any per-item Skip/Create choices you had already made are reset.
 Review rows for new notes state what will be created — the resulting title, its
 keywords, and how many links it carries — before you approve anything. When the
 import finishes, the receipt adds how many of those links actually resolved
-("Import finished · 59 notes created · 12 links resolved"); links to notes
-outside the batch stayed as text and are not counted.
+("59 notes created · 12 links resolved"); links to notes outside the batch
+stayed as text and are not counted.
 
 ## Common tasks
 
@@ -1171,3 +1227,22 @@ Added in this pass: what a folder and its files have to be before they can be
 checked, and the named refusals. Known gap, not fixed here: the root row in
 **Manage sync folders** reads "Sync folder (name unavailable before cutover)"
 rather than the display name you typed — task-32451.)*
+
+*Verified against fix/library-notes-w3-import-review — 2026-09-11 (fix round 1):
+`.git` is skipped at the walker for every source and both platform adapters;
+the update diff reduces both sides to one link spelling before comparing, so
+an unchanged source shows no diff; a collapsed run's summary names the whole
+run's size when a page shows only part of it; and a collapsed run's title is
+no longer parsed as Textual markup, so a vault folder named `[bold]Archive`
+renders as itself.*
+
+*Verified against fix/library-notes-w3-import-review — 2026-09-11 (task-32250,
+task-32256, task-32257, task-32258, task-32262, task-32263): the Import once
+review pages by rendered rows so no group or run is cut in two, collapses an
+interchangeable run to one summary row with a disclosure, spends the path
+budget last so the outcome survives, and takes the pane while it is open; a
+disabled primary carries its reason as text; the receipt states its outcome
+once and reconciles the two denominators; dropped frontmatter properties, the
+no-change/diff basis, the pre-selected collision default and vault-aware
+unsupported copy are all stated on the surface; and a resolved wikilink is
+stored as `[[target|title]](note://<id>)`.*
