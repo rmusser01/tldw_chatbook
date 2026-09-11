@@ -882,6 +882,22 @@ $ds-library-source-browser-width: 31;
     text-style: bold underline;
 }
 
+/* task-32359 (critique #10, B D9): the active destination and the focused
+   row rendered identically -- bold + underline over rgb(25,68,102) vs
+   rgb(28,70,102), three RGB units apart and colour-only. The rail had no
+   `:focus` rule of its own and fell back to the Button default. Focus
+   everywhere else on this screen is a SHAPE -- the house `█` left bar
+   (task-31983) -- so the rail stops being the exception: `-selected` above
+   keeps the background treatment, focus adds the bar. The bar replaces the
+   row's 1-column left padding (`padding: 0 1` -> `0 1 0 0`) so the label
+   neither shifts nor is clipped, and `outline: none` suppresses the generic
+   `*:focus{outline:solid}` fallback (core/_reset.tcss). */
+.library-rail-row:focus {
+    border-left: thick $ds-action-focus;
+    padding: 0 1 0 0;
+    outline: none;
+}
+
 /* Flashcards-due emphasis on the create-flashcards rail row. Bright uses an
    accent text color (not a background fill) so the row stands out without
    reading as selected -- real selection is `.library-rail-row-selected`'s
