@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
@@ -22,6 +23,7 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     ImportMatchKind,
     ImportPreviewItem,
     NoteImportPlan,
+    REVIEW_CLASSIFICATION_ORDER,
     RootCollisionChoice,
     RootCollisionState,
     planned_plan_change_count,
@@ -58,6 +60,14 @@ class NoteImportPage:
     page_count: int = 1
     has_previous: bool = False
     has_next: bool = False
+    group_totals: tuple[tuple[str, int], ...] = ()
+    """How many rows each classification has across the whole review.
+
+    task-32250: a page heading read "New (23)" while the group actually held
+    58, and the next page's heading read "New (22)" -- the same words for a
+    different number, with the real total nowhere on screen. The heading says
+    which of the two it means by carrying both.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,6 +245,7 @@ class LibraryNoteImportSnapshot:
     can_import: bool
     import_disabled_reason: str
     destination_error: str = ""
+    group_totals: tuple[tuple[str, int], ...] = ()
     collision_kind: str = ""
     collision_name: str = field(default="", repr=False)
     collision_choice: str = ""
@@ -259,15 +270,35 @@ class LibraryNoteImportSnapshot:
     resolved_links: int = 0
 
 
+def _review_order(plan: NoteImportPlan | None) -> tuple[ImportPreviewItem, ...]:
+    """Return the plan's rows in the order the review groups them.
+
+    Paging slices this, not the plan's own path order, so every group's rows
+    are contiguous: a page then shows whole groups plus at most one group's
+    boundary, instead of three groups' worth of unrelated slices (task-32250).
+    """
+    if plan is None:
+        return ()
+    position = {
+        classification: index
+        for index, classification in enumerate(REVIEW_CLASSIFICATION_ORDER)
+    }
+    return tuple(
+        sorted(plan.items, key=lambda item: position.get(item.classification, 99))
+    )
+
+
 def _page(
     plan: NoteImportPlan | None, page_number: int, page_size: int
 ) -> NoteImportPage:
     size = min(max(int(page_size), 1), MAX_IMPORT_REVIEW_PAGE_SIZE)
-    total = len(plan.items) if plan is not None else 0
+    ordered = _review_order(plan)
+    total = len(ordered)
     page_count = max(1, (total + size - 1) // size)
     number = min(max(int(page_number), 1), page_count)
     start = (number - 1) * size
-    items = plan.items[start : start + size] if plan is not None else ()
+    items = ordered[start : start + size]
+    totals = Counter(item.classification.value for item in ordered)
     return NoteImportPage(
         items=items,
         page_number=number,
@@ -276,6 +307,11 @@ def _page(
         page_count=page_count,
         has_previous=number > 1,
         has_next=number < page_count,
+        group_totals=tuple(
+            (classification.value, totals[classification.value])
+            for classification in REVIEW_CLASSIFICATION_ORDER
+            if totals[classification.value]
+        ),
     )
 
 
@@ -845,6 +881,7 @@ def project_library_note_import_snapshot(
         preview_items=items,
         page=state.page.page_number,
         page_count=state.page.page_count,
+        group_totals=state.page.group_totals,
         can_check=state.can_check,
         check_disabled_reason=(
             "Choose a source first."

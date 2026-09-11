@@ -325,8 +325,13 @@ async def test_review_shows_at_least_fifteen_rows_at_235x52() -> None:
     app = _ImportHost(
         _import_snapshot(
             phase="review",
-            status_line="Review 25 items before import.",
-            preview_items=tuple(_item(index) for index in range(1, 26)),
+            status_line="Review 25 sources before import.",
+            # Distinct folders: a run of interchangeable rows collapses to one
+            # summary row instead (task-32250), which this test is not about.
+            preview_items=tuple(
+                replace(_item(index), name=f"vault/Folder {index}/note.md")
+                for index in range(1, 26)
+            ),
             can_import=True,
             import_disabled_reason="",
         )
@@ -928,3 +933,271 @@ async def test_one_import_leaves_review_progress_and_receipt_reconciled(
     assert settled.status_line == "Import completed."
     assert "created" not in settled.status_line
     assert "created" not in settled.receipt_detail
+
+
+# --- task-32250 (pagination, elision, pane) --------------------------------
+
+
+async def test_a_review_row_states_its_outcome_without_elision_at_235x52() -> None:
+    """Every New row used to end "· ke…" -- the row's whole point, cut off."""
+    long_name = (
+        "vault/Inbox/A note with an extremely long file name that keeps going "
+        "and going so the list has to clip or wrap it somewhere sensible.md"
+    )
+    app = _ImportHost(
+        _import_snapshot(
+            phase="review",
+            status_line="Review 1 source before import.",
+            preview_items=(
+                replace(
+                    _item(1),
+                    name=long_name,
+                    effect_summary=(
+                        "Content: create 1 new note: Long name · keywords "
+                        "archive, inbox · 2 links."
+                    ),
+                    membership_summary="Create in vault / Inbox.",
+                ),
+            ),
+        )
+    )
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        summary = app.query_one(".note-import-row-text", Static)
+        text = _plain(summary)
+        # Nothing is clipped at this width.
+        assert summary.size.width >= len(text)
+
+    # The decision-bearing half survives …
+    assert "keywords archive, inbox" in text
+    assert "2 links" in text
+    assert "Create in vault / Inbox" in text
+    # … the path gives way for it, keeping the name a reader recognises …
+    assert "somewhere sensible.md" in text
+    assert "…" in text
+
+
+async def test_a_long_uniform_run_collapses_to_one_summary_row() -> None:
+    """23 near-identical Archive rows are not a review (task-32250 AC#4)."""
+    items = tuple(
+        replace(_item(index), name=f"vault/Archive/Archived note {index:03d}.md")
+        for index in range(1, 24)
+    )
+    app = _ImportHost(
+        _import_snapshot(
+            phase="review",
+            status_line="Review 23 sources before import.",
+            preview_items=items,
+        )
+    )
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        runs = list(app.query(".note-import-run").results(Collapsible))
+        assert len(runs) == 1
+        title = str(runs[0].title)
+        assert "vault/Archive" in title
+        assert "23 files" in title
+        assert "Create all" in title
+        assert "vault / Archive" in title
+        # Nothing is hidden: every individual decision is one press away.
+        assert runs[0].collapsed is True
+        assert len(runs[0].query(".note-import-row")) == 23
+
+
+async def test_a_short_run_is_not_collapsed() -> None:
+    """A handful of rows stays readable as rows (task-32250 AC#4)."""
+    items = tuple(
+        replace(_item(index), name=f"vault/Archive/note {index}.md")
+        for index in range(1, 4)
+    )
+    app = _ImportHost(
+        _import_snapshot(
+            phase="review",
+            status_line="Review 3 sources before import.",
+            preview_items=items,
+        )
+    )
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        assert not app.query(".note-import-run")
+        assert len(app.query(".note-import-row")) == 3
+
+
+async def test_a_group_heading_says_what_its_count_means_on_this_page() -> None:
+    """"New (23)" then "New (22)" were the same words for different numbers."""
+    app = _ImportHost(
+        _import_snapshot(
+            phase="review",
+            status_line="Review 30 sources before import.",
+            preview_items=(
+                replace(_item(1), name="vault/One/a.md"),
+                replace(_item(2), name="vault/Two/b.md"),
+                replace(
+                    _item(3),
+                    name="vault/Canvas/Overview.canvas",
+                    classification="unsupported",
+                    action="skip",
+                    reason="Obsidian canvas — not a note.",
+                ),
+            ),
+            group_totals=(("new", 30), ("unsupported", 1)),
+            page=1,
+            page_count=2,
+        )
+    )
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        headings = [
+            _plain(heading)
+            for heading in app.query(".note-import-group-heading").results(Static)
+        ]
+
+    assert "New (2 of 30 on this page)" in headings
+    # A group that fits entirely on the page keeps the plain count.
+    assert "Unsupported (1)" in headings
+
+
+async def test_the_pager_says_which_end_of_the_review_it_is_at() -> None:
+    """A disabled pager and an active one looked identical (task-32250 AC#5)."""
+    app = _ImportHost(
+        _import_snapshot(
+            phase="review",
+            status_line="Review 30 sources before import.",
+            preview_items=(_item(1),),
+            page=2,
+            page_count=2,
+        )
+    )
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        previous = app.query_one("#note-import-page-previous", Button)
+        following = app.query_one("#note-import-page-next", Button)
+
+    assert previous.disabled is False
+    assert str(previous.label) == "Previous page"
+    assert following.disabled is True
+    assert "last page" in str(following.label)
+
+
+def test_pagination_keeps_each_group_contiguous() -> None:
+    """A page used to hold slices of three different groups (task-32250 AC#2).
+
+    The pure state is the right level for this: the canvas can only render
+    the page it is handed, so the ordering contract belongs to the pager.
+    """
+    from tldw_chatbook.Library.library_note_import_state import (
+        _page as build_page,
+    )
+    from tldw_chatbook.Notes.note_import_plan_models import (
+        ImportAction,
+        ImportBounds,
+        ImportClassification,
+        ImportPreviewItem,
+        ImportSource,
+        ImportSourceKind,
+        NoteImportPlan,
+        ParsedNotePayload,
+        ProposedFolderMembership,
+    )
+
+    def _row(index: int, classification: ImportClassification) -> ImportPreviewItem:
+        importable = classification is ImportClassification.NEW
+        return ImportPreviewItem(
+            item_id=f"item-{index:03d}",
+            source=ImportSource(
+                kind=ImportSourceKind.DIRECTORY_MEMBER,
+                display_path=f"vault/{classification.value}/{index:03d}.md",
+                source_path=Path(f"/private/vault/{index:03d}.md"),
+            ),
+            payloads=(
+                (ParsedNotePayload(title=f"N{index}", content="Body"),)
+                if importable
+                else ()
+            ),
+            memberships=(
+                (ProposedFolderMembership(payload_index=0, folder_segments=("vault",)),)
+                if importable
+                else ()
+            ),
+            classification=classification,
+            reason="Ready." if importable else "Not a note.",
+            default_action=ImportAction.CREATE_NEW if importable else ImportAction.SKIP,
+            selected_action=(
+                ImportAction.CREATE_NEW if importable else ImportAction.SKIP
+            ),
+            allowed_actions=(
+                (ImportAction.SKIP, ImportAction.CREATE_NEW)
+                if importable
+                else (ImportAction.SKIP,)
+            ),
+            match=None,
+            replace_content=False,
+            add_membership=importable,
+        )
+
+    # Interleaved on disk, exactly as a real vault walk produces them.
+    rows = []
+    for index in range(1, 31):
+        rows.append(_row(index, ImportClassification.NEW))
+        if index % 6 == 0:
+            rows.append(_row(1000 + index, ImportClassification.UNSUPPORTED))
+    plan = NoteImportPlan(
+        bounds=ImportBounds(
+            max_files=200,
+            max_file_bytes=1_000_000,
+            max_total_bytes=5_000_000,
+            max_depth=8,
+        ),
+        items=tuple(rows),
+        proposed_folder_paths=(("vault",),),
+    )
+
+    first = build_page(plan, 1, 25)
+    second = build_page(plan, 2, 25)
+
+    assert {item.classification.value for item in first.items} == {"new"}
+    assert dict(first.group_totals) == {"new": 30, "unsupported": 5}
+    # The split group's rows are contiguous: page 2 finishes New, then starts
+    # Unsupported. No page holds two slices of the same group.
+    assert [item.classification.value for item in second.items] == (
+        ["new"] * 5 + ["unsupported"] * 5
+    )
+
+
+def test_the_review_takes_the_pane_while_it_is_the_task_in_hand() -> None:
+    """task-32250 AC#6: the list keeps no share while a review is open.
+
+    Driven through the screen's real preference derivation, because the
+    override has to survive the same resolver the shell calls.
+    """
+    from dataclasses import replace as _replace
+
+    from tldw_chatbook.Utils.adaptive_reader_state import (
+        AdaptiveReaderLayoutPreferences,
+    )
+
+    screen = _minimal_notes_screen()
+    controller = screen._notes_controller
+    preferences = AdaptiveReaderLayoutPreferences(
+        library_open=True, items_open=True, custom_widths_enabled=False
+    )
+
+    controller._library_notes_view = "import"
+    controller._library_note_import_snapshot = _replace(
+        controller._library_note_import_snapshot, phase="review"
+    )
+    reviewing = controller._library_notes_work_first_preferences(preferences)
+
+    controller._library_note_import_snapshot = _replace(
+        controller._library_note_import_snapshot, phase="select"
+    )
+    choosing = controller._library_notes_work_first_preferences(preferences)
+
+    assert (reviewing.library_open, reviewing.items_open) == (False, False)
+    # Choosing a source is not the same task: the list stays where it was.
+    assert choosing.items_open is True

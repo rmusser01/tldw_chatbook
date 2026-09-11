@@ -46,6 +46,24 @@ NON_IMPORTABLE_CLASSIFICATIONS = frozenset(
 )
 """Classifications that carry no payload and may only be skipped."""
 
+REVIEW_CLASSIFICATION_ORDER = (
+    ImportClassification.NEW,
+    ImportClassification.UNCHANGED_REPEAT,
+    ImportClassification.CHANGED_REPEAT,
+    ImportClassification.UNCERTAIN_MATCH,
+    ImportClassification.UNSUPPORTED,
+    ImportClassification.SKIPPED,
+    ImportClassification.EMPTY,
+    ImportClassification.FAILED,
+)
+"""The order the review groups its rows in.
+
+Paging follows this order (task-32250), so a group's rows are contiguous and
+a page shows at most one group's boundary instead of a different slice of
+three groups per page. The canvas renders in the same order, from the same
+sequence, because two orders would put a heading over the wrong rows.
+"""
+
 
 class ImportAction(str, Enum):
     """Action an approved preview item may request from a later executor."""

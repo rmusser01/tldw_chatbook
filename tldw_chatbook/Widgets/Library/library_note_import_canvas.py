@@ -76,6 +76,64 @@ def _disabled_action_label(text: str, *, disabled: bool, reason: str = "") -> st
     return f"{text} unavailable — {reason.rstrip('.')}"
 
 
+_ROW_NAME_BUDGET = 56
+"""Display-width budget for the path at the head of one review row.
+
+task-32250: the row's job is to state the resulting title, its keywords and
+its link count. Those came last and were the first thing the row lost.
+"""
+
+_UNIFORM_RUN_MIN = 8
+"""Rows that must share a folder and an outcome before they collapse to one."""
+
+
+def _bounded_row_name(name: str) -> str:
+    """Keep a review row's path recognizable without spending the whole row."""
+    return elide_path_middle(name, budget=_ROW_NAME_BUDGET)
+
+
+def _group_heading(label: str, *, rendered: int, total: int) -> str:
+    """Name what a group heading's count means on this page.
+
+    task-32250: "New (23)" on page 1 and "New (22)" on page 2 were the same
+    words for different numbers, with the group's real size nowhere on screen.
+    """
+    if rendered >= total:
+        return f"{label} ({total})"
+    return f"{label} ({rendered} of {total} on this page)"
+
+
+def _run_key(item: LibraryNoteImportItemSnapshot) -> tuple[str, ...]:
+    """Return what makes two review rows interchangeable at a glance."""
+    folder, _, _ = item.name.rpartition("/")
+    return (
+        folder,
+        item.classification,
+        item.action,
+        item.reason if item.classification in _NON_IMPORTABLE else "",
+        item.membership_summary,
+    )
+
+
+def _uniform_runs(
+    items: tuple[LibraryNoteImportItemSnapshot, ...],
+) -> tuple[tuple[LibraryNoteImportItemSnapshot, ...], ...]:
+    """Split one rendered group into consecutive interchangeable runs."""
+    return tuple(tuple(run) for _, run in groupby(items, key=_run_key))
+
+
+def _run_summary(run: tuple[LibraryNoteImportItemSnapshot, ...]) -> str:
+    """Return the one row that stands for a collapsed run of identical rows."""
+    first = run[0]
+    folder, _, _ = first.name.rpartition("/")
+    where = _bounded_row_name(folder) if folder else "the selection"
+    if first.classification in _NON_IMPORTABLE:
+        return f"{where} · {len(run)} files · {first.reason.rstrip(' .')}"
+    verb = "Skip" if first.action == "skip" else "Create"
+    destination = first.membership_summary.rstrip(" .")
+    return f"{where} · {len(run)} files · {verb} all · {destination}"
+
+
 _SOURCE_NAME_BUDGET = 48
 """Shared display-width budget for a selected source name (review round 4:
 
@@ -653,6 +711,7 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
             item.item_id: f"item-{index}"
             for index, item in enumerate(sorted_items, start=1)
         }
+        group_totals = dict(state.group_totals)
         for classification, grouped in groupby(
             sorted_items,
             key=lambda item: item.classification,
@@ -660,7 +719,11 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
             items = tuple(grouped)
             with Horizontal(classes="note-import-group-row ds-toolbar"):
                 yield Static(
-                    f"{_CLASSIFICATION_LABELS[classification]} ({len(items)})",
+                    _group_heading(
+                        _CLASSIFICATION_LABELS[classification],
+                        rendered=len(items),
+                        total=group_totals.get(classification, len(items)),
+                    ),
                     classes="note-import-group-heading",
                     markup=False,
                 )
@@ -688,16 +751,40 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                         ),
                         compact=True,
                     )
-            for item in items:
-                yield from self._compose_review_item(item, dom_tokens[item.item_id])
+            for run in _uniform_runs(items):
+                if len(run) < _UNIFORM_RUN_MIN:
+                    for item in run:
+                        yield from self._compose_review_item(
+                            item, dom_tokens[item.item_id]
+                        )
+                    continue
+                # task-32250: 23 near-identical rows are not a review. One
+                # summary row states the shared outcome; the disclosure keeps
+                # every individual decision one press away.
+                with Collapsible(
+                    title=_run_summary(run),
+                    id=f"note-import-run-{dom_tokens[run[0].item_id]}",
+                    classes="note-import-run",
+                    collapsed=True,
+                ):
+                    for item in run:
+                        yield from self._compose_review_item(
+                            item, dom_tokens[item.item_id]
+                        )
 
         if state.page_count > 1:
+            # task-32250: a disabled pager looked like an active one in
+            # monochrome, so it says which end of the review it is at.
+            at_start = state.page <= 1
+            at_end = state.page >= state.page_count
             previous = Button(
-                "Previous page",
+                _disabled_action_label(
+                    "Previous page", disabled=at_start, reason="this is the first page"
+                ),
                 id="note-import-page-previous",
                 classes="library-canvas-action",
                 compact=True,
-                disabled=state.page <= 1,
+                disabled=at_start,
             )
             yield previous
             yield Static(
@@ -706,21 +793,34 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                 markup=False,
             )
             next_button = Button(
-                "Next page",
+                _disabled_action_label(
+                    "Next page", disabled=at_end, reason="this is the last page"
+                ),
                 id="note-import-page-next",
                 classes="library-canvas-action",
                 compact=True,
-                disabled=state.page >= state.page_count,
+                disabled=at_end,
             )
             yield next_button
 
     @staticmethod
     def _review_row_summary(item: LibraryNoteImportItemSnapshot) -> str:
-        """Return one line: path, what happens, and where it lands."""
+        """Return one line: path, what happens, and where it lands.
+
+        task-32250: the path was spent first and in full, so a 120-character
+        filename pushed the whole outcome clause off the row and every other
+        row ended in "· ke…" -- hiding the keywords and link count the row
+        exists to state. The path middle-elides to a budget instead; the
+        decision-bearing half is what has to survive.
+        """
         parts = (
-            (item.name, item.reason)
+            (_bounded_row_name(item.name), item.reason)
             if item.classification in _NON_IMPORTABLE
-            else (item.name, item.effect_summary, item.membership_summary)
+            else (
+                _bounded_row_name(item.name),
+                item.effect_summary,
+                item.membership_summary,
+            )
         )
         return " · ".join(part.rstrip(" .") for part in parts if part)
 

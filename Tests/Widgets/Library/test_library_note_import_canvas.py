@@ -649,8 +649,10 @@ class _ProductionCssCanvasApp(ConsolidatedCSSApp):
 
 
 async def test_review_is_scrollable_and_paints_next_action_at_60_columns() -> None:
+    # Each row sits in its own folder, so the uniform-run collapse
+    # (task-32250) leaves 24 individual rows to scroll.
     items = tuple(
-        _item(item_id=f"item-{index}", name=f"draft [{index}].md")
+        _item(item_id=f"item-{index}", name=f"folder-{index}/draft [{index}].md")
         for index in range(1, 25)
     )
     snapshot = _snapshot(
