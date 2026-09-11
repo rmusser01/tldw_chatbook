@@ -24,9 +24,18 @@ Filed from the 2026-09-10 Console rail UX review (review item A1).
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A keybinding exists that toggles the Context (left) rail, conforming to ADR-031 conventions, and works when focus is in the transcript or composer
-- [ ] #2 A keybinding exists that toggles the Inspector (right) rail under the same constraints
-- [ ] #3 Both toggles are reachable as 'Console: ...' command palette entries
-- [ ] #4 The bindings do not shadow terminal-convention keys or the globals listed in ADR-031, and the composer still receives all printable input
-- [ ] #5 F1 help panel lists the new bindings; user-guide docs updated
+- [ ] #1 A keybinding toggles the Context (left) rail, mirroring the existing alt+i Inspector toggle (conforming to ADR-031), and works when focus is in the transcript or composer
+- [ ] #2 Both rail toggles (left and Inspector) are reachable as 'Console: ...' command palette entries
+- [ ] #3 The bindings do not shadow terminal-convention keys or ADR-031 globals, and the composer still receives all printable input
+- [ ] #4 F1 help panel lists the left-rail binding alongside the existing alt+i entry; user-guide docs updated
+- [ ] #5 The left-rail toggle respects the same reveal/preference semantics as the existing Inspector toggle (explicit marker, width floors)
 <!-- AC:END -->
+<!-- AC:END -->
+
+## Implementation Notes
+<!-- SECTION:NOTES:BEGIN -->
+### Walkthrough verification (2026-09-10, dev tip a0b8f96416)
+
+VERIFIED (live + code): left rail has NO toggle binding/action/palette entry; right rail has alt+i (chat_screen.py:1881). Scope: LEFT-rail binding + palette entries for BOTH rails.
+Live evidence: headless tmux run, scratch profile, 160x45 and 124x45 captures; code evidence re-verified in the implementation worktree.
+<!-- SECTION:NOTES:END -->

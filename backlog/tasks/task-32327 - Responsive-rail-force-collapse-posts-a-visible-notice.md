@@ -29,3 +29,11 @@ Filed from the 2026-09-10 Console rail UX review (review item B3).
 - [ ] #3 Preferences are still not rewritten by responsive overrides (existing behavior kept)
 - [ ] #4 Unit tests cover the notice firing once and not on subsequent collapses
 <!-- AC:END -->
+
+## Implementation Notes
+<!-- SECTION:NOTES:BEGIN -->
+### Walkthrough verification (2026-09-10, dev tip a0b8f96416)
+
+VERIFIED LIVE: rail collapsed with zero feedback (Enter on focused collapse button). No notify() anywhere near _adapt_console_workspace_to_width (chat_screen.py:21718-21780).
+Live evidence: headless tmux run, scratch profile, 160x45 and 124x45 captures; code evidence re-verified in the implementation worktree.
+<!-- SECTION:NOTES:END -->

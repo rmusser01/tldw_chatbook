@@ -29,3 +29,11 @@ Filed from the 2026-09-10 Console rail UX review (review item B2).
 - [ ] #3 All shell ids and config keys remain unchanged (verified by grep: no test churn from renames)
 - [ ] #4 Docs glossary or terminology section added covering rail, handle, staged sources, scope, Inspector
 <!-- AC:END -->
+
+## Implementation Notes
+<!-- SECTION:NOTES:BEGIN -->
+### Walkthrough verification (2026-09-10, dev tip a0b8f96416)
+
+VERIFIED LIVE/Code: left header 'Context <', right '> Inspect', handle constants 'Context v'/'<- Inspector' (rail_state.py:79-80), Ctrl+Shift+P opens 'Conversation Inspector' modal whose tab header still says 'Chat Context' (console_conversation_inspector.py:1777-1781). Three names, one concept space.
+Live evidence: headless tmux run, scratch profile, 160x45 and 124x45 captures; code evidence re-verified in the implementation worktree.
+<!-- SECTION:NOTES:END -->

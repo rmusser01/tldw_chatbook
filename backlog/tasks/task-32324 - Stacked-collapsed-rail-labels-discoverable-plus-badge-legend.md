@@ -28,3 +28,11 @@ Filed from the 2026-09-10 Console rail UX review (review item A5).
 - [ ] #2 The stacked-labels setting is documented in the user guide next to the rail presentation settings
 - [ ] #3 No behavior change to default handle rendering
 <!-- AC:END -->
+
+## Implementation Notes
+<!-- SECTION:NOTES:BEGIN -->
+### Walkthrough verification (2026-09-10, dev tip a0b8f96416)
+
+VERIFIED (code): labels 'Context >'/'<-Inspect', badges '1 appr'/'art' (console_rail_handle.py:120-135); F1 built from CONSOLE_WORKBENCH_SHORTCUT_GROUPS (chat_screen.py:1199-1293).
+Live evidence: headless tmux run, scratch profile, 160x45 and 124x45 captures; code evidence re-verified in the implementation worktree.
+<!-- SECTION:NOTES:END -->

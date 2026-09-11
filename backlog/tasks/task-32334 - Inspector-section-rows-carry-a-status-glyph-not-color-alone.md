@@ -29,3 +29,11 @@ Filed from the 2026-09-10 Console rail UX review (review item C5).
 - [ ] #3 Color styling remains as the secondary signal
 - [ ] #4 Tests assert glyph presence per status
 <!-- AC:END -->
+
+## Implementation Notes
+<!-- SECTION:NOTES:BEGIN -->
+### Walkthrough verification (2026-09-10, dev tip a0b8f96416)
+
+PARTIAL on dev: fleet rows already carry status glyphs (agent.py _AGENT_STATUS_GLYPHS); Environment/Tasks rows do not (console_environment_state.py:639-668). Scope: bring the glyph convention to Environment/Tasks projections.
+Live evidence: headless tmux run, scratch profile, 160x45 and 124x45 captures; code evidence re-verified in the implementation worktree.
+<!-- SECTION:NOTES:END -->

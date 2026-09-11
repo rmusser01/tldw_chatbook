@@ -2,7 +2,7 @@
 id: TASK-32339
 title: >-
   Review changes action renders under a proper heading
-status: To Do
+status: Done
 assignee:
   - '@zcode'
 created_date: '2026-09-10 12:00'
@@ -24,7 +24,17 @@ Filed from the 2026-09-10 Console rail UX review (review item D3).
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The review-changes action renders inside a labeled group consistent with the run inspector's grouping
-- [ ] #2 No other action's grouping changes
-- [ ] #3 Widget test asserts the button renders under the expected heading
+- [x] #1 The review-changes action renders inside a labeled group consistent with the run inspector's grouping
+- [x] #2 No other action's grouping changes
+- [x] #3 Widget test asserts the button renders under the expected heading
 <!-- AC:END -->
+
+## Implementation Notes
+<!-- SECTION:NOTES:BEGIN -->
+**Close-out.** Closed without code change: re-verification against dev tip found the Changes group heading already present and pinned by tests.
+
+### Walkthrough verification (2026-09-10, dev tip a0b8f96416)
+
+ALREADY FIXED ON DEV: 'Changes' is a full ROW_GROUP with heading (console_inspector_ownership.py:141; console_run_inspector.py:638-669), pinned by Tests/UI/test_console_run_inspector.py:394,418. Closing.
+Live evidence: headless tmux run, scratch profile, 160x45 and 124x45 captures; code evidence re-verified in the implementation worktree.
+<!-- SECTION:NOTES:END -->

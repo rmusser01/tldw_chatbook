@@ -28,3 +28,11 @@ Filed from the 2026-09-10 Console rail UX review (review item C4).
 - [ ] #2 The pruned-history line reads as status, not an instruction
 - [ ] #3 Row-click behavior and the 12-row cap are unchanged
 <!-- AC:END -->
+
+## Implementation Notes
+<!-- SECTION:NOTES:BEGIN -->
+### Walkthrough verification (2026-09-10, dev tip a0b8f96416)
+
+RELOCATED on dev: '+N more - open Review' became '... N more - Review opens all' in Environment->Changes (console_environment_state.py:655-660) - still non-clickable while the sibling 'Review in Change Review' row IS clickable. Scope: make the overflow tail open Review too.
+Live evidence: headless tmux run, scratch profile, 160x45 and 124x45 captures; code evidence re-verified in the implementation worktree.
+<!-- SECTION:NOTES:END -->

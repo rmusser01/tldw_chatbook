@@ -28,3 +28,11 @@ Filed from the 2026-09-10 Console rail UX review (review item C6).
 - [ ] #2 Tooltips are markup-escaped (user content has raised MarkupError before -- PR-T1 I1)
 - [ ] #3 No per-row layout change
 <!-- AC:END -->
+
+## Implementation Notes
+<!-- SECTION:NOTES:BEGIN -->
+### Walkthrough verification (2026-09-10, dev tip a0b8f96416)
+
+VERIFIED (code): ConsoleInspectorSectionRow sets no tooltip (console_inspector_section.py:820-1003); only chevron and view-all tails have them.
+Live evidence: headless tmux run, scratch profile, 160x45 and 124x45 captures; code evidence re-verified in the implementation worktree.
+<!-- SECTION:NOTES:END -->

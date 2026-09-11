@@ -29,3 +29,11 @@ Filed from the 2026-09-10 Console rail UX review (review item B1).
 - [ ] #3 User-guide rows for the control bar are updated to the new behavior/copy
 - [ ] #4 Tests covering the button label/action are updated
 <!-- AC:END -->
+
+## Implementation Notes
+<!-- SECTION:NOTES:BEGIN -->
+### Walkthrough verification (2026-09-10, dev tip a0b8f96416)
+
+VERIFIED LIVE: control-bar 'Attach context' routes to rail reveal only (chat_screen.py:4640-4651); composer menu separately has a real 'Attach file' (file picker). Mislabel stands.
+Live evidence: headless tmux run, scratch profile, 160x45 and 124x45 captures; code evidence re-verified in the implementation worktree.
+<!-- SECTION:NOTES:END -->

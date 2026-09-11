@@ -28,3 +28,11 @@ Filed from the 2026-09-10 Console rail UX review (review item C7).
 - [ ] #2 Any other internal-form leaks in the viewer's rendered rows are mapped or filed
 - [ ] #3 Viewer tests assert the display mapping
 <!-- AC:END -->
+
+## Implementation Notes
+<!-- SECTION:NOTES:BEGIN -->
+### Walkthrough verification (2026-09-10, dev tip a0b8f96416)
+
+VERIFIED (code): console_conversation_inspector.py:1810-1822 renders f'[{msg.role}] {msg.status}' with enum-derived values; on py>=3.11 that prints '[ConsoleMessageRole.USER] complete'.
+Live evidence: headless tmux run, scratch profile, 160x45 and 124x45 captures; code evidence re-verified in the implementation worktree.
+<!-- SECTION:NOTES:END -->

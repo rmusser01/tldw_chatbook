@@ -28,3 +28,11 @@ Filed from the 2026-09-10 Console rail UX review (review item D4).
 - [ ] #2 Unarmed/absent prefill rendering is unchanged
 - [ ] #3 Row status class semantics unchanged
 <!-- AC:END -->
+
+## Implementation Notes
+<!-- SECTION:NOTES:BEGIN -->
+### Walkthrough verification (2026-09-10, dev tip a0b8f96416)
+
+VERIFIED (code): labels at chat_screen.py:14265-14292; prefill genuinely blocks agent/tools dispatch (console_chat_controller.py:17170-17178) and nothing surfaces it in the rows.
+Live evidence: headless tmux run, scratch profile, 160x45 and 124x45 captures; code evidence re-verified in the implementation worktree.
+<!-- SECTION:NOTES:END -->

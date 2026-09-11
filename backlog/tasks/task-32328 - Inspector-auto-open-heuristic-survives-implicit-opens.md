@@ -29,3 +29,11 @@ Filed from the 2026-09-10 Console rail UX review (review item B4).
 - [ ] #3 Existing rail preference serialization round-trips unchanged for existing configs (no migration break)
 - [ ] #4 Unit tests cover both paths (implicit store keeps heuristic; explicit toggle kills it)
 <!-- AC:END -->
+
+## Implementation Notes
+<!-- SECTION:NOTES:BEGIN -->
+### Walkthrough verification (2026-09-10, dev tip a0b8f96416)
+
+VERIFIED (code): chat_screen.py:13077-13078 returns False if 'right_open' key exists in stored prefs at all - any explicit toggle permanently kills the 120-col auto-open. left_open_explicit marker pattern already exists to copy.
+Live evidence: headless tmux run, scratch profile, 160x45 and 124x45 captures; code evidence re-verified in the implementation worktree.
+<!-- SECTION:NOTES:END -->
