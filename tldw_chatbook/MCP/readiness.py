@@ -649,6 +649,45 @@ def builtin_readiness(
     )
 
 
+#: ADR-148 Wave D: the rail-facing identity of the in-process agent tool
+#: catalog. Deliberately equal to permission_store.BUILTIN_TOOL_SERVER_KEY
+#: ("agent:builtin") -- the store identity that already exists but had no
+#: rail presence. The equality is pinned by test; readiness.py must not
+#: import the store (dependency direction), so the literal is duplicated
+#: once and tested.
+AGENT_TOOLS_SERVER_KEY = "agent:builtin"
+
+
+def agent_tools_readiness(*, enabled: bool) -> ReadinessSnapshot:
+    """Readiness for the in-process agent tool catalog (ADR-148 Wave D).
+
+    Not a server: nothing connects to it and no client launches it -- the
+    state is purely whether the `[console] local_tools_enabled` master
+    switch registers the workspace/web/Watchlists/built-in agent tools.
+    """
+    if enabled:
+        state = ReadinessState.READY
+        message = "In-process tools for Console agents."
+    else:
+        state = ReadinessState.OFF_OPT_IN
+        message = (
+            "Turned off — Console agents get no workspace, web, or "
+            "Watchlists tools."
+        )
+    return ReadinessSnapshot(
+        server_key=AGENT_TOOLS_SERVER_KEY,
+        label="Agent tools",
+        source="agent",
+        state=state,
+        reasons=() if enabled else (ReasonCode.NOT_CONFIGURED,),
+        message=message,
+        transport="—",
+        auth_display="—",
+        scope_display="—",
+        detail={"enabled": enabled},
+    )
+
+
 STATE_CSS_CLASSES: dict[ReadinessState, str] = {
     ReadinessState.READY: "mcp-status-ready",
     ReadinessState.CHECKING: "mcp-status-info",
