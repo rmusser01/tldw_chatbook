@@ -1,7 +1,9 @@
 """Installed TTS profiles and voice inventory, without runtime constructors."""
 
 import hashlib
+import os
 import sqlite3
+import stat
 import sys
 from contextlib import closing
 from dataclasses import replace
@@ -41,12 +43,39 @@ class _Profiles(_SQLiteDeclaration):
     def discover(self, config):
         items = super().discover(config)
         context = discovery_context(config)
-        return tuple(
+        items = tuple(
             replace(item, shared_group="shared:tts:profile:" + context.profile_id)
             if item.status == "included"
             else item
             for item in items
         )
+        if self.owner_id != "tts.profile_store":
+            return items
+        # ProfileStoreLease retains this exact empty sibling after closing. Its
+        # native admission holds remain responsible for accepted lock operations.
+        database = database_path(config, "tts_profiles_db_path")
+        lock = _RawDeclaration(self.owner_id)._item(
+            config, database.with_name(database.name + ".lock"), "lock"
+        )
+        if lock.status == "included":
+            from tldw_chatbook.Backup_Recovery.bootstrap import pinned_directory
+
+            try:
+                with pinned_directory(lock.path.parent) as parent:
+                    info = os.stat(lock.path.name, dir_fd=parent, follow_symlinks=False)
+                    empty = (
+                        stat.S_ISREG(info.st_mode)
+                        and info.st_nlink == 1
+                        and info.st_size == 0
+                    )
+                lock = replace(
+                    lock, status="intentionally_excluded" if empty else "unsupported"
+                )
+            except (OSError, ValueError, RuntimeError):
+                lock = replace(lock, status="unavailable")
+        elif lock.status == "unused":
+            lock = replace(lock, status="intentionally_excluded")
+        return items + (lock,)
 
     def validate(self, candidate: Path) -> tuple[str, ...]:
         from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
