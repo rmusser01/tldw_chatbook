@@ -613,7 +613,7 @@ else:
  print('INDEXED')
 """
 args=[sys.executable,'-c',child,json.dumps(config.to_dict(),default=str),str(base)]
-with subprocess.Popen(args+['first'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True) as first:
+with (base/'first.stderr.log').open('w+') as first_log, subprocess.Popen(args+['first'],stdout=subprocess.PIPE,stderr=first_log,text=True) as first:
  try:
   deadline=time.monotonic()+15
   while not (base/'entered').exists():
@@ -626,7 +626,7 @@ with subprocess.Popen(args+['first'],stdout=subprocess.PIPE,stderr=subprocess.PI
  finally:
   (base/'release').touch()
  stdout,stderr=first.communicate(timeout=15)
- assert first.returncode==0,stderr
+ assert first.returncode==0,(base/'first.stderr.log').read_text()
  assert 'INDEXED' in stdout
 second=subprocess.run(args+['second'],capture_output=True,text=True,timeout=15)
 assert second.returncode==0,second.stderr
