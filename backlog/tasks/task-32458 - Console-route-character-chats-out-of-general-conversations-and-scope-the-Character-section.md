@@ -1,5 +1,5 @@
 ---
-id: TASK-32312
+id: TASK-32458
 title: >-
   Console: route character chats out of general conversations and scope the
   Character section
@@ -13,6 +13,14 @@ dependencies: []
 priority: high
 ---
 
+## Renumbering provenance
+
+Renumbered from TASK-32312 on 2026-09-11. The id collided with `task-32312 -
+Console-edit-displayable-thinking-block-text-in-place.md`, which arrived on dev
+while this task's branch was in review; per the 2026-08-21 owner rule
+(TASK-19601) the older arrival keeps the id and this younger task renumbers.
+No dependencies or doc/code references pointed at the old id beyond this file
+and its own commit message.
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
