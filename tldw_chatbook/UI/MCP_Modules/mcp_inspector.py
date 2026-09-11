@@ -43,7 +43,10 @@ from tldw_chatbook.MCP.local_runtime_delegate import (
     RawToolCallRefusedError,
     capitalize_first,
 )
-from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.MCP.permission_store import (
+    HIGH_RISK_TAGS,
+    EffectiveToolState,
+)
 from tldw_chatbook.MCP.readiness import (
     REASON_LABELS,
     STATE_CSS_CLASSES,
@@ -2204,11 +2207,21 @@ class MCPInspector(Vertical):
         # a Static summary plus its own Remove button, index-aligned with
         # `self._current_permission_arg_rules` so the press handler below
         # can resolve `rule_id` without re-fetching.
+        # R22: `permission_store.arg_rule_allows` refuses outright for a
+        # tool whose tags intersect `HIGH_RISK_TAGS`, so a rule stored
+        # against one is inert -- say so on the row instead of listing it
+        # as if it were quieting calls. The Remove button stays: an inert
+        # rule is exactly the kind a user wants to clear out.
+        rule_prefix = (
+            "Exact-input allow (not in effect: risk floor)"
+            if set(tool.tags) & HIGH_RISK_TAGS
+            else "Exact-input allow"
+        )
         for index, rule in enumerate(self._current_permission_arg_rules):
             args_json = str(rule.get("args_json", ""))
             widgets.append(
                 Static(
-                    f"Exact-input allow · {_arg_rule_summary(args_json)}",
+                    f"{rule_prefix} · {_arg_rule_summary(args_json)}",
                     id=f"mcp-inspector-arg-rule-{index}",
                     classes="ds-field-row",
                     markup=False,

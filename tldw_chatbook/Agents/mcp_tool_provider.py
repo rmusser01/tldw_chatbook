@@ -68,7 +68,10 @@ from tldw_chatbook.MCP.hub_tool_catalog import (
     local_tools_from_record,
     schema_argument_names,
 )
-from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.MCP.permission_store import (
+    HIGH_RISK_TAGS,
+    EffectiveToolState,
+)
 from tldw_chatbook.MCP.redaction import redact_mapping
 from tldw_chatbook.MCP.tool_naming import dedupe_names, llm_tool_name
 
@@ -188,6 +191,35 @@ def _pending_reason(state: EffectiveToolState) -> str:
     if state.risk_floored:
         return "risk_floored"
     return "ask"
+
+
+#: task-32281 fix round (R22): every card option EXCEPT "always allow this
+#: exact input". `permission_store.arg_rule_allows` refuses outright for a
+#: tool whose tags intersect `HIGH_RISK_TAGS`, so a rule stored for one
+#: would never quiet a single call -- the card was advertising a decision
+#: that does nothing. `always_allow` STAYS: it persists a tool-level
+#: `allow` whose `origin` is `"tool_override"`, and
+#: `resolve_effective_state`'s floor explicitly spares that origin, so
+#: unlike the arg rule it really does take effect.
+_HIGH_RISK_OPTIONS: tuple[str, ...] = (
+    "approve_once",
+    "approve_session",
+    "always_allow",
+    "deny",
+)
+
+
+def _options_for_tool(tool: HubTool) -> tuple[str, ...]:
+    """The card options this tool may be decided with.
+
+    Args:
+        tool: The tool the row is for.
+
+    Returns:
+        `_HIGH_RISK_OPTIONS` for a `mutates`/`process` tool, else `()` --
+        the empty default the card reads as "offer everything".
+    """
+    return _HIGH_RISK_OPTIONS if set(tool.tags) & HIGH_RISK_TAGS else ()
 
 
 class MCPToolProvider:
@@ -704,6 +736,7 @@ class MCPToolProvider:
                 :TOOL_DESCRIPTION_CAPTURE_CAP
             ],
             reason=_pending_reason(state),
+            options=_options_for_tool(tool),
         )
 
     # -- invocation (WORKER THREAD) ----------------------------------------
@@ -865,6 +898,7 @@ class MCPToolProvider:
             server_label=tool.server_label,
             arguments=call_args,
             reason=_pending_reason(state),
+            options=_options_for_tool(tool),
         )
         try:
             decisions = self._approval_callback([pending])
@@ -1016,6 +1050,16 @@ class MCPToolProvider:
             decision = APPROVED_SESSION_DECISION if already_approved else "approved"
             return self._execute(tool, args, decision=decision)
         if verdict == "allow_matching":
+            if set(tool.tags) & HIGH_RISK_TAGS:
+                # R22: `arg_rule_allows` refuses for these tools, so the
+                # rule would be stored and never consulted. Degrade to a
+                # one-time approval rather than persist dead state.
+                logger.debug(
+                    "MCPToolProvider: allow_matching not persisted for "
+                    f"{tool.server_key}/{tool.name} -- high-risk tags are "
+                    "never quieted by an argument rule; approving once"
+                )
+                return self._execute(tool, args, decision="approved")
             # TASK-26012: persist an allow scoped to EXACTLY the displayed
             # arguments (AC#3) -- never a whole-tool allow. Rug-pull hashing
             # happens service-side against this live HubTool.

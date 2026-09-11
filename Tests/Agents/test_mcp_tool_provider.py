@@ -1106,6 +1106,79 @@ def test_hook_level_approval_and_deny_of_one_tool_record_one_row_each(running_lo
     assert service.execute_calls[0][4] == "approved"
 
 
+def test_high_risk_rows_do_not_offer_the_inert_exact_input_option(running_loop):
+    """R22: `permission_store.arg_rule_allows` returns False outright for a
+    tool whose tags intersect `HIGH_RISK_TAGS`, so "always allow this exact
+    input" could never quiet one of its calls -- the card was advertising a
+    decision that does nothing. `always_allow` STAYS offered: it persists a
+    `tool_override` allow, the one origin `resolve_effective_state`'s risk
+    floor spares.
+    """
+    from dataclasses import replace
+
+    service = FakeMCPService(
+        catalog_records=[
+            _catalog_record("srv", [_tool_dict("wipe"), _tool_dict("peek")])
+        ]
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    risky_name = next(
+        e.name for e in provider.list_catalog() if e.name.endswith("wipe")
+    )
+    safe_name = next(
+        e.name for e in provider.list_catalog() if e.name.endswith("peek")
+    )
+    tool, state = provider._entry_by_llm_name[risky_name]
+    provider._entry_by_llm_name[risky_name] = (
+        replace(tool, tags=("mutates",)),
+        state,
+    )
+
+    risky = provider.pending_gate_for(risky_name, {"x": 1}, "c-1")
+    safe = provider.pending_gate_for(safe_name, {"x": 1}, "c-2")
+
+    assert risky is not None and safe is not None
+    assert "allow_matching" not in risky.options, (
+        f"a high-risk row still offers an inert exact-input rule: {risky.options}"
+    )
+    assert risky.options == (
+        "approve_once",
+        "approve_session",
+        "always_allow",
+        "deny",
+    )
+    # Untagged tools are untouched -- "" means "offer the full set".
+    assert safe.options == ()
+
+
+def test_allow_matching_on_a_high_risk_tool_approves_once_without_persisting(
+    running_loop,
+):
+    """R22(b): defense in depth for a verdict that reaches the provider
+    anyway (a stale card, a caller that ignores `options`). Storing the
+    rule would leave permanently dead state in `mcp_permissions.json`."""
+    from dataclasses import replace
+
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("wipe")])]
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+    tool, state = provider._entry_by_llm_name[tool_id]
+    provider._entry_by_llm_name[tool_id] = (replace(tool, tags=("mutates",)), state)
+    provider.apply_batch_decisions(RUN, {tool_id: "allow_matching"})
+
+    result = provider.invoke(tool_id, {"x": 1})
+
+    assert result.ok is True, "the approved call did not run"
+    assert service.add_arg_rule_calls == [], (
+        f"a rule `arg_rule_allows` can never honour was persisted: "
+        f"{service.add_arg_rule_calls}"
+    )
+
+
 def test_invoke_stamped_timeout_uses_exact_model_facing_copy(running_loop):
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]

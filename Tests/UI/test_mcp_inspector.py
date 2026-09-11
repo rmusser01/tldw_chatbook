@@ -4432,6 +4432,38 @@ async def test_arg_rule_row_redacts_a_secret_shaped_argument():
 
 
 @pytest.mark.asyncio
+async def test_arg_rule_row_on_a_high_risk_tool_says_it_is_not_in_effect():
+    """R22: `permission_store.arg_rule_allows` refuses outright when the
+    tool's tags intersect `HIGH_RISK_TAGS`, so a rule stored against one
+    never quiets a call. Listing it unannotated told the user a rule was
+    working that never fires. Remove stays wired -- an inert rule is
+    exactly what a user wants to clear out."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(name="write", tags=("mutates",)),
+            EffectiveToolState(state="ask", origin="server_default"),
+            arg_rules=[{"rule_id": "r1", "args_json": '{"path": "x"}'}],
+        )
+        await pilot.pause()
+
+        assert str(
+            app.query_one("#mcp-inspector-arg-rule-0", Static).renderable
+        ) == 'Exact-input allow (not in effect: risk floor) · {"path": "x"}'
+
+        await pilot.click("#mcp-inspector-arg-rule-remove-0")
+        await pilot.pause()
+
+        events = [
+            e
+            for e in app.events
+            if isinstance(e, MCPInspector.RemoveArgRuleRequested)
+        ]
+        assert [e.rule_id for e in events] == ["r1"]
+
+
+@pytest.mark.asyncio
 async def test_show_permission_with_no_arg_rules_renders_no_rule_rows():
     app = InspectorApp()
     async with app.run_test(size=(100, 60)) as pilot:
