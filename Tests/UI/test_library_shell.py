@@ -33172,6 +33172,14 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
 
         await pilot.resize_terminal(170, 48)
         await _wait_for_library_notes_compact(screen, pilot, False)
+        # PRE-EXISTING DEV RED (task-32185/32201 own it): this assertion fails
+        # identically on dev and on any branch, so EVERY step below it is
+        # unreached. task-32247 updated the two `wait_footer("esc notes |
+        # ctrl+end end")` strings further down for the editor tier's new
+        # document-end chip; only the first occurrence (above the resize) is
+        # actually exercised today. They are correct by construction — the
+        # same tier this test already asserts once — but do not read a green
+        # run of this file as having covered them.
         assert all(widget.display is True for widget in ancillary)
         assert (
             tuple(
