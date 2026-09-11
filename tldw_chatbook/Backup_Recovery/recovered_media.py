@@ -10,6 +10,7 @@ import json
 import os
 import re
 import sqlite3
+import stat
 import uuid
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
@@ -34,6 +35,7 @@ _ASSET_ID = re.compile(r"^[0-9a-f]{32}$")
 
 def _recovered_alias_authorizer(read_authorizer):
     """Permit only installed reference aliases within a private relocation."""
+
     def authorize(action, first, second, database, source):
         if source is None and (
             action == sqlite3.SQLITE_TRANSACTION
@@ -41,7 +43,8 @@ def _recovered_alias_authorizer(read_authorizer):
             and first in {"BEGIN", "COMMIT", "ROLLBACK"}
             or database == "main"
             and (
-                action == sqlite3.SQLITE_INSERT and first == "refs"
+                action == sqlite3.SQLITE_INSERT
+                and first == "refs"
                 or action == sqlite3.SQLITE_UPDATE
                 and (first, second) == ("tombstones", "references_json")
             )
@@ -549,6 +552,7 @@ def prepare_temporary_capture(
         ),
     )
 
+
 class RecoveredMedia:
     """A profile-scoped catalog; source identities never select file names."""
 
@@ -573,10 +577,15 @@ class RecoveredMedia:
         return self.db_path.parent
 
     @contextmanager
-    def _connection(self):
+    def _connection(self, *, must_exist=False, expected_identity=None):
         _core_access(self)
         with closing(
-            connect_private_sqlite("recovered.media", self.db_path)
+            connect_private_sqlite(
+                "recovered.media",
+                self.db_path,
+                must_exist=must_exist,
+                expected_identity=expected_identity,
+            )
         ) as connection:
             _register_core_connection(self, connection)
             connection.execute("PRAGMA foreign_keys=ON")
@@ -740,11 +749,18 @@ class RecoveredMedia:
                 "INSERT INTO refs VALUES (?,?,?,?,?)", identity + (asset_id,)
             )
 
-    def delete(self, asset_id: str) -> None:
+    def delete(self, asset_id: str, *, review=None) -> None:
         self._path(asset_id)
-        with self._connection() as connection:
+        expected = (
+            _review_source(self, asset_id, review) if review is not None else None
+        )
+        with self._connection(
+            must_exist=review is not None, expected_identity=expected
+        ) as connection:
             with connection:
                 connection.execute("BEGIN IMMEDIATE")
+                if review is not None:
+                    _compare_review(self, connection, review)
                 if connection.execute(
                     "SELECT 1 FROM recovery_holds WHERE asset_id=?", (asset_id,)
                 ).fetchone():
@@ -877,11 +893,18 @@ class RecoveredMedia:
                     (json.dumps(remaining), asset_id),
                 )
 
-    def cleanup_orphan(self, asset_id):
+    def cleanup_orphan(self, asset_id, *, review=None):
         """Explicit cleanup only, with a fresh transactional reference/hold check."""
-        with self._connection() as connection:
+        expected = (
+            _review_source(self, asset_id, review) if review is not None else None
+        )
+        with self._connection(
+            must_exist=review is not None, expected_identity=expected
+        ) as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
+                if review is not None:
+                    _compare_review(self, connection, review)
                 if connection.execute(
                     "SELECT 1 FROM refs WHERE asset_id=? UNION ALL SELECT 1 FROM recovery_holds WHERE asset_id=?",
                     (asset_id, asset_id),
@@ -905,6 +928,241 @@ class RecoveredMedia:
                 return True
             finally:
                 connection.rollback()
+
+
+@dataclass(frozen=True)
+class RecoveredAssetDetails:
+    """Catalog facts; size is the recorded payload size, not measured disk use."""
+
+    asset_id: str
+    digest: str
+    size: int
+    media_type: str
+    state: str
+    reference_count: int
+    hold_count: int
+
+    @property
+    def orphan_eligible(self) -> bool:
+        return (
+            self.state == "ready" and not self.reference_count and not self.hold_count
+        )
+
+
+@dataclass(frozen=True)
+class RecoveredMediaDetails:
+    """One bounded, consistently observed page of an existing catalog."""
+
+    root: Path
+    assets: tuple[RecoveredAssetDetails, ...]
+    total: int
+    offset: int
+    has_more: bool
+
+
+@dataclass(frozen=True)
+class RecoveredAssetReview:
+    """Exact selected owner identity and effects for a deliberate action."""
+
+    root: Path
+    root_identity: tuple[int, ...]
+    catalog_identity: tuple[int, ...]
+    asset: RecoveredAssetDetails
+    references: tuple[tuple[str, str, str, str], ...]
+    holds: tuple[str, ...]
+
+
+def _existing_store(root):
+    # Passive inspection must not create/migrate the catalog or replay journals.
+    store = object.__new__(RecoveredMedia)
+    store.db_path = lexical_path(root) / "catalog.sqlite3"
+    return store
+
+
+def _native_identity(info):
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_nlink)
+
+
+def _catalog_identity(store):
+    parent, leaf = _open_verified_parent(store.db_path, missing_leaf_allowed=False)
+    try:
+        root = os.fstat(parent)
+        catalog = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
+        if (
+            root.st_uid != os.geteuid()
+            or stat.S_IMODE(root.st_mode) & 0o077
+            or not stat.S_ISREG(catalog.st_mode)
+            or catalog.st_nlink != 1
+            or catalog.st_uid != os.geteuid()
+            or stat.S_IMODE(catalog.st_mode) != 0o600
+        ):
+            raise ValueError("recovered_media_privacy_unverified")
+        return _native_identity(root), _native_identity(catalog), catalog
+    finally:
+        os.close(parent)
+
+
+def _details(connection, store, asset_id):
+    if type(asset_id) is not str or not _ASSET_ID.fullmatch(asset_id):
+        raise ValueError("invalid_recovered_asset")
+    row = connection.execute(
+        "SELECT substr(digest,1,65),size,substr(media_type,1,4097),state FROM assets WHERE asset_id=?",
+        (asset_id,),
+    ).fetchone()
+    if row is None:
+        raise KeyError(asset_id)
+    digest, size, media_type, state = row
+    if (
+        type(digest) is not str
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        or type(size) is not int
+        or not 0 <= size <= MAX_PAYLOAD_BYTES
+        or type(media_type) is not str
+        or len(media_type) > 4096
+        or not media_type.startswith(("image/", "video/"))
+        or state not in {"pending", "ready", "deleted"}
+    ):
+        raise ValueError("invalid_recovered_asset")
+    refs = connection.execute(
+        "SELECT count(*) FROM refs WHERE asset_id=?", (asset_id,)
+    ).fetchone()[0]
+    holds = connection.execute(
+        "SELECT count(*) FROM recovery_holds WHERE asset_id=?", (asset_id,)
+    ).fetchone()[0]
+    if state == "deleted":
+        length = connection.execute(
+            "SELECT length(references_json) FROM tombstones WHERE asset_id=?",
+            (asset_id,),
+        ).fetchone()
+        if refs > 1000 or length is None or length[0] > 16 * 1024**2:
+            raise ValueError("recovered_details_limit")
+        if not store._valid_tombstone(connection, asset_id):
+            raise ValueError("invalid_recovered_tombstone")
+    return RecoveredAssetDetails(asset_id, digest, size, media_type, state, refs, holds)
+
+
+def _asset_review(store, connection, asset_id):
+    asset = _details(connection, store, asset_id)
+    if asset.reference_count > 1000 or asset.hold_count > 1000:
+        raise ValueError("recovered_details_limit")
+    references = tuple(
+        connection.execute(
+            "SELECT substr(profile,1,4097),substr(message,1,4097),substr(slug,1,4097),substr(media_type,1,4097) FROM refs WHERE asset_id=? ORDER BY profile,message,slug,media_type",
+            (asset_id,),
+        )
+    )
+    holds = tuple(
+        row[0]
+        for row in connection.execute(
+            "SELECT substr(hold_id,1,4097) FROM recovery_holds WHERE asset_id=? ORDER BY hold_id",
+            (asset_id,),
+        )
+    )
+    for reference in references:
+        _identity(*reference)
+    if any(type(hold) is not str or not hold or len(hold) > 4096 for hold in holds):
+        raise ValueError("invalid_recovery_hold")
+    root, catalog, _ = _catalog_identity(store)
+    return RecoveredAssetReview(store.root, root, catalog, asset, references, holds)
+
+
+@contextmanager
+def _inspect_catalog(store):
+    root, catalog, info = _catalog_identity(store)
+    with store._connection(must_exist=True, expected_identity=info) as connection:
+        connection.execute("PRAGMA query_only=ON")
+        connection.execute("BEGIN")
+        issues = _validate_sqlite(connection, (1,), SCHEMAS)
+        if issues:
+            raise ValueError(issues[0])
+        yield connection
+        if _catalog_identity(store)[:2] != (root, catalog):
+            raise ValueError("recovered_review_changed")
+
+
+def list_recovered_media(root: Path, *, limit: int = 50, offset: int = 0):
+    """List existing catalog metadata without payload reads or owner startup."""
+    if (
+        type(limit) is not int
+        or not 1 <= limit <= 100
+        or type(offset) is not int
+        or offset < 0
+    ):
+        raise ValueError("recovered_details_limit")
+    store = _existing_store(root)
+    parent, leaf = _open_verified_parent(store.root, missing_leaf_allowed=False)
+    try:
+        try:
+            info = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
+        except FileNotFoundError:
+            return None
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or stat.S_IMODE(info.st_mode) & 0o077
+        ):
+            raise ValueError("recovered_media_privacy_unverified")
+    finally:
+        os.close(parent)
+    try:
+        store.db_path.lstat()
+    except FileNotFoundError:
+        return None
+    with _inspect_catalog(store) as connection:
+        total = connection.execute("SELECT count(*) FROM assets").fetchone()[0]
+        ids = connection.execute(
+            "SELECT substr(asset_id,1,33) FROM assets ORDER BY asset_id LIMIT ? OFFSET ?",
+            (limit, offset),
+        )
+        assets = tuple(_details(connection, store, row[0]) for row in ids)
+        return RecoveredMediaDetails(
+            store.root, assets, total, offset, offset + len(assets) < total
+        )
+
+
+def review_recovered_asset(root: Path, asset_id: str) -> RecoveredAssetReview:
+    """Review all affected reference identities and holds without reading media."""
+    store = _existing_store(root)
+    store._path(asset_id)
+    with _inspect_catalog(store) as connection:
+        return _asset_review(store, connection, asset_id)
+
+
+def _review_source(store, asset_id, review):
+    if (
+        type(review) is not RecoveredAssetReview
+        or review.root != store.root
+        or review.asset.asset_id != asset_id
+    ):
+        raise ValueError("recovered_review_changed")
+    root, catalog, info = _catalog_identity(store)
+    if (root, catalog) != (review.root_identity, review.catalog_identity):
+        raise ValueError("recovered_review_changed")
+    return info
+
+
+def _compare_review(store, connection, review):
+    issues = _validate_sqlite(connection, (1,), SCHEMAS)
+    if issues:
+        raise ValueError(issues[0])
+    if _asset_review(store, connection, review.asset.asset_id) != review:
+        raise ValueError("recovered_review_changed")
+
+
+def delete_reviewed_asset(review: RecoveredAssetReview) -> None:
+    """Perform an explicitly reviewed deletion through the existing journal."""
+    if type(review) is not RecoveredAssetReview:
+        raise ValueError("recovered_review_changed")
+    _existing_store(review.root).delete(review.asset.asset_id, review=review)
+
+
+def cleanup_reviewed_asset(review: RecoveredAssetReview) -> bool:
+    """Recheck a reviewed orphan, retaining all existing reference/hold checks."""
+    if type(review) is not RecoveredAssetReview:
+        raise ValueError("recovered_review_changed")
+    return _existing_store(review.root).cleanup_orphan(
+        review.asset.asset_id, review=review
+    )
 
 
 class _RecoveredAdapter:
