@@ -773,13 +773,22 @@ def audit_entry_detail_payload(entry: Mapping[str, Any]) -> dict[str, Any]:
         A metadata-only payload safe for the execution-detail display.
     """
 
+    # R24: the Audit TABLE humanises the decision token; this detail showed
+    # the raw one, so one row read two different ways. The raw token stays
+    # (it is the record), with the table's own label beside it. Local
+    # import: `mcp_audit_mode` imports from this module -- same reason
+    # `remediation_actions` is imported locally below.
+    from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import _DECISION_LABELS
+
     server_key = str(entry.get("server_key") or "")
     tool_name = str(entry.get("tool_name") or "")
+    decision = str(entry.get("decision") or "")
     return {
         "ts": entry.get("ts"),
         "tool": f"{server_key}::{tool_name}",
         "initiator": entry.get("initiator"),
         "decision": entry.get("decision"),
+        "decision_label": _DECISION_LABELS.get(decision, decision),
         "ok": entry.get("ok"),
         "status": entry.get("status"),
         "duration": format_duration_ms(int(entry.get("duration_ms") or 0)),

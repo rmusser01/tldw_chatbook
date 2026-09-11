@@ -7577,12 +7577,14 @@ Select {
  *   escape hatch already fighting this exact rule elsewhere in the bundle
  *   (`.settings-imagegen-backend-row Checkbox`, `MCPSchemaForm Checkbox`,
  *   `PromptBlockEditor #prompt-editor-lane-options Checkbox`,
- *   `MCPToolsMode #mcp-tools-local-enabled`, `LibraryIngestCanvas
- *   .type-group-contents Checkbox`, `#evals-bench-capture-continuations`
- *   (features/_evals.tcss) -- see their own comments, e.g.
- *   components/_agentic_terminal.tcss and features/_evals.tcss) drops
- *   `width: 100%` too, standardizing on `width: auto` alongside
- *   `height: auto`. That six-deep precedent, plus the sweep below,
+ *   `LibraryIngestCanvas .type-group-contents Checkbox`,
+ *   `#evals-bench-capture-continuations` (features/_evals.tcss) -- see
+ *   their own comments, e.g. components/_agentic_terminal.tcss and
+ *   features/_evals.tcss) drops `width: 100%` too, standardizing on
+ *   `width: auto` alongside `height: auto`. (A sixth,
+ *   `MCPToolsMode #mcp-tools-local-enabled`, was in this list until
+ *   task-32286 turned that row into a toggle Button and retired it.)
+ *   That five-deep precedent, plus the sweep below,
  *   is why this is a full retirement and not a narrower height-only fix.
  * - The sweep this retirement was checked against (grepping every
  *   `Checkbox(` call app-wide for one relying on this rule with no escape

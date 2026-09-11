@@ -162,7 +162,7 @@ expose_local_tools` is on, it is also published to *external* MCP clients,
 and that list is built when the built-in server starts, so that half
 follows the next client launch. This pane is still labeled as the
 built-in *MCP server* (the stdio process `python -m tldw_chatbook.MCP`
-clients launch) even though these particular checkboxes control the
+clients launch) even though these particular gate buttons control the
 in-process *agent* tool catalog — a different subsystem sharing the same
 detail pane for discoverability.
 
@@ -482,6 +482,12 @@ per tool, tied to that tool's current definition the same way **Always
 allow** is (a server that changes the tool's definition invalidates the
 rule, same rug-pull guard).
 
+The card does **not** offer it for a high-risk tool (one tagged `mutates`
+or `process`): the risk floor beats an argument rule, so such a rule would
+never quiet a call. If one is already stored — hand-written, or left by an
+earlier version — the inspector lists it as *Exact-input allow (not in
+effect: risk floor)*, with its **Remove** button still live.
+
 A tool that carries one or more of these rules gets a `≡` marker on its
 State cell in the Permissions matrix (see the legend line under the
 matrix). Selecting that tool's row lists each stored rule in the
@@ -567,7 +573,10 @@ land in the existing **Blocked (Off)** / **Denied (no decision)** buckets.
 Docs pass 2026-09-10 (task-32281, against code and tests, not a live
 screen): added "Exact-input allow rules" — the inspector now lists each
 stored rule with a Remove action, and the Permissions matrix marks a tool
-that carries one with a `≡` suffix. Docs pass 2026-09-10 (task-32284,
+that carries one with a `≡` suffix. Fix round, same day: the card no
+longer offers this choice for a `mutates`/`process` tool (the risk floor
+makes such a rule inert), and an already-stored one is labelled "not in
+effect: risk floor" instead of being listed as if it were working. Docs pass 2026-09-10 (task-32284,
 against code and tests, not a live screen): the Tool gates rows are now
 buttons that state on/off in text under the tool's plain-language name
 (one copy table shared with the first-run wizard), and the old blanket
@@ -577,7 +586,16 @@ publication the single next-client-launch exception. Fix round, same day:
 that exception now names its own precondition — the external-MCP half
 only applies when `[mcp] expose_local_tools` is on — and the master
 switch is corrected alongside `ask_user` as on by default (it was
-previously the only one credited). Docs pass 2026-09-10 (task-32286,
+previously the only one credited). Docs pass 2026-09-10 (task-32291,
+against code and tests, not a live screen): added "Session approvals" —
+"Approve for session" grants are now listed in the inspector's permission
+block with a per-row **Revoke**, and the Permissions matrix marks a tool
+holding one with a ` (session)` suffix; until this pass a session grant
+was invisible and could only be dropped by restarting the app. Docs pass
+2026-09-10 (task-32283, against code and tests, not a live screen): the
+selected server's own group now leads both Tools mode and the Permissions
+matrix, and **Open tool catalog** drills straight to that server rather
+than to the top of an unfiltered list. Docs pass 2026-09-10 (task-32286,
 against code and tests, not a live screen): the Tools-mode master
 control is now a toggle button (it used to be a Checkbox plus a
 separate "Enabled"/"Disabled" label, which a bundle width escape hatch

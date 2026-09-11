@@ -9627,6 +9627,16 @@ def test_audit_entry_detail_payload_is_metadata_only():
 
     assert payload["tool"] == "local:docs::search"
     assert payload["duration"] == "1.5s"
+    # R24: the detail carries the Audit table's own humanised label beside
+    # the raw token, so one row no longer reads two different ways.
+    assert payload["decision"] == "allowed"
+    assert payload["decision_label"] == "Allowed"
+    assert (
+        audit_entry_detail_payload({"decision": "denied-killswitch"})[
+            "decision_label"
+        ]
+        == "Blocked (kill switch)"
+    )
     assert payload["argument_names"] == ["query"]
     assert payload["unknown_argument_count"] == 1
     assert payload["result_type"] == "list"

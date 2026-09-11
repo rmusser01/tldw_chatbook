@@ -1677,8 +1677,12 @@ class MCPPermissionStore:
         profile: Any, server_key: str, tool_name: str
     ) -> dict[str, Any] | None:
         """One tool's raw stored entry within ``profile``, or None --
-        shared traversal for ``list_tool_arg_rules``/``remove_tool_arg_
-        rule`` (task-32281)."""
+        ``list_tool_arg_rules``' traversal (task-32281).
+
+        Deliberately NOT shared with ``remove_tool_arg_rule``, which walks
+        the same path inline because it also needs the parent ``tools``
+        mapping in hand to drop a tool entry its last rule emptied.
+        """
         if not isinstance(profile, Mapping):
             return None
         server_entry = _as_mapping(profile.get("servers")).get(server_key)

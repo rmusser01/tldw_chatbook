@@ -388,8 +388,8 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             self.value = value
 
     class ToolGateChanged(Message, namespace="mcp_servers_mode"):
-        """Posted when a `[tools]`/`[console]` registration-gate Checkbox
-        (task-3240) is toggled.
+        """Posted when a `[tools]`/`[console]` registration-gate button
+        (task-3240) is pressed.
 
         Unlike `BuiltinFlagChanged` (hardcoded to the `[mcp]` section),
         `section` is explicit here: task-3240's gates span both `[tools]`
@@ -1140,8 +1140,8 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         Before `#mcp-detail-tool-gates` existed, the nearest surviving
         focusable was `#mcp-detail-scroll` -- an inert container, so a
         stray Space there did nothing. Adding that sibling AFTER the
-        `[mcp]` toggles changed the nearest survivor for a gate-checkbox
-        toggle to the LAST `[mcp]` checkbox (`mcp-builtin-expose-prompts`)
+        `[mcp]` toggles changed the nearest survivor for a gate-button
+        press to the LAST `[mcp]` checkbox (`mcp-builtin-expose-prompts`)
         -- a live, actionable Checkbox. The save+resync this SAME toggle
         triggers therefore left focus parked there, so the user's very
         next Space silently wrote an unrelated `[mcp]` key instead of

@@ -58,6 +58,7 @@ from tldw_chatbook.Chat.console_chat_store import (
 )
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
+    KILL_SWITCH_REFUSAL,
     USER_DENIED_REFUSAL as CONTROLLER_USER_DENIED_REFUSAL,
 )
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
@@ -3966,7 +3967,7 @@ def test_successful_tool_payload_collisions_stay_success_live_and_resumed(
     [
         (ToolResult(ok=False, error="ordinary dispatch failure"), "failed"),
         (
-            ToolResult.blocked("tool execution is disabled by the kill switch"),
+            ToolResult.blocked(KILL_SWITCH_REFUSAL),
             "blocked",
         ),
     ],

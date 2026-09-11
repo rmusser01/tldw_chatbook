@@ -4953,9 +4953,16 @@ class UnifiedMCPControlPlaneService:
             ``profile_id``. Empty on a fresh instance -- grants are never
             persisted.
         """
+        # R24: iterate a SNAPSHOT -- an agent worker thread calls
+        # `approve_for_session` concurrently, and a set mutated mid-iteration
+        # raises `RuntimeError`, which the caller
+        # (`MCPWorkbench._session_approvals_for_row`) swallows into an empty
+        # listing: every " (session)" suffix vanishes for that render.
         return sorted(
             (server_key, tool_name)
-            for approved_profile, server_key, tool_name in self._session_approvals
+            for approved_profile, server_key, tool_name in tuple(
+                self._session_approvals
+            )
             if approved_profile == profile_id
         )
 
