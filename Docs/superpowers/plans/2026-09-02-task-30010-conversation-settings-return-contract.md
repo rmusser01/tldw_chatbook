@@ -150,6 +150,8 @@ git commit -m "feat: define Conversation settings return handoff"
 - Test: `Tests/UI/test_console_session_settings.py`
 - Test: `Tests/State/test_screen_state_store.py`
 - Test: `Tests/UI/test_screen_navigation.py`
+- Test: `Tests/UI/test_console_session_settings.py`
+- Test: `Tests/State/test_screen_state_store.py`
 
 **Interfaces:**
 - Produces: `ConsoleSettingsDraftSnapshot.to_mapping() -> dict[str, object]`
@@ -195,6 +197,13 @@ Handle the modal result variant in `_open_console_settings`: retain the suspende
 - [ ] **Step 5: Verify screen snapshot and modal suites**
 
 Run: `pytest Tests/State/test_screen_state_store.py Tests/UI/test_console_session_settings.py Tests/UI/test_screen_navigation.py -k 'snapshot or credential or return or settings or navigation_completion' -q`
+- [ ] **Step 4: Route credential requests through ChatScreen**
+
+Handle the modal result variant in `_open_console_settings`: retain the suspended snapshot on `ChatScreen`, stage the typed return handoff, and post the typed Settings context. Add the snapshot key to `_serialize_native_console_state()` / `_restore_native_console_state()` with absent-key backward compatibility. Do not apply the draft as session settings during suspension.
+
+- [ ] **Step 5: Verify screen snapshot and modal suites**
+
+Run: `pytest Tests/State/test_screen_state_store.py Tests/UI/test_console_session_settings.py -k 'snapshot or credential or return or settings' -q`
 
 Expected: PASS.
 
@@ -202,6 +211,7 @@ Expected: PASS.
 
 ```bash
 git add tldw_chatbook/Widgets/Console/console_settings_modal.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/UI/Navigation/main_navigation.py tldw_chatbook/app.py Tests/UI/test_console_session_settings.py Tests/State/test_screen_state_store.py Tests/UI/test_screen_navigation.py
+git add tldw_chatbook/Widgets/Console/console_settings_modal.py tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_console_session_settings.py Tests/State/test_screen_state_store.py
 git commit -m "feat: suspend Conversation settings across credential setup"
 ```
 
@@ -237,6 +247,14 @@ schema, persistence, payload exposure, or state owner, so no new ADR is needed.
 **Interfaces:**
 - Consumes: `ProviderSettingsNavigationTarget`, `ConsoleSettingsReturnTarget`, `ConversationSettingsReturnOutcome`
 - Produces: `PendingHandoffStore.settle_transferred_claim(claim) -> bool`
+**Files:**
+- Modify: `tldw_chatbook/UI/Screens/settings_screen.py`
+- Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
+- Test: `Tests/UI/test_settings_configuration_hub.py`
+- Test: `Tests/UI/test_console_native_chat_flow.py`
+
+**Interfaces:**
+- Consumes: `ProviderSettingsNavigationTarget`, `ConsoleSettingsReturnTarget`, `ConversationSettingsReturnOutcome`
 - Produces: Settings continuation actions `settings-provider-return`, `settings-provider-stay`, `settings-provider-return-without-save`
 - Produces: conflict actions `settings-provider-conflict-review`, `settings-provider-conflict-discard`, `settings-provider-conflict-return`
 

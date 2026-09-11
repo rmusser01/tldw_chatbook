@@ -8,7 +8,7 @@ import math
 import os
 import re
 from dataclasses import dataclass, fields, replace
-from typing import Callable, Literal, Mapping, Sequence, overload
+from typing import TYPE_CHECKING, Callable, Literal, Mapping, Sequence, overload
 from urllib.parse import urlparse, urlunparse
 
 from tldw_chatbook.Chat.console_provider_support import (
@@ -19,6 +19,8 @@ from tldw_chatbook.Chat.console_provider_support import (
     supported_console_provider_readiness_keys,
 )
 from tldw_chatbook.Chat.console_provider_endpoints import (
+    DEFAULT_LLAMACPP_BASE_URL,  # noqa: F401  (re-exported; console_settings_modal imports it from here)
+    INVALID_LLAMACPP_BASE_URL_COPY,
     URL_BASED_PROVIDER_KEYS,  # noqa: F401  (re-exported; console_settings_modal imports it from here)
     first_configured_endpoint,
     generic_endpoint_differs,
@@ -27,7 +29,12 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
     safe_endpoint_display,
     unsaved_endpoint_copy,
 )
+from tldw_chatbook.Chat.provider_catalog import (
+    PROVIDER_CUSTOM_GROUP_KEYS,
+    provider_display_name,
+)
 from tldw_chatbook.Chat.provider_readiness import (
+    ProviderReadiness,
     get_provider_readiness,
     provider_config_key,
 )
@@ -45,11 +52,20 @@ from tldw_chatbook.Chat.provider_test_evidence import (
     ProviderDraftIdentity,
     ProviderTestEvidence,
 )
-from tldw_chatbook.config import ProviderSettingsError, provider_settings_for_key
+from tldw_chatbook.config import (
+    ProviderSettingsError,
+    provider_settings_for_key,
+    resolve_provider_api_key,
+)
 from tldw_chatbook.model_capabilities import anthropic_model_rejects_disabled_thinking
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.token_counter import count_tokens_messages
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+
+if TYPE_CHECKING:
+    # Imported lazily at call sites: custom_endpoint_registry imports this
+    # module for URL normalization, so a module-level import would cycle.
+    from tldw_chatbook.Chat.custom_endpoint_registry import CustomEndpointEntry
 
 
 NATIVE_CONSOLE_PROVIDER_KEYS = DIRECT_CONSOLE_PROVIDER_KEYS
@@ -86,11 +102,6 @@ CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS = frozenset(
         "vllm",
         "zai",
     }
-)
-DEFAULT_LLAMACPP_BASE_URL = "http://127.0.0.1:9099"
-INVALID_LLAMACPP_BASE_URL_COPY = (
-    "Provider blocked: invalid llama.cpp base URL. "
-    "Use an http(s) URL such as http://127.0.0.1:9099."
 )
 MODEL_OPTION_PLACEHOLDER_VALUES = frozenset({"none", "null"})
 TokenCounter = Callable[[Sequence[Mapping[str, str]], str, str], int]
@@ -858,32 +869,89 @@ def build_console_rail_system_line(system_prompt: str | None) -> str:
     return f"System: {preview}"
 
 
+_CUSTOM_AND_LEGACY_GROUP_KEYS = frozenset(
+    provider_config_key(key) for key in PROVIDER_CUSTOM_GROUP_KEYS
+)
+
+
+def _provider_option_group_rank(
+    provider_key: str,
+    requires_api_key_by_provider: Mapping[str, bool],
+) -> int:
+    """Return the Settings/Wizard provider-group rank for an option key.
+
+    Mirrors the F4 Settings and First-Run Wizard taxonomy (task-180): cloud
+    providers first, then local ones, then custom slots and legacy aliases
+    together. Off-catalog keys (e.g. configured WIP providers) sort with the
+    custom-and-legacy group rather than interleaving into cloud/local.
+    """
+    if provider_key in _CUSTOM_AND_LEGACY_GROUP_KEYS:
+        return 2
+    if provider_key not in requires_api_key_by_provider:
+        return 2
+    return 0 if requires_api_key_by_provider[provider_key] else 1
+
+
 def build_console_provider_options(
     providers_models: Mapping[str, Sequence[str]],
+    app_config: Mapping[str, object] | None = None,
 ) -> list[ConsoleSettingsOption]:
-    """Return sorted Console-sendable provider options plus configured providers."""
-    provider_keys = sorted(
-        {
-            key
-            for key in (provider_config_key(provider) for provider in providers_models)
-            if key
-        }
-    )
+    """Return grouped, display-ordered Console provider options.
+
+    Options are ordered by the shared provider-group taxonomy (Cloud, Local,
+    Custom & legacy) and then by display name, so consumers that render
+    ``provider_display_name`` labels (the Console settings modal) present the
+    same visible order the Settings screen and First-Run Wizard teach, instead
+    of an alphabetical-by-config-key order that shuffles the display labels.
+    Option values stay raw provider config keys (task-191).
+
+    Args:
+        providers_models: Configured provider -> model ids mapping feeding
+            the WIP-marked configured-provider options.
+        app_config: Full CLI config mapping. When given, registry entries
+            (ADR-146) follow the sorted built-ins as a final run: value
+            ``custom-ep:<slug>``, label ``display_name``, ordered by creation
+            (config file order) then display name. None keeps the
+            built-in-only result so existing callers are unchanged.
+
+    Returns:
+        The ordered provider options, values carrying raw provider config
+        keys (or registry ids) and labels carrying display names.
+    """
     supported_provider_keys = supported_console_provider_readiness_keys(
         CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
     )
+    catalog_entries = supported_console_provider_catalog(
+        CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
+    )
+    requires_api_key_by_provider = {
+        entry.readiness_key: entry.requires_api_key for entry in catalog_entries
+    }
+
+    def _option_sort_key(provider_key: str) -> tuple[int, str, str]:
+        group_rank = _provider_option_group_rank(
+            provider_key, requires_api_key_by_provider
+        )
+        return (
+            group_rank,
+            provider_display_name(provider_key).casefold(),
+            provider_key,
+        )
+
     provider_keys = sorted(
         {
-            *provider_keys,
             *(
-                entry.readiness_key
-                for entry in supported_console_provider_catalog(
-                    CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
+                key
+                for key in (
+                    provider_config_key(provider) for provider in providers_models
                 )
+                if key
             ),
-        }
+            *(entry.readiness_key for entry in catalog_entries),
+        },
+        key=_option_sort_key,
     )
-    return [
+    options = [
         ConsoleSettingsOption(
             label=provider_key
             if provider_key in supported_provider_keys
@@ -891,6 +959,42 @@ def build_console_provider_options(
             value=provider_key,
         )
         for provider_key in provider_keys
+    ]
+    options.extend(_custom_endpoint_provider_options(app_config))
+    return options
+
+
+def _custom_endpoint_provider_options(
+    app_config: Mapping[str, object] | None,
+) -> list[ConsoleSettingsOption]:
+    """Return registry entry options appended after the built-in providers.
+
+    ADR-146: each valid ``[custom_endpoints.<slug>]`` entry renders as a
+    first-class provider option -- value ``custom-ep:<slug>``, label
+    ``display_name`` -- after the built-in Custom & legacy group, ordered by
+    creation (config file order, which ``load_custom_endpoints`` preserves)
+    then display name. ``app_config=None`` yields no entries so callers that
+    predate the registry keep their built-in-only result.
+    """
+    if app_config is None:
+        return []
+    # Lazy import: custom_endpoint_registry imports this module for URL
+    # normalization, so a module-level import would cycle.
+    from tldw_chatbook.Chat.custom_endpoint_registry import (
+        CUSTOM_ENDPOINT_ID_PREFIX,
+        load_custom_endpoints,
+    )
+
+    indexed_entries = sorted(
+        enumerate(load_custom_endpoints(app_config).values()),
+        key=lambda indexed: (indexed[0], indexed[1].display_name.casefold()),
+    )
+    return [
+        ConsoleSettingsOption(
+            label=entry.display_name,
+            value=f"{CUSTOM_ENDPOINT_ID_PREFIX}{entry.slug}",
+        )
+        for _creation_index, entry in indexed_entries
     ]
 
 
@@ -1145,7 +1249,8 @@ def resolve_effective_chat_configuration(
         _mapping_value(app_config, "chat_defaults")
     )
     provider_id = _canonical_chat_provider_id(
-        _string_value(provider) or _string_setting(chat_defaults, "provider")
+        _string_value(provider) or _string_setting(chat_defaults, "provider"),
+        app_config,
     )
     provider_settings = _provider_settings(app_config, provider_id)
     candidates = (
@@ -1173,10 +1278,16 @@ def resolve_effective_chat_configuration(
 
 def build_canonical_chat_defaults_mutation(
     effective: EffectiveChatConfiguration,
+    app_config: Mapping[str, object] | None = None,
 ) -> dict[str, dict[str, str]]:
-    """Build the canonical provider/model fragment for an explicit save."""
+    """Build the canonical provider/model fragment for an explicit save.
+
+    ``app_config`` (when provided) keeps a resolvable custom-ep provider id
+    intact instead of collapsing it onto the generic ``custom`` slot, so a
+    saved default reboots onto the registry entry it selected.
+    """
     chat_defaults: dict[str, str] = {}
-    provider_id = _canonical_chat_provider_id(effective.provider)
+    provider_id = _canonical_chat_provider_id(effective.provider, app_config)
     model = _string_value(effective.model)
     if provider_id:
         chat_defaults["provider"] = provider_id
@@ -1366,7 +1477,20 @@ def build_console_settings_readiness(
     """Project one deterministic Console blocker and independent evidence."""
     if type(active_run) is not bool:
         raise ValueError("Active-run state must be boolean.")
-    canonical_provider = _canonical_chat_provider_id(settings.provider)
+    # ADR-146 (registry seam): a custom-ep provider resolves through its
+    # registry entry -- the family it executes as, and the entry's persisted
+    # endpoint when the session carries no explicit base URL. Lazy import:
+    # custom_endpoint_registry imports this module for URL normalization, so
+    # a module-level import would cycle.
+    from tldw_chatbook.Chat.custom_endpoint_registry import (
+        entry_for,
+        family_execution_key,
+    )
+
+    entry = entry_for(app_config, settings.provider)
+    canonical_provider = _canonical_chat_provider_id(
+        family_execution_key(entry.family) if entry is not None else settings.provider
+    )
     identity = resolve_console_provider_identity(
         canonical_provider,
         handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
@@ -1376,10 +1500,22 @@ def build_console_settings_readiness(
     send_capable_keys = _send_capable_readiness_keys(native_provider_keys)
 
     base_url = _string_value(settings.base_url)
+    if entry is not None and not base_url:
+        # ADR-146: the entry is the persisted endpoint carrier, so a blank
+        # session base_url resolves from it instead of the family default.
+        base_url = entry.base_url
     provider_settings, provider_configuration_invalid = (
-        _provider_settings_with_validity(app_config, provider_key)
+        _provider_settings_with_validity(
+            app_config,
+            settings.provider if entry is not None else provider_key,
+        )
     )
     readiness = get_provider_readiness(provider_key, app_config, environ=environ)
+    if entry is not None and readiness.ready:
+        readiness = (
+            _custom_endpoint_missing_key_readiness(entry, provider_key, environ)
+            or readiness
+        )
     exact_identity_evidence = bool(
         evidence is not None
         and current_identity is not None
@@ -1390,9 +1526,7 @@ def build_console_settings_readiness(
     credential_source: CredentialSource = "none"
     if readiness.api_key_source:
         credential_source = (
-            "environment"
-            if readiness.api_key_source.startswith("env:")
-            else "stored"
+            "environment" if readiness.api_key_source.startswith("env:") else "stored"
         )
 
     if not readiness.requires_api_key:
@@ -1410,8 +1544,7 @@ def build_console_settings_readiness(
         credential = "present_unverified"
 
     evidence_is_current = bool(
-        exact_identity_evidence
-        and (not readiness.requires_api_key or readiness.ready)
+        exact_identity_evidence and (not readiness.requires_api_key or readiness.ready)
     )
     snapshot = readiness.snapshot(
         selected_model=settings.model,
@@ -1787,7 +1920,24 @@ def _chat_defaults_with_streaming_compat(
     return compatible_defaults
 
 
-def _canonical_chat_provider_id(provider: str | None) -> str:
+def _canonical_chat_provider_id(
+    provider: str | None,
+    app_config: Mapping[str, object] | None = None,
+) -> str:
+    """Return the canonical provider id for a chat-defaults provider value.
+
+    A ``custom-ep:<slug>`` id whose registry entry resolves in ``app_config``
+    is returned unchanged (ADR-146: the entry -- not its family -- is the
+    persisted default, and the config-key normalization below would mangle
+    the prefix's hyphen into an underscore). Every other value keeps the
+    legacy-alias and readiness-key fallback chain.
+    """
+    # Lazy import: custom_endpoint_registry imports this module for URL
+    # normalization, so a module-level import would cycle.
+    from tldw_chatbook.Chat.custom_endpoint_registry import entry_for
+
+    if app_config is not None and entry_for(app_config, provider) is not None:
+        return str(provider)
     normalized = provider_config_key(provider)
     normalized = _LEGACY_CHAT_PROVIDER_ALIASES.get(normalized, normalized)
     return resolve_console_provider_identity(
@@ -1799,6 +1949,19 @@ def _canonical_chat_provider_id(provider: str | None) -> str:
 def _provider_settings(
     app_config: Mapping[str, object], provider_key: str
 ) -> Mapping[str, object]:
+    # ADR-146 (registry seam): custom-ep providers read their settings from
+    # the registry entry, not the api_settings table. Lazy import:
+    # custom_endpoint_registry imports this module for URL normalization, so
+    # a module-level import would cycle.
+    from tldw_chatbook.Chat.custom_endpoint_registry import (
+        custom_endpoint_provider_settings,
+    )
+
+    custom_endpoint_settings = custom_endpoint_provider_settings(
+        app_config, provider_key
+    )
+    if custom_endpoint_settings is not None:
+        return custom_endpoint_settings
     api_settings = _mapping_value(app_config, "api_settings")
     try:
         return provider_settings_for_key(api_settings, provider_key)
@@ -1806,11 +1969,76 @@ def _provider_settings(
         return {}
 
 
+def _custom_endpoint_missing_key_readiness(
+    entry: "CustomEndpointEntry",
+    provider_key: str,
+    environ: Mapping[str, str] | None,
+) -> ProviderReadiness | None:
+    """Return missing-key readiness for an entry whose declared credential
+    does not resolve, or None when it resolves or nothing is declared.
+
+    ADR-146: entry credentials mirror provider-settings semantics — the env
+    reference wins over the stored key, and an entry declaring neither rides
+    the plain family readiness. An entry that declares a credential the
+    environment cannot satisfy blocks the send instead of silently sending
+    keyless through a family that is otherwise keyless-ready.
+
+    Args:
+        entry: Resolved registry entry for the session's custom-ep provider.
+        provider_key: Family readiness key the entry executes as.
+        environ: Environment mapping, injectable for deterministic tests;
+            ``None`` reads ``os.environ``.
+
+    Returns:
+        A not-ready ``ProviderReadiness`` naming the recovery, or None when
+        the family readiness should stand.
+    """
+    env = environ if environ is not None else os.environ
+    stored_key = resolve_provider_api_key(entry.api_key)
+    env_key = (
+        resolve_provider_api_key(env.get(entry.api_key_env, ""))
+        if entry.api_key_env
+        else None
+    )
+    if not entry.api_key_env and stored_key is None:
+        return None
+    if env_key is not None or stored_key is not None:
+        return None
+    if entry.api_key_env:
+        recovery = (
+            f"Set {entry.api_key_env} or update the stored api_key for the "
+            f"'{entry.display_name}' endpoint."
+        )
+    else:
+        recovery = f"Update the stored api_key for the '{entry.display_name}' endpoint."
+    return ProviderReadiness(
+        provider=entry.display_name,
+        provider_key=provider_key,
+        requires_api_key=True,
+        ready=False,
+        api_key=None,
+        api_key_source=None,
+        env_var=entry.api_key_env,
+        reason="Missing API key",
+        recovery=recovery,
+    )
+
+
 def _provider_settings_with_validity(
     app_config: Mapping[str, object], provider_key: str
 ) -> tuple[Mapping[str, object], bool]:
     """Return selected provider settings and whether their table is malformed."""
 
+    # ADR-146: a registry entry is its own settings carrier, so an entry
+    # provider is never "missing from api_settings" -- route it through the
+    # registry-aware reader and skip the table-validity walk.
+    from tldw_chatbook.Chat.custom_endpoint_registry import (
+        custom_endpoint_provider_settings,
+    )
+
+    custom = custom_endpoint_provider_settings(app_config, provider_key)
+    if custom is not None:
+        return custom, False
     raw_api_settings = app_config.get("api_settings", {})
     if not isinstance(raw_api_settings, Mapping):
         return {}, "api_settings" in app_config
@@ -1953,10 +2181,11 @@ def console_session_endpoint_survives_restart(
     """Return whether the session endpoint is backed for the next boot.
 
     ``True`` when the provider uses no endpoint, the session carries no
-    endpoint, or the session endpoint equals the restart fallback chain's
-    value (so re-deriving defaults next boot reproduces it). ``False`` means
-    the endpoint lives only in this session and is silently lost on restart
-    -- the task-16473 persistence trap.
+    endpoint, the session rides a resolvable registry entry (ADR-146: the
+    entry is the persisted endpoint carrier), or the session endpoint equals
+    the restart fallback chain's value (so re-deriving defaults next boot
+    reproduces it). ``False`` means the endpoint lives only in this session
+    and is silently lost on restart -- the task-16473 persistence trap.
 
     Args:
         settings: Console session settings carrying the endpoint to check.
@@ -1967,6 +2196,12 @@ def console_session_endpoint_survives_restart(
         Whether re-deriving defaults on the next boot would reproduce the
         session's endpoint.
     """
+    # Lazy import: custom_endpoint_registry imports this module for URL
+    # normalization, so a module-level import would cycle.
+    from tldw_chatbook.Chat.custom_endpoint_registry import entry_for
+
+    if entry_for(app_config, settings.provider) is not None:
+        return True
     provider_key = provider_config_key(settings.provider)
     provider_settings = _provider_settings(app_config, provider_key)
     base_url = _string_value(settings.base_url)

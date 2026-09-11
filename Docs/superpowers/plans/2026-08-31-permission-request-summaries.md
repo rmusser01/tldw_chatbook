@@ -9,6 +9,7 @@
 **Tech Stack:** Python ≥3.11, Textual 8.x, existing `chat_api_call` dispatcher, `pytest` with `asyncio_mode = "auto"`.
 
 **Spec:** `Docs/superpowers/specs/2026-08-31-permission-request-summaries-design.md` (ADR: `backlog/decisions/090-permission-request-context-summaries.md`). Read both before starting.
+**Spec:** `Docs/superpowers/specs/2026-08-31-permission-request-summaries-design.md` (ADR: `backlog/decisions/080-permission-request-context-summaries.md`). Read both before starting.
 
 ## Global Constraints
 
@@ -38,6 +39,7 @@ Create `Tests/Agents/test_tool_call_rationale.py`:
 
 ```python
 """ADR-090: rationale capture normalization + ToolCall field."""
+"""ADR-080: rationale capture normalization + ToolCall field."""
 
 from tldw_chatbook.Agents.agent_models import (
     RATIONALE_CAPTURE_CAP,
@@ -78,6 +80,7 @@ In `tldw_chatbook/Agents/agent_models.py`, add `import re` to the stdlib imports
 
 ```python
 #: ADR-090: cap for rationale text captured at parse time (tail-biased).
+#: ADR-080: cap for rationale text captured at parse time (tail-biased).
 RATIONALE_CAPTURE_CAP = 500
 
 _RATIONALE_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
@@ -88,6 +91,7 @@ def normalize_rationale(text: object, cap: int = RATIONALE_CAPTURE_CAP) -> str:
     """Normalize model-authored advisory text for display-surface transit.
 
     Untrusted-content hygiene (ADR-090 §Security): strip control characters,
+    Untrusted-content hygiene (ADR-080 §Security): strip control characters,
     collapse all whitespace to single spaces, and cap length keeping the
     TAIL (the end of a preamble is the part adjacent to the tool call; the
     head is often an unrelated answer to the user), prefixing an ellipsis
@@ -122,6 +126,7 @@ class ToolCall:
     call_id: str = ""
     raw_arguments: str = ""
     #: ADR-090: the model's own stated reason for this call (explicit fence
+    #: ADR-080: the model's own stated reason for this call (explicit fence
     #: ``rationale`` key, else the turn's preamble text). Advisory display
     #: data for the approval card ONLY -- never persisted, never serialized
     #: into durable captures, never an input to any security verdict.
@@ -160,6 +165,7 @@ Append to `Tests/Agents/test_tool_call_rationale.py`:
 ```python
 # ---------------------------------------------------------------------------
 # with_preamble_rationale + parse_fenced_tool_call (ADR-090 hybrid capture)
+# with_preamble_rationale + parse_fenced_tool_call (ADR-080 hybrid capture)
 # ---------------------------------------------------------------------------
 
 from tldw_chatbook.Agents.agent_models import with_preamble_rationale
@@ -225,6 +231,7 @@ def with_preamble_rationale(calls, preamble):
     """Attach a turn's preamble text as the rationale of calls lacking one.
 
     The hybrid rule (ADR-090): an explicit fence ``rationale`` key wins, so
+    The hybrid rule (ADR-080): an explicit fence ``rationale`` key wins, so
     calls that already carry a rationale pass through untouched; everything
     else (native turn text, fence preamble) fills in from ``preamble``.
 
@@ -252,6 +259,7 @@ In `agent_runtime.py`, extend the `parse_fenced_tool_call` return (lines :187-19
     if not isinstance(call_id, str):
         return None
     # ADR-090: an optional explicit rationale key; wrong-typed values are
+    # ADR-080: an optional explicit rationale key; wrong-typed values are
     # ignored, never fatal -- the call itself must still parse.
     rationale = payload.get("rationale", "")
     if not isinstance(rationale, str):
@@ -273,6 +281,7 @@ Then the loop at :1087-1092 — preamble/native attach:
             calls = list(turn.tool_calls)
             if calls:
                 # ADR-090: native turns -- the assistant text of the same
+                # ADR-080: native turns -- the assistant text of the same
                 # turn is the rationale for every call in it.
                 calls = list(with_preamble_rationale(calls, turn.text))
         fenced = None
@@ -280,6 +289,7 @@ Then the loop at :1087-1092 — preamble/native attach:
             _visible, fenced = split_visible_text_and_tool_call(turn.text)
             if fenced is not None:
                 # ADR-090: fence turns -- the visible text preceding the
+                # ADR-080: fence turns -- the visible text preceding the
                 # fence is the fallback rationale (explicit key wins inside
                 # with_preamble_rationale).
                 calls = list(with_preamble_rationale([fenced], _visible))
@@ -317,6 +327,7 @@ Create `Tests/Agents/test_pending_call_context_fields.py`:
 
 ```python
 """ADR-090: rationale + description ride the existing pending-call chain."""
+"""ADR-080: rationale + description ride the existing pending-call chain."""
 
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.Chat.console_chat_controller import _collect_mcp_pending
@@ -373,6 +384,10 @@ Expected: FAIL — `TypeError: MCPPendingCall() got an unexpected keyword argume
     #: display only -- never gates, never persists).
     rationale: str = ""
     #: ADR-090: the tool definition's description, for the external
+    #: ADR-080: the model's advisory rationale for this call (advisory
+    #: display only -- never gates, never persists).
+    rationale: str = ""
+    #: ADR-080: the tool definition's description, for the external
     #: summarizer prompt; "" when the owner had none at hand.
     description: str = ""
 ```
@@ -390,6 +405,7 @@ Expected: FAIL — `TypeError: MCPPendingCall() got an unexpected keyword argume
 ```
 
 (add to its docstring's Args: `rationale: The call's advisory rationale (ADR-090), copied verbatim onto the row.`) and in the returned `MCPPendingCall(...)` add:
+(add to its docstring's Args: `rationale: The call's advisory rationale (ADR-080), copied verbatim onto the row.`) and in the returned `MCPPendingCall(...)` add:
 
 ```python
             call_id=call_id,
@@ -457,6 +473,7 @@ Create `Tests/Chat/test_approval_payload_summary.py`:
 
 ```python
 """ADR-090: approval payload marshals rationale/description/summary."""
+"""ADR-080: approval payload marshals rationale/description/summary."""
 
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.Chat.console_chat_controller import _build_approval_payload
@@ -512,6 +529,7 @@ def _build_approval_payload(
     """Marshal one approval round's card payload.
 
     ADR-090: rows carry ``rationale`` (the model's advisory context) and
+    ADR-080: rows carry ``rationale`` (the model's advisory context) and
     ``description`` (the tool definition's own text, for the external
     summarizer); the payload carries a ``summary`` slot that starts ``None``
     and is filled by the advisory summarizer -- payload-carried so any
@@ -581,6 +599,7 @@ Create `Tests/UI/test_approval_context_lines.py`:
 
 ```python
 """ADR-090: advisory context/summary lines on the approval card."""
+"""ADR-080: advisory context/summary lines on the approval card."""
 
 import pytest
 from textual.app import App, ComposeResult
@@ -681,6 +700,7 @@ Create `tldw_chatbook/Chat/approval_display.py` — move `_snake_case`, `_DESTIN
 
 ```python
 #: ADR-090: display cap for one advisory line (tail-biased).
+#: ADR-080: display cap for one advisory line (tail-biased).
 RATIONALE_DISPLAY_CAP = 240
 CONTEXT_LABEL = "Model context:"
 SUMMARY_LABEL = "Summary:"
@@ -742,6 +762,7 @@ Compose (beside the hidden `deadline` Static at ~:500, same built-hidden pattern
 `__init__`: add `self._batch_summary: str | None = None` beside the other batch stashes (and confirm `self._batch_round_id` is initialized — it is set in `set_batch`; initialize it to `None` in `__init__` if it is not already).
 
 `set_batch`: add keyword-only `summary: str | None = None` to the signature (documented in its docstring Args: "summary: ADR-090 advisory batch summary carried by the payload, re-rendered on every remount"); stash `self._batch_summary = format_context_line(summary) if summary else None`, and right after the deadline-update block call:
+`set_batch`: add keyword-only `summary: str | None = None` to the signature (documented in its docstring Args: "summary: ADR-080 advisory batch summary carried by the payload, re-rendered on every remount"); stash `self._batch_summary = format_context_line(summary) if summary else None`, and right after the deadline-update block call:
 
 ```python
         self._render_summary_line()
@@ -752,6 +773,7 @@ New methods on `ChatApprovalCard`:
 ```python
     def _render_summary_line(self) -> None:
         """Render the batch-level advisory summary line (ADR-090).
+        """Render the batch-level advisory summary line (ADR-080).
 
         Plain, dim/italic, visually subordinate to every machine-owned
         field; hidden entirely when there is nothing to show.
@@ -772,6 +794,7 @@ New methods on `ChatApprovalCard`:
 
     def set_summary(self, round_id: str | None, text: str) -> None:
         """Patch ONLY the batch summary line for a matching round (ADR-090).
+        """Patch ONLY the batch summary line for a matching round (ADR-080).
 
         Guarded by the card's current round id -- a late result from a
         prior round must never land on the current card -- and never
@@ -841,6 +864,7 @@ Create `Tests/Chat/test_permission_summary_service.py`:
 
 ```python
 """ADR-090: permission-summary config resolution."""
+"""ADR-080: permission-summary config resolution."""
 
 from types import SimpleNamespace
 
@@ -931,6 +955,7 @@ Expected: FAIL — module does not exist.
 ```python
 [permission_summary]
 # ADR-090: advisory summaries on Console approval cards.
+# ADR-080: advisory summaries on Console approval cards.
 # mode: off (default) | fallback (only when the model gave no rationale)
 # | always (every approval round). Enabling sends a bounded tail of the
 # conversation (user/assistant text only) to this provider.
@@ -948,6 +973,7 @@ Create `tldw_chatbook/Chat/permission_summary_service.py`:
 
 ```python
 """ADR-090: external fast-LLM summaries for Console approval rounds.
+"""ADR-080: external fast-LLM summaries for Console approval rounds.
 
 Advisory-only by construction: this module resolves config, builds one
 bounded prompt per approval round, and returns a normalized line of text
@@ -991,6 +1017,7 @@ class PermissionSummaryResolution:
         model: Configured model, or None to let the provider default apply.
         timeout_seconds/max_tokens/tail_max_chars/system_prompt: Call
             parameters; defaults per ADR-090.
+            parameters; defaults per ADR-080.
     """
 
     mode: str
@@ -1108,6 +1135,7 @@ Append to `Tests/Chat/test_permission_summary_service.py`:
 ```python
 # ---------------------------------------------------------------------------
 # tail / prompt / call (ADR-090 §4)
+# tail / prompt / call (ADR-080 §4)
 # ---------------------------------------------------------------------------
 
 import json
@@ -1220,6 +1248,7 @@ def build_messages_tail(
     """Project stored conversation messages into the bounded summary tail.
 
     ADR-090 egress bound: user/assistant visible text ONLY -- tool results,
+    ADR-080 egress bound: user/assistant visible text ONLY -- tool results,
     system messages, and anything else never egress. Newest messages are
     kept; the oldest are dropped first once the budget is exceeded (one
     newest message may exceed the budget by itself -- it is kept, bounded
@@ -1316,6 +1345,7 @@ def summarize_pending_round(
     call_fn: Callable[..., Any] = chat_api_call,
 ) -> Optional[str]:
     """One advisory summary for one approval round; never raises (ADR-090).
+    """One advisory summary for one approval round; never raises (ADR-080).
 
     Args:
         resolution: An ACTIVE resolution (inactive -> None, no call).
@@ -1380,6 +1410,7 @@ Create `Tests/Chat/test_permission_summary_wiring.py`:
 
 ```python
 """ADR-090: fire-once trigger matrix + guarded delivery, no real threads."""
+"""ADR-080: fire-once trigger matrix + guarded delivery, no real threads."""
 
 import threading
 from types import SimpleNamespace
@@ -1513,6 +1544,7 @@ Seam attribute beside `self.set_pending_approval` (:2050):
 
 ```python
         #: ADR-090: UI-thread bridge that patches a mounted approval card's
+        #: ADR-080: UI-thread bridge that patches a mounted approval card's
         #: advisory summary line ``(round_id, text)``. Registered by the
         #: Console screen alongside ``set_pending_approval``; None in
         #: headless contexts and delivery silently no-ops.
@@ -1524,6 +1556,7 @@ Round state (:4649-4663) — two new keys:
 ```python
             "revoked": False,
             # ADR-090: advisory summary for this round (payload-carried so
+            # ADR-080: advisory summary for this round (payload-carried so
             # remounts re-render it) and the fire-once guard for the
             # external summarizer (no-call outcomes also consume it).
             "summary": None,
@@ -1548,6 +1581,7 @@ Three new methods beside it:
         """Fire the external summarizer once per round, if configured.
 
         ADR-090 trigger: ``fallback`` only when some pending row lacks a
+        ADR-080 trigger: ``fallback`` only when some pending row lacks a
         rationale, ``always`` for every round with rows. One call per
         ``round_id`` -- no-call outcomes also consume the once-flag, and
         parked rounds fire on their promotion marshal because every mount
@@ -1591,6 +1625,7 @@ Three new methods beside it:
         The approval wait loop is never blocked and the round's deadline is
         unaffected; a slow call that outlives the round is dropped on
         delivery. Content-free failures only (ADR-090).
+        delivery. Content-free failures only (ADR-080).
         """
         try:
             tail = build_messages_tail(
@@ -1651,6 +1686,7 @@ Three new methods beside it:
 
 ```python
             # ADR-090: UI-thread bridge to patch a mounted approval card's
+            # ADR-080: UI-thread bridge to patch a mounted approval card's
             # advisory summary line in place (never re-runs set_batch).
             "update_pending_approval_summary": self._update_console_approval_summary,
 ```
@@ -1660,6 +1696,7 @@ Method beside `_set_console_pending_approval` (:19403-19407; import `ChatApprova
 ```python
     def _update_console_approval_summary(self, round_id: str, text: str) -> None:
         """ADR-090: patch the mounted approval card's summary line in place."""
+        """ADR-080: patch the mounted approval card's summary line in place."""
         try:
             task_cards = self.query_one("#console-task-surface", ChatTaskCards)
             card = task_cards.query_one(ChatApprovalCard)
@@ -1755,6 +1792,8 @@ Expected: PASS (helper test green; settings-screen suites unaffected).
 ```bash
 backlog task create "Permission-request context summaries" -d "Advisory rationale + opt-in fast-LLM summaries on Console approval cards per ADR-090" --ac "Model context lines render on approval rows,External summary fires once per round per mode,Nothing advisory persists or alters verdicts,Targeted tests green"
 backlog task edit <id> --plan "Implement per Docs/superpowers/plans/2026-08-31-permission-request-summaries.md" --notes "Spec: Docs/superpowers/specs/2026-08-31-permission-request-summaries-design.md; ADR: backlog/decisions/090-permission-request-context-summaries.md"
+backlog task create "Permission-request context summaries" -d "Advisory rationale + opt-in fast-LLM summaries on Console approval cards per ADR-080" --ac "Model context lines render on approval rows,External summary fires once per round per mode,Nothing advisory persists or alters verdicts,Targeted tests green"
+backlog task edit <id> --plan "Implement per Docs/superpowers/plans/2026-08-31-permission-request-summaries.md" --notes "Spec: Docs/superpowers/specs/2026-08-31-permission-request-summaries-design.md; ADR: backlog/decisions/080-permission-request-context-summaries.md"
 backlog task edit <id> -s "In Progress"
 ```
 
