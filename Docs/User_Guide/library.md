@@ -309,7 +309,7 @@ leading `▸` uses cannot collide on one control.
 | **Import…** | Opens the Import media canvas — see [Import & export](library/import-and-export.md). |
 | **New note** | Opens the production note-creation canvas. It is shown directly in the Get started rail. |
 | **Explore all tools** | Reveals and remembers the complete Library without changing section disclosures. |
-| **Back to Get started** | Returns an explicitly expanded, still-empty Library to the Get started landing and compact rail, with focus on **Import…**. It is never offered after graduation. |
+| **Back to Get started** | Returns an explicitly expanded, still-empty Library to the Get started landing and compact rail, with focus on **Import…**. It is offered only after you have explicitly expanded a still-empty Library from Get started, and never after graduation. |
 | **Search Library…** | Type a query and press Enter: lands on the Search / RAG canvas and runs it (empty submit just opens the canvas) — see [Search & RAG](library/search-and-rag.md). **x** beside the box empties it. The box shows the live query only on the Search / RAG canvas; every other canvas gets an empty box, and returning to Search / RAG restores the query and its results. Text typed into the box on another canvas and never submitted is discarded when you leave — it never becomes the Search / RAG query. |
 | **Chunking Lab** / **Try selected text** | Under **Details ▸ Actions**, above the line "Chunking Lab — compare how text is split for search". Opens a full-screen A/B tool; **Escape** there returns to the Library canvas you came from, including from the sample editor. |
 | **▾** / **▸** (section headers) | Open or collapse that rail section — see [State glyphs](#state-glyphs). |
@@ -895,3 +895,8 @@ Conversations arrives with its first row focused like every other browse list).*
 *Verified against fix/library-crit10-pagers — 2026-09-11 (task-32354: the
 single-page pager rule this page documents now holds for Skills, Collections
 and the media Trash as well as Media, Conversations and Prompts).*
+
+*Verified against fix/library-crit10-onboarding-import — 2026-09-11
+(task-32349: a Library with no content yet lands on Get started however old its
+config file is, so "Back to Get started" is offered only to someone who has
+seen Get started).*
