@@ -1355,6 +1355,31 @@ def test_tool_marker_with_full_output_and_diff_keeps_full_output_label():
     assert action.label == "Full output"
 
 
+@pytest.mark.parametrize(
+    "status", ["denied", "blocked_off", "blocked_kill_switch", "blocked"]
+)
+def test_refused_tool_marker_says_the_body_went_to_the_model(status: str):
+    """task-32279: what a refused step hides is the instruction the MODEL got.
+
+    Live evidence: after a Deny, expanding the marker showed "Do not retry
+    this call..." under "Full output" -- reading as if the tool had produced
+    it.
+    """
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="list_characters → ERROR: tool call denied by the user.",
+        tool_output_full="tool call denied by the user. Do not retry this call.",
+        activity_presentation=ConsoleActivityPresentation(
+            "tool", "list_characters", status
+        ),
+    )
+
+    action = _tool_output_action(message)
+
+    assert action is not None
+    assert action.label == "Sent to the model"
+
+
 def test_plain_tool_marker_offers_no_expansion():
     """No hidden text and no diff: no dead affordance (TASK-1843 rule)."""
     message = ConsoleChatMessage(

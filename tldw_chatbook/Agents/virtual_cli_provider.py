@@ -36,9 +36,10 @@ from .local_tool_provider import (
     LOCAL_KILL_SWITCH_REFUSAL,
     LOCAL_ROOT_CHANGED_REFUSAL,
     LOCAL_TIMEOUT_REFUSAL,
+    LOCAL_USER_DENY_REFUSAL,
     RunAdmittedWorkspaceRoot,
 )
-from .mcp_tool_provider import MCPPendingCall
+from .mcp_tool_provider import MCPPendingCall, approval_effects_for_tool
 from .run_context import current_run_id, current_tool_call_id
 from .tool_catalog import redact_root_locator
 
@@ -341,6 +342,7 @@ class VirtualCliProvider:
                 else "ask"
             ),
             call_id=call.call_id or command,
+            effects=approval_effects_for_tool(hub),
         )
 
     def apply_batch_decisions(
@@ -417,8 +419,15 @@ class VirtualCliProvider:
             verdict = self._ask_verdict(hub, command, args)
         if verdict != "allow":
             self._record(hub, "denied-timeout" if verdict == "timeout" else "denied")
+            # Qodo #7: same split as `LocalToolProvider._invoke_detailed` --
+            # this branch is reached only AFTER the resolver returned
+            # something other than "deny" (the configured-Off case returned
+            # `LOCAL_DENY_REFUSAL` above), so a non-timeout verdict here is
+            # the user's own decision and must not claim "set to Off".
             refusal = (
-                LOCAL_TIMEOUT_REFUSAL if verdict == "timeout" else LOCAL_DENY_REFUSAL
+                LOCAL_TIMEOUT_REFUSAL
+                if verdict == "timeout"
+                else LOCAL_USER_DENY_REFUSAL
             )
             return ToolResult.blocked(refusal)
 

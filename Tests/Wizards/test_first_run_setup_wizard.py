@@ -11347,6 +11347,33 @@ async def test_tools_step_rows_are_described_and_do_not_overlap():
         assert "⚠" in write_desc
 
 
+def test_read_class_tool_copy_mentions_per_call_approval():
+    """task-32289 AC#2: Full setup's tools step described reads as safe with
+    no mention that they still ask every time -- append that fact to every
+    read-class tool's description instead of just the mutating ones' ⚠.
+
+    Qodo #6: the first wording ("Asks you each time before running.") was
+    unconditional, and a tool-level Allow or a session approval makes it
+    false -- a user who picks a broader scope then sees behaviour the setup
+    screen promised would not happen. The sentence now states the default
+    AND acknowledges the broader scopes the approval card offers.
+    """
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import ToolsStep
+
+    for tool_name in (
+        "read_file",
+        "list_directory",
+        "glob_files",
+        "grep_files",
+        "expand_document",
+    ):
+        _title, desc = ToolsStep._TOOL_COPY[tool_name]
+        assert desc.endswith(
+            "Asks before running unless you approve a longer scope."
+        ), (tool_name, desc)
+        assert "each time" not in desc.lower(), (tool_name, desc)
+
+
 @pytest.mark.asyncio
 async def test_progress_defaults_to_quick_track_and_titles_fit():
     """TASK-1499: Welcome anchors at the recommended 5-step count, and no

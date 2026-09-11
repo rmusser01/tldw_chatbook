@@ -23,6 +23,7 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_KILL_SWITCH_REFUSAL,
     LOCAL_ROOT_CHANGED_REFUSAL,
     LOCAL_TIMEOUT_REFUSAL,
+    LOCAL_USER_DENY_REFUSAL,
 )
 from tldw_chatbook.Agents.mcp_tool_provider import (
     DENY_REFUSAL as MCP_DENY_REFUSAL,
@@ -31,6 +32,7 @@ from tldw_chatbook.Agents.mcp_tool_provider import (
     UNRESOLVED_REFUSAL as MCP_UNRESOLVED_REFUSAL,
     USER_DENY_REFUSAL as MCP_USER_DENY_REFUSAL,
 )
+from tldw_chatbook.Agents.raw_shell_tool_provider import RAW_SHELL_DENY_REFUSAL
 from tldw_chatbook.Chat.console_agent_bridge import (
     STEP_APPROVAL_TIMEOUT,
     build_intermediate_planning_marker,
@@ -43,9 +45,11 @@ from tldw_chatbook.Chat.console_chat_controller import (
     USER_DENIED_REFUSAL as CONTROLLER_USER_DENIED_REFUSAL,
 )
 from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_ACTIVITY_REFUSAL_STATUSES,
     ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleMessageRole,
+    console_activity_status_word,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_turn_grouping import visual_messages
@@ -237,40 +241,119 @@ def test_activity_status_classifies_success_error_timeout_and_non_tool_steps(
 
 
 @pytest.mark.parametrize(
-    "verdict",
+    ("verdict", "expected"),
     [
-        CONTROLLER_USER_DENIED_REFUSAL.format(name="fs_list"),
-        CONTROLLER_KILL_SWITCH_REFUSAL,
+        (CONTROLLER_USER_DENIED_REFUSAL.format(name="fs_list"), "denied"),
+        (CONTROLLER_KILL_SWITCH_REFUSAL, "blocked_kill_switch"),
     ],
 )
-def test_direct_controller_review_results_are_blocked(verdict: str) -> None:
-    assert classify_activity_status(STEP_TOOL_RESULT, verdict) == "blocked"
+def test_direct_controller_review_results_name_who_refused(
+    verdict: str, expected: str
+) -> None:
+    """task-32279: the user's own Deny is not the same state as a policy block."""
+    assert classify_activity_status(STEP_TOOL_RESULT, verdict) == expected
 
 
 @pytest.mark.parametrize(
-    "refusal",
+    ("refusal", "expected"),
     [
         # Builtin gate copy: exact kill-switch text, plus pinned prefixes
         # whose provider-owned suffix is the runtime tool name.
-        "tool execution is disabled by the kill switch",
-        "tool is set to Off: calculator",
-        user_denial_refusal("calculator"),
-        "tool requires approval and none was granted: calculator",
-        LOCAL_DENY_REFUSAL,
-        LOCAL_TIMEOUT_REFUSAL,
-        LOCAL_KILL_SWITCH_REFUSAL,
-        LOCAL_GATE_ERROR_REFUSAL,
-        LOCAL_ROOT_CHANGED_REFUSAL,
-        LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-        MCP_DENY_REFUSAL,
-        MCP_USER_DENY_REFUSAL,
-        MCP_UNRESOLVED_REFUSAL,
-        MCP_TIMEOUT_REFUSAL,
-        MCP_KILL_SWITCH_REFUSAL,
+        ("tool execution is disabled by the kill switch", "blocked_kill_switch"),
+        ("tool is set to Off: calculator", "blocked_off"),
+        (user_denial_refusal("calculator"), "denied"),
+        ("tool requires approval and none was granted: calculator", "blocked"),
+        # Qodo #7: split -- the string below can only mean Off now, and the
+        # user's own Deny has its own.
+        (LOCAL_DENY_REFUSAL, "blocked_off"),
+        (LOCAL_USER_DENY_REFUSAL, "denied"),
+        (LOCAL_TIMEOUT_REFUSAL, "blocked"),
+        (LOCAL_KILL_SWITCH_REFUSAL, "blocked_kill_switch"),
+        (LOCAL_GATE_ERROR_REFUSAL, "blocked"),
+        (LOCAL_ROOT_CHANGED_REFUSAL, "blocked"),
+        (LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL, "blocked"),
+        (MCP_DENY_REFUSAL, "blocked_off"),
+        (MCP_USER_DENY_REFUSAL, "denied"),
+        (MCP_UNRESOLVED_REFUSAL, "blocked"),
+        (MCP_TIMEOUT_REFUSAL, "blocked"),
+        (MCP_KILL_SWITCH_REFUSAL, "blocked_kill_switch"),
+        # Qodo #3: raw shell's Off refusal names the same fact MCP's does.
+        (RAW_SHELL_DENY_REFUSAL, "blocked_off"),
     ],
 )
-def test_error_wrapped_provider_refusals_are_blocked(refusal: str) -> None:
-    assert classify_activity_status(STEP_TOOL_RESULT, f"ERROR: {refusal}") == "blocked"
+def test_error_wrapped_provider_refusals_keep_their_refusing_authority(
+    refusal: str, expected: str
+) -> None:
+    """task-32279: every refusal stays a refusal; only the WORD narrows."""
+    assert classify_activity_status(STEP_TOOL_RESULT, f"ERROR: {refusal}") == expected
+
+
+@pytest.mark.parametrize(
+    ("refusal", "expected"),
+    [
+        (MCP_USER_DENY_REFUSAL, "denied"),
+        (user_denial_refusal("calculator"), "denied"),
+        (MCP_DENY_REFUSAL, "blocked_off"),
+        (MCP_KILL_SWITCH_REFUSAL, "blocked_kill_switch"),
+        (MCP_UNRESOLVED_REFUSAL, "blocked"),
+        (RAW_SHELL_DENY_REFUSAL, "blocked_off"),
+    ],
+)
+def test_structured_blocked_outcome_still_reads_the_refusal_text(
+    refusal: str, expected: str
+) -> None:
+    """The live defect: a Deny arrived as outcome="blocked" and stopped there.
+
+    `tool_outcome` proved only THAT the call was refused, so the transcript
+    said "blocked" for a refusal the user had just made by hand.
+    """
+    assert (
+        classify_activity_status(
+            STEP_TOOL_RESULT, f"ERROR: {refusal}", tool_outcome="blocked"
+        )
+        == expected
+    )
+    assert (
+        classify_activity_status(STEP_TOOL_RESULT, refusal, tool_outcome="blocked")
+        == expected
+    )
+
+
+def test_unrecognised_blocked_outcome_keeps_the_generic_refusal_word() -> None:
+    assert (
+        classify_activity_status(
+            STEP_TOOL_RESULT, "ERROR: disk exploded", tool_outcome="blocked"
+        )
+        == "blocked"
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "word"),
+    [
+        ("denied", "denied by you"),
+        ("blocked_off", "blocked (Off)"),
+        ("blocked_kill_switch", "blocked (kill switch)"),
+        ("blocked", "blocked"),
+        ("success", "success"),
+        ("failed", "failed"),
+    ],
+)
+def test_activity_status_word_is_the_one_transcript_vocabulary(
+    status: str, word: str
+) -> None:
+    """task-32279: the marker's word is derived, never re-spelled per surface."""
+    assert console_activity_status_word(status) == word
+
+
+def test_every_refusal_status_is_named_as_one() -> None:
+    """A refusal's body is the text sent to the MODEL, whoever refused."""
+    assert CONSOLE_ACTIVITY_REFUSAL_STATUSES == {
+        "blocked",
+        "denied",
+        "blocked_off",
+        "blocked_kill_switch",
+    }
 
 
 def test_unknown_error_wrapped_tool_failure_is_failed() -> None:
@@ -297,10 +380,78 @@ def test_structured_success_outcome_overrides_payload_collision(collision: str) 
     )
 
 
-def test_legacy_step_without_structured_outcome_keeps_safe_fallback() -> None:
-    refusal = f"ERROR: {LOCAL_DENY_REFUSAL}"
+def test_local_refusals_name_the_authority_that_actually_refused() -> None:
+    """Qodo #7, replacing `test_local_deny_refusal_never_claims_an_authority_
+    it_cannot_know`.
 
-    assert classify_activity_status(STEP_TOOL_RESULT, refusal) == "blocked"
+    `local_tool_provider` used to return ONE string for a card Deny AND for
+    a configured Off, so the only honest word was the generic "blocked" --
+    the transcript then contradicted the card the user had just answered.
+    The provider now returns a distinct string per authority, so each one
+    renders its own word, in both the `ERROR:`-wrapped and structured
+    `outcome="blocked"` shapes.
+    """
+    for refusal, expected, word in (
+        (LOCAL_DENY_REFUSAL, "blocked_off", "blocked (Off)"),
+        (LOCAL_USER_DENY_REFUSAL, "denied", "denied by you"),
+    ):
+        assert (
+            classify_activity_status(STEP_TOOL_RESULT, f"ERROR: {refusal}") == expected
+        )
+        assert (
+            classify_activity_status(
+                STEP_TOOL_RESULT, refusal, tool_outcome="blocked"
+            )
+            == expected
+        )
+        assert (
+            build_step_activity_presentation(
+                STEP_TOOL_RESULT,
+                tool_name="fs_list",
+                result=refusal,
+                tool_outcome="blocked",
+            ).status
+            == expected
+        )
+        assert console_activity_status_word(expected) == word
+
+
+def test_raw_shell_off_renders_the_off_word_not_the_generic_one() -> None:
+    """Qodo #3: the whole point of the `blocked_off` status is the WORD.
+
+    Classification alone proves nothing the user sees, so pin the rendered
+    marker copy for both shapes a raw-shell Off arrives in.
+    """
+    structured = build_step_activity_presentation(
+        STEP_TOOL_RESULT,
+        tool_name="shell_exec",
+        result=RAW_SHELL_DENY_REFUSAL,
+        tool_outcome="blocked",
+    )
+    wrapped = build_step_activity_presentation(
+        STEP_TOOL_RESULT,
+        tool_name="shell_exec",
+        result=f"ERROR: {RAW_SHELL_DENY_REFUSAL}",
+    )
+
+    assert structured.status == wrapped.status == "blocked_off"
+    assert console_activity_status_word(structured.status) == "blocked (Off)"
+
+
+def test_error_wrapped_controller_kill_switch_is_named_as_one() -> None:
+    """The controller refusal reaches the bridge wrapped as well as raw."""
+    assert (
+        classify_activity_status(
+            STEP_TOOL_RESULT, f"ERROR: {CONTROLLER_KILL_SWITCH_REFUSAL}"
+        )
+        == "blocked_kill_switch"
+    )
+
+
+def test_legacy_step_without_structured_outcome_keeps_safe_fallback() -> None:
+    refusal = f"ERROR: {MCP_DENY_REFUSAL}"
+
+    assert classify_activity_status(STEP_TOOL_RESULT, refusal) == "blocked_off"
     assert (
         classify_activity_status(STEP_TOOL_RESULT, "ERROR: disk exploded") == "failed"
     )
@@ -310,10 +461,10 @@ def test_malformed_persisted_outcome_falls_back_without_raising() -> None:
     assert (
         classify_activity_status(
             STEP_TOOL_RESULT,
-            f"ERROR: {LOCAL_DENY_REFUSAL}",
+            f"ERROR: {MCP_DENY_REFUSAL}",
             tool_outcome="unknown",  # type: ignore[arg-type]
         )
-        == "blocked"
+        == "blocked_off"
     )
 
 

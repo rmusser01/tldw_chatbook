@@ -1359,7 +1359,9 @@ class ConsoleInspectorState:
         Args:
             live_work_title: Pending live-work launch title. Ignored while
                 ``run_active`` -- a running generation always reads
-                "Generating…".
+                "Generating…" -- and ignored while ``approval_count`` is
+                non-zero, which reads "Waiting for your approval" instead
+                (task-32345: outranks ``run_active`` too).
             provider_label: Active provider name for the run-recipe line.
             model_label: Active model name for the run-recipe line.
             provider_ready: Whether the provider can be sent to. ``False``
@@ -1438,9 +1440,15 @@ class ConsoleInspectorState:
             ConsoleDisplayRow("Run recipe", run_recipe),
             ConsoleDisplayRow(
                 "Live work",
-                # TASK-347: a running generation shows "Generating…"; else
-                # the pending Library-RAG launch title, else no active work.
-                "Generating…"
+                # task-32345: a pending approval outranks everything below
+                # -- it is a fact about the USER (a card is waiting on
+                # them), more current than "a generation is in flight".
+                # TASK-347: else a running generation shows "Generating…";
+                # else the pending Library-RAG launch title, else no
+                # active work.
+                "Waiting for your approval"
+                if normalized_approval_count > 0
+                else "Generating…"
                 if run_active
                 else _clean(live_work_title, "No active work"),
             ),
