@@ -4225,3 +4225,219 @@ no complete-PR or merge-readiness claim.
 
 All seven derived checks pass again on this repair checkpoint:
 `/private/tmp/pr2427-notes-fixture-preflight.log`. No generated output changed.
+
+## 2026-09-11: terminal B failures and targeted reconciliation
+
+The previously running B cohort is terminal: **986 passed, 32 failed**, 10
+warnings in 4778.73 seconds. Its native final inventory contains four descriptors,
+zero named SQLite handles and zero instance locks. Evidence:
+`/private/tmp/pr2427-notes-dev-native-b.log` and
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-notes-dev-native-b.Keh6x6/fd_identity.jsonl`.
+
+Work remains on published `81dadcc80bc92988f9def977992708a96c36b6a5`, before
+another dev rebase. TASK31932 steps166–167 record the bounded plan. Re-running
+the exact32 first produced **30 failed, 2 passed** in154.98 seconds
+(`/private/tmp/pr2427-32-baseline.log`). The two isolated passes were not dismissed:
+controlled worker/mount ordering subsequently reproduced both original NoMatches
+failures in37.25 seconds (`/private/tmp/pr2427-lifecycle-proof.log`).
+
+Test-only corrections follow existing accepted contracts: retained Files source
+switch and settled list scrolling; five-cell grips; landing Ctrl+N; separate
+conversation source handoff versus Resume and active archive scope; Settings
+credential recovery; singular export counts; authoritative saved timestamp;
+Notes Info/delete geometry and exact visible keyboard scroll origins; removed
+context row and token display; Search-only query commits; explicit focus-channel
+prerequisites. No product behavior, skips, caps, or cleanup ownership changed.
+Independent review approved the Files diff and identified two Shell copy
+assertions to strengthen before accepting the final patch.
+
+Files return checks: **6 passed** in20.48 seconds, zero final SQLite/locks
+(`/private/tmp/pr2427-files-four-green.log`, native report directory
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-files-four-green.Duou39`).
+The corrected exact32 run is terminal: **29 passed, 3 failed** in87.48 seconds
+(`/private/tmp/pr2427-32-contract-green.log`, native report directory
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-32-contract-green.EGHkqV`).
+Its remaining failures concern Notes deep-link focus after resize, Notes footer
+registration, and attached focus after an empty Conversations recompose. The
+two controlled lifecycle defects remain open despite passing this ungated run.
+Both exact32 runs retain13 SQLite descriptors and one instance lock, with final
+identity/path evidence pointing to the last empty-Conversations fixture; this
+cleanup difference from complete B is under investigation, not accepted.
+
+Read-only attribution explains the observed last-test retention: installed
+pytest retains the final failure in `sys.last_value`/`sys.last_traceback`/
+`sys.last_exc`, clearing it at the next test call. The retained traceback holds
+the empty-Conversations test's app/host/screen; complete B continues after that
+test, whereas exact32 ends there. This is a source-backed explanation, not a
+successful cleanup qualification. Fix the failure and repeat native attribution;
+do not clear process globals or add forced collection to manufacture a result.
+
+Runtime evidence: Files `_initialize` resumes with `is_running=False` while
+`_active`, `is_mounted`, and `is_attached` are still true, then queries an already
+removed path label. Notes backlinks project while the mounted work pane has
+no editor children. The footer's last incorrect publisher is pane visibility
+refresh calling generic `_register_footer_shortcuts`; the Notes-specific helper
+still returns the correct expected tuple. A temporary diagnostic selector
+correction repairs navigator/create/sync footer states, exposing a further stale
+exit expectation for the accepted search-input typing context. Runtime fixes
+are proposed, not implemented; the skill-required design approval is pending.
+
+Scoped fatal Ruff and whitespace checks pass. Complete owning files have not
+been requalified after these edits. No commit, push, rebase, or merge was made
+during this failure-investigation batch; all previously documented size,
+preload, CSS and separate resource-owner blockers remain open.
+
+Final contract refinements: preserve the original selected Notes rail-row focus
+after compact resize (TASK32233 changed the preceding Escape hop, not this
+fallback), and strengthen the RAG callout/export checks to exact text. These
+three tests pass in6.53 seconds, with six final descriptors and zero SQLite/locks:
+`/private/tmp/pr2427-contract-refinements.log`, native report
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-contract-refinements.IUMxF9/fd_identity.jsonl`.
+Combined targeted evidence now verifies corrections for28 of the original32
+failures. It does not establish a clean complete-file run.
+
+The remaining four are runtime defects. In addition to the two lifecycle races
+and footer overwrite, empty Conversations has a missing focus fallback. Its
+test initially injected a detached rail row; reacquiring the current attached
+row corrects that fixture, but a controlled recompose still leaves focus None
+beyond the settlement deadline. The true empty page offers Start in Console,
+not the filter its registered focus channel searches for. Evidence:
+`/private/tmp/pr2427-focus-current.log` (1 failed in6.07 seconds).
+The proposed fourth narrow fix extends that existing channel to the already
+visible recovery action; no new owner or navigation policy is proposed.
+
+The footer test's final exit expectation now pins exact rail typing help.
+Temporary diagnostic selection control plus that expectation and the old metric
+assertions passes the whole test in3.81 seconds
+(`/private/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-footer-exit.JluVS2/exit-control.log`),
+but no tracked runtime change exists. All diagnostic and verification processes
+are terminal. Final fatal scoped Ruff and whitespace pass. Step168 records these
+refinements and the four design-gated runtime candidates.
+
+Final independent review caught a further footer contract violation: that
+diagnostic observed the retired token indicator displayed (empty) on exit,
+because the Notes ancillary publisher still reveals all three indicators.
+TASK17653 requires it to stay hidden; the final test now requires word/DB
+visibility and separately hidden/empty token state, matching its sibling.
+Do not preserve the passing old visibility assertion or claim the temporary
+control qualifies this strengthened test. Include retirement-safe ancillary
+publication in the pending Notes footer fix; no runtime edit has been made.
+
+### Approved direction and written-spec checkpoint
+
+The user approved the targeted runtime fixes on2026-09-11. The written design is
+`Docs/superpowers/specs/2026-09-11-pr2427-library-runtime-repairs-design.md`, saved
+in design-only commit `7906de42ef`. Independent spec review approved it without
+findings. It preserves existing owners and includes the token-indicator repair
+within the footer area. ADR086/141 apply; no new ADR is required.
+
+The required written-spec user review remains before implementation planning.
+No runtime edit, test execution, push, rebase or merge occurred in this design
+checkpoint. Previously verified test corrections remain uncommitted and intact.
+
+### Approved runtime repair implementation (2026-09-11)
+
+Written-spec approval is received; the prior approval gate is closed. The
+independently reviewed plan is
+`Docs/superpowers/plans/2026-09-11-pr2427-library-runtime-repairs.md`.
+One implementation owner changed only the four approved runtime owners and the
+two existing UI test files, preserving the earlier28 contract corrections.
+Notes retains the newest snapshot before checking editor-child readiness;
+Files skips stopped control projection without abandoning its acquired runtime;
+footer registration uses the existing Notes-aware selector and no longer
+reveals the retired token; empty Conversations tries the existing filter then
+the attached/focusable Console recovery action without activating it.
+
+Controlled RED establishes five intended failures, including both actual
+`NoMatches` worker errors: `/private/tmp/pr2427-runtime-red-implementation.log`
+(5 failed,30.05s). Expanded GREEN passes13 in26.42s, including rootful/rootless
+late initialization, retained remount and exact replica close, latest Notes
+snapshot/EditorReady/dirty edit, footer replacement and token retirement, and
+Conversations filter/expiry/newer-focus controls:
+`/private/tmp/pr2427-runtime-green-expanded.log`. Its native report is
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-runtime-green-expanded.SnQHeP/fd_identity.jsonl`:
+six final descriptors, zero SQLite or locks. The mounted sibling Media footer
+typing control passes1 in3.39s, also six final descriptors/zero SQLite or locks:
+`/private/tmp/pr2427-runtime-media-control.log` and
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-runtime-media-control.jEBx1V/fd_identity.jsonl`.
+
+The wider controls are17 passed/4 failed, not clean:
+`/private/tmp/pr2427-runtime-final-controls.log`. All four failures are in
+untouched `Tests/UI/test_library_footer_focus.py`, whose `SimpleNamespace`
+omits `_library_narrow_stage_return_active` used by the byte-identical baseline
+generic dispatcher. These failures are recorded, not skipped or weakened.
+That run also ends with six descriptors/zero SQLite or locks. Initial GREEN
+diagnostics exposed two new-test mistakes (wrong owner alias/first-paint receipt
+and the formatter's literal leading blank); they were corrected in tests,
+without relaxing exact content, ordering or focus assertions.
+
+Fatal scoped Ruff and whitespace pass. Full scoped Ruff has exactly the same
+309 filename/code/message findings as baseline, not a clean-full-lint claim.
+Six derived-artifact checks pass in
+`/private/tmp/pr2427-runtime-preflight.log`; the sandbox could not acquire the
+declared Mermaid input. The unchanged hash-pinned checker succeeds with network
+access in `/private/tmp/pr2427-runtime-mermaid-retry.log` (all six generated
+outputs reproduce). No generated files were changed.
+
+Implementation review and integrated qualification are in progress. The
+independent unsharded inventory contains1063 cases across both complete UI files
+and `Tests/Widgets/Library/test_library_notes_canvas.py`. Three deterministic
+native-observed shards cover that inventory without xdist; their union must be
+checked for exact-once coverage. Original32 plus eight controlled cases run
+separately, unsharded. Sources are frozen; no rebase, publication or merge is
+claimed while these runs remain pending.
+
+The first original32-plus-eight run completed40 passed in96.31s with six final
+descriptors and zero SQLite/locks: `/private/tmp/pr2427-runtime-original32.log`,
+report
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-runtime-original32.zkGEIL/fd_identity.jsonl`.
+Independent spec review then required a stronger no-navigation observation:
+the harness can stay on Library while a separate app receives a Console-open
+call. Behavior-preserving spies now wrap the real app method and assert zero
+calls after empty entry/recompose and expiry/newer-focus recovery. All three
+strengthened cases pass in9.56s, six descriptors/zero SQLite or locks:
+`/private/tmp/pr2427-runtime-navigation-spy.log`, report
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-runtime-navigation-spy.ln7wYl/fd_identity.jsonl`.
+Spec re-review approves Task1 without remaining findings; quality review follows.
+
+Before that assertion edit, the three full-file shards were deliberately
+stopped. Shards0/1 ended on interrupt (exit2;50/87 passed), and shard2 required
+termination after not responding to interrupt (exit143; incomplete). Their
+`/private/tmp/pr2427-runtime-shard{0,1,2}.log` files are aborted diagnostic
+evidence only, never complete coverage or cleanup qualification. Fresh full-file
+processes and an original32-plus-eight rerun are required after final review.
+
+Quality review found a real remaining partial-mount race, so Task1 is not yet
+approved. Holding `#library-note-context-keywords-row` before its children mount
+while the real title is already queryable reproduces `NoMatches` for the context
+keywords field. The whole-subtree regression still passes under this probe,
+demonstrating its coverage gap. The reviewer made no source changes. The writer
+is adding this controlled partial-child case and checking every unconditional
+projection target before writes, as already allowed by the approved spec/plan.
+Latest snapshot retention and existing post-compose replay must remain intact.
+No full-file qualification has restarted, and no implementation commit or push
+has occurred while this finding is open.
+
+The partial-mount refinement is implemented: require the existing direct
+children's mounted state in addition to title presence before any projection.
+Textual recursively awaits composed descendants before marking each direct root
+mounted; no new state flag, coordinator, selector inventory or exception handler
+is needed. The same Notes regression now gates five branches. With the old guard,
+four partial branches fail through real backlinks with missing context keywords,
+mode control, wide keywords and delete confirmation; the whole-pane control
+passes (4 failed/1 passed,18.85s, `/private/tmp/pr2427-notes-partial-red.log`).
+Final targeted controls pass11 in23.25s:
+`/private/tmp/pr2427-notes-partial-green.log`, report
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-notes-partial-green.u24Y6l/fd_identity.jsonl`.
+Final six descriptors include zero SQLite/locks. Fatal Ruff/whitespace pass and
+the complete scoped lint multiset remains the same309 baseline findings.
+Spec re-review approves this anticipated refinement without remaining findings;
+quality re-review is pending. The expanded inventory now gains four cases:
+expected1067 complete-file cases and44 original32-plus-regression cases.
+
+Final independent quality re-review approves the bounded implementation with no
+critical, important or minor findings. Both review gates are now closed. The
+original32 contract corrections and four runtime repairs are ready for an exact
+local implementation checkpoint; complete-file qualification remains pending.
+The four unrelated incomplete-footer-fake failures and previously documented
+size/preload/CSS/resource-owner findings remain open. No merge readiness claim.

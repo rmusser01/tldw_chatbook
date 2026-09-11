@@ -1,6 +1,6 @@
 # PR 2427: remaining Library runtime repairs
 
-Status: design direction approved by the user on 2026-09-11; written-spec review pending.
+Status: design direction and written spec approved by the user on 2026-09-11.
 Task: TASK-31932, steps166–168. Base: `81dadcc80bc92988f9def977992708a96c36b6a5`.
 
 ## Goal and limits
