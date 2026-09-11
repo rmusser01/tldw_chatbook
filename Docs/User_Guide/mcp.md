@@ -25,6 +25,10 @@ MCP manages MCP servers, scoped tools, permissions, and audit readiness
 external tools — most people never need to change anything here."). It's
 organized into four modes: Servers, Tools, Permissions, and Audit.
 
+Below ~120 terminal columns the layout adapts: the detail panel stacks
+under the main area as a compact, scrollable band instead of squeezing
+three unreadable columns.
+
 ## Getting there
 
 - Press **Ctrl+9**, click **⌃9 MCP** in the nav bar, or press **Ctrl+P** →

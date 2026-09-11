@@ -11815,3 +11815,25 @@ async def test_compact_band_renders_select_prompts_without_mid_word_breaks():
             assert "Overview" in rendered
     finally:
         inspector_module.get_cli_setting = original
+
+
+@pytest.mark.asyncio
+async def test_every_mode_renders_usably_at_100x30():
+    """ADR-148 Wave E sweep: each mode's canvas renders at 100x30 with the
+    stacked band present and bounded."""
+    app = WorkbenchApp()
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        for mode, canvas_id in (
+            ("servers", "mcp-mode-canvas-servers"),
+            ("tools", "mcp-mode-canvas-tools"),
+            ("permissions", "mcp-mode-canvas-permissions"),
+            ("audit", "mcp-mode-canvas-audit"),
+        ):
+            workbench.set_mode(mode)
+            await pilot.pause()
+            canvas = app.query_one(f"#{canvas_id}")
+            assert canvas.display
+            assert canvas.region.height > 3
+        assert app.query_one("#mcp-hub-inspector").region.height <= 12
