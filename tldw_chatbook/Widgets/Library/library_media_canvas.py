@@ -196,17 +196,21 @@ def _media_row_label_rest(
     """Return the marker-free Media row label for one responsive density.
 
     task-30044 (critique 2026-09-03 P2): both densities use the SHORT state
-    prefix ("Loaded · " / "Loading · ") -- the old wide-mode prose ("Loaded
-    in Reader            ") consumed ~28 of ~35 label cells and displaced
+    word ("loaded" / "loading") -- the old wide-mode prose ("Loaded in
+    Reader            ") consumed ~28 of ~35 label cells and displaced
     titles to "Quart"/"SQLit", so the row that mattered most was the one
     you couldn't identify.
     """
     visible_title = _visible_row_title(title)
-    state = "Loading" if loading else "Loaded" if loaded else ""
-    prefix = f"{state} · " if state else ""
+    # task-32364 AC#1 (critique #10): the state used to prefix the TITLE
+    # ("▸ Loaded · Attention Is All You Need"), so the row's identity was
+    # displaced by its status. task-30044's constraint still holds -- the
+    # SHORT word, never the old prose -- it just belongs on the fact line.
+    state = "loading" if loading else "loaded" if loaded else ""
+    detail = f"{secondary} · {state}" if state else secondary
     if compact:
-        return f" {prefix}{visible_title} · {secondary}"
-    return f" {prefix}{visible_title}\n    {secondary}"
+        return f" {visible_title} · {detail}"
+    return f" {visible_title}\n    {detail}"
 
 
 class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
@@ -456,6 +460,22 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         actions = self._media_actions_for_press(event)
         if actions is not None:
             actions.handle_library_media_filter_clear(event)
+
+    @on(Button.Pressed, "#library-media-scope-clear")
+    def handle_library_media_scope_clear(self, event: Button.Pressed) -> None:
+        """Route the scope line's Clear to the media controller (task-32350).
+
+        A separate row from "Clear filter" on purpose: the two clear
+        different things, and the region-ownership census maps one handler
+        to exactly one selector.
+
+        Args:
+            event: Press of the scope line's "Clear", forwarded unchanged to
+                the media controller, which owns the behaviour.
+        """
+        actions = self._media_actions_for_press(event)
+        if actions is not None:
+            actions.handle_library_media_scope_clear(event)
 
     @on(Button.Pressed, "#library-media-sort")
     def handle_library_media_sort(self, event: Button.Pressed) -> None:
@@ -1009,6 +1029,34 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             )
             sets_btn.display = not select_mode
             yield sets_btn
+        # task-32350: the applied scope, stated. The filter Input below is a
+        # draft until submitted, so it cannot be trusted to describe the
+        # rows; this line is projected from the applied scope in
+        # build_library_media_browse_state and can only ever agree with them.
+        # A state built by the legacy ``build_library_media_state`` carries no
+        # scope_line; an empty Static would just spend a row saying nothing.
+        if self.canvas.scope_line:
+            scope_row = Horizontal(id="library-media-scope-row")
+            scope_row.styles.height = "auto"
+            with scope_row:
+                # Width comes from `.library-media-scope-line` (1fr +
+                # ellipsis), not an inline style: an auto-width Static
+                # pushed its own Clear off the pane edge once the Reader
+                # narrowed Items.
+                yield Static(
+                    self.canvas.scope_line,
+                    id="library-media-scope-line",
+                    classes="library-media-scope-line",
+                    markup=False,
+                )
+                if self.canvas.scope_clearable:
+                    yield Button(
+                        "Clear",
+                        id="library-media-scope-clear",
+                        classes="library-canvas-action",
+                        compact=True,
+                        tooltip="Clear the filter and type this line states.",
+                    )
         filter_row = Horizontal(classes="ds-toolbar")
         filter_row.styles.height = "auto"
         with filter_row:

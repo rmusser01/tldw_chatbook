@@ -239,6 +239,23 @@ the same markers, after the CLI's short summary.
 hand-edit to elaborate — never the other order. Diff the task file after any `--notes`
 call to confirm what survived.
 
+**Second instance, 2026-09-11 (critique-10 fix wave, task-32057).** Nearly four
+years of this file saying so did not stop it. Closing out the pagers branch,
+`backlog task edit 32057 --notes "<short summary>"` was run on a task that
+already carried hand-written notes for AC#2, AC#3 and AC#4 plus its modified-file
+list. The command printed success; the detail was gone. It was recoverable only
+because the task file had already been committed — `git checkout HEAD -- "<task
+file>"` brought it back, and the short summary was then re-applied by hand inside
+the markers. Had the notes been written and not yet committed, they were
+unrecoverable: nothing else holds a copy.
+
+The sharpened rule, because "run `--notes` first" is easy to forget an hour into
+a close-out: **`--notes` is a create-only flag. On a task that already has an
+`## Implementation Notes` section, never use it — edit the Markdown between
+`<!-- SECTION:NOTES:BEGIN -->` and `<!-- SECTION:NOTES:END -->` directly.** And
+commit the task file before any `backlog task edit`, so git is the backstop the
+CLI does not give you.
+
 ---
 
 ## Never `git add -A` while resolving a rebase conflict

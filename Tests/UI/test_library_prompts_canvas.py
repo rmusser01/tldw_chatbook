@@ -1331,7 +1331,7 @@ async def test_prompts_canvas_rows_show_first_class_type_source_and_lane_summary
                 artifact_type="recipe",
                 type_label="Recipe",
                 source_label="Server",
-                lane_summary="System + User",
+                lane_summary="has system and user text",
             ),
         ),
         count=1,
@@ -1341,7 +1341,7 @@ async def test_prompts_canvas_rows_show_first_class_type_source_and_lane_summary
 
     async with app.run_test() as pilot:
         label = str(pilot.app.query_one("#library-prompt-row-8", Button).label)
-        assert "Recipe · Server · System + User" in label
+        assert "Recipe · Server · has system and user text" in label
         assert "Reusable structure" in label
 
 
@@ -5235,7 +5235,7 @@ async def test_library_real_recipe_list_pipeline_preserves_type_source_and_lanes
         await _wait_for_selector(screen, pilot, f"#library-prompt-row-{prompt_id}")
 
         button = screen.query_one(f"#library-prompt-row-{prompt_id}", Button)
-        assert "Recipe · Local · System + User" in str(button.label)
+        assert "Recipe · Local · has system and user text" in str(button.label)
         [record] = screen._library_prompt_browse_controller.result.items
         assert record["id"] == f"local:prompt:{prompt_uuid}"
         assert record["local_id"] == prompt_id

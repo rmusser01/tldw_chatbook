@@ -72,7 +72,7 @@ the canvas scrolls, so the trust panel may sit below the fold.
 
 | Line | Action button |
 |---|---|
-| "Skill trust isn't set up — set it up to review and use skills." | **Set up skill trust** |
+| "Skill trust isn't set up, so every skill reads “needs review” — set it up to review and use skills." | **Set up skill trust** |
 | "Skill trust needs to be set up again after an update." | **Set up skill trust** |
 | "Skill trust is temporarily unavailable — try again." | **Retry** |
 | "Skill trust is locked for this session." | **Unlock** |
@@ -84,6 +84,13 @@ A standalone **Reset skill trust…** button appears next to the header for
 the locked and set-up-again states. It two-step confirms with "Reset skill
 trust? Every skill will need re-approval. Your skills are not deleted."
 (**Reset** / **Cancel**).
+
+### Pager
+
+The pager under the list shows the item range, and — only when a second page
+exists — the page number, the boundary reason, and the **Previous** / **Next**
+controls. A list that fits on one page has nowhere to page to, so none of that
+chrome is drawn; this matches every other Library list.
 
 ### Importing
 
@@ -454,3 +461,9 @@ check.)*
 row carries its trust state as a word, so an approved and an unapproved skill
 no longer paint alike; task-32217: with no skill open the list takes the
 columns the "Select a skill to inspect it here." pane was holding).*
+
+*Verified against fix/library-crit10-pagers — 2026-09-11 (task-32363: the
+trust banner says that with no trust store every skill reads "needs review",
+so an approval made earlier is unverifiable rather than lost; task-32354: the
+Skills pager drops "Page 1 of 1", its boundary reasons and the two dead
+controls when everything fits on one page).*

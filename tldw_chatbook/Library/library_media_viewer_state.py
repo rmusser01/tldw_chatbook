@@ -514,14 +514,32 @@ def build_library_media_highlight_rows(
 
 
 def detail_analysis_text(detail: Mapping[str, Any]) -> str:
-    """Public read of the newest version's analysis text (see the private helper)."""
-    return _latest_version_analysis_text(detail)
+    """Public read of the analysis the Reader would DISPLAY for ``detail``.
+
+    Qodo on #2602: this returned only the newest version's text, while
+    ``build_library_media_viewer_state`` prefers a top-level
+    ``analysis_content`` and falls back to versions -- so a detail carrying
+    the top-level form with no versions displayed an analysis while both
+    callers here reported none (Find refused it, and the bulk Analyze gate
+    counted the item as un-analyzed). Both want "the analysis the Reader
+    shows", and ``_library_media_unanalyzed_ids`` says exactly that in its
+    own docstring, so the precedence is fixed once, here.
+
+    Args:
+        detail: A ``get_media_item`` detail mapping.
+
+    Returns:
+        The displayed analysis text, or "" when there is none.
+    """
+    return _text(detail.get("analysis_content")) or _latest_version_analysis_text(
+        detail
+    )
 
 
 def analysis_find_unavailable_reason(
-    *, mode: str, analysis: str, generating: bool, editing: bool
+    *, mode: str, analysis: str, generating: bool, editing: bool, external: bool = False
 ) -> str:
-    """Why Find cannot open on the Analysis tab right now, or "" when it can.
+    """Why Find cannot open on the Reader tab being read, or "" when it can.
 
     Qodo on #2378: Find opens the bar for the tab being read, and the
     Analysis tab composes its bar only around analysis text. With no text
@@ -534,10 +552,31 @@ def analysis_find_unavailable_reason(
         analysis: The current analysis text, or "".
         generating: Whether an analysis is being generated.
         editing: Whether the analysis edit form is open.
+        external: Whether this is a server ("external") detail. Those
+            compose the READ body whatever mode was retained
+            (``_compose_active_body``'s first branch is
+            ``external_detail or reader_mode == "read"``), so they always
+            have a bar to mount and are always searchable.
 
     Returns:
         The user-facing reason, or "" when Find is available.
     """
+    # task-32348 (critique #10, B D4): Find mounts the bar that
+    # ``_compose_active_body`` composes, and only the Read and Analysis
+    # bodies compose one. On Info/Highlights the gate returned "" (the
+    # function only ever considered the Analysis tab), so the button was
+    # enabled, armed ``find_open``, mounted nothing, and left focus outside
+    # any Input -- where the next typed character fired the screen's own
+    # accelerators ("t" armed "Delete this media?", B D4a).
+    if external:
+        # Qodo on #2602: an external detail renders the Read body no matter
+        # which mode the session carried in, so refusing it on a retained
+        # "info"/"highlights" would disable Find over text that is on screen
+        # -- and the gate returned "" for every non-analysis mode before this
+        # task, so that would be a regression, not a tightening.
+        return ""
+    if mode in ("info", "highlights"):
+        return "This tab has no text to search · switch to Read or Analysis."
     if mode != "analysis":
         return ""
     if generating:

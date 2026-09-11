@@ -13254,3 +13254,29 @@ An exact canonical receipt/default shape, with four negative metadata regression
 resolved it; all 39 selected closed-history cases passed. Locate the actual failed
 boundary before treating every post-rebase failure as either fixture-only or a
 production regression.
+
+### A pipeline's exit code is the LAST command's — `pytest | tail` always looks green (2026-09-11)
+
+During the critique-10 fix wave a branch verified a change with
+`… -m pytest <file> -q | tail -40` and read the command as passing. It was not:
+the run was red, and `tail` had exited 0 over it. A shell pipeline reports the
+status of its **last** command, so every `pytest | tail`, `pytest | grep`,
+`pytest | head` reports the status of the filter, never the test run. The
+failure is silent in the worst way — the tool that lies is the one added for
+readability, and the failing names are usually scrolled off above the tail
+window, so the output *looks* consistent with the exit code.
+
+This is why the wave's brief mandated the redirect form, and it is the form to
+use:
+
+```bash
+… -m pytest <node id> -q -p no:cacheprovider > /tmp/<name>.txt 2>&1
+tail -40 /tmp/<name>.txt          # separate command; the status above is pytest's
+```
+
+Read the **summary line** out of the file (`N failed, M passed`), not the exit
+status of whatever printed it. `set -o pipefail` fixes the exit code but not the
+lost output, and it is not on by default in the shells these commands run in.
+The same trap sits behind `./scripts/preflight.sh | tail` — a known previous
+incident in this repo, and the reason preflight is always run bare.
+

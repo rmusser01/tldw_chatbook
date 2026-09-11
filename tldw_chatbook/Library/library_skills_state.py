@@ -809,8 +809,13 @@ def skill_trust_header_line(posture: str, blocked_count: int) -> tuple[str, str]
         action), or ``None`` to hide the header entirely.
     """
     if posture == "needs_setup":
+        # task-32363 (critique #10, B D5): with no trust store every skill
+        # reads "needs review", including ones approved earlier -- the list
+        # looked wrong rather than unverifiable. The banner now states the
+        # precedence instead of leaving the reader to infer it.
         return (
-            "Skill trust isn't set up — set it up to review and use skills.",
+            "Skill trust isn't set up, so every skill reads \"needs review\" — "
+            "set it up to review and use skills.",
             "setup",
         )
     if posture == "needs_resetup":
