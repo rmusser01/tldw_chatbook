@@ -1152,17 +1152,22 @@ def remap_credential_copies(
         path = _staged_path(staging, copies[record["file"]])
         if path == Path(staging) / record["file"]:
             raise ValueError("credential_original_mutation")
-        data = json.loads(_read(path))
-        matches = [
-            target
-            for target in _targets(data)
-            if target["server_id"] == record["server_id"]
-        ]
-        if not matches:
-            raise ValueError("credential_reference_changed")
-        for target in matches:
-            target["auth_reference"] = "keyring:" + plan["purpose"]
-        _write(path, json.dumps(data))
+        _remap_server_reference(path, record, plan["purpose"])
+
+
+def _remap_server_reference(path, record, purpose):
+    """Rewrite only a supported server reference in an owned private copy."""
+    data = json.loads(_read(path))
+    matches = [
+        target
+        for target in _targets(data)
+        if target["server_id"] == record["server_id"]
+    ]
+    if not matches:
+        raise ValueError("credential_reference_changed")
+    for target in matches:
+        target["auth_reference"] = "keyring:" + purpose
+    _write(path, json.dumps(data))
 
 
 def check_replacement_credential(record, plan, *, allow_existing=False) -> None:
@@ -1232,3 +1237,53 @@ def verify_replacement_credential(record, plan) -> dict[str, str]:
         "purpose": plan["purpose"],
         "value_digest": _fingerprint(value),
     }
+
+
+def plan_rollback_credential(record):
+    """Plan an absent fresh destination from an authenticated remappable value."""
+    if (
+        record["kind"] != "server"
+        or not record["remappable"]
+        or record["status"] != "captured"
+    ):
+        raise ValueError("rollback_credential_scope_changed")
+    purpose = "recovery_" + uuid4().hex + "_" + record["purpose"]
+    try:
+        if _read_scope({**record, "purpose": purpose}, _credential_store()) is not None:
+            raise ValueError("credential_scope_collision")
+    except Exception:  # noqa: BLE001 - backend errors may contain secret values
+        raise ValueError("rollback_credential_store_unavailable") from None
+    return {
+        "purpose": purpose,
+        "material_digest": _fingerprint(record),
+        "value_digest": _fingerprint(record["value"]),
+    }
+
+
+def verify_rollback_credential(record, plan, *, apply=False):
+    """Check/create only the intended fresh scope; never read or mutate the old scope."""
+    from tldw_chatbook.runtime_policy.server_credentials import ServerCredentialScope
+
+    if (
+        record["kind"] != "server"
+        or not record["remappable"]
+        or record["status"] != "captured"
+        or plan["material_digest"] != _fingerprint(record)
+        or plan["value_digest"] != _fingerprint(record["value"])
+        or not re.fullmatch(
+            "recovery_[0-9a-f]{32}_" + re.escape(record["purpose"]), plan["purpose"]
+        )
+    ):
+        raise ValueError("rollback_credential_plan_invalid")
+    try:
+        store = _credential_store()
+        scope = ServerCredentialScope.legacy(record["server_id"], plan["purpose"])
+        value = store.get_scoped_secret(scope)
+        if value is None and apply:
+            store.set_recovery_secret_if_absent(scope, record["value"])
+            value = store.get_scoped_secret(scope)
+        if value != record["value"]:
+            raise ValueError("rollback_credential_value_changed")
+    except Exception:  # noqa: BLE001 - backend errors may contain secret values
+        raise ValueError("rollback_credential_value_changed") from None
+    return {"purpose": plan["purpose"], "value_digest": _fingerprint(value)}

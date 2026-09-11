@@ -441,7 +441,15 @@ class _MoveParent(_Evidence):
 
 class _MoveIntent(_Evidence):
     logical_id: str
-    step: Literal["retire", "publish", "unpublish", "restore"]
+    step: Literal[
+        "retire",
+        "publish",
+        "unpublish",
+        "restore",
+        "credential_retire",
+        "credential_publish",
+        "credential_unpublish",
+    ]
     source: _Object
     destination: str
     parents: list[_MoveParent] = Field(min_length=1, max_length=2)
@@ -461,7 +469,48 @@ class _RollbackStarted(_Evidence):
     retained_credential_scopes: list[str] = Field(max_length=10000)
 
 
+class _RollbackCredentialScope(_Evidence):
+    purpose: str
+    material_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    value_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class _RollbackCredentialReference(_Evidence):
+    record_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    logical_id: str
+    target: str
+    artifact_id: str
+    owner: Literal["mcp.targets"]
+
+
+class _RollbackCredentialArtifact(_Evidence):
+    logical_id: str
+    candidate: _Object
+    metadata: _Object
+
+
+class _RollbackCredentialPlan(_Evidence):
+    rollback_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    previous_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    material_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    scopes: dict[str, _RollbackCredentialScope] = Field(min_length=1, max_length=10000)
+    references: list[_RollbackCredentialReference] = Field(
+        min_length=1, max_length=10000
+    )
+    artifacts: list[_RollbackCredentialArtifact] = Field(
+        min_length=1, max_length=MAX_EVENTS
+    )
+
+
+class _RollbackCredentialApplied(_Evidence):
+    plan_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    record_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    purpose: str
+    value_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class _OriginalsValidated(_Evidence):
+    credential_plan_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     rollback_started_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     artifacts: list[_Object] = Field(max_length=MAX_EVENTS)
     directories: list[_DirectoryState] = Field(max_length=MAX_EVENTS)
@@ -561,6 +610,8 @@ class _Event(_Evidence):
         "rolled_back",
         "rollback_metadata_started",
         "rollback_metadata_applied",
+        "rollback_credentials_planned",
+        "rollback_credential_applied",
         "directory_metadata_started",
         "directory_metadata_applied",
     ]
@@ -656,8 +707,20 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
             allowed = {"rolled_back"}
         elif events[-1] == "rolled_back":
             allowed = set()
+    if "rollback_credentials_planned" in events and not rolling:
+        allowed = {"rollback_started"}
     if events and events[-1] == "move_intended":
         allowed = {"move_observed"}
+    if (
+        prepared_record is not None
+        and prepared_record.evidence["mode"] == "replace"
+        and "rollback_verified" in events
+        and not any(value in events for value in ("committed", "rolled_back"))
+        and events[-1] != "move_intended"
+    ):
+        allowed.add("rollback_credentials_planned")
+        if "rollback_credentials_planned" in events:
+            allowed.add("rollback_credential_applied")
     if event not in allowed:
         raise ValueError("journal_transition_invalid")
     if (
@@ -673,6 +736,8 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
         "originals_validated": _OriginalsValidated,
         "rollback_activation_recorded": _RollbackActivation,
         "rolled_back": _RolledBack,
+        "rollback_credentials_planned": _RollbackCredentialPlan,
+        "rollback_credential_applied": _RollbackCredentialApplied,
         "rollback_metadata_started": _DirectoryIntent,
         "rollback_metadata_applied": _DirectoryProgress,
         "candidate_staged": _CandidateReceipt,
@@ -701,6 +766,8 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
             "rolled_back",
             "rollback_metadata_started",
             "rollback_metadata_applied",
+            "rollback_credentials_planned",
+            "rollback_credential_applied",
         }:
             _validate_reverse_evidence(event, validated, prior, prepared_record)
         elif isinstance(validated, _Rollback):
@@ -1028,28 +1095,61 @@ def _validate_reverse_evidence(event, value, prior, prepared_record):
     rolling = next((row for row in prior if row.event == "rollback_started"), None)
     if event == "move_intended":
         item = items.get(value.logical_id)
-        if item is None or (value.step in {"unpublish", "restore"}) != (
-            rolling is not None
-        ):
+        if item is None or (
+            value.step in {"unpublish", "restore"}
+            or value.step.startswith("credential_")
+        ) != (rolling is not None):
             raise ValueError("move_context_invalid")
-        source, target = {
-            "retire": (item.previous, item.retained),
-            "publish": (item.candidate, item.target),
-            "unpublish": (
-                item.candidate,
-                item.candidate.path if item.candidate else None,
-            ),
-            "restore": (item.previous, item.target),
-        }[value.step]
-        source_path = (
-            item.target
-            if value.step == "unpublish"
-            else item.retained
-            if value.step == "restore"
-            else source.path
-            if source
-            else None
-        )
+        if value.step.startswith("credential_"):
+            candidates = [
+                entry
+                for row in prior
+                if row.event == "rollback_credentials_planned"
+                for entry in _RollbackCredentialPlan.model_validate(
+                    row.evidence
+                ).artifacts
+                if entry.logical_id == item.logical_id
+            ]
+            latest = next((entry for entry in reversed(candidates)), None)
+            if value.step == "credential_retire" and latest is not None:
+                source, source_path, target = item.previous, item.target, item.retained
+            elif value.step == "credential_publish" and latest is not None:
+                source, source_path, target = (
+                    latest.candidate,
+                    latest.candidate.path,
+                    item.target,
+                )
+            elif value.step == "credential_unpublish":
+                source = next(
+                    (
+                        entry.candidate
+                        for entry in candidates
+                        if entry.candidate.path == value.destination
+                    ),
+                    None,
+                )
+                source_path, target = item.target, value.destination
+            else:
+                raise ValueError("move_mapping_invalid")
+        else:
+            source, target = {
+                "retire": (item.previous, item.retained),
+                "publish": (item.candidate, item.target),
+                "unpublish": (
+                    item.candidate,
+                    item.candidate.path if item.candidate else None,
+                ),
+                "restore": (item.previous, item.target),
+            }[value.step]
+            source_path = (
+                item.target
+                if value.step == "unpublish"
+                else item.retained
+                if value.step == "restore"
+                else source.path
+                if source
+                else None
+            )
         if (
             source is None
             or value.source.model_dump(exclude={"path"})
@@ -1082,6 +1182,68 @@ def _validate_reverse_evidence(event, value, prior, prepared_record):
         }
         if {row.path: (row.device, row.inode) for row in value.directories} != expected:
             raise ValueError("move_directory_invalid")
+    elif event == "rollback_credentials_planned":
+        rollback = next(row for row in prior if row.event == "rollback_verified")
+        if value.rollback_digest != _evidence_digest(
+            rollback.evidence
+        ) or value.previous_digest != _evidence_digest(prior[-1].evidence):
+            raise ValueError("rollback_credential_plan_invalid")
+        artifact_ids = {row.logical_id for row in value.artifacts}
+        if (
+            len(artifact_ids) != len(value.artifacts)
+            or {row.record_id for row in value.references} != set(value.scopes)
+            or len(value.references) != len(value.scopes)
+            or artifact_ids != {row.artifact_id for row in value.references}
+        ):
+            raise ValueError("rollback_credential_plan_invalid")
+        for row in value.artifacts:
+            item = items.get(row.logical_id)
+            if (
+                item is None
+                or item.previous is None
+                or row.candidate.path != row.metadata.path
+                or (row.candidate.device, row.candidate.inode, row.candidate.kind)
+                != (row.metadata.device, row.metadata.inode, row.metadata.kind)
+                or row.candidate.device != item.previous.device
+                or Path(item.retained).parent not in Path(row.candidate.path).parents
+                or row.candidate.kind != item.previous.kind
+            ):
+                raise ValueError("rollback_credential_plan_invalid")
+        for row in value.references:
+            item = items[row.artifact_id]
+            if not (
+                Path(row.target) == Path(item.target)
+                or item.previous.kind == "directory"
+                and Path(item.target) in Path(row.target).parents
+            ):
+                raise ValueError("rollback_credential_plan_invalid")
+        for scope in value.scopes.values():
+            import re
+
+            if (
+                re.fullmatch(r"recovery_[0-9a-f]{32}_[A-Za-z0-9_.-]+", scope.purpose)
+                is None
+            ):
+                raise ValueError("rollback_credential_plan_invalid")
+    elif event == "rollback_credential_applied":
+        plan = next(
+            row
+            for row in reversed(prior)
+            if row.event == "rollback_credentials_planned"
+        )
+        expected = plan.evidence["scopes"].get(value.record_id)
+        phase = prior[prior.index(plan) + 1 :]
+        if (
+            expected is None
+            or value.plan_digest != _evidence_digest(plan.evidence)
+            or value.purpose != expected["purpose"]
+            or value.value_digest != expected["value_digest"]
+            or any(
+                row.event == event and row.evidence["record_id"] == value.record_id
+                for row in phase
+            )
+        ):
+            raise ValueError("rollback_credential_value_invalid")
     elif event == "rollback_started":
         rollback = next(row for row in prior if row.event == "rollback_verified")
         if (
@@ -1105,6 +1267,32 @@ def _validate_reverse_evidence(event, value, prior, prepared_record):
             for item in prepared.artifacts
             if item.previous is not None
         }
+        credential = next(
+            (
+                row
+                for row in reversed(prior)
+                if row.event == "rollback_credentials_planned"
+            ),
+            None,
+        )
+        if value.credential_plan_digest != (
+            _evidence_digest(credential.evidence) if credential else None
+        ):
+            raise ValueError("rollback_credential_plan_invalid")
+        if credential:
+            for row in _RollbackCredentialPlan.model_validate(
+                credential.evidence
+            ).artifacts:
+                expected[items[row.logical_id].target] = row.metadata.model_copy(
+                    update={"path": items[row.logical_id].target}
+                )
+            phase = prior[prior.index(credential) + 1 :]
+            if {
+                row.evidence["record_id"]
+                for row in phase
+                if row.event == "rollback_credential_applied"
+            } != set(credential.evidence["scopes"]):
+                raise ValueError("rollback_credential_application_incomplete")
         if (
             value.rollback_started_digest != _evidence_digest(rolling.evidence)
             or {row.path: row for row in value.artifacts} != expected
@@ -1151,6 +1339,16 @@ def _validate_reverse_evidence(event, value, prior, prepared_record):
         ] or value.activation_digest != _evidence_digest(prior[-1].evidence):
             raise ValueError("rollback_terminal_invalid")
     elif event in {"rollback_metadata_started", "rollback_metadata_applied"}:
+        credential = next(
+            (
+                row
+                for row in reversed(prior)
+                if row.event == "rollback_credentials_planned"
+            ),
+            None,
+        )
+        if credential:
+            prior = prior[prior.index(credential) + 1 :]
         item = next(
             (
                 row
@@ -1295,6 +1493,8 @@ class Journal:
             "rolled_back",
             "rollback_metadata_started",
             "rollback_metadata_applied",
+            "rollback_credentials_planned",
+            "rollback_credential_applied",
         }:
             raise ValueError("recovery_execution_required")
         if event in {

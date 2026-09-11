@@ -509,8 +509,13 @@ def _rollback_activation_successor(
     journal = Journal(control, operation_id)
     with pinned_directory(journal.root) as parent:
         rows = journal._records(parent)
+    from .rollback_credentials import current_phase
+
+    phase = current_phase(rows)
     start = next((row for row in rows if row.event == "rollback_started"), None)
-    validated = next((row for row in rows if row.event == "originals_validated"), None)
+    validated = next(
+        (row for row in reversed(phase) if row.event == "originals_validated"), None
+    )
     if (
         start is None
         or validated is None
@@ -561,10 +566,13 @@ def _operation_activation_generation(control, operation_id, witness, selector):
     rolling = next((row for row in rows if row.event == "rollback_started"), None)
     generation = rolling.evidence["generation"] if rolling else prepared.generation
     validated = "originals_validated" if rolling else "installed_validated"
+    from .rollback_credentials import current_phase
+
+    phase = current_phase(rows) if rolling else rows
     return (
         prepared.mode == "replace"
         and bool(prepared.replacement_profiles)
-        and any(row.event == validated for row in rows)
+        and any(row.event == validated for row in phase)
         and witness["generation"] == generation
         and witness["operation_id"] == operation_id
         and witness["store_root"] == str(control / "activation")

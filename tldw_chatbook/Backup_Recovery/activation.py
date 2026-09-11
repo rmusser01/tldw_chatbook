@@ -456,7 +456,7 @@ def _rollback_installation_id(selector, root, witness, profiles, rows, prepared)
 
     started = next(row for row in rows if row.event == "rollback_started")
     activation = next(
-        row for row in rows if row.event == "rollback_activation_recorded"
+        row for row in reversed(rows) if row.event == "rollback_activation_recorded"
     )
     entry = next(
         (row for row in started.evidence["profiles"] if row["config"] == str(selector)),

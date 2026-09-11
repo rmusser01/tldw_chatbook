@@ -377,7 +377,7 @@ def test_recovery_refuses_changed_local_evidence_before_any_reverse(
 
 
 @pytest.mark.parametrize("drift", [False, True])
-def test_actual_original_credentials_must_match_and_new_scopes_are_retained(
+def test_actual_original_credentials_reuse_or_remap_and_new_scopes_are_retained(
     tmp_path, monkeypatch, helper_resource_root, drift
 ):
     from Tests.Backup_Recovery.test_replacement import _credential_candidate
@@ -412,8 +412,7 @@ def test_actual_original_credentials_must_match_and_new_scopes_are_retained(
         scoped = dict(backend.values)
         if drift:
             store.set_secret("peer", "api_key", "changed-old-secret")
-            before = {path: path.read_bytes() for path in original}
-            with pytest.raises(ValueError, match="rollback_credential_scope_changed"):
+            assert (
                 replacement.recover_replacement(
                     operation,
                     control_root=tmp_path / "control",
@@ -421,8 +420,17 @@ def test_actual_original_credentials_must_match_and_new_scopes_are_retained(
                     rollback_password=b"rollback",
                     cancel=Event(),
                 )
-            assert all(path.read_bytes() == value for path, value in before.items())
-            assert not bootstrap.startup_permission(case[-1], tmp_path / "bootstrap")[0]
+                == "rolled_back"
+            )
+            import json
+
+            purpose = json.loads(targets.read_bytes())["targets"][0][
+                "auth_reference"
+            ].removeprefix("keyring:")
+            assert store.get_secret("peer", purpose) == "current-shared-secret"
+            assert store.get_secret("peer", "api_key") == "changed-old-secret"
+            assert case[-1].read_bytes() == original[case[-1]]
+            assert bootstrap.startup_permission(case[-1], tmp_path / "bootstrap")[0]
         else:
             assert (
                 replacement.recover_replacement(

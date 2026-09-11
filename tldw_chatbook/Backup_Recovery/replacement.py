@@ -914,9 +914,8 @@ def _read_credential_records(candidate, prepared, session):
 
 @contextmanager
 def _unlock_recovery(journal, prepared, password, session, cancel):
-    """Authenticate this exact held rollback archive and check original credentials."""
-    from .credentials import _credential_store, _fingerprint, _read_scope
-    from .journal import _evidence_digest, _Rollback
+    """Authenticate this exact held rollback archive and expose its captured values."""
+    from .journal import _Rollback
     from .space import require_capacity
 
     require_rollback_password(password)
@@ -962,32 +961,12 @@ def _unlock_recovery(journal, prepared, password, session, cancel):
         )
         if not _matches(proof.ciphertext, proof.ciphertext.path):
             raise ValueError("rollback_ciphertext_changed")
-        limits = ArchiveLimits()
+        from .rollback_credentials import RollbackMaterial
 
-        def check_credentials():
-            _finalization_session(session, prepared.publication, prepared)
-            with session._capture_bound_sources(
-                (), view, limits, limits.expanded_bytes
-            ):
-                material = _material(view)
-                checked = {}
-                for record in material:
-                    if (
-                        record["status"] != "captured"
-                        or record["kind"] == "encrypted_config"
-                    ):
-                        continue
-                    try:
-                        value = _read_scope(record, _credential_store())
-                    except Exception:  # noqa: BLE001 - backend errors may contain secrets
-                        raise ValueError("rollback_credential_scope_changed") from None
-                    if value != record["value"]:
-                        raise ValueError("rollback_credential_scope_changed")
-                    checked[record["id"]] = _fingerprint(value)
-            return _evidence_digest(checked)
+        material = RollbackMaterial(archive, view, session, prepared)
+        material.records()
+        yield material
 
-        check_credentials()
-        yield check_credentials
     finally:
         import shutil
 
@@ -1048,7 +1027,10 @@ def recover_replacement(
                     journal, prepared, session, check_credentials, cancel
                 )
                 return "rolled_back"
-            if any(row.event == "rollback_started" for row in records):
+            if any(
+                row.event in {"rollback_started", "rollback_credentials_planned"}
+                for row in records
+            ):
                 raise ValueError("rollback_direction_selected")
             _apply_replacement_credentials(
                 candidate, journal, session=session, cancel=cancel
@@ -1078,12 +1060,13 @@ def recover_replacement(
 
 
 def _rollback_replacement(journal, prepared, session, check_credentials, cancel):
-    """Reverse unchanged retained originals; unsupported credential drift stays fenced."""
+    """Restore retained originals and authenticated remappable credential values."""
     from .activation import bind_activation
     from .archive_models import Metadata
     from .bootstrap import _key
     from .journal import _evidence_digest, _states
     from .native_files import flush_directory, pinned_directory
+    from .plan_records import load_plan
     from .publication import (
         _activation_proof,
         _begin_move,
@@ -1093,7 +1076,15 @@ def _rollback_replacement(journal, prepared, session, check_credentials, cancel)
         _reconcile_moves,
         _reverse_native_move,
     )
+    from .rollback_credentials import (
+        alternate_artifacts,
+        apply_credentials,
+        current_phase,
+        prepare_credentials,
+        restore_alternate,
+    )
 
+    plan = load_plan(journal)
     context = prepared.publication
     root = Path(context.bootstrap_root)
     name = "pending-" + _key(journal.operation_id) + ".json"
@@ -1107,15 +1098,24 @@ def _rollback_replacement(journal, prepared, session, check_credentials, cancel)
         _finalization_session(session, context, prepared)
         _pending(journal, context, targets=_publication_targets(prepared), durable=True)
         _reconcile_moves(journal, parent, prepared, finish=False)
+        credential_plan = prepare_credentials(
+            check_credentials, journal, parent, prepared, plan, cancel
+        )
+        apply_credentials(check_credentials, journal, parent, credential_plan)
         records = journal._records(parent)
+        phase = current_phase(records)
+        alternatives = alternate_artifacts(credential_plan)
         started = next(
             (row for row in records if row.event == "rollback_started"), None
         )
         if started is None:
             _check_directory_states(prepared, records)
-            if "uncertain" in _states(prepared).values():
+            if any(
+                state == "uncertain" and key not in alternatives
+                for key, state in _states(prepared).items()
+            ):
                 raise ValueError("rollback_originals_unverified")
-            check_credentials()
+            check_credentials.check(credential_plan)
             rollback = next(row for row in records if row.event == "rollback_verified")
             prepared_record = next(row for row in records if row.event == "prepared")
             journal._append(
@@ -1134,11 +1134,17 @@ def _rollback_replacement(journal, prepared, session, check_credentials, cancel)
             )
             journal._flush_records(parent)
             started = journal._records(parent)[-1]
-        completed = any(row.event == "originals_validated" for row in records)
+        completed = any(row.event == "originals_validated" for row in phase)
         if not completed:
             for item in reversed(prepared.artifacts):
                 reader._check(cancel)
                 _finalization_session(session, context, prepared)
+                check_credentials.check(credential_plan)
+                if item.logical_id in alternatives:
+                    restore_alternate(
+                        journal, parent, prepared, item, alternatives[item.logical_id]
+                    )
+                    continue
                 state = _states(prepared, logical_id=item.logical_id)[item.logical_id]
                 if state == "uncertain":
                     raise ValueError("rollback_originals_unverified")
@@ -1152,7 +1158,7 @@ def _rollback_replacement(journal, prepared, session, check_credentials, cancel)
                     _reverse_native_move(intent)
                     _complete_move(journal, parent, prepared, intent, moved=True)
             for item in reversed(prepared.directory_metadata):
-                records = journal._records(parent)
+                records = current_phase(journal._records(parent))
                 done = any(
                     row.event == "rollback_metadata_applied"
                     and row.evidence["logical_id"] == item.logical_id
@@ -1204,13 +1210,17 @@ def _rollback_replacement(journal, prepared, session, check_credentials, cancel)
                     },
                 )
                 journal._flush_records(parent)
-            proof = _originals_proof(prepared, started, check_credentials)
+            proof = _originals_proof(
+                prepared, started, check_credentials, credential_plan
+            )
             journal._append(parent, "originals_validated", proof)
             journal._flush_records(parent)
         else:
-            _originals_proof(prepared, started, check_credentials)
-        records = journal._records(parent)
-        validated = next(row for row in records if row.event == "originals_validated")
+            _originals_proof(prepared, started, check_credentials, credential_plan)
+        records = current_phase(journal._records(parent))
+        validated = next(
+            row for row in reversed(records) if row.event == "originals_validated"
+        )
         activation = next(
             (row for row in records if row.event == "rollback_activation_recorded"),
             None,
@@ -1247,7 +1257,7 @@ def _rollback_replacement(journal, prepared, session, check_credentials, cancel)
             != activation.evidence["records"]
         ):
             raise ValueError("rollback_activation_changed")
-        _originals_proof(prepared, started, check_credentials)
+        _originals_proof(prepared, started, check_credentials, credential_plan)
         if journal._records(parent)[-1].event != "rolled_back":
             journal._append(
                 parent,
@@ -1259,7 +1269,7 @@ def _rollback_replacement(journal, prepared, session, check_credentials, cancel)
             )
             journal._flush_records(parent)
         _finalization_session(session, context, prepared)
-        _originals_proof(prepared, started, check_credentials)
+        _originals_proof(prepared, started, check_credentials, credential_plan)
         _pending(journal, context, targets=_publication_targets(prepared), durable=True)
         with pinned_directory(root) as bootstrap:
             info = os.fstat(bootstrap)
@@ -1271,22 +1281,26 @@ def _rollback_replacement(journal, prepared, session, check_credentials, cancel)
             flush_directory(bootstrap)
 
 
-def _originals_proof(prepared, started, check_credentials):
+def _originals_proof(prepared, started, check_credentials, credential_plan=None):
     from .journal import _evidence_digest, _states
+    from .rollback_credentials import alternate_artifacts, originals_proof
 
-    if any(state != "staged" for state in _states(prepared).values()):
+    alternatives = alternate_artifacts(credential_plan)
+    if any(
+        state != "staged" and key not in alternatives
+        for key, state in _states(prepared).items()
+    ):
         raise ValueError("rollback_originals_unverified")
     for row in prepared.safety_sources:
         if not _matches(row.source, row.source.path, metadata=True):
             raise ValueError("safety_source_changed")
-    check_credentials()
+    check_credentials.check(credential_plan)
     return {
+        "credential_plan_digest": _evidence_digest(credential_plan.evidence)
+        if credential_plan
+        else None,
         "rollback_started_digest": _evidence_digest(started.evidence),
-        "artifacts": [
-            observe_artifact(Path(item.target), metadata=True)
-            for item in prepared.artifacts
-            if item.previous
-        ],
+        "artifacts": originals_proof(prepared, credential_plan),
         "directories": [
             _directory_state(item.previous.path).model_dump()
             for item in prepared.directory_metadata
