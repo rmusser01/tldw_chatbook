@@ -27,6 +27,17 @@ _STATUS_CLASS_MAP = {
     "blocked": {"blocked", "missing", "unavailable"},
 }
 
+#: User-facing copy for each legacy-row status class (TASK-32332). The CSS
+#: class stays the styling seam; the TEXT the user reads is sentence-case
+#: copy, and the unclassifiable catch-all says "Off" instead of exposing the
+#: developer token "muted".
+_STATUS_CLASS_COPY = {
+    "ready": "Ready",
+    "running": "Retrieving",
+    "blocked": "Blocked",
+    "muted": "Off",
+}
+
 
 class ConsoleStagedSourceOpenRequested(Message):
     """Request navigation to one staged source's canonical Library row."""
@@ -158,7 +169,7 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
                             markup=False,
                         ),
                         Static(
-                            status_class,
+                            _STATUS_CLASS_COPY.get(status_class, status_class),
                             id=f"console-staged-source-status-{index}",
                             classes=f"console-staged-source-status {status_class}",
                             markup=False,
@@ -199,7 +210,11 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
                 classes="console-rail-section-title",
             )
             yield Static(
-                str(self.state.source_count),
+                (
+                    "none"
+                    if not self.state.source_count
+                    else str(self.state.source_count)
+                ),
                 id="console-staged-context-count",
                 classes="console-staged-context-count",
             )
