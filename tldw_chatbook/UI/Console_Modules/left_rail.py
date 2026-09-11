@@ -42,7 +42,6 @@ message rather than matched by id prefix in the screen's
 from __future__ import annotations
 
 import asyncio
-import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
@@ -2221,14 +2220,11 @@ class ConsoleLeftRail(Vertical):
             summary_state = self._settings_summary_state
             # TASK-23196: provider_row/model_row are deliberately NOT read
             # here any more; the status bar owns those two values.
-            temperature_match = re.search(
-                r"T ([\d.]+)", summary_state.sampling_row or ""
-            )
-            temperature_value = temperature_match.group(1) if temperature_match else "—"
-            max_tokens_match = re.search(
-                r"max_tokens (\d+)", summary_state.sampling_row or ""
-            )
-            max_tokens_value = max_tokens_match.group(1) if max_tokens_match else "—"
+            # TASK-32338: structured fields on the summary state replace
+            # regex-parsing of the formatted sampling_row (which rendered a
+            # silent em-dash whenever the copy's wording shifted).
+            temperature_value = summary_state.temperature or "—"
+            max_tokens_value = summary_state.max_tokens or "—"
 
             # TASK-23196: the Provider and Model rows that stood here were
             # the third simultaneous rendering of the same two values -- the
