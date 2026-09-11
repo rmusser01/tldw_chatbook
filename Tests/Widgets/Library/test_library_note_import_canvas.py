@@ -544,7 +544,7 @@ async def test_importing_shows_bounded_progress_and_cooperative_cancel() -> None
     async with app.run_test(size=(60, 20)) as pilot:
         await pilot.pause()
         assert _plain(app.query_one("#note-import-progress", Static)) == (
-            "7 of 12 complete · 7 imported · 1 skipped · 0 failed"
+            "7 of 12 planned changes complete · 7 imported · 1 skipped · 0 failed"
         )
         assert await pilot.click("#note-import-cancel")
         await pilot.pause()

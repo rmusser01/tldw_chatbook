@@ -24,6 +24,7 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     NoteImportPlan,
     RootCollisionChoice,
     RootCollisionState,
+    planned_plan_change_count,
     resolved_wikilink_count,
 )
 from tldw_chatbook.Notes.note_import_planner import apply_item_override
@@ -93,6 +94,10 @@ class NoteImportWorkflowSnapshot:
     # Same reason for the links the batch resolved (task-32178): the count is
     # a fact about the approved plan, which the next selection replaces.
     latest_resolved_links: int = 0
+    # task-32258: the receipt's own total counts planned changes (one per
+    # note a source creates), while the review counted sources. Keeping the
+    # source count is what lets the receipt reconcile the two out loud.
+    latest_source_count: int = 0
     cancel_requested: bool = False
     decision_item_ids: frozenset[str] = frozenset()
     collision_rename_input: str = field(default="", repr=False)
@@ -647,7 +652,10 @@ def begin_importing(state: NoteImportWorkflowSnapshot) -> NoteImportWorkflowSnap
         raise ValueError("An exact approved plan is required before importing.")
     progress = ImportExecutionProgress(
         state=ImportSessionState.PENDING,
-        total=len(state.plan.items),
+        # task-32258: this used to seed the bar with the review's SOURCE
+        # count, so the first real progress message moved the denominator
+        # under the reader. The ledger counts planned changes; so does this.
+        total=planned_plan_change_count(state.plan),
         completed=0,
         imported=0,
         updated=0,
@@ -717,6 +725,7 @@ def settle_import(
             state, min(receipt.skipped, MAX_RECEIPT_SKIPPED_ROWS)
         ),
         latest_resolved_links=resolved_wikilink_count(state.approved_plan.plan),
+        latest_source_count=len(state.approved_plan.plan.items),
         cancel_requested=False,
     )
 
@@ -728,7 +737,7 @@ def begin_retry(state: NoteImportWorkflowSnapshot) -> NoteImportWorkflowSnapshot
         state=ImportSessionState.PENDING,
         total=state.receipt.total
         if state.receipt is not None
-        else len(state.plan.items),
+        else planned_plan_change_count(state.plan),
         completed=0,
         imported=0,
         updated=0,
@@ -797,7 +806,10 @@ def project_library_note_import_snapshot(
     if state.phase is NoteImportPhase.CHECKING:
         status = f"◌ Checking {state.selected_count} selected source{'s' if state.selected_count != 1 else ''}…"
     elif state.phase is NoteImportPhase.REVIEW:
-        status = f"Review {state.page.total_items} item{'s' if state.page.total_items != 1 else ''} before import."
+        # task-32258: "66 items" above a progress bar reading "67 of 67" and
+        # a receipt reading "59 + 8" gave one import three bare numbers. Each
+        # surface now names its own unit; these are the sources being reviewed.
+        status = f"Review {state.page.total_items} source{'s' if state.page.total_items != 1 else ''} before import."
     elif state.phase is NoteImportPhase.IMPORTING:
         status = (
             "Stopping after the current item…"
@@ -866,12 +878,12 @@ def project_library_note_import_snapshot(
             if progress
             else ""
         ),
-        receipt_line=(
-            f"{receipt.imported} imported · {receipt.updated} updated · {receipt.skipped} skipped · {receipt.failed} failed"
-            if receipt
-            else ""
-        ),
-        receipt_detail=_receipt_detail(receipt, state.latest_resolved_links),
+        # task-32258: the receipt used to state one outcome three times --
+        # "Import completed." in the header, a counted line, then the same
+        # counts again in other words. The outcome is stated once, here; the
+        # quiet line below it reconciles the two denominators instead.
+        receipt_line=_receipt_outcome(receipt, state.latest_resolved_links),
+        receipt_detail=_receipt_detail(receipt, state.latest_source_count),
         skipped_count=receipt.skipped if receipt else 0,
         skipped_items=state.latest_skipped_items if receipt else (),
         resolved_links=state.latest_resolved_links if receipt else 0,
@@ -1076,16 +1088,21 @@ def _skipped_items(
     )[:limit]
 
 
-def _receipt_detail(
+def _receipt_outcome(
     receipt: ImportExecutionReceipt | None,
     resolved_links: int = 0,
 ) -> str:
+    """State what this import did, once, in counted plain words.
+
+    Args:
+        receipt: The settled receipt, or None before one exists.
+        resolved_links: Obsidian links that found a note in the same batch.
+
+    Returns:
+        One sentence naming every non-zero outcome and its unit.
+    """
     if receipt is None:
         return ""
-    if receipt.state is ImportSessionState.CANCELLED:
-        return "Cancelled. Finished items were not rolled back."
-    if receipt.state is ImportSessionState.NEEDS_ATTENTION:
-        return "Some items failed. Completed changes were kept."
     # task-32130: "All planned items settled." named no outcome at all.
     counts = (
         (receipt.imported, "note", "created"),
@@ -1100,4 +1117,37 @@ def _receipt_detail(
         for count, noun, verb in counts
         if count
     ]
-    return " · ".join(["Import finished", *(parts or ["nothing changed"])])
+    return " · ".join(parts or ["Nothing changed"])
+
+
+def _receipt_detail(
+    receipt: ImportExecutionReceipt | None,
+    reviewed_sources: int = 0,
+) -> str:
+    """Reconcile the receipt's denominator with the one the review showed.
+
+    Args:
+        receipt: The settled receipt, or None before one exists.
+        reviewed_sources: How many sources the approved review listed.
+
+    Returns:
+        The caveat for an unfinished run, followed by the two denominators
+        stated together so they cannot read as a contradiction (task-32258).
+    """
+    if receipt is None:
+        return ""
+    caveat = (
+        "Cancelled. Finished items were not rolled back."
+        if receipt.state is ImportSessionState.CANCELLED
+        else "Some items failed. Completed changes were kept."
+        if receipt.state is ImportSessionState.NEEDS_ATTENTION
+        else ""
+    )
+    if not reviewed_sources:
+        return caveat
+    changes = (
+        f"{receipt.total} planned change"
+        f"{'' if receipt.total == 1 else 's'} from {reviewed_sources} reviewed "
+        f"source{'' if reviewed_sources == 1 else 's'}."
+    )
+    return f"{caveat} {changes}".strip()

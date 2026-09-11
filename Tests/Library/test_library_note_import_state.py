@@ -720,7 +720,10 @@ def test_receipt_projection_distinguishes_durable_session_state(
     projected = project_library_note_import_snapshot(settled)
 
     assert projected.status_line == expected_status
-    assert detail_fragment in projected.receipt_detail.casefold()
+    # task-32258: the counted outcome is stated once, on the receipt line;
+    # the quiet detail carries the caveat and the denominator reconciliation.
+    combined = f"{projected.receipt_line} {projected.receipt_detail}".casefold()
+    assert detail_fragment in combined
 
 
 # --- task-32130 / task-32134: honest receipt copy and selection changes ----
@@ -783,9 +786,10 @@ def test_completion_copy_says_what_happened_in_plain_words() -> None:
 
     projection = project_library_note_import_snapshot(state)
 
-    assert projection.receipt_detail == (
-        "Import finished · 61 notes created · 11 files skipped"
-    )
+    # task-32258: once, and on the primary line -- the header already says
+    # the session completed, so a second "Import finished" was a repeat.
+    assert projection.receipt_line == "61 notes created · 11 files skipped"
+    assert "Import finished" not in projection.receipt_detail
 
 
 def test_clear_selection_returns_to_an_empty_select_phase() -> None:
@@ -955,9 +959,7 @@ def test_receipt_counts_the_links_the_import_resolved() -> None:
     projection = project_library_note_import_snapshot(_linked_settled_state())
 
     assert projection.resolved_links == 1
-    assert projection.receipt_detail == (
-        "Import finished · 2 notes created · 1 link resolved"
-    )
+    assert projection.receipt_line == "2 notes created · 1 link resolved"
 
 
 def test_a_revisited_receipt_keeps_its_resolved_link_count() -> None:
@@ -978,7 +980,7 @@ def test_an_import_that_resolves_no_links_says_nothing_about_them() -> None:
     )
 
     assert projection.resolved_links == 0
-    assert "link" not in projection.receipt_detail
+    assert "link" not in projection.receipt_line
 
 
 # --- task-32262 (review fidelity) -----------------------------------------

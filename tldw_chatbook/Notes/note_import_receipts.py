@@ -38,6 +38,7 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     ImportMatchKind,
     ImportPreviewItem,
     NoteImportPlan,
+    planned_change_count,
 )
 from tldw_chatbook.Notes.note_import_planner import PriorImportObservation
 from tldw_chatbook.Notes.notes_device_state_schema import (
@@ -374,9 +375,9 @@ def _folder_path_digest(segments: tuple[str, ...]) -> str:
 
 
 def _outcome_count(action: ImportAction, payload_count: int) -> int:
-    if action is ImportAction.CREATE_NEW:
-        return payload_count
-    return 1
+    # task-32258: defined once, in the plan model, so the ledger's total and
+    # the progress bar's total cannot drift into two different denominators.
+    return planned_change_count(action, payload_count)
 
 
 def _copy_bounded_transitions(

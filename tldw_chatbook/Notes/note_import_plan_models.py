@@ -837,6 +837,33 @@ def creatable_wikilink_keys(plan: NoteImportPlan) -> dict[str, str]:
     return item_ids
 
 
+def planned_change_count(action: ImportAction, payload_count: int) -> int:
+    """Return how many separate changes one reviewed source settles.
+
+    A source that creates notes settles one change per note; every other
+    action settles exactly one. This is the receipt ledger's own unit, and it
+    is defined once (task-32258) because the review counts SOURCES and the
+    two numbers were being read as one -- "Review 66 items" over a progress
+    line that said "67 of 67".
+
+    Args:
+        action: The action the review settled on for the source.
+        payload_count: How many notes the source parsed into.
+
+    Returns:
+        The number of durable outcome rows the source is worth.
+    """
+    return payload_count if action is ImportAction.CREATE_NEW else 1
+
+
+def planned_plan_change_count(plan: NoteImportPlan) -> int:
+    """Return the planned-change total for one reviewed plan."""
+    return sum(
+        planned_change_count(item.selected_action, len(item.payloads))
+        for item in plan.items
+    )
+
+
 def resolved_wikilink_count(plan: NoteImportPlan) -> int:
     """Count the `[[links]]` this plan will rewrite as note links.
 

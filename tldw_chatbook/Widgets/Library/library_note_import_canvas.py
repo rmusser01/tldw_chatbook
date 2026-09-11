@@ -853,8 +853,13 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
 
     def _compose_importing(self, state: LibraryNoteImportSnapshot) -> ComposeResult:
         detail = f" · {state.progress_detail}" if state.progress_detail else ""
+        # task-32258: "67 of 67 complete" above a review that counted 66 read
+        # as a contradiction. The unit is named, because it is not the same
+        # unit: one planned change per note a source creates, one per skip.
+        noun = "planned change" if state.progress_total == 1 else "planned changes"
         yield Static(
-            f"{state.progress_completed} of {state.progress_total} complete{detail}",
+            f"{state.progress_completed} of {state.progress_total} {noun} complete"
+            f"{detail}",
             id="note-import-progress",
             markup=False,
         )

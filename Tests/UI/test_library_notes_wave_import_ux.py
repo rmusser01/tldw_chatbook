@@ -807,3 +807,124 @@ def test_the_canvas_takes_its_non_importable_set_from_the_planner_enum() -> None
     assert set(library_note_import_canvas._CLASSIFICATION_LABELS) == {
         classification.value for classification in ImportClassification
     }
+
+
+# --- task-32258 (one import, three surfaces) -------------------------------
+#
+# The numbers are produced by the real chain -- real discovery, parser,
+# planner, receipt ledger and executor over a real temp ChaChaNotes database
+# -- because the disagreement being pinned is between two real denominators:
+# the review counts SOURCES, while the ledger counts PLANNED CHANGES (one per
+# note a source creates). A fake receipt could not reproduce it.
+
+
+def _real_import_controller(root: Path):
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
+    from tldw_chatbook.Notes.note_import_discovery import discover_import_sources
+    from tldw_chatbook.Notes.note_import_execution_models import (
+        approve_note_import_plan,
+    )
+    from tldw_chatbook.Notes.note_import_executor import (
+        LocalNoteImportTarget,
+        NoteImportExecutor,
+    )
+    from tldw_chatbook.Notes.note_import_parsers import parse_import_sources
+    from tldw_chatbook.Notes.note_import_plan_models import ImportBounds
+    from tldw_chatbook.Notes.note_import_planner import (
+        analyze_root_collision,
+        apply_item_override,
+        classify_import_batch,
+        confirm_uncertain_match,
+        resolve_root_collision,
+    )
+    from tldw_chatbook.Notes.note_import_receipts import NoteImportReceiptRepository
+    from tldw_chatbook.UI.Library_Modules.library_note_import_controller import (
+        LibraryNoteImportController,
+    )
+
+    database = CharactersRAGDB(root / "chachanotes.db", "wave-import-test")
+    published: list[object] = []
+    controller = LibraryNoteImportController(
+        bounds=ImportBounds(
+            max_files=1_000,
+            max_file_bytes=16 * 1024 * 1024,
+            max_total_bytes=256 * 1024 * 1024,
+            max_depth=32,
+        ),
+        database=lambda: database,
+        folder_repository=lambda: LocalNoteFolderRepository(database),
+        receipt_repository=lambda: NoteImportReceiptRepository(root / "receipts.db"),
+        discover_import_sources=discover_import_sources,
+        parse_import_sources=parse_import_sources,
+        classify_import_batch=classify_import_batch,
+        analyze_root_collision=analyze_root_collision,
+        resolve_root_collision=resolve_root_collision,
+        confirm_uncertain_match=confirm_uncertain_match,
+        apply_item_override=apply_item_override,
+        approve_note_import_plan=approve_note_import_plan,
+        executor_factory=lambda db, folders, ledger: NoteImportExecutor(
+            target=LocalNoteImportTarget(db=db, folder_repository=folders),
+            receipt_repository=ledger,
+        ),
+        publish_snapshot=published.append,
+        refresh_after_settlement=lambda: None,
+    )
+    return controller, published
+
+
+async def test_one_import_leaves_review_progress_and_receipt_reconciled(
+    tmp_path: Path,
+) -> None:
+    """Review said 66, progress said 67, the receipt said 59 + 8 (task-32258)."""
+    vault = tmp_path / "vault"
+    (vault / "Notes").mkdir(parents=True)
+    (vault / "Notes" / "one.md").write_text("# One\n\nBody.\n", encoding="utf-8")
+    (vault / "Notes" / "two.md").write_text("# Two\n\nBody.\n", encoding="utf-8")
+    # One source, two notes: this is where the two denominators separate.
+    (vault / "rows.csv").write_text(
+        "title,content\nCSV one,first\nCSV two,second\n", encoding="utf-8"
+    )
+    (vault / "picture.png").write_bytes(b"not a note")
+
+    (tmp_path / "profile").mkdir()
+    controller, published = _real_import_controller(tmp_path / "profile")
+    controller.accept_selected_path(vault, is_folder=True)
+    await controller.check()
+
+    review = controller.presentation_snapshot
+    sources = len(controller.snapshot.plan.items)
+    assert review.status_line == f"Review {sources} sources before import."
+
+    progress_totals: list[int] = []
+    inner = controller._publish_snapshot
+
+    def capture(snapshot):
+        if snapshot.phase == "importing":
+            progress_totals.append(snapshot.progress_total)
+        inner(snapshot)
+
+    controller._publish_snapshot = capture
+    await controller.approve_and_execute()
+
+    settled = controller.presentation_snapshot
+    receipt = controller.snapshot.receipt
+    # Every surface counts something it names, and the two denominators are
+    # reconciled out loud rather than left to contradict each other.
+    assert set(progress_totals) == {receipt.total}
+    assert receipt.total > sources  # the CSV source creates two notes
+    assert (
+        receipt.imported + receipt.updated + receipt.skipped + receipt.failed
+        == receipt.total
+    )
+    assert settled.receipt_detail == (
+        f"{receipt.total} planned changes from {sources} reviewed sources."
+    )
+    assert settled.receipt_line == (
+        f"{receipt.imported} notes created · {receipt.skipped} file skipped"
+    )
+    # …and the outcome is stated once: the header carries the session state,
+    # the receipt line the counts, the detail the denominators.
+    assert settled.status_line == "Import completed."
+    assert "created" not in settled.status_line
+    assert "created" not in settled.receipt_detail
