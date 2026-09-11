@@ -46,9 +46,11 @@ navigation buttons — fix it and press Next again, or go Back.
 | Protect keys | Config encryption (password at startup) | Settings ▸ Privacy & Security is a read-out; encryption changes are password-gated and not editable there |
 
 The Voice step leads with a sample text and **Test and Hear**; the endpoint,
-model, and output settings sit under its "Advanced" section. On terminals
-smaller than about 100×30 the wizard shows a one-line nudge — everything
-still works, steps just scroll.
+model, and output settings sit under its "Advanced" section. Advancing saves
+the voice settings; the step reports the result itself and refuses to move on
+if the save failed, so setup never raises a pop-up notification over a later
+step's buttons. On terminals smaller than about 100×30 the wizard shows a
+one-line nudge — everything still works, steps just scroll.
 
 The final summary shows a ✓/✗ line per area, read back from what was actually
 saved — and if the connection check failed while you were setting up (a
@@ -86,3 +88,11 @@ canvas. Added "Write your first note", which finishes setup on Library's
 New note view directly. The Console's post-setup "Get started" card gained
 the matching "Write a note in Library" action, which needs no provider and
 stays available for the whole time the card blocks the composer.)*
+
+*Verified against fix/library-notes-w3-wizard-toast — 2026-09-11 (task-32266:
+the Voice step's save raised the global "Settings saved successfully!" toast,
+which Textual docks bottom-right of the current screen — by the time the write
+settled the wizard had advanced, so the toast landed over the Protect step's
+buttons or the Summary's exit actions, "Write your first note" among them. The
+wizard's save no longer announces itself; the step that made it still reports
+every outcome in place.)*

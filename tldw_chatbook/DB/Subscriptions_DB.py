@@ -742,10 +742,32 @@ class SubscriptionsDB(BaseDB):
         ).fetchone()
         if has_version_table:
             versions = [int(row[0]) for row in conn.execute("SELECT version FROM schema_version")]
-            if versions == [1]:
+            # Every version this build can open: the current one and the one
+            # it knows how to migrate from. Anything else -- a FUTURE version
+            # above all -- must reach the refusal below with the database
+            # untouched: normalizing it away would delete a newer build's
+            # marker and then run v2 assumptions over schema and data this
+            # build has never seen (Qodo #4).
+            recognized = set(versions) <= {1, _CURRENT_SCHEMA_VERSION}
+            if recognized and _CURRENT_SCHEMA_VERSION in versions:
+                # The current version is present, possibly beside stale rows
+                # left by an abnormal exit (the fresh-create path's
+                # `INSERT OR IGNORE` and the migration path's `DELETE` +
+                # insert can disagree about what "the" row is -- task-32343).
+                # Normalize rather than refuse to open.
+                if len(versions) > 1:
+                    with self.transaction() as tx_conn:
+                        tx_conn.execute(
+                            "DELETE FROM schema_version WHERE version != ?",
+                            (_CURRENT_SCHEMA_VERSION,),
+                        )
+            elif versions == [1]:
                 self._migrate_from_v1_to_v2()
-            elif versions != [_CURRENT_SCHEMA_VERSION]:
-                raise SubscriptionError("Unsupported subscriptions schema version")
+            else:
+                raise SubscriptionError(
+                    f"Unsupported subscriptions schema version {versions} in "
+                    f"{self.db_path_str}; this build supports {_CURRENT_SCHEMA_VERSION}"
+                )
 
         with self.transaction() as conn:
             conn.executescript("""

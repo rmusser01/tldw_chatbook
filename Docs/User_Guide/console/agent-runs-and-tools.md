@@ -57,10 +57,16 @@ finish or interrupt it." Runs continue when you switch screens — see
 
 **In the reply row itself** — while the turn works, the unfinished
 `Assistant` row shows a live activity line in place of its (empty) text, so
-a long tool call never looks frozen: `⚙ read_file · 4s` names the tool that
-is running and how long it has been running, `Thinking… · 6s` means the
-tool finished and the model is composing the next round, and `Generating…`
-is the wait for the model's first response of the turn. The elapsed figure
+a long tool call never looks frozen. `Connecting tools… · 4s` marks the
+pre-provider setup step. The first send after a launch pays for it once,
+assembling the turn's tools and your profile. `⚙ read_file · 4s` names the
+tool that is running and how long it has been running, `Thinking… · 6s`
+means the tool finished and the model is composing the next round, and
+`Generating…` is the wait for the model's first response of the turn. That
+setup step is
+capped at ten seconds: if something it needs — an OS keychain prompt, for
+instance — does not answer in time, the send goes ahead without profile
+tools rather than waiting. The elapsed figure
 advances while you watch. The line is live-only — it vanishes the moment
 the reply's own text arrives, and a conversation you reopen later shows the
 completed `Tool` rows below instead. During a fleet turn, while the primary
@@ -1975,7 +1981,8 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   means you already looked.
 
 —
-*Verified against dev @ ff435772c — 2026-07-31. Named agents section added
+*Verified against dev @ ff435772c — 2026-07-31; activity-line states
+re-verified live 2026-09-10 (task-32344, `Connecting tools…`). Named agents section added
 against dev @ 3dd3e7431 — 2026-08-09 (fleet PR-1: driven live — Console
 delegated to a real named definition, the transcript showed the
 `[researcher]` sub-agent marker, and the reply visibly honored the
