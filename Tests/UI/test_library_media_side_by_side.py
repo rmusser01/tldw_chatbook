@@ -687,7 +687,8 @@ async def test_compact_media_viewer_back_empty_page_focuses_recovery_control(
             else:
                 expected = (
                     "library-media-review-sets" if completion == "explicit"
-                    else "library-media-empty-import"
+                    # The retained empty-page toolbar owns the first recovery control.
+                    else "library-media-type-filter"
                 )
                 await _wait_for_condition(
                     pilot, lambda: getattr(screen.focused, "id", None) == expected,

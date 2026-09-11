@@ -16,6 +16,37 @@ from tldw_chatbook.UI.Console_Modules import archive
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 
+def test_archive_send_gate_resolves_replaced_session_owner():
+    from tldw_chatbook.UI.Console_Modules.wiring import (
+        build_console_submission_controller,
+    )
+
+    screen = SimpleNamespace(
+        app_instance=SimpleNamespace(_conversation_archive_inflight={"chat-a"}),
+        _session=SimpleNamespace(_current_console_conversation_id=lambda: "chat-a"),
+    )
+    build_console_submission_controller(screen)
+    expected = "Archive change in progress. Your draft is preserved."
+    assert screen._submission._console_send_blocked_reason() == expected
+    screen._session = SimpleNamespace(_current_console_conversation_id=lambda: "chat-b")
+    screen.app_instance._conversation_archive_inflight = {"chat-b"}
+    assert screen._submission._console_send_blocked_reason() == expected
+
+
+@pytest.mark.asyncio
+async def test_archive_unsaved_chat_resolves_session_owner_without_screen_delegate():
+    app = SimpleNamespace(notify=Mock())
+    screen = SimpleNamespace(
+        app_instance=app,
+        _session=SimpleNamespace(_current_console_conversation_id=lambda: None),
+    )
+    await archive.archive_current_conversation(screen)
+    app.notify.assert_called_once_with(
+        "Send and save this conversation before archiving it.",
+        severity="information",
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "owner_state", ["visible", "background", "closed", "closed-visible"]
@@ -47,7 +78,7 @@ async def test_cancelled_archive_preflight_restores_only_own_keyboard_draft(
         stash = composer.stash_draft_for_send()
         console._console_inflight_send_stashes[session.id] = stash
         task = asyncio.create_task(
-            console._submit_console_native_draft_observed(stash.text, session.id)
+            console._submission._submit_console_native_draft_observed(stash.text, session.id)
         )
         await asyncio.wait_for(entered.wait(), 5)
         if owner_state in {"background", "closed"}:
@@ -95,7 +126,7 @@ async def test_cancelled_archive_delivers_committed_outcome(monkeypatch, navigat
     screen = SimpleNamespace(
         app_instance=app,
         is_mounted=True,
-        _current_console_conversation_id=lambda: "chat-a",
+        _session=SimpleNamespace(_current_console_conversation_id=lambda: "chat-a"),
         _workspace=SimpleNamespace(_invalidate_console_persisted_rows_cache=Mock()),
         _sync_native_console_chat_ui=AsyncMock(),
     )

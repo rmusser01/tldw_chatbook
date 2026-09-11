@@ -103,7 +103,7 @@ git diff --check
 ```
 
 Expected: both complete functional files pass. Measure and report controller residual cap failure honestly; no claim all PR gates pass. Preserve old RED evidence and existing exact-resource controls.
-- [ ] Obtain independent bounded diff review for exact formatting, privacy and ownership. Save verified scope in a separate commit after relevant tests and static checks. Integrated import-flow/native qualification remains part of step152, not replaced by pure tests.
+- [x] Obtain independent bounded diff review for exact formatting, privacy and ownership. Save verified scope in a separate commit after relevant tests and static checks. Integrated import-flow/native qualification remains part of step152, not replaced by pure tests. Saved as782bf6c202.
 
 ## Implementation evidence
 

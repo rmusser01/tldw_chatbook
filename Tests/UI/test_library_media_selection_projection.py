@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
+from textual.widgets import Button, Input
 
 from Tests.UI.library_media_rows import summary_row
 from tldw_chatbook.Library.library_media_reader_state import (
@@ -15,6 +16,40 @@ from tldw_chatbook.Library.library_media_state import (
     build_media_browse_result,
 )
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+
+@pytest.mark.parametrize("applied_query", (None, "", "retained query"))
+@pytest.mark.parametrize("filter_disabled", (False, True))
+def test_empty_media_focus_reads_applied_scope_from_browse_state(
+    monkeypatch: pytest.MonkeyPatch,
+    applied_query: str | None,
+    filter_disabled: bool,
+) -> None:
+    """Use retained-page scope and skip disabled recovery controls.
+
+    Args:
+        monkeypatch: Supplies the mounted control lookup boundary.
+        applied_query: Retained query, or no settled page yet.
+        filter_disabled: Whether the query control can receive focus.
+    """
+    screen = LibraryScreen(SimpleNamespace(app_config={}))
+    state = screen._library_media_browse_controller.state
+    state.requested_scope = MediaBrowseScope(query="pending query")
+    if applied_query is not None:
+        state.applied_result = build_media_browse_result(
+            MediaBrowseScope(query=applied_query),
+            {"items": [], "total": 0, "limit": 20, "offset": 0},
+        )
+    filter_input = Input(disabled=filter_disabled)
+    type_filter = Button("Type")
+    controls = {
+        "#library-media-filter": filter_input,
+        "#library-media-type-filter": type_filter,
+    }
+    monkeypatch.setattr(screen, "query_one", lambda selector, *_: controls[selector])
+
+    expected = filter_input if applied_query and not filter_disabled else type_filter
+    assert screen._library_media_empty_list_fallback_target() is expected
 
 
 def _apply_page(screen, ids=(1, 2)):

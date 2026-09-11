@@ -3704,3 +3704,119 @@ from the locator repair. All original return assertions remain intact. After
 rebase, observation-only callback tracing may attribute receipt capture, guard
 expiry, pending release and late Filter focus without adding sleeps or changing
 production policy.
+
+## September 10: latest-dev rebase and integration checkpoint
+
+Replayed all 251 commits onto dev
+`4b905d25a7c6aa85511f9f5444643d6a3f7ac5ee`; resulting local head
+`617884de61e49a3cc696a58f8f9cf24f5f246e45`. The 443 changed Python/JSON
+files parse, the integrated diff passes whitespace checks, and no duplicate
+Backlog IDs occur across 3,839 task files. The unrelated untracked
+`2026-09-08-pr2427-library-reader-paydown.md` remains untouched.
+
+Conflict resolution retains upstream archive admission/reservations/cancelled
+draft recovery in the extracted submission owner, research refusal in Commands,
+archive recovery handlers and all consumer timers, independent conversation
+paging errors, exact migration-delta plus current-schema coverage, and the
+combined Watchlists stylesheet ownership. Notes retains semantic note selectors,
+fresh-age assertions, restored tree Sort and its chooser/filtered disabled state,
+ordered locator calls, reveal-only focus semantics and the exact Back receipt.
+Independent fixed-ref review clears plan147 and all six plan142 guard lines.
+
+Initial integrated architecture cohort: **202 passed, 13 failed**, eight warnings,
+161.86s (`/private/tmp/pr2427-rebase-architecture.log`). Eleven failures are
+unchanged size ceilings: ChatScreen +82, LibraryScreen +681, Conversations +113,
+Export +45, Ingest +234, Navigation +4, Import +64 against the auto-merged602,
+Notes +349, RAG search +4, Skill import +4, Unavailable navigation +23.
+The unintended auto-merged Import increase is restored to the original587,
+making its pre-extraction gap79. No increased ceilings are accepted.
+
+The other two architecture failures are addressed separately:
+
+- Incoming archive and new submission wiring called the retired Screen
+  `_current_console_conversation_id`. Both now resolve the existing session
+  owner, including replacement-owner late binding. Two focused controls
+  reproduce the exact AttributeErrors before the two-line fix
+  (`/private/tmp/pr2427-rebase-archive-owner-red.log`). New cancellation tests
+  initially called the retired observed-submit seam; that fixture now calls
+  the actual submission owner. All exact visible/background/closed draft,
+  foreign-tab, stash/task cleanup and recovery assertions remain.
+  Complete cancellation/recovery files: **31 passed**, three warnings,10.38s
+  (`/private/tmp/pr2427-rebase-archive-green.log`). Complete private-delegate
+  architecture: **66 passed**, two warnings,1.98s
+  (`/private/tmp/pr2427-rebase-delegate-green.log`). Changed-file Ruff and
+  independent repair review pass.
+- Diagnostic drift is aggregate arithmetic only. An independent rebuild
+  comparison confirms every non-summary entry—including statement digests,
+  classification and sink topology—is identical. Regeneration corrects
+ 604 owners,709 path candidates and7,669 TASK-494 calls; subsequent checker
+  passes with12 unchanged sink files. No diagnostic or privacy behavior changes.
+
+Complete Notes wave-list: **27 passed**, three warnings,9.32s
+(`/private/tmp/pr2427-rebase-wave-list.log`). Combined CSS integrity, boot-byte
+guard and Watchlists context files: **35 passed**, four warnings,38.77s
+(`/private/tmp/pr2427-rebase-css-tests.log`). Source rebuild produces no further
+stylesheet diff. The official snapshot updater (no force) records755,513 boot
+CSS bytes, within the existing ceiling. This census includes both the reviewed
+modal-default consolidation and newer dev styles.
+
+The approved import-formatting spec and plan were independently approved.
+Commit782bf6c202 moves only pure four-string formatting into the existing state
+module; exact body AST parity, privacy and controller effect ownership pass
+sequential independent spec and quality reviews. Final complete state/controller
+files:73 passed,2 dependency warnings,4.01s
+(`/private/tmp/pr2427-import-formatting-style-final.log`), after characterization
+GREEN and wiring RED. Ruff/scoped formatting pass. Controller628 remains41 over
+the original587 ceiling; the unchanged size suite finishes41 passed,11 failed
+(`/private/tmp/pr2427-size-final.log`). No cap failure is waived.
+
+Initial complete Notes Reader plus two Back cases finished35 passed,5 failed
+(`/private/tmp/pr2427-rebase-reader-back.log`). Three Reader errors call a
+Media fallback using the retired controller.applied_scope rather than ADR128's
+controller.state.applied_scope. Six direct controls fail with that exact
+AttributeError before the one-line receiver correction
+(`/private/tmp/pr2427-media-fallback-red.log`); they distinguish applied versus
+pending query state and disabled fallback controls. The two Back cases reach
+their selected-row focus but have an auto-merged stale `newest` assertion,
+contradicting the test's explicit persisted `title` setup. Correcting that exact
+oracle preserves row18, placement, list7 and rail2 assertions.
+
+Expanded verification then finishes67 passed,1 failed
+(`/private/tmp/pr2427-reader-back-green.log`), including all Reader and both exact
+Back cases. The sole failure is another stale oracle: the empty Media page now
+retains its toolbar, so its first enabled recovery control is Type, not Import.
+That exact target is corrected; cancellation and explicit-target assertions
+remain unchanged. Independent integration review clears these repairs.
+
+Final complete Reader, Media side-by-side, projection, crit9 Media-list,
+archive cancellation/recovery and both exact Notes Back cases pass133 tests,
+3 warnings,157.92s (`/private/tmp/pr2427-reader-media-native.log`). Observation-
+only native inventory at
+`/private/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-reader-media-native.x55eYR/fd_identity.jsonl`
+ends with7 descriptors:stdio3, intended faulthandler log1, kqueue1 andsockets2;
+no SQLite or instance-lock handles. The final three first appeared during the
+first synchronous Reader test. Isolating that test reproduces them, but so does
+a minimal application-free async pytest test (1 passed,0.07s), with no project
+imports or fixtures:
+`/private/tmp/pr2427-pytest-loop-control.log` and
+`/private/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-pytest-loop-control.FAQA6u/fd_identity.jsonl`.
+Installed pytest-asyncio's `_temporary_event_loop_policy` obtains then restores
+the old policy loop. This is the measured runner baseline, not evidence for a
+new application cleanup hook. No global cleanup or test-body change was added.
+
+All seven derived checks pass with the existing pinned Mermaid source cache
+(`/private/tmp/pr2427-rebase-cached-preflight.log`). An initial uncached run
+failed only for unavailable Mermaid input; no generated asset was replaced.
+The three changed Library test files pass Ruff; LibraryScreen retains the same
+49 existing Ruff findings as HEAD, adding none in this repair.
+
+GitHub dev advanced again to a5486ad4d4b070a7ee09cf592894a1844a21f4c9,
+60 commits/49 files after4b905d25a7. Preserve this verified checkpoint before
+integrating the new rail, reader and list-entry focus changes. These bounded
+passes do not qualify the entire integrated PR or new resource owners.
+
+Fresh GitHub read still reports OPEN at published
+`a7a180dbc16cc10e8f0a18c82608c64c0f5a144e`, with no unresolved review threads
+(pagination complete). Its external reviewer statuses are not current-head CI
+clearance. Publication, remaining affected tests/size repairs, final-head review
+and normal protected merge remain open.
