@@ -1995,3 +1995,23 @@ async def test_local_detail_toolbar_offers_lifecycle_actions():
         ]
         assert "Disconnect" in labels and "Refresh tools" in labels
         assert "Connect" not in labels
+
+
+# -- Wave D (2026-09-11 MCP Hub UX program, ADR-148): rail IA split --------
+
+
+def test_agent_tools_readiness_builder_shapes_the_rail_row():
+    from tldw_chatbook.MCP.permission_store import BUILTIN_TOOL_SERVER_KEY
+    from tldw_chatbook.MCP.readiness import agent_tools_readiness
+
+    on = agent_tools_readiness(enabled=True)
+    assert on.server_key == "agent:builtin"
+    assert on.server_key == BUILTIN_TOOL_SERVER_KEY  # same store identity, no new key
+    assert on.source == "agent"
+    assert on.label == "Agent tools"
+    assert on.state is ReadinessState.READY
+    assert "Console" in on.message
+
+    off = agent_tools_readiness(enabled=False)
+    assert off.state is ReadinessState.OFF_OPT_IN
+    assert "Turned off" in off.message
