@@ -94,6 +94,7 @@ idx_conversation_dictionary_attachments_dictionary	pre-convention	plan never cap
 idx_conversation_local_marks_type	pre-convention	plan never captured without stats
 idx_conversation_world_books_book	pre-convention	plan never captured without stats
 idx_conversation_world_books_conv	pre-convention	plan never captured without stats
+idx_conversations_archive	plan-pinned	Tests/DB/test_conversation_archive_query_plan.py
 idx_conversations_assistant_identity	pre-convention	plan never captured without stats
 idx_conversations_discovery_entity	pre-convention	plan never captured without stats
 idx_conversations_discovery_owner	pre-convention	plan never captured without stats

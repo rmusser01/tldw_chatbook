@@ -21,6 +21,10 @@ Pure module: no I/O, no provider imports.
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
 
 from .agent_models import ToolCall, ToolSchema
 
@@ -60,19 +64,33 @@ NATIVE_TOOLS_PROVIDERS = frozenset(
 )
 
 
-def provider_supports_native_tools(api_endpoint: str | None) -> bool:
+def provider_supports_native_tools(
+    api_endpoint: str | None, *, reasoning_replay: ReasoningReplayPolicy | None = None
+) -> bool:
     """Return whether ``api_endpoint`` supports native tool-calls end-to-end.
 
     Args:
         api_endpoint: The ``chat_api_call`` provider key. The Console passes
             ``ConsoleProviderResolution.execution_key`` — the key
             ``PROVIDER_PARAM_MAP`` is indexed by.
+        reasoning_replay: Frozen local endpoint facts; native support remains
+            independent of the optional reasoning replay mode.
 
     Returns:
         True when the provider forwards ``tools=`` AND returns the raw
         OpenAI-compatible response shape (see module docstring).
     """
-    return str(api_endpoint or "").strip().lower() in NATIVE_TOOLS_PROVIDERS
+    provider = str(api_endpoint or "").strip().lower()
+    if provider in {
+        "llama_cpp",
+        "local_llamacpp",
+        "vllm",
+        "local_vllm",
+        "ollama",
+        "local_ollama",
+    }:
+        return bool(reasoning_replay is not None and reasoning_replay.native_tools)
+    return provider in NATIVE_TOOLS_PROVIDERS
 
 
 def schemas_to_openai_tools(schemas: list[ToolSchema]) -> list[dict]:

@@ -226,18 +226,69 @@ def test_the_review_shows_the_resulting_title_keywords_and_links(vault: Path) ->
     summary = _effect_summary(item)
 
     assert "Library review" in summary
-    assert "keywords project, ux, notes-review, lib-review" in summary
+    assert "keywords project, ux, alias: notes-review, alias: lib-review" in summary
     assert "3 links" in summary
 
 
 def test_frontmatter_supplies_the_title_keywords_and_aliases(vault: Path) -> None:
-    """Frontmatter title wins over the first heading and tags become keywords."""
+    """Frontmatter title wins over the first heading and tags become keywords.
+
+    An alias is an alternate *name*, not a tag, so it keeps an ``alias:``
+    prefix and stays tellable apart in Info (task-32178).
+    """
     payload = _payloads(vault)["vault/Projects/Library review.md"]
 
     assert payload.title == "Library review"
-    assert payload.keywords == ("project", "ux", "notes-review", "lib-review")
+    assert payload.keywords == (
+        "project",
+        "ux",
+        "alias: notes-review",
+        "alias: lib-review",
+    )
     assert not payload.content.startswith("---")
     assert payload.content.startswith("# Ignored heading")
+
+
+def test_a_long_alias_keeps_its_name_when_the_prefix_would_not_fit(
+    tmp_path: Path,
+) -> None:
+    """The display prefix must never be the reason an alias is lost.
+
+    A 508-character alias is valid input and fits the keyword ceiling, but
+    ``alias: `` pushes it past 512 (PR #2556 review).
+    """
+    root = tmp_path / "vault"
+    long_alias = "a" * 508
+    _write(root, ".obsidian/app.json", "{}")
+    _write(root, "Note.md", f"---\naliases: [{long_alias}]\n---\n# Note\n")
+
+    payload = _payloads(root)["vault/Note.md"]
+
+    assert payload.keywords == (long_alias,)
+
+
+def test_a_capitalized_marker_still_marks_the_vault(tmp_path: Path) -> None:
+    """Vault detection casefolds the marker, exactly like the skip map.
+
+    Windows and macOS preserve a folder's casing while comparing it
+    case-insensitively, so a ``.Obsidian`` marker must not leave the vault's
+    own folders in the import (PR #2556 review).
+    """
+    root = tmp_path / "vault"
+    _write(root, ".Obsidian/app.json", "{}")
+    _write(root, "Templates/Daily.md", "# {{date}}\n")
+    _write(root, "Projects/Real.md", "# Real\n")
+
+    discovery = discover_import_sources([root], _bounds(), obsidian_mode=True)
+
+    assert discovery.vault_detected is True
+    assert {skip.reason_code for skip in discovery.skips} == {
+        "obsidian_config",
+        "obsidian_template",
+    }
+    assert tuple(
+        candidate.source.display_path for candidate in discovery.candidates
+    ) == ("vault/Projects/Real.md",)
 
 
 def test_block_sequence_tags_also_become_keywords(vault: Path) -> None:

@@ -263,6 +263,10 @@ def _branch_screen_fake(service: _BranchService):
         _focus_calls=[],
         _capture_library_notes_focus_identity=lambda: SimpleNamespace(),
         is_mounted=True,
+        # i-trash (#2553): a fresh tree visit also refreshes the trash
+        # count; a no-op keeps every caller of this shared fake off that
+        # AttributeError regardless of which wave lands first.
+        _refresh_library_notes_trash=lambda: None,
     )
 
     def _sync(*_args, **kwargs):
@@ -5184,6 +5188,13 @@ async def test_mounted_real_repository_statuses_protect_actions_before_page_memb
     try:
         async with host.run_test(size=(170, 48)) as pilot:
             screen = _active_library_screen(host)
+            # task-32172: the tree pages in the Sort value now, and this
+            # test arranges its "outside the first page" note by TITLE ("Z
+            # managed outside page" after twenty "A nn"). Under the default
+            # Newest that note is the most recently created, so it would
+            # lead page 1 -- pin the order the fixture is built for rather
+            # than rebuilding the fixture.
+            screen._notes_state.sort = "title"
             await _wait_for_library_shell(screen, pilot)
             await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
             root_key = NotesBranchKey(None, "folders")

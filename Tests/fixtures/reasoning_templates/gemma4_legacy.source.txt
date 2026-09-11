@@ -1,0 +1,1 @@
+Captured from llama.cpp /props on localhost:9099, 2026-09-10. Gemma 4 26B A4B GGUF embedded template. Reviewed against Google Gemma 4 thinking guidance: current assistant tool calls only.
