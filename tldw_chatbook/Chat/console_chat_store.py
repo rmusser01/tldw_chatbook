@@ -17482,12 +17482,40 @@ class ConsoleChatStore:
         return self._snapshot(message)
 
     def update_message_thinking_block(
-        self, message_id: str, block_id: str, text: str
+        self,
+        message_id: str,
+        block_id: str,
+        text: str,
+        *,
+        expected_text: str | None = None,
     ) -> ConsoleChatMessage:
         """Edit one displayable thinking block's text in place.
 
         ADR-090 amendment (TASK-32312): block identity, provenance, source
         encoding, and the answer stay intact; only the block's text changes.
+
+        Args:
+            message_id: Native Console id of the assistant owner.
+            block_id: Envelope block id whose text is being replaced.
+            text: Replacement text. Must be non-blank, bounded by the
+                envelope limits, and safe for the block's source encoding.
+            expected_text: The text the editor prefilled from. When supplied
+                and the block's current text differs, the edit is refused --
+                an optimistic guard against saving a stale modal over a
+                newer generation (a stream that settled, or a variant swap,
+                while the editor was open).
+
+        Returns:
+            A snapshot of the updated message.
+
+        Raises:
+            KeyError: Unknown message id.
+            ValueError: Non-assistant owner, streaming/pending owner,
+                disabled generation actions, missing envelope or block,
+                proprietary block, blank text, unsafe start-anchored text,
+                stale ``expected_text``, or envelope bound violations.
+            ConsoleThinkingCompatibilityError: The generation's thinking
+                data is unreadable (opaque future envelope or quarantine).
         """
         with self._generation_owner_scope(message_id):
             self._reject_quarantined_generation_mutation(
@@ -17496,12 +17524,20 @@ class ConsoleChatStore:
             return self._run_commit_aware_generation_mutation(
                 message_id,
                 lambda: self._update_message_thinking_block(
-                    message_id, block_id, text
+                    message_id,
+                    block_id,
+                    text,
+                    expected_text=expected_text,
                 ),
             )
 
     def _update_message_thinking_block(
-        self, message_id: str, block_id: str, text: str
+        self,
+        message_id: str,
+        block_id: str,
+        text: str,
+        *,
+        expected_text: str | None = None,
     ) -> ConsoleChatMessage:
         message = self._message_or_raise(message_id)
         if message.role is not ConsoleMessageRole.ASSISTANT:
@@ -17528,6 +17564,11 @@ class ConsoleChatStore:
             raise ValueError(f"Unknown thinking block id: {block_id!r}.")
         if isinstance(block, ProprietaryThinkingBlock):
             raise ValueError("Proprietary thinking cannot be edited.")
+        if expected_text is not None and block.text != expected_text:
+            raise ValueError(
+                "Thinking changed while editing; reopen the block and edit "
+                "the current text."
+            )
         if not text.strip():
             raise ValueError("Thinking text cannot be blank.")
         if block.source_format == "start_anchored_think":
@@ -20229,7 +20270,7 @@ class ConsoleChatStore:
                 thinking.envelope
             )
         try:
-            reconcile(
+            result = reconcile(
                 server_profile_id=profile_id,
                 authenticated_principal_id=self.sync_v2_authenticated_principal_id,
                 workspace_scope=self.sync_v2_workspace_scope,
@@ -20240,6 +20281,27 @@ class ConsoleChatStore:
         except Exception:
             logger.warning(
                 "Failed to project Sync v2 continuation owner after local mutation"
+            )
+            return
+        # The reconciled envelope is now the newest projected payload for
+        # this row. Record its hash so the next ordinary enqueue (for
+        # example a later content edit) chains from it as base_version
+        # instead of the stale pre-generation-mutation hash.
+        try:
+            session = self._sessions.get(
+                self._message_session_index.get(message.id, "")
+            )
+            conversation_id = (
+                session.persisted_conversation_id if session is not None else None
+            )
+            if conversation_id is not None:
+                self._record_sync_v2_message_version(
+                    f"{conversation_id}:{persisted_id}", result
+                )
+        except Exception:
+            logger.warning(
+                "Failed to record Sync v2 version hash after generation "
+                "reconciliation"
             )
 
     def _persist_pending_message_if_ready(

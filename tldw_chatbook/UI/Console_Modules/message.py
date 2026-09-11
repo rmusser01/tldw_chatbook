@@ -2581,6 +2581,10 @@ class ConsoleMessageController:
         either), and the screen resolves the displayable block from the
         display model because the display-only activity id can never
         resolve in the store.
+
+        Args:
+            event: Thinking-row edit request carrying the projected
+                activity id of the selected disclosure row.
         """
         editable = self._console_thinking_edit_target(event.activity_id)
         if editable is None:
@@ -2606,7 +2610,10 @@ class ConsoleMessageController:
                 return
             try:
                 store.update_message_thinking_block(
-                    owner_message_id, block_id, result.text
+                    owner_message_id,
+                    block_id,
+                    result.text,
+                    expected_text=text,
                 )
             except ValueError as exc:
                 self.app_instance.notify(str(exc), severity="warning")

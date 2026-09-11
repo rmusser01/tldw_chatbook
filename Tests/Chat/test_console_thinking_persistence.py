@@ -1295,3 +1295,63 @@ def test_edit_thinking_block_rejects_oversized_text() -> None:
         store.update_message_thinking_block(
             message_id, "reasoning-1", "x" * (MAX_THINKING_TEXT_BYTES + 1)
         )
+
+
+def test_edit_thinking_block_rejects_stale_expected_text() -> None:
+    store, message_id = _memory_thinking_store(_thinking("reasoning"))
+
+    with pytest.raises(ValueError, match="changed while editing"):
+        store.update_message_thinking_block(
+            message_id,
+            "reasoning-1",
+            "cleaned reasoning",
+            expected_text="stale prefill text",
+        )
+
+    unchanged = store.get_message(message_id)
+    assert unchanged.thinking is not None
+    assert unchanged.thinking.blocks[0].text == "reasoning"
+
+
+def test_edit_thinking_block_accepts_matching_expected_text() -> None:
+    store, message_id = _memory_thinking_store(_thinking("reasoning"))
+
+    edited = store.update_message_thinking_block(
+        message_id,
+        "reasoning-1",
+        "cleaned reasoning",
+        expected_text="reasoning",
+    )
+
+    assert edited.thinking is not None
+    assert edited.thinking.blocks[0].text == "cleaned reasoning"
+
+
+def test_thinking_edit_reconcile_records_sync_version_hash(tmp_path: Path) -> None:
+    db, conversation_id, repository = _database(tmp_path / "edit-sync-hash.sqlite")
+    _insert(db, repository, _acceptance(conversation_id))
+    canonical = dump_thinking_blocks_json(_thinking("old reasoning"))
+    _raw_semantic_corruption(
+        db,
+        "UPDATE messages SET content = 'old answer', thinking_blocks_json = ?, "
+        "assistant_generation_state = 'complete' WHERE id = 'assistant-1'",
+        (canonical,),
+    )
+    store, _session_id = _restored_store(db, conversation_id)
+
+    class _ReconcileProducer:
+        source = db
+
+        def reconcile_chat_message_intent(self, **_kwargs: object) -> dict[str, object]:
+            return {
+                "status": "enqueued",
+                "outbox_entry": {"envelope": {"payload_hash": "hash-after-edit"}},
+            }
+
+    store.sync_v2_server_profile_id = "server-a"
+    store.sync_v2_chat_producer = _ReconcileProducer()
+
+    store.update_message_thinking_block("assistant-1", "reasoning-1", "cleaned")
+
+    stable_key = f"{conversation_id}:assistant-1"
+    assert store._sync_v2_message_versions.get(stable_key) == "hash-after-edit"

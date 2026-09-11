@@ -10,6 +10,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static, TextArea
 
+from tldw_chatbook.Chat.thinking_blocks import MAX_THINKING_TEXT_BYTES
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 
@@ -204,7 +205,13 @@ class ConsoleThinkingEditResult:
 class ConsoleEditThinkingModal(
     SafeModalDismissMixin, ModalScreen[ConsoleThinkingEditResult | None]
 ):
-    """Edit one displayable thinking block's text without touching the answer."""
+    """Edit one displayable thinking block's text without touching the answer.
+
+    Args:
+        text: The block's current text, used as the editor prefill; the
+            caller also keeps this value as the optimistic-concurrency
+            baseline for the store's save-time ``expected_text`` guard.
+    """
 
     DEFAULT_CSS = """
     ConsoleEditThinkingModal {
@@ -260,6 +267,7 @@ class ConsoleEditThinkingModal(
         self._text = text
 
     def compose(self) -> ComposeResult:
+        """Yield the modal's context line, editor, error line, and actions."""
         with Vertical(id="console-edit-thinking-modal"):
             yield Static("Edit Thinking", classes="console-modal-header")
             yield Static(
@@ -277,9 +285,12 @@ class ConsoleEditThinkingModal(
                 )
 
     def on_mount(self, event: events.Mount) -> None:  # type: ignore[override]
-        # Same stale-key clock domain guard as the message edit modal
-        # (TASK-360): keys pressed before this modal appeared never reach
-        # the textarea.
+        """Arm the TASK-360 stale-key guard and focus the editor.
+
+        Args:
+            event: Mount event supplying the clock domain shared with
+                ``Key.time`` for the pre-modal keystroke guard.
+        """
         self._opened_at = event.time
         area = self.query_one("#console-edit-thinking-body", _EditMessageTextArea)
         area.opened_at = event.time
@@ -297,6 +308,11 @@ class ConsoleEditThinkingModal(
         if not edited_text.strip():
             self.query_one("#console-edit-thinking-error", Static).update(
                 "Thinking text cannot be blank."
+            )
+            return
+        if len(edited_text.encode("utf-8")) > MAX_THINKING_TEXT_BYTES:
+            self.query_one("#console-edit-thinking-error", Static).update(
+                "Edited thinking is too large for one block."
             )
             return
         self.dismiss(ConsoleThinkingEditResult(text=edited_text))

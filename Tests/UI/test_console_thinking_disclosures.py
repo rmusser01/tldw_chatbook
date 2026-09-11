@@ -665,3 +665,24 @@ async def test_editable_block_returns_none_for_proprietary() -> None:
         disclosure = _disclosure(transcript, proprietary_owner)
 
         assert transcript.thinking_editable_block(disclosure.activity_message_id) is None
+
+
+@pytest.mark.asyncio
+async def test_editable_block_refuses_streaming_owner() -> None:
+    app = ThinkingTranscriptHarness()
+    streaming = _assistant(
+        content="",
+        status="streaming",
+        blocks=(_displayable("partial live thinking"),),
+    )
+
+    async with app.run_test(size=(100, 28)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages([streaming], session_id="session-a")
+        await transcript.refresh_messages()
+        disclosure = _disclosure(transcript, streaming)
+
+        # A live disclosure must not open the edit modal with partial text
+        # (TASK-32312 review: saving a stale live prefill after completion
+        # would truncate the finished reasoning).
+        assert transcript.thinking_editable_block(disclosure.activity_message_id) is None

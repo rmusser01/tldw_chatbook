@@ -752,3 +752,25 @@ async def test_thinking_modal_cancel_dismisses_none():
         await pilot.pause()
 
     assert result == [None]
+
+
+@pytest.mark.asyncio
+async def test_thinking_modal_oversized_save_blocked_inline():
+    from tldw_chatbook.Chat.thinking_blocks import MAX_THINKING_TEXT_BYTES
+
+    app = _ModalHost()
+    result: list[ConsoleThinkingEditResult | None] = []
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = ConsoleEditThinkingModal(text="orig")
+        await app.push_screen(modal, callback=result.append)
+        await pilot.pause()
+
+        editor = modal.query_one("#console-edit-thinking-body", TextArea)
+        editor.text = "x" * (MAX_THINKING_TEXT_BYTES + 1)
+        await pilot.click("#console-edit-thinking-save")
+        await pilot.pause()
+
+        assert result == []
+        error = modal.query_one("#console-edit-thinking-error", Static)
+        assert "too large" in _static_plain_text(error).lower()

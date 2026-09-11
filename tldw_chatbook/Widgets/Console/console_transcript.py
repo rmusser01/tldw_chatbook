@@ -2645,6 +2645,10 @@ class ConsoleThinkingEditRequested(Message):
     thinking-row copy seam). Anchored by projected activity id -- the owning
     screen resolves the displayable block from the transcript's display
     model and owns the block-scoped edit modal.
+
+    Args:
+        activity_id: Projected thinking activity row identifier (the
+            deterministic uuid5 of the owner message and block ids).
     """
 
     def __init__(self, activity_id: str) -> None:
@@ -5127,8 +5131,14 @@ class ConsoleTranscript(VerticalScroll):
     def thinking_editable_block(self, activity_id: str) -> tuple[str, str, str] | None:
         """Resolve one displayable block for the block-scoped edit seam.
 
-        Returns ``(assistant_message_id, block_id, text)``, or ``None`` for
-        unknown rows and content-free proprietary evidence (TASK-32312).
+        Args:
+            activity_id: Projected thinking activity row identifier.
+
+        Returns:
+            A ``(assistant_message_id, block_id, text)`` tuple for a
+            displayable block on a terminal (non-streaming) assistant owner,
+            or ``None`` for unknown rows, content-free proprietary evidence,
+            and live rows whose partial text must never prefill an editor.
         """
         ref = self._thinking_activity_refs.get(activity_id)
         if ref is None:
@@ -5141,7 +5151,9 @@ class ConsoleTranscript(VerticalScroll):
             ),
             None,
         )
-        envelope = assistant.thinking if assistant is not None else None
+        if assistant is None or assistant.status in {"pending", "streaming"}:
+            return None
+        envelope = assistant.thinking
         if not isinstance(envelope, ThinkingEnvelope):
             return None
         block = next(
