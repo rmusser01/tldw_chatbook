@@ -27,7 +27,7 @@ def restored(generation='generation'):
  with authority.maintenance(('profile',),3) as session:
   bind_activation(root,'restore',selector,generation,('config',),session=session)
  (root/('pending-'+bootstrap._key('restore')+'.json')).unlink()
- activation.approve(generation,'config')
+ assert not activation.allowed(generation,'config')
 effects=[]
 class Response:
  status_code=200
@@ -79,12 +79,14 @@ review=recovery.prepare_openai_reconnect()
 assert not effects
 assert 'owned-test-key' not in repr(review)
 recovery.confirm_openai_reconnect(review)
+assert not activation.allowed('generation','config')
 result=calls.chat_with_openai(message,model='gpt-4o-mini',streaming=False)
 assert result['choices'][0]['message']['content']=='answer'
 posts=[e for e in effects if isinstance(e,tuple)]
 assert len(posts)==1 and posts[0][1]=='https://api.openai.com/v1/chat/completions'
 assert posts[0][2]['headers']['Authorization']=='Bearer owned-test-key'
 assert posts[0][2]['allow_redirects'] is False
+assert not activation.allowed('generation','config')
 assert not blocked_attempts()
 print('retired and reopened')
 """
@@ -313,15 +315,21 @@ from tldw_chatbook.Backup_Recovery import bootstrap
 from tldw_chatbook.Backup_Recovery.activation import ActivationStore
 from tldw_chatbook import config
 assert config.CLI_APP_CLIENT_ID==entry.installation_id
+_,profiles=bootstrap._records(bootstrap.default_bootstrap_root())
+witness=next(p['activation'] for p in profiles if p['selector']==entry.config)
+activation=ActivationStore(Path(witness['store_root']))
+def unrelated_inactive():
+ for owner in ('config','skills','mcp.local','runtime.sync_state','db.scheduled_tasks'):
+  assert owner in witness['owners'],owner
+  assert not activation.allowed(witness['generation'],owner),owner
+unrelated_inactive()
 if mode=='approve':
- _,profiles=bootstrap._records(bootstrap.default_bootstrap_root())
- witness=next(p['activation'] for p in profiles if p['selector']==entry.config)
- ActivationStore(Path(witness['store_root'])).approve(witness['generation'],'config')
  recovery.confirm_openai_reconnect(recovery.prepare_openai_reconnect(auth_source='env:OPENAI_API_KEY'))
 EFFECT_FIXTURE
 answer=calls.chat_with_openai([{'role':'user','content':'hello'}],model='gpt-4o-mini')
 assert answer['choices'][0]['message']['content']=='answer'
 assert len([e for e in effects if isinstance(e,tuple)])==1
+unrelated_inactive()
 assert not blocked_attempts()
 print('verified isolated reconnect')
 """.replace("EFFECT_FIXTURE", _SETUP[_SETUP.index("effects=[]") :])
@@ -362,6 +370,74 @@ def test_actual_isolated_generation_reopens_openai_receipt_in_fresh_process(tmp_
         "isolated",
         "local",
         script="CHILD=" + repr(_ISOLATED_CHILD) + "\n" + _ISOLATED,
+        timeout=60,
+    )
+
+
+_DAMAGED_CHILD = (
+    _ISOLATED_CHILD.split("if mode=='approve':")[0]
+    + r"""
+import json
+stage,damage=mode.split(':')
+EFFECT_FIXTURE
+review=None
+if stage!='prepare':
+ review=recovery.prepare_openai_reconnect(auth_source='env:OPENAI_API_KEY')
+if stage=='request':
+ recovery.confirm_openai_reconnect(review)
+ operation=recovery._Operation(Path(entry.config))
+generation=activation._generation(witness['generation'])
+before={p.name:p.read_bytes() for p in generation.glob('openai-connection-*')}
+required=generation/'required.json'
+association=bootstrap.default_bootstrap_root()/('activation-'+bootstrap._key(entry.config)+'.json')
+if damage=='missing_required':required.unlink()
+elif damage=='corrupt_required':required.write_bytes(b'{')
+elif damage=='missing_pair':association.unlink()
+elif damage=='mismatched_pair':
+ document=json.loads(association.read_bytes())
+ document['activation']['generation']='foreign-generation'
+ association.write_text(json.dumps(document))
+else:raise AssertionError(damage)
+select=recovery._selection
+def no_secret(*args,**kwargs):
+ if kwargs.get('resolve'):raise AssertionError('damaged history resolved credentials')
+ return select(*args,**kwargs)
+recovery._selection=no_secret
+def no_client(*args,**kwargs):raise AssertionError('damaged history constructed client')
+calls.requests.Session=no_client
+try:
+ if stage=='prepare':recovery.prepare_openai_reconnect(auth_source='env:OPENAI_API_KEY')
+ elif stage=='confirm':recovery.confirm_openai_reconnect(review)
+ else:
+  with recovery._using(operation):
+   recovery.openai_post(calls.requests.Session(),'https://api.openai.com/v1/chat/completions',headers={'Authorization':'Bearer owned-test-key'})
+except (recovery.ProviderReconnectRequired,bootstrap.RecoveryRequired):pass
+else:raise AssertionError('damaged paired history authorized provider')
+finally:
+ if stage=='request':operation.close()
+assert {p.name:p.read_bytes() for p in generation.glob('openai-connection-*')}==before
+assert not effects and not blocked_attempts()
+print('verified isolated reconnect')
+""".replace("EFFECT_FIXTURE", _SETUP[_SETUP.index("effects=[]") :])
+)
+
+
+@pytest.mark.parametrize("stage", ["prepare", "confirm", "request"])
+@pytest.mark.parametrize(
+    "damage",
+    ["missing_required", "corrupt_required", "missing_pair", "mismatched_pair"],
+)
+def test_actual_isolated_paired_damage_refuses_before_provider_effects(
+    tmp_path, stage, damage
+):
+    script = _ISOLATED.replace(
+        "for mode in ('approve','reopen'):", "for mode in (sys.argv[1],):"
+    )
+    _run(
+        tmp_path,
+        f"{stage}:{damage}",
+        "local",
+        script="CHILD=" + repr(_DAMAGED_CHILD) + "\n" + script,
         timeout=60,
     )
 
@@ -634,7 +710,7 @@ register_pending(root,'restore2',('profile',),control2,(selector,))
 with authority.maintenance(('profile',),3) as session:
  bind_activation(root,'restore2',selector,'generation2',('config',),session=session)
 (root/('pending-'+bootstrap._key('restore2')+'.json')).unlink()
-new=ActivationStore(control2/'activation');new.approve('generation2','config')
+new=ActivationStore(control2/'activation');assert not new.allowed('generation2','config')
 shutil.copyfile(old,new._generation('generation2')/old.name)
 (new._generation('generation2')/old.name).chmod(0o600)
 try:calls.chat_with_openai(message,model='gpt-4o-mini')

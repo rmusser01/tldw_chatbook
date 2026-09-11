@@ -25,9 +25,8 @@ from tldw_chatbook.Backup_Recovery.activation import (
     _private,
     _read,
     _write,
-    activation_permission,
-    execution_scope,
 )
+from tldw_chatbook.Backup_Recovery.generation_witnesses import _witnesses
 from tldw_chatbook.Backup_Recovery.native_files import pinned_directory
 from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
 
@@ -200,30 +199,10 @@ def _selection(path, auth_source=None, *, resolve=False):
 
 
 def _history(path, lease):
-    root, names = lease.execution_context(path)
-    if activation_permission(
-        "config",
-        config_selector=path,
-        bootstrap_root=root,
-        namespaces=names,
-        ordinary_only=True,
-    ):
-        return ()
-    with execution_scope(("config",), path, retained=lease) as allowed:
-        if not allowed:
-            raise ProviderReconnectRequired()
-    _, _, associations = bootstrap._control_records(root)
-    held = set(names or ())
-    results = []
-    for row in associations:
-        witness = row["activation"]
-        if (
-            row["selector"] == str(path) or held.intersection(witness["namespaces"])
-        ) and witness not in results:
-            results.append(witness)
-    if not results:
-        raise ProviderReconnectRequired()
-    return tuple(results)
+    try:
+        return tuple(_witnesses(path, lease))
+    except (OSError, ValueError, TypeError, RuntimeError, KeyError, AttributeError):
+        raise ProviderReconnectRequired() from None
 
 
 @dataclass(frozen=True)
@@ -465,12 +444,7 @@ def _using(operation):
     operation.check()
     token = _current.set((operation, _identity()))
     try:
-        with execution_scope(
-            ("config",), operation.path, retained=operation.lease
-        ) as allowed:
-            if not allowed:
-                raise ProviderReconnectRequired()
-            yield operation
+        yield operation
     finally:
         _current.reset(token)
 
