@@ -307,6 +307,7 @@ from ...Chat.console_command_grammar import (
 )
 from ...MCP.permission_prompt_reducer import format_permission_prompt_report
 from ...Chat.console_prefill import (
+    armed_prefill_row_value,
     ACTION_CLEAR,
     ACTION_ERROR,
     ACTION_ONE_SHOT,
@@ -14336,7 +14337,8 @@ class ChatScreen(BaseAppScreen):
         if one_shot:
             prefill_rows.append(
                 ConsoleDisplayRow(
-                    "Prefill (next send only)", describe_prefill_preview(one_shot)
+                    "Prefill (next send only)",
+                    armed_prefill_row_value(one_shot),
                 )
             )
         session_settings = active_session.settings
@@ -14345,7 +14347,7 @@ class ChatScreen(BaseAppScreen):
         )
         if pinned:
             prefill_rows.append(
-                ConsoleDisplayRow("Prefill (pinned)", describe_prefill_preview(pinned))
+                ConsoleDisplayRow("Prefill (pinned)", armed_prefill_row_value(pinned))
             )
         return (
             ConsoleDisplayRow(

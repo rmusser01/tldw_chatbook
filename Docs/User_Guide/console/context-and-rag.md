@@ -598,8 +598,10 @@ forcing a format ("Here is the JSON:") or an opening tone.
   `Prefill (pinned): '…'`, or "No prefill armed."
 
 Prefill text is capped at 4,000 characters. While armed it shows in the
-Inspector rows **Prefill (next send only)** / **Prefill (pinned)** and in
-the Chat Context viewer's **Response Prefill** fold.
+Inspector rows **Prefill (next send only)** / **Prefill (pinned)** — each
+row's value ends with "— tools skipped this send" as a standing reminder of
+that side effect — and in the Chat Context viewer's **Response Prefill**
+fold.
 
 ### RAG scope
 
