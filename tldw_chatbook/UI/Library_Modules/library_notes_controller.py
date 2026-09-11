@@ -5474,9 +5474,16 @@ class LibraryNotesController:
                     failure_message = (
                         "This deleted note changed elsewhere — refresh and try again."
                     )
-                except Exception:
-                    logger.opt(exception=True).warning(
-                        "Failed to restore a Library note"
+                except Exception as exc:  # noqa: BLE001 - degrade to a notice
+                    # task-32299: metadata only, by review. This is a
+                    # REVIEWED_METADATA_ONLY diagnostic (Tests/Architecture/
+                    # test_persistent_diagnostic_inventory.py) and the frame
+                    # holds the note record, so it keeps the error TYPE and
+                    # not the traceback the log-file sink would render locals
+                    # into.
+                    logger.warning(
+                        "Failed to restore a Library note; error_type={}",
+                        type(exc).__name__,
                     )
                     failure_message = "Could not restore this note."
 

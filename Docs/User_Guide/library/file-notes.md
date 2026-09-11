@@ -53,14 +53,18 @@ Using compact **Back to navigator** does not reset it.
   instead.
 - **Library navigation** (left of the workspace) — the same Library rail as
   the rest of the screen, so you can leave for Media, Prompts or Skills
-  without going back through Notes first. Its grip collapses it. Before a
-  folder is linked, the empty state below takes the full canvas width and
-  the rail is not shown; it returns once a folder is linked.
+  without going back through Notes first. The rail is there before a folder
+  is linked too — the file list and the editor are what wait for a folder,
+  not the rail — but its collapse grip arrives with the folder, so before
+  linking the rail is simply always open. Once linked, the grip collapses
+  it. On compact terminals (under about 120 columns) the rail is collapsed
+  whether or not a folder is linked, so the empty state takes the full
+  canvas width there.
 - **Folder link row** (top) — before setup the status reads "Choose a notes
   folder." with buttons **Details** and **Choose folder…**, and the line
   under it explains the mode: "Folder files edits Markdown files in a folder
-  on disk, in place. Nothing is copied into the Library." When
-  `[notes] sync_directory` is set, a **Use \<folder\>** button offers that
+  on disk, in place. Nothing is copied into the Library." When a notes
+  folder is already configured, a **Use \<folder\>** button offers that
   folder directly. Once linked, the status becomes "Linked · Local folder:
   \<folder\>" (or "Checking · Local folder: …" / "Offline · Local folder: …"
   when the folder can't be verified) and the button relabels to
@@ -95,16 +99,21 @@ Using compact **Back to navigator** does not reset it.
 |---|---|
 | **Choose folder…** / **Change…** | Opens the "Choose File Notes Folder" picker; the choice is saved to `[file_notes] root` in config.toml. It opens on the linked folder when there is one, and otherwise on the folder you last picked through it (`[file_notes] browse`) — or your home directory the first time. Type into the **Folder path** field and either press Enter (browses into it) or click **Select** (uses it right away, without needing Enter first); an invalid path shows an inline reason and leaves the picker open |
 | **Details** | Opens "File Notes folder details" — a read-only status report; **Close** or **Esc** dismisses it |
-| **Cancel** (folder change) | Appears beside **Change…** only while a folder change is running. Press it to stop waiting: the status reads "Folder change cancelled · previous folder kept" and the folder you already had stays linked |
+| **Cancel** (folder change) | Appears once a folder change has been running about three seconds — the same moment the line stops being a bare "Changing folder…". Press it to stop waiting: the status reads "Folder change cancelled · previous folder kept" and the folder you already had stays linked |
 | **Keep waiting** (folder change) | Appears beside **Cancel** once a folder change has been running about three seconds. Grants the change one more full 30-second budget; it can be used once per change, then the control goes away |
 | **Choose another** (folder change) | Appears with **Keep waiting**. Abandons the change, keeps the folder you already had, and reopens the folder picker in one step |
-| **Use \<folder\>** | Appears only before a folder is linked, and only when `[notes] sync_directory` names an existing folder by absolute path in config.toml. Links that folder without opening the picker |
+| **Use \<folder\>** | Appears only before a folder is linked, and only when a configured folder still exists. It reads `[file_notes] root` — the key **Choose folder…** writes — and falls back to the legacy `[notes] sync_directory`; either must name an existing folder by absolute path in config.toml. Links that folder without opening the picker |
 
-While a folder change runs, the folder line reads `Changing folder…`. If it
-is still going after about three seconds it starts reporting how far the
-scan has got — `Changing folder… · 1,240 entries so far` (or `· still
-working` before the first count) — and **Keep waiting** and **Choose
-another** appear beside **Cancel**. After 30 seconds the change gives up on
+While a folder change runs, the folder line reads `Changing folder…` and the
+row holds nothing else. If it is still going after about three seconds it
+starts reporting how far the scan has got — `Changing folder… · 1,240
+entries so far` (or `· still working` before the first count) — and that is
+when **Cancel**, **Keep waiting** and **Choose another** arrive: the way out
+appears with the line that admits one is needed. Those three are then the
+whole row: **Details** and **Change…** step aside, because **Details**
+would only repeat the line you are already reading and **Change…** is
+inert until the change ends, which is what **Choose another** is for.
+After 30 seconds the change gives up on
 its own and the folder line itself reads "Folder change timed out · previous
 folder kept. Try again or choose a different folder." That reason stays on
 the folder line until you start another folder change or open a file.
@@ -116,6 +125,11 @@ folder." and the new folder is the one in use.
 Abandoning a folder change — by **Cancel**, by **Choose another**, or by
 letting it time out — also stops the folder scan itself. Picking a different
 folder afterwards works normally; you do not have to restart the app.
+
+Leaving Folder files while a change is running abandons it as well — Esc,
+the "‹ Library / Notes" cue and moving to another screen all do. The folder
+line goes with the surface you left, so that outcome arrives as a
+notification instead: "Folder change cancelled · previous folder kept".
 
 ### Edit and Manage
 
@@ -474,8 +488,8 @@ there; a slow scan reports its entry count and offers Keep waiting / Choose
 another. task-32136: once a folder is linked, Folder files keeps the Library
 rail and the source strip at wide sizes; the empty state shown before any
 folder is linked explains the mode and offers the configured
-`[notes] sync_directory` folder, but is a full-width onboarding step without
-the Library rail until you link one.)*
+`[notes] sync_directory` folder, but was a full-width onboarding step without
+the Library rail until you linked one — superseded by task-32173 below.)*
 
 *Verified against fix/library-notes-pickers — 2026-09-09 (task-32122: the
 "Choose File Notes Folder" picker used to commit the directory being
@@ -504,3 +518,29 @@ value no longer names a real folder. Stored as `[file_notes] browse` in
 `config.toml`. Independent of Import once's and
 Keep a folder synced's own last-used directories, see
 [Database notes](notes.md).)*
+
+*Verified against fix/library-notes-r-file-notes — 2026-09-09 (task-32173:
+the Library rail is now shown inside Folder files before a folder is linked,
+not only after — the file list and the editor are what wait for a folder. On
+terminals under about 120 columns the rail stays collapsed either way, which
+is unchanged. task-32180: at 60 columns the slow-folder-change row kept
+**Choose another** 11 cells off the right edge; **Cancel** / **Keep
+waiting** / **Choose another** now size to their labels and **Details** /
+**Change…** stand down for the duration of the change. **Use \<folder\>**
+reads `[file_notes] root` first and the legacy `[notes] sync_directory`
+second.)*
+
+*Verified against fix/library-notes-r-file-notes — 2026-09-09 (task-32180
+review round 1: a folder change started from the unlinked empty state kept
+the empty state's hug-your-own-width status, so at 60 columns **Keep
+waiting** and **Choose another** were pushed off the row. The busy line now
+elides in that state too. The pre-link Library rail has no collapse grip;
+the grip arrives with the folder.)*
+
+*Verified against fix/library-notes-r-file-notes — 2026-09-10 (task-32102,
+landed on this branch so the workspace lands once: **Cancel** now arrives
+with the still-working line rather than at t=0, leaving Folder files during
+a folder change reports the cancellation as a notification rather than into
+the row being torn down, and the wait line no longer carries the warning or
+offline tint of the state it replaced. Pinned by tests, not by a live
+capture.)*
