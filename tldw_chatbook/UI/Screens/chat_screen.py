@@ -471,6 +471,7 @@ from ...Chat.console_rail_state import (
     resolve_console_rail_priority,
     serialize_console_rail_stored_preferences,
     serialize_console_rail_updated_preferences,
+    console_rail_right_open_explicit,
 )
 from ...config import (
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
@@ -13174,7 +13175,11 @@ class ChatScreen(BaseAppScreen):
             # were using to show one they never asked for. Between 118 and
             # 128 columns that swap happened on a single column of resize.
             return False
-        if isinstance(stored_preferences, dict) and "right_open" in stored_preferences:
+        if console_rail_right_open_explicit(stored_preferences):
+            # TASK-32328: only an EXPLICIT Inspector toggle kills the
+            # auto-open band. Key presence alone used to -- but implicit
+            # writers store ``right_open`` too, permanently disabling the
+            # heuristic for users who never chose.
             return False
         if (
             available_columns is None

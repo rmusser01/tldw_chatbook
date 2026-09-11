@@ -1152,3 +1152,61 @@ def test_disclosure_ids_accept_environment_and_tasks():
 def test_coerce_garbage_falls_back_to_defaults():
     coerced = coerce_console_rail_preferences({"environment_open": "banana"})
     assert coerced.environment_open is True
+
+
+# --- TASK-32328: the 118-128 auto-open band dies only on EXPLICIT toggles ------
+
+
+def test_explicit_right_toggle_writes_marker_and_kills_auto_open_distinguishability():
+    """TASK-32328: an explicit Inspector toggle writes right_open_explicit;
+    implicit writes leave the marker absent so the auto-open heuristic can
+    still tell "the user chose" from "some writer stored a preference"."""
+    from tldw_chatbook.Chat.console_rail_state import (
+        CONSOLE_RAIL_RIGHT_OPEN_EXPLICIT_KEY,
+        coerce_console_rail_preferences,
+        console_rail_right_open_explicit,
+        serialize_console_rail_updated_preferences,
+    )
+
+    from dataclasses import replace
+
+    base = coerce_console_rail_preferences(None)
+    # A real explicit toggle: the caller replaces the value AND passes the
+    # gesture flag, exactly as _set_console_rail_preference does.
+    toggled = replace(base, right_open=True)
+    explicit = serialize_console_rail_updated_preferences(
+        toggled, None, left_open=None, right_open=True, character_toggled=False
+    )
+    assert explicit["right_open"] is True
+    assert console_rail_right_open_explicit(explicit) is True
+
+    # An implicit write (e.g. a first-ever section toggle) does NOT add
+    # the marker. It may still carry the right_open KEY (the base
+    # serializer always writes it) -- that is exactly the payload shape
+    # that used to kill the auto-open band by key presence; the heuristic
+    # now reads the marker, not the key.
+    implicit = serialize_console_rail_updated_preferences(
+        base, None, left_open=None, right_open=None, character_toggled=False
+    )
+    assert CONSOLE_RAIL_RIGHT_OPEN_EXPLICIT_KEY not in implicit
+    assert console_rail_right_open_explicit(implicit) is False
+
+    # Against a seeded Mapping without right_open, the key is omitted
+    # outright (existing rule) and the marker stays absent.
+    seeded = serialize_console_rail_updated_preferences(
+        base, {}, left_open=None, right_open=None, character_toggled=False
+    )
+    assert "right_open" not in seeded
+    assert console_rail_right_open_explicit(seeded) is False
+
+    # And the marker survives a later write that did not touch the rail.
+    later = serialize_console_rail_updated_preferences(
+        coerce_console_rail_preferences(explicit),
+        explicit,
+        left_open=None,
+        right_open=None,
+        character_toggled=False,
+    )
+    assert console_rail_right_open_explicit(later) is True
+    # ...and the right_open key itself survives (it was explicitly chosen).
+    assert later["right_open"] is True
