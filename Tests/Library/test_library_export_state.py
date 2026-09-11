@@ -272,7 +272,13 @@ def test_running_status_and_error_lines_pass_through_unchanged():
 
 def test_media_quality_options_are_the_three_known_values_in_order():
     assert MEDIA_QUALITY_OPTIONS == ("thumbnail", "compressed", "original")
-    assert DEFAULT_MEDIA_QUALITY == "thumbnail"
+
+
+def test_export_defaults_to_full_fidelity():
+    """task-32353 AC#1 (critique #10): the default used to be "thumbnail" --
+    a silent data reduction chosen for someone whose reason for exporting is
+    usually to keep the files. A lossy bundle is now something you ask for."""
+    assert DEFAULT_MEDIA_QUALITY == "original"
 
 
 def test_export_form_state_carries_quality_choices_visible_flag():

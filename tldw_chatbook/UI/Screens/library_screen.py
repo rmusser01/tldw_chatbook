@@ -124,6 +124,7 @@ from ...Library.library_conversation_reader_state import (
     project_conversation_multiselect,
 )
 from ...Library.library_export_scope import (
+    ExportPreview,
     ExportScope,
     resolve_export_selections,
 )
@@ -455,7 +456,10 @@ from ...Widgets.Library import (
     library_rag_scope_shows_recovery,
     skill_editor_warning_lines,
 )
-from ...Widgets.Library.library_rail import library_db_size_rows
+from ...Widgets.Library.library_rail import (
+    library_db_size_rows,
+    library_diagnostics_disclosure,
+)
 from ...Widgets.Library.library_file_notes_events import (
     FileNotesEditableOpened,
     FileNotesIdentityCleared,
@@ -1298,8 +1302,13 @@ class LibraryScreen(BaseAppScreen):
     #: landing (``action_library_ingest_back``). Shared by the footer and
     #: F1 via ``_library_footer_shortcuts_for_current_state``, the
     #: task-2858 single-source rule.
+    #:
+    #: task-32364 AC#3: the Enter row here is the OPEN-gate wording only.
+    #: ``_library_ingest_shortcuts_for_current_state`` replaces it with
+    #: "check this path" while the gate is shut, because the first Enter on
+    #: an unvalidated path validates rather than imports.
     LIBRARY_INGEST_SHORTCUTS = (
-        ("enter", "start"),
+        ("enter", "start import"),
         ("esc", "back"),
         ("/", "search"),
         ("F6", "next pane"),
@@ -13934,6 +13943,12 @@ class LibraryScreen(BaseAppScreen):
         ``reason · next step`` grammar, read off the eligibility decision
         the state already holds (``LibraryWorkspaceSourceRow.reason_code``).
         The unblocked case is unchanged and grows no dot.
+
+        task-32357 AC#1 refines only the SENTENCE that carries them: the
+        eligible/blocked pair read as a status report about a concept
+        ("handoff") a first-time reader has never met. The derivation below
+        -- which rows are blocked, their shared reason, the remedy that
+        matches -- is task-32230's, untouched.
         """
         label = state.handoff_label
         if label.startswith(LIBRARY_HANDOFF_LABEL_PREFIX):
@@ -13982,8 +13997,16 @@ class LibraryScreen(BaseAppScreen):
             # workspace"), minus the workspace id the per-row recovery
             # sentence would drag into a 34-cell rail row.
             remedy = f"Copy or link {pronoun} into this workspace"
-        head = label[: match.start()].rstrip().rstrip(",")
-        return f"{head} · {match.group(0)} · {reason} · {remedy}"
+        # task-32357 AC#1 (critique #10, A cap 20): the line was a correct
+        # engineering summary of a concept the reader had never met. The
+        # counts and the reason are unchanged; the sentence is now the task
+        # the reader can act on.
+        blocked_count = int(match.group(1))
+        noun = "item" if blocked_count == 1 else "items"
+        return (
+            f"{blocked_count} {noun} can't be used in Console yet · "
+            f"{reason} · {remedy}"
+        )
 
     def _workspaces_detail_rows(
         self,
@@ -14053,8 +14076,8 @@ class LibraryScreen(BaseAppScreen):
     ) -> tuple[Any, ...]:
         """Build the Actions group's Details rail rows.
 
-        Only the two action buttons plus one dim WIP note survive here; the
-        Workspace group's Handoff row now carries the eligible/blocked
+        Only the two action buttons plus one dim storage note survive here;
+        the Workspace group's Handoff row now carries the eligible/blocked
         status, so the retired ready/blocked/next-step callouts that used to
         repeat it are gone.
         """
@@ -14070,8 +14093,31 @@ class LibraryScreen(BaseAppScreen):
                 classes="library-source-action",
                 tooltip=(
                     "Create a local-only workspace and make it active. "
-                    "Server sync and ACP handoff remain WIP."
+                    # task-32357 AC#1: same panel, same reader -- the
+                    # sibling line's "WIP" went, this one goes with it.
+                    # Review F7: and so does the bare acronym. The concept
+                    # is spelled; ACP stays in parentheses for the reader
+                    # who already knows it.
+                    "Server sync and agent hand-off (ACP) aren't available yet."
                 ),
+            ),
+            Static(
+                # task-32357 AC#1 (critique #10, A cap 20): "WIP" is a
+                # ticket status, not something a reader of this panel can
+                # act on or even place. The line says the same two facts in
+                # the reader's own terms: where their content is, and what
+                # is not available yet.
+                #
+                # It also sits beside the button it captions again (its id
+                # has always said so). Left where it had drifted to -- under
+                # "Use in Console" -- the longer sentence wrapped to three
+                # rail lines and pushed that button out of reach of an
+                # 18-row rail, measured by
+                # ``test_folder_files_low_height_rail_scrolls_to_last_action``.
+                "Everything here is stored on this machine · syncing to a "
+                "server isn't available yet.",
+                id="library-workspace-create-local-copy",
+                classes="library-rail-empty-copy",
             ),
         ]
         if not workspace_depth_state.source_rows:
@@ -14097,13 +14143,6 @@ class LibraryScreen(BaseAppScreen):
         if handoff_disabled:
             use_in_console.add_class("library-source-action-blocked")
         widgets.append(use_in_console)
-        widgets.append(
-            Static(
-                "Server sync WIP · local only",
-                id="library-workspace-create-local-copy",
-                classes="library-rail-empty-copy",
-            )
-        )
         # task-32064: the Chunking Lab pair used to be the first interactive
         # row under the header on EVERY Library canvas, unglossed -- a
         # first-time reviewer pressed it and landed in a full-screen A/B tool
@@ -15256,9 +15295,10 @@ class LibraryScreen(BaseAppScreen):
         disclosure), not on a polling loop: three stat() triples through
         ``DBStatusManager.update_db_sizes`` (WAL-inclusive, task-2859),
         then a targeted update of ``#library-details-db-sizes``. When the
-        cache was empty at compose time the line was never mounted, so
-        the patcher mounts it after ``#library-details-body`` -- the same
-        conditional the compose branch owns (``LibraryRail.compose``).
+        cache was empty at compose time the line was never mounted, so the
+        patcher mounts it into the Details ▸ Diagnostics body (task-32357
+        AC#2) -- the same conditional the compose branch owns
+        (``LibraryRail._compose_details_body_children``).
         """
         manager = getattr(self.app_instance, "db_status_manager", None)
         update = getattr(manager, "update_db_sizes", None)
@@ -15270,14 +15310,44 @@ class LibraryScreen(BaseAppScreen):
                     "Details-open DB size recompute failed; the disclosure "
                     "keeps its cached reading."
                 )
-        anchors = list(self.query("#library-details-body"))
-        if not anchors:
+        # task-32357 AC#2: the rows live inside the Diagnostics disclosure
+        # now, so that body is the parent a freshly computed row mounts
+        # into (``after=None`` appends). A rail that composed with an empty
+        # cache has no disclosure either -- it is rendered only when there
+        # is something to put in it -- so the same conditional the compose
+        # branch owns is applied here, from the one builder both share.
+        size_rows = library_db_size_rows(self._library_db_sizes_lines())
+        if not size_rows:
             return
+        containers = list(self.query("#library-rail-section-body-details-diagnostics"))
+        if containers:
+            parent = containers[0]
+        else:
+            anchors = list(self.query("#library-details-body"))
+            if not anchors:
+                return
+            # Review F10: the rail owns the open/closed state, so a
+            # disclosure mounted here has to arrive in the state the rail
+            # believes it is in -- otherwise a reopen after the sizes
+            # briefly vanished would leave `diagnostics_open` True against
+            # a closed body, and the next toggle press would read as inert.
+            rail = self._active_library_rail()
+            header, parent = library_diagnostics_disclosure(
+                bool(rail is not None and rail.diagnostics_open)
+            )
+            try:
+                await anchors[0].parent.mount_all([header, parent], after=anchors[0])
+            except Exception:
+                loguru_logger.debug(
+                    "Mounting the Diagnostics disclosure failed; the next "
+                    "rail recompose renders it from the updated cache."
+                )
+                return
+        previous = None
         # task-32230: one row per source, so the patcher walks the same row
         # list ``LibraryRail`` composes -- updating the rows that are there
         # and mounting the ones that are not, each after its predecessor.
-        previous = anchors[0]
-        for row_id, rendered in library_db_size_rows(self._library_db_sizes_lines()):
+        for row_id, rendered in size_rows:
             existing = list(self.query(f"#{row_id}"))
             if existing:
                 existing[0].update(rendered)
@@ -15285,7 +15355,7 @@ class LibraryScreen(BaseAppScreen):
                 continue
             row = Static(rendered, id=row_id, classes="library-details-row")
             try:
-                await previous.parent.mount(row, after=previous)
+                await parent.mount(row, after=previous)
             except Exception:
                 loguru_logger.debug(
                     "Mounting the freshly computed DB-sizes rows failed; the "
@@ -18715,6 +18785,10 @@ class LibraryScreen(BaseAppScreen):
     def _compute_library_export_counts(scope: ExportScope, media_db: Any, chachanotes_db: Any, prompts_db: Any) -> dict[str, int]:
         return LibraryExportController._compute_library_export_counts(scope, media_db, chachanotes_db, prompts_db)
 
+    @staticmethod
+    def _compute_library_export_preview(scope: ExportScope, media_db: Any) -> ExportPreview:
+        return LibraryExportController._compute_library_export_preview(scope, media_db)
+
     def _start_library_export_counts_worker(self) -> None:
         """Kick off the export scope's full-query counts (Task 1's resolver).
 
@@ -18743,12 +18817,14 @@ class LibraryScreen(BaseAppScreen):
             counts = self._compute_library_export_counts(
                 scope, media_db, chachanotes_db, prompts_db
             )
+            preview = self._compute_library_export_preview(scope, media_db)
             result = self._apply_library_export_counts(
                 scope,
                 counts,
                 generation=generation,
                 route_key=route_key,
                 request_id=request_id,
+                preview=preview,
             )
             if (
                 result is not LibraryEntryReconcileResult.APPLIED
@@ -18766,6 +18842,7 @@ class LibraryScreen(BaseAppScreen):
                     generation=generation,
                     route_key=route_key,
                     request_id=request_id,
+                    preview=preview,
                 )
             return
         self._run_library_export_counts_worker(
@@ -18792,6 +18869,10 @@ class LibraryScreen(BaseAppScreen):
         counts = self._compute_library_export_counts(
             scope, media_db, chachanotes_db, prompts_db
         )
+        # task-32353 AC#2: the same worker, the same connection -- the
+        # contents/size read never happens on the UI thread, and its wrapper
+        # logs then degrades rather than letting a failure escape here.
+        preview = self._compute_library_export_preview(scope, media_db)
         # ``self.app`` (Textual's own running-App property), not
         # ``self.app_instance`` -- ``call_from_thread`` needs the App whose
         # event loop is actually running this screen (see
@@ -18806,6 +18887,7 @@ class LibraryScreen(BaseAppScreen):
                 generation=generation,
                 route_key=route_key,
                 request_id=request_id,
+                preview=preview,
             )
         except Exception:
             # A shutdown/detach mid-marshal can raise RuntimeError OR
@@ -18821,6 +18903,7 @@ class LibraryScreen(BaseAppScreen):
         generation: int | None = None,
         route_key: tuple[object, ...] | None = None,
         request_id: int,
+        preview: ExportPreview | None = None,
     ) -> LibraryEntryReconcileResult:
         """Marshal a landed counts result onto the export form (UI thread).
 
@@ -18851,6 +18934,8 @@ class LibraryScreen(BaseAppScreen):
             counts: The landed counts (keys "media"/"conversations"/"notes"/
                 "prompts").
             request_id: Monotonic identity of the Export visit/count request.
+            preview: The sibling contents/size read (task-32353 AC#2),
+                landed under the same staleness guards as ``counts``.
         """
         if request_id != self._export_state.counts_request_id:
             return LibraryEntryReconcileResult.SUPERSEDED
@@ -18883,6 +18968,7 @@ class LibraryScreen(BaseAppScreen):
         if not self._library_entry_reconcile_is_current(generation, active_route_key):
             return LibraryEntryReconcileResult.SUPERSEDED
         self._export_state.counts = counts
+        self._export_state.preview = preview or ExportPreview()
         state = self._build_library_export_state()
         try:
             canvas = self.query_one("#library-export-canvas", LibraryExportCanvas)
@@ -18912,6 +18998,27 @@ class LibraryScreen(BaseAppScreen):
             apply_library_export_submit_gate(submit_button, state)
         except (NoMatches, QueryError):
             return LibraryEntryReconcileResult.FAILED
+        # task-32353 AC#2: both new lines are empty until counts land, so
+        # this patcher owns them too (recompose discipline -- the in-place
+        # updater owns every conditional compose owns). Deliberately AFTER
+        # the gate, in its own guard: the Export button's disabled/label/
+        # tooltip must never be left stale by a quiet line failing to
+        # resolve, which is what sharing the `try` above would have done.
+        for selector, text, shown in (
+            (
+                "#library-export-consequence-line",
+                state.consequence_line,
+                bool(state.consequence_line),
+            ),
+            (
+                "#library-export-contents",
+                "\n".join(state.contents_lines),
+                bool(state.contents_lines),
+            ),
+        ):
+            for line in self.query(selector):
+                line.update(text)
+                line.display = shown
         return LibraryEntryReconcileResult.APPLIED
 
     def _build_library_export_state(self) -> LibraryExportFormState:
@@ -18941,6 +19048,9 @@ class LibraryScreen(BaseAppScreen):
             error_line=self._export_state.error,
             last_export_line=last_export_line,
             quality_choices_visible=self._export_state.quality_choices_visible,
+            titles=self._export_state.preview.titles,
+            approx_bytes=self._export_state.preview.approx_bytes,
+            item_count=self._export_state.preview.item_count,
         )
 
     # ----- Export canvas: execution (Task 3) ------------------------------
@@ -21656,6 +21766,30 @@ class LibraryScreen(BaseAppScreen):
             getattr(self._library_rail_preferences(), f"{section_id}_open", True)
         )
         self._set_library_rail_section(section_id, not currently_open)
+
+    @on(LibraryRail.DiagnosticsOpened)
+    def refresh_library_details_sizes_for_diagnostics(
+        self, event: LibraryRail.DiagnosticsOpened
+    ) -> None:
+        """Recompute the DB sizes the Diagnostics disclosure just revealed.
+
+        Qodo review #2: task-4023 AC#3 made opening a disclosure the
+        refresh trigger, and `_set_library_rail_section` only fires it for
+        the OUTER Details section. Nesting the size rows one disclosure
+        deeper (task-32357 AC#2) put them back behind a toggle that
+        refreshed nothing, so opening Diagnostics with Details already open
+        revealed whatever the cache last held. Same worker, same exclusive
+        group, so the two triggers cannot run twice over each other.
+
+        Args:
+            event: The rail's own open notice; it never fires on close.
+        """
+        event.stop()
+        self.run_worker(
+            self._refresh_library_details_db_sizes(),
+            exclusive=True,
+            group="library_details_db_sizes",
+        )
 
     @on(Button.Pressed, ".library-conversation-row")
     def handle_library_conversation_row(self, event: Button.Pressed) -> None:

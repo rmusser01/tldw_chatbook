@@ -10,7 +10,7 @@ layout that is broken in the app.
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Input, Static
+from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Library.library_rail_state import LibraryRailPreferences
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
@@ -169,6 +169,12 @@ async def test_details_db_sizes_render_one_source_per_line() -> None:
         await _wait_for_library_shell(screen, pilot)
         screen._set_library_rail_section("details", True)
         await _wait_for_selector(screen, pilot, "#library-details-db-sizes")
+        # task-32357 AC#2: the sizes moved behind a closed Diagnostics
+        # disclosure, so this width pin opens it before measuring paint.
+        screen.query_one(
+            "#console-rail-section-toggle-library-details-diagnostics", Button
+        ).press()
+        await pilot.pause()
         await pilot.pause()
 
         rows = [
@@ -236,12 +242,14 @@ def test_the_handoff_row_names_the_blocker_and_its_remedy() -> None:
         "Console/RAG handoff: 0 eligible, 1 blocked", [_blocked_source_row()]
     )
     label = LibraryScreen._workspace_handoff_summary_label(None, state)
+    # task-32357 AC#1 re-rendered the sentence (the eligible/blocked pair
+    # read as a status report about a concept the reader had not met); the
+    # count, the reason and the remedy this pin exists for are unchanged.
     assert (
-        "1 blocked · not in this workspace · Link it from the conversation's header"
-        in label
+        "not in this workspace · Link it from the conversation's header" in label
     ), label
     assert label == (
-        "0 eligible · 1 blocked · not in this workspace · "
+        "1 item can't be used in Console yet · not in this workspace · "
         "Link it from the conversation's header"
     ), label
     assert "●" not in label, label
@@ -268,7 +276,7 @@ def test_the_handoff_row_falls_back_to_the_rule_s_own_recovery_copy() -> None:
     )
     label = LibraryScreen._workspace_handoff_summary_label(None, state)
     assert label == (
-        "0 eligible · 1 blocked · blocked for this workspace · "
+        "1 item can't be used in Console yet · blocked for this workspace · "
         "Select an active workspace before using this item in Console"
     ), label
 
@@ -290,7 +298,7 @@ def test_the_handoff_row_generalises_across_a_mixed_blocked_set() -> None:
         ],
     )
     assert LibraryScreen._workspace_handoff_summary_label(None, state) == (
-        "2 eligible · 2 blocked · in another workspace · "
+        "2 items can't be used in Console yet · in another workspace · "
         "Copy or link them into this workspace"
     )
 
@@ -436,7 +444,7 @@ def test_a_mixed_but_wholly_linkable_block_keeps_a_linking_remedy() -> None:
     # The reason cannot claim either single code for the whole set, but the
     # remedy is still the real one: every row here can be linked.
     assert label == (
-        "0 eligible · 2 blocked · blocked for this workspace · "
+        "2 items can't be used in Console yet · blocked for this workspace · "
         "Link them from the conversation's header"
     ), label
     assert "Copy or link this conversation into workspace" not in label

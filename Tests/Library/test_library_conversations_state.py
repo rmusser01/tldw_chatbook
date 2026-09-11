@@ -74,10 +74,10 @@ def test_rows_preserve_authoritative_service_order_with_age_labels():
 
     assert isinstance(state, LibraryConversationsCanvasState)
     assert [row.conversation_id for row in state.rows] == ["conv-b", "conv-c", "conv-a"]
-    assert state.rows[0].secondary == "12 messages - 2h"
+    assert state.rows[0].secondary == "12 messages · 2h"
     # No age available -> no " - {age}" suffix.
     assert state.rows[1].secondary == "3 messages"
-    assert state.rows[2].secondary == "5 messages - 3m"
+    assert state.rows[2].secondary == "5 messages · 3m"
     for row in state.rows:
         assert isinstance(row, LibraryConversationRow)
 
@@ -264,7 +264,7 @@ def test_id_title_count_key_fallbacks_using_conversation_id_and_messages_total()
     row = state.rows[0]
     assert row.conversation_id == "cid-99"
     assert row.title == "Fallback Chat"
-    assert row.secondary == "7 messages - 3m"
+    assert row.secondary == "7 messages · 3m"
 
 
 def test_final_page_disables_next_without_dropping_supplied_rows():

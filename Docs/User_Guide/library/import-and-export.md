@@ -146,10 +146,36 @@ respectively — a single fixed "original copies full media files…" caption
 used to show regardless of the selected option) (shown only when media is
 in scope), "Choose destination…"
 above "No destination chosen", and the "Export bundle (.zip)" submit
-button. A "Cancel" button appears while an export is running. Once an
-export finishes, a receipt line appears above the submit button and stays
-there — it updates in place after each further export and survives
-switching to another rail row and back, for the rest of the session.
+button. The chooser opens on **original** — full fidelity — so a bundle
+only loses content when you ask it to (task-32353).
+
+Directly above the submit button, two quiet lines say what pressing it
+will write, before you press it (task-32353): a **bundle line** —
+"Bundle: 2 media items · text only · about 4 KB before compression" —
+naming how many items are going in, what the archive holds for each of
+them, and how much content that is (the written `.zip` is smaller; the
+receipt after the run reports that file's own size). "text only" is not a
+summary of the quality chooser: whatever that control is set to, a bundle
+holds each item's stored text plus its details, never the original media
+file — the Library does not keep a path to one. The line is absent when
+the scope is empty, where "Nothing to export in this scope." is the only
+thing worth saying. And a
+**contents list** naming the items themselves, up to 20 of them, then
+"+ N more". Where the size cannot be known up front (an "Everything"
+export spans four sources, only one of which can be measured beforehand)
+the line says "size known once it runs" rather than guessing, and the
+contents list is absent. Both appear once counting finishes.
+
+When the submit button is off, its reason is on the line directly beneath
+it — "Choose a destination before exporting.", "Nothing to export in this
+scope.", "Waiting for item counts before exporting.", or "An export is
+already running." (task-32362). It is the same sentence the tooltip shows,
+so a keyboard-first reader never has to hover to find out why.
+
+A "Cancel" button appears while an export is running. Once an export
+finishes, a receipt line appears above the submit button and stays there —
+it updates in place after each further export and survives switching to
+another rail row and back, for the rest of the session.
 
 The receipt is read back out of the bundle that was written, not out of
 what you asked for: "✓ exported · 12 items · 348 KB · /path/to/out.zip"
@@ -259,9 +285,11 @@ destination, or leaving the Import canvas cancels pending consent.
 | Export control | What it does |
 |---|---|
 | "Export name" | Pre-filled "Library export 2026-07-31" (today's date); becomes the bundle's display name. |
-| "quality: thumbnail" | Press to open a one-row strip of thumbnail / compressed / original (✓ on the active one) right under the button; pick one directly, or press the button again / Escape to close without changing. The helper line underneath always describes the option currently showing. Only "original" copies full media files into the zip; the others keep the package small. |
+| "quality: original" | Opens on "original" (full fidelity, task-32353). Press to open a one-row strip of thumbnail / compressed / original (✓ on the active one) right under the button; pick one directly, or press the button again / Escape to close without changing. The helper line underneath always describes the option currently showing. Only "original" copies full media files into the zip; the others keep the package small. |
+| "Bundle: N media items · text only · about X KB before compression" | What pressing Export will actually write: how many items go in, what the archive holds for each (stored text and details — never the original media file, whatever the quality chooser says), and how much content that is. The archive itself is smaller — the receipt after the run stats the written `.zip`. Reads "size known once it runs" when the scope's size cannot be measured up front. The count is the items still exportable, so a selection whose item was trashed underneath reports what will really be written. Absent for an empty scope. Appears once counting finishes. |
+| The contents list | The titles of the items going into the bundle, up to 20, then "+ N more". Absent when the scope's items cannot be enumerated before the run. |
 | "Choose destination…" | Opens "Choose Export Destination". Whatever you pick is normalized to end in `.zip`; if that file already exists, an "Overwrites <name>" note appears (informational — exporting proceeds and replaces it). |
-| "Export bundle (.zip)" | Enabled once counting has finished, the scope is non-empty, and a destination is chosen. "Nothing to export in this scope." appears when the scope is empty; either way, hovering the button always shows a tooltip naming the same reason it's disabled (or "Write the bundle to the chosen destination." once it's ready) — a disabled press can never look like it silently did nothing. |
+| "Export bundle (.zip)" | Enabled once counting has finished, the scope is non-empty, and a destination is chosen. "Nothing to export in this scope." appears when the scope is empty; either way, the reason is printed on the line directly below the button AND repeated in its tooltip (or "Write the bundle to the chosen destination." once it's ready) — a disabled press can never look like it silently did nothing. |
 | "Cancel" | Visible only while an export is running; stops it. The quiet line above keeps reporting progress throughout ("Exporting (N items)…" at first, then the phase it's on — "Collecting notes…  3/12", "Packaging archive…  5/9 files"), and once the write has run for about three seconds that same line gains " · still working · Cancel" pointing at this button. Pressing it leaves "Cancelling…" until the run reports back. |
 | "✓ exported · N items · X KB · path" | Appears after the first successful export this session; the count and size are read back from the written archive's own manifest, so they report what actually landed rather than what was selected. Stays until the next successful export replaces it. (A receipt restored from an earlier session, before those facts were recorded, still shows as "Last export: <path> · <relative time>".) |
 | "✗ export produced no content · N items were selected" | The run collected none of the N items you selected, so no bundle was written at all — nothing on disk to mistake for a real export. The submit button becomes "Retry export". (A single-item selection reads "· 1 item was selected".) |
@@ -320,17 +348,22 @@ destination, or leaving the Import canvas cancels pending consent.
 Library screen (not just the landing — though never while you're typing in
 a text field, where `i` stays a letter), and entering the form always
 parks the caret in the path field, so you can type or paste a path
-immediately. **Enter** in the path field starts the import once the gate
-line clears — with "⚠" warnings outstanding, Enter,Enter carries the same
-two-press consent as the Start button. **r** re-stages your last import
-of the session ("Retry this batch") when the queue has settled — inside a
+immediately. **Enter** in the path field takes two different actions
+depending on where you are, and the footer names the one it will take: on a
+path that has not been checked yet it runs the pre-check and the footer
+reads **`enter check this path`**; once the gate line clears the footer
+reads **`enter start import`** and Enter starts the import. With "⚠"
+warnings outstanding, Enter,Enter carries the same two-press consent as the
+Start button. **r** re-stages your last import of the session ("Retry this
+batch") when the queue has settled — inside a
 text field it stays a letter. **Escape** first backs out of a pending
 "Press Start again" confirm (staying on the form), otherwise returns you
 to the Library landing (a half-filled form is kept, same as switching
 rail rows). At narrow widths the navigation rail collapses to its reachable
 **Nav** handle so the form keeps working width. The footer preserves primary
 and recovery actions first, and F1 lists the same state-derived set:
-`enter start`, `esc back`, and, when available, `r retry`.
+`enter check this path` / `enter start import`, `esc back`, and, when
+available, `r retry`.
 
 The Export form has no screen-specific shortcuts. **Escape** also closes
 the Parakeet install dialog. Global keys live in the
@@ -930,7 +963,36 @@ path, jumping the listing to it, with Ctrl+A selecting the field.)*
 
 *Verified against fix/library-crit9-import — 2026-09-10 (task-32216: "Show details" leaves focus on the row action it toggled instead of the Keywords field 25 rows up; task-32231: a run of identical settled outcomes collapses into one "✗ failed · N files · reason" row with "Show the N files", "Retry all" and "Dismiss all"; a group whose members need a different transcription model offers no bare "Retry all", matching those rows' own actions; a group never spans two imports.)*
 
+*Verified against fix/library-crit10-export — 2026-09-11 (task-32353: the
+quality chooser opens on "original" instead of "thumbnail", so a bundle only
+loses content when asked, and a bundle line plus a contents list state what
+the export will write — count, what the archive holds, estimated size, and
+the item titles — before the button is pressed, the size qualified "before compression" so it
+cannot be read as contradicting the receipt's smaller written-archive figure;
+task-32362: a blocked "Export bundle (.zip)"
+prints its reason on the line below it, not only in a tooltip.)*
+
+*Verified against fix/library-crit10-export — 2026-09-11, review round 2
+(Qodo on PR #2601: the bundle line no longer names the quality chooser's
+value — the exporter writes the same stored text for all three options, so
+"previews only"/"compressed files"/"full files" described an archive that is
+never produced; an empty scope shows no bundle line rather than "0 items …
+about 1 KB"; and the count is the items still exportable, not the raw size
+of a selection that may have gone stale.)*
+
 *Verified against fix/library-crit10-onboarding-import — 2026-09-11
 (task-32351: a folder batch is named after the folder you chose, not after
 whichever subfolder the recursive scan reached first; the landing's
 needs-attention card states the failed and skipped counts.)*
+
+*Verified against fix/library-crit10-media-rows — 2026-09-11 (task-32364
+AC#3: the Import footer no longer says "enter start" for both steps — on an
+unchecked path it reads "enter check this path" and only once the Start gate
+clears does it read "enter start import", derived from the same gate Enter
+itself obeys.)*
+
+*Verified against fix/library-crit10-media-rows — 2026-09-11, fix round 1
+(task-32364 AC#3 review: the Enter label now reaches the footer on a gate
+transition that does not recompose the canvas — previously only a changed
+type-group set re-registered it, so opening the gate any other way left the
+footer naming the previous step's action.)*

@@ -115,10 +115,23 @@ the task-32043 session pins, bulk-delete, and filter-restore pins stay green.
 Live-verified in tmux at 235x52: filter to a hit, then narrow to zero — the
 Reader falls back to "Select a media item to read it here.".)*
 
-**Row markers.** An item's second row says what it is and how old it is, and
-adds **· analysed** when that item already carries an analysis — so you can
-see what is worth generating without opening anything (`document · 5m ·
-analysed`). The row re-reads its state from the database the moment an
+**Row markers.** An item's second row says what it is and when it last
+changed, and adds **· analysed** when that item already carries an analysis —
+so you can see what is worth generating without opening anything
+(`document · updated 5m · analysed`). The age is labelled, because a bare
+"10m" on an `audio` or `video` row reads as the item's *length*; under a
+minute it reads **updated just now**. The word is **updated**, not "added":
+the value is the item's last-modified time — the same one the Reader's
+preview line calls "Updated:" — so saving an analysis moves it. It shares the
+Trash list's grammar (`pdf · trashed 3m`), which is also why it is
+"updated 5m" and not "updated 5m ago": on this pane four cells are the
+difference between a keyword row showing its term and hiding it.
+
+The row that is open in the Reader ends **· loaded** (**· loading** while it
+is fetching) — the state is a fact about the row, so it sits with the other
+facts rather than in front of the title.
+
+The row re-reads its state from the database the moment an
 analysis is saved — from the Reader's Generate, or from a bulk Analyze run —
 without re-paging the list; until task-31942 lands (the save does not yet
 commit durably), the mark can lag the Reader on a real profile. Its title row
@@ -135,15 +148,20 @@ reuses that same cell for its **☑/☐**, so a row never carries two markers.
 While a filter is active, a row it found only through one of its **keywords**
 adds **· keyword: \<term\>** — the filter searches titles, item text and
 keywords, so without it a hit whose title and body hold nothing you typed
-reads as a mistake (`article · 2m · keyword: notes`). A row whose title or
-text carries the term already shows you why it is there and says nothing
+reads as a mistake (`article · updated 2m · keyword: notes`). A row whose
+title or text carries the term already shows you why it is there and says nothing
 extra. Long tags are cut to ten columns (`keyword: quokkasand…`; five
 wide CJK characters, or five flag emoji) to keep the line short — the cut
 counts a flag by the two columns it paints and never leaves half of one, so
-the row frame does not drift. It can still be too long for a narrow Items pane:
-at the pane's narrowest the row ends in an ellipsis mid-term, and a row that is
-both analysed and a keyword hit can run out of room at the default width too. The
-Reader's **Info** tab "Keywords:" line applies the same guard: it shows the
+the row frame does not drift. It can still be too long for a narrow Items
+pane, and the labelled age made that tighter: at the pane's narrowest the row
+ends in an ellipsis a few characters into `keyword:` itself, before the term
+starts. A row that is both analysed and a keyword hit can run out of room at
+the default width too, and the row open in the Reader spends a further nine
+columns on its `· loaded`, so at the automatic narrow width (100 columns) that
+row is the first to clip.
+
+The Reader's **Info** tab "Keywords:" line applies the same guard: it shows the
 full stored keyword but drops a dangling half-flag so that surface's frame
 does not drift either (the edit form still prefills the stored keyword
 verbatim).
@@ -348,6 +366,8 @@ left-margin gap).*
 
 | Control | What it does |
 |---|---|
+| Scope line | The quiet line under the "Media (N)" header states the scope the rows in front of you actually came from: the count as **N of M**, the applied filter in quotes, the type ("all types" until you pick one), and the sort — for example `Media · 1 of 11 · filter “notes” · all types · sort: Newest`. The filter box keeps a *draft* until you press Enter, so the box and the list can legitimately disagree; this line always describes the applied scope and never echoes an unsubmitted draft. |
+| "Clear" (on the scope line) | Appears only while a filter or a type is applied. It drops the whole scope this line states — filter *and* type — and empties the filter box with it, so no draft is left behind. The toolbar's "Clear filter" still clears only the filter it names. |
 | "Title/keyword…" / "Clear filter" | Searches the complete local Media source before paging — titles, item text, and the keywords an item is tagged with, so a tag you filed items under finds them even when it appears in no title. It is separate from Find in item, and "Review these" pins exactly what it returned. Clearing restores the unfiltered selection when it is still available. |
 | "type: All types" | Opens one bounded keyboard list containing the complete type set. The row your arrow keys are on carries a leading `█` bar (the same cue the list rows use); ✓ marks the value currently in force, so the row you are on and the row that is active are told apart — on opening, both marks sit on the active row (`█ ✓ All types`). "All types" means no filter; a stored type literally named "All" remains a separate selectable value. Press Escape (or pick the current choice) to cancel. |
 | "sort: Newest" | Opens the same kind of bounded keyboard list with all four orders (Newest, Oldest, Title A-Z, Title Z-A) fully visible, the same leading `█` on the row you are on and ✓ on the active one. Escape cancels. |
@@ -536,7 +556,7 @@ still spans the pane.
 
 | Button | What it does |
 |---|---|
-| "Find" | Opens the search bar for the tab you are reading — the transcript on Read, the analysis on Analysis — focused and ready to type; a second press or Escape closes it. Walking with `]`/`[` keeps an active query but never moves your cursor into the field. This never filters Items. `Ctrl+F` opens it from the keyboard. On Highlights and Info it is disabled and says so — those tabs have no text to search. |
+| "Find" | Opens the search bar for the tab you are reading — the transcript on Read, the analysis on Analysis — focused and ready to type; a second press or Escape closes it. Walking with `]`/`[` keeps an active query but never moves your cursor into the field. This never filters Items. `Ctrl+F` opens it from the keyboard. When the tab you are on has nothing to search — Highlights and Info have no text — it reads "○ Find" and prints that tab's own reason on the line directly under the toolbar, not only in a tooltip (task-32362). |
 | "Use in Console" | Stages this item as context for your next Console message. |
 | "Read later" ↔ "Remove later" | Toggles the loaded item's persisted reading-list state. |
 | "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. Opening it adds one toolbar row directly beneath this one — the tab row and the reading body shift down a single line (two on a Reader too narrow to fit all four actions side by side), never off the fold — the button reads "More ▴" while the row is open, and focus stays on it so a second press closes the row. |
@@ -1202,6 +1222,10 @@ loaded the conversation list takes the columns the empty Reader was holding).*
 other browse list, so Up/Down walks its rows and the Escape hop -- "focus
 Items", then "focus Library" -- is live and named from the first frame).*
 
+*Verified against fix/library-crit10-export — 2026-09-11 (task-32362: a
+blocked "○ Find" prints why on the line below the Reader toolbar, matching
+the blocked Generate action's own inline reason one pane over.)*
+
 *Verified against fix/library-crit10-viewer — 2026-09-11 (task-32348: Ctrl+F
 opens the Reader's Find bar and the footer names it, the Highlights and Info
 tabs refuse it with "This tab has no text to search · switch to Read or
@@ -1220,6 +1244,19 @@ query restores the rendered view).*
 single-page Trash draws no "Page 1 of 1" and no Previous/Next, and its pager
 block is one row instead of two. Live at 235x52 on a seeded profile with one
 trashed item and with the list filtered to none.)*
+
+*Verified against fix/library-crit10-media-rows — 2026-09-11 (task-32347: a
+media row's age is labelled with the field it comes from — "audio · updated
+10m", "updated just now" under a minute — because a bare "10m" on an audio or
+video row read as the item's length, and the value is the item's last-modified
+time, not its ingest time. task-32350: a quiet scope line under the "Media (N)"
+header states the APPLIED scope ("Media · 1 of 11 · filter “notes” · all types ·
+sort: Newest"), drops its "of M" half when the screen's Media total is only a
+lower bound, and carries a "Clear" that drops filter and type and empties the
+filter box — so an unsubmitted draft can no longer be mistaken for what the rows
+came from. task-32364: the Reader's row ends "· loaded" instead of prefixing its
+title with "Loaded ·", and a conversation row reads "5 messages · 16m" with the
+same separator every other Library list uses.)*
 
 *Verified against fix/library-crit10-layout — 2026-09-11, fix round 1
 (task-32107: the refusal/promise sentence renders directly under the action it
