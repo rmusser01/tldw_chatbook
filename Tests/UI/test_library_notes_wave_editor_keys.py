@@ -1043,6 +1043,57 @@ async def test_one_escape_from_info_returns_to_the_editor(size):
         assert screen._notes_state.view == "editor"
 
 
+@pytest.mark.asyncio
+async def test_one_escape_returns_from_info_opened_by_keyboard():
+    """AC#1, fix round 1 (review, 32267 gap): the KEYBOARD route in.
+
+    The five entry states the task's notes record all reach Info by mouse
+    press or by pressing the button programmatically. Task-32246's Tab trap
+    makes Tab-to-Info-then-Enter the primary keyboard route into this pane,
+    so that is the route this pins: from the body, Tab to
+    ``#library-note-context``, Enter, then ONE Escape back to the editor
+    with focus on a control the editor owns.
+    """
+    host = _build_notes_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_note(screen, pilot)
+
+        screen.query_one("#library-note-body", TextArea).focus()
+        await pilot.pause()
+        info_button = screen.query_one("#library-note-context", Button)
+        for _ in range(len(list(screen.focus_chain))):
+            if screen.focused is info_button:
+                break
+            await pilot.press("tab")
+            await pilot.pause()
+        else:
+            raise AssertionError(
+                "Tab never reached the Info button from the body"
+            )
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert screen.query_one("#library-note-context-region").display, (
+            "Enter on the Tab-reached Info button did not open Info"
+        )
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert not screen.query_one("#library-note-context-region").display, (
+            "Info survived the first Escape on the keyboard route in"
+        )
+        assert screen.query_one("#library-note-editor-region").display
+        assert screen._notes_state.view == "editor"
+        work_pane = screen.query_one("#library-note-work-pane")
+        assert screen.focused is not None
+        assert work_pane in screen.focused.ancestors_with_self, (
+            f"Escape left focus outside the editor, on {screen.focused!r}"
+        )
+
+
 # --- task-32268: the delete prompt sits with the control that raised it ----
 
 
