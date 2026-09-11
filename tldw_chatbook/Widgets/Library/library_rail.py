@@ -159,10 +159,33 @@ class LibraryDetailsRow(Static):
         super().__init__(renderable, *args, **kwargs)
         self._details_source: Any = renderable
 
-    def update(self, renderable: Any = "") -> None:
-        """Store the caller's renderable, then paint its hung form."""
-        self._details_source = renderable
-        super().update(library_hang_details_row(renderable, self.content_size.width))
+    @property
+    def content(self) -> Any:
+        """The renderable the CALLER passed, not the re-wrapped paint form.
+
+        ``tldw_chatbook``'s Textual compatibility shim exposes ``.renderable``
+        as ``self.content``, and rows are asserted through it all over the
+        suite ("Active · Local Default"). Re-wrapping is a paint concern, so
+        the source is what this reports; ``Static``'s own ``__content`` (which
+        the visual is built from) still holds the hung text.
+        """
+        return self._details_source
+
+    @content.setter
+    def content(self, value: Any) -> None:
+        self.update(value)
+
+    def update(self, content: Any = "", *, layout: bool = True) -> None:
+        """Store the caller's renderable, then paint its hung form.
+
+        Args:
+            content: The row's renderable, exactly as the caller means it.
+            layout: Forwarded to ``Static.update``.
+        """
+        self._details_source = content
+        super().update(
+            library_hang_details_row(content, self.content_size.width), layout=layout
+        )
 
     def on_resize(self, event: Resize) -> None:
         """Re-hang at the new width.
