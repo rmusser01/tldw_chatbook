@@ -19042,6 +19042,7 @@ class LibraryScreen(BaseAppScreen):
             description=str(form.get("description", "")),
             media_quality=str(form.get("quality", DEFAULT_MEDIA_QUALITY)),
             destination=str(form.get("destination", "")),
+            destination_error=str(form.get("destination_error", "")),
             destination_exists=bool(form.get("destination_exists", False)),
             running=self._export_state.running,
             status_line=self._library_export_status_line(),

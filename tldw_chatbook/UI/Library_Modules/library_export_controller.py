@@ -243,6 +243,7 @@ from ...Library.library_export_state import (
     DEFAULT_MEDIA_QUALITY,
     MEDIA_QUALITY_OPTIONS,
     default_export_name,
+    describe_unusable_destination,
     format_empty_export_error,
     normalize_export_destination,
 )
@@ -1377,13 +1378,33 @@ class LibraryExportController:
             logger.warning(
                 f"Rejected Library export destination {selected_path!r}: {exc}"
             )
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify(f"Rejected export destination: {exc}", severity="warning")
+            self._refuse_library_export_destination(str(exc))
             return
         normalized_path = normalize_export_destination(validated_path)
+        # task-32251 AC#3: refuse an unwritable destination HERE, where the
+        # user chose it, rather than at zip-open time as an errno repr
+        # naming a `.partial` file they never asked for.
+        unusable = describe_unusable_destination(normalized_path)
+        if unusable:
+            logger.warning(f"Unusable Library export destination: {unusable}")
+            self._refuse_library_export_destination(unusable)
+            return
         self._library_export_form["destination"] = str(normalized_path)
+        self._library_export_form["destination_error"] = ""
         self._library_export_form["destination_exists"] = normalized_path.exists()
+        self.refresh(recompose=True)
+
+    def _refuse_library_export_destination(self, reason: str) -> None:
+        """Clear the destination and say why, on the destination row.
+
+        Args:
+            reason: One sentence naming what is wrong with the pick.
+        """
+        self._library_export_form["destination"] = ""
+        self._library_export_form["destination_exists"] = False
+        self._library_export_form["destination_error"] = (
+            f"Can't save there: {reason}"
+        )
         self.refresh(recompose=True)
 
 # --- BEGIN generated export-controller-state shims ---

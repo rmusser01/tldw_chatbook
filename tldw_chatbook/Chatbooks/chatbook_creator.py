@@ -585,6 +585,26 @@ class ChatbookCreator:
                 "auto_included": list(self.auto_included_characters),
             }
             return False, "Unable to export one or more Prompts.", dependency_info
+        except OSError as e:
+            # task-32251 AC#4: every filesystem failure in here used to
+            # surface as its own repr -- a live export reported "[Errno 2]
+            # No such file or directory: '.../notes-bundle.zip.partial'",
+            # naming an internal temp file the user never chose. Say what
+            # could not be done, to the path they DID choose.
+            logger.opt(exception=True).error(
+                "ChatbookCreator.create_chatbook: filesystem error error_type={}",
+                type(e).__name__,
+            )
+            dependency_info = {
+                "missing_dependencies": list(self.missing_dependencies),
+                "auto_included": list(self.auto_included_characters),
+            }
+            reason = e.strerror or "the file system refused the write"
+            return (
+                False,
+                f"Could not write the bundle to {output_path}: {reason}.",
+                dependency_info,
+            )
         except Exception as e:
             logger.opt(exception=True).error(
                 "ChatbookCreator.create_chatbook: Error creating chatbook"
