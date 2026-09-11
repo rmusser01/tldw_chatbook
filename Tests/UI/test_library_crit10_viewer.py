@@ -124,6 +124,14 @@ async def test_ctrl_f_opens_the_reader_find_bar_and_the_footer_names_it():
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_first_media_reader(host, pilot)
         assert ("ctrl+f", "find") in screen._library_footer_shortcuts_for_current_state()
+        # The critique's "Find is not in the Tab order" reading is wrong: the
+        # button is an ordinary focusable Button in the Reader's focus chain.
+        # What was missing was a KEY, which is what this test pins.
+        find_button = screen.query_one("#library-media-reader-find", Button)
+        assert find_button.focusable, find_button
+        assert find_button in screen.focus_chain, [
+            w.id for w in screen.focus_chain
+        ]
         await pilot.press("ctrl+f")
         await pilot.pause()
         assert screen.query("#library-media-content-search-controls")
