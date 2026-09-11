@@ -328,6 +328,13 @@ selection controls with a useful next step. The exact total remains visible in
 the title, but there is no meaningless “page 1 of 1” or “nothing to select”
 mechanic.
 
+The paging half of that rule is Library-wide: **Skills, Collections and the
+media Trash** drop “page 1 of 1”, the boundary reason and both **Previous** /
+**Next** controls too whenever everything fits on one page, keeping only the
+item range. Every part comes back the moment a second page exists. Paging that
+is *paused* rather than absent — a stale page whose totals are withheld — keeps
+its controls, disabled and carrying the reason.
+
 ```text
 source really has no items          active filter has no matches
 --------------------------          ----------------------------
@@ -898,6 +905,10 @@ field | after esc: u use Library context in Console · o open evidence | enter
 run search | F6 next pane"; the same shape on the Media list keeps "s select"
 behind the same gesture, and "F6 next pane" is last so a narrow footer drops it
 before any verb).*
+
+*Verified against fix/library-crit10-pagers — 2026-09-11 (task-32354: the
+single-page pager rule this page documents now holds for Skills, Collections
+and the media Trash as well as Media, Conversations and Prompts).*
 
 *Verified against fix/library-crit10-onboarding-import — 2026-09-11
 (task-32349: a Library with no content yet lands on Get started however old its

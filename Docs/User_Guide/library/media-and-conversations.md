@@ -296,7 +296,11 @@ Escape returns to the list.
 Notes on the edges: with nothing deleted the view says "Trash is empty.
 Items you delete from Media land here." and "Restore" reads "○ Restore"
 with a reason tooltip; if the trash holds more items than one fetch page,
-a status line says "showing X of N" honestly. Entering Trash clears any
+a status line says "showing X of N" honestly. The pager under the list is
+drawn **only when a second page exists**: a trash that fits on one page keeps
+the item range ("1-1 of 1") and drops "Page 1 of 1" along with both
+**Previous** / **Next**, the same rule the rest of the Library follows (see
+[Library](../library.md)), so Restore sits directly under the last row. Entering Trash clears any
 "✓ deleted…" receipt still showing on the list — the Trash view is the
 durable path that receipt pointed at. Trashed items are **excluded from
 search** (Library search and RAG keyword retrieval both skip them) until
@@ -1196,3 +1200,8 @@ offered no toggle).*
 analysis now shows the stored text, where the matches are actually marked,
 with "○ Rendered" refused and its reason on the line beneath; clearing the
 query restores the rendered view).*
+
+*Verified against fix/library-crit10-pagers — 2026-09-11 (task-32354: a
+single-page Trash draws no "Page 1 of 1" and no Previous/Next, and its pager
+block is one row instead of two. Live at 235x52 on a seeded profile with one
+trashed item and with the list filtered to none.)*
