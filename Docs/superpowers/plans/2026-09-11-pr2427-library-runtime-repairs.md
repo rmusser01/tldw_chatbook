@@ -83,15 +83,15 @@ Review sibling projections on this path; change an existing guard only if contro
 
 - [x] Self-review exact diff, runtime callers, owned-resource finalizers and assertion strength; run scoped fatal Ruff and whitespace checks.
 - [x] Obtain independent spec-compliance review, then independent quality review; address findings in that order.
-- [ ] Save the reviewed implementation with exact-path staging and `git -c gc.auto=0 commit`. Root owns documentation/plan status. No push until qualified evidence is recorded.
+- [x] Save the reviewed implementation with exact-path staging and `git -c gc.auto=0 commit`. Root owns documentation/plan status. No push until qualified evidence is recorded.
 
 ## Task 2: integrated qualification and checkpoint
 
 - [x] Map all original32 IDs from `/private/tmp/pr2427-notes-dev-native-b.log`; account for renamed source-switch/handoff tests and updated parameter IDs. Require exactly32 selected original cases before adding new regressions.
-- [ ] Run all32 and new regression nodes with frozen sources. All must pass; ungated success cannot replace the controlled lifecycle tests.
-- [ ] Run complete `Tests/UI/test_library_file_notes_workspace.py`, `Tests/UI/test_library_shell.py`, and any touched Widgets test file. No repository-wide sweep. Preserve failed/pending output and do not rebase while running.
-- [ ] Use the repository's existing deterministic pytest-shard partition for complete-file qualification: three independent native-observed processes, identical file arguments and options, `--num-shards=3` with `--shard-id=0/1/2`, no xdist. Collect an independent unsharded node inventory and compare it with the union of all observed `before_protocol` IDs: exact equality, no duplicate or omitted case, terminal outcomes for every shard. Report final descriptors separately per process. This independently reviewed strategy preserves complete coverage, not the historical whole-file single-process order; the original32-plus-races run above remains unsharded and ordered.
-- [ ] Use the existing observer for each run:
+- [x] Run all32 and new regression nodes with frozen sources. All must pass; ungated success cannot replace the controlled lifecycle tests.
+- [x] Run complete `Tests/UI/test_library_file_notes_workspace.py`, `Tests/UI/test_library_shell.py`, and any touched Widgets test file. No repository-wide sweep. Preserve failed/pending output and do not rebase while running.
+- [x] Use the repository's existing deterministic pytest-shard partition for complete-file qualification: three independent native-observed processes, identical file arguments and options, `--num-shards=3` with `--shard-id=0/1/2`, no xdist. Collect an independent unsharded node inventory and compare it with the union of all observed `before_protocol` IDs: exact equality, no duplicate or omitted case, terminal outcomes for every shard. Report final descriptors separately per process. This independently reviewed strategy preserves complete coverage, not the historical whole-file single-process order; the original32-plus-races run above remains unsharded and ordered.
+- [x] Use the existing observer for each run:
 
 ```sh
 task_report_dir=$(mktemp -d "${TMPDIR%/}/pr2427-runtime-verify.XXXXXX")
@@ -101,8 +101,26 @@ env -u NO_COLOR TERM=xterm-256color COLORTERM=truecolor \
 ```
 
 Capture complete logs and terminal exit; inspect the report's final all-live identities for SQLite and instance locks. Never clear pytest's final traceback or force collection to produce a clean result. Gate timeouts fail loudly and test-owned resources finalize on failure/cancellation.
-- [ ] Run fatal scoped Ruff, whitespace and existing derived-artifact checks appropriate to changed files. Preserve known baseline full-lint/size/preload/CSS debt separately; do not raise limits or regenerate unrelated output.
-- [ ] Record evidence in TASK31932 and `backlog/docs/pr-2427-rebase-reconciliation.md`; update the quiet weekly automation with actual remaining state. Commit the checkpoint with exact staging after review.
+- [x] Run fatal scoped Ruff, whitespace and existing derived-artifact checks appropriate to changed files. Preserve known baseline full-lint/size/preload/CSS debt separately; do not raise limits or regenerate unrelated output.
+- [x] Record evidence in TASK31932 and `backlog/docs/pr-2427-rebase-reconciliation.md`; update the quiet weekly automation with actual remaining state. Commit the checkpoint with exact staging after review.
 - [ ] Only then resume fresh-dev integration and PR-review/normal protected merge under the standing request. These remain blocked by separately documented qualification issues, not silently included in completion of this repair batch.
 
 No routine design reapproval is needed within the user-approved spec. Escalate only a materially different remedy or missing authority.
+
+## Task 3: adjacent footer fixture contract (test-only follow-up)
+
+The wider Task1C controls exposed four failures in the unchanged pure dispatcher
+fake in `Tests/UI/test_library_footer_focus.py`. TASK31223 defines its typing-key
+filter assertions; TASK32225 subsequently added narrow-return and mounted-slash
+queries to the real dispatcher. The fake supplies neither current state seam.
+This is a routine fixture-contract correction under TASK31932 AC3, not an added
+runtime repair or a footer policy change.
+
+ADR required: no. ADR path: N/A. Reason: test-only compatibility with the existing
+TASK31223/TASK32225 behavior; no changed interface or runtime boundary.
+
+- [x] Finish the frozen three-file qualification before editing this additional file.
+- [x] Run the complete footer-focus file RED and retain its four missing-state failures.
+- [x] Supply the fake's explicit non-narrow, unmounted context using only its missing state seams. Preserve all assertions, the real dispatcher method, and production bytes; do not add `getattr` fallbacks to runtime code.
+- [x] Run the complete footer-focus file plus the real mounted sibling Media footer control GREEN with native attribution; require unchanged behavior and zero final SQLite/locks. Run file-scoped Ruff and whitespace.
+- [x] Obtain independent review, record the additional evidence, and save only this fixture and root-owned documentation. If the two known missing seams do not explain the failures, investigate before adding another remedy.

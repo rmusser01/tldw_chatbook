@@ -4441,3 +4441,74 @@ original32 contract corrections and four runtime repairs are ready for an exact
 local implementation checkpoint; complete-file qualification remains pending.
 The four unrelated incomplete-footer-fake failures and previously documented
 size/preload/CSS/resource-owner findings remain open. No merge readiness claim.
+
+### Final runtime checkpoint qualification
+
+Reviewed implementation is committed as `2adcbe0c18e8a7a4006a83f352208c194f62f12e`.
+All seven derived checks pass together on final source:
+`/private/tmp/pr2427-runtime-final-preflight.log`. The final unsharded original32
+plus12 controlled regression cases pass44 in107.64s (three existing dependency
+warnings): `/private/tmp/pr2427-runtime-qualified-original32.log`. Native report
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-runtime-qualified-original32.5AS9oT/fd_identity.jsonl`
+ends with six descriptors, zero SQLite or locks, without forced collection or
+clearing pytest state. This is final-source evidence for all original32 repairs.
+
+The independent unsharded inventory confirms1067 complete-file cases in
+`/private/tmp/pr2427-runtime-qualified-inventory.log`. Final native shards select
+364/356/347 cases respectively and are still pending. Their logs are
+`/private/tmp/pr2427-runtime-qualified-shard{0,1,2}.log`, with reports under the
+per-user temporary roots `pr2427-runtime-qualified-shard0.vweQC9`,
+`pr2427-runtime-qualified-shard1.vQm64z`, and
+`pr2427-runtime-qualified-shard2.qCEDLB`. Source remains frozen at the checkpoint.
+No publication, rebase or merge has been performed in this repair batch.
+
+All three final shards are terminal and green on unchanged `2adcbe0c18` source:
+
+| Shard | Passed | Seconds | Final descriptors | SQLite / locks |
+| --- | ---: | ---: | ---: | --- |
+| 0 | 364 | 1730.10 | 7 | 0 / 0 |
+| 1 | 356 | 851.56 | 7 | 0 / 0 |
+| 2 | 347 | 1432.22 | 4 | 0 / 0 |
+
+The union of all `before_protocol` IDs matches the independently collected1067
+IDs exactly, with no duplicates or omissions. Per-file inventory is162 Files
+workspace,868 Library shell and37 Notes canvas cases. This qualifies complete
+files across three deterministic processes, not their historical single-process
+order. The original32-plus12 run above remains ordered and unsharded. Existing
+dependency warnings remain visible (3/3/10 across the shards); no skips, weakened
+assertions, timeout increases, forced GC or source edits were used.
+
+Each final process holds one `faulthandler.log` stream in addition to standard
+streams and, where still present, the runner's selector descriptors.
+`Logging_Config.py` explicitly retains `_crash_dump_stream` for the process
+lifetime because fault/signal-context writes cannot reopen it lazily. It is not
+a SQLite or instance-lock handle, and it was not forcibly closed to alter the
+inventory. Every final descriptor was inspected, including historical paths.
+
+### Adjacent footer fixture closeout
+
+After all frozen qualification processes exited, the independently reviewed
+Task3 plan supplied only the pure footer fake's two missing state seams:
+non-narrow return and unmounted state. The real dispatcher and every original
+assertion are unchanged; production bytes are unchanged. Complete-file RED is
+4 failed/3 passed in2.98s (`/private/tmp/pr2427-footer-fake-red.log`). Complete
+seven-test file plus the real mounted Media footer control pass8 in3.77s:
+`/private/tmp/pr2427-footer-fake-green.log`, native report
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-footer-fake-green.V2fzXo/fd_identity.jsonl`.
+Final six descriptors include zero SQLite/locks. File-scoped full Ruff and
+whitespace pass; independent spec and quality reviews approve without findings.
+The four previously recorded incomplete-fake failures are therefore resolved.
+
+The final independent four-file inventory contains1074 distinct cases:
+`/private/tmp/pr2427-runtime-closeout-inventory.log`. It matches the union of
+the three qualified native shards and the footer control run. The sole repeated
+case is the intentionally rerun mounted Media footer control; the original
+three-shard1067 inventory is independently exact-once. All seven derived checks
+pass again in `/private/tmp/pr2427-runtime-closeout-preflight.log`. All local
+verification processes are terminal. No repository-wide sweep was run.
+
+The original32 failures and four adjacent footer-fixture failures are addressed.
+This does not close the separately recorded journey86/Console493 SQLite-owner
+findings,13 size ceilings, preload504/500, or seven unconsolidated CSS declarations.
+Newest-dev integration, current-head PR review/checks and normal protected merge
+also remain open. No cap, ownership policy or merge protection was changed.
