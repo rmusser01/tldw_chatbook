@@ -3,9 +3,10 @@ id: TASK-32204
 title: >-
   Library test harnesses that pin CSS_PATH to the app bundle alone measure
   unstyled geometry since the agentic split
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-10 15:20'
+updated_date: '2026-09-11 10:45'
 labels:
   - library
   - tests
@@ -25,7 +26,79 @@ Three Notes tests were found red on `dev` for exactly this reason and repaired i
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every test harness under `Tests/` that composes a Library, Console, Settings, Evals or Scheduling widget loads the same stylesheet set the app loads for that screen (`APP_STYLESHEETS` or the owning screen's sheet), and the sweep that found them is recorded in the notes with its command and hit list
-- [ ] #2 A guard test fails when a harness class sets `CSS_PATH` to the bundle path alone while composing a widget whose rules live in a screen-owned sheet, naming the harness and the sheet
-- [ ] #3 Any test whose expected geometry changes once it is styled is re-pinned to the styled truth with equal or better assertion strength, and each such re-pin cites this task
+- [x] #1 Every test harness under `Tests/` that composes a Library, Console, Settings, Evals or Scheduling widget loads the same stylesheet set the app loads for that screen (`APP_STYLESHEETS` or the owning screen's sheet), and the sweep that found them is recorded in the notes with its command and hit list
+- [x] #2 A guard test fails when a harness class sets `CSS_PATH` to the bundle path alone while composing a widget whose rules live in a screen-owned sheet, naming the harness and the sheet
+- [x] #3 Any test whose expected geometry changes once it is styled is re-pinned to the styled truth with equal or better assertion strength, and each such re-pin cites this task
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Make the sweep executable: resolve each harness `CSS_PATH` statically (inline
+   module-level names, same-module `Class.CSS_PATH`, the real `TldwCli.CSS_PATH`),
+   skip harnesses that push the owning screen, flag those whose queried selectors
+   only the missing split sheet styles.
+2. Flip every hit to `APP_STYLESHEETS`, preserving any screen-sheet bracket.
+3. Run every touched file against a detached `origin/dev` worktree and compare
+   FAILED name sets; re-pin whatever the styling legitimately changes.
+4. Keep the scan as the AC#2 guard test.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Approach: the sweep IS the guard. `scan_bundle_only_harnesses` in
+`Tests/UI/test_consolidated_css_harness.py` walks every `Tests/**/*.py`, resolves
+each class's `CSS_PATH` (two substitution passes over module-level assignments,
+same-module `Class.CSS_PATH`, and the real `TldwCli.CSS_PATH`), skips a harness
+that names the screen owning the sheet (Textual loads it there, as production
+does), and flags one that queries a selector present ONLY in the missing sheet.
+Docstrings are excluded from the selector scan -- this repo discusses selectors in
+prose constantly, and an early version flagged four `test_library_shell.py`
+harnesses off comment text alone.
+
+Sweep command and hit list (recorded per AC#1):
+
+    .venv/bin/python -c "from Tests.UI.test_consolidated_css_harness import \
+        scan_bundle_only_harnesses; print(len(scan_bundle_only_harnesses()))"
+
+41 harnesses across 30 files: 25 Console-sheet (test_console_assistant_turn x2,
+character_context_geometry, chip_strip_overflow, composer_collapse x2,
+composer_cursor, composer_overflow, narrow_layout, prompts_modal,
+rail_width_budget, run_inspector, scope_picker_modal, settings_geometry,
+setup_card_fit x2, tab_strip_budget x2, thinking_disclosures,
+transcript_markdown_widget, turn_file_card x4, workspace_files_integration),
+7 scheduling (destination_shells x2, schedules_automations_tab,
+schedules_new_button, schedules_workbench x4 -- 8 rows), 5 settings
+(settings_agents_category, settings_narrow_layout, settings_web_search,
+speech_tts_settings_ownership_closeout), 3 library
+(library_adaptive_reader_shell `_ProbeApp`, library_ingest_structural
+`_CssTrueCanvasHost`, product_maturity_gate1 `ConsoleHarness`), 1 watchlists
+(kept_briefings_modal). All 41 now pin `APP_STYLESHEETS`; the scan returns 0.
+
+Evidence the pin matters (AC#1): with the sheets loaded, five tests that are RED
+on dev pass -- `test_inspector_group_heading_shares_a_left_edge_with_its_rows`,
+`test_proprietary_status_is_fully_painted_at_narrow_width`,
+`test_immersive_markdown_flavor_is_distinct_and_accessibly_painted[textual-dark]`
+and `[textual-light]`, `test_selected_card_uses_the_bundles_focus_background`.
+They had been measuring an unstyled layout.
+
+AC#3 -- one re-pin, `test_grips_emit_correct_toggle_for_enter_space_and_pointer_click`:
+`Button._on_click` DROPS a click while the button still carries `-active` from
+its previous press (Textual's 0.2 s press animation). Traced with a wrapped
+`_on_click`: at the click, `-active` was True on the branch and False on dev --
+same geometry, same widget under the pointer, opposite outcome. The test now
+waits that window out and keeps its three-toggle assertion.
+
+Name-set comparisons (branch vs detached `origin/dev` ff2dc03145, same
+selections): console batch 1 3=3, batch 2 5=5, batch 3 11 branch / 16 dev (the
+five above), batch 4 11 branch / 0 dev -- of which 10 are
+`test_schedules_workbench.py`, since shown to be broadly unstable on dev too
+(4 -> 9 failures across two clean dev runs, with only one name in common), filed
+as task-32453, and 1 is `test_library_core_loop_modes_are_actionable_without_
+leaving_library`, which fails identically on dev when run alone.
+
+Files: `Tests/UI/test_consolidated_css_harness.py` (+ the scan and guard), 30
+harness files (one-line pins), `Tests/UI/test_library_adaptive_reader_shell.py`
+(the re-pin).
+<!-- SECTION:NOTES:END -->

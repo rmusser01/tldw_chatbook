@@ -2,9 +2,10 @@
 id: TASK-32201
 title: >-
   Library Notes: the notes filter never reaches the search service
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-10 07:30'
+updated_date: '2026-09-11 10:45'
 labels:
   - library
   - notes
@@ -51,7 +52,59 @@ Reproduction, exact assertion text per node:
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Typing a filter value into `#library-notes-filter` and pressing Enter calls the notes scope service's `search_notes` and narrows the rendered rows to the matches (`test_library_note_keyboard_capability_matrix[filter-terminal_size0]` and `[filter-terminal_size1]` pass)
-- [ ] #2 A filter submitted on a wide Database Notes list settles into `_notes_state.filter` and `_notes_state.filter_records`, and survives the note editor Back round trip (`test_library_note_editor_back_restores_exact_wide_browse_context` passes)
-- [ ] #3 Continue from the Library landing restores the Database Notes filter that was active before admission (`test_library_landing_continue_reapplies_database_notes_scope_after_admission` passes)
+- [x] #1 Typing a filter value into `#library-notes-filter` and pressing Enter calls the notes scope service's `search_notes` and narrows the rendered rows to the matches (`test_library_note_keyboard_capability_matrix[filter-terminal_size0]` and `[filter-terminal_size1]` pass)
+- [x] #2 A filter submitted on a wide Database Notes list settles into `_notes_state.filter` and `_notes_state.filter_records`, and survives the note editor Back round trip (`test_library_note_editor_back_restores_exact_wide_browse_context` passes)
+- [x] #3 Continue from the Library landing restores the Database Notes filter that was active before admission (`test_library_landing_continue_reapplies_database_notes_scope_after_admission` passes)
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Trace the real submit route from `Input.Submitted` on `#library-notes-filter`.
+2. Decide product vs fixture on evidence, not on the task's premise.
+3. Repair at the cause, with the three named nodes as the RED->GREEN pin.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+CORRECTION to this task's premise, with evidence. The filter is NOT missing
+from the product: `handle_library_notes_filter` -> `_run_library_notes_filter`
+submits through `NotesScopeService.search_note_tree_placements` (the folder tree
+pages PLACEMENTS, not notes -- `library_screen.py`, the `method =
+getattr(service, "search_note_tree_placements", None)` guard). The shared fake
+`StaticLibraryNotesScopeService` (`Tests/UI/test_destination_shells.py`) carried
+only `search_notes`, so that guard returned before calling anything: the filter
+silently did nothing in EVERY Library suite, which is what the three nodes were
+reporting.
+
+Fix: the fake implements `search_note_tree_placements`, delegating its matching
+to its own `search_notes` so the one substring rule (and the `search_calls`
+record the filter tests assert on) stays in one place, and returning a
+`NotePlacementPage` of unfiled placements exactly as `page_note_placements`
+does.
+
+RED -> GREEN per node:
+- `test_library_note_keyboard_capability_matrix[filter-terminal_size0]` and
+  `[filter-terminal_size1]`: RED `AssertionError: Keyboard filter submit never
+  reached search_notes.` -> GREEN.
+- `test_library_note_editor_back_restores_exact_wide_browse_context`: RED
+  `Filtered Notes scope did not settle: ... calls=[]` -> reached the next
+  assertion, `assert 20 == 32` on `filter_records`, which is the paged truth
+  (`LIBRARY_NOTES_TREE_PAGE_SIZE` = 20). Re-pinned to the window AND the page
+  total (`tree_filter_state.total == 32`), which says strictly more than the
+  old "all 32 records" line -> GREEN.
+- `test_library_landing_continue_reapplies_database_notes_scope_after_admission`:
+  RED `Continue did not restore the Database Notes filter.` -> GREEN. Same
+  cause, as the task suspected but could not prove.
+
+Sibling filter tests re-run green in the same pass
+(`test_library_shell_notes_filter_queries_search_seam`,
+`test_library_shell_notes_filter_clears_before_stale_response_lands`).
+
+Not changed, deliberately: `_run_library_notes_filter`'s `callable(...)` guard
+still returns silently when a service lacks the seam. In production the facade
+always has it; making that a hard failure is a separate call.
+
+Files: `Tests/UI/test_destination_shells.py`, `Tests/UI/test_library_shell.py`.
+<!-- SECTION:NOTES:END -->

@@ -2,9 +2,10 @@
 id: TASK-32202
 title: >-
   Library Notes: three compact note-region behaviors newly reachable
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-10 07:32'
+updated_date: '2026-09-11 10:45'
 labels:
   - library
   - notes
@@ -47,7 +48,42 @@ Reproduction, exact assertion text per node:
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 At 60x20, a Database note whose detail is still loading keeps the "Library notes · Library database" scope line in the status header alongside the loading copy, with Back visible (`test_library_note_60x20_loading_allocation_keeps_back_visible` passes)
+- [x] #1 At 60x20, a Database note whose detail is still loading keeps the "Library notes · Library database" scope line in the status header alongside the loading copy, with Back visible (`test_library_note_60x20_loading_allocation_keeps_back_visible` passes)
 - [ ] #2 Compact surplus rows go entirely to the named owner region for every owner, not only one (`test_library_note_compact_surplus_allocation_expands_only_named_owner` passes for all three parametrisations)
 - [ ] #3 A Notes local shortcut is registered only while its owning region has focus, and is flushed when focus leaves it (`test_library_note_local_shortcuts_are_region_scoped_and_flush_guarded` passes)
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Run the three nodes and trace each to its cause.
+2. Repair what is a stale expectation; file what is a behaviour decision.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+AC#1 done; AC#2 and AC#3 filed as task-32455 with their proven diagnoses.
+
+AC#1 -- stale expectation, corrected. The failing line was in the shared
+`_assert_task8_compact_chrome` helper, not in the test body: it asserts the
+authority line always carries "Library notes" and "Next:". Both halves are
+superseded. task-32360 (critique #10) DELIBERATELY drops the "Library notes"
+prefix below 64 columns because the full line took three rows in a two-row box
+and "files." was cut off with no ellipsis -- the source strip directly above
+names the authority instead. And task-32063 deliberately gives the loading
+state no "Next:" clause, because a "Next:" names a control the reader can press
+and "wait for loading" names none. The helper now asserts the authority is
+named on the SOURCE STRIP, that the authority line says something, and that
+"Next:" is there whenever the state is not loading. The other two callers of
+that helper still pass.
+
+AC#2 (`assert 9 == 11` for the navigator owner, `assert 12 == 11` for the
+context owner) and AC#3 (`assert 'browse-notes' == ''` -- ctrl+n now selects
+the Notes rail row with no Notes region focused, which task-32356 changed from
+"open Create" to "create the note") are behaviour questions for the owners of
+the compact allocator and of the shortcut grammar, not constants a test-health
+pass can re-pin. Diagnoses and current numbers recorded in task-32455.
+
+Files: `Tests/UI/test_library_shell.py`.
+<!-- SECTION:NOTES:END -->
