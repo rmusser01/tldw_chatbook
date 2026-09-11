@@ -25,6 +25,8 @@ from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol, cast
 from loguru import logger
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
+
     from .agent_worktree import AgentWorktree
     from .run_log import RunLogWriter
 
@@ -596,12 +598,30 @@ class _ProjectInstructionPayloadError(RuntimeError):
     """Content-free terminal error for a staged row dropped by bounding."""
 
 
-def _count_model_messages(messages: list[dict], model: str, provider: str) -> int:
-    """Count ordinary rows directly, falling back for multimodal content."""
+def _count_model_messages(
+    messages: list[dict],
+    model: str,
+    provider: str,
+    *,
+    reasoning_replay: ReasoningReplayPolicy | None = None,
+    tokenizer_model: str | None = None,
+) -> int:
+    """Count the same canonical projection sent, keeping exact model eligibility."""
+    from tldw_chatbook.Chat.local_reasoning import project_reasoning_history
+
+    if reasoning_replay is not None or any(
+        "_tldw_call_thinking" in row for row in messages
+    ):
+        messages = project_reasoning_history(
+            messages, provider=provider, model=model, policy=reasoning_replay
+        )
+        return count_console_messages_tokens(messages, tokenizer_model or model)
     try:
-        return count_tokens_messages(messages, model, provider=provider)
+        return count_tokens_messages(
+            messages, tokenizer_model or model, provider=provider
+        )
     except (TypeError, ValueError):
-        return count_console_messages_tokens(messages, model)
+        return count_console_messages_tokens(messages, tokenizer_model or model)
 
 
 def _append_workspace_context_note(system_content: str, note: str) -> str:
@@ -811,6 +831,7 @@ def build_first_request_schema_plan(
                 model=config.model,
                 api_endpoint=api_endpoint,
                 native_tools=config.native_tools,
+                reasoning_replay=config.reasoning_replay,
             ),
         )
         if active is None:
@@ -835,6 +856,7 @@ def catalog_schema_tokens(
     model: str,
     api_endpoint: str,
     native_tools: bool,
+    reasoning_replay: ReasoningReplayPolicy | None = None,
 ) -> int:
     """Measure one complete provider-visible schema-set representation.
 
@@ -853,7 +875,9 @@ def catalog_schema_tokens(
     """
     if not schemas:
         return 0
-    native = native_tools and provider_supports_native_tools(api_endpoint)
+    native = native_tools and provider_supports_native_tools(
+        api_endpoint, reasoning_replay=reasoning_replay
+    )
     rendered = (
         json.dumps(
             schemas_to_openai_tools(list(schemas)),
@@ -881,7 +905,9 @@ def _first_request_plan_fits(
     reserve = config.response_reserve_tokens
     if type(reserve) is not int or reserve < 0:
         return False
-    native = config.native_tools and provider_supports_native_tools(api_endpoint)
+    native = config.native_tools and provider_supports_native_tools(
+        api_endpoint, reasoning_replay=config.reasoning_replay
+    )
     schemas = plan.runtime_schemas + plan.active_schemas
     system_content = plan.system_prompt
     if not native:
@@ -902,6 +928,7 @@ def _first_request_plan_fits(
         [{"role": "system", "content": system_content}, *messages],
         config.model,
         api_endpoint,
+        reasoning_replay=config.reasoning_replay,
     )
     if type(used) is not int or used <= 0:
         return False
@@ -911,6 +938,7 @@ def _first_request_plan_fits(
             model=config.model,
             api_endpoint=api_endpoint,
             native_tools=True,
+            reasoning_replay=config.reasoning_replay,
         )
     return used <= context_limit - reserve
 
@@ -2233,7 +2261,9 @@ class AgentService:
         trusted_role: Literal["primary", "subagent"] = "primary",
     ) -> ModelRequest:
         """Build the exact bounded messages and native tools sent on a turn."""
-        native = config.native_tools and provider_supports_native_tools(api_endpoint)
+        native = config.native_tools and provider_supports_native_tools(
+            api_endpoint, reasoning_replay=config.reasoning_replay
+        )
         schemas = runtime_schemas + list(active_schemas)
         system_content = config.system_prompt
         tools: list[dict] = []
@@ -2291,6 +2321,12 @@ class AgentService:
             native=native,
             enabled=evict_enabled,
             min_recent_rounds=min_recent_rounds,
+            count_fn=lambda rows, _model: _count_model_messages(
+                rows,
+                config.model,
+                api_endpoint,
+                reasoning_replay=config.reasoning_replay,
+            ),
         )
         return ModelRequest(
             messages=tuple(dict(message) for message in payload),
@@ -2313,7 +2349,10 @@ class AgentService:
             if type(reserve) is not int or reserve < 0:
                 return 0
             used = _count_model_messages(
-                list(request.messages), config.model, api_endpoint
+                list(request.messages),
+                config.model,
+                api_endpoint,
+                reasoning_replay=config.reasoning_replay,
             )
             if request.tools:
                 used += estimate_tokens(
@@ -2352,7 +2391,10 @@ class AgentService:
             ):
                 return False
             used = _count_model_messages(
-                list(request.messages), config.model, api_endpoint
+                list(request.messages),
+                config.model,
+                api_endpoint,
+                reasoning_replay=config.reasoning_replay,
             )
             if type(used) is not int or used <= 0:
                 return False
@@ -2562,7 +2604,9 @@ class AgentService:
         first_request_fits: bool = True,
         run_id: str | None = None,
     ):
-        native = config.native_tools and provider_supports_native_tools(api_endpoint)
+        native = config.native_tools and provider_supports_native_tools(
+            api_endpoint, reasoning_replay=config.reasoning_replay
+        )
         initial_context_checked = False
         context_observed = False
         staged = staged_delivery if staged_delivery is not None else {}
@@ -2736,6 +2780,12 @@ class AgentService:
                 native=native,
                 enabled=effective_log_active and evict_requested,
                 min_recent_rounds=min_recent_rounds,
+                count_fn=lambda rows, _model: _count_model_messages(
+                    rows,
+                    config.model,
+                    api_endpoint,
+                    reasoning_replay=config.reasoning_replay,
+                ),
                 continuation_groups=(
                     () if gateway_prepares_continuation else effective_groups
                 ),
@@ -2837,11 +2887,31 @@ class AgentService:
                     else config.model
                 )
                 tokens = _count_model_messages(
-                    payload, est_model, api_endpoint
+                    payload,
+                    config.model,
+                    api_endpoint,
+                    reasoning_replay=config.reasoning_replay,
+                    tokenizer_model=est_model,
                 ) + estimate_tokens(text, est_model, provider=api_endpoint)
+            thinking_envelope = getattr(resp, "thinking_envelope", None)
+            thinking_echo = None
+            if thinking_envelope is not None:
+                from tldw_chatbook.Chat.console_thinking_capture import (
+                    CALL_THINKING_KEY,
+                )
+                from tldw_chatbook.Chat.thinking_blocks import ThinkingEnvelope
+
+                if not isinstance(thinking_envelope, ThinkingEnvelope):
+                    raise ValueError("Call thinking metadata is malformed.")
+                thinking_echo = {
+                    "role": "assistant",
+                    "content": text,
+                    CALL_THINKING_KEY: thinking_envelope,
+                }
             if not native:
                 return ModelTurn(
                     text=text,
+                    assistant_message=thinking_echo,
                     tokens=tokens,
                     provider_continuation=provider_continuation,
                 )
@@ -2854,9 +2924,10 @@ class AgentService:
             if raw_calls:
                 message = {**message, "tool_calls": raw_calls}
             tool_calls = parse_native_tool_calls(message)
-            assistant_message = None
+            assistant_message = thinking_echo
             if tool_calls:
                 assistant_message = {
+                    **(thinking_echo or {}),
                     "role": "assistant",
                     "content": text,
                     "tool_calls": raw_calls,
@@ -5363,6 +5434,9 @@ class AgentService:
                 allowed_tools=child_allowed_tools,
                 budget=child_budget,
                 native_tools=config.native_tools,
+                reasoning_replay=(
+                    config.reasoning_replay if child_model == config.model else None
+                ),
                 # A sub-agent operates on the same workspace roots as its
                 # parent, so it inherits the same environment note verbatim
                 # (appended to its own prompt in call_model, after its identity
@@ -5960,6 +6034,9 @@ class AgentService:
                 allowed_tools=child_allowed_tools,
                 budget=child_budget,
                 native_tools=config.native_tools,
+                reasoning_replay=(
+                    config.reasoning_replay if child_model == config.model else None
+                ),
                 workspace_context_note=config.workspace_context_note,
                 personal_context_block=config.personal_context_block,
                 response_reserve_tokens=config.response_reserve_tokens,
@@ -6924,6 +7001,8 @@ class AgentService:
                     config,
                     model=candidate_model,
                     provider=candidate_endpoint,
+                    # Endpoint/model approval belongs only to the resolved primary.
+                    reasoning_replay=None,
                 )
                 return self._make_call_model(
                     candidate_config,

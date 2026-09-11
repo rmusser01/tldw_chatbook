@@ -187,7 +187,8 @@ keyword: quokkasand…`, the title hit painted `article · 1m`.)*
 - **Disabled actions announce themselves.** While nothing is checked,
   "Export selected"/"Delete selected" read **"○ Export selected"** /
   **"○ Delete selected"** — the leading **○** is the Library's disabled
-  marker (the same ✓/○ pair the ingest toggles use), so the state never
+  marker (the same marker every gated Library action carries — see
+  [State glyphs](../library.md#state-glyphs)), so the state never
   depends on colour alone — and their tooltips say what to do ("Select one
   or more items…"). The same goes for **"○ Select"** when the list is
   empty ("Nothing here to select yet."). Checking the first row flips the
@@ -1075,6 +1076,12 @@ with nothing on screen to link into.)*
 line beneath it, so it no longer truncates in a narrow reader pane; `c` now
 consults the workspace gate the button consults; a block linking cannot
 resolve says so and withholds the link.)*
+
+*Verified against fix/library-crit9-grammar — 2026-09-10, fix round 1
+(task-32235: the disabled marker's description no longer points at the
+"✓/○ pair the ingest toggles use" — those toggles are "☐/☑" now, and "○"
+means a blocked or disabled action and nothing else. The legend lives in
+[State glyphs](../library.md#state-glyphs).)*
 
 *Verified against fix/library-crit8-riders-a — 2026-09-10 (task-32101: the
 blocked hand-off paints the action name once — the disabled marker moved

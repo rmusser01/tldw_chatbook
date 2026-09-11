@@ -9,7 +9,6 @@ import threading
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import PurePosixPath
 from uuid import UUID, uuid4, uuid5
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
@@ -40,12 +39,11 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     MAX_IMPORT_KEYWORDS_PER_NOTE,
     ImportAction,
     ImportPreviewItem,
-    ImportSourceKind,
     ParsedNotePayload,
     ProposedFolderMembership,
     RootCollisionChoice,
+    creatable_wikilink_keys,
     rewrite_wikilinks,
-    wikilink_key,
 )
 from tldw_chatbook.Notes.note_import_receipts import (
     EffectTransition,
@@ -1269,11 +1267,17 @@ class NoteImportExecutor:
             )
             return
 
-        if len(membership_effects) != len(item.memberships):
+        # task-32176: only an approved membership has a durable effect row
+        # (note_import_receipts records one per membership when, and only when,
+        # item.add_membership is set). An Update existing that leaves folder
+        # placement alone still carries the memberships the parser proposed, so
+        # comparing against those aborted the whole run with no receipt.
+        authorized_memberships = item.memberships if item.add_membership else ()
+        if len(membership_effects) != len(authorized_memberships):
             raise ImportReceiptTransitionError(
                 "Membership receipt authority does not match the approved plan."
             )
-        memberships = tuple(zip(item.memberships, membership_effects, strict=True))
+        memberships = tuple(zip(authorized_memberships, membership_effects, strict=True))
         memberships_by_payload: dict[
             int, list[tuple[ProposedFolderMembership, ImportEffectRecord]]
         ] = {}
@@ -1761,33 +1765,15 @@ def _deterministic_note_id(
 def _wikilink_note_ids(approved: ApprovedNoteImportPlan) -> dict[str, str]:
     """Map the batch's link keys to the note ids its new notes will be given.
 
-    Every single-note source this plan creates is addressable the two ways
-    Obsidian addresses it: by its vault-relative path without the extension and
-    by its bare file name. A name two sources share resolves to neither, so an
-    ambiguous link stays literal rather than pointing at a guess.
+    The key grammar lives in `creatable_wikilink_keys` so the receipt's
+    "N links resolved" count and this rewrite map cannot drift apart
+    (task-32178); note ids are deterministic, so the map exists before
+    anything is written.
     """
-    note_ids: dict[str, str] = {}
-    ambiguous: set[str] = set()
-    for item in approved.plan.items:
-        if item.selected_action is not ImportAction.CREATE_NEW or len(
-            item.payloads
-        ) != 1:
-            continue
-        note_id = _deterministic_note_id(approved.approval_id, item.item_id, 0)
-        parts = PurePosixPath(item.source.display_path).parts
-        if item.source.kind is ImportSourceKind.DIRECTORY_MEMBER:
-            parts = parts[1:]
-        if not parts:
-            continue
-        path = PurePosixPath(*parts)
-        for target in (path.with_suffix("").as_posix(), path.stem):
-            key = wikilink_key(target)
-            if not key or key in ambiguous:
-                continue
-            if note_ids.setdefault(key, note_id) != note_id:
-                ambiguous.add(key)
-                del note_ids[key]
-    return note_ids
+    return {
+        key: _deterministic_note_id(approved.approval_id, item_id, 0)
+        for key, item_id in creatable_wikilink_keys(approved.plan).items()
+    }
 
 
 def _allows_existing_root(

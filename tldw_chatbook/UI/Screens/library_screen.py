@@ -1095,7 +1095,7 @@ class LibraryScreen(BaseAppScreen):
         Binding(
             "c",
             "library_conversation_open_console",
-            "Open in Console",
+            "Resume conversation",
             show=False,
         ),
         Binding("t", "library_media_move_to_trash", "Move to trash", show=False),
@@ -1912,16 +1912,6 @@ class LibraryScreen(BaseAppScreen):
         overflow-x: hidden;
     }
 
-    #library-shell-grid.library-notes-compact #library-note-context-status {
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-        padding: 0 1;
-        text-wrap: nowrap;
-        text-overflow: ellipsis;
-    }
-
     #library-shell-grid.library-notes-compact #library-note-context-region {
         height: 1fr;
         min-height: 0;
@@ -2267,6 +2257,11 @@ class LibraryScreen(BaseAppScreen):
             "quizzes": None,
         }
         self._library_loaded = False
+        #: task-32245: a navigation context admitted BEFORE mount cannot arm
+        #: its destination's entry focus yet (no canvas exists). The row is
+        #: parked here and ``on_mount`` runs the same
+        #: ``_arm_library_row_entry_focus`` the mounted route runs inline.
+        self._pending_library_entry_focus_row: str | None = None
         # Combined Search+RAG canvas state; see LibraryRagSearchState's own
         # module docstring/field comments for the per-field detail that
         # used to live here. `history` has a genuinely computed default
@@ -4089,7 +4084,7 @@ class LibraryScreen(BaseAppScreen):
             # gate is wider than it -- blocked, the key explains rather than
             # opening, which is not what a footer chip promises.
             if self._library_conversation_handoff_ready():
-                shortcuts.append(("c", "open in Console"))
+                shortcuts.append(("c", "resume conversation"))
             shortcuts.append(("F6", "next pane"))
             escape_label = self._library_conversation_escape_label()
             if escape_label:
@@ -8630,6 +8625,12 @@ class LibraryScreen(BaseAppScreen):
                 exclusive=True,
                 group="library_nav_character",
             )
+        pending_entry_focus_row = self._pending_library_entry_focus_row
+        self._pending_library_entry_focus_row = None
+        if pending_entry_focus_row:
+            # task-32245: a pre-mount navigation context selected this row
+            # but could not arm its entry focus; the canvas exists now.
+            self._arm_library_row_entry_focus(pending_entry_focus_row)
 
     async def on_unmount(self) -> None:
         """Unregister the ingest registry listener registered in ``on_mount``.
@@ -8883,6 +8884,7 @@ class LibraryScreen(BaseAppScreen):
         state["library_conversation_page"] = (
             self._conversations_state.page if conversation_applied else 1
         )
+        state["conversation_archive_scope"] = self._conversation_recovery().scope
         state["library_conversation_query"] = (
             self._conversations_state.query if conversation_applied else ""
         )
@@ -9306,6 +9308,15 @@ class LibraryScreen(BaseAppScreen):
         self._conversations_state.focus_after_apply = ""
         self._conversations_state.select_mode = False
         self._conversations_state.row_selection.clear()
+        from ...Utils.input_validation import validate_conversation_archive_scope
+
+        try:
+            archive_scope = validate_conversation_archive_scope(
+                state.get("conversation_archive_scope")
+            )
+        except ValueError:
+            archive_scope = "active"
+        self._conversation_recovery().scope = archive_scope
         conversation_query = state.get("library_conversation_query")
         self._conversations_state.requested_query = self._safe_text(
             conversation_query if isinstance(conversation_query, str) else "",
@@ -9400,44 +9411,6 @@ class LibraryScreen(BaseAppScreen):
         # is a no-op, and a hit is idempotent pre-mount attribute assignment
         # (see the method's own docstring).
         self._seed_local_source_snapshot_from_cache()
-
-    def _seed_local_source_snapshot_from_cache(self) -> None:
-        """Apply the app-scoped snapshot cache before this screen mounts.
-
-        Called from both ``__init__`` and ``restore_state`` (task-15459) --
-        the app calls both on a freshly constructed, not-yet-mounted
-        instance before ``switch_screen`` mounts it (see ``restore_state``'s
-        own docstring), so seeding here is what lets a warm revisit's FIRST
-        ``compose_content`` already render the previous visit's data instead
-        of the "Loading…" placeholder -- rather than composing once with
-        that placeholder and then being forced into an immediate second,
-        explicit ``refresh(recompose=True)`` from ``on_mount`` to correct it
-        (that fallback still exists there, for the cache-miss/expired case
-        this seed does not cover).
-
-        Mirrors ``on_mount``'s own freshness check
-        (``LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS``) so a stale cache is never
-        instant-applied here either.
-
-        Safe to call this early: ``_apply_local_source_snapshot`` only
-        touches the DOM (recompose / rail sync) when ``self.is_mounted`` is
-        True, which is never the case at either call site, so a hit is a
-        pure attribute assignment with no recompose or widget-query side
-        effects.
-        """
-        cached_snapshot = getattr(
-            self.app_instance, "_library_source_snapshot_cache", None
-        )
-        cached_stamp = getattr(
-            self.app_instance, "_library_source_snapshot_cache_stamp", None
-        )
-        if (
-            cached_snapshot is None
-            or cached_stamp is None
-            or time.monotonic() - cached_stamp >= LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS
-        ):
-            return
-        self._apply_local_source_snapshot(*cached_snapshot)
 
     def _file_notes_active(self) -> bool:
         """Return whether the retained File Notes workspace owns the canvas."""
@@ -10216,6 +10189,9 @@ class LibraryScreen(BaseAppScreen):
             if not self._unavailable_navigation._library_character_admission_is_current(self, character_admission):
                 self._unavailable_navigation._discard_library_character_admission(self, character_admission)
                 return
+        # task-32245: a deep link owes its destination the same entry focus a
+        # rail-row press does.
+        self._arm_library_row_entry_focus(target_row_id)
         if character_admission is not None:
             await self._unavailable_navigation._open_pending_library_character_navigation(self, )
 
@@ -11456,20 +11432,32 @@ class LibraryScreen(BaseAppScreen):
         if shell.canvas_kind == "conversations":
             local_list_surface = True
             expected_selector = "#library-conversations-canvas"
-            if self._library_lookup_error is None:
-                conversations_state = self._build_library_conversations_state()
-                self._adopt_library_conversation_state_selection(
-                    conversations_state.selected_id
-                )
-                sync_kind = "conversations"
-                replacement = LibraryConversationsCanvas(
-                    conversations_state,
-                    id="library-conversations-canvas",
-                )
+            # Conversation paging has its own failure and retry state. A broad
+            # source outage must not replace a successful independent page.
+            conversations_state = self._build_library_conversations_state()
+            self._adopt_library_conversation_state_selection(
+                conversations_state.selected_id
+            )
+            sync_kind = "conversations"
+            replacement = LibraryConversationsCanvas(
+                conversations_state,
+                id="library-conversations-canvas",
+            )
         elif (
-            shell.canvas_kind == LIBRARY_CANVAS_KIND_NOTES
+            shell.canvas_kind
+            in (LIBRARY_CANVAS_KIND_NOTES, LIBRARY_CANVAS_KIND_NOTES_CREATE)
             and self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
         ):
+            # task-32245: NOTES_CREATE belongs here too. ``compose_content``
+            # mounts the shared "Loading local Library sources…" placeholder
+            # for BOTH kinds (they share one retained Items pane), but this
+            # reconciler only knew ``notes`` -- so a first entry that landed
+            # on New note before the snapshot resolved (the wizard's "Write
+            # your first note" hand-off, the Console setup card's notes
+            # action, a cold command-palette "new_note") kept that
+            # placeholder for the life of the visit. ``_build_library_entry_
+            # active_child`` and ``_LIBRARY_RESIDENT_CANVAS_OWNER_ROWS``
+            # already pair the two kinds; this site was the odd one out.
             local_list_surface = True
             expected_selector = "#library-notes-canvas"
             if self._library_lookup_error is None:
@@ -11510,7 +11498,7 @@ class LibraryScreen(BaseAppScreen):
 
         if (
             local_list_surface
-            and shell.canvas_kind != "skills"
+            and shell.canvas_kind not in {"skills", "conversations"}
             and self._library_lookup_error is not None
         ):
             expected_selector = "#library-canvas-error"
@@ -11821,7 +11809,25 @@ class LibraryScreen(BaseAppScreen):
     def _seed_local_source_snapshot_from_cache(
         self, *, now: float | None = None
     ) -> bool:
-        """Apply a recent detached cache snapshot before first composition."""
+        """Apply a recent detached cache snapshot before first composition.
+
+        Called from both ``__init__`` and ``restore_state`` (task-15459) on a
+        freshly constructed, not-yet-mounted instance, so a warm revisit's
+        FIRST ``compose_content`` already renders the previous visit's data
+        instead of the "Loading…" placeholder. Safe to call this early, and
+        twice: ``_apply_local_source_snapshot`` only touches the DOM when
+        ``self.is_mounted``, which neither call site is, so a hit is a pure
+        attribute assignment and a miss is a no-op. ``on_mount`` still owns
+        the cache-miss/expired case and the mount-time reconciliation.
+
+        Args:
+            now: Monotonic reading to age the cache against, for tests;
+                defaults to ``time.monotonic()``.
+
+        Returns:
+            True when a fresh snapshot was applied, False on a miss or on a
+            cache older than ``LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS``.
+        """
         stamp = getattr(self.app_instance, "_library_source_snapshot_cache_stamp", None)
         if not isinstance(stamp, (int, float)) or not math.isfinite(float(stamp)):
             return False
@@ -12547,18 +12553,8 @@ class LibraryScreen(BaseAppScreen):
         return LIBRARY_GENERIC_WORKSPACE_BLOCK, False, detail
 
     def _library_conversation_handoff_ready(self) -> bool:
-        """Whether the Conversations Console hand-off may run right now.
-
-        The ONE predicate behind the header action's enabled state, the
-        ``c`` accelerator's ``check_action`` gate, and that key's footer
-        entry (fix round 1: ``c`` consulted only the load fence, so it
-        reached the press -- and its toast -- on a conversation whose own
-        button was disabled and said why).
-        """
-        return (
-            self._conversations_state.reader_state.loaded_actions_eligible
-            and not self._library_conversation_workspace_block()[0]
-        )
+        """Use the same retained-identity load fence as the Resume button."""
+        return self._conversations_state.reader_state.loaded_actions_eligible
 
     def _link_selected_conversation_to_workspace(self) -> None:
         """Link the open conversation into the active workspace (task-32056).
@@ -12996,10 +12992,20 @@ class LibraryScreen(BaseAppScreen):
         }
 
     def _workspace_source_records(self) -> Mapping[str, tuple[Mapping[str, Any], ...]]:
-        return {
+        records = {
             source_type: tuple(self._local_source_records[source_type])
             for source_type in ("notes", "media", "conversations")
         }
+        # Archive pages are outside the active-only startup snapshot. Include
+        # their fetched rows in the same per-item workspace eligibility rules.
+        conversations = {
+            str(row.get("id") or row.get("conversation_id")): row
+            for row in records["conversations"]
+        }
+        for row in self._conversations_state.page_records:
+            conversations[str(row.get("id") or row.get("conversation_id"))] = row
+        records["conversations"] = tuple(conversations.values())
+        return records
 
     def _invalidate_library_workspace_depth_state(self) -> None:
         self._library_workspace_depth_state_cache = None
@@ -14600,6 +14606,56 @@ class LibraryScreen(BaseAppScreen):
         return self._conversation_reader_controller._start_library_conversation_reader_selection(
             conversation_id
         )
+
+    @on(Button.Pressed, ".library-conversation-scope")
+    def handle_library_conversation_scope(self, event: Button.Pressed) -> None:
+        """Select a validated archive scope and reload the first result page.
+
+        Args:
+            event: Scope button press consumed before starting the page request.
+        """
+        return self._conversations_controller.handle_library_conversation_scope(event)
+
+    @on(Button.Pressed, "#library-conversations-view-archived")
+    def handle_library_conversation_view_archive(self, event: Button.Pressed) -> None:
+        """Show archived conversations while retaining the current search query.
+
+        Args:
+            event: Receipt action press consumed before switching to Archived.
+        """
+        return self._conversations_controller.handle_library_conversation_view_archive(event)
+
+    @on(Button.Pressed, "#library-conversations-undo")
+    def handle_library_conversation_undo(self, event: Button.Pressed) -> None:
+        """Schedule reversal of successful versioned archive changes.
+
+        Args:
+            event: Undo press consumed before starting the exclusive recovery worker.
+        """
+        return self._conversations_controller.handle_library_conversation_undo(event)
+
+    @on(Button.Pressed, "#library-conversation-archive")
+    @on(Button.Pressed, "#library-conversation-restore")
+    @on(Button.Pressed, "#library-conversations-archive-selected")
+    @on(Button.Pressed, "#library-conversations-restore-selected")
+    def handle_library_conversation_archive_action(self, event: Button.Pressed) -> None:
+        """Confirm archive or restore for captured identities and versions.
+
+        Args:
+            event: Single or bulk archive/restore press consumed by this handler.
+        """
+        return self._conversations_controller.handle_library_conversation_archive_action(event)
+
+    def _conversation_recovery(self):
+        from ..Library_Modules.library_conversation_recovery import (
+            LibraryConversationRecovery,
+        )
+
+        recovery = self.__dict__.get("_library_conversation_recovery")
+        if recovery is None:
+            recovery = LibraryConversationRecovery(self._conversations_controller)
+            self._library_conversation_recovery = recovery
+        return recovery
 
     def _build_library_conversations_state(self):
         return self._conversations_controller._build_library_conversations_state()
@@ -20725,6 +20781,24 @@ class LibraryScreen(BaseAppScreen):
             self._arm_library_list_entry_focus()
         if self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT:
             self._start_library_export_counts_worker()
+        self._arm_library_row_entry_focus(row_id)
+
+    def _arm_library_row_entry_focus(self, row_id: str) -> None:
+        """Park entry focus for one destination row once its canvas exists.
+
+        task-32245: this was inline in the rail-row switch, so it ran only
+        on that route. The navigation-context deep links
+        (``apply_navigation_context``) apply the SAME row selection and
+        recompose from it, but skipped every arm here -- so the wizard's
+        "Write your first note" hand-off landed on the New-note canvas with
+        nothing focused: its advertised "enter create note" was dead (the
+        footer fell back to the bare "esc back to notes" tier) and the first
+        Enter fell through to the app's own binding and left Library for
+        Home. Both routes now share this one arm.
+
+        Args:
+            row_id: The destination rail row the route is landing on.
+        """
         if row_id == LIBRARY_ROW_INGEST_MEDIA and self.is_mounted:
             # task-3302 AC#1 (MI-03): entering Ingest parks the caret in
             # the path field -- the first action on this canvas is always
@@ -20826,6 +20900,9 @@ class LibraryScreen(BaseAppScreen):
                 loaded_preview_selected=self._library_conversation_loaded_preview_selected(),
             )
             self._sync_library_conversation_reader()
+            for action in ("archive-selected", "restore-selected"):
+                for button in self.query(f"#library-conversations-{action}"):
+                    button.disabled = not self._conversations_state.row_selection.count
             return
         if conversation_id:
             self._acknowledge_library_destination_change()
@@ -27472,6 +27549,18 @@ class LibraryScreen(BaseAppScreen):
     def _on_ingest_job_details(self, event: Button.Pressed) -> None:
         return self._ingest_controller._on_ingest_job_details(event)
 
+    @on(Button.Pressed, ".library-ingest-group-expand")
+    def handle_library_ingest_group_expand(self, event: Button.Pressed) -> None:
+        return self._ingest_controller.handle_library_ingest_group_expand(event)
+
+    @on(Button.Pressed, ".library-ingest-group-retry")
+    def handle_library_ingest_group_retry(self, event: Button.Pressed) -> None:
+        return self._ingest_controller.handle_library_ingest_group_retry(event)
+
+    @on(Button.Pressed, ".library-ingest-group-dismiss")
+    def handle_library_ingest_group_dismiss(self, event: Button.Pressed) -> None:
+        return self._ingest_controller.handle_library_ingest_group_dismiss(event)
+
     @on(Button.Pressed, "#library-ingest-analyze-skipped")
     def handle_library_ingest_analyze_skipped(self, event: Button.Pressed) -> None:
         """Analyze every import row this queue still shows analysis-skipped.
@@ -32746,6 +32835,7 @@ class LibraryScreen(BaseAppScreen):
                 record_id,
                 mode="local",
                 scope_type="all",
+                archive_scope=self._conversation_recovery().scope,
                 limit=LIBRARY_CONVERSATION_PAGE_SIZE,
             )
         except Exception:
@@ -33218,8 +33308,22 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-conversation-open-console")
     def open_selected_conversation_in_console(self, event: Button.Pressed) -> None:
+        """Resume the fully loaded original conversation in Console.
+
+        Args:
+            event: Resume press consumed before checking the retained identity fence.
+        """
         return self._conversations_controller.open_selected_conversation_in_console(event)
 
+
+    @on(Button.Pressed, "#library-conversation-use-source")
+    def use_selected_conversation_as_source(self, event: Button.Pressed) -> None:
+        """Stage the loaded transcript under the existing workspace source rules.
+
+        Args:
+            event: Source action press forwarded to the browse controller.
+        """
+        return self._conversations_controller.use_selected_conversation_as_source(event)
 
     @on(Button.Pressed, "#library-conversation-link-workspace")
     def link_selected_conversation_to_workspace(self, event: Button.Pressed) -> None:
@@ -33234,36 +33338,16 @@ class LibraryScreen(BaseAppScreen):
         self._link_selected_conversation_to_workspace()
 
     def _library_conversation_block_sentence(self) -> str | None:
-        """Return the reader's current refusal sentence, or None (task-32101).
-
-        The very sentence the disabled control and its tooltip show, built
-        from the same helper the reader widget uses -- so the ``c`` key can
-        never explain the refusal differently from the button.
-        """
-        blocked, linkable, detail = self._library_conversation_workspace_block()
-        reader_state = self._conversations_state.reader_state
+        """Explain the Resume load/identity fence using the Reader's shared copy."""
         return library_conversation_block_sentence(
-            reader_state,
-            blocked=blocked,
-            detail=detail,
-            link_offered=(
-                reader_state.loaded_actions_eligible and bool(blocked) and linkable
-            ),
+            self._conversations_state.reader_state, blocked=""
         )
 
     def action_library_conversation_open_console(self) -> None:
-        """Keyboard 'c': hand the open conversation to Console (task-32056).
+        """Resume the loaded original, or explain the same fence as its button.
 
-        Mirrors ``action_library_media_use_in_console``; the two share the
-        key and are separated by ``check_action``'s selected-row gate, since
-        only one Library canvas is open at a time.
-
-        (task-32101) A blocked conversation answers with the sentence the
-        control on screen already carries, instead of nothing at all:
-        task-32056's fix round 1 stopped the key at ``check_action`` to kill
-        a toast that named a workspace with nothing to link into, but that
-        left the key dead with no way to learn why. The toast now repeats
-        the visible explanation, whose remedy IS on screen.
+        The key remains live while a conversation is open, including when
+        loading blocks Resume. Workspace membership gates Use as source only.
         """
         if not self._library_conversation_handoff_ready():
             sentence = self._library_conversation_block_sentence()
@@ -33271,7 +33355,7 @@ class LibraryScreen(BaseAppScreen):
             if sentence and callable(notify):
                 notify(sentence, severity="warning")
             return
-        self._open_selected_conversation_handoff()
+        self._conversations_controller.resume_selected_conversation()
 
     def open_chunking_lab(self, *, use_selected: bool = False) -> None:
         """Open the local tool directly, with only a local media ID as context."""
