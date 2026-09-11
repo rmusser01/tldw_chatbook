@@ -1217,6 +1217,7 @@ def test_canvas_discovery_hint_requires_the_actual_complete_run_allow_list():
     assert complete.startswith(base)
     assert CANVAS_DISCOVERY_HINT in complete
     assert guide.CANVAS_OFFER_POLICY in complete
+    assert "If context does not establish consent, clarify." in complete
     assert "canvas_guide" in complete
     without_guide = _append_canvas_discovery_hint(base, artifacts)
     assert CANVAS_DISCOVERY_HINT in without_guide

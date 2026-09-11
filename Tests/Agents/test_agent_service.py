@@ -462,6 +462,7 @@ def test_model_request_guidance_tracks_the_exact_disclosed_canvas_schema_set(
     from tldw_chatbook.Canvas.guide import CANVAS_OFFER_POLICY
 
     assert CANVAS_OFFER_POLICY in system
+    assert "If context does not establish consent, clarify." in system
     for disclosed_name in disclosed_names:
         assert disclosed_name in system
     assert ("V1 supports inline HTML/CSS and classic scripts" in system) == (
