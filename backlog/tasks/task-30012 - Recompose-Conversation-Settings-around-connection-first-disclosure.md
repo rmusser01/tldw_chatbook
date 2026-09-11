@@ -6,6 +6,11 @@ assignee:
   - '@codex'
 created_date: '2026-09-02 18:04'
 updated_date: '2026-09-03 18:20'
+status: In Progress
+assignee:
+  - '@codex'
+created_date: '2026-09-02 18:04'
+updated_date: '2026-09-02 18:04'
 labels:
   - console
   - ux
@@ -31,6 +36,15 @@ Restructure the full modal around the user’s connection task while retaining f
 - [x] #5 Exactly one completion action is primary, every disabled completion action has a persistent reason, and immediate Context and memory operations do not compete with completion primacy
 - [x] #6 Save labels and adjacent scope copy distinguish conversation-only application from provider/model/generation defaults used by future conversations
 - [x] #7 Provider default, Not estimated, singular model counts, Base URL visibility, and provider display-name copy are accurate across all modal entry points
+
+<!-- AC:BEGIN -->
+- [ ] #1 The full surface is named Conversation settings and presents Provider, applicable credential/endpoint, Model, verify/discover, and readiness before advanced controls
+- [ ] #2 Advanced generation defaults closed for first-time or blocked setup, opens when explicitly targeted, and preserves disclosure state for the current Console session
+- [ ] #3 Controls are hidden only when existing authoritative capability evidence says they have no effect; unknown support remains available under Advanced with neutral copy
+- [ ] #4 Enumerated controls use constrained widgets, provider selection is searchable/grouped, model/custom-ID speed paths remain available, and hidden controls are absent from keyboard traversal
+- [ ] #5 Exactly one completion action is primary, every disabled completion action has a persistent reason, and immediate Context and memory operations do not compete with completion primacy
+- [ ] #6 Save labels and adjacent scope copy distinguish conversation-only application from provider/model/generation defaults used by future conversations
+- [ ] #7 Provider default, Not estimated, singular model counts, Base URL visibility, and provider display-name copy are accurate across all modal entry points
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -51,4 +65,5 @@ Implemented the connection-first Conversation settings redesign across four revi
 Verification: provider/picker/rail slice 117 passed; modal/summary bounded slice 110 passed; Task-4 root slice 22 passed; rail 52 passed; compaction lifecycle 1 passed; native credential pointer/return 4 passed; 80x24, 100x30, and 160x40 geometry cases pass. Ruff, py_compile, CSS build, and git diff --check pass. Full suite was not run per repository policy. Independent review closed all P0-P2 findings.
 
 ADR required: no new ADR. Existing ADR-006, ADR-011, and ADR-033 continue to own provider settings, workbench UI, and session state boundaries.
+Not implemented yet.
 <!-- SECTION:NOTES:END -->

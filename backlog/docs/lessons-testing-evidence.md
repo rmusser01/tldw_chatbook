@@ -2321,6 +2321,23 @@ never what the screen shows; the composited screen is the only authority (third
 recorded instance of this lesson class). When a live report contradicts a green suite,
 suspect the harness before the reporter.
 
+**Fourth instance, inverted direction (TASK-32330, 2026-09-11).** The
+arc's per-suite runs were all green for a staged-row status class whose
+CSS line referenced `$ds-status-muted` — a variable that does not exist
+anywhere in the tree. Nothing caught it because the light harnesses
+never load the console split sheets, so the rule (and its broken
+variable) simply never applied. The consolidated run — which mounts
+screens through harnesses that DO load the full stylesheet — failed 102
+tests at compose with `UnresolvedVariableError: reference to undefined
+variable '$ds-status-muted'`. Same root cause, opposite symptom: the
+harness gap hid a stylesheet defect instead of a geometry one. **What to
+do:** any change that TOUCHES a tcss file must run at least one suite
+that loads the real stylesheet bundle (e.g. the environment-wiring or
+workbench-contract harnesses) — per-suite green on widget-level harnesses
+says nothing about whether the sheet itself parses. Grepping the variable
+name against the theme sheets costs one second and catches the
+typo-class outright.
+
 **Fourth instance (2026-08-07, task-2859 item 10, padding not clipping this time).** A
 `.library-rag-result-snippet { padding: 0 1; }` bundle rule (fixing a snippet sitting
 flush against its card border) tested green with `snippet.region.x ==
@@ -13383,3 +13400,14 @@ Two corollaries worth keeping:
   `except` block that already released the setup authority for the *other*
   failure. Two half-cleanups is the bug; one release for every failure is the
   fix, and it is the smaller diff.
+
+### Canvas CSS must survive browser parsing as well as compilation (2026-09-10)
+
+During TASK-32459, both new HTML guide examples passed the Canvas compiler but
+Chromium refused their plans with `invalid-plan`. Inspecting CSSOM declarations
+showed that `background` expanded into unallowlisted `background-position-x/y`,
+and `border` expanded into unallowlisted `border-image-*` properties. Replacing
+those shorthands with `background-color`, `border-width`, `border-style`, and
+`border-color` made the exact packaged examples execute without changing pinned
+runtime assets. Compiler acceptance alone does not qualify authoring examples;
+run their exact source through the actual renderer and exercise the controls.

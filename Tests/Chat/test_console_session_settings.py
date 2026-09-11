@@ -13,6 +13,9 @@ from textual.widgets import Button, Select, Static
 import tldw_chatbook.Chat.console_session_settings as session_settings
 from tldw_chatbook.Chat.console_context_repository import ConsoleMemoryRecord
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
+from tldw_chatbook.Chat.console_provider_support import (
+    resolve_console_provider_identity,
+)
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
     ConsoleSettingsContextEstimate,
@@ -25,8 +28,10 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_default_console_session_settings,
     build_console_model_options,
     build_console_provider_options,
+    console_session_endpoint_survives_restart,
     console_settings_warnings,
     reasoning_effort_hint_for_model,
+    resolve_effective_chat_configuration,
     validate_console_session_settings,
 )
 from tldw_chatbook.Chat.provider_test_evidence import (
@@ -35,6 +40,9 @@ from tldw_chatbook.Chat.provider_test_evidence import (
 )
 from tldw_chatbook.Chat.provider_endpoint_contract import (
     canonical_connection_identity,
+)
+from tldw_chatbook.Chat.custom_endpoint_registry import (
+    custom_endpoint_provider_settings,
 )
 from tldw_chatbook.Utils.token_counter import count_tokens_messages
 from tldw_chatbook.Widgets.Console.console_context_controls import (
@@ -515,8 +523,37 @@ def test_provider_options_include_all_configured_providers() -> None:
     )
     option_values = [option.value for option in options]
 
-    assert option_values == sorted(option_values)
     assert {"anthropic", "llama_cpp", "openai"}.issubset(option_values)
+
+
+def test_provider_options_follow_settings_group_order_then_display_name() -> None:
+    """Cloud before local before custom-and-legacy, display-name order within.
+
+    Matches the F4 Settings / First-Run Wizard taxonomy (task-180) instead of
+    an alphabetical-by-config-key order that shuffles the display labels.
+    """
+    options = build_console_provider_options(
+        providers_models={
+            "custom": ["custom-model"],
+            "llama_cpp": ["local-model"],
+            "custom_2": ["custom-model-2"],
+            "zai": ["glm-model"],
+            "local_llamacpp": ["legacy-model"],
+            "openai": ["gpt-4.1"],
+            "anthropic": ["claude-sonnet"],
+        }
+    )
+    option_values = [option.value for option in options]
+    position = {value: index for index, value in enumerate(option_values)}
+
+    # Cloud group first, display-name alphabetical within it.
+    assert position["anthropic"] < position["openai"] < position["zai"]
+    # Local group follows cloud; custom-and-legacy follows local.
+    assert position["zai"] < position["llama_cpp"]
+    assert position["llama_cpp"] < position["custom"]
+    # Custom-and-legacy ordered by display label: "Custom OpenAI-compatible",
+    # "Custom OpenAI-compatible #2", "llama.cpp (legacy alias)".
+    assert position["custom"] < position["custom_2"] < position["local_llamacpp"]
 
 
 def test_provider_options_include_console_sendable_handlers_missing_from_model_registry() -> (
@@ -1617,7 +1654,7 @@ def test_readiness_blocks_unsaved_generic_endpoint_with_safe_details() -> None:
 
     assert readiness.label == "Endpoint not saved"
     assert readiness.native_send_supported is False
-    assert "save the endpoint in Conversation settings" in readiness.detail
+    assert "Save model defaults" in readiness.detail
     assert "Selected endpoint: http://127.0.0.1:9999/v1" in readiness.detail
     assert "Saved endpoint: http://127.0.0.1:11434" in readiness.detail
 
@@ -3283,3 +3320,122 @@ class TestReadinessKeySetCaching:
         )
         assert session_settings._supported_readiness_keys() == fresh
         assert session_settings._send_capable_readiness_keys() == fresh
+
+
+def _build_console_settings_summary_state_for_test():
+    """Build a summary from a real settings object with known values."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        ConsoleSessionSettings,
+        ConsoleSettingsContextEstimate,
+        build_console_settings_summary_state,
+        build_console_settings_readiness,
+    )
+
+    settings = ConsoleSessionSettings(
+        provider="openai",
+        model="gpt-test",
+        temperature=0.7,
+        top_p=0.9,
+        max_tokens=4096,
+    )
+    return build_console_settings_summary_state(
+        settings,
+        ConsoleSettingsContextEstimate(
+            used_tokens=None, token_limit=None, label="Context: unavailable"
+        ),
+        build_console_settings_readiness(settings, app_config={}),
+    )
+
+
+def test_summary_state_carries_structured_sampling_fields():
+    """TASK-32338: the left rail's Model section must not regex-parse the
+    formatted sampling_row; the summary carries the two values it renders
+    as structured fields."""
+    state = _build_console_settings_summary_state_for_test()
+    assert state.temperature == "0.70"
+    assert state.max_tokens == "4096"
+
+
+def _registry_config() -> dict:
+    return {
+        "custom_endpoints": {
+            "gpu": {
+                "display_name": "GPU llama",
+                "family": "llama_cpp",
+                "base_url": "http://192.168.1.5:8080",
+            },
+            "paid": {
+                "display_name": "Paid compat",
+                "family": "openai_compatible",
+                "base_url": "https://api.example.com/v1",
+                "api_key_env": "PAID_KEY",
+            },
+        }
+    }
+
+
+def test_custom_endpoint_readiness_is_family_readiness():
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(
+            provider="custom-ep:gpu", model="m", base_url="http://192.168.1.5:8080"
+        ),
+        app_config=_registry_config(),
+        environ={},
+    )
+    assert readiness.label == "Ready"
+    assert readiness.native_send_supported is True
+
+
+def test_custom_endpoint_keyed_family_requires_key():
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(
+            provider="custom-ep:paid", model="m", base_url="https://api.example.com/v1"
+        ),
+        app_config=_registry_config(),
+        environ={},
+    )
+    assert readiness.native_send_supported is False
+
+
+def test_provider_settings_resolves_custom_endpoint_aliases():
+    settings_view = custom_endpoint_provider_settings(
+        _registry_config(), "custom-ep:paid"
+    )
+    assert settings_view["api_base_url"] == "https://api.example.com/v1"
+    assert settings_view["api_key_env"] == "PAID_KEY"
+
+
+def test_unresolvable_custom_endpoint_falls_back_to_generic_family():
+    identity = resolve_console_provider_identity("custom-ep:ghost")
+    assert identity.is_supported is True
+    assert identity.execution_key == "custom"
+
+
+def test_provider_options_append_registry_entries_after_builtins():
+    options = build_console_provider_options(
+        {"openai": ["m"]}, app_config=_registry_config()
+    )
+    values = [o.value for o in options]
+    assert values.index("custom") < values.index("custom-ep:gpu")
+    labels = {o.value: o.label for o in options}
+    assert labels["custom-ep:gpu"] == "GPU llama"
+
+
+def test_effective_configuration_resolves_custom_endpoint():
+    effective = resolve_effective_chat_configuration(
+        _registry_config(), provider="custom-ep:paid", model=None
+    )
+    assert effective.provider == "custom-ep:paid"
+    assert effective.base_url == "https://api.example.com/v1"
+
+
+def test_custom_endpoint_sessions_survive_restart():
+    settings = ConsoleSessionSettings(
+        provider="custom-ep:gpu", model="m", base_url="http://192.168.1.5:8080"
+    )
+    assert (
+        console_session_endpoint_survives_restart(
+            settings, app_config=_registry_config(), environ={}
+        )
+        is True
+    )

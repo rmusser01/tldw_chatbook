@@ -18,8 +18,8 @@ def test_nav_labels_carry_the_ctrl_modifier() -> None:
     assert nav_button_label("home", "Home") == "⌃1 Home"
     assert nav_button_label("acp", "ACP") == "⌃0 ACP"
     # Unnumbered destinations carry their F-key route.
-    assert nav_button_label("lab", "Lab") == "F7 Lab"
-    assert nav_button_label("settings", "Settings") == "F9 Settings"
+    assert nav_button_label("lab", "Lab") == "F2 Lab"
+    assert nav_button_label("settings", "Settings") == "F4 Settings"
 
 
 # UX-056 -----------------------------------------------------------------

@@ -3,6 +3,7 @@
 import json
 
 from tldw_chatbook.Chat.console_prefill import (
+    armed_prefill_row_value,
     ACTION_CLEAR,
     ACTION_ERROR,
     ACTION_ONE_SHOT,
@@ -107,3 +108,23 @@ class TestPinnedPrefillFromConversationMetadata:
             {"active_dictionaries": [1, 2], PINNED_PREFILL_METADATA_KEY: "Voice:"}
         )
         assert pinned_prefill_from_conversation_metadata(raw) == "Voice:"
+
+
+def test_armed_prefill_row_value_appends_tools_skipped_suffix() -> None:
+    """TASK-32340: an armed prefill row states its side effect.
+
+    While any prefill is armed, tool calling (including MCP) is skipped for
+    that send; the inspector row's value must say so.
+    """
+    value = armed_prefill_row_value("Sure thing:")
+    assert value == "Sure thing: — tools skipped this send"
+
+
+def test_armed_prefill_row_value_truncates_before_suffix() -> None:
+    """Long prefill text is still collapsed/truncated, then suffixed."""
+    long_text = "word " * 400
+    value = armed_prefill_row_value(long_text)
+    assert value.endswith(" — tools skipped this send")
+    preview = value.removesuffix(" — tools skipped this send")
+    assert preview.endswith("…")
+    assert len(preview) <= 400

@@ -280,6 +280,13 @@ class ConsoleConversationBrowserInputRow:
     icon: str = ""
     #: task-31207: canonical ``#rrggbb`` tint for the icon ("" when unset).
     color: str = ""
+    #: TASK-32309: local character id for character conversations (None for
+    #: every other row). The flat Conversations lane excludes these rows;
+    #: the Character section owns them (workspace-scoped character rows stay
+    #: in their workspace Tree node -- workspace wins).
+    character_id: str | None = None
+    #: TASK-32309: character display name ("" when unknown).
+    character_label: str = ""
 
 
 @dataclass(frozen=True)
@@ -330,6 +337,12 @@ class ConsoleConversationBrowserRow:
     icon: str = ""
     #: task-31207: canonical ``#rrggbb`` icon tint ("" when unset).
     color: str = ""
+    #: TASK-32309: local character id for character conversations (None for
+    #: every other row). Part of row value equality so identity changes
+    #: repaint instead of skipping as a no-op.
+    character_id: str | None = None
+    #: TASK-32309: character display name ("" when unknown).
+    character_label: str = ""
 
 
 @dataclass(frozen=True)
@@ -579,6 +592,8 @@ def _normalize_input_row(
         queued_count=max(0, int(row.queued_count)),
         icon=str(row.icon or ""),
         color=str(row.color or ""),
+        character_id=_text_or_none(row.character_id),
+        character_label=str(row.character_label or ""),
     )
 
 
@@ -607,6 +622,8 @@ def _to_browser_row(
         queued_count=max(0, int(row.queued_count)),
         icon=str(row.icon or ""),
         color=str(row.color or ""),
+        character_id=_text_or_none(row.character_id),
+        character_label=str(row.character_label or ""),
     )
 
 
@@ -927,6 +944,12 @@ def _scope_copy(row: ConsoleConversationBrowserInputRow) -> str:
 
 
 def _belongs_to_chats(row: ConsoleConversationBrowserInputRow) -> bool:
+    # TASK-32309: character conversations are owned by the Character rail
+    # section (or their workspace Tree node when workspace-scoped), never the
+    # flat Conversations lane -- the same one-owner-per-conversation rule the
+    # workspace Tree already follows.
+    if _text_or_none(row.character_id) is not None:
+        return False
     return row.scope_type == "global" or row.workspace_id in (
         None,
         DEFAULT_WORKSPACE_ID,

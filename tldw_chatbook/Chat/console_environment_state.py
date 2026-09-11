@@ -14,6 +14,7 @@ from enum import Enum
 from rich.cells import cell_len
 
 from tldw_chatbook.Chat import console_rail_state
+from tldw_chatbook.Chat.console_glyphs import status_glyph
 from tldw_chatbook.Workspaces.change_tracking import ChangedFile
 
 # Preserve callers of the original display-state exports without making the
@@ -375,6 +376,46 @@ def _git_status_class(stale: bool) -> str:
     return "blocked" if stale else ""
 
 
+def _with_status_glyph(text: str, status: str) -> str:
+    """Prefix the shared status glyph when a row carries a status.
+
+    TASK-32334: section-row status is otherwise colour-class only; the
+    leading glyph keeps the row readable in low-colour terminals, matching
+    the fleet panel's row convention. The glyph resolves to its ASCII
+    fallback at the render seam like any other composed label text.
+    """
+    glyph = status_glyph(status)
+    return f"{glyph} {text}" if glyph else text
+
+
+def _with_status_glyph_and_expand_marker(
+    label: str,
+    status: str,
+    row_id: str,
+    expanded: frozenset[str],
+    *,
+    budget: int = SINGLE_LINE_ROW_BUDGET,
+) -> str:
+    """Compose the status glyph and the expand marker within ONE budget.
+
+    Qodo 2614 #12: applying ``_with_status_glyph`` AFTER
+    ``_with_expand_marker`` let the glyph ride outside the marker's
+    ellipsize budget, so a long status-bearing label could push the row
+    past the rail width and the terminal's own ellipsis swallowed the
+    trailing expand chevron. The glyph is now applied first and the marker
+    helper receives the budget MINUS the glyph's cells, so the marker
+    stays inside the row either way.
+    """
+    glyph = status_glyph(status)
+    if not glyph:
+        return _with_expand_marker(label, row_id, expanded, budget=budget)
+    prefix = f"{glyph} "
+    marked = _with_expand_marker(
+        label, row_id, expanded, budget=budget - cell_len(prefix)
+    )
+    return prefix + marked
+
+
 # TASK-31664: trailing-marker convention. Enter on a rail row used to have
 # FIVE outcome classes that read identically -- expand-in-place, navigate
 # to another surface (in-app or the OS browser), insert text into the
@@ -623,7 +664,9 @@ def project_environment_section(
         return ConsoleInspectorSectionState(
             rows=(InspectorSectionRow(
                 row_id=ENV_ROW_ERROR,
-                primary_text="Environment unavailable — Refresh to retry",
+                primary_text=_with_status_glyph(
+                    "Environment unavailable — Refresh to retry", "blocked"
+                ),
                 status="blocked",
             ),),
             summary="",
@@ -638,7 +681,9 @@ def project_environment_section(
 
     rows.append(InspectorSectionRow(
         row_id=ENV_ROW_CHANGES,
-        primary_text=_with_expand_marker("Changes", ENV_ROW_CHANGES, expanded),
+        primary_text=_with_status_glyph_and_expand_marker(
+            "Changes", status, ENV_ROW_CHANGES, expanded
+        ),
         secondary_text=_with_stale_marker(
             signed_change_counts(git.adds, git.dels), git.stale
         ),
@@ -655,7 +700,11 @@ def project_environment_section(
         if len(git.files) > _MAX_FILE_ROWS:
             rows.append(InspectorSectionRow(
                 row_id="env-file-more",
+                # TASK-32333: phrased as an instruction, so it IS one --
+                # activating opens Change Review on the working tree (same
+                # destination as the "Review in Change Review" row below).
                 primary_text=f"… {len(git.files) - _MAX_FILE_ROWS} more — Review opens all",
+                clickable=True,
                 indent=1,
             ))
         rows.append(InspectorSectionRow(
@@ -685,8 +734,8 @@ def project_environment_section(
 
     rows.append(InspectorSectionRow(
         row_id=ENV_ROW_BRANCH,
-        primary_text=_with_expand_marker(
-            _branch_primary(git), ENV_ROW_BRANCH, expanded
+        primary_text=_with_status_glyph_and_expand_marker(
+            _branch_primary(git), status, ENV_ROW_BRANCH, expanded
         ),
         secondary_text=_with_stale_marker(_branch_secondary(git), git.stale),
         status=status, clickable=True,
@@ -735,8 +784,11 @@ def project_environment_section(
             secondary = f"Merged {relative_age(pr.merged_at, now)}"
         rows.append(InspectorSectionRow(
             row_id=ENV_ROW_PR,
-            primary_text=_with_expand_marker(
-                f"PR #{pr.number} · {state_label}", ENV_ROW_PR, expanded
+            primary_text=_with_status_glyph(
+                _with_expand_marker(
+                    f"PR #{pr.number} · {state_label}", ENV_ROW_PR, expanded
+                ),
+                "blocked" if pr.stale else "",
             ),
             secondary_text=_with_stale_marker(secondary, pr.stale),
             status="blocked" if pr.stale else "",
@@ -776,8 +828,8 @@ def project_environment_section(
                 checks_status = "done"
             rows.append(InspectorSectionRow(
                 row_id=ENV_ROW_CHECKS,
-                primary_text=_with_expand_marker(
-                    checks_primary, ENV_ROW_CHECKS, expanded
+                primary_text=_with_status_glyph_and_expand_marker(
+                    checks_primary, checks_status, ENV_ROW_CHECKS, expanded
                 ),
                 secondary_text=(
                     f"{pr.passing_count} passed · {pending} pending" if failing else ""
@@ -787,7 +839,8 @@ def project_environment_section(
             if ENV_ROW_CHECKS in expanded:
                 for index, check in enumerate(pr.failing_checks):
                     rows.append(InspectorSectionRow(
-                        row_id=f"env-check-{index}", primary_text=check.name,
+                        row_id=f"env-check-{index}",
+                        primary_text=_with_status_glyph(check.name, "error"),
                         status="error",
                         indent=1,
                     ))
@@ -892,8 +945,11 @@ def project_tasks_section(
         ac = f"{bt.ac_done}/{bt.ac_total} ACs · " if bt.ac_total else ""
         rows.append(InspectorSectionRow(
             row_id=TASKS_ROW_HEAD,
-            primary_text=_with_expand_marker(
-                f"task-{bt.task_id} · {bt.status}", TASKS_ROW_HEAD, expanded
+            primary_text=_with_status_glyph_and_expand_marker(
+                f"task-{bt.task_id} · {bt.status}",
+                _STATUS_ROW_CLASS.get(bt.status, ""),
+                TASKS_ROW_HEAD,
+                expanded,
             ),
             secondary_text=f"{ac}{bt.title}",
             status=_STATUS_ROW_CLASS.get(bt.status, ""),
@@ -925,7 +981,10 @@ def project_tasks_section(
         for index, entry in enumerate(ordered[:MAX_TASK_LIST_ROWS]):
             rows.append(InspectorSectionRow(
                 row_id=f"{TASKS_ENTRY_ROW_PREFIX}{index}",
-                primary_text=f"task-{entry.task_id} · {entry.title}",
+                primary_text=_with_status_glyph(
+                    f"task-{entry.task_id} · {entry.title}",
+                    _STATUS_ROW_CLASS.get(entry.status, ""),
+                ),
                 secondary_text=entry.status,
                 status=_STATUS_ROW_CLASS.get(entry.status, ""),
                 indent=1,

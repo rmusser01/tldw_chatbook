@@ -1,4 +1,4 @@
-"""TASK-2775: the F9 Settings screen has an About category.
+"""TASK-2775: the F4 Settings screen has an About category.
 
 Version/license/links were unreachable since TASK-1346 retired the legacy
 ToolsSettingsWindow. About is a read-only ("view") category under

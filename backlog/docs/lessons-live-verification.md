@@ -1,5 +1,26 @@
 # Lessons: verifying against the real thing
 
+## A process's No route to host can be an app privacy denial
+
+**TASK-32459, 2026-09-10.** curl and Python sockets to the user-authorized
+llama.cpp endpoint failed immediately, including outside the execution sandbox.
+The initial report incorrectly called the server unreachable from the Mac.
+The user could load its UI in Firefox. A route lookup found the target on en0;
+macOS nehelper logs explicitly said
+`Local network denied by preference for ChatGPT (com.openai.codex)`.
+
+Attribute connection evidence to the process that produced it. Check the
+route and app-specific network permission diagnostics before asking the user to
+repair a working server. Sandbox escalation does not grant macOS Local Network
+permission. Obtain approval to change that privacy setting; do not route around
+the denial through another app.
+
+The same sample initially constructed provider resolution manually, skipping
+native-tool capability discovery, and attempted an edit before confirming the
+temporary Canvas settlement. Normal `resolve_for_send` and an assertion of
+committed, reachable source resolved those harness defects. Keep that headless
+bridge evidence separate from the full Console UI and durable persistence.
+
 ## A healthy local model does not prove capture or tool outcomes (TASK-32194–32197)
 
 **2026-09-09.** The llama.cpp server answered uncaptured messages while captured

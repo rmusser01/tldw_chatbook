@@ -1,6 +1,6 @@
 # User settings
 
-The F9 Settings destination is the canonical place to configure Chatbook. The
+The F4 Settings destination is the canonical place to configure Chatbook. The
 legacy Tools Settings window and enhanced Chat sidebar are deprecated and do
 not receive new settings. Code comments marked `# USER-SETTING` identify values
 that should be represented in this surface rather than requiring users to edit

@@ -1788,3 +1788,48 @@ class TestLibraryConversationSeams:
                 service.get_library_conversation_messages(unavailable_id)
         finally:
             db.close_connection()
+
+
+def test_list_conversations_character_scope_filters_before_pagination(tmp_path):
+    """TASK-32309 (review finding 1): ``character_scope`` is applied by the
+    storage query, so character conversations neither occupy page slots nor
+    count toward the page total.
+
+    Args:
+        tmp_path: Temporary directory for the real SQLite database backing
+            the service under test.
+    """
+    db = CharactersRAGDB(tmp_path / "character-scope.sqlite", "test-client")
+    try:
+        character_id = db.add_character_card({"name": "Scope Character"})
+        service = ChatConversationService(db)
+        character_conversation = service.create_conversation(
+            character_id=character_id,
+            assistant_kind="character",
+            assistant_id=str(character_id),
+            runtime_backend="local",
+        )
+        service.create_conversation(title="Generic chat")
+        service.create_conversation(title="Another generic chat")
+
+        generic = service.list_conversations(
+            scope_type="global", character_scope="generic", limit=2
+        )
+        character = service.list_conversations(
+            scope_type="global", character_scope="character", limit=2
+        )
+        unfiltered = service.list_conversations(scope_type="global", limit=10)
+
+        assert [item["id"] for item in generic["items"]] == [
+            item["id"]
+            for item in unfiltered["items"]
+            if item["id"] != character_conversation
+        ]
+        assert generic["pagination"]["total"] == 2
+        assert [item["id"] for item in character["items"]] == [
+            character_conversation
+        ]
+        assert character["pagination"]["total"] == 1
+        assert unfiltered["pagination"]["total"] == 3
+    finally:
+        db.close_connection()
