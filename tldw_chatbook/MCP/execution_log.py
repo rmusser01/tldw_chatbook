@@ -30,6 +30,19 @@ APPROVED_SESSION_DECISION = "approved-session"
 #: "what did I refuse?" unanswerable.
 POLICY_DENIED_DECISION = "denied-policy"
 
+#: task-32280 fix round: the master kill switch (or the local-tools master
+#: switch) refused the call. Its own token because it is neither a person's
+#: no nor a per-tool Allow/Ask/Off setting: the row should send the reader to
+#: the switch, not to the tool's permissions.
+KILL_SWITCH_DENIED_DECISION = "denied-killswitch"
+
+#: Nobody decided: an approval round that ended without a verdict, a gate
+#: that raised instead of resolving, a turn cancelled mid-approval, a
+#: workspace root that changed underfoot. Predates this task as a bare
+#: literal in `MCPToolProvider._apply_verdict`; named here because the fix
+#: round gave it four more producers.
+UNRESOLVED_DENIED_DECISION = "denied-unresolved"
+
 
 @dataclass(frozen=True)
 class ExecutionRecord:

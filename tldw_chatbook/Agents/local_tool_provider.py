@@ -38,6 +38,11 @@ from uuid import uuid4
 from loguru import logger
 
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import TOOL_DESCRIPTION_CAPTURE_CAP
+from tldw_chatbook.MCP.execution_log import (
+    KILL_SWITCH_DENIED_DECISION,
+    POLICY_DENIED_DECISION,
+    UNRESOLVED_DENIED_DECISION,
+)
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.local_runtime_delegate import PERMISSION_STATE_UNRESOLVED_CLAUSE
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
@@ -1567,11 +1572,15 @@ class LocalToolProvider:
         override when set (LOCAL_TIMEOUT_REFUSAL otherwise).
 
         Audit (MCP parity): refusals are recorded via the optional
-        ``record_decision`` seam -- "denied" for kill-switch/deny/gate_error
-        outcomes, "denied-timeout" for timeout/no_callback (matching the
-        refusal copy the model actually saw). Successful executions record
-        nothing: MCPToolProvider records those service-side via
-        execute_hub_tool, which has no local analogue.
+        ``record_decision`` seam, and task-32280's fix round gave each
+        REFUSER its own token rather than one flat "denied": ``"denied"``
+        only for a person's card Deny, ``"denied-policy"`` for a configured
+        Off, ``"denied-killswitch"`` for the kill switch,
+        ``"denied-unresolved"`` for a gate that raised instead of
+        resolving, and ``"denied-timeout"`` for timeout/no_callback
+        (matching the refusal copy the model actually saw). Successful
+        executions record nothing: MCPToolProvider records those
+        service-side via execute_hub_tool, which has no local analogue.
         """
         name = tool_id.split(":", 1)[1] if ":" in tool_id else tool_id
         spec = self._specs.get(name)
@@ -1606,7 +1615,10 @@ class LocalToolProvider:
                 provider_terminal=LocalProviderTerminal.NOT_STARTED,
             )
         if self._kill_switch_engaged():
-            self._record_decision_safe(self.hub_tool_for(name), "denied")
+            # task-32280 fix round: the switch refused, not the user.
+            self._record_decision_safe(
+                self.hub_tool_for(name), KILL_SWITCH_DENIED_DECISION
+            )
             return LocalToolInvocationResult(
                 result=ToolResult.blocked(LOCAL_KILL_SWITCH_REFUSAL),
                 final_gate="kill_switch",
@@ -1857,15 +1869,31 @@ class LocalToolProvider:
             # genuinely resolving to "deny" -- still fails closed (the tool
             # does not run), but the reason told to the model is honest:
             # the permission check itself failed, not a configured Off.
-            # Audit vocabulary is unchanged ("denied" is this seam's only
-            # refusal decision besides "denied-timeout" -- see this
-            # provider's own `record_decision` docstring); only the
-            # returned TEXT distinguishes the two cases.
-            self._record_decision_safe(self.hub_tool_for(name), "denied")
+            #
+            # task-32280 fix round: the AUDIT row now says the same thing
+            # the model was told. It used to record plain "denied", which
+            # Audit renders as "Denied by you" -- a claim about a person
+            # for a gate that never resolved at all.
+            self._record_decision_safe(
+                self.hub_tool_for(name), UNRESOLVED_DENIED_DECISION
+            )
             result = ToolResult.blocked(LOCAL_GATE_ERROR_REFUSAL)
         else:
-            # "deny" and any unrecognized verdict fail closed the same way.
-            self._record_decision_safe(self.hub_tool_for(name), "denied")
+            # "deny" and any unrecognized verdict fail closed the same way
+            # to the MODEL -- but not to the audit log. task-32280 fix
+            # round: `_verdict_for()` already knows which of the two this
+            # is (`refusal_reason`), and throwing that away here is what
+            # made a configured Off indistinguishable from a person
+            # pressing Deny. PERMISSION_OFF is the configured state; an
+            # unrecognized verdict resolves nothing, so it is neither.
+            reason = gate.refusal_reason
+            if reason == LocalToolInvocationReason.PERMISSION_OFF:
+                decision = POLICY_DENIED_DECISION
+            elif reason == LocalToolInvocationReason.APPROVAL_REFUSED:
+                decision = "denied"
+            else:
+                decision = UNRESOLVED_DENIED_DECISION
+            self._record_decision_safe(self.hub_tool_for(name), decision)
             result = ToolResult.blocked(LOCAL_DENY_REFUSAL)
         return LocalToolInvocationResult(
             result=result,

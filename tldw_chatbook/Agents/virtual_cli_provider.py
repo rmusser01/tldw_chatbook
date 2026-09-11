@@ -13,6 +13,11 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic import ValidationError as PydanticValidationError
 
+from tldw_chatbook.MCP.execution_log import (
+    KILL_SWITCH_DENIED_DECISION,
+    POLICY_DENIED_DECISION,
+    UNRESOLVED_DENIED_DECISION,
+)
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools.virtual_cli_impls import (
@@ -394,22 +399,26 @@ class VirtualCliProvider:
         except VirtualCliArgumentError as exc:
             return ToolResult(ok=False, error=f"invalid virtual_cli request: {exc}")
         hub = self.hub_tool_for(command)
+        # task-32280 fix round: six refusers used to share one "denied"
+        # token, which Audit now renders as "Denied by you" -- true of
+        # exactly one of them (the card Deny below). Each token names WHO
+        # refused; the refusal copy the model sees is unchanged.
         if not self._authority_is_valid(authority):
-            self._record(hub, "denied")
+            self._record(hub, UNRESOLVED_DENIED_DECISION)
             return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
         if not self._local_tools_are_enabled():
-            self._record(hub, "denied")
+            self._record(hub, KILL_SWITCH_DENIED_DECISION)
             return ToolResult.blocked(LOCAL_KILL_SWITCH_REFUSAL)
         if self._kill_switch_engaged():
-            self._record(hub, "denied")
+            self._record(hub, KILL_SWITCH_DENIED_DECISION)
             return ToolResult.blocked(LOCAL_KILL_SWITCH_REFUSAL)
         try:
             state = self._resolve_state(hub)
         except Exception:
-            self._record(hub, "denied")
+            self._record(hub, UNRESOLVED_DENIED_DECISION)
             return ToolResult.blocked(LOCAL_GATE_ERROR_REFUSAL)
         if state.state == "deny":
-            self._record(hub, "denied")
+            self._record(hub, POLICY_DENIED_DECISION)
             return ToolResult.blocked(LOCAL_DENY_REFUSAL)
         if state.state == "allow":
             verdict = "allow"

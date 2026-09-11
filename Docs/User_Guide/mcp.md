@@ -437,8 +437,12 @@ its filter can answer "what did I refuse?":
 
 - **Denied by you** — you pressed **Deny** on the approval card.
 - **Blocked (Off)** — the permissions refused the call; no card was shown.
+- **Blocked (kill switch)** — the kill switch refused the call; neither a
+  person nor a per-tool Allow/Ask/Off setting.
 - **Denied (timeout)** — the card expired before you answered.
-- **Denied (no decision)** — the approval round ended with no verdict.
+- **Denied (no decision)** — the approval round ended with no verdict (a
+  cancelled approval, a permission check that raised, a Hub test whose
+  two-press confirm went stale, a workspace root that moved underfoot).
 
 A Deny you press in Console lands here as its own row, exactly as each
 approval does.
@@ -512,4 +516,9 @@ implies is recorded with its mitigations. Docs pass 2026-09-10
 of its own (it previously left none — the review hook refuses the call
 before the provider that was doing the recording ever runs), and the
 permissions-Off refusal moved to its own **Blocked (Off)** decision so it
-no longer shares the user's "Denied by you" bucket.*
+no longer shares the user's "Denied by you" bucket. Fix round, same day:
+every remaining producer of the bare "denied" token for a refusal the
+user did not make (MCP/local/virtual-CLI kill-switch paths, the Hub's Test
+Tool gate denial, a run stopped while a card was pending) now records the
+refuser that actually applies — **Blocked (kill switch)** is new; the rest
+land in the existing **Blocked (Off)** / **Denied (no decision)** buckets.*

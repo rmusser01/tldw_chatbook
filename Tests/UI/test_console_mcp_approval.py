@@ -2306,7 +2306,12 @@ def test_request_mcp_approvals_cancellation_records_denied_decision_to_execution
     assert records, "the stop-mid-approval path left no audit record at all"
     assert records[0]["server_key"] == "local:docs"
     assert records[0]["tool_name"] == "search"
-    assert records[0]["decision"] == "denied"
+    # task-32280 fix round: the turn was stopped WHILE the card was up, so
+    # nobody answered it. The bare "denied" Audit now renders as "Denied by
+    # you" claimed a decision the user never got to make; the category the
+    # row already carried (`approval_cancelled`) is unchanged, so the
+    # precise mechanism survives the retarget.
+    assert records[0]["decision"] == "denied-unresolved"
     assert records[0]["ok"] is False
     assert records[0]["error_category"] == "approval_cancelled"
     assert "error" not in records[0]

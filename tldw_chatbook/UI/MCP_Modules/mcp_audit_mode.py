@@ -24,7 +24,9 @@ from textual.widgets import Button, DataTable, Input, Select, Static
 
 from tldw_chatbook.MCP.execution_log import (
     APPROVED_SESSION_DECISION,
+    KILL_SWITCH_DENIED_DECISION,
     POLICY_DENIED_DECISION,
+    UNRESOLVED_DENIED_DECISION,
 )
 from tldw_chatbook.MCP.readiness import HubAction
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import format_duration_ms
@@ -89,14 +91,22 @@ def _finding_field(finding: Mapping[str, Any], key: str) -> str:
 # on the approval card; "Blocked (Off)" is the permissions refusing a call
 # nobody was ever shown. Audit exists to answer "what did I refuse?", which
 # one shared bucket cannot.
+#
+# Fix round: once "denied" MEANS "you", every producer writing it for a
+# refusal the user did not make became a lie in the log, so each refuser got
+# its own token -- the kill switch ("Blocked (kill switch)": neither a
+# person nor a per-tool setting, so the row points at the switch) and
+# "nobody decided" ("Denied (no decision)": a cancelled approval, a gate
+# that raised, a stale Hub-test admission, a moved workspace root).
 _DECISION_OPTIONS: list[tuple[str, str]] = [
     ("Allowed", "allowed"),
     ("Approved", "approved"),
     ("Approved (session)", APPROVED_SESSION_DECISION),
     ("Denied by you", "denied"),
     ("Blocked (Off)", POLICY_DENIED_DECISION),
+    ("Blocked (kill switch)", KILL_SWITCH_DENIED_DECISION),
     ("Denied (timeout)", "denied-timeout"),
-    ("Denied (no decision)", "denied-unresolved"),
+    ("Denied (no decision)", UNRESOLVED_DENIED_DECISION),
     ("Downgraded", "downgraded"),
 ]
 
@@ -114,8 +124,9 @@ _INITIATOR_OPTIONS: list[tuple[str, str]] = [
 _BLOCKED_DECISIONS = {
     "denied",
     POLICY_DENIED_DECISION,
+    KILL_SWITCH_DENIED_DECISION,
     "denied-timeout",
-    "denied-unresolved",
+    UNRESOLVED_DENIED_DECISION,
 }
 
 # Task 1 (MCP Hub Phase 6): `state_text()` kind buckets for the Decision and
@@ -132,7 +143,14 @@ _DECISION_KIND: dict[str, str] = {
     APPROVED_SESSION_DECISION: "ready",
     "denied": "error",
     POLICY_DENIED_DECISION: "error",
+    KILL_SWITCH_DENIED_DECISION: "error",
     "denied-timeout": "error",
+    # task-32280 fix round: "denied-unresolved" was in `_BLOCKED_DECISIONS`
+    # but had no kind, so it painted `muted` -- an unremarkable grey row for
+    # a call that never ran. The fix round gave it four more producers
+    # (cancelled mid-approval, a gate that raised, a stale Hub-test
+    # admission, a moved workspace root), which made the gap load-bearing.
+    UNRESOLVED_DENIED_DECISION: "error",
     "downgraded": "warning",
 }
 

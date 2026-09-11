@@ -1556,7 +1556,11 @@ def test_invoke_refuses_when_kill_switch_flips_between_compose_and_invoke(runnin
     assert result.ok is False
     assert result.error == KILL_SWITCH_REFUSAL
     assert service.execute_calls == []
-    assert service.record_tool_decision_calls[-1][2] == "denied"
+    # task-32280 fix round: the SWITCH refused. Recording the bare "denied"
+    # here put a row Audit renders as "Denied by you" in the log for a call
+    # no person was ever asked about -- and pointed the reader at this
+    # tool's permissions instead of at the switch that actually blocked it.
+    assert service.record_tool_decision_calls[-1][2] == "denied-killswitch"
 
 
 def test_invoke_refuses_when_kill_switch_flips_even_with_a_stamped_verdict(

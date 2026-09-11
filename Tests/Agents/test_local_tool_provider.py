@@ -2472,11 +2472,69 @@ def _recording_provider(tmp_path, **kwargs):
     return p, recorded
 
 
+# -- task-32280 fix round: one refusal token per REFUSER ----------------------
+#
+# Once Audit renders the bare "denied" token as "Denied by you", every
+# producer that writes it for a refusal the user did not make is a lie in
+# the log. This provider already knew the difference -- `_verdict_for()`
+# returns a `refusal_reason` (PERMISSION_OFF / APPROVAL_REFUSED /
+# PERMISSION_UNRESOLVED / APPROVAL_TIMEOUT) -- it just threw that fact away
+# at the recording call. These pin that it no longer does.
+
+
+def _raising_state(_hub):
+    raise RuntimeError("store gone")
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "stamp", "decision", "refusal"),
+    [
+        pytest.param(
+            {"kill": True}, None, "denied-killswitch", LOCAL_KILL_SWITCH_REFUSAL,
+            id="kill-switch",
+        ),
+        pytest.param(
+            {"state": DENY}, None, "denied-policy", LOCAL_DENY_REFUSAL,
+            id="permissions-off",
+        ),
+        pytest.param(
+            {"resolve_state": _raising_state},
+            None,
+            "denied-unresolved",
+            LOCAL_GATE_ERROR_REFUSAL,
+            id="gate-error",
+        ),
+        pytest.param(
+            {"state": ASK}, "deny", "denied", LOCAL_DENY_REFUSAL, id="user-deny",
+        ),
+        pytest.param(
+            {"state": ASK},
+            "timeout",
+            "denied-timeout",
+            LOCAL_TIMEOUT_REFUSAL,
+            id="timeout",
+        ),
+    ],
+)
+def test_each_refuser_records_its_own_decision(
+    tmp_path, kwargs, stamp, decision, refusal
+):
+    p, recorded = _recording_provider(tmp_path, **kwargs)
+    if stamp is not None:
+        p.apply_batch_decisions(RUN, {"fs_list": stamp})
+
+    r = p.invoke("local:fs_list", {"path": "."})
+
+    assert not r.ok and r.error == refusal
+    assert [(h.name, d) for h, d in recorded] == [("fs_list", decision)]
+
+
 def test_deny_state_records_denied(tmp_path):
     p, recorded = _recording_provider(tmp_path, state=DENY)
     r = p.invoke("local:fs_list", {"path": "."})
     assert not r.ok and r.error == LOCAL_DENY_REFUSAL
-    assert [(h.name, d) for h, d in recorded] == [("fs_list", "denied")]
+    # task-32280 fix round: a configured Off is not a person saying no.
+    assert [(h.name, d) for h, d in recorded] == [("fs_list", "denied-policy")]
     assert recorded[0][0].server_key == "local:__local__"
 
 
@@ -2484,7 +2542,9 @@ def test_kill_switch_records_denied(tmp_path):
     p, recorded = _recording_provider(tmp_path, kill=True)
     r = p.invoke("local:fs_list", {"path": "."})
     assert not r.ok and r.error == LOCAL_KILL_SWITCH_REFUSAL
-    assert [(h.name, d) for h, d in recorded] == [("fs_list", "denied")]
+    # task-32280 fix round: the switch refused, not the user and not a
+    # per-tool permission -- the row should point at the switch.
+    assert [(h.name, d) for h, d in recorded] == [("fs_list", "denied-killswitch")]
 
 
 def test_timeout_stamp_records_denied_timeout(tmp_path):

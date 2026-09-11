@@ -1269,8 +1269,11 @@ def test_compose_local_provider_records_deny_via_service(monkeypatch, tmp_path):
     r = local_provider.invoke("local:fs_list", {"path": "."})
 
     assert not r.ok
+    # task-32280 fix round: a tool configured Off is not a person saying no.
+    # Through the REAL wiring (the controller's `record_decision` seam into
+    # the service), not just the provider's own unit test.
     assert service.recorded_decisions == [
-        ("local:__local__", "fs_list", "denied", "agent", None)
+        ("local:__local__", "fs_list", "denied-policy", "agent", None)
     ]
 
 

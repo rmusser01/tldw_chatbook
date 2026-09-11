@@ -58,7 +58,9 @@ from tldw_chatbook.Agents.builtin_tool_gate import DENIAL_POLICY
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import TOOL_DESCRIPTION_CAPTURE_CAP
 from tldw_chatbook.MCP.execution_log import (
     APPROVED_SESSION_DECISION,
+    KILL_SWITCH_DENIED_DECISION,
     POLICY_DENIED_DECISION,
+    UNRESOLVED_DENIED_DECISION,
 )
 from tldw_chatbook.MCP.hub_tool_catalog import (
     HubTool,
@@ -795,7 +797,10 @@ class MCPToolProvider:
         # stamped-verdict short-circuit below so even an earlier-this-turn
         # approval cannot bypass it.
         if self._kill_switch_engaged():
-            self._record_decision_safe(tool, decision="denied")
+            # task-32280 fix round: the SWITCH refused, not the user and not
+            # this tool's Allow/Ask/Off setting -- a reader who wants the
+            # call to work must go to the switch, so the row says so.
+            self._record_decision_safe(tool, decision=KILL_SWITCH_DENIED_DECISION)
             return ToolResult.blocked(KILL_SWITCH_REFUSAL)
 
         # PR2a Task 5: only THIS run's own stamp may resolve this call. The
@@ -1055,7 +1060,7 @@ class MCPToolProvider:
         # version recorded plain "denied" here, so Decision-filtered audit
         # views reported an explicit denial nobody made). Mirrors the
         # existing "denied-timeout" vocabulary.
-        self._record_decision_safe(tool, decision="denied-unresolved")
+        self._record_decision_safe(tool, decision=UNRESOLVED_DENIED_DECISION)
         return ToolResult.blocked(UNRESOLVED_REFUSAL)
 
     def _safe_side_effect(

@@ -426,6 +426,7 @@ from tldw_chatbook.Library.library_rag_service import (
 from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
     build_library_rag_evidence_bundle,
 )
+from tldw_chatbook.MCP.execution_log import UNRESOLVED_DENIED_DECISION
 from tldw_chatbook.MCP.permission_store import BUILTIN_TOOL_SERVER_KEY
 from tldw_chatbook.runtime_policy.bootstrap import (
     load_default_runtime_source_state,
@@ -11913,7 +11914,12 @@ class ConsoleChatController:
                 record(
                     call.server_key,
                     call.tool_name,
-                    decision="denied",
+                    # task-32280 fix round: the turn was stopped WHILE the
+                    # card was up -- the user never answered it. Recording
+                    # this as the bare "denied" made Audit report an
+                    # explicit "Denied by you" for a question nobody got to
+                    # answer.
+                    decision=UNRESOLVED_DENIED_DECISION,
                     initiator="agent",
                     error="run stopped while approval pending",
                 )

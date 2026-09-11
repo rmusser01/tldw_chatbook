@@ -16,6 +16,7 @@ import tldw_chatbook
 from tldw_chatbook.MCP.readiness import HubAction
 from tldw_chatbook.MCP.execution_log import POLICY_DENIED_DECISION
 from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import (
+    _BLOCKED_DECISIONS,
     _DECISION_OPTIONS,
     MCPAuditMode,
     _decision_kind,
@@ -518,6 +519,10 @@ async def test_select_options_cover_full_decision_and_initiator_vocabulary():
             # decision, so "what did I refuse?" cannot be answered with rows
             # nobody ever saw a card for.
             "denied-policy",
+            # task-32280 fix round: the kill switch is neither a person nor
+            # a per-tool Allow/Ask/Off setting -- filtering for it must not
+            # mean trawling the other refusals.
+            "denied-killswitch",
             "denied-timeout",
             # TASK-294: an unresolved verdict is audited as its own decision
             # so Decision filtering cannot mistake it for an explicit denial.
@@ -543,6 +548,35 @@ def test_decision_vocabulary_names_user_denials_and_policy_off_apart():
     labels = dict((value, label) for label, value in _DECISION_OPTIONS)
     assert labels["denied"] == "Denied by you"
     assert labels[POLICY_DENIED_DECISION] == "Blocked (Off)"
+
+
+@pytest.mark.parametrize(
+    ("decision", "label", "kind"),
+    [
+        # task-32280 fix round: every refusal token names WHO refused, and
+        # every one of them is an `error` row -- a call that never ran.
+        # "denied-unresolved" had no `_DECISION_KIND` entry at all (it fell
+        # back to `muted`, reading like an informational row) while already
+        # being in `_BLOCKED_DECISIONS`; the fix round gave it four more
+        # producers, so the gap became load-bearing.
+        pytest.param("denied", "Denied by you", "error", id="user"),
+        pytest.param("denied-policy", "Blocked (Off)", "error", id="policy"),
+        pytest.param(
+            "denied-killswitch", "Blocked (kill switch)", "error", id="killswitch"
+        ),
+        pytest.param("denied-timeout", "Denied (timeout)", "error", id="timeout"),
+        pytest.param(
+            "denied-unresolved", "Denied (no decision)", "error", id="unresolved"
+        ),
+    ],
+)
+def test_every_refusal_token_has_its_own_label_and_reads_as_an_error(
+    decision, label, kind
+):
+    labels = dict((value, text) for text, value in _DECISION_OPTIONS)
+    assert labels[decision] == label
+    assert decision in _BLOCKED_DECISIONS
+    assert _decision_kind(decision) == kind
 
 
 def test_policy_off_denials_read_as_blocked_calls():

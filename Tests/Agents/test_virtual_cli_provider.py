@@ -9,6 +9,9 @@ import tldw_chatbook.Agents.virtual_cli_provider as virtual_cli_provider
 from tldw_chatbook.Agents.agent_models import ToolCall
 from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
+    LOCAL_DENY_REFUSAL,
+    LOCAL_GATE_ERROR_REFUSAL,
+    LOCAL_KILL_SWITCH_REFUSAL,
     LOCAL_ROOT_CHANGED_REFUSAL,
     RunAdmittedWorkspaceRoot,
 )
@@ -100,6 +103,90 @@ def admitted_root(
         guard=guard,
         workspace_executor=executor,
     )
+
+
+# -- task-32280 fix round: one refusal token per REFUSER ----------------------
+#
+# This provider recorded a flat "denied" for six different refusers. Audit
+# now renders that token as "Denied by you", so five of the six were a lie
+# about who said no.
+
+
+def _boom_state(_hub):
+    raise RuntimeError("store gone")
+
+
+def _deny_callback(pendings):
+    return {(p.call_id or p.llm_name): "deny" for p in pendings}
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "decision", "refusal"),
+    [
+        pytest.param(
+            {"local_tools_enabled": lambda: False},
+            "denied-killswitch",
+            LOCAL_KILL_SWITCH_REFUSAL,
+            id="local-tools-off",
+        ),
+        pytest.param(
+            {"kill_switch": lambda: True},
+            "denied-killswitch",
+            LOCAL_KILL_SWITCH_REFUSAL,
+            id="kill-switch",
+        ),
+        pytest.param(
+            {"resolve_state": _boom_state},
+            "denied-unresolved",
+            LOCAL_GATE_ERROR_REFUSAL,
+            id="gate-error",
+        ),
+        pytest.param(
+            {"state": DENY}, "denied-policy", LOCAL_DENY_REFUSAL, id="permissions-off"
+        ),
+        pytest.param(
+            {"state": ASK, "approval_callback": _deny_callback},
+            "denied",
+            LOCAL_DENY_REFUSAL,
+            id="user-deny",
+        ),
+    ],
+)
+def test_each_refuser_records_its_own_decision(tmp_path, kwargs, decision, refusal):
+    recorded: list[tuple[str, str]] = []
+    provider = make_provider(
+        tmp_path,
+        record_decision=lambda hub, value: recorded.append((hub.name, value)),
+        **kwargs,
+    )
+
+    result = provider.invoke("virtual_cli", {"command": "ls", "argv": ["."]})
+
+    assert not result.ok and result.error == refusal
+    assert [value for _name, value in recorded] == [decision]
+
+
+def test_a_changed_workspace_root_is_not_recorded_as_the_user_denying(tmp_path):
+    """The root moved underfoot -- nobody decided anything."""
+    recorded: list[tuple[str, str]] = []
+    provider = make_provider(
+        tmp_path,
+        state=ALLOW,
+        record_decision=lambda hub, value: recorded.append((hub.name, value)),
+        admitted_roots=(
+            admitted_root(
+                "folder-a",
+                tmp_path / "a",
+                RecordingWorkspaceExecutor(),
+                guard=lambda _write: False,
+            ),
+        ),
+    )
+
+    result = provider.invoke("virtual_cli", {"command": "ls", "argv": ["."]})
+
+    assert not result.ok and result.error == LOCAL_ROOT_CHANGED_REFUSAL
+    assert [value for _name, value in recorded] == ["denied-unresolved"]
 
 
 def test_provider_exposes_one_structured_model_tool(tmp_path):

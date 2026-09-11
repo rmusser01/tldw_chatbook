@@ -18,7 +18,13 @@ from loguru import logger
 from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
-from .execution_log import MCPExecutionLog, POLICY_DENIED_DECISION, build_record
+from .execution_log import (
+    KILL_SWITCH_DENIED_DECISION,
+    MCPExecutionLog,
+    POLICY_DENIED_DECISION,
+    UNRESOLVED_DENIED_DECISION,
+    build_record,
+)
 from .hub_tool_catalog import (
     HubTool,
     builtin_tools_from_inventory,
@@ -222,6 +228,58 @@ class _ResolvedHubTest:
 # alone cannot -- the batch runs serially, so a per-item refusal there would
 # only stop the offending item, not the ones dispatched before it.
 _RAW_TOOL_CALL_REFUSED_MESSAGE = RAW_TOOL_CALL_REFUSED_MESSAGE
+
+
+#: task-32280 fix round: `LocalToolInvocationReason` values (the local
+#: provider's OWN word for why a call never ran), mapped to the refuser they
+#: name. The provider already computes this per call; the Hub test path used
+#: to throw it away and record a flat "denied" -- which Audit now renders as
+#: "Denied by you", a claim about a person for refusals no person made.
+_HUB_REFUSAL_DECISION_BY_REASON: dict[str, str] = {
+    "permission_off": POLICY_DENIED_DECISION,
+    "permission_denied": POLICY_DENIED_DECISION,
+    "permission_unresolved": UNRESOLVED_DENIED_DECISION,
+    "approval_refused": "denied",
+    "approval_timeout": "denied-timeout",
+}
+
+
+def _refusal_decision_for_hub_test(reason: str | None, final_gate: str | None) -> str:
+    """Name WHO refused a local-Hub test that never dispatched.
+
+    The provider's `reason_code` is the authority when there is one -- the
+    `final_gate` string is NOT reliable on its own: providers report values
+    outside the Hub's own vocabulary (``"off"``, say) which
+    `_local_hub_outcome_from_detail` normalizes to ``"unresolved"``, so
+    reading the gate alone would relabel a genuine configured Off as "nobody
+    decided". The gate is the fallback for the synthetic terminals, which
+    carry no reason at all.
+
+    task-32280 fix round: ONE exception to "reason is the authority" --
+    `LocalToolProvider.invoke_detailed()`'s kill-switch branch has no
+    ``LocalToolInvocationReason`` member for the switch, so it tags its
+    result ``PERMISSION_OFF`` (a typing convenience) while ``final_gate``
+    truthfully says ``"kill_switch"``. Trusting the reason there would
+    record the switch's refusal as "Blocked (Off)". The gate is checked
+    first for this one value; every other reason this dict knows about
+    never pairs with ``final_gate == "kill_switch"``, so this cannot
+    shadow a real permission-Off.
+    """
+    if final_gate == "kill_switch":
+        return KILL_SWITCH_DENIED_DECISION
+    mapped = _HUB_REFUSAL_DECISION_BY_REASON.get(reason or "")
+    if mapped is not None:
+        return mapped
+    if final_gate == "deny":
+        return POLICY_DENIED_DECISION
+    if final_gate == "ask":
+        return "denied"
+    if final_gate in ("timeout", "no_callback"):
+        return "denied-timeout"
+    # Everything else (a gate that raised, an ineligible tool, a cancelled
+    # or crashed test): nothing resolved, so neither a person nor a setting
+    # refused this.
+    return UNRESOLVED_DENIED_DECISION
 
 
 class UnifiedMCPControlPlaneService:
@@ -2554,7 +2612,10 @@ class UnifiedMCPControlPlaneService:
                 registered_argument_names=registered_argument_names,
                 result=None,
                 initiator=initiator,
-                decision="denied",
+                # task-32280 fix round: governance refused this; no card was
+                # ever shown, so the row must not read "Denied by you".
+                # `error_category` still carries the precise mechanism.
+                decision=POLICY_DENIED_DECISION,
             )
             raise
         except Exception as exc:
@@ -3130,13 +3191,14 @@ class UnifiedMCPControlPlaneService:
             approval_consumed = (
                 approval_callback.consumed if approval_callback is not None else False
             )
+            _gate = fresh_gate
             return LocalHubExecutionOutcome(
                 decision=(
                     "approved"
                     if approval_consumed
                     else "allowed"
                     if handler_started.is_set()
-                    else "denied"
+                    else _refusal_decision_for_hub_test(category, _gate)
                 ),
                 status=cast(LocalHubStatus, status),
                 error_category=category,
@@ -3358,13 +3420,14 @@ class UnifiedMCPControlPlaneService:
         ) -> LocalHubExecutionOutcome:
             callback = approval_state["callback"]
             approval_consumed = callback.consumed if callback is not None else False
+            _gate = gate_state["value"]
             return LocalHubExecutionOutcome(
                 decision=(
                     "approved"
                     if approval_consumed
                     else "allowed"
                     if handler_started.is_set()
-                    else "denied"
+                    else _refusal_decision_for_hub_test(category, _gate)
                 ),
                 status=cast(LocalHubStatus, status),
                 error_category=category,
@@ -3551,7 +3614,9 @@ class UnifiedMCPControlPlaneService:
         owner = execution.start(key, _owner())
         if owner is None:
             outcome = LocalHubExecutionOutcome(
-                decision="denied",
+                # task-32280 fix round: refused because another test held
+                # the slot -- nobody decided anything about this one.
+                decision=UNRESOLVED_DENIED_DECISION,
                 status="blocked",
                 error_category="already_active",
                 final_gate=public.rendered_gate,
@@ -3804,7 +3869,7 @@ class UnifiedMCPControlPlaneService:
             if approval_consumed
             else "allowed"
             if dispatch_started
-            else "denied"
+            else _refusal_decision_for_hub_test(reason, final_gate)
         )
         return LocalHubExecutionOutcome(
             decision=decision,
@@ -4203,10 +4268,19 @@ class UnifiedMCPControlPlaneService:
     def _record_prepared_hub_block(
         self, public: ToolTestAdmissionPreview, reason: str
     ) -> None:
+        # task-32280 fix round: two kinds of `reason` arrive here. A gate
+        # one ("permission_denied" = the tool is Off) names a refuser; the
+        # rest are ADMISSION failures -- the two-press confirm went stale
+        # (identity_changed, profile_changed, definition_changed,
+        # authority_changed, arguments_changed, gate_changed,
+        # intent_mismatch, intent_invalid, preview_unavailable) and the run
+        # was abandoned before anyone decided. Neither kind is a person
+        # pressing Deny, which is what the bare "denied" this used to write
+        # now means. `error_category` still keeps the exact reason.
         self.record_tool_decision(
             public.server_key,
             public.tool_name,
-            decision="denied",
+            decision=_refusal_decision_for_hub_test(reason, None),
             initiator="test",
             error_category=reason,
         )
@@ -4708,10 +4782,18 @@ class UnifiedMCPControlPlaneService:
             # rejected alternative -- naming it would have falsely cross-
             # referenced the unrelated `runtime_policy` engine's own
             # `PolicyDeniedError`.
+            # task-32280 fix round: these two `error_category` tokens were
+            # already the honest distinction; the DECISION column now makes
+            # it too. A genuine Off is "Blocked (Off)"; a gate that raised
+            # resolved nothing, so nobody -- user or policy -- decided.
             self.record_tool_decision(
                 BUILTIN_SERVER_KEY,
                 normalized_tool_name,
-                decision="denied",
+                decision=(
+                    UNRESOLVED_DENIED_DECISION
+                    if is_gate_error
+                    else POLICY_DENIED_DECISION
+                ),
                 initiator="test",
                 error_category="gate_error" if is_gate_error else "gate_denied",
             )
@@ -4935,7 +5017,11 @@ class UnifiedMCPControlPlaneService:
                         "approval_timeout"
                         if "timeout" in decision
                         else "approval_cancelled"
-                        if decision == "denied" and error
+                        # task-32280 fix round: the cancelled-mid-approval
+                        # row moved to "denied-unresolved" (nobody answered
+                        # the card), and it is still exactly this category.
+                        if error
+                        and decision in ("denied", UNRESOLVED_DENIED_DECISION)
                         else "denied"
                         # task-32280 split the permissions-Off refusal out of
                         # plain "denied" into its own decision token; it is
