@@ -5086,7 +5086,7 @@ log_unknown_models = true      # Whether to log when an unknown model is queried
 # Deep-Search Configuration
 # ==========================================================
 [tools]
-# web_deep_search_enabled = false    # Opt-in deep-search tool; requires app restart; each call makes ~2x-results+3 LLM calls plus page fetches (real money on paid providers)
+# web_deep_search_enabled = false    # Opt-in deep-search tool; the Console picks this up on its next agent run (each run rebuilds its tool catalog fresh, no app restart needed); external MCP clients only see it on their next client launch, and only when [mcp] expose_local_tools = true; each call makes ~2x-results+3 LLM calls plus page fetches (real money on paid providers)
 
 [SearchSettings]
 # Default search backend shared by basic web_search and web_deep_search.
@@ -5095,8 +5095,11 @@ log_unknown_models = true      # Whether to log when an unknown model is queried
 # web-search dependencies and network access are still required).
 # search_provider_default = "duckduckgo"
 # Deep-search-only defaults below. Enable the deep-search tool with
-# [tools] web_deep_search_enabled = true (requires app restart; each call makes
-# ~2x-results+3 LLM calls plus page fetches -- real money on paid providers).
+# [tools] web_deep_search_enabled = true -- the Console picks this up on its
+# next agent run (no app restart needed); external MCP clients only see it on
+# their next client launch, and only when [mcp] expose_local_tools = true.
+# Each call makes ~2x-results+3 LLM calls plus page fetches -- real money on
+# paid providers.
 # relevance_analysis_llm = "openai"
 # final_answer_llm = "openai"
 # search_enable_subquery = false   # generate sub-questions from the query and

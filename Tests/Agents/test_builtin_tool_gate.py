@@ -540,11 +540,13 @@ def test_only_externally_published_gates_are_flagged_restart_required(monkeypatc
     """task-32284 AC#3: the pane's note must be honest per gate.
 
     Every provider in this pane is rebuilt per Console agent run
-    (`build_console_tool_registry` constructs `BuiltinToolProvider` and
+    (`Chat/console_agent_bridge.py`'s `_compose_run_registry_and_allowed`
+    constructs `BuiltinToolProvider` and `console_chat_controller.py`'s
     `_compose_local_provider` constructs `LocalToolProvider` for each run),
     so no gate here needs an app restart for the agent path. The single
     exception is a gate that ALSO decides what the built-in MCP *server*
-    publishes to external clients: that list is built once when the server
+    publishes to external clients (only reached when `[mcp]
+    expose_local_tools` is on): that list is built once when the server
     starts.
     """
     import tldw_chatbook.config as config_module

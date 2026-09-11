@@ -640,12 +640,14 @@ class ToolGate:
             built once per process start, so THAT half cannot pick the
             change up until a relaunch (task-32284). Every provider behind
             this pane is rebuilt per Console agent run
-            (``build_console_tool_registry`` constructs
-            ``BuiltinToolProvider``; ``_compose_local_provider``
-            constructs ``LocalToolProvider``), so the agent half of every
-            gate applies on the next run -- the flag is about external MCP
-            publication, whose tool list ``MCPServer`` builds when it
-            starts.
+            (``Chat/console_agent_bridge.py``'s
+            ``_compose_run_registry_and_allowed`` constructs
+            ``BuiltinToolProvider``; ``console_chat_controller.py``'s
+            ``_compose_local_provider`` constructs ``LocalToolProvider``),
+            so the agent half of every gate applies on the next run -- the
+            flag is about external MCP publication (only reached at all
+            when ``[mcp] expose_local_tools`` is on), whose tool list
+            ``MCPServer`` builds when it starts.
     """
 
     section: str

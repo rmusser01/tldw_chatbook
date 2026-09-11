@@ -140,8 +140,9 @@ shows. The group is split into two subheadings:
   **Local workspace, web, and Watchlists tools (master switch)**, mirroring the
   direct Tools-mode control. `web_deep_search` (multi-query web research that
   may cost real money on paid providers) has an additional individual gate
-  underneath it, as does `ask_user` (the only gate here that is on by
-  default).
+  underneath it, as does `ask_user`. The master switch and `ask_user` are
+  on by default; every `Agent built-ins` gate and `web_deep_search` default
+  to off.
 
 The master switch governs the **Console/agent path only**. It does *not*
 control whether an enabled tool (e.g. `web_deep_search`) is exposed to
@@ -153,10 +154,10 @@ after saving — the label you end up looking at is what is really stored,
 never an optimistic guess. **When a change takes effect:** every gate in
 this group applies to the *next Console agent run* — each run builds its
 tool catalog fresh — so no app restart is needed. The one caveat, called
-out in its own note under the group, is `web_deep_search`: it is also
-published to *external* MCP clients, and that list is built when the
-built-in server starts, so that half follows the next client launch. This
-pane is still labeled as the
+out in its own note under the group, is `web_deep_search`: when `[mcp]
+expose_local_tools` is on, it is also published to *external* MCP clients,
+and that list is built when the built-in server starts, so that half
+follows the next client launch. This pane is still labeled as the
 built-in *MCP server* (the stdio process `python -m tldw_chatbook.MCP`
 clients launch) even though these particular checkboxes control the
 in-process *agent* tool catalog — a different subsystem sharing the same
@@ -569,4 +570,8 @@ buttons that state on/off in text under the tool's plain-language name
 (one copy table shared with the first-run wizard), and the old blanket
 "applies on next app restart" note is corrected — every gate here applies
 to the next Console agent run, with `web_deep_search`'s external-MCP
-publication the single next-client-launch exception.*
+publication the single next-client-launch exception. Fix round, same day:
+that exception now names its own precondition — the external-MCP half
+only applies when `[mcp] expose_local_tools` is on — and the master
+switch is corrected alongside `ask_user` as on by default (it was
+previously the only one credited).*

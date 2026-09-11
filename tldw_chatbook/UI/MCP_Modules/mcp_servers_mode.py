@@ -213,8 +213,9 @@ _TOOL_GATE_ID_PREFIX = "mcp-gate-"
 # `_builtin_toggle_widgets()`'s "next client launch" wording. These gates
 # affect the in-process AGENT tool catalog, not the MCP client/server
 # handshake. It says "next run", not "next restart", because that is what
-# the code does: `build_console_tool_registry()` constructs
-# `BuiltinToolProvider` and `_compose_local_provider()` constructs
+# the code does: `Chat/console_agent_bridge.py`'s
+# `_compose_run_registry_and_allowed()` constructs `BuiltinToolProvider` and
+# `console_chat_controller.py`'s `_compose_local_provider()` constructs
 # `LocalToolProvider` once per Console agent run, each reading these keys
 # fresh (verified by flipping a gate in-process and rebuilding).
 _TOOL_GATE_NOTE_TEXT = (
@@ -225,9 +226,19 @@ _TOOL_GATE_NOTE_TEXT = (
 # decides what the built-in MCP SERVER publishes, and that list is built
 # when the server starts -- so external clients pick it up on their next
 # launch even though the agent half is live next run.
+#
+# task-32284 fix round (Important 2): `build_server_local_provider()`
+# (`MCP/local_server_tools.py`) is only reached at all when `[mcp]
+# expose_local_tools` is on (default off, `MCP/server.py`) -- rendering
+# this note unconditionally implied external publication whenever a gate
+# happened to be flagged `restart_required`, regardless of that switch.
+# Naming the switch in the sentence is the cheaper of the two honest
+# fixes (the alternative -- reading the flag here and hiding the row --
+# needs a second config read plus two more render-state tests for the
+# same information); the sentence is true whether the switch is on or off.
 _TOOL_GATE_RESTART_NOTE_TEMPLATE = (
-    "Also published to external MCP clients: {names} — that half applies on "
-    "their next client launch."
+    "When [mcp] expose_local_tools is on, external MCP clients also see this "
+    "change: {names} — on their next client launch."
 )
 
 _LOCAL_TOOLS_INCLUDED_TEXT = (
@@ -1122,7 +1133,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
 
         task-3240 fix round 1 (Critical 1, reviewer-caught regression).
         `remove_children()` (in either `_rebuild_builtin_toggles()` or
-        `_rebuild_tool_gate_checkboxes()`) destroys whichever Checkbox
+        `_rebuild_tool_gate_buttons()`) destroys whichever Checkbox
         currently holds focus; Textual does not itself relocate focus when
         the focused widget is removed this way (identical mechanism to
         `sources_pane.py`'s `recompose()`, which documents it at length).
@@ -1140,7 +1151,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         """
         focused_id = self._focused_toggle_id()
         await self._rebuild_builtin_toggles()
-        await self._rebuild_tool_gate_checkboxes()
+        await self._rebuild_tool_gate_buttons()
         self._restore_toggle_focus(focused_id)
 
     def _builtin_toggle_widgets(self) -> list[Widget]:
@@ -1232,9 +1243,15 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         the master back on re-enables its dependents the very next resync
         with no separate wiring. The `id` still comes from `gate.key`,
         never from the label, so the save/reload path is unaffected.
+
+        task-32284 fix round (Minor d): `gate.title` is escaped with
+        `rich.markup.escape` before it goes into the label -- this repo has
+        been bitten before by a `[` in a Button label being parsed as Rich
+        markup (every other title-derived label in this file already goes
+        through the same `escape_markup` import).
         """
         return Button(
-            f"{gate.title}: {'on' if gate.enabled else 'off'} ▸",
+            f"{escape_markup(gate.title)}: {'on' if gate.enabled else 'off'} ▸",
             id=f"{_TOOL_GATE_ID_PREFIX}{gate.key}",
             classes="console-action-secondary",
             compact=True,
@@ -1356,7 +1373,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             )
         return widgets
 
-    async def _rebuild_tool_gate_checkboxes(self) -> None:
+    async def _rebuild_tool_gate_buttons(self) -> None:
         """Rebuild `#mcp-detail-tool-gates` from `_tool_gate_widgets()`.
 
         Mirrors `_rebuild_builtin_toggles()`'s awaited remove-then-mount

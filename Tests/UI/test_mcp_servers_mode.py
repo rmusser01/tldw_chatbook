@@ -784,7 +784,7 @@ async def test_showing_builtin_detail_does_not_post_builtin_flag_changed():
 
 
 @pytest.mark.asyncio
-async def test_tool_gate_checkboxes_render_under_builtin_detail_with_subheadings_and_note(
+async def test_tool_gate_buttons_render_under_builtin_detail_with_subheadings_and_note(
     monkeypatch,
 ):
     """The builtin detail pane also renders a "Tool gates" group -- one
@@ -949,7 +949,7 @@ async def test_local_group_dependents_are_enabled_while_master_is_on(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_tool_gate_checkboxes_do_not_appear_for_non_builtin_detail():
+async def test_tool_gate_buttons_do_not_appear_for_non_builtin_detail():
     app = CanvasApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
@@ -979,7 +979,7 @@ async def test_showing_builtin_detail_does_not_post_tool_gate_changed(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_toggling_tool_gate_checkbox_posts_tool_gate_changed_with_section_and_key(
+async def test_toggling_tool_gate_button_posts_tool_gate_changed_with_section_and_key(
     monkeypatch,
 ):
     """A [tools]-section gate (web_deep_search) and the [console]-section
@@ -1020,6 +1020,10 @@ async def test_toggling_tool_gate_checkbox_posts_tool_gate_changed_with_section_
         assert str(button.label).endswith(": off ▸")  # declared, not accidental
         assert button.disabled is False  # master is on -> not disabled
 
+        # `.press()`, not `pilot.click` -- this test's own focus is the posted
+        # event's section/key/value; mouse hit-testing coverage for these
+        # rows lives in
+        # Tests/UI/test_mcp_workbench.py::test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog.
         button.press()
         await pilot.pause()
         assert len(app.events) == 1

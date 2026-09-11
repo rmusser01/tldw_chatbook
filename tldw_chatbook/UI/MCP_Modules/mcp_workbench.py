@@ -5397,7 +5397,7 @@ class MCPWorkbench(Container):
         plus `web_deep_search`) and `[console]` (the local group's master
         switch, `local_tools_enabled`). The resync's `_show_selected_detail()`
         call rebuilds the gate checkboxes fresh from `all_tool_gates()`
-        (via `MCPServersMode._rebuild_tool_gate_checkboxes()`), so a failed
+        (via `MCPServersMode._rebuild_tool_gate_buttons()`), so a failed
         write shows the truth rather than an optimistic local flip.
         """
         try:
