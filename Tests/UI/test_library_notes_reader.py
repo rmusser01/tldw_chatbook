@@ -41,30 +41,6 @@ from tldw_chatbook.Widgets.Library import (
 )
 
 
-@pytest.fixture(autouse=True)
-async def _drain_pending_repaints():
-    """task-32298: let a queued repaint land before the next app starts.
-
-    `KeyError: "No 'text-area--gutter' key in COMPONENT_CLASSES"` is raised
-    when Textual repaints a `TextArea` whose component styles teardown has
-    already cleared (TASK-32114 proved the same key on a REAL teardown --
-    Escape closing the MCP Test Tool panel on Linux CI -- so this is not
-    confined to the harness). Every test here that leaves the Notes editor
-    mounted ends by tearing its app down, and whether the repaint queued by
-    its last action runs before or after that teardown is pure loop timing:
-    the same two nodes flip between passing alone and failing at whole-file
-    scope. Giving the loop its turns after each test drains that repaint
-    while the widgets it targets are still alive.
-
-    This is a harness mitigation, not the product guard: the durable fix is
-    `app.batch_update()` around the canvas removal (the shape TASK-32114
-    used), which the Library route switch does not do yet.
-    """
-    yield
-    for _ in range(3):
-        await asyncio.sleep(0)
-
-
 def test_folder_files_reader_authority_scaffold_is_distinct() -> None:
     app = _build_test_app()
     library = app.app_config.setdefault("library", {})

@@ -3,10 +3,10 @@ id: TASK-32298
 title: >-
   Library Notes: reader suite hits a Textual text-area--gutter component-class
   race at file scope
-status: Done
+status: In Progress
 assignee: []
 created_date: '2026-09-10 13:35'
-updated_date: '2026-09-11 10:45'
+updated_date: '2026-09-11 19:10'
 labels:
   - library
   - notes
@@ -45,7 +45,7 @@ observe this race in this file at all.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 `Tests/UI/test_library_notes_reader.py` run as a whole file passes `test_reader_route_invalidates_autosave_queued_before_park`, and keeps passing when the tests before it are reordered or their timing shifts
+- [ ] #1 `Tests/UI/test_library_notes_reader.py` run as a whole file passes `test_reader_route_invalidates_autosave_queued_before_park`, and keeps passing when the tests before it are reordered or their timing shifts
 - [x] #2 The `text-area--gutter` `COMPONENT_CLASSES` race is understood well enough to say whether it can reach a user (a real editor mount) or is confined to the test harness's mount timing, and that answer is written down
 - [ ] #3 Whatever guard fixes it is applied wherever this repo mounts a `TextArea` under the same conditions, not only in this one test — `test_mcp_workbench` hit the same key
 <!-- AC:END -->
@@ -61,31 +61,63 @@ observe this race in this file at all.
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-AC#1: reproduced on this branch at whole-file scope (`1 failed, 33 passed`,
-`KeyError: "No 'text-area--gutter' key in COMPONENT_CLASSES"`), and did NOT
-reproduce on the next identical run (`34 passed`) -- so it is intermittent here,
-not the deterministic ordering interaction this task recorded at its base. An
-autouse `_drain_pending_repaints` fixture now gives the loop its turns after
-each test, so a repaint queued by a test's last action lands while the widgets
-it targets are still alive instead of during the next app's setup. Whole file
-green twice after it (34 passed, 34 passed).
+AC#1 is NOT met. It was ticked on a frequency argument and is now unticked
+with the measurement that contradicts it.
+
+Evidence, whole-file scope, `Tests/UI/test_library_notes_reader.py`:
+
+| branch state | runs | result |
+|---|---|---|
+| f0fa91cdd6, `_drain_pending_repaints` present | 4 (review) + 1 (fix round) | `1 failed, 33 passed` every time |
+| `_drain_pending_repaints` deleted | 2 | `1 failed, 33 passed` both times |
+
+Always the same node
+(`test_reader_route_invalidates_autosave_queued_before_park`), always
+`KeyError: "No 'text-area--gutter' key in COMPONENT_CLASSES"`, always raised
+INSIDE the test body at the Notes -> Media route switch
+(`test_library_notes_reader.py:1212` -> `_wait_for_selector` ->
+`pilot.pause(0.02)` -> `Screen._on_timer_update` -> `_render_chops` ->
+`TextArea.render_lines`). The fixture drained after `yield`, i.e. after the
+body, so it could never reach that window: it is inert, measured in both
+directions above, and has been deleted rather than left reading as a fix.
+
+Mechanism, traced into Textual 8: `App._prune` clears the widget's
+`_component_styles` when the node's message-loop task exits
+(`widget.py:4534`) but only SCHEDULES the `parent.refresh(layout=True)` that
+drops it from the compositor map (`AwaitRemove`'s `post_mount`, run via
+`call_next`). A repaint landing in that window composites a `TextArea` whose
+styles are gone. That is why only `app.batch_update()` closes it --
+`_on_timer_update` returns immediately while `app._batch_count` is set.
+
+Two test-side isolations were tried at the switch and both failed, so they are
+not shipped:
+
+1. Drain the prune with `asyncio.sleep(0)` turns, then `screen.refresh(layout=True)`
+   before the wait: still `1 failed, 33 passed` on the first of two runs, same
+   node, same KeyError.
+2. Hold the whole teardown inside `pilot.app.batch_update()`: the KeyError did
+   not recur, but the shifted timing broke a sibling node instead
+   (`test_reader_route_parks_dirty_note_selection_and_preview_without_saving`,
+   `assert screen._notes_state.autosave_timer is not None` after returning to
+   Notes) -- `1 failed, 33 passed` again. Emulating the missing product guard
+   from the test would also have hidden the defect rather than fixed it.
+
+AC#2 stands (answered below). AC#3 is NOT met and is not met by anything on
+this branch: the product guard belongs to task-32456
+(`app.batch_update()` around the Library canvas teardown, plus the
+deterministic regression TASK-32114 has for the MCP panel). This task stays
+In Progress behind it, and the one remaining red in the file is filed there.
 
 AC#2 -- can it reach a user? YES, and the repo already proved it: TASK-32114
 (PR #2534) hit this exact key on Linux CI through a REAL teardown -- Escape
 closing the MCP Test Tool panel left the editor in the compositor after
-teardown had cleared its component styles -- and fixed it by removing the panel
-inside `app.batch_update()`. It is a repaint landing in the window between
-"styles cleared" and "widget gone", so any surface that unmounts a live
-`TextArea` outside a batch update can hit it. Library is such a surface:
+teardown had cleared its component styles -- and fixed it by removing the
+panel inside `app.batch_update()`. It is a repaint landing in the window
+between "styles cleared" and "widget gone", so any surface that unmounts a
+live `TextArea` outside a batch update can hit it. Library is such a surface:
 `grep -rn batch_update` over `UI/Screens/library_screen.py` and
 `UI/Library_Modules/` returns nothing, and `#library-note-body` is a
 `NoteEditorTextArea`.
 
-AC#3 is NOT met by this change and is filed as task-32456: the fixture is a
-harness mitigation, and the product guard (batching the Library canvas
-teardown, plus a deterministic regression like TASK-32114's) belongs with the
-route-switch code. Marked in the fixture's own docstring so it cannot be
-mistaken for the fix.
-
-Files: `Tests/UI/test_library_notes_reader.py`.
+Files: `Tests/UI/test_library_notes_reader.py` (the inert fixture removed).
 <!-- SECTION:NOTES:END -->
