@@ -338,4 +338,4 @@ a529dbd3ed0b13502b8d100e3053e0bea5baa119
 
 # TASK-31932 step159: unchanged Handoff formatter body moved to existing
 # support layer; retained Screen wrapper and canonical compatibility imports.
-eca8c083e7c4b27fadf6d8d8a7fe40515eca69ce
+f6274c1e5aa6862d8fc50ac9320c6ace468c9dad
