@@ -890,3 +890,49 @@ through the whole hazard, because the row it presses (`.library-media-row`) was
 NOT one of the migrated handlers. A guard's pin only covers the handlers that
 route through the guard; migrating a handler out from under one silently
 narrows what the pin proves without changing the pin's result.
+
+---
+
+## The MRO walk also runs the BASE's private `_on_*` handler — and it runs LAST, so an inline effect in a subclass gets undone (task-32251, 2026-09-11)
+
+The `super().on_mount()` lesson above is about a base body running *twice*.
+The same dispatcher has a second, sharper consequence for the private
+`_on_<event>` handlers Textual's own widgets use: the base implementation
+runs for the event **whether or not you call `super()`**, and because
+`_get_dispatch_methods` walks `self.__class__.__mro__` most-derived-first,
+it runs **after** yours. If the base handler's job is to SET something your
+override wants to set differently, you lose.
+
+The incident: `PathInput` (the picker path field) needed the click that
+focuses it to select the pre-filled directory, so typing an absolute path
+replaces it instead of appending — the defect was a field holding
+`/Users/me/Users/me/.cache/...` after a click and a type. The obvious
+override was
+
+```python
+async def _on_mouse_down(self, event):
+    await super()._on_mouse_down(event)
+    self.action_select_all()          # <- never survives
+```
+
+and it failed the first test run with the typed text spliced in at the click
+offset. `Input._on_mouse_down` sets `self.selection = Selection.cursor(...)`;
+the dispatcher called it again after the override returned and collapsed the
+selection to the click point. Calling `super()` was not merely redundant here,
+it was misleading — deleting it changed nothing.
+
+**The fix that works: defer past the dispatch.** `self.call_next(
+self.action_select_all)` runs after every MRO handler for that message has
+been invoked. `call_after_refresh` works too where a layout pass is wanted.
+
+**Corollaries.**
+- A subclass `_on_focus` / `_on_key` that only records state is safe (nothing
+  to undo) and still must not call `super()`.
+- `Screen._forward_event` focuses a clicked widget BEFORE forwarding the
+  `MouseDown` to it, and `set_focus` only posts `Focus` when focus actually
+  moves — so "a `Focus` immediately followed by a `MouseDown`" is an exact
+  test for "this click is the one that focused me", which is what armed the
+  select-all here. `self.has_focus` inside `_on_mouse_down` is always `True`
+  and tells you nothing.
+- `Input.select_on_focus` defaults to `True` already; the reason click-to-
+  focus behaved differently from Tab-to-focus is entirely this ordering.

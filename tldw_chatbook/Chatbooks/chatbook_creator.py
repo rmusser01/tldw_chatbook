@@ -591,7 +591,9 @@ class ChatbookCreator:
             # No such file or directory: '.../notes-bundle.zip.partial'",
             # naming an internal temp file the user never chose. Say what
             # could not be done, to the path they DID choose.
-            logger.opt(exception=True).error(
+            # Metadata only, deliberately: an OSError's own message carries
+            # the destination path, and this sink is persistent.
+            logger.error(
                 "ChatbookCreator.create_chatbook: filesystem error error_type={}",
                 type(e).__name__,
             )

@@ -1386,7 +1386,9 @@ class LibraryExportController:
         # naming a `.partial` file they never asked for.
         unusable = describe_unusable_destination(normalized_path)
         if unusable:
-            logger.warning(f"Unusable Library export destination: {unusable}")
+            # Deliberately path-free: the reason names the user's own
+            # directory, and this sink is persistent.
+            logger.warning("Refused an unusable Library export destination")
             self._refuse_library_export_destination(unusable)
             return
         self._library_export_form["destination"] = str(normalized_path)

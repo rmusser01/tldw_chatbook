@@ -491,8 +491,9 @@ Both folder pickers remember where you were. Each reopens at the directory it
 last picked in *that* flow, so Import once and Keep a folder synced never move
 each other's starting point, and neither borrows the Library ingest browser's.
 The first use of either — or a remembered folder that has since been moved or
-deleted — opens at your home directory instead. **Folder files** keeps its own
-separate memory, see [File notes](file-notes.md).
+deleted — falls through to the folder `[notes] sync_directory` names, and only
+then to your home directory. **Folder files** keeps its own separate memory,
+see [File notes](file-notes.md).
 
 If files or notes change after checking, activation is refused as stale and the
 nearest valid action is **Check again**. Conflicts and deletion choices are not
@@ -559,8 +560,11 @@ your home directory the first time. Its **Folder path** field can be typed into
 directly: press **Enter** to browse into the typed path, or click **Select
 folder** to use it immediately without pressing Enter first — either way,
 whatever the field currently holds is what gets picked, not merely the
-directory being browsed. An invalid path shows an inline reason and leaves the
-dialog open. Once a folder is picked, the confirmation line shows its full path
+directory being browsed. The field arrives pre-filled with the directory being
+browsed, and the click that puts the cursor in it selects that value, so typing
+a path replaces it rather than appending to it (`Ctrl+A` selects it too). An
+invalid path shows its reason on a row under the field and leaves the dialog
+open. Once a folder is picked, the confirmation line shows its full path
 (elided in the middle for long paths, keeping the folder name itself visible),
 not just its name.
 
@@ -753,7 +757,8 @@ automatically. Global navigation keys live in the [guide index](../index.md).
   written whenever a selection is made in that flow. Separate keys, so neither
   flow moves the other's starting point; **Folder files** has its own
   `[file_notes] browse`. A key naming a folder that no longer exists is
-  ignored and the picker opens at your home directory.
+  ignored and the picker falls back to `[notes] sync_directory`, then to your
+  home directory.
 - [Lasting Notes folder sync](../../Features/notes_bidirectional_sync.md) —
   runtime, cutover, ownership, and recovery details.
 - [File notes](file-notes.md) — the **Folder files** side of the source strip.
@@ -1107,3 +1112,11 @@ critique-10 claims reconciled; surface fixes in task-32346, 32348, 32349,
 32354, 32355). This page needed no correction — the note editor's autosave
 story and its guarded return were already stated here; the Library overview is
 what had drifted.*
+
+*Verified against fix/library-notes-w3-pickers-git — 2026-09-11 (task-32251:
+every path field in these pickers now selects its pre-fill on the click that
+focuses it — clicking in and typing an absolute path used to leave
+`/Users/you/Users/you/vault` — and an invalid path reports on a row under the
+field instead of inside the dialog's bottom border. With nothing remembered, a
+picker opens at `[notes] sync_directory` before falling back to home. Verified
+live at 235x52.)*
