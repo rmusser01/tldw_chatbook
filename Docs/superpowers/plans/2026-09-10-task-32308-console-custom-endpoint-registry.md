@@ -412,6 +412,92 @@ git commit -m "feat: gateway routes custom-ep providers through family execution
 
 ---
 
+### Task 5.5: Gateway credential wiring for custom-ep entries
+
+> Inserted by controller ruling after Task 5's review: entry-declared credentials
+> (api_key_env / api_key) never reach `resolution.api_key` (readiness reads
+> `api_settings` under the keyless family key), so a keyed entry whose declared
+> credential resolves sends unauthenticated (server 401) while Task 3's UI gate
+> says Ready. No other task owns send-time credential wiring.
+
+**Files:**
+- Modify: `tldw_chatbook/Chat/console_provider_gateway.py` (resolution api_key on generic and llama paths)
+- Test: `Tests/Chat/test_console_provider_gateway.py`
+
+**Interfaces:**
+- Consumes: Task 2/3 registry seams (`entry_for`, `custom_endpoint_provider_settings` — note its view exposes `api_key_env`; `resolve_provider_credential` in provider_readiness reads `api_key_env_var`, mind that alias), ADR-146 precedence env ref → stored key → none.
+- Produces: no new public API. Behavior: when a custom-ep entry declares a credential and it resolves, `resolution.api_key` carries it on both the generic and llama paths (Authorization header flows; the adapter's `api_key_resolved` stamp must not suppress it); when a declared credential does NOT resolve, the gateway blocks with the existing Missing-key copy (matching Task 3's UI gate contract). Keyless entries and all non-custom-ep providers byte-identical.
+
+- [ ] **Step 1: Write the failing tests** (append to `Tests/Chat/test_console_provider_gateway.py`, same construction style as Task 5's two tests)
+
+```python
+def test_custom_endpoint_declared_env_key_flows_to_resolution(monkeypatch):
+    monkeypatch.setenv("PAID_KEY", "paid-secret")
+    app_config = {
+        "custom_endpoints": {"paid": {
+            "display_name": "Paid", "family": "openai_compatible",
+            "base_url": "https://api.example.com/v1",
+            "api_key_env": "PAID_KEY"}},
+    }
+    resolved = _resolve_custom_ep_selection(  # Task 5's helper/construction
+        provider="custom-ep:paid", model="m",
+        base_url="https://api.example.com/v1", app_config=app_config)
+    assert resolved.api_key == "paid-secret"
+    assert resolved.execution_provider == "custom-openai-api"
+
+def test_custom_endpoint_stored_key_flows_to_resolution():
+    app_config = {
+        "custom_endpoints": {"paid": {
+            "display_name": "Paid", "family": "openai_compatible",
+            "base_url": "https://api.example.com/v1",
+            "api_key": "stored-secret"}},
+    }
+    resolved = _resolve_custom_ep_selection(
+        provider="custom-ep:paid", model="m",
+        base_url="https://api.example.com/v1", app_config=app_config)
+    assert resolved.api_key == "stored-secret"
+
+def test_custom_endpoint_unresolved_declared_key_blocks_with_missing_key_copy():
+    app_config = {
+        "custom_endpoints": {"paid": {
+            "display_name": "Paid", "family": "openai_compatible",
+            "base_url": "https://api.example.com/v1",
+            "api_key_env": "PAID_KEY_UNSET"}},
+    }
+    resolved = _resolve_custom_ep_selection(
+        provider="custom-ep:paid", model="m",
+        base_url="https://api.example.com/v1", app_config=app_config)
+    assert resolved.sendable is False
+    assert "API key" in resolved.visible_copy
+
+def test_custom_endpoint_llama_family_declared_key_flows_to_resolution():
+    app_config = {
+        "custom_endpoints": {"gpu": {
+            "display_name": "GPU llama", "family": "llama_cpp",
+            "base_url": "http://192.168.1.5:8080",
+            "api_key": "llama-secret"}},
+    }
+    resolved = _resolve_custom_ep_selection(
+        provider="custom-ep:gpu", model="m",
+        base_url="http://192.168.1.5:8080", app_config=app_config)
+    assert resolved.execution_provider == "llama_cpp"
+    assert resolved.api_key == "llama-secret"
+```
+
+- [ ] **Step 2: Run to verify failure** — `pytest Tests/Chat/test_console_provider_gateway.py -k custom_endpoint -q` in the snapshot env; expected: the three key-flow tests FAIL with `api_key is None`.
+
+- [ ] **Step 3: Implement** — at the resolution site where `custom_entry` is known: resolve the entry credential per ADR-146 precedence (env value of `entry.api_key_env` first, then `entry.api_key`, blank/placeholder rejected) and, when resolved, set it into the resolution's api_key on both paths (override the keyless-family readiness result); when declared but unresolved, block with the existing missing-API-key copy (reuse Task 3's gate semantics). Never log the value.
+
+- [ ] **Step 4: Run to verify pass** — full gateway file (baseline 238 + 4 new = 242) plus `Tests/Chat/test_custom_endpoint_registry.py` (8) — snapshot env per Task 3/4/5 reports.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -m "fix: flow declared custom endpoint credentials into gateway resolution" -- tldw_chatbook/Chat/console_provider_gateway.py Tests/Chat/test_console_provider_gateway.py
+```
+
+---
+
 ### Task 6: Modal — "New endpoint from template…" creation flow
 
 **Files:**
