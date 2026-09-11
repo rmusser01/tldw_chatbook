@@ -45,6 +45,12 @@ _COLLISION_PREFLIGHT_CHUNK_SIZE = 400
 _MEMBERSHIP_QUERY_CHUNK_SIZE = 400
 _MEMBERSHIP_ID_INSERT_ATTEMPTS = 3
 _MAX_NOTE_TREE_PAGE_SIZE = 500
+#: task-32172: the orders note placements can be paged and located in. The
+#: tree's Sort control offers exactly these, and both halves -- the pager and
+#: the deep-link locator's rank -- read them through the same two helpers, so
+#: a located offset can never be counted against a different order than the
+#: page it lands on.
+PLACEMENT_ORDERS = ("title", "newest", "oldest")
 _TREE_SEARCH_NOTE_LIMIT = 250
 _TREE_SEARCH_FOLDER_LIMIT = 500
 _TREE_SEARCH_MEMBERSHIP_LIMIT = 1000
@@ -349,7 +355,12 @@ class LocalNoteFolderRepository:
         )
 
     def page_note_placements(
-        self, *, parent_id: str | None, limit: int, offset: int
+        self,
+        *,
+        parent_id: str | None,
+        limit: int,
+        offset: int,
+        order: str = "title",
     ) -> NotePlacementPage:
         """Return an exact page of visible note placements beneath one parent.
 
@@ -357,17 +368,21 @@ class LocalNoteFolderRepository:
             parent_id: Exact folder identifier, or ``None`` for Unfiled notes.
             limit: Maximum placements to return.
             offset: Zero-based placement offset.
+            order: One of ``PLACEMENT_ORDERS``; the tiebreakers are always
+                note id then membership id, so every order is total.
 
         Returns:
             Visible placement rows with exact total and page cursors.
 
         Raises:
-            FolderValidationError: If an identifier or page bound is invalid.
+            FolderValidationError: If an identifier, page bound or order is
+                invalid.
         """
         _validate_int_bound(
             "limit", limit, minimum=1, maximum=_MAX_NOTE_TREE_PAGE_SIZE
         )
         _validate_int_bound("offset", offset, minimum=0)
+        order = _validate_placement_order(order)
         if parent_id is not None:
             _validate_folder_id(parent_id, field="parent_id")
 
@@ -389,7 +404,8 @@ class LocalNoteFolderRepository:
                 rows = cursor.execute(
                     f"SELECT n.{_NOTE_COLUMNS.replace(', ', ', n.')} "
                     f"{unfiled_from_sql} "
-                    "ORDER BY n.title COLLATE NOCASE, n.id LIMIT ? OFFSET ?",
+                    f"ORDER BY {_placement_order_term(order, prefix='n.')}, "
+                    "n.id LIMIT ? OFFSET ?",
                     (limit, offset),
                 ).fetchall()
                 placements = tuple(
@@ -427,7 +443,7 @@ class LocalNoteFolderRepository:
                 rows = cursor.execute(
                     f"{effective_memberships_sql}"
                     "SELECT * FROM effective_memberships "
-                    "ORDER BY title COLLATE NOCASE, id, membership_id "
+                    f"ORDER BY {_placement_order_term(order)}, id, membership_id "
                     "LIMIT ? OFFSET ?",
                     (parent_id, limit, offset),
                 ).fetchall()
@@ -519,6 +535,7 @@ class LocalNoteFolderRepository:
         page_size: int,
         preferred_folder_id: str | None = None,
         preferred_membership_id: str | None = None,
+        order: str = "title",
     ) -> NoteTreeLocation | None:
         """Locate the preferred surviving placement of one active note.
 
@@ -527,17 +544,22 @@ class LocalNoteFolderRepository:
             page_size: Placement page size used by the tree.
             preferred_folder_id: Folder to prefer after exact membership lookup.
             preferred_membership_id: Exact surviving membership to prefer.
+            order: The ``PLACEMENT_ORDERS`` value the caller is paging in;
+                the returned ``placement_offset`` is a rank counted in that
+                same order, so it addresses the page the note is really on.
 
         Returns:
             A filed or Unfiled location, or None when the note is inactive.
 
         Raises:
-            FolderValidationError: If an identifier or page bound is invalid.
+            FolderValidationError: If an identifier, page bound or order is
+                invalid.
         """
         _validate_folder_id(note_id, field="note_id")
         _validate_int_bound(
             "page_size", page_size, minimum=1, maximum=_MAX_NOTE_TREE_PAGE_SIZE
         )
+        order = _validate_placement_order(order)
         if preferred_folder_id is not None:
             _validate_folder_id(preferred_folder_id, field="preferred_folder_id")
         if preferred_membership_id is not None:
@@ -582,9 +604,10 @@ class LocalNoteFolderRepository:
                 ).fetchone()
                 if note is None:
                     return None
+                before, ties = _placement_rank_clauses(order, prefix="candidate.")
                 rank = int(
                     cursor.execute(
-                        """
+                        f"""
                         SELECT COUNT(*) AS rank
                         FROM notes AS candidate
                         WHERE candidate.deleted = 0
@@ -597,14 +620,14 @@ class LocalNoteFolderRepository:
                                 AND m.deleted = 0 AND m.owner_active = 1
                           )
                           AND (
-                              candidate.title COLLATE NOCASE < ? COLLATE NOCASE
+                              {before}
                               OR (
-                                  candidate.title = ? COLLATE NOCASE
+                                  {ties}
                                   AND candidate.id < ?
                               )
                           )
                         """,
-                        (note["title"], note["title"], note_id),
+                        (note_id, note_id, note_id),
                     ).fetchone()["rank"]
                 )
                 return NoteTreeLocation(
@@ -617,6 +640,7 @@ class LocalNoteFolderRepository:
 
             folder_id = str(selected["membership_folder_id"])
             membership_id = str(selected["membership_id"])
+            before, ties = _placement_rank_clauses(order, prefix="n.")
             rank = int(
                 cursor.execute(
                     f"""
@@ -628,9 +652,9 @@ class LocalNoteFolderRepository:
                     WHERE m.folder_id = ? AND m.deleted = 0 AND m.owner_active = 1
                       AND NOT ({_MANAGED_ANCESTOR_SHADOW_SQL})
                       AND (
-                          n.title COLLATE NOCASE < ? COLLATE NOCASE
+                          {before}
                           OR (
-                              n.title = ? COLLATE NOCASE
+                              {ties}
                               AND (
                                   n.id < ? OR (n.id = ? AND m.id < ?)
                               )
@@ -639,8 +663,8 @@ class LocalNoteFolderRepository:
                     """,
                     (
                         folder_id,
-                        selected["title"],
-                        selected["title"],
+                        note_id,
+                        note_id,
                         note_id,
                         note_id,
                         membership_id,
@@ -2844,6 +2868,80 @@ def validate_deterministic_folder_id(folder_id: object) -> str:
 
 def _validate_expected_version(expected_version: object) -> None:
     _validate_int_bound("expected_version", expected_version, minimum=1)
+
+
+def _validate_placement_order(order: object) -> str:
+    """Return one accepted placement order or fail closed.
+
+    The value reaches an ``ORDER BY`` by string interpolation (SQLite takes
+    no parameter there), so it is checked against the closed set rather
+    than escaped.
+
+    Args:
+        order: Caller-supplied placement order.
+
+    Returns:
+        The accepted order.
+
+    Raises:
+        FolderValidationError: If the order is not one of the three.
+    """
+    if order not in PLACEMENT_ORDERS:
+        raise FolderValidationError("order must be title, newest or oldest.")
+    return str(order)
+
+
+def _placement_order_term(order: str, *, prefix: str = "") -> str:
+    """Return the leading ORDER BY term for one placement order.
+
+    ``last_modified`` is a ``DATETIME`` column, but its stored text is not
+    one shape: the schema's ``DEFAULT CURRENT_TIMESTAMP`` writes
+    space-separated ``YYYY-MM-DD HH:MM:SS``, while every application writer
+    stamps ISO ``YYYY-MM-DDTHH:MM:SS.sssZ``. Comparing that text directly
+    sorts same-day rows by the separator character (``' ' < 'T'``) instead
+    of by time, so both date orders wrap the column in ``julianday()`` to
+    compare a normalized numeric instant instead.
+    """
+    if order == "newest":
+        return f"julianday({prefix}last_modified) DESC"
+    if order == "oldest":
+        return f"julianday({prefix}last_modified)"
+    return f"{prefix}title COLLATE NOCASE"
+
+
+def _placement_rank_clauses(order: str, *, prefix: str = "") -> tuple[str, str]:
+    """Return the "sorts before the anchor" / "ties with it" SQL pair.
+
+    The deep-link locator counts a note's rank with the same leading term
+    the pager sorts by, so a located offset lands on the page that actually
+    contains the note. Each clause takes the ANCHOR NOTE'S ID as one ``?``
+    and reads that note's own stored value in SQL: ``last_modified`` is a
+    ``DATETIME`` column, so a value read into Python comes back through the
+    connection's datetime converter and is re-bound in a different textual
+    shape than the column holds -- which silently mis-ranks the anchor
+    against itself. The date orders also wrap both sides in ``julianday()``
+    for the same mixed-timestamp-shape reason as ``_placement_order_term``.
+
+    Args:
+        order: An already-validated placement order.
+        prefix: Table alias prefix for the compared column, if any.
+
+    Returns:
+        A ``(sorts_before, ties_with)`` SQL pair, each taking one note id.
+    """
+    if order == "title":
+        anchor = "(SELECT title FROM notes WHERE id = ?)"
+        return (
+            f"{prefix}title COLLATE NOCASE < {anchor} COLLATE NOCASE",
+            f"{prefix}title = {anchor} COLLATE NOCASE",
+        )
+    anchor = "julianday((SELECT last_modified FROM notes WHERE id = ?))"
+    comparison = ">" if order == "newest" else "<"
+    column = f"julianday({prefix}last_modified)"
+    return (
+        f"{column} {comparison} {anchor}",
+        f"{column} = {anchor}",
+    )
 
 
 def _validate_int_bound(

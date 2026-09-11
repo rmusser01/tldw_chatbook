@@ -13146,3 +13146,70 @@ and the audit proved nothing.
 filter or assertion runs over strings that embed paths, check that it can
 still return a negative in your own working directory before you trust either
 a pass or a fail.
+
+## A navigation pin taken at the message boundary is not a pin on the landing (task-32245, 2026-09-10)
+
+**PR #2538 shipped a new onboarding exit with a green test on a broken
+destination.** The wizard Summary's "Write your first note" posted
+`NavigateToScreen(TAB_LIBRARY, {notes_create: True})`, and
+`test_wizard_exit_route_notes_navigates_to_library_new_note` asserted exactly
+that message against a **mocked receiver**. Both halves of the actual landing
+were broken and neither could be seen from there: focus was parked on nothing
+(so the footer read the bare "esc back to notes" tier and the first `Enter`
+fell through to the app binding and left Library for **Home**), and the Items
+pane sat on "Loading local Library sources…" for the life of the visit — still
+loading at 113 s while the rail already read `Notes (0)`. Three assessors
+reproduced it live; the suite never could.
+
+Both causes were *route divergence*, which is precisely what a message
+assertion cannot see: the destination row's entry-focus arm lived inline in
+`_select_library_rail_row_after_source_admission` (rail/`Ctrl+N` only), and
+`_reconcile_library_entry_state` matched `notes` but not `notes-create`, so the
+placeholder its own `compose_content` mounts for BOTH kinds was never replaced.
+Reaching the same canvas by `Ctrl+N` was correct throughout — the shipped test
+was pinning the one hop where the two routes still agreed.
+
+**What to do.** A test for a new navigation affordance must drive the real
+producer through to the **mounted destination** and assert what the user then
+faces: the focused control, the footer the focus implies, and that every
+loading placeholder has resolved. A mocked receiver is fine for the untrusted-
+payload guards (an incomplete result must not navigate) and nowhere else. When
+a second route to an existing destination is added, first ask what the existing
+route does AFTER the selection lands — that post-selection work is where the
+new route will silently differ.
+
+
+PR #2576 reproduced the same evidence gap in Console Full search: an opener
+mock passed even with a query absent from saved text. Following the actual
+application route exposed broad Library source errors replacing a successfully
+fetched conversation canvas. The fixed regression asserts the mounted results
+and original reader content, excludes an unrelated saved chat, and covers the
+source-failure interleave independently. A page-state result alone did not prove
+the user could see or use that result.
+
+### Archive recovery: canceled workers do not cancel SQLite threads (2026-09-10)
+
+During TASK-32300 and TASK-32274–32276, sequential archive/Undo checks passed but a simultaneous
+writer test exposed SQLite deferred-transaction contention; taking the write
+reservation up front resolved it. Independent review then canceled the UI worker
+while a thread-backed archive write was blocked: its guard cleared while the
+write continued, allowing a send before commit. The regression now controls the
+thread with events and verifies the archive reservation remains until commit and
+cache publication. Shield the operation that owns the reservation, rather than
+assuming coroutine cancellation stops a database thread.
+
+PR #2576's fifth review found that shielding storage alone still lost the UI
+receipt when the waiter was cancelled. Completion must also own receipt and
+cache publication. Block the write, cancel its caller, release it, and assert
+the durable outcome and recovery state; a successful database assertion alone
+does not prove the user can recover the completed operation.
+
+### Batch import success can hide the item under test (2026-09-10)
+
+During PR #2576 review, the Chatbook rename-conflict test passed even though its
+one-argument mock rejected the new `archive_scope` keyword. Other imported items
+made the aggregate success count positive while the conversation failed. An
+assertion on the actual renamed conversation creation exposed the TypeError;
+correcting the mock contract then made that assertion pass. Batch tests must
+assert the specific item's persisted outcome or write payload, not only an
+aggregate count that unrelated items can satisfy.

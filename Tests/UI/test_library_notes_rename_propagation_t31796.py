@@ -255,18 +255,86 @@ def test_placement_title_sort_key_matches_repository_tiebreakers() -> None:
     """Title order is the repository's, not a display choice.
 
     task-32128 reconciled the inert Sort control against this pin rather
-    than the other way round: ``page_note_placements`` pages with ``ORDER BY
-    title COLLATE NOCASE``, and every offset the tree browses with -- the
-    deep-link locator's ``containing_offset`` included -- is computed
-    against that order. A Newest/Oldest control could only re-sort the
-    loaded window, so it was removed from the folder tree; the flat list,
-    which sorts its own records, keeps it. See
-    ``Tests/UI/test_library_notes_wave_list.py``.
+    than the other way round: ``page_note_placements`` paged with a
+    hard-coded ``ORDER BY title COLLATE NOCASE``, and every offset the tree
+    browsed with -- the deep-link locator's rank included -- was computed
+    against that order, so a Newest/Oldest control could only re-sort the
+    loaded window and was removed from the folder tree.
+
+    task-32172 made that order a PARAMETER of both halves and gave the
+    control back. Title is still one of the three orders and still the
+    repository's default, so this pin stands unchanged; the date orders are
+    pinned in ``Tests/Notes/test_note_folder_repository.py`` and the
+    matching in-place re-sort just below.
     """
     a = _placement("a", "Same", "f1", "m2")
     b = _placement("a", "Same", "f1", "m1")
     # Equal title + note id -> membership_id breaks the tie.
     assert placement_title_sort_key(b) < placement_title_sort_key(a)
+
+
+def _dated(note_id: str, title: str, modified: str) -> NotePlacementRecord:
+    return NotePlacementRecord(
+        note={"id": note_id, "title": title, "last_modified": modified},
+        folder_id="f1",
+        membership=_membership(f"m-{note_id}", "f1", note_id),
+    )
+
+
+def test_a_rename_re_sorts_the_loaded_window_in_the_active_order() -> None:
+    """task-32172: a save re-sorts by the order the tree is actually paged in.
+
+    A save both retitles the note and moves its ``last_modified``, so under
+    Newest the row belongs at the top of its folder. Re-sorting the loaded
+    window by TITLE there would scramble it into an order the next page
+    load contradicts -- the same "the tree lies about its order" defect
+    task-32128 pulled the control for. The renamed title is chosen to sort
+    LAST alphabetically so a title re-sort and a date re-sort disagree.
+    """
+    branches = {
+        NotesBranchKey("f1", "placements"): _placements_branch(
+            "f1",
+            _dated("n-new", "Bbb", "2026-03-03T00:00:00Z"),
+            _dated("n-old", "Ccc", "2026-01-01T00:00:00Z"),
+        )
+    }
+
+    patched, changed = patch_notes_tree_branches_title(
+        branches,
+        note_id="n-old",
+        title="Zzz sorts last by title",
+        modified_at="2026-04-04T00:00:00Z",
+        order="newest",
+    )
+
+    assert changed is True
+    assert [
+        str(item.note["id"])
+        for item in patched[NotesBranchKey("f1", "placements")].items
+    ] == ["n-old", "n-new"]
+
+
+def test_a_rename_still_re_sorts_by_title_in_title_order() -> None:
+    """task-32172: the default order keeps task-31796's Qodo #3 behaviour."""
+    branches = {
+        NotesBranchKey("f1", "placements"): _placements_branch(
+            "f1",
+            _dated("n-new", "Bbb", "2026-03-03T00:00:00Z"),
+            _dated("n-old", "Ccc", "2026-01-01T00:00:00Z"),
+        )
+    }
+
+    patched, _changed = patch_notes_tree_branches_title(
+        branches,
+        note_id="n-old",
+        title="Aaa sorts first by title",
+        modified_at="2026-04-04T00:00:00Z",
+    )
+
+    assert [
+        str(item.note["id"])
+        for item in patched[NotesBranchKey("f1", "placements")].items
+    ] == ["n-old", "n-new"]
 
 
 # --- screen wiring: _patch_library_note_list_from_session ------------------
