@@ -121,8 +121,23 @@ async def main():
   templates=ChunkingTemplateManager()
   template=ChunkingTemplate(name=name+'-retained',description=name+' chunking template',pipeline=[])
   templates.save_template(template)
+  from tldw_chatbook.Character_Chat import Chat_Dictionary_Lib as dictionaries
+  from tldw_chatbook.config import get_user_data_dir
+  dictionary_service.add_entry(dictionary['id'],{'pattern':name+'-term','replacement':name+' retained definition'})
+  exported=dictionaries.export_dictionary_to_file(core,dictionary['id'])
+  assert exported is not None
+  exported=Path(exported)
+  assert exported.parent==get_user_data_dir()/'chat_dicts'
+  assert dictionaries.parse_user_dict_markdown_file(str(exported),str(exported.parent))=={name+'-term':name+' retained definition'}
+  from tldw_chatbook.Media_Creation.generation_templates import get_all_templates
+  style=get_user_data_dir()/'image_generation_styles'/(name+'-retained.toml')
+  style.parent.mkdir(mode=0o700,exist_ok=True)
+  style.write_text('name='+json.dumps(name+' retained style')+'\ncategory="Custom"\ndescription='+json.dumps(name+' style description')+'\nbase_prompt='+json.dumps('{{subject}}, '+name+' retained light')+'\nnegative_prompt='+json.dumps(name+' unwanted detail')+'\n')
+  loaded_style=get_all_templates(reload=True)[style.stem]
+  assert loaded_style.base_prompt=='{{subject}}, '+name+' retained light'
   durable_api=dict(persona=persona['id'],dictionary=dictionary['id'],dictionary_revision=dictionary_version['revision'],grammar=grammar['id'],feedback=feedback['feedback_id'],audio=audio['history_id'],template=template.name)
   durable_files={owner:dict(path=str(path),hex=path.read_bytes().hex()) for owner,path in (('chat.prompt_history',history.path),('ui.emoji_recents',selector.parent/'recent_emojis.json'),('ui.state',state),('ui.themes',theme),('personas',persona_service.persona_store_path),('chat.dictionary_history',dictionary_service.history_store_path),('chat.grammars',app.local_chat_grammars_service.store_path),('feedback',app.local_feedback_service.store_path),('audio.history',audio_service.history_store_path),('chunking.templates',templates.user_templates_dir/(template.name+'.json')))}
+  durable_files.update({owner:dict(path=str(path),hex=path.read_bytes().hex()) for owner,path in (('chat.dictionaries',exported),('generation.styles',style))})
   collections=app.local_library_collections_service
   collection=collections.create_collection(name+' collection',description=name+' retained collection')
   collection_member=collections.add_item_to_collection(collection.collection_id,source_type='note',source_id=str(note),title=name+' linked note')
@@ -289,6 +304,9 @@ async def main():
     row=next(row for row in manifest['files'] if row['owner_id']==owner and source[row['logical_id']].path==Path(expected['path']))
     assert source[row['logical_id']].status=='included'
     assert (result.root/row['payload']).read_bytes()==bytes.fromhex(expected['hex'])
+   for owner,leaf in (('chat.dictionaries',label+'-dictionary.md'),('generation.styles',label+'-retained.toml')):
+    retained_files=[row for row in manifest['files'] if row['owner_id']==owner and source[row['logical_id']].path.name==leaf and source[row['logical_id']].path.is_relative_to(fixture/label)]
+    assert len(retained_files)==1,(label,owner,'missing retained file')
    collections=next(row for row in manifest['files'] if row['owner_id']=='db.library_collections' and source[row['logical_id']].path.is_relative_to(fixture/label))
    with closing(sqlite3.connect((result.root/collections['payload']).as_uri()+'?mode=ro',uri=True)) as db:
     assert db.execute('SELECT name FROM library_collections WHERE name=?',(label+' collection',)).fetchall()==[(label+' collection',)]
@@ -506,7 +524,7 @@ mapping={}
 # be reviewed explicitly instead of silently landing in a miscellaneous folder.
 custom={'db.chachanotes.primary','chat.attachments','notes.sync_bindings','quiz.local','study.local','db.media.primary','research.local'}
 ordinary={'db.evals','db.library_collections','db.library_ingest_jobs','db.scheduled_tasks','db.subscriptions','db.workspaces','kanban.local','mcp.targets','notifications.client','runtime.event_state','runtime.sync_state','writing.local','chat.prompt_history','personas','chat.dictionary_history','chat.grammars','feedback','audio.history'}
-trees={'chat.dictionaries':'chat_dicts','chatbooks.archives':'chatbooks','rag.definitions':'rag_profiles','chunking.templates':'chunking_templates'}
+trees={'chat.dictionaries':'chat_dicts','chatbooks.archives':'chatbooks','rag.definitions':'rag_profiles','chunking.templates':'chunking_templates','generation.styles':'image_generation_styles'}
 for key,row in roots.items():
  owner=producer[key].owner_id
  if row.synthetic:
@@ -641,6 +659,20 @@ async def main():
   assert persona['system_prompt']==label+' retained persona prompt' and not persona['is_active']
   version=app.local_chat_dictionary_service.get_version(durable['dictionary'],durable['dictionary_revision'])
   assert version['snapshot']['description']==label+' retained dictionary history'
+  from tldw_chatbook.Character_Chat import Chat_Dictionary_Lib as dictionaries
+  exported=next(row for row in dictionaries.list_available_dictionary_files() if row['name']==label+'-dictionary')
+  exported_path=Path(exported['path'])
+  assert dictionaries.parse_user_dict_markdown_file(str(exported_path),str(exported_path.parent))=={label+'-term':label+' retained definition'}
+  from tldw_chatbook.Media_Creation.generation_templates import get_all_templates
+  from tldw_chatbook.config import get_user_data_dir
+  style=get_all_templates(reload=True)[label+'-retained']
+  assert style.name==label+' retained style' and style.category=='Custom'
+  assert style.description==label+' style description' and style.base_prompt=='{{subject}}, '+label+' retained light'
+  assert style.negative_prompt==label+' unwanted detail'
+  assert exported_path==get_user_data_dir()/'chat_dicts'/(label+'-dictionary.md')
+  for owner,path in (('chat.dictionaries',exported_path),('generation.styles',get_user_data_dir()/'image_generation_styles'/(label+'-retained.toml'))):
+   assert path.is_absolute() and path!=Path(seed['durable_files'][owner]['path'])
+   assert path.read_bytes()==bytes.fromhex(seed['durable_files'][owner]['hex'])
   grammar=await app.local_chat_grammars_service.get_grammar(durable['grammar'])
   assert grammar['grammar_text']=='root ::= "'+label+'"' and grammar['validation_status']=='unchecked'
   feedback=await app.local_feedback_service.get_feedback(durable['feedback'])
