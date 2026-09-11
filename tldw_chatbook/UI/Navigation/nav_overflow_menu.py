@@ -23,6 +23,7 @@ from .main_navigation import (
     CONSOLE_ATTENTION_TOOLTIP,
     NavigateToScreen,
     navigation_destination_label,
+    navigation_destination_label_text,
 )
 from .shell_destinations import SHELL_DESTINATION_ORDER
 
@@ -77,13 +78,16 @@ class NavOverflowMenu(ModalScreen[None]):
         with Vertical(id="nav-overflow-menu"):
             yield Static("All destinations", id="nav-overflow-menu-title")
             for destination in SHELL_DESTINATION_ORDER:
-                label = navigation_destination_label(
+                # Same dimmed key-prefix label the strip shows (task-32306),
+                # so the menu doubles as shortcut teaching; the "(current)"
+                # marker is appended in plain style.
+                label = navigation_destination_label_text(
                     destination.destination_id,
                     destination.accessible_label,
                     console_needs_attention=console_needs_attention,
                 )
                 if destination.destination_id == self._active_destination_id:
-                    label = f"{label} (current)"
+                    label = label.append(" (current)")
                 button = Button(
                     label,
                     id=f"nav-overflow-{destination.destination_id}",

@@ -398,7 +398,7 @@ provider, model, and temperature without the full modal.
 QwenCloud behaves like the other hosted providers: select it once, use the
 normal streaming Console and native function tools, and discover models
 through the shared cached catalog. Configure its durable **API mode** in
-**F9 ▸ Providers & Models**; it is not a per-session Console override. A run
+**F4 ▸ Providers & Models**; it is not a per-session Console override. A run
 pins the selected mode and endpoint for every model turn, so changing Settings
 mid-run cannot switch its continuation to another API.
 
@@ -440,7 +440,7 @@ mode or provider conversation ID. Fresh defaults are `kimi-k3` at
 `https://api.moonshot.ai/v1` and `glm-5.2` at
 `https://api.z.ai/api/paas/v4`; saved historical models remain usable.
 Moonshot's China endpoint and intentional compatible custom endpoints are
-configured in **F9 ▸ Providers & Models**.
+configured in **F4 ▸ Providers & Models**.
 
 - Existing Chatbook function tools use the same approval, cancellation,
   execution, budget, and durable recovery loop for both providers. Moonshot

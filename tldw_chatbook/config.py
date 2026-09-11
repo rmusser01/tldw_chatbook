@@ -4633,7 +4633,7 @@ allowed_extra_params = []
 
 # ComfyUI H3 image editing is explicit opt-in: add "comfyui" to
 # enabled_backends above after reviewing this server boundary. Saving a base_url
-# in F9 Settings consents to sending the source image and instruction to that
+# in F4 Settings consents to sending the source image and instruction to that
 # exact origin. ComfyUI retains uploaded inputs and saved outputs according to
 # the server operator's policy.
 # [image_generation.comfyui]

@@ -18,7 +18,7 @@ The **Reports** slot lists recent Daily Briefs. With no reports yet, use
 configured LLM provider). If a run fails — for example, no API key is
 configured — the failed report is listed and a **Run the Daily Report
 demo again** button stays on the screen so you can retry after fixing the
-provider in **Settings (F9) → API Keys**. Report timestamps are shown in
+provider in **Settings (F4) → API Keys**. Report timestamps are shown in
 your local time.
 
 ## Import
@@ -29,7 +29,7 @@ Console (Chatbooks) or generate them from Library sources instead.
 
 ## Getting there
 
-- Press **Ctrl+4**, click **⌃4 Artifacts** in the nav bar, or press
+- Press **Ctrl+6**, click **⌃6 Artifacts** in the nav bar, or press
   **Ctrl+P** → "Tab Navigation: Switch to Artifacts".
 
 ## Sharing artifacts

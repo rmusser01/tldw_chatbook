@@ -11,7 +11,7 @@ media item alongside everything else in your Library.
 
 ## Getting there
 
-Press **F11**, click **F11 Meetings** in the nav bar, or open the command
+Press **F7**, click **F7 Meetings** in the nav bar, or open the command
 palette (**Ctrl+P**) and choose **"Tab Navigation: Switch to Meetings"**.
 There is no digit hotkey — Meetings sits past the Ctrl+0 row alongside Lab,
 Logs, Settings, and Research.
@@ -317,7 +317,7 @@ ModelScope's own terms before redistributing them).
 
 | Key | Action |
 |---|---|
-| F11 | Switch to Meetings (also reachable via the command palette; no other screen-specific bindings) |
+| F7 | Switch to Meetings (also reachable via the command palette; no other screen-specific bindings) |
 
 All other actions on this screen (device pickers, Start/Pause/Stop,
 Recover, Open in Library) are mouse/pointer controls with no dedicated key

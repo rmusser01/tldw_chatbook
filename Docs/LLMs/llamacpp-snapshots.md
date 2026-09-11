@@ -14,7 +14,7 @@ guarantee for other models or releases. See the
 
 ## Before launching
 
-Enable snapshots in canonical **F9 Settings → LLM and Providers**, using the
+Enable snapshots in canonical **F4 Settings → LLM and Providers**, using the
 category Save/Revert workflow, or in Models → **Details & preferences** using
 Apply. Enable/disable changes apply to the **next launch**. Keep-count changes
 apply to later Save operations on an already-running enabled launch.

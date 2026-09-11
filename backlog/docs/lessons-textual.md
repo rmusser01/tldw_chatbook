@@ -968,3 +968,28 @@ the rule into the owning screen's `BUNDLED_CSS` and regenerate, or set the
 properties as inline styles on the instance (`widget.styles.min_height = 1`),
 which is the one tier above app CSS. Verify by rendering, not by reading the
 selector: the first attempt here looked correct and did nothing.
+
+---
+
+## User-visible hotkeys live in four places, not one — sweep all of them
+
+**TASK-32306, 2026-09-10 (nav renumbering).** Rebinding the shell-destination
+F-key tail (F7–F11 → F2/F3/F4/F5/F7) and re-seating Artifacts touched the
+shortcut map in `shell_destinations.py`, the label scheme in
+`UI/Navigation/main_navigation.py`, and the strip order — the easy part. A
+review pass initially claimed "no code UI copy teaches these keys" off a
+quoted-string grep, and that was wrong: the Console settings modal teaches
+"F9 Settings > Console behavior" (`Widgets/Console/console_settings_modal.py`,
+asserted by `test_console_context_controls.py`), other modules ship
+"...or in F9 Settings, before sending." style copy in multi-line constants the
+quote-anchored regex missed, and `Docs/` carries the key in 20+ files. The
+missed modal copy would have shipped a dead key in a user-facing message; it
+surfaced only because a second, looser sweep (`grep -rn "F9"` minus
+hex-color/review-round noise) ran during implementation.
+
+**What to do.** A key that users are taught (nav hotkeys, F1-help entries,
+footer hints) exists in up to four layers: (1) the binding, (2) label/copy
+strings in Python — including multi-line constants, so grep for the bare
+token, not `"quoted"` patterns, (3) tests that assert on those strings,
+(4) `Docs/`. Sweep all four with one loose grep for the token and filter
+noise by eye; a quote-anchored regex is not evidence of absence.

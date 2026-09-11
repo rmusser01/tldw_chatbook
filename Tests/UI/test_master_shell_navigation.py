@@ -112,18 +112,18 @@ async def test_master_shell_navigation_order_and_labels():
         ("nav-home", "\u23031 Home"),
         ("nav-console", "\u23032 Console"),
         ("nav-library", "\u23033 Library"),
-        ("nav-research", "F10 Research"),
-        ("nav-artifacts", "\u23034 Artifacts"),
-        ("nav-personas", "\u23035 Roleplay"),
-        ("nav-watchlists_collections", "\u23036 Watchlists"),
+        ("nav-personas", "\u23034 Roleplay"),
+        ("nav-watchlists_collections", "\u23035 Watchlists"),
+        ("nav-artifacts", "\u23036 Artifacts"),
         ("nav-schedules", "\u23037 Schedules"),
         ("nav-workflows", "\u23038 Workflows"),
-        ("nav-meetings", "F11 Meetings"),
         ("nav-mcp", "\u23039 MCP"),
         ("nav-acp", "\u23030 ACP"),
-        ("nav-lab", "F7 Lab"),
-        ("nav-logs", "F8 Logs"),
-        ("nav-settings", "F9 Settings"),
+        ("nav-lab", "F2 Lab"),
+        ("nav-logs", "F3 Logs"),
+        ("nav-settings", "F4 Settings"),
+        ("nav-research", "F5 Research"),
+        ("nav-meetings", "F7 Meetings"),
     ]
 
 
@@ -132,10 +132,11 @@ def test_nav_button_label_numbering_scheme():
 
     assert nav_button_label("home", "Home") == "\u23031 Home"
     assert nav_button_label("acp", "ACP") == "\u23030 ACP"
-    assert nav_button_label("lab", "Lab") == "F7 Lab"
-    assert nav_button_label("logs", "Logs") == "F8 Logs"
-    assert nav_button_label("settings", "Settings") == "F9 Settings"
-    assert nav_button_label("research", "Research") == "F10 Research"
+    assert nav_button_label("lab", "Lab") == "F2 Lab"
+    assert nav_button_label("logs", "Logs") == "F3 Logs"
+    assert nav_button_label("settings", "Settings") == "F4 Settings"
+    assert nav_button_label("research", "Research") == "F5 Research"
+    assert nav_button_label("meetings", "Meetings") == "F7 Meetings"
 
 
 @pytest.mark.asyncio
@@ -497,7 +498,15 @@ async def test_folded_screen_boxes_owning_destination_button():
 
 
 def test_shell_destination_hotkeys_keep_existing_destination_owners():
-    """Inserting Research cannot move any existing destination's shortcut."""
+    """The shortcut map is an explicit destination contract (task-32306).
+
+    Inserting a destination cannot move any existing destination's shortcut;
+    the only way keys move is an explicit edit of SHELL_DESTINATION_SHORTCUTS
+    -- which task-32306 did once, deliberately, to restore the left-to-right
+    keyboard walk (number row ctrl+1..ctrl+0, then the F-row from F2,
+    skipping reserved f1/f6) and to seat Research/Meetings in the tail
+    instead of stranding F10/F11 mid-strip.
+    """
     from textual.actions import parse
 
     from tldw_chatbook.app import TldwCli
@@ -516,18 +525,18 @@ def test_shell_destination_hotkeys_keep_existing_destination_owners():
         "home": "ctrl+1",
         "console": "ctrl+2",
         "library": "ctrl+3",
-        "artifacts": "ctrl+4",
-        "personas": "ctrl+5",
-        "watchlists_collections": "ctrl+6",
+        "personas": "ctrl+4",
+        "watchlists_collections": "ctrl+5",
+        "artifacts": "ctrl+6",
         "schedules": "ctrl+7",
         "workflows": "ctrl+8",
         "mcp": "ctrl+9",
         "acp": "ctrl+0",
-        "lab": "f7",
-        "logs": "f8",
-        "settings": "f9",
-        "research": "f10",
-        "meetings": "f11",
+        "lab": "f2",
+        "logs": "f3",
+        "settings": "f4",
+        "research": "f5",
+        "meetings": "f7",
     }
     assert len(hotkey_bindings) == len(SHELL_DESTINATION_ORDER)
     for binding in hotkey_bindings:
@@ -543,14 +552,14 @@ def test_shell_destination_hotkeys_keep_existing_destination_owners():
 
 
 def test_shell_destination_binding_arguments_are_textual_strings():
-    """Ctrl+1 and F10 must dispatch a string destination ID, not a name token."""
+    """Ctrl+1 and F5 must dispatch a string destination ID, not a name token."""
     from textual.actions import ActionError, parse
 
     from tldw_chatbook.app import TldwCli
 
     bindings = {binding.key: binding for binding in TldwCli.BINDINGS}
 
-    for key, destination_id in (("ctrl+1", "home"), ("f10", "research")):
+    for key, destination_id in (("ctrl+1", "home"), ("f5", "research")):
         try:
             namespace, action, arguments = parse(bindings[key].action)
         except ActionError as exc:
@@ -1139,17 +1148,17 @@ async def test_click_on_ghosted_nav_button_via_border_route_is_a_no_op():
     button). That is exactly the "clicked the border, not a widget" case
     `on_click`'s own guard clause exists to route into the loop below --
     i.e. this is the real bug path, not a synthetic bypass of it.
-    `active="artifacts"` at 80 cols reliably straddles/ghosts
-    `nav-watchlists_collections` (`Region(x=64, y=0, width=15,
-    height=3)`), the same defect class as the review's own probe
-    (`nav-watchlists_collections`, `x=62-71, y=2`, a different active
-    destination).
+    `active="home"` at 80 cols reliably straddles/ghosts `nav-artifacts`
+    (`Region(x=63, y=0, width=14, height=3)`, the "⌃6 Art" fragment), the
+    same defect class as the review's own probe
+    (`nav-watchlists_collections`, `x=62-71, y=2`, before the task-32306
+    reorder moved Artifacts behind Watchlists).
     """
     events_seen = []
 
     class TestApp(ConsolidatedCSSApp):
         def compose(self):
-            yield MainNavigationBar(active="artifacts")
+            yield MainNavigationBar(active="home")
 
         def on_navigate_to_screen(self, message):
             events_seen.append(message.screen_name)
@@ -1167,7 +1176,7 @@ async def test_click_on_ghosted_nav_button_via_border_route_is_a_no_op():
         ]
         assert ghosted, "test premise: expected a straddling destination at 80 cols"
         target = next(
-            (b for b in ghosted if b.id == "nav-watchlists_collections"), ghosted[0]
+            (b for b in ghosted if b.id == "nav-artifacts"), ghosted[0]
         )
         assert target.disabled
         region = target.region
@@ -1199,7 +1208,7 @@ async def test_click_on_ghosted_nav_button_via_border_route_is_a_no_op():
         await pilot.pause(0.1)
 
         assert events_seen == []
-        assert nav.active_destination_id == "artifacts"
+        assert nav.active_destination_id == "home"
         assert target.has_class("nav-button-clip-ghost")
         assert target.disabled
 

@@ -17,7 +17,7 @@ can sync with a tldw server you configure).
    [first-run setup wizard](First_Run_Setup.md), which offers to do step 2
    for you; skipping it leaves you on [Home](home.md), and Console's
    composer stays locked with a "Get started" card until a provider exists.
-2. Open **[Settings](settings.md)** — press **F9**, click **F9 Settings** in
+2. Open **[Settings](settings.md)** — press **F4**, click **F4 Settings** in
    the nav bar, or **Ctrl+P** → "Tab Navigation: Switch to Settings" — and
    set a provider + model (or point at a local server) under **Providers &
    Models**.
@@ -35,23 +35,24 @@ can sync with a tldw server you configure).
 | Ctrl+2 | [Console](console.md) | Live agent conversations, approvals, tools, RAG, and runs. |
 | Console → Menu → Buddy | [Buddies](buddies.md) | Manage artwork and Personas; follow and reply to conversations across screens. |
 | Ctrl+3 | [Library](library.md) | Source material, imports, notes, media, conversations, prompts, skills, Search/RAG — plus hand-offs to Study for flashcards and quizzes. |
-| Ctrl+4 | [Artifacts](artifacts.md) 🚧 | Generated outputs, bundles, reports, datasets, and Chatbooks. |
-| Ctrl+5 | [Roleplay](roleplay-chat-dictionaries.md) | Characters, personas, chat dictionaries, and lore/world books. |
-| Ctrl+6 | [Watchlists](watchlists.md) 🚧 | Monitored sources, runs, alerts, and recovery. |
+| Ctrl+4 | [Roleplay](roleplay-chat-dictionaries.md) | Characters, personas, chat dictionaries, and lore/world books. |
+| Ctrl+5 | [Watchlists](watchlists.md) 🚧 | Monitored sources, runs, alerts, and recovery. |
+| Ctrl+6 | [Artifacts](artifacts.md) 🚧 | Generated outputs, bundles, reports, datasets, and Chatbooks. |
 | Ctrl+7 | [Schedules](schedules.md) 🚧 | When jobs, watchlists, and workflows run. |
 | Ctrl+8 | [Workflows](workflows.md) 🚧 | Reusable procedures, recipes, dry-runs, and outputs. |
-| F11 | [Meetings](meetings.md) | Record a call or a room with a live labelled transcript, then file it in the Library. |
 | Ctrl+9 | [MCP](mcp.md) 🚧 | MCP servers, tools, permissions, auth, and audit. |
 | Ctrl+0 | [ACP](acp.md) 🚧 | Agent Client Protocol agents, sessions, runtimes, diffs, and terminals. |
-| F7 | [Lab](lab.md) 🚧 | Models, speech, and evaluation runs. |
-| F8 | [Logs](logs.md) 🚧 | Application logs and diagnostics. |
-| F9 | [Settings](settings.md) | Global app preferences, appearance, accounts, and storage. |
-| F10 | [Research](research_workspace.md) | Authority-explicit research workspaces, plus navigation to durable Research Runs. |
+| F2 | [Lab](lab.md) 🚧 | Models, speech, and evaluation runs. |
+| F3 | [Logs](logs.md) 🚧 | Application logs and diagnostics. |
+| F4 | [Settings](settings.md) | Global app preferences, appearance, accounts, and storage. |
+| F5 | [Research](research_workspace.md) | Authority-explicit research workspaces, plus navigation to durable Research Runs. |
+| F7 | [Meetings](meetings.md) | Record a call or a room with a live labelled transcript, then file it in the Library. |
 
-Lab, Logs, Settings, and Research sit past the ten digits, so they get function
-keys instead: **F7**, **F8**, **F9**, **F10** — the nav labels say so ("F7 Lab",
-"F8 Logs", "F9 Settings", "F10 Research"). The nav bar and the command palette
-(**Ctrl+P**) reach them
+Lab, Logs, Settings, Research, and Meetings sit past the ten digits, so they
+continue the walk onto the function-key row from its left end: **F2**, **F3**,
+**F4**, **F5**, **F7** (F1 is Help and F6 is Next Pane; F6 is skipped) — the
+nav labels say so ("F2 Lab", "F3 Logs", "F4 Settings", "F5 Research",
+"F7 Meetings"). The nav bar and the command palette (**Ctrl+P**) reach them
 too.
 
 Two more screens exist with **no nav label and no "Tab Navigation" palette
@@ -75,16 +76,17 @@ separate screens.
 
 **Note:** The "⌃\<digit\>" (or "F\<n\>") shown before each nav label is
 that screen's hotkey: press **Ctrl+digit** (Ctrl+1 … Ctrl+9, Ctrl+0) — or
-**F7** / **F8** / **F9** for the last three — to switch to it from anywhere;
+**F2**–**F5** / **F7** for the last five — to switch to it from anywhere;
 the keys work even while a text field has focus. Bare digit keys are not
 navigation shortcuts (typing `2` in the composer just types "2"). Clicking
 the nav label and **Ctrl+P** work everywhere too.
 
 One screen claims some of these digits for itself: on
 [Roleplay](roleplay-chat-dictionaries.md), **Ctrl+1 –
-Ctrl+4 switch that screen's four modes** instead of changing screens.
-Ctrl+5 … Ctrl+0 still navigate from there, as do the nav bar and
-**Ctrl+P**.
+Ctrl+4 switch that screen's four modes** instead of changing screens
+(Ctrl+4 would otherwise be Roleplay's own nav key — but you are already
+there, so it switches modes). Ctrl+5 … Ctrl+0 still navigate from there,
+as do the nav bar and **Ctrl+P**.
 
 ## Global keyboard shortcuts
 
@@ -94,7 +96,7 @@ Ctrl+5 … Ctrl+0 still navigate from there, as do the nav bar and
 | Ctrl+P | Open the command palette — search and jump to any screen or command from anywhere |
 | Ctrl+Q | Quit the app |
 | Ctrl+1 … Ctrl+9, Ctrl+0 | Switch to the screen with that hotkey digit (see the nav map above). Exception: on [Roleplay](roleplay-chat-dictionaries.md), Ctrl+1 – Ctrl+4 switch that screen's modes instead |
-| F7 / F8 / F9 | Switch to Lab / Logs / Settings — the three destinations past the digit row; they work while a text field has focus, like the Ctrl+digit chords |
+| F2 / F3 / F4 / F5 / F7 | Switch to Lab / Logs / Settings / Research / Meetings — the five destinations past the digit row; they work while a text field has focus, like the Ctrl+digit chords (F6 is skipped: Next Pane) |
 | F6 | Cycle through the current screen's panes; on screens without a pane cycle it only shows a notice |
 | Shift+F6 | Cycle panes backward — bound only on [Console](console.md) and [Roleplay](roleplay-chat-dictionaries.md); elsewhere it does nothing |
 

@@ -1521,7 +1521,7 @@ explicit Workspace bindings, not a global confinement-directory field.
 these tools in Console.
 
 **Default search backend.** Basic `web_search` and the opt-in
-`web_deep_search` share one preference. Open **Settings (F9) → Web Search**,
+`web_deep_search` share one preference. Open **Settings (F4) → Web Search**,
 choose **Default search backend**, complete its fields, and **Save (s)**.
 Use **Test saved settings** to send the displayed sample query and check access.
 For file-based configuration, the equivalent preference is:

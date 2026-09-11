@@ -14,7 +14,10 @@ from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Input, Select, Static
 
 from tldw_chatbook.UI.Logs_Window import LogRecord, LogsWindow, _styled_line
-from tldw_chatbook.UI.Navigation.main_navigation import nav_button_label
+from tldw_chatbook.UI.Navigation.main_navigation import (
+    nav_button_label,
+    nav_button_label_text,
+)
 from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import ReminderForm
 
 
@@ -38,10 +41,33 @@ def test_every_destination_has_a_hotkey_route() -> None:
 
 
 def test_fkey_labels_on_late_destinations() -> None:
-    assert nav_button_label("research", "Research") == "F10 Research"
-    assert nav_button_label("lab", "Lab") == "F7 Lab"
-    assert nav_button_label("logs", "Logs") == "F8 Logs"
-    assert nav_button_label("settings", "Settings") == "F9 Settings"
+    assert nav_button_label("research", "Research") == "F5 Research"
+    assert nav_button_label("lab", "Lab") == "F2 Lab"
+    assert nav_button_label("logs", "Logs") == "F3 Logs"
+    assert nav_button_label("settings", "Settings") == "F4 Settings"
+    assert nav_button_label("meetings", "Meetings") == "F7 Meetings"
+
+
+def test_nav_label_text_dims_only_the_key_prefix() -> None:
+    """task-32306: the key prefix renders dimmed so it parses as a key hint,
+    not an ordinal -- while the plain-string contract (and the bar's width
+    math, which reads cell length) stays identical to ``nav_button_label``.
+    """
+    for destination_id, word in (
+        ("home", "Label"),
+        ("acp", "Label"),
+        ("lab", "Label"),
+        ("meetings", "Label"),
+    ):
+        text = nav_button_label_text(destination_id, word)
+        plain = nav_button_label(destination_id, word)
+        assert str(text) == plain
+        assert text.cell_len == len(plain)
+        # Exactly one span, covering only the key prefix (everything before
+        # the first space), in dim style.
+        (span,) = text.spans
+        assert span.style == "dim"
+        assert text.plain[span.start : span.end] == plain.split(" ", 1)[0]
 
 
 # UX-069 -----------------------------------------------------------------
