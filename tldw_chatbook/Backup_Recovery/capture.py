@@ -77,6 +77,8 @@ def _manifest_for(inventory, staged, aliases, options, issues):
                     "mtime_ns": meta.mtime_ns,
                 },
             }
+            if item.shared_group:
+                aliases.setdefault(item.shared_group, []).append(item.logical_id)
     for item, path in staged:
         meta = item.metadata
         if meta is not None and meta.root_id in directories:
