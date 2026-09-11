@@ -99,6 +99,8 @@ from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
     PermissionProfileContext,
     PermRow,
     ToolPolicyProfileOption,
+    _PROFILE_HINT_TEXT,
+    _undiscovered_servers_hint,
     format_tool_state_label,
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm
@@ -611,6 +613,13 @@ class MCPWorkbench(Container):
         # True once the first load has had its chance to pre-select, so a
         # later resync can never re-hijack a selection the user cleared.
         self._did_initial_preselect: bool = False
+        # Wave C (F1): True while the first-load preselection holds the
+        # canvas on the OVERVIEW -- the rail highlights the row and the
+        # inspector explains it, but the detail view stays one explicit
+        # navigation away. Cleared by the first explicit selection
+        # (`_select_server_key`) or a restored view state, either of which
+        # is real user intent.
+        self._hold_canvas_overview: bool = False
         self._scope: str = "personal"
         self._scope_ref: str | None = None
         self._snapshots: list[ReadinessSnapshot] = []
@@ -1112,10 +1121,12 @@ class MCPWorkbench(Container):
         ]
         if len(problems) == 1:
             self._selected_server_key = problems[0].server_key
+            self._hold_canvas_overview = True
         elif len(self._snapshots) == 1:
             # task-2240: the lone rail row (fresh install's off/opt-in
             # built-in) is worth landing on too -- see the docstring.
             self._selected_server_key = self._snapshots[0].server_key
+            self._hold_canvas_overview = True
 
     def _selected_target_id(self) -> str | None:
         """The server-target id implied by `_selected_server_key`.
@@ -2646,7 +2657,13 @@ class MCPWorkbench(Container):
             preview=preview,
             echo=echo,
             gate_breadcrumb=tool_gate_breadcrumb(),
+            discovery_hint=_undiscovered_servers_hint(self._snapshots),
             profile_context=profile_context,
+        )
+        # Wave C (F8): only a non-default profile needs the Console-context
+        # caveat -- the default profile IS the plain story.
+        canvas.set_profile_hint(
+            _PROFILE_HINT_TEXT if self._tool_policy_profile_id != "default" else None
         )
         await self.query_one(MCPPermissionsMode).update_server_profiles(
             await self._server_governance_profiles(service, refresh=refresh_governance)
@@ -3305,6 +3322,15 @@ class MCPWorkbench(Container):
         -- they can change from other clients/sessions, and this only runs
         on an actual selection change, not on every keystroke.
         """
+        if self._hold_canvas_overview:
+            # Wave C (F1): the first-load preselection explains itself in
+            # the rail + inspector while the overview (Add server, callouts)
+            # stays on screen -- `show_detail(None)` keeps the canvas on the
+            # overview AND refreshes its data underneath, exactly like any
+            # other resync with no selection. The hold is cleared by the
+            # first explicit selection (see `_select_server_key`).
+            await canvas.show_detail(None)
+            return
         if (
             selected is not None
             and self._is_external_record_key(selected.server_key)
@@ -3470,6 +3496,9 @@ class MCPWorkbench(Container):
 
     async def _apply_view_state(self, state: dict[str, Any]) -> None:
         # Tolerant restore: unknown keys ignored; legacy panel shape accepted.
+        # Wave C (F1): a restored view state is explicit prior-user intent
+        # and wins over the first-load overview hold.
+        self._hold_canvas_overview = False
         source = state.get("source") or state.get("selected_source")
         if source in ("local", "server") and source != self._source:
             await self._switch_source(str(source))
@@ -3570,6 +3599,10 @@ class MCPWorkbench(Container):
         `_switch_source()`'s identical T6 clear.
         """
         self._selected_server_key = server_key
+        # Wave C (F1): an explicit selection (rail row, table row, callout,
+        # breadcrumb) is real navigation intent -- the first-load
+        # overview hold, if any, ends here.
+        self._hold_canvas_overview = False
         # T6: selecting a different server invalidates any Tools-mode
         # selection the inspector was showing -- "switching modes or
         # servers clears the tool view" -- and (I1 above) the Findings
@@ -5641,7 +5674,11 @@ class MCPWorkbench(Container):
             return
         self._profile_save_in_flight = True
         self.run_worker(
-            self._save_local_profile(dict(event.payload), warning=event.warning),
+            self._save_local_profile(
+                dict(event.payload),
+                warning=event.warning,
+                connect_after=event.connect_after,
+            ),
             group="mcp-profile-save",
             exclusive=True,
         )
@@ -5653,7 +5690,11 @@ class MCPWorkbench(Container):
             return None
 
     async def _save_local_profile(
-        self, payload: dict[str, Any], warning: str | None = None
+        self,
+        payload: dict[str, Any],
+        warning: str | None = None,
+        *,
+        connect_after: bool = False,
     ) -> None:
         """Run one profile save; on success, also re-surface the form's args
         secret-lint `warning` as a toast (I4 follow-up). The in-form
@@ -5662,6 +5703,13 @@ class MCPWorkbench(Container):
         sub-second after the warning rendered, so without this toast the
         user would never see it on exactly the path where the secret
         actually got persisted into a profile's args.
+
+        Wave C (F7a): `connect_after=True` (the form's "Save and connect")
+        dispatches the connect lifecycle for the just-saved profile once
+        the save and resync land -- the saved->connected journey used to
+        require finding the new row and its inspector Connect action.
+        A connect failure surfaces through the lifecycle's own
+        notification/readiness path (e.g. a missing env placeholder).
         """
         try:
             service = self._service()
@@ -5698,6 +5746,11 @@ class MCPWorkbench(Container):
                 self.app.notify(warning, severity="warning")
             self._snapshots = await self._collect_snapshots()
             await self._sync_children()
+            if connect_after and payload.get("profile_id"):
+                profile_id = str(payload["profile_id"])
+                self._start_lifecycle(
+                    f"local:{profile_id}", profile_id, "connect"
+                )
         finally:
             self._profile_save_in_flight = False
 

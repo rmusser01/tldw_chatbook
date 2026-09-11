@@ -11520,3 +11520,112 @@ async def test_test_tool_key_falls_back_to_tools_cursor_row():
             for message, _ in notifications
         )
         assert any("display-only" in message for message, _ in notifications)
+
+
+# -- Wave C (2026-09-11 MCP Hub UX program): flow fixes ---------------------
+
+
+@pytest.mark.asyncio
+async def test_fresh_install_preselection_keeps_overview_on_screen(monkeypatch):
+    """C1/F1: the first-load preselection (F-054/task-2240) keeps the
+    OVERVIEW table on screen -- the rail highlights the row and the
+    inspector explains it, but the Add server/Import toolbar and recovery
+    callouts stay visible instead of being hidden behind a detail view the
+    user never navigated to. An explicit selection still opens the detail
+    exactly as before, and a background resync alone must not flip views."""
+    monkeypatch.setattr(
+        mcp_workbench_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: default,
+    )
+    app = ProblemRecordsApp([])
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        assert workbench._selected_server_key == "builtin:tldw_chatbook"
+
+        assert app.query_one("#mcp-servers-overview").display is True
+        assert app.query_one("#mcp-servers-detail").display is False
+        state = app.query_one("#mcp-inspector-state", Static)
+        assert "tldw_chatbook (built-in)" in str(state.renderable)
+
+        # A background resync (lifecycle completion, `r`) must not flip it.
+        await workbench._sync_children()
+        await pilot.pause()
+        assert app.query_one("#mcp-servers-overview").display is True
+
+        # An explicit selection opens the detail as before.
+        await workbench._select_server_key("builtin:tldw_chatbook")
+        await pilot.pause()
+        assert app.query_one("#mcp-servers-detail").display is True
+
+
+@pytest.mark.asyncio
+async def test_save_and_connect_runs_lifecycle_after_save():
+    """C3/F7a: the add-server form's "Save and connect" persists the
+    profile and immediately dispatches the connect lifecycle -- the
+    saved->connected journey used to require finding the new row and its
+    Connect action in the inspector."""
+    connect_calls: list[str] = []
+
+    class SaveConnectService(FakeHubService):
+        async def save_local_profile(self, payload):
+            return dict(payload)
+
+        async def connect_local_profile(self, profile_id):
+            connect_calls.append(profile_id)
+            return {"ok": True, "tools": []}
+
+    class SaveConnectApp(ConsolidatedCSSApp):
+        def __init__(self) -> None:
+            super().__init__()
+            self.unified_mcp_service = SaveConnectService()
+
+        def compose(self) -> ComposeResult:
+            yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+    app = SaveConnectApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        await workbench.open_add_server_form()
+        await pilot.pause()
+        app.query_one("#mcp-form-id", Input).value = "docs"
+        app.query_one("#mcp-form-command", Input).value = "npx"
+        await pilot.click("#mcp-form-save-connect")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert connect_calls == ["docs"]
+        assert not list(app.query("#mcp-servers-form > *"))
+
+
+@pytest.mark.asyncio
+async def test_non_default_tool_policy_profile_shows_console_context_hint(tmp_path):
+    """C5/F8: with a non-default tool-policy profile selected, a one-line
+    hint under the profile selector says Console applies the profile on top
+    -- the matrix alone reads as if these rows were the whole story."""
+    store_path = tmp_path / "mcp_permissions.json"
+    store = MCPPermissionStore(store_path)
+    payload = store.load()
+    payload["profiles"]["research"] = _imported_tool_policy_profile()
+    store.save(payload)
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        hint = app.query_one("#mcp-perm-profile-hint", Static)
+        assert not hint.display  # default profile: no hint
+
+        workbench = app.query_one(MCPWorkbench)
+        await workbench.select_tool_policy_profile("research")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert hint.display
+        text = str(hint.renderable)
+        assert "Console" in text
+        assert "Ask" in text
