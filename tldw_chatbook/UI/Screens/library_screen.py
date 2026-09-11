@@ -1489,12 +1489,19 @@ class LibraryScreen(BaseAppScreen):
     # task-32247 AC#2: the document-end key is advertised beside the other
     # editor keys. Without it the only way to learn it was to guess -- and
     # before the binding existed, guessing it did nothing.
-    # Escape stays FIRST here, unlike its sibling tiers: the compact tier
-    # is what the ≤64-column narrow stage paints, where one chip is all
-    # that fits legibly (task-32346) and the exit is the chip that must
-    # survive -- ``test_compact_editor_context_reaches_the_paint_at_60_cols``
-    # pins the displayed string on it. The two tiers still carry the same
-    # keys in the same order, which the honesty contract requires.
+    # Escape stays FIRST here, unlike its sibling tiers, because the real
+    # footer drops trailing chips that miss the width budget and the exit
+    # is the one that must survive. Measured through the real
+    # ``AppFooterStatus`` at 60 columns (fix round 1, review F2 -- the
+    # round-0 comment cited a pin that did not exist and a budget of one
+    # chip that is not this tier's): BOTH compact chips paint
+    # ("esc notes | ctrl+end end"), a third is dropped, and the same pair
+    # in the WIDE wording paints only "esc back to notes". So the head of
+    # the tier is what is guaranteed, whatever a later label growth does.
+    # ``test_only_one_context_chip_paints_at_sixty_columns`` pins the budget
+    # itself; ``test_the_editor_exit_chip_survives_at_sixty_columns`` pins
+    # this tier against the focus chip appended below. The two tiers carry
+    # the same keys in the same order, which the honesty contract requires.
     LIBRARY_NOTES_EDITOR_SHORTCUTS = (
         ("esc", "back to notes"),
         ("ctrl+end", "end of note"),
