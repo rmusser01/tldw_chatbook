@@ -70,6 +70,45 @@ def _plan_digest(plan):
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
+def _publication_scope_path(path, *, items=(), prepared=None):
+    """Map only the installed declared SQLite transient relation to its main."""
+    from .models import StorageItem
+    from .owner_registry import install_adapters
+
+    if prepared is not None:
+        items = []
+        for group in prepared.rollback_sources:
+            items.append(
+                StorageItem(
+                    group.owner_id,
+                    group.logical_id,
+                    Path(group.source.path),
+                    "included",
+                    (),
+                )
+            )
+            items.extend(
+                StorageItem(
+                    "sqlite.transient",
+                    key,
+                    Path(value.path),
+                    "intentionally_excluded",
+                    (group.logical_id,),
+                )
+                for key, value in group.sidecars.items()
+            )
+    matches = [
+        item for item in items if item.path == path and item.owner == "sqlite.transient"
+    ]
+    if not matches:
+        return path
+    owners = {owner.owner_id: owner for owner in install_adapters()}
+    mains = {_sidecar_main(item, items, owners).path for item in matches}
+    if len(mains) != 1:
+        raise ValueError("rollback_sidecar_unclassified")
+    return mains.pop()
+
+
 def _finalization_session(session, context, prepared):
     from .control_records import UNBOUND_NAMESPACE
     from .storage_admission import MaintenanceSession, _contains_owned_path
@@ -91,7 +130,10 @@ def _finalization_session(session, context, prepared):
         or not set(context.namespaces) <= set(session._names)
         or any(name not in registry for name in context.namespaces)
         or any(
-            not any(_contains_owned_path(root, path) for root in session._roots)
+            not any(
+                _contains_owned_path(root, _publication_scope_path(path, prepared=prepared))
+                for root in session._roots
+            )
             for path in (
                 *map(Path, context.selectors),
                 *_publication_targets(prepared),
@@ -174,8 +216,12 @@ def finalize_candidate(candidate: Path, plan: RestorePlan, journal, *, session) 
     """
     from .activation import bind_activation
     from .owner_registry import install_adapters
+    from .plan_records import load_plan
     from .staging import _items
 
+    checked_plan = load_plan(journal)
+    if _plan_digest(checked_plan) != _plan_digest(plan):
+        raise ValueError("publication_context_unverified")
     with journal._locked(exclusive=True) as parent:
         records = journal._records(parent)
         row = next((row for row in records if row.event == "prepared"), None)
@@ -187,7 +233,7 @@ def finalize_candidate(candidate: Path, plan: RestorePlan, journal, *, session) 
             raise ValueError("publication_context_unverified")
         _finalization_session(session, context, prepared)
         if any(
-            not _matches(row.source, row.source.path, metadata=True)
+            not _safety_source_matches(row.source)
             for row in prepared.safety_sources
         ):
             raise ValueError("safety_source_changed")
@@ -236,6 +282,7 @@ def finalize_candidate(candidate: Path, plan: RestorePlan, journal, *, session) 
                     prepared.generation,
                     tuple(owners),
                     session=session,
+                    plan=checked_plan,
                 )
         proof = {
             "generation": prepared.generation,
@@ -318,7 +365,7 @@ def finalize_candidate(candidate: Path, plan: RestorePlan, journal, *, session) 
         ):
             raise ValueError("finalization_activation_changed")
         if any(
-            not _matches(row.source, row.source.path, metadata=True)
+            not _safety_source_matches(row.source)
             for row in prepared.safety_sources
         ):
             raise ValueError("safety_source_changed")
@@ -374,7 +421,7 @@ def _catalog_proof(journal, prepared, *, register=False):
     return sorted(records, key=lambda row: row["path"])
 
 
-def _pending(journal, context, *, targets=(), durable=False, committed=None):
+def _pending(journal, context, *, targets=(), durable=False, committed=None, plan=None):
     pending, _ = _records(Path(context.bootstrap_root))
     expected = {
         "version": 1,
@@ -389,6 +436,18 @@ def _pending(journal, context, *, targets=(), durable=False, committed=None):
     )
     if matching != [expected] and not absent_commit:
         raise ValueError("publication_pending_mismatch")
+    if targets:
+        with pinned_directory(journal.root) as parent:
+            records = journal._records(parent)
+        row = next((row for row in records if row.event == "prepared"), None)
+        prepared = _Prepared.model_validate(row.evidence) if row else None
+        targets = tuple(
+            _publication_scope_path(
+                path, items=plan.target.items if plan is not None and plan.target else (),
+                prepared=prepared,
+            )
+            for path in targets
+        )
     registry = _registry(Path(context.bootstrap_root))
     if registry is not None:
         if any(name not in registry for name in context.namespaces):
@@ -594,6 +653,95 @@ def _directory_state(path):
         )
 
 
+def _observe_safety_source(path):
+    """Observe explicit safety metadata without traversing unselected children."""
+    path = Path(path)
+    if not stat.S_ISDIR(path.lstat().st_mode):
+        return observe_artifact(path, metadata=True)
+    state = _directory_state(path)
+    return _Object(
+        path=state.path,
+        device=state.device,
+        inode=state.inode,
+        kind="directory",
+        size=0,
+        sha256=_evidence_digest(
+            {
+                "safety_directory_metadata": state.model_dump(exclude={"path"}),
+            }
+        ),
+    ).model_dump()
+
+
+def _safety_source_matches(source):
+    """Check the finite safety witness; ordinary artifact semantics stay intact."""
+    try:
+        return _observe_safety_source(source.path) == source.model_dump()
+    except (OSError, ValueError, RecursionError):
+        return False
+
+
+def _builtin_safety_scope(plan, artifacts, directory_metadata):
+    """Require every declared member of each explicitly preserved builtin root."""
+    if not plan.safety_scope:
+        return
+    owner = "persona.visual_identity_builtin"
+    selected = {
+        i.logical_id: i for i in plan.target.items if i.logical_id in plan.safety_scope
+    }
+    builtin = [i for i in selected.values() if i.owner == owner]
+    if not builtin:
+        return
+    available = set(selected)
+    for item in plan.target.items:
+        if item.path is not None and (
+            any(
+                row["previous"] is not None
+                and (
+                    item.path == Path(row["target"])
+                    or Path(row["target"]) in item.path.parents
+                )
+                for row in artifacts
+            )
+            or any(
+                item.path == Path(row["previous"]["path"]) for row in directory_metadata
+            )
+        ):
+            available.add(item.logical_id)
+    for item in builtin:
+        meta = item.metadata
+        root = selected.get(meta.root_id) if meta else None
+        parent = selected.get(meta.parent_id) if meta and meta.parent_id else None
+        if (
+            root is None
+            or root.owner != owner
+            or root.metadata is None
+            or root.status != "included_directory"
+            or root.metadata.parent_id is not None
+            or root.metadata.relative_path != ""
+            or root.metadata.root_id != root.logical_id
+            or item.path != root.path / meta.relative_path
+            or meta.kind
+            != ("directory" if item.status == "included_directory" else "file")
+            or item is not root
+            and (
+                parent is None
+                or parent.owner != owner
+                or parent.status != "included_directory"
+                or parent.path != item.path.parent
+            )
+            or not set(item.dependencies) <= available
+            or any(
+                other.logical_id not in selected
+                for other in plan.target.items
+                if other.owner == owner
+                and other.metadata is not None
+                and other.metadata.root_id == meta.root_id
+            )
+        ):
+            raise ValueError("safety_scope_incomplete")
+
+
 def _directory_expected(prepared, records):
     expected = {
         item.previous.path: item.previous for item in prepared.directory_metadata
@@ -717,13 +865,15 @@ def _rollback_sources(plan, artifacts, owners):
         if item.status != "included" or policy is None or not policy.schema_sql:
             continue
         sidecars = {}
-        for row in plan.target.items:
+        for row in sorted(plan.target.items, key=lambda value: value.logical_id):
             if row.owner != "sqlite.transient":
                 continue
             main = _sidecar_main(row, plan.target.items, owners)
             # Semantic aliases at one declared path share the same live WAL/SHM.
             # A hardlink or another pathname never borrows that path's sidecars.
-            if row.path.exists() and (
+            if row.path.exists() and not any(
+                existing.path == row.path for existing in sidecars.values()
+            ) and (
                 main.logical_id == item.logical_id
                 or item.shared_group
                 and main.shared_group == item.shared_group
@@ -829,6 +979,7 @@ def _prepare(
             journal,
             context,
             targets=[path for _, path in (*plan.restore, *plan.retire)],
+            plan=plan,
         )
         recheck_targets(plan)
         document = _descriptor(candidate, plan)
@@ -943,6 +1094,20 @@ def _prepare(
                 if row["action"] == "retire"
             ):
                 continue
+            repeated = next((row for row in rows if row["action"] == "retire" and row["destination"] == str(path)), None)
+            if repeated is not None:
+                aliases = {item.logical_id: item for item in plan.target.items}
+                left, right = aliases[key], aliases[repeated["logical_id"]]
+                if left.owner != "sqlite.transient" or right.owner != "sqlite.transient":
+                    raise ValueError("duplicate_retirement_target")
+                left = _sidecar_main(left, plan.target.items, owners)
+                right = _sidecar_main(right, plan.target.items, owners)
+                if left.path != right.path or not (
+                    left.logical_id == right.logical_id
+                    or left.shared_group and left.shared_group == right.shared_group
+                ):
+                    raise ValueError("rollback_sidecar_unclassified")
+                continue
             rows.append(
                 {
                     "logical_id": key,
@@ -1023,7 +1188,7 @@ def _prepare(
                     if evidence not in projection_roots:
                         projection_roots.append(evidence)
                 for local_path, local_item in target_items.items():
-                    if local_path == target or target in local_path.parents:
+                    if local_path is not None and (local_path == target or target in local_path.parents):
                         main = _sidecar_main(local_item, plan.target.items, owners)
                         local_owner = owners.get(main.owner)
                         if local_owner is None:
@@ -1113,6 +1278,7 @@ def _prepare(
             ) or not _matches(material, material.path):
                 raise ValueError("credential_material_unverified")
         safety_sources = []
+        _builtin_safety_scope(plan, artifacts, directory_metadata)
         target_by_id = (
             {item.logical_id: item for item in plan.target.items} if plan.target else {}
         )
@@ -1121,7 +1287,9 @@ def _prepare(
             adapter = owners.get(item.owner)
             policy = _item_validator(adapter, item).schema_policy() if adapter else None
             if (
-                item.status != "included"
+                item.status not in {"included", "included_directory"}
+                or item.status == "included_directory"
+                and item.owner != "persona.visual_identity_builtin"
                 or adapter is None
                 or policy is None
                 or policy.schema_sql
@@ -1138,7 +1306,7 @@ def _prepare(
                 {
                     "logical_id": key,
                     "owner_id": item.owner,
-                    "source": observe_artifact(item.path, metadata=True),
+                    "source": _observe_safety_source(item.path),
                 }
             )
         journal._append(
@@ -1317,7 +1485,7 @@ def publish_candidate(
             raise ValueError("publication_context_unverified")
         _pending(journal, context)
         if any(
-            not _matches(row.source, row.source.path, metadata=True)
+            not _safety_source_matches(row.source)
             for row in prepared.safety_sources
         ):
             raise ValueError("safety_source_changed")

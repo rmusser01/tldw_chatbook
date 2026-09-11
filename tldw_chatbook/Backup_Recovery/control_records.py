@@ -328,13 +328,120 @@ def _publish_activation_record(root, parent, name, before, after, temporary, ide
         raise ValueError("activation_publication_changed")
 
 
+def _replacement_activation_names(
+    journal, prepared, records, plan, selected, previous, registry
+):
+    """Derive forward additions from receipt-bound producer/config relationships."""
+    from . import archive_reader as reader
+    from .journal import _CandidateReceipt
+    from .limits import ArchiveLimits
+    from .publication import _plan_digest
+    from .staging import _items
+
+    names = set(previous["namespaces"])
+    additions = set(prepared.publication.namespaces) - names
+    additions = {
+        name for name in additions if name.startswith("replacement.destination.")
+    }
+    if not additions or any(row.event == "rollback_started" for row in records):
+        return sorted(names)
+    receipt = _CandidateReceipt.model_validate(records[0].evidence)
+    installed = next(
+        (row.evidence for row in records if row.event == "installed_validated"), None
+    )
+    if (
+        installed is None
+        or receipt.local_plan is None
+        or _plan_digest(plan) != receipt.plan_digest
+        or receipt.plan_digest != prepared.publication.plan_digest
+        or plan.archive_digest != prepared.publication.archive_digest
+        or installed["plan_digest"] != receipt.plan_digest
+    ):
+        raise ValueError("activation_destination_plan_required")
+    with reader._regular(journal.root / "verified-manifest.json") as stream:
+        encoded = stream.read(ArchiveLimits().manifest_bytes + 1)
+    import hashlib
+
+    if (
+        len(encoded) > ArchiveLimits().manifest_bytes
+        or hashlib.sha256(encoded).hexdigest() != receipt.manifest_digest
+        or installed["manifest_digest"] != receipt.manifest_digest
+    ):
+        raise ValueError("verified_manifest_changed")
+    doc = reader._manifest(encoded, ArchiveLimits(), True)
+    items = _items(doc, plan)
+    configs = {key: item.path for key, item in items.items() if item.owner == "config"}
+    producers = {item.logical_id: item for item in doc.producer_inventory}
+    synthetic_members = {
+        root.logical_id: tuple(
+            row.logical_id
+            for row in (*doc.files, *doc.directories)
+            if row.root_id == root.logical_id
+            and row.logical_id != root.logical_id
+            and row.logical_id in items
+        )
+        for root in doc.directories
+        if root.synthetic
+    }
+
+    def selectors(key):
+        pending, visited, result = [key], set(), set()
+        while pending:
+            key = pending.pop()
+            if key in visited:
+                continue
+            visited.add(key)
+            if key in configs:
+                result.add(configs[key])
+            elif key in synthetic_members:
+                pending.extend(synthetic_members[key])
+            elif key in producers:
+                pending.extend(producers[key].dependencies)
+        return result
+
+    parents = {
+        row.path: row for artifact in prepared.artifacts for row in artifact.parents
+    }
+    for name in sorted(additions):
+        roots = registry[name]["roots"]
+        if len(roots) != 1:
+            raise ValueError("activation_destination_scope_invalid")
+        root = Path(roots[0])
+        if (
+            name
+            != "replacement.destination."
+            + hashlib.sha256(str(root).encode()).hexdigest()
+        ):
+            raise ValueError("activation_destination_scope_invalid")
+        evidence = parents.get(str(root))
+        if evidence is None:
+            raise ValueError("activation_destination_parent_changed")
+        with pinned_directory(root) as parent:
+            info = os.fstat(parent)
+            if (info.st_dev, info.st_ino) != (evidence.device, evidence.inode):
+                raise ValueError("activation_destination_parent_changed")
+        related = set()
+        for key, item in items.items():
+            if item.path is not None and (
+                item.path == root or root in item.path.parents
+            ):
+                owners = selectors(key)
+                if not owners:
+                    raise ValueError("activation_destination_dependency_required")
+                related.update(owners)
+        if selected in related:
+            names.add(name)
+    return sorted(names)
+
+
 def _bind_activation(
-    bootstrap_root, operation_id, config_selector, generation, owners, session
+    bootstrap_root, operation_id, config_selector, generation, owners, session, plan=None
 ):
     """Install paired generation evidence while exact native maintenance is held.
 
-    No namespace remap, enrollment refresh, journal commit or fence clearance is
-    performed here. The pending operation and an explicit before/after intent
+    Existing sources stay enrolled; checked forward plans may add their exact
+    publication destinations. No journal commit or fence clearance occurs here.
+    The pending operation and an explicit before/after intent
     retain ambiguous writes for the eventual recovery executor.
     """
     from .activation import ActivationStore, _identifier, _private
@@ -365,6 +472,15 @@ def _bind_activation(
     previous = next((p for p in profiles if p["selector"] == str(selected)), None)
     if previous is not None:
         names = previous["namespaces"]
+        if plan is not None:
+            from .journal import _Prepared
+
+            journal = Journal(Path(operation["control_root"]), operation_id)
+            with pinned_directory(journal.root) as parent:
+                records = journal._records(parent)
+            prepared = _Prepared.model_validate(next(row.evidence for row in records if row.event == "prepared"))
+            if prepared.mode == "replace" and generation == prepared.generation:
+                names = _replacement_activation_names(journal, prepared, records, plan, selected, previous, registry)
     if (
         registry is None
         or not set(names) <= set(operation["namespaces"])
@@ -372,7 +488,9 @@ def _bind_activation(
     ):
         raise ValueError("activation_profile_scope_mismatch")
     roots = sorted({p for n in names for p in registry[n]["roots"]})
-    if previous is not None and previous["roots"] != roots:
+    if previous is not None and previous["roots"] != sorted(
+        {path for name in previous["namespaces"] for path in registry[name]["roots"]}
+    ):
         raise ValueError("activation_profile_mapping_changed")
     if not any(_contains_owned_path(Path(p), selected) for p in roots) or any(
         not any(_contains_owned_path(r, Path(p)) for r in session._roots) for p in roots
@@ -626,13 +744,15 @@ def _recovery_pending(root, journal, prepared):
 def _recover_activation_pairs(journal, prepared, session):
     """Finish exact local before/after pairs; ordinary readers never repair them."""
     from .activation import ActivationStore
+    from .plan_records import load_plan
     from .publication import _finalization_session
 
+    plan = load_plan(journal)
     root = Path(prepared.publication.bootstrap_root)
     _finalization_session(session, prepared.publication, prepared)
     pending = _recovery_pending(root, journal, prepared)
     registry = _registry(root)
-    with journal._locked(exclusive=True), pinned_directory(root) as parent:
+    with journal._locked(exclusive=True) as journal_parent, pinned_directory(root) as parent:
         names = sorted(
             name for name in os.listdir(parent) if name.startswith("activation-update-")
         )
@@ -673,8 +793,13 @@ def _recover_activation_pairs(journal, prepared, session):
                 )
                 if (
                     previous["selector"] != update.selector
-                    or previous["namespaces"] != after_profile["namespaces"]
-                    or previous["roots"] != after_profile["roots"]
+                    or _replacement_activation_names(
+                        journal, prepared, journal._records(parent=journal_parent), plan,
+                        selector, previous, registry,
+                    ) != after_profile["namespaces"]
+                    or previous["roots"] != sorted({
+                        path for scope in previous["namespaces"] for path in registry[scope]["roots"]
+                    })
                 ):
                     raise ValueError("activation_recovery_context_invalid")
                 old = previous.get("activation")

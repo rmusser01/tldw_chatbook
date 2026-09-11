@@ -25,6 +25,7 @@ def bind_activation(
     owners: tuple[str, ...],
     *,
     session=None,
+    plan=None,
 ) -> Path:
     """Associate local requirements under live matching maintenance and pending intent.
 
@@ -34,12 +35,13 @@ def bind_activation(
     Initial profiles inherit the complete affected pending footprint, excluding
     guards held only by maintenance. For narrower multi-profile isolation, the
     executor must register separate affected scopes/pending records. Existing
-    profiles retain their exact enrolled namespace/root mapping.
+    profiles retain their enrolled sources; a checked replacement plan may add
+    only its verified per-selector publication destinations.
     """
     from .control_records import _bind_activation
 
     return _bind_activation(
-        bootstrap_root, operation_id, config_selector, generation, owners, session
+        bootstrap_root, operation_id, config_selector, generation, owners, session, plan
     )
 
 

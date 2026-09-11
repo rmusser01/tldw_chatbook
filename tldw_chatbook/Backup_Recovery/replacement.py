@@ -29,7 +29,11 @@ from .credentials import _material, process_credentials
 from .journal import _CandidateReceipt, _matches, _Prepared, observe_artifact
 from .limits import ArchiveLimits
 from .models import FileMetadata, Inventory, StorageItem
-from .native_files import create_private_directory, create_private_file
+from .native_files import (
+    create_private_directory,
+    create_private_file,
+    pinned_directory,
+)
 from .owner_registry import install_adapters
 from .publication import (
     _descriptor,
@@ -37,8 +41,10 @@ from .publication import (
     _finalization_session,
     _pending,
     _plan_digest,
+    _publication_scope_path,
     _publication_targets,
     _rollback_sources,
+    _safety_source_matches,
 )
 from .restore_plan import RestorePlan, recheck_targets
 from .sqlite_validation import validated_schema_version
@@ -50,6 +56,25 @@ class RollbackCredentialReviewRequired(CaptureReviewRequired):
     def __init__(self, issues):
         super().__init__(tuple(sorted(set(issues))))
         self.args = ("rollback_credential_coverage_changed",)
+
+
+def _validate_builtin_safety(items, candidates, owners):
+    """Validate finite builtin roots against the actual captured core and files."""
+    from tldw_chatbook.Persona_Visual.recovery import _Assets
+
+    for item in items:
+        if (
+            item.owner == "persona.visual_identity_builtin"
+            and item.status == "included_directory"
+            and item.metadata is not None
+            and item.metadata.parent_id is None
+        ):
+            owner = owners.get(item.owner)
+            if type(owner) is not _Assets:
+                raise ValueError("rollback_owner_unavailable")
+            issues = owner.validate_dependencies(item, item.path, candidates)
+            if issues:
+                raise ValueError(issues[0])
 
 
 def _checked_originals(plan, journal, session):
@@ -89,7 +114,7 @@ def _checked_originals(plan, journal, session):
         if {row.logical_id for row in prepared.safety_sources} != set(
             plan.safety_scope
         ) or any(
-            not _matches(row.source, row.source.path, metadata=True)
+            not _safety_source_matches(row.source)
             for row in prepared.safety_sources
         ):
             raise ValueError("rollback_safety_source_changed")
@@ -132,7 +157,9 @@ def _checked_originals(plan, journal, session):
             ):
                 continue
             if not any(
-                _contains_owned_path(Path(root), item.path)
+                _contains_owned_path(
+                    Path(root), _publication_scope_path(item.path, items=plan.target.items)
+                )
                 for binding in bindings
                 for root in binding["roots"]
             ):
@@ -353,6 +380,7 @@ def capture_verify_rollback(
         validate_groups(
             inventory.items, candidates, stage, cancel, limits, limits.expanded_bytes
         )
+        _validate_builtin_safety(inventory.items, candidates, owners)
         rebound = _replace(
             inventory, items=tuple(_replace(item, path=path) for item, path in staged)
         )
@@ -456,12 +484,14 @@ def capture_verify_rollback(
         by_id = {row.logical_id: row for row in doc.files}
         verified = stage / "verified"
         create_private_directory(verified)
+        verified_candidates = {}
         for source in prepared.rollback_sources:
             payload = by_id.get(source.logical_id)
             if payload is None or payload.owner_id != source.owner_id:
                 raise ValueError("rollback_sqlite_coverage_mismatch")
             private = verified / hashlib.sha256(source.logical_id.encode()).hexdigest()
             _copy_verified_payload(archive, payload, private, cancel)
+            verified_candidates[source.logical_id] = private
             version = validated_schema_version(owners[source.owner_id], private, cancel)
             if version != versions[source.owner_id]:
                 raise ValueError("rollback_sqlite_schema_changed")
@@ -473,6 +503,16 @@ def capture_verify_rollback(
                     "payload_digest": payload.sha256,
                 }
             )
+        for item in inventory.items:
+            if item.owner != "persona.visual_identity_builtin" or item.status != "included":
+                continue
+            payload = by_id.get(item.logical_id)
+            if payload is None or payload.owner_id != item.owner:
+                raise ValueError("rollback_builtin_coverage_mismatch")
+            private = verified / hashlib.sha256(item.logical_id.encode()).hexdigest()
+            _copy_verified_payload(archive, payload, private, cancel)
+            verified_candidates[item.logical_id] = private
+        _validate_builtin_safety(inventory.items, verified_candidates, owners)
         projection_candidates = {}
         for item in inventory.items:
             if item.owner != "rag.projections" or item.status != "included":
@@ -696,6 +736,122 @@ def _ensure_first_bindings(plan, selectors, root, cancel):
         recheck_targets(plan)
 
 
+def _selected_config_container(plan, document, key, destination, registry, profiles):
+    """Verify the one mapped config root and its actual local source footprint."""
+    from .bootstrap import _overlap
+
+    selected = dict(plan.restore)
+    roots = {root for root, path in plan.destinations if path == destination}
+    if key not in roots:
+        return False
+    configs = [
+        row
+        for row in document.files
+        if row.root_id in roots and row.owner_id == "config"
+    ]
+    if len(configs) != 1:
+        return False
+    config = configs[0]
+    selector = selected.get(config.logical_id)
+    current = next((row for row in profiles if Path(row["selector"]) == selector), None)
+    if (
+        current is None
+        or selector.parent != destination
+        or any(
+            Path(row["selector"]) != selector
+            and _overlap(destination, Path(row["selector"]))
+            for row in profiles
+        )
+    ):
+        return False
+    producers = {row.logical_id: row for row in document.producer_inventory}
+    config_keys = {row.logical_id for row in document.files if row.owner_id == "config"}
+
+    def config_dependencies(key):
+        pending, visited, result = [key], set(), set()
+        while pending:
+            value = pending.pop()
+            if value in visited:
+                continue
+            visited.add(value)
+            if value in config_keys:
+                result.add(value)
+            elif value in producers:
+                pending.extend(producers[value].dependencies)
+        return result
+
+    synthetic = {row.logical_id for row in document.directories if row.synthetic}
+    members = [
+        row
+        for row in (*document.files, *document.directories)
+        if row.root_id in roots and row.logical_id not in synthetic
+    ]
+    if {row.root_id for row in members} != roots or any(
+        row.logical_id not in selected
+        or config_dependencies(row.logical_id) != {config.logical_id}
+        for row in members
+    ):
+        return False
+    actual_paths = {
+        item.path
+        for item in plan.target.items
+        if item.status in {"included", "included_directory"}
+    }
+    return all(
+        name in current["namespaces"]
+        and Path(path) in actual_paths
+        and not any(name in row["namespaces"] for row in profiles if row is not current)
+        for name, entry in registry.items()
+        for path in entry["roots"]
+        if _overlap(destination, Path(path))
+    )
+
+
+def _register_publication_parents(plan, authority, protected, *, document):
+    """Fence only selected existing private parents of new mapped destinations."""
+    from . import bootstrap
+    from .restore_plan import _ancestor
+
+    registry = bootstrap._registry(authority.control_root.parent)
+    _, profiles = bootstrap._records(authority.control_root.parent)
+    roots = [Path(path) for entry in registry.values() for path in entry["roots"]]
+    for key, destination in plan.destinations:
+        paths = [
+            path
+            for _, path in plan.restore
+            if path == destination or destination in path.parents
+        ]
+        if all(
+            any(root == path or root in path.parents for root in roots)
+            for path in paths
+        ):
+            continue
+        parent = _ancestor(destination)
+        config_container = destination.is_dir() and _selected_config_container(
+            plan, document, key, destination, registry, profiles
+        )
+        if any(bootstrap._overlap(parent, path) for path in protected) or (
+            not config_container
+            and (
+                destination.exists()
+                or parent == destination
+                or any(bootstrap._overlap(parent, path) for path in roots)
+            )
+        ):
+            raise ValueError("replacement_destination_parent_required")
+        with pinned_directory(parent) as fd:
+            info = os.fstat(fd)
+            if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+                raise ValueError("replacement_destination_parent_required")
+        name = (
+            "replacement.destination."
+            + hashlib.sha256(str(parent).encode()).hexdigest()
+        )
+        authority.register(name, (parent,))
+        roots.append(parent)
+    recheck_targets(plan)
+
+
 def replace(
     plan: RestorePlan,
     candidate: Path,
@@ -733,7 +889,8 @@ def replace(
     recheck_targets(plan)
     control_root = lexical_path(control_root)
     root = bootstrap.default_bootstrap_root()
-    config_keys = {row.logical_id for row in reader.verify_sealed(archive, cancel).files if row.owner_id == "config"}
+    document = reader.verify_sealed(archive, cancel)
+    config_keys = {row.logical_id for row in document.files if row.owner_id == "config"}
     config_destinations = [path for key, path in plan.restore if key in config_keys]
     if len(config_destinations) != len(set(config_destinations)):
         raise ValueError("replacement_config_mapping_ambiguous")
@@ -761,6 +918,11 @@ def replace(
         for row in selected
     ):
         raise ValueError("replacement_binding_changed")
+    authority = admission_authority(root)
+    _register_publication_parents(
+        plan, authority, (root, control_root, candidate, archive.path), document=document
+    )
+    registry = bootstrap._registry(root)
     affected = [path for _, path in (*plan.restore, *plan.retire)]
     affected += [
         item.path for item in plan.target.items if item.logical_id in plan.safety_scope
@@ -785,7 +947,8 @@ def replace(
             for name in names
             for bound in registry[name]["roots"]
         )
-        for path in affected
+        for original in affected
+        for path in (_publication_scope_path(original, items=plan.target.items),)
     ):
         raise ValueError("replacement_scope_uncovered")
     protected = [Path(bound) for name in names for bound in registry[name]["roots"]]
@@ -1115,11 +1278,19 @@ def _abort_context(journal, plan, records):
         )
     _, profiles = bootstrap._records(root)
     registry = bootstrap._registry(root)
+    receipt = _CandidateReceipt.model_validate(records[0].evidence)
+    with reader._regular(journal.root / "verified-manifest.json") as stream:
+        encoded = stream.read(ArchiveLimits().manifest_bytes + 1)
+    if len(encoded) > ArchiveLimits().manifest_bytes or hashlib.sha256(encoded).hexdigest() != receipt.manifest_digest:
+        raise ValueError("verified_manifest_changed")
+    doc = reader._manifest(encoded, ArchiveLimits(), True)
+    config_keys = {row.logical_id for row in doc.files if row.owner_id == "config"}
+    config_paths = {path for key, path in plan.restore if key in config_keys}
     selectors = sorted(
         {
             str(item.path)
             for item in plan.target.items
-            if item.owner == "config" and (item.logical_id, item.path) in plan.restore
+            if item.owner == "config" and item.path in config_paths
         }
     )
     selected = [row for row in profiles if row["selector"] in selectors]
@@ -1193,7 +1364,10 @@ def _abort_prepublication(journal, plan, cancel, *, execute):
             raise ValueError("publication_pending_mismatch")
         session._check()
         if session._control != root / "admission" or any(
-            not any(_contains_owned_path(bound, path) for bound in session._roots)
+            not any(
+                _contains_owned_path(bound, _publication_scope_path(path, items=plan.target.items))
+                for bound in session._roots
+            )
             for path in (*affected, *map(Path, context.selectors))
         ):
             raise ValueError("finalization_scope_uncovered")
@@ -1598,7 +1772,7 @@ def _originals_proof(prepared, started, check_credentials, credential_plan=None)
     ):
         raise ValueError("rollback_originals_unverified")
     for row in prepared.safety_sources:
-        if not _matches(row.source, row.source.path, metadata=True):
+        if not _safety_source_matches(row.source):
             raise ValueError("safety_source_changed")
     check_credentials.check(credential_plan)
     return {
