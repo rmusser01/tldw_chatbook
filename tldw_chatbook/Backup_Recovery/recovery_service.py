@@ -348,6 +348,60 @@ class RecoveryService:
 
         return plan_restore(self.inspection(inspection_id), **choices)
 
+    def start_extraction_preview(
+        self, inspection_id, *, group_ids, destination, limits=None
+    ):
+        """Review manual byte extraction on the retained worker before publication."""
+        from .inert_extraction import preview_inert_extraction
+        from .service_storage import work_root
+
+        archive = self.inspection(inspection_id)
+
+        def preview(operation, cancel):
+            self._update(operation, phase="reviewing_extraction")
+            plan = preview_inert_extraction(
+                archive,
+                group_ids=group_ids,
+                destination=Path(destination),
+                limits=limits or ArchiveLimits(),
+                cancel=cancel,
+                protected_roots=(self.control_root, work_root(self.control_root)),
+            )
+            self._update(
+                operation, phase="extraction_review_ready", result={"plan": plan}
+            )
+
+        return self._start("preview_extraction", preview)
+
+    def start_extraction(self, inspection_id, plan):
+        """Publish reviewed opaque files without installing or activating a profile."""
+        from .inert_extraction import InertExtractionPlan, extract_inert
+        from .service_storage import work_root
+
+        archive = self.inspection(inspection_id)
+        if type(plan) is not InertExtractionPlan or not {
+            self.control_root,
+            work_root(self.control_root),
+        }.issubset(plan.protected_roots):
+            raise ValueError("extraction_preview_required")
+
+        def extract(operation, cancel):
+            self._update(operation, phase="extracting_inert_files")
+            result = extract_inert(archive, plan, cancel=cancel)
+            self._update(
+                operation,
+                phase="inert_extracted",
+                result={
+                    "path": str(result.destination),
+                    "report_path": str(result.report_path),
+                    "archive_digest": result.archive_digest,
+                    "group_ids": result.group_ids,
+                    "inert_extracted": True,
+                },
+            )
+
+        return self._start("extract_inert", extract)
+
     def start_restore(self, inspection_id, plan, *, rollback_password=None):
         from .restore_plan import RestorePlan
 

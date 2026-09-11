@@ -265,7 +265,7 @@ try:
  config,data=ProfileCatalog(control).resolve(profile)
  assert config==dest/'config'/'config.toml' and data==dest/'data'
  import tomllib
- assert tomllib.loads(config.read_text())['general']['users_name']=='recovered' 
+ assert tomllib.loads(config.read_text())['general']['users_name']=='recovered'
  assert _launch_descriptor(profile,control).profile_id==profile
  assert service.profiles()[0]['profile_id']==profile
  assert service.profiles()[0]['status']=='restoration_validated'

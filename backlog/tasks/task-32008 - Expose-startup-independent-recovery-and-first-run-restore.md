@@ -14,7 +14,7 @@ dependencies:
 - task-32005
 - task-32006
 - task-32007
-updated_date: 2026-09-11 08:21
+updated_date: 2026-09-11 08:30
 ---
 
 ## Description
@@ -53,4 +53,6 @@ Release P originalTask25 inert extraction from /private/tmp/chatbook-inert-extra
 2026-09-11: P froze standalone inert manual extraction2files /private/tmp/chatbook-inert-extraction-report.md, patch SHAc79bd9410c110ba2ff8d9715f23677da61496797fb3d3584dfaf540cab62a3df. Root full-source review no current finding; exact committed-production snapshot + frozen unit21newcases pass and10architecture pass, only census5newproducer rows failed as expected,10.73s /private/tmp/inert-extraction-root-index.log. Added exactly5 reviewed input/private report-intent/payload boundary rows; independent A source+census review pending, clean census rerun pending. Root's initial hash-loader wrapper mistook metadata keys for filenames and copied nothing/no tests ran; corrected wrapper uses files mapping, not a product failure. Service/UI/CLI extraction still not exposed.
 Original extraction view composition planned within existing single-worker service: start_extraction_preview(inspection_id, group_ids, destination, limits) retains native verification on worker; start_extraction(inspection_id, reviewed_plan) uses same acquired source and always adds actual control/work protected roots. Result reports inert_extracted/path/report only, no restoration/open approval. Root adding focused new service composition test first; service source extension waits C isolated branch correction release/freeze.
 A independently approved exact inert extraction frozen two-file patch plus precisely five census rows: /private/tmp/chatbook-inert-extraction-independent-review.md; no findings/source edits. Root clean census11passed7.91s after root21newbehavioral cases pass10.73s. Production Ruff/Bandit0. Ready for bounded standalone engine commit, service/UI exposure remains original pending work.
+2026-09-11: Root verified CLI recover parser likewise lacks new native pre-safety --abort choice. Released exact launcher.py mutually-exclusive parser choice + test_launcher.py real pre-safety abort dispatch proof with A's corresponding F9 correction. Existing dispatcher uses actual service action validation; no new engine. This updates exactly two firstslice hashes for focused C re-review after prior eightfile approval. Extraction service followup frozen separately with4actual+census11pass15.34s; A independent review queued.
+A independently approved frozen extraction service followup: /private/tmp/chatbook-inert-extraction-service-independent-review.md, exact3file hashes/patch verified;4native composition+census11 passed15.34s in committed production snapshot, Ruff0/Bandit0. Standalone extraction engine already committeda19114179; facade ready for scoped commit. One embedded test trailing whitespace exposed by prior commit check is removed here; source behavior unchanged, subsequent mutation shell scripts fail fast.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
