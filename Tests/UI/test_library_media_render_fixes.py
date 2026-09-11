@@ -1619,10 +1619,11 @@ def _plain_local_host() -> LibraryProductionCSSHarness:
     """Two local items with neither an author nor a URL.
 
     ``_two_media_items`` carries an author on both rows, so it can never
-    show the empty byline row task-31277 collapses. The type is ``pdf`` --
-    outside ``_MARKDOWN_MEDIA_TYPES`` -- so no Rendered|Raw strip can enter
-    the chrome count whatever the content sniffs as, and one deliberately
-    long line proves the reading measure.
+    show the empty byline row task-31277 collapses. The content is plain
+    prose with no Markdown marker, so no Rendered|Raw strip can enter the
+    chrome count (since task-32234 the content sniff decides that alone,
+    for every media type), and one deliberately long line proves the
+    reading measure.
     """
     app = _build_media_test_app()
     long_line = (
@@ -1634,8 +1635,8 @@ def _plain_local_host() -> LibraryProductionCSSHarness:
         {
             "id": f"media-{index}",
             "title": f"Roadmap Recording {index}",
-            # pdf is outside _MARKDOWN_MEDIA_TYPES, so no Rendered|Raw strip
-            # can appear and the chrome count is independent of the sniff.
+            # task-32234: the content above sniffs as plain prose, so no
+            # Rendered|Raw strip can appear whatever this type is.
             "type": "pdf",
             "last_modified": "2026-07-06T08:00:00Z",
             "keywords": ["roadmap"],
@@ -3541,10 +3542,9 @@ async def test_returning_to_read_restores_the_reading_position_once():
 async def test_analysed_secondary_survives_the_36_cell_items_floor():
     """M-1: the 24-cell secondary at the Items pane's 36-cell floor.
 
-    The automatic resolver gives Items 52 cells at both tested terminal
-    sizes, so the floor only runs when a custom Items width asks for it (a
-    custom width is obeyed as typed). 36 is ``list_min_width`` + Media's two
-    one-cell grips -- the narrowest the pane ever gets.
+    A custom 36-cell Items pane gives its canvas 32 cells after padding.
+    Since task-32060 the canvas fits that content box instead of overflowing
+    it with its own 36-cell minimum. The analysis state must remain readable.
     """
     host = _review_state_host()
     async with host.run_test(size=(235, 52)) as pilot:
@@ -3557,8 +3557,13 @@ async def test_analysed_secondary_survives_the_36_cell_items_floor():
         screen._sync_library_media_reader_layout_from_shell()
         await _wait_for_condition(
             pilot,
-            lambda: _items_pane_width(screen) == 36,
-            message="The Items pane never reached its 36-cell floor.",
+            lambda: _items_pane_width(screen) == 32,
+            message=lambda: (
+                f"Items canvas width={_items_pane_width(screen)}; "
+                f"view={screen._media_state.view}; "
+                f"preferences={screen._media_state.reader_preferences}; "
+                f"layout={screen._media_state.reader_layout}"
+            ),
         )
 
         # The crop at this width clips a neighbouring pane border into the
@@ -4221,7 +4226,7 @@ async def test_more_row_actions_share_one_grid_column_grammar(size):
 
     "Open manager" used to sit one cell further in than its siblings. PR H
     replaced the More disclosure's bare Vertical with a single ``ItemGrid``
-    (``#library-media-reader-more-actions``, fixed 15-16 cell columns), so
+    (``#library-media-reader-more-actions``, now fixed 17-cell columns), so
     every action in the row is laid out on the same column origins by
     construction. This is the painted proof, kept as a pin so the column
     grammar cannot silently drift back.
@@ -4243,23 +4248,36 @@ async def test_more_row_actions_share_one_grid_column_grammar(size):
             "library-media-open",
             "library-media-delete",
         ], actions
-        columns = sorted({action.region.x for action in actions})
+        # task-31980 deliberately separates the destructive label by two
+        # cells inside its grid slot. Compare slot origins, then verify the
+        # full labels are still painted rather than treating that margin as
+        # a broken column alignment.
+        expected_margins = {
+            "library-media-edit": 0,
+            "library-media-open": 0,
+            "library-media-delete": 2,
+        }
+        assert {
+            action.id: action.styles.margin.left for action in actions
+        } == expected_margins
+        origins = {
+            action.id: action.region.x - expected_margins[action.id]
+            for action in actions
+        }
+        columns = sorted(set(origins.values()))
         # One pitch for the whole row: "Open manager" starts exactly one
         # column after "Edit metadata" and one before "Move to trash",
         # never on an origin (or an extra cell of indent) of its own.
-        pitches = {
-            second - first for first, second in zip(columns, columns[1:])
-        }
-        assert len(pitches) == 1, [
-            (action.id, action.region) for action in actions
-        ]
+        pitches = {second - first for first, second in zip(columns, columns[1:])}
+        assert len(pitches) == 1, [(action.id, action.region) for action in actions]
         # ...and every row of the grid starts at the same leftmost column.
         rows: dict[int, list[int]] = {}
         for action in actions:
-            rows.setdefault(action.region.y, []).append(action.region.x)
+            rows.setdefault(action.region.y, []).append(origins[action.id])
         assert {min(xs) for xs in rows.values()} == {columns[0]}, rows
         painted = _painted(host, grid.region)
-        assert "Open manager" in painted, painted
+        for label in ("Edit metadata", "Open manager", "Move to trash"):
+            assert label in painted, painted
 
 
 # ---------------------------------------------------------------------------

@@ -11042,11 +11042,11 @@ def _painted_label_column(host, button) -> int:
 def _row_is_painted_focused(host, row) -> bool:
     """Whether ``row`` really carries the media row focus cue on screen.
 
-    ``.library-media-row:focus`` sets ``outline: none`` and paints its cue as
-    a STYLE (focus background + bold underline), so a region assertion cannot
-    tell a focused row from an unfocused one (the task-31221 lesson).
+    The label carries bold underline; the separate solid focus bar added by
+    task-31983 is not underlined. Inspect the painted content region so that
+    border glyphs do not invalidate the label's focus cue.
     """
-    cells = _painted_cells(host, row.region)
+    cells = _painted_cells(host, row.content_region)
     return bool(cells) and all(style.underline for _text, style in cells)
 
 
