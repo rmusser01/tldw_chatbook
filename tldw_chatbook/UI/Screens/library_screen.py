@@ -10005,7 +10005,10 @@ class LibraryScreen(BaseAppScreen):
         if not self._file_notes_active():
             return True
         assert self._notes_state.file_notes_workspace is not None
-        self._notes_state.file_notes_workspace.cancel_structural_wait()
+        # task-32102: this seam is only ever reached on the way out, so the
+        # outcome is announced -- the root row it used to be written to is
+        # part of the canvas being torn down.
+        self._notes_state.file_notes_workspace.cancel_structural_wait(leaving=True)
         return await self._notes_state.file_notes_workspace.flush_pending_work()
 
     def _acquire_file_notes_transition(
