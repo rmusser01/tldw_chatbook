@@ -3,9 +3,11 @@ id: TASK-32261
 title: >-
   Library Notes keyboard and low-vision polish: compact select strip, stray
   radio glyph, unnamed resize grips
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-10 18:05'
+updated_date: '2026-09-11 15:42'
 labels:
   - library
   - notes
@@ -34,8 +36,18 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Export selected is present at 100x30, or the guide stops claiming it
-- [ ] #2 The selection count is printed once, and is separated from the adjacent focused button
-- [ ] #3 No radio-like glyph renders on a control that is not a radio or a checkbox
+- [ ] #2 The selection count is printed once on the compact strip the critique measured, on its own line rather than jammed against the focused Done -- AC SCOPED (task-32261 implementation): the wide layout still mounts both counters, and "one source of truth" for them is peer task-32272 (wave-3 Task 6), whose brief names the same select-mode counters in the same file
+- [ ] #3 The Notes canvas follows the Library glyph legend: the circle marks a DISABLED action (beside its reason), `☐/☑` mark selection, and neither is used for the other -- AC REVISED (task-32261 implementation): the circle is `LIBRARY_DISABLED_ACTION_MARKER`, a Library-wide decision task-32235 shipped, documented in `Docs/User_Guide/library.md`'s legend table and pinned by `test_one_meaning_per_library_glyph`. Dropping it from disabled actions (which task-32235's own AC#1 text also asks for) is a Library-wide change across every canvas, its guide pages and ~20 test files -- it belongs to the peer that owns that legend, not to the Notes instance
 - [ ] #4 The resize grips carry an accessible name
 - [ ] #5 Covered by a test asserting the compact select-strip contents
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Measure the compact select strip at the 42-column Items pane a 100x30 terminal resolves
+2. Hide the in-strip duplicate counter in compact so Export selected fits the pane (the wide duplicate is peer task-32272's)
+3. Confirm the pane grips already carry an accessible name (task-32355) and pin it on the Notes route
+4. Re-scope AC#3: the circle marker is the Library-wide disabled-action legend task-32235 shipped
+5. RED->GREEN compact strip test; guide + stamp
+<!-- SECTION:PLAN:END -->

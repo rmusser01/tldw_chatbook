@@ -1,11 +1,13 @@
 ---
 id: TASK-32270
 title: >-
-  Library Notes return cue is documented but its display flag is always false
-  in wide Database Notes
-status: To Do
-assignee: []
+  Library Notes return cue is documented but its display flag is always false in
+  wide Database Notes
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-10 18:05'
+updated_date: '2026-09-11 15:42'
 labels:
   - library
   - notes
@@ -31,3 +33,12 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 - [ ] #1 The cue renders in wide Database Notes with navigation closed, or the guide no longer claims it does
 - [ ] #2 Covered by a test asserting the cue's presence or absence in the state the guide describes
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Prove the display flag: library_browse_route_swap's wide_focused_task requires not adaptive_database_notes
+2. Take the AC's documentation branch -- the cue is a compact control (task-32136/32139)
+3. Correct the three guide sentences that promise it on a wide terminal
+4. Pin both the absence in wide Database Notes and the guide's own wording
+<!-- SECTION:PLAN:END -->

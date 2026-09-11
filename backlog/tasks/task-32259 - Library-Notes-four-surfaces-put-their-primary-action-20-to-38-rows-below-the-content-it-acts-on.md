@@ -1,11 +1,13 @@
 ---
 id: TASK-32259
 title: >-
-  Library Notes: four surfaces put their primary action 20 to 38 rows below
-  the content it acts on
-status: To Do
-assignee: []
+  Library Notes: four surfaces put their primary action 20 to 38 rows below the
+  content it acts on
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-10 18:05'
+updated_date: '2026-09-11 15:42'
 labels:
   - library
   - notes
@@ -35,6 +37,15 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 <!-- AC:BEGIN -->
 - [ ] #1 Import once's primary action renders adjacent to the selection summary it acts on, not at the pane floor
 - [ ] #2 A full-canvas task (import review, sync setup, export) owns the pane width while it is the task in hand
-- [ ] #3 No Notes surface renders its primary action more than a screenful below the content it acts on at 235x52
+- [ ] #3 No Notes surface renders its primary action more than a screenful below the content it acts on at 235x52 -- AC SCOPED (task-32259 implementation): the Session Git panel's 22-row gap is task-32248's (wave-3 Task 5) and the review pane's elision is task-32250's; this task covers Import once, the Folder-files empty state and the Markdown preview
 - [ ] #4 Covered by a test asserting the action's row distance from its content on the Import once selection screen
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Trace the four surfaces the description names; Session Git belongs to Task 5 and the review-pane elision to task-32250
+2. Compose Import once's primary action inside the bounded select/destination body instead of under the 1fr scroll floor
+3. Close the Items list while a full-canvas Notes task (import, lasting sync) is in hand
+4. RED->GREEN row-distance test on the Import once selection screen; live capture at 235x52
+<!-- SECTION:PLAN:END -->

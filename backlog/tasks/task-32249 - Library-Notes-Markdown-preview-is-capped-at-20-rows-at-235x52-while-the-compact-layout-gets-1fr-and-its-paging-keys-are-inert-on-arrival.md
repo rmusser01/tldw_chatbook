@@ -3,9 +3,11 @@ id: TASK-32249
 title: >-
   Library Notes Markdown preview is capped at 20 rows at 235x52 while the
   compact layout gets 1fr, and its paging keys are inert on arrival
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-10 18:05'
+updated_date: '2026-09-11 15:42'
 labels:
   - library
   - notes
@@ -36,3 +38,14 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 - [ ] #4 The status line does not advertise editing behaviour while Preview is showing
 - [ ] #5 Covered by a test pinning the preview height rule in the wide layout
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce live at 235x52 on a seeded profile (preview height, paging keys, callout marker, status line)
+2. Confirm the 20-row cap was already deleted by task-32217; pin it at the critique's width
+3. Focus the preview region on activation, mirroring Info's handler
+4. Rewrite Obsidian callout headers into plain blockquote headers before the Markdown widget sees them
+5. Stop the status line advertising autosave while Preview is showing
+6. RED->GREEN tests in Tests/UI/test_library_notes_w3_layout.py; guide + stamp
+<!-- SECTION:PLAN:END -->

@@ -1,9 +1,13 @@
 ---
 id: TASK-32389
-title: 'Library Notes: below 64 columns the reader keeps an empty work pane while the list is cut'
-status: To Do
-assignee: []
+title: >-
+  Library Notes: below 64 columns the reader keeps an empty work pane while the
+  list is cut
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-11 10:30'
+updated_date: '2026-09-11 15:42'
 labels:
   - library
   - notes
@@ -24,3 +28,12 @@ task-32217 settled that an empty work pane hands its columns to the list. `_sync
 - [ ] #2 Opening a note restores the reading split at that width
 - [ ] #3 The 60-column case is pinned in the notes layout test file
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce the 32/18 split with the layout resolver at 60 columns
+2. Opt the Notes profile into task-32065's list_first_when_empty rule
+3. Drop an items priority below the single-stage floor when the work pane is empty, so the one rule owns the case
+4. Pin 60 columns both ways in Tests/UI/test_library_notes_wave_list.py
+<!-- SECTION:PLAN:END -->

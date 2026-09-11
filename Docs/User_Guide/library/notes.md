@@ -48,12 +48,17 @@ selected Library note, switch between Library notes and Folder files,
 change the linked Folder files root, leave Notes, or close the open Folder
 files file. Folder files' compact **Back to navigator** action is not a reset.
 
-When Library navigation is closed, one stable cue names the return
-destination:
+On a wide terminal the strip above the canvas keeps both source switches —
+**Library notes | Folder files** — whether Library navigation is open or
+closed, and the in-canvas **‹ Notes** control is the way back to the list.
+The **‹ Library / Notes** cue this page used to describe here belongs to
+compact terminals, where the strip collapses to it — see the Source strip
+bullet below. (Was "When Library navigation is closed, one stable cue names
+the return destination" — superseded by task-32270 below.)
 
 ```text
 +-----------------------------------------------------------------------+
-| ‹ Library / Notes                                                     |
+| ‹ Library / Notes            (compact terminals only)                 |
 |                                                                       |
 |  Focused note editor or retained Files workspace                      |
 |                                                                       |
@@ -86,7 +91,10 @@ editor's own Back control returns to its list.
   also names its folder — "Reading list · Unfiled · 2h". While no note is
   open the list takes the width the empty work area would otherwise waste,
   so long titles are not truncated on a wide terminal; opening a note hands
-  that width back. Its own grip collapses or restores the list without
+  that width back. The same rule holds below 64 columns, where there is no
+  room for two panes at all: with nothing open the list is the whole stage
+  instead of sharing it with an empty work area, and opening a note gives
+  the stage to the note. Its own grip collapses or restores the list without
   changing the Folder files tree choice. Renaming a note does not repaint its
   list row live while the note stays open: a Notes refresh that lands while
   the title field holds focus is skipped rather than queued, so tabbing or
@@ -113,8 +121,8 @@ editor's own Back control returns to its list.
 - **Note work area** — opens when you click a note. **Edit** shows the title
   and body, **Preview** renders the Markdown, and **Info** holds keywords,
   dates, version details, copy/export actions, and Delete. Save status and
-  frequent actions remain in the header. On wide terminals the
-  top `‹ Library / Notes` cue returns to the exact prior list row, scope, and
+  frequent actions remain in the header. On wide terminals the editor's own
+  `‹ Notes` control returns to the exact prior list row, scope, and
   scroll positions; on compact terminals use `‹ Back to list`. While you are
   typing, the title, body and keyword fields are each their own authority: a
   background refresh never rewrites the field under your hands, and it never
@@ -343,7 +351,7 @@ both stay closed until you choose to reopen one.
 | "Manage sync folders" | Appears only when roots or paused migration candidates exist; opens root status and contextual controls. |
 | "Last import" | Reopens the latest import receipt from this app session after you return to the Notes list. |
 | "Export…" | Opens the "Export bundle (.zip)" canvas scoped to notes — bundle notes into a .zip. |
-| "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". "Export…" hides while selecting. |
+| "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". "Export…" hides while selecting. On a compact terminal the row shortens to "Done", "All N", "Clear" and "Export", and the count is printed on its own line under the row rather than inside it — all five stay on the pane. |
 
 With no notes at all, the list reads "No notes yet. Create your first note."
 above the tree — even when the seeded **Agent_Lessons** folder (see "Reuse
@@ -368,7 +376,7 @@ own. Nothing is ever painted as half a word.
 |---|---|
 | "‹ Notes" / "‹ Back to list" | Returns to the list (your text is already saved — see autosave below). One wording across Edit, Preview, and Info: "‹ Notes" at wide sizes, "‹ Back to list" on a compact terminal. |
 | **Edit** | Shows the editable title and body. This is the default view when you open a note. |
-| **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. |
+| **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. It takes the whole work pane, and it takes keyboard focus when you open it, so `pgup`/`pgdn` page the rendered note straight away — no click inside the box first. An Obsidian callout (`> [!note] Title`) renders as a quoted block headed "Note: Title" rather than printing its `[!note]` marker. The status line does not offer to keep editing while Preview is showing; it names **Edit** instead. |
 | **Info** | Shows Properties (including comma-separated keywords, note dates/version, and **Linked from**), Reuse & Export, and Danger sections. |
 | **Linked from (N)** (Info → Properties) | Lists the notes whose bodies link to this one, newest import or not — the `[title](note://…)` links Import once writes for an Obsidian vault's `[[wikilinks]]` (see "Obsidian vaults"). Click an entry to open that note. While the lookup runs the line reads "Linked from — checking…", and "Linked from — couldn't check" if it failed, so a count is only claimed once the answer is in. When nothing points here the line reads "Linked from (0) — no notes link here yet". The list is capped at 50 entries; past that the count reads "50+". Links you type by hand in the body count too, as long as they use the same `note://` form. |
 | Status line | Shows the autosave state: "Saved", "Saving…", "Unsaved changes", "Conflict — …", "Save failed — …", or "Unavailable — …". It does not carry a word count. Created/Modified/version details are under Info → Properties, each with an absolute local timestamp beside its relative age and the word count (e.g. "Created 2026-09-08 21:14 · 3m ago · Modified … · v1 · 6 words"). "Saved" appears once per view, not repeated in Info. |
@@ -409,8 +417,8 @@ prominent. The body background and editor size stay unchanged, so focusing
 the editor does not flash or fill the writing surface. Small fields such as
 Title and Keywords still use their usual filled focus treatment.
 
-The wide `‹ Library / Notes` cue and Escape use the same guarded return as
-the compact Back control. A dirty save, sync, conflict, reload confirmation,
+The editor's `‹ Notes` control, the compact `‹ Library / Notes` cue and
+Escape all use the same guarded return. A dirty save, sync, conflict, reload confirmation,
 or running mutation can therefore keep the focused task open until it is safe
 to leave. A successful return restores the Library notes / Folder files source, filter,
 sort, selected note or placement, Notes-list scroll, Library-rail scroll, and
@@ -543,6 +551,13 @@ unavailable-in-this-release reason; no files or notes change.
 **Import once** copies supported note files into local Library notes. It is
 not the same as **Keep a folder synced**: the import ends after this reviewed
 batch, while lasting sync retains a root relationship.
+
+Import once and **Add from files** are whole tasks, not a second reading
+pane: while one of them is open the Notes list beside it closes to its grip
+and the task takes the pane's width, and the list comes back the moment you
+leave. **Check selection** stands directly under the selection summary it
+acts on rather than at the pane floor; the review, import and receipt steps
+keep their action pinned under the scrolling list it approves.
 
 Choose files one at a time with **Add another file**, or choose one folder.
 A folder is exclusive; it cannot be combined with selected files, so a folder
@@ -1107,3 +1122,17 @@ critique-10 claims reconciled; surface fixes in task-32346, 32348, 32349,
 32354, 32355). This page needed no correction — the note editor's autosave
 story and its guarded return were already stated here; the Library overview is
 what had drifted.*
+
+*Verified against fix/library-notes-w3-layout — 2026-09-11 (wave-3 group
+`layout`, live at 235x52 / 100x30 / 60x24 on a seeded scratch profile with a
+Markdown-showcase note). task-32249: Preview fills the work pane, takes focus
+on arrival so `pgup`/`pgdn` page without a click, renders an Obsidian callout
+instead of printing its `[!note]` marker, and its status line names **Edit**
+rather than offering to keep editing. task-32259: **Check selection** stands
+with the selection summary, and Import once / Add from files close the Notes
+list beside them while they are the task in hand. task-32261: the compact
+select strip prints its count once, on its own line, so all five actions stay
+on a 42-column pane. task-32270: the `‹ Library / Notes` cue is a compact
+control — the wide sentences that promised it are corrected above.
+task-32389: below 64 columns an empty work pane hands the whole stage to the
+list.*
