@@ -3236,6 +3236,154 @@ class MCPWorkbench(Container):
         async with self._sync_children_lock:
             await self._sync_permissions_mode(echo=echo)
 
+    def on_mcp_permissions_mode_bulk_state_requested(
+        self, event: MCPPermissionsMode.BulkStateRequested
+    ) -> None:
+        """ADR-149 Wave F: dispatch one bulk-set (shift+space) in the
+        background -- the canvas computed the visible scope and the next
+        state; this executes it as N ordinary single writes."""
+        event.stop()
+        self.run_worker(
+            self._apply_bulk_tool_states(
+                event.server_key,
+                list(event.tool_names),
+                event.new_state,
+                event.profile_context,
+            ),
+            group="mcp-perm-bulk",
+            exclusive=True,
+        )
+
+    def on_mcp_permissions_mode_bulk_clear_requested(
+        self, event: MCPPermissionsMode.BulkClearRequested
+    ) -> None:
+        """ADR-149 Wave F: dispatch one bulk-clear (C) -- same worker path
+        with a None state; the canvas sent only rows that hold an
+        override."""
+        event.stop()
+        self.run_worker(
+            self._apply_bulk_tool_states(
+                event.server_key,
+                list(event.tool_names),
+                None,
+                event.profile_context,
+            ),
+            group="mcp-perm-bulk",
+            exclusive=True,
+        )
+
+    async def _apply_bulk_tool_states(
+        self,
+        server_key: str,
+        tool_names: list[str],
+        new_state: str | None,
+        context: PermissionProfileContext | None,
+    ) -> None:
+        """ADR-149 Wave F: apply one state (None = clear) to a server's
+        tool rows as N ordinary, individually profile-scoped
+        `set_tool_state` calls -- no batch store API (ADR-149), per-row
+        audit logging unchanged. Raw-shell rows are skipped (their
+        two-state projection makes a generic write a lie) and the skip is
+        named in the echo. First failure stops the batch with the
+        service's own reason; each write is independent and idempotent,
+        so a partial batch stands."""
+        context = self._validate_profile_context(context)
+        if context is None:
+            return
+        service = self._service()
+        if service is None or not tool_names:
+            return
+        label = ""
+        written = 0
+        skipped_raw_shell = 0
+        try:
+            for tool_name in tool_names:
+                if _is_raw_shell_tool(server_key, tool_name):
+                    skipped_raw_shell += 1
+                    continue
+                tool = self._tool_for(server_key, tool_name)
+                if (
+                    new_state == "allow"
+                    and tool is None
+                    and server_key not in HASH_FREE_SERVER_KEYS
+                ):
+                    # Same vanished-tool guard a single press hits -- count
+                    # it as skipped rather than aborting the batch.
+                    skipped_raw_shell += 1
+                    continue
+                if not label:
+                    label = next(
+                        (
+                            tool.server_label
+                            for tool in self._last_hub_tools
+                            if tool.server_key == server_key
+                        ),
+                        server_key,
+                    )
+                # Per-write context: each write changes the profile digest,
+                # so the NEXT write must carry a freshly captured one (the
+                # single-press path never hits this -- it writes once and
+                # re-captures only for the re-render). Re-deriving from the
+                # inventory reads the store once per row -- bounded by the
+                # visible row count. Selection moved mid-batch -> the same
+                # stale toast a single press gives, partial writes stand.
+                _, _, write_context = self._tool_policy_inventory()
+                if (
+                    write_context is None
+                    or write_context.profile_id != context.profile_id
+                    or write_context.selector_generation
+                    != context.selector_generation
+                ):
+                    self.app.notify(
+                        _toast(
+                            "Tool policy profile changed. Refresh and try again."
+                        ),
+                        severity="warning",
+                    )
+                    return
+                self._call_profile_scoped(
+                    service.set_tool_state,
+                    server_key,
+                    tool_name,
+                    new_state,
+                    context=write_context,
+                    tool=tool,
+                )
+                written += 1
+        except Exception as exc:
+            logger.warning(
+                "{}",
+                _safe_diagnostic_message("MCP bulk permission update failed", exc),
+            )
+            if _is_stale_profile_error(exc):
+                self.app.notify(
+                    _toast("Tool policy profile changed. Refresh and try again."),
+                    severity="warning",
+                )
+            else:
+                reason = (
+                    str(exc).strip().splitlines()[0][:140]
+                    if str(exc).strip()
+                    else type(exc).__name__
+                )
+                self.app.notify(
+                    _toast(f"Permission update failed: {reason}"),
+                    severity="error",
+                )
+            return
+        echo_parts = []
+        if new_state is None:
+            echo_parts.append(f"{label}: {written} visible overrides cleared")
+        else:
+            echo_parts.append(
+                f"{label}: {written} tools → {_cycled_ui_label(new_state)}"
+            )
+        if skipped_raw_shell:
+            echo_parts.append(f"{skipped_raw_shell} skipped (raw shell)")
+        echo = " · ".join(echo_parts) + " · "
+        async with self._sync_children_lock:
+            await self._sync_permissions_mode(echo=echo)
+
     async def _show_selected_detail(
         self, canvas: MCPServersMode, selected: ReadinessSnapshot | None
     ) -> None:
