@@ -34,6 +34,7 @@ from tldw_chatbook.Library.library_media_viewer_state import (
     LibraryMediaHighlightRow,
     LibraryMediaViewerState,
     find_content_matches,
+    looks_like_markdown_content,
 )
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
@@ -64,6 +65,16 @@ READER_EMPTY_FAILED_COPY = "Nothing loaded — the list could not be loaded."
 #: plain-prose transcript -- "for transcripts", withheld from a transcript.
 #: It now says why THIS item has none.
 RENDERED_VIEW_NOTE = "No Markdown formatting to render — showing the stored text"
+
+#: task-32365 review finding 1: only the Raw view marks a match (rendered
+#: mode mounts the Markdown widget alone, so there is no raw widget to
+#: restyle and the scroll-to-match is a SOURCE line index). An active query
+#: therefore forces Raw on the Analysis tab; this says so and names the way
+#: back, rather than leaving a Rendered button that repaints the same body.
+ANALYSIS_RENDERED_BLOCKED_BY_SEARCH = (
+    "Showing the stored text so matches can be marked · clear the search to "
+    "read it rendered."
+)
 
 
 def empty_reader_copy(*, loading: bool, list_failed: bool) -> str:
@@ -117,6 +128,12 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             a toggle -- when ``viewer.is_markdown`` is true; the screen is
             responsible for defaulting this per item and never showing
             ``"rendered"`` for a non-markdown item.
+        analysis_content_mode: The same choice for the Analysis tab's own
+            body (task-32365). Separate from ``content_mode`` because the
+            two tabs hold different text: an item's transcript can be plain
+            while its generated analysis is Markdown, and vice versa. Owned
+            by this widget -- the toggle handler below flips it and
+            recomposes -- so it survives the screen's viewer syncs.
     """
 
     DEFAULT_CSS = """
@@ -140,6 +157,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         content_query: str = "",
         content_match_index: int = 0,
         content_mode: str = "raw",
+        analysis_content_mode: str = "rendered",
         find_open: bool = False,
         find_focus_pending: bool = False,
         loading: bool = False,
@@ -215,6 +233,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         self.content_query = content_query
         self.content_match_index = content_match_index
         self.content_mode = content_mode
+        self.analysis_content_mode = analysis_content_mode
         self.find_open = find_open
         self.find_focus_pending = find_focus_pending
         self.loading = loading
@@ -391,6 +410,12 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 analysis=self.viewer.analysis,
                 generating=self.generating_analysis,
                 editing=self.editing_analysis,
+                # Qodo 4 on #2602: an external detail composes the READ body
+                # whatever mode the session carried in, so the gate needs to
+                # know -- without this the KEY opened Find on a server
+                # document while this button stayed disabled, the exact
+                # key/control divergence one shared gate exists to prevent.
+                external=self.external_detail,
             )
             find = Button(
                 library_disabled_action_label("Find", bool(find_reason)),
@@ -588,8 +613,25 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                     markup=False,
                 )
 
-    def _compose_content_mode_toggle(self) -> ComposeResult:
+    def _compose_content_mode_toggle(
+        self,
+        *,
+        is_markdown: bool | None = None,
+        mode: str | None = None,
+        prefix: str = "library-media",
+        blocked_reason: str = "",
+    ) -> ComposeResult:
         """Render the Rendered|Raw toggle, for an item that can render.
+
+        task-32365: the Analysis tab renders the same pair over its own
+        text, so the three things that differ per tab -- whether there is
+        anything to render, which view is selected, and the button ids the
+        press handler keys on -- are arguments, defaulting to the Read
+        tab's. The strip and separator ids stay fixed: only one Reader body
+        composes at a time, so they are still unique, and they carry the
+        width rules (this class's ``DEFAULT_CSS`` and
+        ``#library-media-content-mode-strip``) that keep the row from
+        hitting Textual's bare-``1fr`` non-rendering trap.
 
         The toggle is offered only when ``self.viewer.is_markdown`` is true
         -- a non-markdown item always shows the plain Raw view (no behavior
@@ -613,7 +655,11 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             non-markdown item (see the Info branch of
             ``_compose_active_body``).
         """
-        if not self.viewer.is_markdown:
+        if is_markdown is None:
+            is_markdown = self.viewer.is_markdown
+        if mode is None:
+            mode = self.content_mode
+        if not is_markdown:
             # task-32068: the note is a FACT ABOUT THE ITEM, so it belongs to
             # Info (``_compose_active_body``'s info branch), not above the
             # text on every read. Most items are plain, so critique #8 met it
@@ -623,23 +669,60 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             # affordance for nothing (task-31635, critique #5 item 13).
             return
         with Horizontal(id="library-media-content-mode-strip"):
-            rendered_selected = self.content_mode == "rendered"
+            rendered_selected = mode == "rendered"
             rendered_button = Button(
-                "Rendered (selected)" if rendered_selected else "Rendered",
-                id="library-media-content-mode-rendered",
+                library_disabled_action_label(
+                    "Rendered (selected)" if rendered_selected else "Rendered",
+                    bool(blocked_reason),
+                ),
+                id=f"{prefix}-content-mode-rendered",
                 compact=True,
             )
             rendered_button.set_class(rendered_selected, "-selected")
+            if blocked_reason:
+                # Never a pressable control that changes nothing: while a
+                # query forces the Raw view (see ``_compose_analysis``) the
+                # strip reports the state and says why, and NEITHER half
+                # accepts a press -- Qodo on #2602 found that pressing the
+                # already-selected Raw wrote the stored preference, so
+                # clearing the query no longer restored Rendered and the
+                # line beneath became a false promise.
+                rendered_button.disabled = True
+                rendered_button.tooltip = blocked_reason
             yield rendered_button
             yield Static("|", id="library-media-content-mode-separator", markup=False)
             raw_selected = not rendered_selected
             raw_button = Button(
                 "Raw (selected)" if raw_selected else "Raw",
-                id="library-media-content-mode-raw",
+                id=f"{prefix}-content-mode-raw",
                 compact=True,
             )
             raw_button.set_class(raw_selected, "-selected")
+            if blocked_reason:
+                raw_button.disabled = True
+                raw_button.tooltip = blocked_reason
             yield raw_button
+
+    @on(Button.Pressed, "#library-media-analysis-content-mode-rendered")
+    @on(Button.Pressed, "#library-media-analysis-content-mode-raw")
+    def _handle_analysis_content_mode(self, event: Button.Pressed) -> None:
+        """Flip the Analysis tab between its rendered and raw views.
+
+        Handled here rather than on the screen (where the Read tab's twin
+        lives) because the choice is this widget's own state: the screen
+        has no analysis view-mode to keep in step, and a recompose is the
+        whole update -- the Read tab patches in place only to avoid
+        re-parsing a full document on every traversal keystroke, which a
+        deliberate toggle press is not.
+
+        Args:
+            event: The Rendered or Raw press from the Analysis toggle strip.
+        """
+        event.stop()
+        self.analysis_content_mode = (
+            "rendered" if str(event.button.id).endswith("-rendered") else "raw"
+        )
+        self.refresh(recompose=True)
 
     # ---- TASK-31745: rename a finished meeting's speakers, from the reader --
     #: What each refusal means in the user's terms, keyed by the reason
@@ -888,8 +971,22 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         Returns:
             None.
         """
+        forces_analysis_raw = (
+            self.reader_mode == "analysis"
+            and bool(self.content_query) != bool(query)
+            and looks_like_markdown_content(self.viewer.analysis)
+        )
         self.content_query = query
         self.content_match_index = match_index
+        if forces_analysis_raw:
+            # task-32365 review finding 1: this seam patches in place, so the
+            # composed mode would never follow the query and the marked Raw
+            # view would never appear. Rebuild instead -- the Find bar hands
+            # its own caret back through the existing focus token, so the
+            # swap costs the user nothing.
+            self.find_focus_pending = True
+            self.refresh(recompose=True)
+            return
         self.query_one(
             "#library-media-content-search-controls",
             LibraryMediaContentSearchControls,
@@ -1028,14 +1125,45 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             # bar works over the analysis text. The screen's search corpus
             # (_library_media_content_matches) is mode-aware, so the query,
             # match count, Prev/Next, and Enter-advance all follow the
-            # active tab. Analysis is plain text -> raw mode, not Markdown.
+            # active tab.
+            analysis_is_markdown = looks_like_markdown_content(self.viewer.analysis)
             matches = find_content_matches(self.viewer.analysis, self.content_query)
+            # task-32365 review finding 1: only the Raw view can MARK a match
+            # -- rendered mode mounts the Markdown widget alone, so
+            # ``LibraryMediaContentBody.sync_search`` has no raw widget to
+            # restyle and the scroll-to-match applies a SOURCE line index to
+            # a rendered scroller. Before this task the analysis was always
+            # raw, so Find worked; making it renderable would have shipped
+            # "Match 3 of 11" over a body with nothing highlighted. An active
+            # query therefore shows the view that can mark, and the toggle
+            # strip below reads "Raw (selected)" so the swap is stated, not
+            # silent. Clearing the query hands Rendered straight back.
+            analysis_mode = "raw" if self.content_query else self.analysis_content_mode
             # task-31269: like Read, the bar is collapsed until Find opens
             # it -- an always-mounted bar stole focus on every item load and
             # swallowed the walk keys (critique #4 P0).
+            blocked = (
+                ANALYSIS_RENDERED_BLOCKED_BY_SEARCH if self.content_query else ""
+            )
+            yield from self._compose_content_mode_toggle(
+                is_markdown=analysis_is_markdown,
+                mode=analysis_mode,
+                prefix="library-media-analysis",
+                blocked_reason=blocked,
+            )
+            if blocked and analysis_is_markdown:
+                # The reason reaches a keyboard-first reader, not only a
+                # mouse tooltip -- the same inline-reason grammar the
+                # Generate gate below uses (task-31981).
+                yield Static(
+                    blocked,
+                    id="library-media-analysis-content-mode-reason",
+                    classes="library-media-action-reason",
+                    markup=False,
+                )
             if self.find_open or self.content_query:
                 yield LibraryMediaContentSearchControls(
-                    is_markdown=False,
+                    is_markdown=analysis_is_markdown,
                     query=self.content_query,
                     matches=matches,
                     match_index=self.content_match_index,
@@ -1045,8 +1173,15 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 self.find_focus_pending = False
             yield LibraryMediaContentBody(
                 content=self.viewer.analysis,
-                is_markdown=False,
-                mode="raw",
+                # task-32365 (critique #10): this body used to pin
+                # ``is_markdown=False, mode="raw"`` because an analysis was
+                # assumed to be plain text. Generated analyses are Markdown
+                # in practice ("## Key contributions" painted as source, A
+                # cap 43), and task-32234 already made the CONTENT sniff --
+                # not a type guess -- the Read tab's authority. Same sniff,
+                # same widget, same Raw toggle.
+                is_markdown=analysis_is_markdown,
+                mode=analysis_mode,
                 query=self.content_query,
                 match_index=self.content_match_index,
                 id="library-media-viewer-content",
