@@ -29,6 +29,7 @@ from Tests.Notes.test_notes_sync_runtime import (
 )
 from Tests.UI.test_library_file_notes_workspace import (
     _assert_legible_painted_text,
+    _painted_text_in_region,
     _production_workspace_context,
     _wait_until,
 )
@@ -645,10 +646,10 @@ async def test_lasting_setup_keeps_server_unavailable_copy_painted(
             server_reason, animate=False
         )
         await pilot.pause()
-        painted = _painted_text(host).lower()
-        assert "server sync-folder" in painted
-        assert "capability not" in painted
-        assert "installed" in painted
+        painted_reason = " ".join(
+            _painted_text_in_region(host, server_reason.region).lower().split()
+        )
+        assert "server sync-folder capability not installed" in painted_reason
         assert (
             screen.query_one("#notes-sync-back", Button)
             in host.screen._compositor.visible_widgets
