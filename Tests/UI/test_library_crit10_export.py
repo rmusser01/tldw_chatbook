@@ -104,9 +104,26 @@ def test_an_unsizeable_scope_says_so_instead_of_guessing():
 
 
 def test_a_long_contents_list_is_capped_and_says_how_many_it_hid():
-    state = _state(titles=tuple(f"Item {n}" for n in range(25)))
+    """The query fetches 21 titles at most, so the remainder is derived from
+    the counts -- the only place the true total lives (review Low 3)."""
+    state = _state(
+        scope=ExportScope(kind="media"),
+        counts={"media": 250, "conversations": 0, "notes": 0, "prompts": 0},
+        titles=tuple(f"Item {n}" for n in range(21)),
+    )
     assert len(state.contents_lines) == 21
-    assert state.contents_lines[-1] == "+ 5 more"
+    assert state.contents_lines[:20] == tuple(f"Item {n}" for n in range(20))
+    assert state.contents_lines[-1] == "+ 230 more"
+
+
+def test_a_contents_list_that_exactly_fills_the_cap_hides_nothing():
+    state = _state(
+        scope=ExportScope(kind="media"),
+        counts={"media": 20, "conversations": 0, "notes": 0, "prompts": 0},
+        titles=tuple(f"Item {n}" for n in range(20)),
+    )
+    assert len(state.contents_lines) == 20
+    assert not any(line.startswith("+ ") for line in state.contents_lines)
 
 
 def test_the_consequence_line_is_empty_until_the_counts_land():
@@ -211,6 +228,15 @@ async def test_the_blocked_find_carries_its_reason_under_the_toolbar():
         assert find.disabled
         assert str(find.label).startswith("○ ")
         assert str(reason.renderable) == find.tooltip
+        # The reason is the toolbar's immediate next sibling and paints
+        # below the button. Asserted as DOM adjacency rather than an exact
+        # row delta (the Export twin's shape): this host mounts the viewer
+        # without its usual container, so the ds-toolbar Horizontal takes
+        # more rows here than in the app. Live at 235x52 the reason renders
+        # on the row directly under the toolbar -- capture 04.
+        toolbar = pilot.app.query_one("#library-media-reader-primary-toolbar")
+        siblings = list(toolbar.parent.children)
+        assert siblings[siblings.index(toolbar) + 1] is reason
         assert reason.region.y >= find.region.y + find.region.height
 
 

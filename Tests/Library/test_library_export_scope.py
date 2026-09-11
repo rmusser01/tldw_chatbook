@@ -17,6 +17,7 @@ snapshot instead of a fresh query would silently drop rows past the cap.
 from __future__ import annotations
 
 import pytest
+from loguru import logger as loguru_logger
 
 from tldw_chatbook.Chatbooks.chatbook_models import ContentType
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -25,6 +26,7 @@ from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Library.library_export_scope import (
     ExportScope,
     count_export_scope,
+    ExportPreview,
     export_scope_label,
     preview_export_scope,
     resolve_export_selections,
@@ -465,7 +467,7 @@ def test_preview_honours_the_media_type_filter_for_a_whole_source_scope(media_db
 
 
 def test_preview_skips_deleted_and_trashed_items(media_db):
-    kept, _, _ = media_db.add_media_with_keywords(
+    media_db.add_media_with_keywords(
         title="Kept", content="k" * 1024, media_type="article"
     )
     trashed, _, _ = media_db.add_media_with_keywords(
@@ -475,9 +477,30 @@ def test_preview_skips_deleted_and_trashed_items(media_db):
 
     preview = preview_export_scope(ExportScope(kind="media"), media_db)
 
+    # The trashed item contributes neither a title nor its 1024 bytes.
     assert preview.titles == ("Kept",)
     assert preview.approx_bytes == 1024
-    assert kept
+
+
+def test_preview_caps_the_title_query_instead_of_reading_every_row(media_db):
+    """task-32353 review (Low 3): the SUM must visit every row, but the
+    canvas renders 20 titles -- so the title query is LIMITed and never
+    materialises one string per item in a whole-source scope."""
+    for index in range(25):
+        # Distinct content per item: identical content dedups into one row.
+        media_db.add_media_with_keywords(
+            title=f"Item {index:02d}",
+            content=f"{index:02d}" + "x" * 1022,
+            media_type="article",
+        )
+
+    preview = preview_export_scope(ExportScope(kind="media"), media_db)
+
+    # One row past the render limit -- enough to know it was truncated.
+    assert len(preview.titles) == 21
+    assert preview.titles[0] == "Item 00"
+    # The byte total still covers all 25, not just the 21 fetched.
+    assert preview.approx_bytes == 25 * 1024
 
 
 def test_preview_is_empty_for_a_scope_whose_items_it_cannot_size(media_db):
@@ -491,13 +514,32 @@ def test_preview_is_empty_for_a_scope_whose_items_it_cannot_size(media_db):
     assert preview.approx_bytes is None
 
 
-def test_preview_degrades_quietly_instead_of_raising_out_of_the_worker():
+def test_preview_raises_so_its_wrapper_can_log_the_failure():
+    """task-32353 review (Medium 2): the quiet-degrade AND its log line
+    live in the controller wrapper, exactly like the sibling counts
+    helper -- the pure query raises rather than failing invisibly."""
+    from tldw_chatbook.UI.Library_Modules.library_export_controller import (
+        LibraryExportController,
+    )
+
     class _Broken:
         def execute_query(self, query, params=()):
             raise RuntimeError("no such table: Media")
 
-    preview = preview_export_scope(ExportScope(kind="media"), _Broken())
+    with pytest.raises(RuntimeError):
+        preview_export_scope(ExportScope(kind="media"), _Broken())
 
-    assert preview.titles == ()
-    assert preview.approx_bytes is None
+    # loguru does not route through pytest's caplog -- attach a real sink.
+    warnings: list[str] = []
+    handle = loguru_logger.add(warnings.append, level="WARNING")
+    try:
+        degraded = LibraryExportController._compute_library_export_preview(
+            ExportScope(kind="media"), _Broken()
+        )
+    finally:
+        loguru_logger.remove(handle)
+    assert degraded == ExportPreview()
+    assert any("Library export preview failed" in line for line in warnings), warnings
+    assert any("category=RuntimeError" in line for line in warnings), warnings
+    # A missing seam is not an error -- there is simply nothing to read.
     assert preview_export_scope(ExportScope(kind="media"), None).approx_bytes is None

@@ -126,7 +126,6 @@ from ...Library.library_conversation_reader_state import (
 from ...Library.library_export_scope import (
     ExportPreview,
     ExportScope,
-    preview_export_scope,
     resolve_export_selections,
 )
 from ...Library.library_export_state import (
@@ -18402,6 +18401,10 @@ class LibraryScreen(BaseAppScreen):
     def _compute_library_export_counts(scope: ExportScope, media_db: Any, chachanotes_db: Any, prompts_db: Any) -> dict[str, int]:
         return LibraryExportController._compute_library_export_counts(scope, media_db, chachanotes_db, prompts_db)
 
+    @staticmethod
+    def _compute_library_export_preview(scope: ExportScope, media_db: Any) -> ExportPreview:
+        return LibraryExportController._compute_library_export_preview(scope, media_db)
+
     def _start_library_export_counts_worker(self) -> None:
         """Kick off the export scope's full-query counts (Task 1's resolver).
 
@@ -18430,7 +18433,7 @@ class LibraryScreen(BaseAppScreen):
             counts = self._compute_library_export_counts(
                 scope, media_db, chachanotes_db, prompts_db
             )
-            preview = preview_export_scope(scope, media_db)
+            preview = self._compute_library_export_preview(scope, media_db)
             result = self._apply_library_export_counts(
                 scope,
                 counts,
@@ -18483,9 +18486,9 @@ class LibraryScreen(BaseAppScreen):
             scope, media_db, chachanotes_db, prompts_db
         )
         # task-32353 AC#2: the same worker, the same connection -- the
-        # contents/size read never happens on the UI thread, and it degrades
-        # to an empty preview rather than raising out of here.
-        preview = preview_export_scope(scope, media_db)
+        # contents/size read never happens on the UI thread, and its wrapper
+        # logs then degrades rather than letting a failure escape here.
+        preview = self._compute_library_export_preview(scope, media_db)
         # ``self.app`` (Textual's own running-App property), not
         # ``self.app_instance`` -- ``call_from_thread`` needs the App whose
         # event loop is actually running this screen (see
@@ -18600,17 +18603,6 @@ class LibraryScreen(BaseAppScreen):
             empty_line = self.query_one("#library-export-empty-line", Static)
             empty_line.update(state.empty_scope_line)
             empty_line.display = bool(state.empty_scope_line)
-            # task-32353 AC#2: both new lines are empty until counts land,
-            # so this patcher owns them too (recompose discipline -- the
-            # in-place updater owns every conditional compose owns).
-            consequence = self.query_one(
-                "#library-export-consequence-line", Static
-            )
-            consequence.update(state.consequence_line)
-            consequence.display = bool(state.consequence_line)
-            contents = self.query_one("#library-export-contents", Static)
-            contents.update("\n".join(state.contents_lines))
-            contents.display = bool(state.contents_lines)
             # task-2858 AC#3 (LIB-11): the tooltip flips in place with
             # `disabled`, same F-018 discipline as the select-mode
             # toolbar's export/delete buttons -- otherwise the compose-
@@ -18622,6 +18614,27 @@ class LibraryScreen(BaseAppScreen):
             apply_library_export_submit_gate(submit_button, state)
         except (NoMatches, QueryError):
             return LibraryEntryReconcileResult.FAILED
+        # task-32353 AC#2: both new lines are empty until counts land, so
+        # this patcher owns them too (recompose discipline -- the in-place
+        # updater owns every conditional compose owns). Deliberately AFTER
+        # the gate, in its own guard: the Export button's disabled/label/
+        # tooltip must never be left stale by a quiet line failing to
+        # resolve, which is what sharing the `try` above would have done.
+        for selector, text, shown in (
+            (
+                "#library-export-consequence-line",
+                state.consequence_line,
+                bool(state.consequence_line),
+            ),
+            (
+                "#library-export-contents",
+                "\n".join(state.contents_lines),
+                bool(state.contents_lines),
+            ),
+        ):
+            for line in self.query(selector):
+                line.update(text)
+                line.display = shown
         return LibraryEntryReconcileResult.APPLIED
 
     def _build_library_export_state(self) -> LibraryExportFormState:

@@ -182,6 +182,9 @@ def test_prompt_memory_database_forces_inline_count_resolution():
             "notes": 0,
             "prompts": 2,
         },
+        # task-32353: the counts helper's sibling, which the worker calls
+        # for the contents/size preview beside the counts.
+        _compute_library_export_preview=lambda *_args: ExportPreview(),
         _apply_library_export_counts=apply_counts,
         _run_library_export_counts_worker=lambda *_args: pytest.fail(
             "memory-backed Prompt counts must stay on the owner thread"

@@ -237,6 +237,7 @@ from ...Library.library_export_scope import (
     ExportPreview,
     ExportScope,
     count_export_scope,
+    preview_export_scope,
 )
 from ...Library.library_export_state import (
     DEFAULT_MEDIA_QUALITY,
@@ -829,6 +830,38 @@ class LibraryExportController:
                 type(exc).__name__,
             )
             return {"media": 0, "conversations": 0, "notes": 0, "prompts": 0}
+
+    @staticmethod
+    def _compute_library_export_preview(
+        scope: ExportScope, media_db: Any
+    ) -> ExportPreview:
+        """Read what the bundle will contain, beside the counts (task-32353 AC#2).
+
+        The sibling of ``_compute_library_export_counts`` above, and
+        deliberately the same shape: the pure query lives in
+        ``library_export_scope`` and raises honestly, this wrapper owns
+        the quiet-degrade AND the log line. Without the log, a canvas
+        permanently stuck on "size known once it runs" (a missing table,
+        a selection past SQLite's bound-parameter limit, a changed seam)
+        would be undiagnosable -- the one path in this feature that can
+        fail in production must not fail invisibly.
+
+        Args:
+            scope: What this export will include.
+            media_db: The media database read seam, or ``None``.
+
+        Returns:
+            The titles + byte total, or ``ExportPreview()`` on any failure.
+        """
+        try:
+            return preview_export_scope(scope, media_db)
+        except Exception as exc:
+            logger.warning(
+                "Library export preview failed scope_kind={} category={}",
+                scope.kind,
+                type(exc).__name__,
+            )
+            return ExportPreview()
 
     # ----- Export canvas: execution (Task 3) ------------------------------
 

@@ -163,6 +163,12 @@ def count_export_scope(
     return counts
 
 
+# How many titles the export canvas lists before it summarises the rest.
+# Owned here, beside the query that applies it as a LIMIT, and imported by
+# ``library_export_state`` -- one number, not two that can drift.
+_CONTENTS_PREVIEW_LIMIT = 20
+
+
 class MediaContentSource(Protocol):
     """The read seam ``preview_export_scope`` needs off ``MediaDatabase``."""
 
@@ -198,22 +204,44 @@ def preview_export_scope(
 
     Only a ``kind="media"`` scope has an enumerable, sizeable item set --
     every other kind returns the empty preview so the canvas says "size
-    known once it runs" rather than guessing. ``ChatbookCreator.
-    _collect_media`` writes each item's ``content`` column into the zip
-    (plus a small metadata JSON), so that column's byte length is the
-    honest estimate for what lands on disk.
+    known once it runs" rather than guessing.
 
-    Never raises: a missing seam, a missing table, or a selection too
-    large for SQLite's bound-parameter limit all degrade to the empty
-    preview, exactly like ``_compute_library_export_counts``'s
-    quiet-degrade contract for the sibling counts query.
+    What the byte total means: ``ChatbookCreator._collect_media`` writes
+    each item's ``content`` column TWICE before compression -- once as
+    ``media_<id>.txt`` and again inside a metadata JSON that embeds the
+    same column under a ``"content"`` key, alongside summary/prompt/
+    provenance. This counts that column ONCE, so it is a deliberate lower
+    bound on the pre-compression payload, not the pre-compression total.
+    That is why the canvas says "about". Do not "correct" it against the
+    doubled figure: the archive is then zipped, and the user's own
+    reference point is how much of their library is going in.
+
+    Two statements, not one: the ``SUM`` has to visit every matching row,
+    but the canvas renders at most ``_CONTENTS_PREVIEW_LIMIT`` titles, so
+    the title query is capped rather than materialising one string per
+    item in a whole-source scope. The caller derives "+ N more" from the
+    counts it already has.
+
+    Raises rather than degrading: the quiet-degrade AND its log line live
+    in ``LibraryExportController._compute_library_export_preview``,
+    exactly where ``count_export_scope``'s live
+    (``_compute_library_export_counts``). A silent ``except`` here would
+    make the one path in this feature that can fail in production fail
+    invisibly -- a canvas stuck on "size known once it runs" with no
+    trace in the log.
 
     Args:
         scope: What this export will include.
         media_db: The media database read seam, or ``None``.
 
     Returns:
-        The titles + byte total, or ``ExportPreview()`` when unavailable.
+        The byte total plus at most ``_CONTENTS_PREVIEW_LIMIT + 1``
+        titles, or ``ExportPreview()`` when the scope is not sizeable.
+
+    Raises:
+        Exception: Whatever the media seam raises -- a missing table, a
+            selection past SQLite's bound-parameter limit, a changed
+            seam. The controller wrapper logs and degrades.
     """
     if scope.kind != "media" or media_db is None:
         return ExportPreview()
@@ -228,19 +256,23 @@ def preview_export_scope(
         if media_type is not None:
             where.append("type = ?")
             params.append(media_type)
+    clause = " AND ".join(where)
     # LENGTH(CAST(... AS BLOB)) is the UTF-8 BYTE count; a bare LENGTH()
     # on TEXT counts characters and under-reports any non-ASCII library.
-    query = (
-        "SELECT title, LENGTH(CAST(content AS BLOB)) AS size FROM Media "
-        f"WHERE {' AND '.join(where)} ORDER BY id ASC"
-    )
-    try:
-        rows = media_db.execute_query(query, tuple(params)).fetchall()
-    except Exception:
-        return ExportPreview()
+    total = media_db.execute_query(
+        "SELECT COALESCE(SUM(LENGTH(CAST(content AS BLOB))), 0) AS size "
+        f"FROM Media WHERE {clause}",
+        tuple(params),
+    ).fetchone()
+    # One row past the render limit is all the caller needs to know the
+    # list was truncated; the true remainder comes from the counts.
+    titles = media_db.execute_query(
+        f"SELECT title FROM Media WHERE {clause} ORDER BY id ASC LIMIT ?",
+        (*params, _CONTENTS_PREVIEW_LIMIT + 1),
+    ).fetchall()
     return ExportPreview(
-        tuple(str(row["title"] or "Untitled") for row in rows),
-        sum(int(row["size"] or 0) for row in rows),
+        tuple(str(row["title"] or "Untitled") for row in titles),
+        int(total["size"] or 0) if total is not None else 0,
     )
 
 

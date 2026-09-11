@@ -240,6 +240,7 @@ async def test_apply_library_export_counts_patches_tooltip_alongside_disabled():
                 last_bytes=None,
             ),
             query_one=pilot.app.query_one,
+            query=pilot.app.query,
         )
         fake._library_entry_route_key = lambda: (LIBRARY_ROW_INGEST_EXPORT,)
         fake._library_entry_reconcile_is_current = lambda *_args: True
@@ -325,6 +326,7 @@ async def test_update_library_export_canvas_after_run_patches_receipt_and_toolti
                 last_bytes=3072,
             ),
             query_one=pilot.app.query_one,
+            query=pilot.app.query,
         )
         fake._library_structural_waits = {}
         fake._library_export_status_line = (

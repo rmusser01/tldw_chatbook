@@ -160,10 +160,12 @@ When the submit button is off, its reason is on the line directly beneath
 it — "Choose a destination before exporting.", "Nothing to export in this
 scope.", "Waiting for item counts before exporting.", or "An export is
 already running." (task-32362). It is the same sentence the tooltip shows,
-so a keyboard-first reader never has to hover to find out why. A "Cancel" button appears while an export is running. Once an
-export finishes, a receipt line appears above the submit button and stays
-there — it updates in place after each further export and survives
-switching to another rail row and back, for the rest of the session.
+so a keyboard-first reader never has to hover to find out why.
+
+A "Cancel" button appears while an export is running. Once an export
+finishes, a receipt line appears above the submit button and stays there —
+it updates in place after each further export and survives switching to
+another rail row and back, for the rest of the session.
 
 The receipt is read back out of the bundle that was written, not out of
 what you asked for: "✓ exported · 12 items · 348 KB · /path/to/out.zip"

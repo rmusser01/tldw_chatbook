@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Mapping
 
 from tldw_chatbook.Library.library_export_scope import (
+    _CONTENTS_PREVIEW_LIMIT,
     ExportScope,
     _count_phrase,
     export_scope_label,
@@ -89,9 +90,6 @@ _MEDIA_QUALITY_BUNDLE_COPY: dict[str, str] = {
     "original": "full files",
 }
 
-# How many titles the contents disclosure lists before it summarises the rest.
-_CONTENTS_PREVIEW_LIMIT = 20
-
 
 def format_export_bytes(size_bytes: int) -> str:
     """Return a byte count in the Export canvas's own "N KB" spelling.
@@ -108,6 +106,13 @@ def format_export_bytes(size_bytes: int) -> str:
         e.g. ``"4 KB"`` -- never "0 KB" for a non-empty bundle (anything
         under 1 KB rounds up to 1).
     """
+    # ponytail: KB only, inherited from the receipt's own rounding -- a
+    # multi-GB media library's ESTIMATE reads "about 1048576 KB before
+    # compression" (the receipt never saw numbers that large). Switch both
+    # halves to a unit-stepping formatter (``library_ingest_state.
+    # _human_size`` already steps) and re-pin the critique-9 receipt string
+    # in the SAME change; splitting them would let estimate and receipt
+    # round differently, which is the drift this function exists to prevent.
     return f"{max(1, round(size_bytes / 1024))} KB"
 
 
@@ -341,12 +346,19 @@ def build_library_export_form_state(
         else f"Bundle: {_count_phrase(total, noun)}{fidelity}{size}"
     )
     # The preview lands with the counts, so neither line renders before them.
-    extra = len(titles) - _CONTENTS_PREVIEW_LIMIT
+    # ``titles`` is capped at the limit + 1 by the query, so its length only
+    # says WHETHER the list was truncated -- the remainder comes from the
+    # counts, which is the only place the true total lives.
+    extra = total - _CONTENTS_PREVIEW_LIMIT
     contents_lines = (
         ()
         if counts_loading
         else tuple(titles[:_CONTENTS_PREVIEW_LIMIT])
-        + ((f"+ {extra} more",) if extra > 0 else ())
+        + (
+            (f"+ {extra} more",)
+            if len(titles) > _CONTENTS_PREVIEW_LIMIT and extra > 0
+            else ()
+        )
     )
     return LibraryExportFormState(
         scope=scope,
