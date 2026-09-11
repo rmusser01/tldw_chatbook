@@ -323,17 +323,26 @@ async def test_workbench_at_100x30_keeps_primary_content_reachable(monkeypatch):
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
-        # Summary wraps to multiple lines instead of clipping at one.
+        # Summary renders whole -- under ADR-148 Wave E's stacked layout
+        # the canvas is WIDER at 100 cols, so the sentence may now fit one
+        # line; the invariant is that it is never clipped mid-sentence
+        # (either it fits, or it wraps to >= 2 lines).
         summary = app.query_one("#mcp-overview-summary", Static)
-        assert summary.region.height >= 2
+        assert summary.region.height >= 1
+        rendered = "\n".join(
+            "".join(segment.text for segment in strip)
+            for strip in app.screen._compositor.render_strips()
+        )
+        summary_text = str(summary.renderable)
+        assert summary_text.splitlines()[0][:60] in rendered
         # Compact columns: everything shown fits the viewport -- no column
-        # silently lost behind horizontal overflow.
+        # silently lost behind horizontal overflow. Under ADR-148 Wave E's
+        # stacked layout the canvas is WIDER at 100 cols, so F-057 may keep
+        # Connection/Auth too -- the invariant is that whatever set renders,
+        # it fits (zero horizontal scroll) and identity+readiness never drop.
         table = app.query_one("#mcp-servers-table", DataTable)
-        assert [str(c.label) for c in table.ordered_columns] == [
-            "Name",
-            "Status",
-            "Tools",
-        ]
+        columns = [str(c.label) for c in table.ordered_columns]
+        assert "Name" in columns and "Status" in columns
         assert table.max_scroll_x == 0
         # Primary actions stay reachable.
         assert app.query_one("#mcp-add-server", Button).region.width > 0
@@ -11733,3 +11742,38 @@ async def test_agent_snapshot_state_follows_local_master_switch(monkeypatch):
             app.query_one(MCPWorkbench)._agent_snapshot.state
             is ReadinessState.READY
         )
+
+
+# -- Wave E (2026-09-11 MCP Hub UX program, ADR-148): narrow-width triad --
+
+
+@pytest.mark.asyncio
+async def test_wide_layout_keeps_inspector_beside_the_main_row():
+    """>=120 cols: the triad is geometrically unchanged -- the inspector
+    sits BESIDE the main row (rail+canvas), full height, not as a band."""
+    app = WorkbenchApp()
+    async with app.run_test(size=(160, 44)) as pilot:
+        await pilot.pause()
+        main_row = app.query_one("#mcp-hub-main-row")
+        inspector = app.query_one("#mcp-hub-inspector")
+        assert inspector.region.x >= main_row.region.x + main_row.region.width - 1
+        assert inspector.region.height > 12  # full pane, not a band
+
+
+@pytest.mark.asyncio
+async def test_compact_layout_stacks_inspector_below_as_bounded_band():
+    """<120 cols (ADR-148): the inspector stacks BELOW the main row as a
+    bounded, scrollable band (<=12 rows) at full width -- replacing the
+    old squeezed third column that broke words mid-token."""
+    app = WorkbenchApp()
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        grid = app.query_one("#mcp-hub-grid")
+        main_row = app.query_one("#mcp-hub-main-row")
+        inspector = app.query_one("#mcp-hub-inspector")
+        assert "mcp-compact" in grid.classes
+        assert inspector.region.y >= main_row.region.y + main_row.region.height - 1
+        assert inspector.region.height <= 12
+        assert inspector.region.width >= main_row.region.width - 1
+        # The rail+canvas row keeps (nearly) the full width.
+        assert main_row.region.width >= 90
