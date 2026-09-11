@@ -1,9 +1,10 @@
 ---
 id: TASK-32359
 title: 'Library rail: active and focused rows are visually identical'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-11 06:18'
+updated_date: '2026-09-11 07:45'
 labels:
   - library
   - accessibility
@@ -20,6 +21,22 @@ Both the active destination and the focused row render bold + underline with bac
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The focused rail row is distinguishable from the active row by a glyph or shape, not colour alone
-- [ ] #2 Pinned with a painted assertion
+- [x] #1 The focused rail row is distinguishable from the active row by a glyph or shape, not colour alone
+- [x] #2 Pinned with a painted assertion
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Painted-frame failing test: focused rail row vs active rail row.\n2. CSS-only: focus gets the house thick left bar; active keeps the background.\n3. Rebuild the bundle.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+CSS-only, as scoped: `.library-rail-row` had no `:focus` rule at all and fell back to the Button default, so the focused row and the active destination both rendered bold + underline over backgrounds three RGB units apart. `.library-rail-row:focus` now takes the house focus shape -- `border-left: thick $ds-action-focus` with `padding: 0 1 0 0` so the label neither shifts nor clips, plus `outline: none` to suppress the generic `*:focus{outline:solid}` fallback. `-selected` keeps the background treatment, unchanged. `library_rail.py` untouched.
+
+Pinned with the painted-frame idiom from `Tests/UI/test_library_row_focus_cue_t31983.py` at 235x52 and 100x30: focus the Media row while Conversations is active, assert the block glyph paints on the focused row and not on the active one, then swap and assert the reverse. Live-confirmed at 235x52 on the seeded profile (F6 + Tab into the rail: the focused Media row paints the bar, the active Conversations row keeps only its marker).
+
+Files: tldw_chatbook/css/components/_agentic_terminal.tcss (+ regenerated bundle), Tests/UI/test_library_crit10_layout.py, Docs/User_Guide/library.md.
+<!-- SECTION:NOTES:END -->
