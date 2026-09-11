@@ -68,6 +68,20 @@ selection" over "Read-only — this note cannot be changed; your draft is
 preserved." Capture:
 `wave3-caps/test-health/live-select-mode-readonly-preview.txt`.
 
+SECOND PRODUCT RACE, found by the consolidated re-verification:
+`_apply_library_note_presentation_state` guarded the lookup of the work PANE
+but not the editor children `apply_session_state` queries inside it.
+`sync_state` only SCHEDULES the rebuild, so the pane can carry the previous
+mode's children while the newer presentation state is already set, and an
+async caller landing there takes `NoMatches` out of its worker --
+`WorkerFailed: NoMatches("No nodes match '#library-note-work-authority'")`
+from `_load_library_note_backlinks`, 1 run in 3 of
+`test_library_shell_blank_title_save_round_trip_agrees_with_the_row` once the
+folder-repository repair let it reach a real backlinks load.
+`LibraryNotesCanvas._apply_post_compose_state` already documents and guards
+the identical shape; the controller seam every async caller routes through now
+does too. GREEN 6 consecutive runs.
+
 TEST-HARNESS STALENESS (AC#1, #2, #6, #7, #8, #9): four independent fixtures
 had fallen behind the folder tree.
 - The shared `StaticLibraryNotesScopeService` had no
