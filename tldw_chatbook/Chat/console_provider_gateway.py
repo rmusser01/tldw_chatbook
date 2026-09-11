@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import json
 import math
+import os
 import threading
 import weakref
 from collections.abc import Iterator, Mapping
@@ -66,10 +67,14 @@ from tldw_chatbook.Chat.console_provider_support import (
     build_local_thinking_payload_fields,
     resolve_console_provider_identity,
 )
+from tldw_chatbook.Chat.console_session_settings import (
+    _custom_endpoint_missing_key_readiness,
+)
 from tldw_chatbook.Chat.custom_endpoint_registry import (
     custom_endpoint_provider_settings,
     entry_for,
     family_execution_key,
+    CustomEndpointEntry,
 )
 from tldw_chatbook.Chat.llamacpp_think_filter import StartAnchoredThinkFilter
 from tldw_chatbook.Chat.console_thinking import publish_thinking, thinking_display
@@ -85,6 +90,7 @@ from tldw_chatbook.config import (
     ProviderSettingsError,
     provider_settings_for_key,
     coerce_bool_setting,
+    resolve_provider_api_key,
 )
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.sensitive_llm_logging import (
@@ -140,6 +146,36 @@ def _normalize_deepseek_api_mode(provider_settings: Mapping[str, Any]) -> str:
             "DeepSeek API mode must be 'responses' or 'chat_completions'."
         )
     return normalized
+
+
+def _custom_entry_credential(
+    entry: CustomEndpointEntry,
+    environ: Mapping[str, str] | None,
+) -> tuple[str | None, str | None]:
+    """Resolve an entry-declared credential per ADR-146 precedence.
+
+    The ``api_key_env`` reference wins over the stored ``api_key``; both are
+    validated so blank or placeholder values never authenticate a send. The
+    returned provenance label names the entry's config location, never the
+    secret; callers must not log the credential value itself.
+
+    Args:
+        entry: Registry entry whose declared credential should resolve.
+        environ: Environment mapping; ``None`` reads ``os.environ``.
+
+    Returns:
+        ``(credential, provenance label)`` or ``(None, None)`` when nothing
+        declared resolves.
+    """
+    env = environ if environ is not None else os.environ
+    if entry.api_key_env:
+        env_key = resolve_provider_api_key(env.get(entry.api_key_env, ""))
+        if env_key is not None:
+            return env_key, f"env:{entry.api_key_env}"
+    stored_key = resolve_provider_api_key(entry.api_key)
+    if stored_key is not None:
+        return stored_key, f"config:custom_endpoints.{entry.slug}.api_key"
+    return None, None
 
 
 @dataclass(slots=True)
@@ -1789,6 +1825,31 @@ class ConsoleProviderGateway:
             )
         else:
             identity = resolve_console_provider_identity(selection.provider)
+        entry_api_key: str | None = None
+        entry_api_key_source: str | None = None
+        if custom_entry is not None:
+            # ADR-146: an entry that declares a credential resolves it from
+            # the entry, not the family readiness -- ``custom`` and
+            # ``llama_cpp`` are keyless families, so without this override a
+            # keyed entry sends unauthenticated (server 401) while the Task 3
+            # UI gate says Ready. The missing-key gate reuses Task 3's
+            # session-settings semantics so the UI and the gateway block
+            # identically; keyless entries (nothing declared) ride the plain
+            # family readiness unchanged.
+            missing_entry_key = _custom_endpoint_missing_key_readiness(
+                custom_entry, identity.readiness_key, self._environ
+            )
+            if missing_entry_key is not None:
+                return self._blocked_resolution(
+                    selection,
+                    provider=selection.provider,
+                    visible_copy=missing_entry_key.user_message,
+                    readiness_key=identity.readiness_key,
+                    execution_key=identity.execution_key,
+                )
+            entry_api_key, entry_api_key_source = _custom_entry_credential(
+                custom_entry, self._environ
+            )
         if identity.uses_direct_llama_path:
             readiness = get_provider_readiness(
                 identity.readiness_key,
@@ -1814,8 +1875,16 @@ class ConsoleProviderGateway:
                     base_url=llama_base_url or DEFAULT_LLAMACPP_BASE_URL,
                     explicit_model=selection.explicit_model,
                     configured_model=selection.configured_model,
-                    api_key=readiness.api_key,
-                    api_key_source=readiness.api_key_source,
+                    api_key=(
+                        entry_api_key
+                        if entry_api_key is not None
+                        else readiness.api_key
+                    ),
+                    api_key_source=(
+                        entry_api_key_source
+                        if entry_api_key is not None
+                        else readiness.api_key_source
+                    ),
                     temperature=selection.temperature,
                     top_p=selection.top_p,
                     min_p=selection.min_p,
@@ -2093,8 +2162,14 @@ class ConsoleProviderGateway:
                 ready=True,
                 readiness_key=identity.readiness_key,
                 execution_key=identity.execution_key,
-                api_key=readiness.api_key,
-                api_key_source=readiness.api_key_source,
+                api_key=(
+                    entry_api_key if entry_api_key is not None else readiness.api_key
+                ),
+                api_key_source=(
+                    entry_api_key_source
+                    if entry_api_key is not None
+                    else readiness.api_key_source
+                ),
                 prompt_caching=prompt_caching,
                 api_mode=api_mode,
                 continuation_protocol=continuation_protocol,
