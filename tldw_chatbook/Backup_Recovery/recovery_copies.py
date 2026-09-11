@@ -33,6 +33,28 @@ def deletion_allowed(
     return user_selected and not pending_operation and not active_hold
 
 
+def rollback(
+    operation_id: str,
+    *,
+    control_root: Path,
+    old_password: bytes,
+    new_password: bytes,
+    cancel,
+    approved_plan=None,
+) -> str:
+    """Execute an explicitly reviewed later replacement using a retained snapshot."""
+    from .later_rollback import execute_rollback
+
+    return execute_rollback(
+        operation_id,
+        control_root=control_root,
+        old_password=old_password,
+        new_password=new_password,
+        cancel=cancel,
+        approved_plan=approved_plan,
+    )
+
+
 def _journal(control_root: Path, operation_id: str) -> Journal:
     """Open an existing local operation without creating missing evidence."""
     if (

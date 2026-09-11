@@ -20,6 +20,22 @@ from .owner_registry import install_adapters
 
 
 @dataclass(frozen=True)
+class LocalSnapshotSource:
+    """Local retained-copy association; verified before selecting snapshot policy."""
+
+    control_root: Path
+    operation_id: str
+    rollback_digest: str
+
+    def record(self):
+        return {
+            "control_root": str(self.control_root),
+            "operation_id": self.operation_id,
+            "rollback_digest": self.rollback_digest,
+        }
+
+
+@dataclass(frozen=True)
 class RestorePlan:
     """Reviewed artifact paths and independently observed local target state."""
 
@@ -38,6 +54,7 @@ class RestorePlan:
     containers: tuple[tuple[str, Path], ...] = ()
     safety_scope: tuple[str, ...] = ()
     acknowledged_credential_issues: tuple[str, ...] = ()
+    local_snapshot: LocalSnapshotSource | None = None
 
 
 def _document(archive):

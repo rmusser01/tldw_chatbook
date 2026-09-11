@@ -65,6 +65,8 @@ def _plan_digest(plan):
         value["safety_scope"] = plan.safety_scope
     if plan.acknowledged_credential_issues:
         value["acknowledged_credential_issues"] = plan.acknowledged_credential_issues
+    if plan.local_snapshot is not None:
+        value["local_snapshot"] = plan.local_snapshot.record()
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
@@ -440,6 +442,10 @@ def _descriptor(candidate, plan):
     if document.get("profile_names") != dict(plan.profile_names) or document.get(
         "issues"
     ) != list(plan.issues):
+        raise ValueError("candidate_plan_mismatch")
+    if document.get("local_snapshot") != (
+        plan.local_snapshot.record() if plan.local_snapshot else None
+    ):
         raise ValueError("candidate_plan_mismatch")
     roots = [Path(value) for value in document["private_roots"]]
     for root in roots:
@@ -1546,6 +1552,16 @@ def _validate_installed(journal, candidate, plan):
         ):
             raise ValueError("verified_manifest_changed")
         doc = reader._manifest(manifest, ArchiveLimits(), True)
+        raw_configs = {}
+        if plan.local_snapshot is not None:
+            from .later_rollback import verify_snapshot_source
+
+            _, source = verify_snapshot_source(plan)
+            if source.manifest_digest != receipt.manifest_digest:
+                raise ValueError("local_snapshot_source_changed")
+            raw_configs = {
+                row.logical_id: row for row in doc.files if row.owner_id == "config"
+            }
         rows = [*descriptor["artifacts"], *descriptor.get("containers", [])]
         expected = {
             item.path: (item.device, item.inode) for item in prepared.installed_paths
@@ -1705,6 +1721,7 @@ def _validate_installed(journal, candidate, plan):
                     topology,
                     synthetic,
                     owners,
+                    raw_configs,
                 ).result()
             verify()
             for row in sorted(
@@ -1804,7 +1821,9 @@ def _apply_directory_metadata(journal, parent, prepared, item):
     )
 
 
-def _validate_installed_copies(items, candidates, topology, synthetic, owners):
+def _validate_installed_copies(
+    items, candidates, topology, synthetic, owners, raw_configs=None
+):
     """Validate operation-private copies without receiving live native authority."""
     from types import MappingProxyType
 
@@ -1828,6 +1847,10 @@ def _validate_installed_copies(items, candidates, topology, synthetic, owners):
                     issues = validate_candidate(
                         owner, candidates[key], Event(), migrate=False
                     )
+                elif item.owner == "config" and key in (raw_configs or {}):
+                    from .later_rollback import validate_snapshot_config
+
+                    issues = validate_snapshot_config(raw_configs[key], candidates[key])
                 else:
                     validator = getattr(owner, "validate_restore", None)
                     issues = (

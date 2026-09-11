@@ -205,6 +205,43 @@ def _items(doc, plan):
     return result
 
 
+def _validate_dependencies(doc, items, owners, candidate_paths, topology):
+    """Check only private candidates; no live maintenance authority is required."""
+    from types import MappingProxyType
+
+    from tldw_chatbook.Persona_Visual.recovery import _Assets
+
+    from .storage_admission import _preview_reads
+
+    with _preview_reads():
+        synthetic = {row.logical_id for row in doc.directories if row.synthetic}
+        for key, item in items.items():
+            owner = owners[item.owner]
+            if type(owner) is _Assets and item.metadata.root_id in synthetic:
+                raise ValueError("invalid_synthetic_asset_root")
+            if key in synthetic:
+                continue  # Fabricated containers carry no source owner data.
+            restore_check = getattr(owner, "validate_restore_dependencies", None)
+            legacy_check = getattr(owner, "validate_dependencies", None)
+            if callable(restore_check):
+                issues = restore_check(
+                    item,
+                    candidate_paths[key],
+                    MappingProxyType(candidate_paths),
+                    topology=topology,
+                )
+            elif callable(legacy_check):
+                if not doc.producer_inventory:
+                    raise ValueError("producer_inventory_required")
+                issues = legacy_check(
+                    item, candidate_paths[key], MappingProxyType(candidate_paths)
+                )
+            else:
+                continue
+            if issues:
+                raise ValueError(issues[0])
+
+
 def stage_restore(
     archive: SealedArchive,
     plan: RestorePlan,
@@ -214,6 +251,7 @@ def stage_restore(
     journal=None,
     isolated_profiles=(),
     retained_credentials=None,
+    session=None,
 ) -> Path:
     """Return a private candidate descriptor with explicit per-volume artifacts.
 
@@ -227,6 +265,10 @@ def stage_restore(
     if isolated_profiles and plan.mode != "isolated":
         raise ValueError("isolated_plan_required")
     doc = _document(archive)
+    if plan.local_snapshot is not None:
+        from .later_rollback import verify_snapshot_source
+
+        verify_snapshot_source(plan, archive)
     recheck_targets(plan)
     for _, live in (*plan.restore, *plan.retire, *plan.preserve):
         if work_root == live or live in work_root.parents or work_root in live.parents:
@@ -308,7 +350,12 @@ def stage_restore(
         from .sqlite_validation import validate_candidate
         from .storage_admission import _preview_reads
 
-        with _preview_reads():
+        validation_scope = (
+            session._capture_bound_sources((), stage, limits, limits.expanded_bytes)
+            if session is not None
+            else _preview_reads()
+        )
+        with validation_scope:
             credentials = {}
             if isolated_profiles:
                 from dataclasses import replace
@@ -347,6 +394,7 @@ def stage_restore(
                     plan_credential_scopes,
                     process_credentials,
                     remap_credential_copies,
+                    replacement_credential_records,
                 )
                 from .models import Inventory
 
@@ -392,14 +440,17 @@ def stage_restore(
                     for key, item in items.items()
                     if key in extracted and key in selected
                 )
-                issues = process_credentials(
-                    stage / "credential-publication",
-                    Inventory(rebound, False, "", ()),
-                    mode="exclude",
-                    encrypted=False,
-                )
-                if issues:
-                    raise ValueError(issues[0])
+                if plan.local_snapshot is not None:
+                    replacement_credential_records(stage, credentials)
+                else:
+                    issues = process_credentials(
+                        stage / "credential-publication",
+                        Inventory(rebound, False, "", ()),
+                        mode="exclude",
+                        encrypted=False,
+                    )
+                    if issues:
+                        raise ValueError(issues[0])
                 remap_credential_copies(stage, credentials, publication_payloads)
             for payload in doc.files:
                 if payload.logical_id not in selected:
@@ -417,7 +468,13 @@ def stage_restore(
                     )
                 )
                 if role == "sqlite":
-                    issues = validate_candidate(owner, candidate, cancel, migrate=True)
+                    issues = validate_candidate(
+                        owner, candidate, cancel, migrate=plan.local_snapshot is None
+                    )
+                elif plan.local_snapshot is not None and payload.owner_id == "config":
+                    from .later_rollback import validate_snapshot_config
+
+                    issues = validate_snapshot_config(payload, candidate)
                 else:
                     validator = getattr(owner, "validate_restore", None)
                     issues = (
@@ -427,7 +484,7 @@ def stage_restore(
                     )
                 if issues:
                     raise ValueError(issues[0])
-                if payload.owner_id == "config":
+                if payload.owner_id == "config" and plan.local_snapshot is None:
                     import tomllib
 
                     import toml
@@ -459,17 +516,32 @@ def stage_restore(
                         candidate,
                         {row.logical_id: row.owner_id for row in doc.files},
                     )
+                snapshot_digest = (
+                    reader._hash(candidate, cancel) if plan.local_snapshot else None
+                )
                 relocate = getattr(owner, "relocate_restore", None)
-                if callable(relocate):
+                if plan.local_snapshot is not None and payload.owner_id == "config":
+                    # Historical config is an authenticated byte snapshot; its
+                    # ordinary relocate hook parses TOML and cannot admit it.
+                    validate_snapshot_config(payload, candidate)
+                elif callable(relocate):
                     relocate(item, candidate, selected)
                 else:
                     owner.relocate(candidate, selected)
-                validator = getattr(owner, "validate_restore", None)
-                issues = (
-                    validator(item, candidate)
-                    if callable(validator)
-                    else owner.validate(candidate)
-                )
+                if (
+                    plan.local_snapshot
+                    and reader._hash(candidate, cancel) != snapshot_digest
+                ):
+                    raise ValueError("local_snapshot_relocation_changed")
+                if plan.local_snapshot is not None and payload.owner_id == "config":
+                    issues = validate_snapshot_config(payload, candidate)
+                else:
+                    validator = getattr(owner, "validate_restore", None)
+                    issues = (
+                        validator(item, candidate)
+                        if callable(validator)
+                        else owner.validate(candidate)
+                    )
                 if issues:
                     raise ValueError(issues[0])
         validated = {
@@ -634,35 +706,20 @@ def stage_restore(
                 for record in (*doc.directories, *doc.files)
             }
         )
-        from tldw_chatbook.Persona_Visual.recovery import _Assets
+        if session is None:
+            _validate_dependencies(doc, items, owners, candidate_paths, topology)
+        else:
+            from concurrent.futures import ThreadPoolExecutor
 
-        with _preview_reads():
-            synthetic = {row.logical_id for row in doc.directories if row.synthetic}
-            for key, item in items.items():
-                owner = owners[item.owner]
-                if type(owner) is _Assets and item.metadata.root_id in synthetic:
-                    raise ValueError("invalid_synthetic_asset_root")
-                if key in synthetic:
-                    continue  # Fabricated containers carry no source owner data.
-                restore_check = getattr(owner, "validate_restore_dependencies", None)
-                legacy_check = getattr(owner, "validate_dependencies", None)
-                if callable(restore_check):
-                    issues = restore_check(
-                        item,
-                        candidate_paths[key],
-                        MappingProxyType(candidate_paths),
-                        topology=topology,
-                    )
-                elif callable(legacy_check):
-                    if not doc.producer_inventory:
-                        raise ValueError("producer_inventory_required")
-                    issues = legacy_check(
-                        item, candidate_paths[key], MappingProxyType(candidate_paths)
-                    )
-                else:
-                    continue
-                if issues:
-                    raise ValueError(issues[0])
+            with ThreadPoolExecutor(max_workers=1) as worker:
+                worker.submit(
+                    _validate_dependencies,
+                    doc,
+                    items,
+                    owners,
+                    candidate_paths,
+                    topology,
+                ).result()
         for payload in doc.files:
             if payload.logical_id not in selected:
                 continue
@@ -726,6 +783,9 @@ def stage_restore(
         descriptor = {
             "version": 1,
             "archive_digest": archive.digest,
+            "local_snapshot": plan.local_snapshot.record()
+            if plan.local_snapshot
+            else None,
             "archive_source": {
                 "path": str(archive.path),
                 "digest": archive.digest,

@@ -11,7 +11,7 @@ dependencies:
 - task-32001
 - task-32004
 - task-32005
-updated_date: 2026-09-11 07:37
+updated_date: 2026-09-11 07:45
 ---
 
 ## Description
@@ -49,4 +49,5 @@ First2-file retainedcopyunit independently APPROVED byruntime_final_capture, /pr
 Service composition underway in original scope: actual live app backup returns writers before packaging; retained archive excludes later native writes (1 passed7.58s). Actual isolated service restore with damaged ambient config and durable catalog after service.close passed1.06s; initial fixture incorrectly expected pre-relocation profile name, corrected to explicitly selected recovered name. Added restore facade/executor and durable restart status work; no UI/completion claim. Review found helper subprocess cwd could select feature sources when fallback test helper path used; copied exact HEAD helper into index snapshot for subsequent isolated dependency qualification. First replacement-service test setup could not build age due omitted offline Go env; corrected known cache env, no source change/network authorization.
 Root service integration: qualify persistent private inspection/candidate work outside control and replacement targets, including narrow default service-storage ownership in inventory so opening recovery does not make later default backup incomplete. Add actual default-control warm-up backup red/green, preserve unknown/malformed control refusal and pending work across close. Files planned: recovery_service.py, service_storage.py, inventory.py and focused service tests. Existing original spec sections control placement/active staging exclusion apply; no broader storage scope.
 Root persistent service-storage dependency independently approved by P (/private/tmp/chatbook-service-storage-independent-review.md): exact3files service_storage.py, inventory service exclusion, standalone test_service_storage.py.5passed0.91s; actual default-app warmup red then Complete backup1pass10.64s. Private control/work disjoint; unknown sibling and missing/corrupt marker remain blocking/no repair; existing dirs never chmod. Ruff1→1 baseline inventory import order, Bandit0. Required dependency for later rollback default-workspace correction. Full service/later integration remains In Progress.
+Root independent later-rollback review completed: approved six-file correction1 patch67ec4965... after sole default-workspace issue resolved using committed9ac805b02 service_storage. Actual sourcecipher-only rawconfig/schema/WAL restoration, new encrypted post-edit safetycopy, knownabsence/safetyonly/credentialproof and freshchild Finish/Rollback receipts inspected.18 originaldistinct cases +newdefault case green; correction3pass22.82s, Ruff0/Bandit0. Exact-index native spotcheck+census next. Pre-safety abort remains separate originalTask22 unit; no wholefeaturecompletionclaim.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
