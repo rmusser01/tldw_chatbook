@@ -2552,3 +2552,22 @@ believing either result: a zero count in the tree you thought you were
 testing means you are testing the wrong tree, not that the code is missing.
 After any suspicious run, `pwd` plus `git -C <tree> status` is one second
 of insurance against a split-brain patch.
+
+## zsh does not word-split `$var`, so my computed SGR click typed itself into the note (TASK-32186, 2026-09-11)
+
+**What happened.** I located a row with `L=$(capture-pane -p | awk '…{print NR" "i}')`
+and then `set -- $L` to get row and column. In bash that splits into `$1`/`$2`;
+**zsh does not word-split unquoted parameters**, so `$1` became `"24 62"` and
+`$2` was empty. The click escape came out as `\e[<0;;24 62M` — not a mouse
+report at all. The first such "click" silently did nothing (I read that as a
+wedge and started debugging the app). The second, sent while the body TextArea
+had focus, was typed into the note: `^[<0;;12 189M…` landed at the top of the
+open note's body and autosaved.
+
+**What to do.** In zsh use `${L%% *}` / `${L##* }`, or `read row col <<< "$L"`,
+or pass the two numbers as separate command substitutions — never `set -- $var`.
+Echo the assembled escape once before sending it: a real SGR click is
+`\e[<0;<col>;<row>M`, and any space or empty field in it means the split failed.
+A click that "does nothing" is more often a malformed escape than a broken app,
+and if a text field has focus the malformed escape becomes input — check the
+note body before blaming the feature.

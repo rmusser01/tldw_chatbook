@@ -13302,3 +13302,23 @@ never skip the implementer-run RED step — it is the only checkpoint that
 reveals whether the plan's code or its tests encode the wrong API. When a
 RED failure contradicts the plan, check the *test-side* API usage for
 version rot before hunting a bug in code that follows the plan.
+
+## A new schema artifact maintained ON WRITE breaks every historical-bootstrap fixture at once (TASK-32186, 2026-09-11)
+
+**What happened.** v73 added `note_links` and made every note writer maintain
+it. `Tests/ChaChaNotesDB/historical_bootstrap.py` builds a genuinely old
+database by patching `_CURRENT_SCHEMA_VERSION` — but fixtures then seed it
+through TODAY's `add_note`, which now wrote to a table a v35/v57/v58 schema
+does not have. Four unrelated migration test files would have gone red with
+`sqlite3.OperationalError: no such table: note_links` raised from deep inside
+`add_note` — an opaque failure with no connection to the fixture's subject.
+Production is never in that state (migration runs in `CharactersRAGDB.__init__`,
+before any write), so the gap belongs to the bootstrap alone.
+
+**What to do.** When a migration adds an artifact that a WRITE path maintains
+(not just one a read path queries), check `historical_bootstrap` in the same
+commit: add it to `_add_forward_write_dependencies` so older fixtures keep
+seeding, and make the test that PINS your migration drop it first — otherwise
+that test asserts against the scaffold and would pass with the migration's DDL
+deleted. The tell that you need this: your new code writes to the table from a
+method a fixture calls, not only from the migration.
