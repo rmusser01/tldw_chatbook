@@ -487,7 +487,14 @@ def test_skill_trust_header_line_maps_postures():
     from tldw_chatbook.Library.library_skills_state import skill_trust_header_line
 
     assert skill_trust_header_line("needs_setup", 0)[1] == "setup"
-    assert "isn't set up" in skill_trust_header_line("needs_setup", 0)[0]
+    # task-32363: the banner states the precedence -- with no trust store
+    # there is nothing to verify an approval against, so an approved skill
+    # reads "needs review" beside an unapproved one and the list looks
+    # wrong rather than unverifiable.
+    assert skill_trust_header_line("needs_setup", 0)[0] == (
+        'Skill trust isn\'t set up, so every skill reads "needs review" — '
+        "set it up to review and use skills."
+    )
     assert skill_trust_header_line("needs_resetup", 0)[1] == "resetup"
     assert "again after an update" in skill_trust_header_line("needs_resetup", 0)[0]
     assert skill_trust_header_line("unavailable", 0)[1] == "retry"

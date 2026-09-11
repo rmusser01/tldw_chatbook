@@ -332,6 +332,13 @@ selection controls with a useful next step. The exact total remains visible in
 the title, but there is no meaningless “page 1 of 1” or “nothing to select”
 mechanic.
 
+The paging half of that rule is Library-wide: **Skills, Collections and the
+media Trash** drop “page 1 of 1”, the boundary reason and both **Previous** /
+**Next** controls too whenever everything fits on one page, keeping only the
+item range. Every part comes back the moment a second page exists. Paging that
+is *paused* rather than absent — a stale page whose totals are withheld — keeps
+its controls, disabled and carrying the reason.
+
 ```text
 source really has no items          active filter has no matches
 --------------------------          ----------------------------
@@ -895,6 +902,10 @@ list, and the landing hub is capped at 96 cells).*
 (task-32225: the return chip stands down wherever a canvas owns Escape itself,
 so the footer never names a return the key would not perform; task-32228:
 Conversations arrives with its first row focused like every other browse list).*
+
+*Verified against fix/library-crit10-pagers — 2026-09-11 (task-32354: the
+single-page pager rule this page documents now holds for Skills, Collections
+and the media Trash as well as Media, Conversations and Prompts).*
 
 *Verified against fix/library-crit10-onboarding-import — 2026-09-11
 (task-32349: a Library with no content yet lands on Get started however old its

@@ -38,6 +38,7 @@ from tldw_chatbook.Library.library_shell_state import (
 )
 from tldw_chatbook.Library.library_pager_state import build_library_pager_display
 from tldw_chatbook.Library.library_skills_state import (
+    DEFAULT_SKILL_BROWSE_PAGE_SIZE,
     SkillBrowseScope,
     SkillEditorState,
     SkillEditorSupportingFile,
@@ -55,6 +56,8 @@ from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Widgets.Library.library_skills_canvas import (
     _TRUST_SETUP_EXPLANATION_COPY,
+    LIBRARY_SKILLS_PAGE_NEXT_ID,
+    LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
     LibrarySkillsListCanvas,
     skill_context_toggle_label,
     skill_disable_model_label,
@@ -252,13 +255,23 @@ async def test_skills_canvas_sort_label_reflects_sort_mode():
 
 
 @pytest.mark.asyncio
-async def test_skills_canvas_renders_exact_pager_and_source_wide_trust_count():
+async def test_skills_canvas_suppresses_single_page_chrome_and_keeps_the_trust_count():
+    """One page of skills renders the range and nothing else (task-32354).
+
+    This REVERSES the pin that
+    ``test_skills_canvas_renders_exact_pager_and_source_wide_trust_count``
+    carried: this canvas composed its own pager and so never got the
+    single-page suppression task-28016/31237 gave every other Library list.
+    The source-wide trust count (``blocked_total``, which counts blocked
+    skills across the whole source and not just this page) stays asserted
+    here; the paged shape moved to the companion test below.
+    """
     pager = build_library_pager_display(
-        applied_page=2,
-        requested_page=2,
-        page_size=20,
+        applied_page=1,
+        requested_page=1,
+        page_size=DEFAULT_SKILL_BROWSE_PAGE_SIZE,
         row_count=2,
-        total=22,
+        total=2,
         freshness="fresh",
     )
     state = dataclasses.replace(
@@ -269,17 +282,61 @@ async def test_skills_canvas_renders_exact_pager_and_source_wide_trust_count():
     )
     app = _CanvasHost(state, trust_posture="ready")
     async with app.run_test() as pilot:
-        assert "22" in str(pilot.app.query_one("#library-skills-header").renderable)
+        assert str(pilot.app.query_one("#library-skills-header").renderable) == (
+            "Skills (2)"
+        )
         assert "7 skills" in str(
             pilot.app.query_one("#library-skills-trust-header").renderable
         )
-        assert "21-22 of 22" in str(
-            pilot.app.query_one("#library-skills-range").renderable
+        assert str(pilot.app.query_one("#library-skills-range").renderable) == (
+            "1-2 of 2"
         )
-        assert "Page 2 of 2" in str(
-            pilot.app.query_one("#library-skills-page").renderable
+        assert not pilot.app.query(
+            "#library-skills-page"
+        ), "Page 1 of 1 has nowhere to page to"
+        assert not pilot.app.query("#library-skills-pager-status")
+        assert not pilot.app.query(
+            f"#{LIBRARY_SKILLS_PAGE_PREVIOUS_ID}"
+        ), "no dead Previous/Next"
+        assert not pilot.app.query(f"#{LIBRARY_SKILLS_PAGE_NEXT_ID}")
+
+
+@pytest.mark.asyncio
+async def test_skills_canvas_renders_the_full_pager_when_a_second_page_exists():
+    """A second page brings back every part of the pager (task-32354).
+
+    One skill more than the browse page size (``21``) is what makes a
+    second page exist; the mounted row list stays the two-row fixture,
+    since the canvas renders ``state.rows`` and ``state.pager`` from
+    independent controller reads.
+    """
+    pager = build_library_pager_display(
+        applied_page=1,
+        requested_page=1,
+        page_size=DEFAULT_SKILL_BROWSE_PAGE_SIZE,
+        row_count=DEFAULT_SKILL_BROWSE_PAGE_SIZE,
+        total=DEFAULT_SKILL_BROWSE_PAGE_SIZE + 1,
+        freshness="fresh",
+    )
+    state = dataclasses.replace(_two_row_state(), pager=pager)
+    app = _CanvasHost(state, trust_posture="ready")
+    async with app.run_test() as pilot:
+        # The header counts the SOURCE (``state.pager.title_count``), not the
+        # rows mounted on this page -- 21 against 2 mounted rows is what makes
+        # the two distinguishable, and the single-page companion cannot say so.
+        assert str(pilot.app.query_one("#library-skills-header").renderable) == (
+            f"Skills ({DEFAULT_SKILL_BROWSE_PAGE_SIZE + 1})"
         )
-        assert pilot.app.query_one("#library-skills-page-next", Button).disabled
+        status = str(pilot.app.query_one("#library-skills-range").renderable)
+        assert status.endswith("· Page 1 of 2"), status
+        assert pilot.app.query(f"#{LIBRARY_SKILLS_PAGE_PREVIOUS_ID}")
+        assert (
+            str(pilot.app.query_one("#library-skills-pager-status").renderable)
+            == "Already on the first page."
+        )
+        assert not pilot.app.query_one(
+            f"#{LIBRARY_SKILLS_PAGE_NEXT_ID}", Button
+        ).disabled
 
 
 @pytest.mark.asyncio
@@ -348,7 +405,14 @@ async def test_skills_list_renders_trust_header_setup():
     app = _CanvasHost(_two_row_state(), trust_posture="needs_setup")
     async with app.run_test() as pilot:
         header = pilot.app.query_one("#library-skills-trust-header", Static)
-        assert "isn't set up" in str(header.renderable)
+        # task-32363: the whole sentence, at the UI boundary. A substring
+        # check on "isn't set up" survived reverting the explanation, so the
+        # thing the task added had no integration coverage at all (Qodo
+        # review of PR #2599, item 2).
+        assert str(header.renderable) == (
+            'Skill trust isn\'t set up, so every skill reads "needs review" — '
+            "set it up to review and use skills."
+        )
         action = pilot.app.query_one("#library-skills-trust-action", Button)
         assert action.trust_action == "setup"
 
@@ -1451,7 +1515,7 @@ async def test_library_skills_45_item_pager_is_visible_and_reaches_middle_page(
         for _ in range(12):
             await pilot.pause()
             if "Page 2 of 3" in str(
-                screen.query_one("#library-skills-page", Static).renderable
+                screen.query_one("#library-skills-range", Static).renderable
             ):
                 break
         assert screen.query_one("#library-skill-row-skill-020", Button)
@@ -1464,7 +1528,7 @@ async def test_library_skills_45_item_pager_is_visible_and_reaches_middle_page(
         for _ in range(12):
             await pilot.pause()
             if "Page 3 of 3" in str(
-                screen.query_one("#library-skills-page", Static).renderable
+                screen.query_one("#library-skills-range", Static).renderable
             ):
                 break
         assert screen.query_one("#library-skill-row-skill-040", Button)
@@ -1516,7 +1580,7 @@ async def test_library_skills_page_previous_returns_to_the_prior_exact_page():
         for _ in range(12):
             await pilot.pause()
             if "Page 2 of 3" in str(
-                screen.query_one("#library-skills-page", Static).renderable
+                screen.query_one("#library-skills-range", Static).renderable
             ):
                 break
         assert "21-40 of 45" in str(
@@ -1527,7 +1591,7 @@ async def test_library_skills_page_previous_returns_to_the_prior_exact_page():
         for _ in range(12):
             await pilot.pause()
             if "Page 1 of 3" in str(
-                screen.query_one("#library-skills-page", Static).renderable
+                screen.query_one("#library-skills-range", Static).renderable
             ):
                 break
         assert screen.query_one("#library-skill-row-skill-000", Button)

@@ -42,7 +42,10 @@ from tldw_chatbook.Library.library_shell_state import (
     library_disabled_action_label,
     library_toggle_label,
 )
-from tldw_chatbook.Library.library_pager_state import LibraryPagerDisplay
+from tldw_chatbook.Library.library_pager_state import (
+    LibraryPagerDisplay,
+    library_pager_layout,
+)
 from tldw_chatbook.Widgets.Library.library_choice_strip import (
     compose_library_choice_strip,
 )
@@ -1318,32 +1321,27 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             yield from self._compose_pager(state.pager)
 
     def _compose_pager(self, pager: LibraryPagerDisplay) -> ComposeResult:
-        """Render the controller-derived Skills pager without recalculation."""
-        reasons = tuple(
-            dict.fromkeys(
-                reason
-                for disabled, reason in (
-                    (pager.previous_disabled, pager.previous_reason),
-                    (pager.next_disabled, pager.next_reason),
-                )
-                if disabled and reason
-            )
-        )
+        """Render the controller-derived Skills pager through the shared rule.
+
+        task-32354 (critique #10): this canvas composed the pager itself and
+        so never got the single-page suppression task-28016/31237 gave every
+        other Library list -- four lines of "Page 1 of 1 / Already on the
+        first page. / ○ Previous ○ Next" for two skills, 4 of 18 usable rows
+        at 60x24 (A caps 60/61). The rule is ``library_pager_layout``'s; this
+        method only renders what it returns.
+        """
+        layout = library_pager_layout(pager)
         with Vertical(id="library-skills-pager", classes="library-source-pager"):
             yield Static(
-                pager.range_copy,
+                " · ".join(layout.status_parts),
                 id="library-skills-range",
                 classes="library-source-pager-status",
                 markup=False,
             )
-            yield Static(
-                pager.page_copy,
-                id="library-skills-page",
-                classes="library-source-pager-status",
-                markup=False,
-            )
             status_copy = " · ".join(
-                copy for copy in (pager.status_copy, *reasons) if copy
+                copy
+                for copy in (pager.status_copy, *layout.boundary_reasons)
+                if copy
             )
             if status_copy:
                 yield Static(
@@ -1352,6 +1350,8 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                     classes="library-source-pager-status",
                     markup=False,
                 )
+            if layout.controls_hidden:
+                return
             with Horizontal(classes="library-source-pager-controls"):
                 yield Button(
                     library_disabled_action_label("Previous", pager.previous_disabled),
