@@ -200,7 +200,11 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         # Removed by 5dd1077df6 when generic Collection restore was retired.
     },
     "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": {
-        "Failed to restore a Library note": (),
+        # task-32299: gained the metadata field when the traceback added
+        # by 593961cb9c (PR #2553, task-32144) was dropped again -- a
+        # reviewed diagnostic may change metadata, not start capturing
+        # exceptions.
+        "Failed to restore a Library note": ("type(exc).__name__",),
     },
     # "canvas sync failed" was dropped from this registry in 51533602c4
     # (TASK-32089): that diagnostic now deliberately keeps its traceback
