@@ -61,6 +61,8 @@ class BackupRestoreScreen(Screen):
         self._last_terminal = None
         self._review_codes_seen = ()
         self._requested_backup_operation = None
+        self._requested_restore_operation = None
+        self._restore_review_codes_seen = ()
         self._rollback_copy_id = None
         self._rollback_plan = None
 
@@ -169,6 +171,7 @@ class BackupRestoreScreen(Screen):
                         password=True,
                         id="backup-rollback-confirm",
                     )
+                    yield Vertical(id="backup-restore-credential-review", classes="backup-form")
                     yield Static(
                         "Review the actual restore, retirement and preservation plan.",
                         id="backup-restore-preview",
@@ -729,6 +732,19 @@ class BackupRestoreScreen(Screen):
                 isinstance(control, Input) and control.password
             ):
                 self._forget_credential_review()
+            if not control.has_class("backup-acknowledge-restore-credential") and not (
+                isinstance(control, Input) and control.password
+            ):
+                self._forget_restore_credential_review()
+
+    def _forget_restore_credential_review(self):
+        """A rollback omission belongs to the unchanged replacement choices."""
+        self._requested_restore_operation = None
+        self._restore_review_codes_seen = ()
+        self.query_one("#backup-restore-credential-review").display = False
+        for box in self.query(".backup-acknowledge-restore-credential"):
+            box.value = False
+            box.disabled = True
 
     def _forget_credential_review(self):
         """An omission decision belongs only to the source choices that failed."""
@@ -877,6 +893,7 @@ class BackupRestoreScreen(Screen):
         self._refresh_status()
 
     def _clear_inspection(self, *, dismiss_current=False):
+        self._forget_restore_credential_review()
         if dismiss_current:
             current = self.service.current()
             self._dismissed_inspection_id = (
@@ -948,6 +965,18 @@ class BackupRestoreScreen(Screen):
                     exclusive=True,
                     group="backup-credential-review",
                 )
+            if (
+                current["kind"] == "restore"
+                and current["operation_id"] == self._requested_restore_operation
+                and codes
+                and codes != self._restore_review_codes_seen
+            ):
+                self._restore_review_codes_seen = codes
+                self.run_worker(
+                    self._show_restore_credential_review(current["operation_id"], codes),
+                    exclusive=True,
+                    group="restore-credential-review",
+                )
         self.query_one("#backup-status", Static).update(text)
         self.query_one("#backup-cancel", Button).disabled = (
             current["state"] != "running"
@@ -978,6 +1007,32 @@ class BackupRestoreScreen(Screen):
                     classes="backup-acknowledge-credential",
                 )
             )
+
+    async def _show_restore_credential_review(self, operation, codes):
+        if operation != self._requested_restore_operation or codes != self._restore_review_codes_seen:
+            return
+        self._invalidate()
+        area = self.query_one("#backup-restore-credential-review", Vertical)
+        await area.remove_children()
+        if operation != self._requested_restore_operation or codes != self._restore_review_codes_seen:
+            return
+        area.display = True
+        await area.mount(
+            Static(
+                "The safety copy could not include these credentials. No replacement was published. "
+                "In Recovery copies, choose Abort untouched replacement. Then return here, "
+                "review each omission, enter a new rollback password, and review restore again.",
+                markup=False,
+            ),
+            *(
+                Checkbox(
+                    Text("Acknowledge safety-copy omission: " + code),
+                    name=code,
+                    classes="backup-acknowledge-restore-credential",
+                )
+                for code in codes
+            ),
+        )
 
     def _deliver(self, app, callback, *args):
         """Discard a read-only preview after its view or application exits."""
@@ -1161,11 +1216,16 @@ class BackupRestoreScreen(Screen):
             destinations,
             names,
             target,
+            tuple(
+                box.name
+                for box in self.query(".backup-acknowledge-restore-credential")
+                if mode == "replace" and box.value and box.name in self._restore_review_codes_seen
+            ),
         )
 
     @work(exclusive=True, thread=True, group="backup-restore-preview")
     def _preview_restore(
-        self, app, revision, inspection, mode, destinations, names, target
+        self, app, revision, inspection, mode, destinations, names, target, acknowledged
     ):
         try:
             inventory = (
@@ -1179,6 +1239,7 @@ class BackupRestoreScreen(Screen):
                 destinations=destinations,
                 target=inventory,
                 profile_names=names,
+                acknowledged_credential_issues=acknowledged,
             )
         except (OSError, ValueError, RuntimeError) as error:
             self._deliver(
@@ -1208,6 +1269,10 @@ class BackupRestoreScreen(Screen):
             rows.extend(f"{label}: {key} → {path}" for key, path in entries)
         rows.extend(f"Issue: {issue}" for issue in plan.issues)
         rows.extend(
+            f"Acknowledged safety-copy credential omission: {issue}"
+            for issue in plan.acknowledged_credential_issues
+        )
+        rows.extend(
             f"Metadata: {key}: {old} → {new}" for key, old, new in plan.metadata
         )
         self.query_one("#backup-restore-preview", Static).update("\n".join(rows))
@@ -1230,9 +1295,10 @@ class BackupRestoreScreen(Screen):
                 return
             password = password.encode()
         try:
-            self.service.start_restore(
+            operation = self.service.start_restore(
                 self._inspection_id, plan, rollback_password=password
             )
+            self._requested_restore_operation = operation if plan.mode == "replace" else None
         except (OSError, ValueError, RuntimeError) as error:
             self.query_one("#backup-message", Static).update(
                 "Restore could not start: " + self.service.issue_code(error)

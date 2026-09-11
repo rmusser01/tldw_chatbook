@@ -500,3 +500,124 @@ async def test_editing_source_requires_new_actual_archive_inspection(tmp_path):
             )
     finally:
         await asyncio.to_thread(service.close)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["none", "target", "source", "destination", "profile", "mode", "reinspect"])
+async def test_replacement_omissions_require_explicit_review_after_untouched_abort(
+    tmp_path, monkeypatch, helper_resource_root, change
+):
+    import asyncio
+
+    from textual.app import App
+    from textual.widgets import Button, Input, Select
+
+    from Tests.Backup_Recovery.test_held_sqlite_rollback import replacement_case
+    from tldw_chatbook.Backup_Recovery import crypto
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+    from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
+
+    monkeypatch.setattr(crypto, "_package_resource_root", lambda: helper_resource_root)
+    with replacement_case(tmp_path, monkeypatch, prepared=False) as case:
+        _, original, _, _, source, selector = case
+        before = selector.read_bytes()
+        service = RecoveryService(tmp_path / "control")
+        # This native fixture has an explicitly selected two-owner inventory.
+        # All archive, planner, staging, rollback and publication code is real.
+        monkeypatch.setattr(service, "preview_backup", lambda *a, **kw: original.target)
+
+        class Harness(App):
+            def on_mount(self):
+                self.push_screen(BackupRestoreScreen(service))
+
+        async def click(pilot, identifier):
+            pilot.app.screen.query_one(identifier, Button).focus()
+            await pilot.press("enter")
+            await pilot.pause()
+
+        async def reviewed(pilot):
+            await click(pilot, "#backup-review-restore")
+            async with asyncio.timeout(10):
+                while pilot.app.screen._restore_plan is None:
+                    await asyncio.sleep(.02)
+
+        app = Harness()
+        try:
+            async with app.run_test(size=(110, 40)) as pilot:
+                screen = app.screen
+                await click(pilot, "#backup-open-inspect")
+                screen.query_one("#backup-source", Input).value = str(tmp_path / "replacement.zip")
+                await click(pilot, "#backup-inspect")
+                async with asyncio.timeout(10):
+                    while screen._inspection_summary is None:
+                        await asyncio.sleep(.02)
+                mapping = dict((*original.destinations, *original.selectors))
+                for index, slot in enumerate(screen._inspection_summary["destination_slots"]):
+                    screen.query_one(f"#backup-root-{index}", Input).value = str(mapping[slot["logical_id"]])
+                screen.query_one("#backup-restore-mode", Select).value = "replace"
+                screen.query_one("#backup-target-config", Input).value = str(selector)
+                screen.query_one("#backup-profile-name-0", Input).value = "Local"
+                screen.query_one("#backup-rollback-password", Input).value = "rollback"
+                screen.query_one("#backup-rollback-confirm", Input).value = "rollback"
+                await pilot.pause()
+                await reviewed(pilot)
+                assert not screen._restore_plan.acknowledged_credential_issues
+                await click(pilot, "#backup-start-restore")
+                state = await asyncio.to_thread(service.wait, service.current()["operation_id"], timeout=30)
+                assert state["review_issues"] == ("credential_format_unreadable",)
+                screen._refresh_status()
+                await pilot.pause()
+                boxes = list(screen.query(".backup-acknowledge-restore-credential"))
+                assert len(boxes) == 1
+                assert not boxes[0].value
+                assert selector.read_bytes() == before
+                await click(pilot, "#backup-open-copies")
+                async with asyncio.timeout(10):
+                    while not list(screen.query(".backup-recover-abort")):
+                        await asyncio.sleep(.02)
+                await click(pilot, ".backup-recover-abort")
+                state = await asyncio.to_thread(service.wait, service.current()["operation_id"], timeout=15)
+                assert state["result"]["aborted"]
+                assert selector.read_bytes() == before
+                await click(pilot, "#backup-open-inspect")
+                boxes[0].value = True
+                await pilot.pause()
+                if change != "none":
+                    failed_operation = screen._requested_restore_operation
+                    codes = screen._restore_review_codes_seen
+                    if change == "reinspect":
+                        await click(pilot, "#backup-inspect")
+                    elif change == "mode":
+                        screen.query_one("#backup-restore-mode", Select).value = "isolated"
+                    else:
+                        identifier = {
+                            "target": "backup-target-config",
+                            "source": "backup-source",
+                            "destination": "backup-root-0",
+                            "profile": "backup-profile-name-0",
+                        }[change]
+                        field = screen.query_one("#" + identifier, Input)
+                        field.value += "-changed"
+                    await pilot.pause()
+                    # A late result from the original operation cannot restore
+                    # unchecked evidence after the user changed its inputs.
+                    await screen._show_restore_credential_review(failed_operation, codes)
+                    assert not boxes[0].value
+                    assert boxes[0].disabled
+                    assert not screen.query_one("#backup-restore-credential-review").display
+                    assert screen._restore_plan is None
+                    assert selector.read_bytes() == before
+                    return
+                screen.query_one("#backup-rollback-password", Input).value = "rollback"
+                screen.query_one("#backup-rollback-confirm", Input).value = "rollback"
+                await pilot.pause()
+                await reviewed(pilot)
+                assert screen._restore_plan.acknowledged_credential_issues == ("credential_format_unreadable",)
+                await click(pilot, "#backup-start-restore")
+                state = await asyncio.to_thread(service.wait, service.current()["operation_id"], timeout=40)
+                assert state["state"] == "succeeded", dict(state)
+                assert state["result"]["restoration_validated"]
+                assert selector.read_bytes() != before
+                assert source.exists()
+        finally:
+            await asyncio.to_thread(service.close)
