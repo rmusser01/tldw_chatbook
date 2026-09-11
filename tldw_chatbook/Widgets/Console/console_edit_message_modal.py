@@ -10,6 +10,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static, TextArea
 
+from tldw_chatbook.Chat.thinking_blocks import MAX_THINKING_TEXT_BYTES
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 
@@ -188,3 +189,130 @@ class ConsoleEditMessageModal(
             )
             return
         self.dismiss(ConsoleEditResult(text=edited_content, resend=True))
+
+
+@dataclass(frozen=True)
+class ConsoleThinkingEditResult:
+    """Outcome of the thinking-block edit modal: the block's edited text.
+
+    ADR-090 amendment (TASK-32312): only the displayable block's text
+    changes; the answer, provenance, and replay encoding stay intact.
+    """
+
+    text: str
+
+
+class ConsoleEditThinkingModal(
+    SafeModalDismissMixin, ModalScreen[ConsoleThinkingEditResult | None]
+):
+    """Edit one displayable thinking block's text without touching the answer.
+
+    Args:
+        text: The block's current text, used as the editor prefill; the
+            caller also keeps this value as the optimistic-concurrency
+            baseline for the store's save-time ``expected_text`` guard.
+    """
+
+    DEFAULT_CSS = """
+    ConsoleEditThinkingModal {
+        align: center middle;
+    }
+
+    #console-edit-thinking-modal {
+        width: 92;
+        height: 28;
+        border: tall gray;
+        background: black;
+        padding: 1 2;
+    }
+
+    #console-edit-thinking-context {
+        height: auto;
+        margin: 1 0 1 0;
+    }
+
+    #console-edit-thinking-body {
+        width: 100%;
+        height: 1fr;
+        min-height: 8;
+    }
+
+    #console-edit-thinking-error {
+        height: auto;
+        min-height: 1;
+        color: red;
+    }
+
+    #console-edit-thinking-actions {
+        height: 3;
+        min-height: 3;
+        margin: 1 0 0 0;
+        align-horizontal: right;
+    }
+
+    #console-edit-thinking-cancel,
+    #console-edit-thinking-save {
+        width: 10;
+        min-width: 10;
+        height: 3;
+        min-height: 3;
+    }
+    """
+
+    SAFE_MODAL_CONTENT = "#console-edit-thinking-modal"
+    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
+
+    def __init__(self, *, text: str) -> None:
+        super().__init__()
+        self._text = text
+
+    def compose(self) -> ComposeResult:
+        """Yield the modal's context line, editor, error line, and actions."""
+        with Vertical(id="console-edit-thinking-modal"):
+            yield Static("Edit Thinking", classes="console-modal-header")
+            yield Static(
+                "Editing this thinking block. The answer, its provenance, "
+                "and replay encoding stay intact.",
+                id="console-edit-thinking-context",
+                markup=False,
+            )
+            yield _EditMessageTextArea(self._text, id="console-edit-thinking-body")
+            yield Static("", id="console-edit-thinking-error", markup=False)
+            with Horizontal(id="console-edit-thinking-actions"):
+                yield Button("Cancel", id="console-edit-thinking-cancel")
+                yield Button(
+                    "Save", id="console-edit-thinking-save", variant="primary"
+                )
+
+    def on_mount(self, event: events.Mount) -> None:  # type: ignore[override]
+        """Arm the TASK-360 stale-key guard and focus the editor.
+
+        Args:
+            event: Mount event supplying the clock domain shared with
+                ``Key.time`` for the pre-modal keystroke guard.
+        """
+        self._opened_at = event.time
+        area = self.query_one("#console-edit-thinking-body", _EditMessageTextArea)
+        area.opened_at = event.time
+        area.focus()
+
+    @on(Button.Pressed, "#console-edit-thinking-cancel")
+    async def _cancel(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self.request_safe_cancel(source="button")
+
+    @on(Button.Pressed, "#console-edit-thinking-save")
+    def _save(self, event: Button.Pressed) -> None:
+        event.stop()
+        edited_text = self.query_one("#console-edit-thinking-body", TextArea).text
+        if not edited_text.strip():
+            self.query_one("#console-edit-thinking-error", Static).update(
+                "Thinking text cannot be blank."
+            )
+            return
+        if len(edited_text.encode("utf-8")) > MAX_THINKING_TEXT_BYTES:
+            self.query_one("#console-edit-thinking-error", Static).update(
+                "Edited thinking is too large for one block."
+            )
+            return
+        self.dismiss(ConsoleThinkingEditResult(text=edited_text))

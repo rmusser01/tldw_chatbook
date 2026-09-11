@@ -891,6 +891,30 @@ NOT one of the migrated handlers. A guard's pin only covers the handlers that
 route through the guard; migrating a handler out from under one silently
 narrows what the pin proves without changing the pin's result.
 
+## `@on` handlers must live on the ChatScreen — `Console_Modules/message.py` is a controller, not a mixin (TASK-32312, 2026-09-10)
+
+**TASK-32312.** Wiring a `ConsoleThinkingEditRequested` event handler for the
+thinking-block edit feature, I added `@on(ConsoleThinkingEditRequested)` to a method
+in `UI/Console_Modules/message.py` — and the handler silently never ran (no modal, no
+toast, test timeout). That module's methods are not screen methods:
+`ChatScreen` constructs exactly one `ConsoleMessageController` in `__init__` (kept at
+`self._message`) and delegates specific methods into it. A plain controller object is
+not a Textual message pump, so `@on` tags on it are inert, and the controller has no
+`query_one` — `self.query_one(...)` inside it raises `AttributeError`, which a broad
+`except Exception` then swallowed into a misleading `None` return. The second trap:
+my first fix probed `hasattr(console, 'on_console_thinking_edit_requested')` via an
+**instance-attribute spy**, which stayed empty — Textual dispatch walks
+`type(self).__mro__`, so instance-attr replacement is invisible to delivery and
+"handler not called" conclusions from it are unreliable.
+
+**What to do.** Put `@on(...)` handlers on `ChatScreen` itself
+(`UI/Screens/chat_screen.py`) and delegate one line into
+`self._message.<controller_method>(event)`. Inside the controller, reach the DOM and
+screen through `self._screen` (`self._screen.query_one(...)`), never `self.` — the
+module's own header says "never a back-door through `self.screen`". When probing
+message delivery in tests, replace the handler on a subclass or count side effects
+(posted modals, store writes), not via instance attributes.
+
 ## A toast belongs to the screen that is current when it FIRES, and it docks over that screen's bottom chrome (task-32266, 2026-09-11)
 
 `App.notify()` hands the notification to `self.screen`, and Textual's

@@ -161,3 +161,36 @@ Automatic recognizes exact reviewed templates, not aliases. Reviewed Gemma 4 and
 Projection occurs before serialization, token accounting and provider admission. Whole owner groups and their matching provenance are filtered together. Runtime guidance and tool results continue the active exchange; any provider-visible row rewrite must preserve causal trace provenance. Children inherit policy but never a parent's thinking owner. Capture, default-on display, canonical persistence and importable transcript export are unaffected by replay preferences.
 
 Reviewed local runtime-control encoding uses the typed `RUNTIME_GUIDANCE` provenance transform. It retains the tool-result/control source and every appended guidance input; ordinary `MESSAGE_REWRITE` continues to accept only exact thinking/continuation attachments.
+
+## Amendment: user editing of displayable thinking block text (2026-09-11, TASK-32312)
+
+Displayable thinking block text is user-editable in place through a block-scoped
+Console edit action. This amends the accepted edit boundary above ("Assistant edit
+remains edit-in-place but explicitly clears thinking and continuation for the
+selected generation"): content edits continue to clear the generation envelope
+unchanged, while the new block-scoped action edits only one displayable block's text
+and leaves answer content, rounds, block identity, provenance, source encoding, and
+provider continuation intact.
+
+Boundary and semantics:
+
+1. Only `DisplayableThinkingBlock`s are editable. Proprietary evidence blocks remain
+   content-free and offer no edit affordance.
+2. An edited block keeps its block id, round ordinal, provenance, and source format.
+   Those fields describe the block's origin, not byte-exactness of its text — the
+   same convention as assistant content edits, which carry no edited marker and no
+   stored original copy.
+3. Edits re-validate the whole envelope (canonical JSON, block-count/text-size
+   bounds, non-empty block text) and persist through the atomic selected-generation
+   projection together with the unchanged answer, so memory, database, and Sync v2
+   observe one owner group. Blank edits are rejected; thinking-block deletion is not
+   part of this amendment (content edit already clears the whole envelope).
+4. Edited blocks remain replay-eligible. Replay continues to serialize a block in its
+   original source encoding and to apply the existing serialization safety checks:
+   edited text that is unsafe for the block's encoding (for example `<think`/
+   `</think` under start-anchored encoding) is rejected at edit time, would be
+   skipped under Auto, and fails before send under Include. No cross-provider
+   translation is introduced.
+5. Block-text editing is refused for streaming/pending owners, opaque or quarantined
+   generations (`thinking_actions_enabled=False`), and non-assistant owners — the
+   same generation-mutation gates as variant selection.
