@@ -660,7 +660,8 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         f"C{number:02d}"
         # C82 validates recovered-media restore edges against staged catalog
         # rows and archive-relative payload topology under the existing owner.
-        for number in range(1, 83)
+        # C83 checks only disposable Chroma candidate metadata, retaining WAL visibility.
+        for number in range(1, 84)
     ]
     assert [row["id"] for row in backup_rows] == [
         f"B{number:02d}" for number in range(1, 38)
@@ -1502,3 +1503,16 @@ def test_core_recovery_factory_exactly_matches_registered_backup_authority():
         "research.local", "writing.local", "db.evals", "eval.definitions", "study.local", "quiz.local",
     }
     assert all(a.__dataclass_params__.frozen for factory in (research, writing, evals, study) for a in factory())
+
+
+def test_rag_candidate_authority_is_read_only_and_backup_excluded(tmp_path):
+    from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+    policy = SQLITE_OWNER_REGISTRY["recovery.rag_projection_validation"]
+    assert policy.allowed_target_kinds == frozenset({SQLiteTargetKind.READ_ONLY_URI})
+    assert not policy.centralized_backup_allowed and not policy.recovery_capture_allowed
+    assert not policy.foreign_read_only_source
+    assert not any(row["owner_id"] == "recovery.rag_projection_validation" for row in _inventory_rows("B"))
+    with pytest.raises(ValueError):
+        connect_private_sqlite("recovery.rag_projection_validation", tmp_path / "must-not-create.db")
+    assert not (tmp_path / "must-not-create.db").exists()

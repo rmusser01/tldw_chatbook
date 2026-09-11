@@ -2882,6 +2882,7 @@ private staged copies. Model lease rows retain their existing cohort status.
 | sqlite:recovery.credentials | tldw_chatbook/Backup_Recovery/credentials | _PRIVATE_FILE | disposable credential reconstruction |
 | sqlite:recovery.validation | tldw_chatbook/DB/private_sqlite | _PRIVATE_AND_READ_ONLY | disposable imported candidate validation |
 | sqlite:recovery.validation_schema | tldw_chatbook/Backup_Recovery/sqlite_validation | _MEMORY | installed schema reference |
+| sqlite:recovery.rag_projection_validation | tldw_chatbook/Backup_Recovery/rag_projection_validation | _READ_ONLY_URI | disposable Chroma candidate validation |
 
 | tldw_chatbook/Backup_Recovery/archive_reader.py | _inspect | ZipFile | 1 | generic_boundary | reviewed archive input |
 | tldw_chatbook/Backup_Recovery/archive_reader.py | _regular | open | 1 | generic_boundary | reviewed archive input |
@@ -2899,6 +2900,10 @@ private staged copies. Model lease rows retain their existing cohort status.
 | tldw_chatbook/Backup_Recovery/credentials.py | _rewrite_database | os.replace | 1 | disposable | staged credential reconstruction |
 | tldw_chatbook/Backup_Recovery/credentials.py | _write | atomic_private_write_text | 1 | disposable | staged credential rewrite |
 | tldw_chatbook/Backup_Recovery/sqlite_validation.py | _reference | connect_private_sqlite | 1 | memory | installed schema reference |
+| tldw_chatbook/Backup_Recovery/rag_projection_validation.py | _native_validate | PersistentClient | 1 | disposable | backup_rag_projection_validation |
+| tldw_chatbook/Backup_Recovery/rag_projection_validation.py | _preflight | connect_private_sqlite | 1 | disposable | backup_rag_projection_validation |
+| tldw_chatbook/Backup_Recovery/rag_projection_validation.py | validate_groups | create_private_file | 1 | disposable | backup_rag_projection_validation |
+| tldw_chatbook/Backup_Recovery/rag_projection_validation.py | validate_groups | write | 1 | disposable | backup_rag_projection_validation |
 | tldw_chatbook/Backup_Recovery/storage_admission.py | _CaptureScope.sqlite_target | mkdir | 2 | disposable | private native capture SQLite copy |
 | tldw_chatbook/Backup_Recovery/storage_admission.py | _CaptureScope.sqlite_target | open | 2 | generic_boundary | native-domain-recovery |
 | tldw_chatbook/Backup_Recovery/storage_admission.py | _CaptureScope.sqlite_target | write | 1 | disposable | private native capture SQLite copy |

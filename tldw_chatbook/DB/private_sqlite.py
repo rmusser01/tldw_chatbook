@@ -109,6 +109,11 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_AND_READ_ONLY,
         "Restricted disposable imported candidate, never a live repository open.",
     ),
+    "recovery.rag_projection_validation": SQLiteOwnerPolicy(
+        "tldw_chatbook/Backup_Recovery/rag_projection_validation",
+        _READ_ONLY_URI,
+        "Restricted disposable Chroma candidate metadata with copied WAL visibility; never a live root.",
+    ),
     "recovery.validation_schema": SQLiteOwnerPolicy(
         "tldw_chatbook/Backup_Recovery/sqlite_validation",
         _MEMORY,
@@ -1304,7 +1309,10 @@ def _with_storage_admission(function):
             raise TypeError("invalid_private_admission_outcome")
         policy = _validated_owner_policy(owner_id)
         if (
-            owner_id in {"recovery.validation", "recovery.credentials"}
+            owner_id in {
+                "recovery.validation", "recovery.credentials",
+                "recovery.rag_projection_validation",
+            }
             or kwargs.get("_verified_descriptor_fd") is not None
             or os.fspath(database) == ":memory:"
             or (kwargs.get("read_only", False) and policy.foreign_read_only_source)

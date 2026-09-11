@@ -69,6 +69,8 @@ def _config_targets(data, profile, config_target, doc, plan, owners):
 
     from .config_adapter import _Definition
     from .profile_paths import DATABASE_PATHS, database_path, user_data_dir
+    from .rag_inventory import _Definitions as _RAGDefinitions
+    from .rag_inventory import _Projections
     from .recovered_media import _RecoveredAdapter
 
     databases = {owner: key for owner, key, _, _ in DATABASE_PATHS}
@@ -129,6 +131,22 @@ def _config_targets(data, profile, config_target, doc, plan, owners):
             expected = managed_artifact_root(user_data_dir(configured)).parent
         elif type(owner) is _RecoveredAdapter:
             expected = user_data_dir(configured) / "recovered_media"
+        elif type(owner) is _Projections:
+            rag = data.get("AppRAGSearchConfig", {}).get("rag", {})
+            selected_root = rag.get("vector_store", {}).get(
+                "persist_directory"
+            ) or rag.get("chroma", {}).get("persist_directory")
+            expected = (
+                Path(selected_root).expanduser().absolute()
+                if selected_root
+                else user_data_dir(configured) / "chromadb"
+            )
+        elif type(owner) is _RAGDefinitions:
+            expected = (
+                config_target.parent / "rag_pipelines.toml"
+                if payload.relative_path == "rag_pipelines.toml"
+                else user_data_dir(configured) / "rag_profiles"
+            )
         elif payload.owner_id in {
             "chat.attachments",
             "study.local",

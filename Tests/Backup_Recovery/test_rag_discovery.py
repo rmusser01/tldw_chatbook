@@ -102,7 +102,7 @@ def test_memory_selection_does_not_hide_retained_default_bytes(config):
     root.mkdir(parents=True)
     (root / "chroma.sqlite3").write_bytes(b"old projection")
     assert any(
-        item.status == "unsupported"
+        item.path == root / "chroma.sqlite3" and item.status == "included"
         for item in adapters()["rag.projections"].discover(config)
     )
 

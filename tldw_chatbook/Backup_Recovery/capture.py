@@ -435,6 +435,9 @@ def _capture_under_maintenance(
                     {stage: total, Path(destination): total * (5 if encrypted else 3)}
                 )
             candidates = {item.logical_id: path for item, path in staged}
+            from .rag_projection_validation import validate_groups
+
+            validate_groups(current.items, candidates, stage, cancel, limits, budget)
             for item, path in staged:
                 adapter = adapters[item.owner]
                 if (

@@ -1,4 +1,4 @@
-"""Inert RAG definitions and selector discovery; projections remain unqualified.
+"""Inert RAG definitions and installed Chroma root discovery.
 
 Never construct a profile manager or vector client here: both may migrate sources.
 Original Task19 separately owns engine capture and restored retrieval readiness.
@@ -16,16 +16,6 @@ from tldw_chatbook.Backup_Recovery.models import (
 )
 from tldw_chatbook.Backup_Recovery.profile_paths import lexical_path, user_data_dir
 from tldw_chatbook.Backup_Recovery.recovery_files import _RawDeclaration
-
-
-def _pending(entries):
-    return tuple(
-        replace(
-            item,
-            status="unsupported" if item.status == "included" else item.status,
-        )
-        for item in entries
-    )
 
 
 def _absent(config, owner, path):
@@ -84,6 +74,45 @@ def _engine(value):
 class _Definitions(_RawDeclaration):
     max_bytes: int = 16 * 1024**2
 
+    def validate_restore_dependencies(self, item, candidate, candidates, *, topology):
+        """Refuse unmapped installed root selectors only when restoring definitions."""
+        if item.metadata is None or item.metadata.kind != "file":
+            return ()
+        import tomllib
+
+        from .credentials import (
+            _rag_config_sections,
+            _rag_definition_kind,
+            _rag_definition_valid,
+            _read,
+        )
+
+        kind = _rag_definition_kind(item.metadata.relative_path)
+        data = (
+            tomllib.loads(_read(candidate).decode())
+            if kind == "pipeline"
+            else json.loads(_read(candidate))
+        )
+        if not _rag_definition_valid(kind, data):
+            return ("rag_definition_format_unsupported",)
+        # Known config positions only; descriptions and experiment history are opaque.
+        for parent, key, _ in _rag_config_sections(kind, data):
+            section = parent[key]
+            for config in (
+                section,
+                section.get("rag", {}),
+                section.get("rag_config", {}),
+            ):
+                config = _mapping(config)
+                for selected in (
+                    config,
+                    config.get("vector_store", {}),
+                    config.get("chroma", {}),
+                ):
+                    if _text(_mapping(selected).get("persist_directory")):
+                        return ("rag_definition_root_mapping_required",)
+        return ()
+
     def discover(self, config):
         from .credentials import _rag_definition_kind
 
@@ -113,8 +142,44 @@ class _Definitions(_RawDeclaration):
 
 
 class _Projections(_RawDeclaration):
-    def validate(self, candidate):
-        return ("rag_projection_capture_unqualified",)
+    def validate_restore_dependencies(self, item, candidate, candidates, *, topology):
+        """Validate one complete private root in staging and installed-copy checks."""
+        if item.metadata is None or item.logical_id != item.metadata.root_id:
+            return ()
+        from threading import Event
+
+        from .limits import ArchiveLimits
+        from .models import FileMetadata
+        from .rag_projection_validation import validate_groups
+
+        group = []
+        for key, (root, parent, relative, kind) in topology.items():
+            if root != item.logical_id or key not in candidates:
+                continue
+            group.append(
+                replace(
+                    item,
+                    logical_id=key,
+                    path=candidates[key],
+                    status="included_directory" if kind == "directory" else "included",
+                    dependencies=item.dependencies if key == root else (parent,),
+                    metadata=FileMetadata(
+                        1,
+                        root,
+                        relative,
+                        parent,
+                        kind,
+                        0o700 if kind == "directory" else 0o600,
+                        0,
+                        "private",
+                    ),
+                )
+            )
+        limits = ArchiveLimits()
+        validate_groups(
+            group, candidates, candidate.parent, Event(), limits, limits.expanded_bytes
+        )
+        return ()
 
     def discover(self, config):
         context = discovery_context(config)
@@ -201,13 +266,47 @@ class _Projections(_RawDeclaration):
                 RecursionError,
             ):
                 issues.append(item.logical_id)
-        entries = tuple(
-            item
-            for root in sorted(roots)
-            for item in _pending(
-                _absent(config, self.owner_id, root) or self._tree(config, root),
-            )
+        from .profile_paths import database_path
+        from .rag_projection_validation import recognized_path
+
+        dependencies = [storage_logical_id(context, "config")]
+        dependencies.extend(
+            item.logical_id
+            for item in definitions
+            if item.status in {"included", "included_directory"}
         )
+        for owner, setting in (
+            ("db.rag_indexing", "rag_indexing_db_path"),
+            ("db.media.primary", "media_db_path"),
+            ("db.chachanotes.primary", "chachanotes_db_path"),
+            ("db.prompts.primary", "prompts_db_path"),
+        ):
+            if database_path(config, setting).exists():
+                dependencies.append(storage_logical_id(context, owner))
+        entries = []
+        for root in sorted(roots):
+            group = _absent(config, self.owner_id, root) or self._tree(config, root)
+            members = tuple(item.logical_id for item in group)
+            for item in group:
+                metadata = item.metadata
+                if metadata is not None:
+                    item = replace(
+                        item,
+                        status=item.status
+                        if recognized_path(metadata.relative_path, metadata.kind)
+                        else "unsupported",
+                        dependencies=tuple(
+                            dict.fromkeys(
+                                (
+                                    *item.dependencies,
+                                    *dependencies,
+                                    *(members if metadata.relative_path == "" else ()),
+                                )
+                            )
+                        ),
+                    )
+                entries.append(item)
+        entries = tuple(entries)
         if issues:
             entries += (
                 StorageItem(
@@ -219,9 +318,6 @@ class _Projections(_RawDeclaration):
                 ),
             )
         return entries
-
-    def capture(self, item, destination, cancel):
-        raise ValueError("rag_projection_capture_unqualified")
 
 
 def recovery_adapters():
