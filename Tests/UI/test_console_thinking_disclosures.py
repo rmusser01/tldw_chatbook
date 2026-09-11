@@ -623,3 +623,66 @@ def test_session_switch_prunes_thinking_owner_state_and_tool_expansion_survives_
     assert thinking_id not in transcript._thinking_activity_refs
     assert not transcript._pending_thinking_auto_collapse
     assert not transcript._manual_thinking_disclosures
+
+
+@pytest.mark.asyncio
+async def test_editable_block_resolves_owner_block_and_text() -> None:
+    app = ThinkingTranscriptHarness()
+    historical = _assistant(
+        content="Answer",
+        status="complete",
+        blocks=(_displayable("full historical thinking"),),
+    )
+
+    async with app.run_test(size=(100, 28)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages([historical], session_id="session-a")
+        await transcript.refresh_messages()
+        disclosure = _disclosure(transcript, historical)
+
+        resolved = transcript.thinking_editable_block(disclosure.activity_message_id)
+
+        assert resolved == (
+            historical.id,
+            "thinking-block-0",
+            "full historical thinking",
+        )
+
+
+@pytest.mark.asyncio
+async def test_editable_block_returns_none_for_proprietary() -> None:
+    app = ThinkingTranscriptHarness()
+    proprietary_owner = _assistant(
+        content="Answer",
+        status="complete",
+        blocks=(_proprietary(),),
+    )
+
+    async with app.run_test(size=(100, 28)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages([proprietary_owner], session_id="session-a")
+        await transcript.refresh_messages()
+        disclosure = _disclosure(transcript, proprietary_owner)
+
+        assert transcript.thinking_editable_block(disclosure.activity_message_id) is None
+
+
+@pytest.mark.asyncio
+async def test_editable_block_refuses_streaming_owner() -> None:
+    app = ThinkingTranscriptHarness()
+    streaming = _assistant(
+        content="",
+        status="streaming",
+        blocks=(_displayable("partial live thinking"),),
+    )
+
+    async with app.run_test(size=(100, 28)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages([streaming], session_id="session-a")
+        await transcript.refresh_messages()
+        disclosure = _disclosure(transcript, streaming)
+
+        # A live disclosure must not open the edit modal with partial text
+        # (TASK-32312 review: saving a stale live prefill after completion
+        # would truncate the finished reasoning).
+        assert transcript.thinking_editable_block(disclosure.activity_message_id) is None

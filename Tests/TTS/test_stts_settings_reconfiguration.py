@@ -3338,3 +3338,56 @@ def test_audio_cpp_mapping_serializes_as_nested_toml_table(
 
     persisted = tomllib.loads(config_path.read_text(encoding="utf-8"))
     assert persisted["app_tts"]["audio_cpp"] == candidate
+
+
+@pytest.mark.asyncio
+async def test_first_run_voice_save_reports_to_the_wizard_without_a_toast(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """task-32266: the first-run wizard saves Voice settings on the user's
+    behalf while advancing a step, and renders every outcome inside the step
+    it came from. The app-level publication toast therefore only lands on
+    whichever step is current when the write settles -- Protect, or the
+    Summary, where Textual docks it bottom-right over the Summary's own
+    docked exit actions ("Write your first note" and its peers).
+    """
+
+    from tldw_chatbook.UI.Wizards.first_run_voice_step_state import (
+        POCKET_TTS_ENDPOINT,
+        POCKET_TTS_MODEL,
+        POCKET_TTS_VOICE,
+        VoiceSetupDraft,
+        build_voice_setup_save_event,
+    )
+
+    app = RecordingApp()
+    handler = STTSEventHandler(app)
+    handler._stts_service = ImmediatePublicationService()
+    monkeypatch.setattr(
+        "tldw_chatbook.config.apply_settings_mutation_to_cli_config",
+        lambda section_values, *, delete_keys: _mutation_outcome(),
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.config.settings",
+        {"COMPREHENSIVE_CONFIG_RAW": {"app_tts": {}}},
+    )
+    recorder = SettingsResultRecorder()
+
+    await handler.handle_settings_save(
+        build_voice_setup_save_event(
+            VoiceSetupDraft(
+                endpoint=POCKET_TTS_ENDPOINT,
+                authentication_mode="none",
+                model_id=POCKET_TTS_MODEL,
+                voice_id=POCKET_TTS_VOICE,
+                response_format="wav",
+                speed=1.0,
+                sample_text="Hello from Chatbook.",
+            ),
+            request_id=7,
+            reply_to=recorder,
+        )
+    )
+
+    assert app.notifications == []
+    assert [result.persisted for result in recorder.results] == [True]

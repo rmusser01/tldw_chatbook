@@ -30,7 +30,12 @@ from .console_citation_sources_modal import (
     ConsoleCitationSourcesModal,
     build_console_citation_source_rows,
 )
-from .console_edit_message_modal import ConsoleEditMessageModal, ConsoleEditResult
+from .console_edit_message_modal import (
+    ConsoleEditMessageModal,
+    ConsoleEditResult,
+    ConsoleEditThinkingModal,
+    ConsoleThinkingEditResult,
+)
 from .console_fork_chat_modal import (
     ConsoleForkChatModal,
     ConsoleForkDialogSummary,
@@ -69,7 +74,7 @@ from .console_terminal_messages import (
     ConsoleTerminalActionRequested,
     ConsoleTerminalInputRequested,
 )
-from .console_transcript import ConsoleTranscript
+from .console_transcript import ConsoleThinkingEditRequested, ConsoleTranscript
 from .console_workbench_state import build_console_workbench_state
 from .console_workspace_context import ConsoleWorkspaceContextTray
 from .console_workspace_tree import (
@@ -144,6 +149,8 @@ __all__ = [
     "ConsoleContextControlState",
     "ConsoleEditMessageModal",
     "ConsoleEditResult",
+    "ConsoleEditThinkingModal",
+    "ConsoleThinkingEditResult",
     "ConsoleForkChatModal",
     "ConsoleForkDialogSummary",
     "ConsoleForkSubmitResult",
@@ -174,6 +181,7 @@ __all__ = [
     "ConsoleTerminalWorkspace",
     "TerminalSessionFormResult",
     "TerminalViewport",
+    "ConsoleThinkingEditRequested",
     "ConsoleTranscript",
     "ConsoleTranscriptSurface",
     "ConsoleVoicePreview",

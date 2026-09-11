@@ -409,3 +409,31 @@ async def test_gateway_shared_raw_owner_marker_attaches_continuation_and_thinkin
     assert repr(prepared.messages_payload).count("SHARED-OWNER-CANARY") == 1
     assert [item async for item in gateway.stream_chat(resolution, prepared)] == ["ok"]
     assert repr(dispatched[0]["messages_payload"]).count("SHARED-OWNER-CANARY") == 1
+
+
+def test_user_edited_block_text_replays_in_original_encoding() -> None:
+    # ADR-090 amendment (TASK-32312): editing a displayable block's text keeps
+    # it replay-eligible, serialized in its original source encoding.
+    resolved = resolve_thinking_history(
+        target=_target(),
+        policy="include",
+        sidecars=(_sidecar(_displayable("USER-CLEANED-REASONING")),),
+    )
+
+    assert [block.text for block in resolved.groups[0].blocks] == [
+        "USER-CLEANED-REASONING"
+    ]
+    assert resolved.groups[0].blocks[0].source_format == "start_anchored_think"
+
+
+def test_user_edited_block_text_with_think_tags_is_skipped_under_auto() -> None:
+    # Edited text that is unsafe for the block's encoding is skipped under
+    # Auto exactly like unsafe captured text (the store rejects this edit
+    # shape up front; this pins the resolution-side guard).
+    resolved = resolve_thinking_history(
+        target=_target(),
+        policy=None,
+        sidecars=(_sidecar(_displayable("cleaned <think>bad</think>")),),
+    )
+
+    assert resolved.groups == ()
