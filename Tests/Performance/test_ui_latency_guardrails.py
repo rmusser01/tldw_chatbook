@@ -32,9 +32,11 @@ its 30 s deadline expiry was misread as app latency.
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 
 import pytest
+from textual.widgets import Static
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -172,3 +174,123 @@ async def test_destination_tour_css_sources_stay_below_parse_cache(
             f"CSS_PATH/DEFAULT_CSS declarations must consolidate per "
             f"TASK-15450 (css/build_css.py)."
         )
+
+
+# ---------------------------------------------------------------------------
+# task-32260: the seeded Library open. The critique measured 12.6 s on a
+# 27-item profile against 2.7 s on an empty one and could not trace it. On
+# this machine the gap is 0.2 s (see the task's Implementation Notes for the
+# full numbers, including a re-measure at the critique's own base commit), so
+# there is no slow path to remove -- but nothing pinned the open time on a
+# profile that HAS content, which is why a 12x claim could stand unchecked
+# for a week. This is that pin: the same generous budget the empty tour uses,
+# now also on a seeded profile, where a regression of the reported class
+# (12.6 s) fails the build.
+# ---------------------------------------------------------------------------
+
+#: What the critique's profile held: 10 notes, 11 media, 6 conversations.
+SEEDED_PROFILE_NOTES = 10
+SEEDED_PROFILE_MEDIA = 11
+SEEDED_PROFILE_CONVERSATIONS = 6
+
+
+def _seed_library_profile(home: Path) -> None:
+    """Write a 27-item Library into the scratch env's own databases.
+
+    Content shape, not volume, is the point: 27 items is the corpus the
+    critique measured, and the open path it exercises (per-source counts,
+    the recent-items strip, one private-SQLite connection per database) is
+    the work an empty profile skips entirely.
+
+    Args:
+        home: The scratch HOME the config file was written under.
+
+    Returns:
+        None.
+    """
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
+    data = home / "library-budget-data"
+    data.mkdir(parents=True, exist_ok=True)
+    chacha = CharactersRAGDB(data / "chachanotes.db", "budget")
+    for index in range(SEEDED_PROFILE_NOTES):
+        chacha.add_note(f"Seeded note {index}", f"Body of seeded note {index}.\n" * 8)
+    for index in range(SEEDED_PROFILE_CONVERSATIONS):
+        conversation_id = chacha.add_conversation({"title": f"Seeded chat {index}"})
+        for turn in range(4):
+            chacha.add_message(
+                {
+                    "conversation_id": conversation_id,
+                    "sender": "user" if turn % 2 == 0 else "assistant",
+                    "content": f"Turn {turn} of seeded chat {index}.",
+                }
+            )
+    media = MediaDatabase(data / "media.db", "budget")
+    for index in range(SEEDED_PROFILE_MEDIA):
+        media.add_media_with_keywords(
+            title=f"Seeded media {index}",
+            media_type="article",
+            content=f"Body of seeded media {index}.\n" * 20,
+            keywords=["seeded"],
+        )
+
+
+def _point_config_at_seeded_databases(home: Path) -> None:
+    """Append explicit database paths so the seed and the app agree."""
+    config_file = Path(os.environ["TLDW_CONFIG_PATH"])
+    data = home / "library-budget-data"
+    config_file.write_text(
+        config_file.read_text()
+        + "\n[general]\nusers_name = \"budget\"\n\n[database]\n"
+        + f'chachanotes_db_path = "{data / "chachanotes.db"}"\n'
+        + f'media_db_path = "{data / "media.db"}"\n'
+    )
+
+
+@pytest.mark.ui
+@pytest.mark.asyncio
+async def test_library_opens_within_budget_on_a_seeded_profile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Library arrives and settles inside its budget with 27 items in it."""
+    home = _scratch_env(monkeypatch, tmp_path)
+    _point_config_at_seeded_databases(home)
+    _seed_library_profile(home)
+
+    from tldw_chatbook.app import TldwCli
+
+    app = TldwCli()
+    async with app.run_test(size=(235, 52)) as pilot:
+        for _ in range(20):
+            await asyncio.sleep(0.05)
+            await pilot.pause()
+
+        started = asyncio.get_running_loop().time()
+        await pilot.press("ctrl+3")
+        arrived, _ = await _wait_for_screen(
+            pilot, "LibraryScreen", SCREEN_SWITCH_BUDGET_SECONDS
+        )
+        elapsed = asyncio.get_running_loop().time() - started
+        # The seeding has to actually reach the app, or this pin measures an
+        # empty profile forever and says nothing about the case it names.
+        for _ in range(40):
+            await asyncio.sleep(_SETTLE_INTERVAL)
+            await pilot.pause()
+        painted = [str(widget.renderable) for widget in app.screen.query(Static)]
+        counted = [text for text in painted if "Notes (" in text]
+
+    assert counted and (
+        f"Notes ({SEEDED_PROFILE_NOTES})" in counted[0]
+        and f"Media ({SEEDED_PROFILE_MEDIA})" in counted[0]
+    ), f"the seeded profile never reached the screen: {counted[:3]}"
+    assert arrived, (
+        "Library never opened on a seeded profile "
+        f"(stuck on {type(app.screen).__name__})"
+    )
+    assert elapsed <= SCREEN_SWITCH_BUDGET_SECONDS, (
+        f"Library took {elapsed:.1f}s to open on a "
+        f"{SEEDED_PROFILE_NOTES + SEEDED_PROFILE_MEDIA + SEEDED_PROFILE_CONVERSATIONS}"
+        f"-item profile (budget {SCREEN_SWITCH_BUDGET_SECONDS}s; measured "
+        "1.1 s on an M-series Mac at dev 4a14b3f36f, task-32260)"
+    )

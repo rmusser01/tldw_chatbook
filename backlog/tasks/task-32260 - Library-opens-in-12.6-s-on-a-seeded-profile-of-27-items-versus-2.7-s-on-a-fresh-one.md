@@ -3,9 +3,11 @@ id: TASK-32260
 title: >-
   Library opens in 12.6 s on a seeded profile of 27 items versus 2.7 s on a
   fresh one
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-10 18:05'
+updated_date: '2026-09-11 15:36'
 labels:
   - library
   - notes
@@ -32,3 +34,12 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 - [ ] #2 Library opens on a 27-item profile within a documented budget
 - [ ] #3 A regression test or a recorded measurement pins the open time
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Rebuild the critique's profile with seed_power_profile.py (10 notes, 11 media, 6 conversations).
+2. Measure the open live at 235x52 on this branch AND at the critique's own base commit e6cb464239, plus a fresh profile.
+3. Profile the seeded open in-process (cProfile) to name what the empty path skips.
+4. Fix the cause if the measurements find one; otherwise record the numbers and pin a budget test on a seeded fixture.
+<!-- SECTION:PLAN:END -->
