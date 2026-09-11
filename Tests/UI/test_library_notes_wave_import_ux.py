@@ -766,3 +766,61 @@ def test_the_canvas_takes_its_non_importable_set_from_the_planner_enum() -> None
     assert set(library_note_import_canvas._CLASSIFICATION_LABELS) == {
         classification.value for classification in ImportClassification
     }
+
+
+# --- task-32242: the older ingest browser gets the same two guarantees ------
+
+
+@pytest.mark.parametrize(
+    "remembered",
+    ["relative/dir", "../../etc", "/definitely/not/here/32242"],
+)
+async def test_ingest_browser_refuses_an_unusable_remembered_directory(
+    remembered, monkeypatch, tmp_path
+) -> None:
+    """AC#1: a relative/traversing/vanished value never reaches ``FileOpen``.
+
+    It used to do a bare ``Path(...).expanduser().is_dir()``, so a relative
+    stored value was resolved against the process working directory.
+    """
+    screen = _minimal_notes_screen()
+    screen._ingest_state.form.path = ""
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen.get_cli_setting",
+        lambda section, key=None, default=None: (
+            remembered if section == "library.ingest" else None
+        ),
+    )
+    monkeypatch.setattr(
+        browse_location_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: None,
+    )
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "relative").mkdir()
+    (tmp_path / "relative" / "dir").mkdir()
+
+    assert screen._library_ingest_browse_location() == str(Path.home())
+
+
+async def test_a_superseded_ingest_selection_cannot_win(
+    tmp_path, monkeypatch
+) -> None:
+    """AC#2: of two picks made before the first write lands, the later one wins."""
+    screen = _minimal_notes_screen()
+    older = tmp_path / "older"
+    newer = tmp_path / "newer"
+    older.mkdir()
+    newer.mkdir()
+    saved = _capture_saved_directories(monkeypatch)
+
+    pending: list = []
+    monkeypatch.setattr(screen, "run_worker", lambda work, **kwargs: pending.append(work))
+
+    screen._persist_library_ingest_location(older / "a.txt")
+    screen._persist_library_ingest_location(newer / "b.txt")
+    # Workers finish out of order: the older selection's write lands last.
+    for work in reversed(pending):
+        work()
+
+    assert saved == [("library.ingest", "last_directory", str(newer))]
