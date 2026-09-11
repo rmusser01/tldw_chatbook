@@ -3,7 +3,7 @@ id: TASK-32246
 title: >-
   Library Notes editor: Tab out of the note body lands on a control that
   swallows typed keys, and may leave the pane with no focus at all
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-10 18:05'
 labels:
@@ -35,8 +35,32 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Tab out of the note body lands on a control that either accepts text or shows focus by shape
-- [ ] #2 Typing after a Tab out of the body never disappears silently: the characters either land somewhere visible or the footer names where focus is
-- [ ] #3 Covered by a test on the real editor route that fails on the live behaviour before the fix
-- [ ] #4 The no-focused-control-anywhere case is reproduced or ruled out, with the exact key sequence recorded in the notes
+- [x] #1 Tab out of the note body lands on a control that either accepts text or shows focus by shape
+- [x] #2 Typing after a Tab out of the body never disappears silently: the characters either land somewhere visible or the footer names where focus is
+- [x] #3 Covered by a test on the real editor route that fails on the live behaviour before the fix
+- [x] #4 The no-focused-control-anywhere case is reproduced or ruled out, with the exact key sequence recorded in the notes
 <!-- AC:END -->
+
+## Implementation Plan
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce live on a seeded profile: open a 37 KB note, Tab out of the body, type.
+2. Trace the landing control and decide whether "no focused control anywhere" is a third defect.
+3. RED test on the real editor route; scope Tab to the open editor at the existing focus seam.
+4. Name the landing control in the footer through the existing `_library_focus_enter_label` seam.
+5. GREEN; verify live at 235x52 and 100x30; guide key table; stamp.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+<!-- SECTION:NOTES:BEGIN -->
+Cause PROVEN for the focus-order half and the AC#4 half RULED OUT, both live at dev 4a14b3f36f on a seeded profile (captures `wave3-caps/editor-keys/10-tab-from-body.txt`, `11-tab-then-type.txt`).
+
+`#library-note-body` is the LAST focusable widget of `#screen-content`, so `LibraryScreen.action_focus_next` wrapped the cycle round to that region's FIRST — `#library-notes-source-database`, the browse chrome's "Library notes" source switch, two panes above the editor. The harness focus chain confirms the order. A `Button` swallows printable keys, so `TAILEDIT` typed straight after Tab vanished with no error.
+
+AC#4's "no focused control anywhere in the visible pane" is NOT a third defect. Exact sequence: open the note from the list, press Tab. Focus IS on `#library-notes-source-database`; a colour decode of that row (`tmux capture-pane -e`) shows it painting `1;4` bold+underline on `48;2;16;49;75` — which is the same treatment it already wears for its own `-selected` class, so a reader (and the reconciler) sees no change. It is invisible, not absent.
+
+Fix: Tab and Shift+Tab cycle inside `#library-note-work-pane` while the note editor is open, the way they already cycle inside the delete prompt (`LibraryScreen.on_key`) and inside `#screen-content` (task-32052). One Tab from the body now lands on `‹ Notes`, which paints a heavy focus border. F6 and Escape remain the ways out of the editor, and the guide says so.
+
+AC#2 needs typed characters to land visibly or the footer to name focus. The landing control is a Button, so the footer names it: `_LIBRARY_NOTE_EDITOR_ENTER_LABELS` feeds `_library_focus_enter_label` (the seam the delete prompt and the New-note canvas already use) and the editor footer tier prepends an `enter …` chip whenever a named control has focus. Live: `enter back to list | esc back to notes | ctrl+end end of note`.
+
+Files: `tldw_chatbook/UI/Screens/library_screen.py`, `Tests/UI/test_library_notes_wave_editor_keys.py`, `Docs/User_Guide/library/notes.md`.
+<!-- SECTION:NOTES:END -->
