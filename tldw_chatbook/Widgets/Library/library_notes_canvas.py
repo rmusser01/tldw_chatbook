@@ -2255,7 +2255,15 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 placeholder="Comma-separated keywords",
                 id="library-note-keywords",
             )
-            yield Static(metadata_line, id="library-note-meta", markup=False)
+            # task-32143 AC#2: `#library-note-meta` used to render the
+            # Created/Modified/version/word-count line here. Its container
+            # has been `display = False` unconditionally since the utilities
+            # moved into Info (see ``apply_session_state``), so it was
+            # composed and re-rendered on every state apply and never seen.
+            # Info's `#library-note-context-meta` is the one that is read,
+            # and the word count it carried now also reads on the chrome
+            # strip under the body. Removed rather than left as a second,
+            # invisible home for the same sentence.
             wide_actions = Horizontal(classes="ds-toolbar")
             wide_actions.styles.height = "auto"
             with wide_actions:
@@ -2583,10 +2591,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         authority_status = self.query_one("#library-note-authority-git-status", Static)
         if self._static_text(authority_status) != channels.authority_git:
             authority_status.update(channels.authority_git)
-        for selector in ("#library-note-meta", "#library-note-context-meta"):
-            widget = self.query_one(selector, Static)
-            if self._static_text(widget) != state.metadata_line:
-                widget.update(state.metadata_line)
+        # task-32143 AC#2: was a two-selector loop -- the second home,
+        # `#library-note-meta`, was never displayed. One meta line now.
+        context_meta = self.query_one("#library-note-context-meta", Static)
+        if self._static_text(context_meta) != state.metadata_line:
+            context_meta.update(state.metadata_line)
         # task-32145: backlinks are loaded by their own worker AFTER the note
         # opens, so they land on an editor that is already composed -- and a
         # recompose is deferred for as long as the reader owns a field

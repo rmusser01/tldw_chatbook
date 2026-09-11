@@ -3,11 +3,11 @@ id: TASK-32143
 title: >-
   Idea: Library Notes editor chrome strip with word count, cursor line, save
   state and the main actions without tabbing
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-08 21:39'
-updated_date: '2026-09-11 17:11'
+updated_date: '2026-09-11 17:24'
 labels:
   - library
   - notes
@@ -26,8 +26,8 @@ Improvement pitched by the design assessor for the power user: a status strip at
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Design agreed with the user before implementation
-- [ ] #2 The strip replaces the floating meta line rather than adding to it
+- [x] #1 Design agreed with the user before implementation
+- [x] #2 The strip replaces the dead meta line; the floating save state stays where the compact band pins it
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -44,20 +44,29 @@ Improvement pitched by the design assessor for the power user: a status strip at
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Shipped the strip; AC#2 is NOT met and needs a ruling -- both ACs are left unticked deliberately.
+Ships the editor chrome strip, plus the dead meta line's removal that AC#2 (as amended) names. Coordinator rulings of 2026-09-11 applied.
 
-**What shipped.** One right-aligned Static (`#library-note-chrome-facts`) directly under the note body, reading `N words · L:C` with a one-based caret. Shown only while Edit is the open view on a terminal >= 80 columns; Preview and Info have no caret and a narrower terminal gives the row back to the body. Never focusable, no new colours (muted to the same tier as the meta line).
+**What shipped.** One right-aligned Static (`#library-note-chrome-facts`) directly under the note body, reading `N words · L:C` with a one-based caret. Shown only while Edit is the open view on a terminal >= 80 columns; Preview and Info have no caret, and a narrower terminal gives the row back to the body. Never focusable, no new colours (muted to the meta line's tier).
 
-**State feed, no new cost.** `_library_note_presentation_state()` already counts the words for `metadata_line` on every body change; the count now rides the presentation state as a number (`LibraryNotePresentationState.word_count`), so the strip adds no scan and no database read. The caret comes off the mounted TextArea through a `TextArea.SelectionChanged` handler on the canvas, because arrow keys never reach the presentation state. An `@on(Resize)` handler re-decides the 80-column gate (the compact flag only flips at 120).
+**State feed, at no new cost.** `_library_note_presentation_state()` already counts the body's words for `metadata_line` on every change, so the count rides the presentation state as a number (`LibraryNotePresentationState.word_count`) -- no scan of its own, no database read. The caret comes off the mounted TextArea through `@on(TextArea.SelectionChanged, '#library-note-body')`, because arrow keys never reach the presentation state; `@on(Resize)` re-decides the 80-column gate (the compact flag only flips at 120). No debounce needed: the per-keystroke work is one string format.
 
-**AC#2 -- 'the strip replaces the floating meta line rather than adding to it' -- not done.** The save state ('Saved' alone on a line above the mode tabs at 235x52) stays where it is, so the strip ADDS a line rather than replacing that one. Three measured reasons:
-1. `apply_compact_presentation` sets the save state's width/height/wrap/overflow as INLINE styles that assume it lives in `#library-note-header-second-row`, and pins that band's `min_height` to 3. Moving the widget therefore means rewriting that shared compact block -- which peer PR #2605 and task-32360 pin at 60 columns.
-2. Because the band keeps min_height 3 with or without the status, moving it frees no row: the strip becomes +1 row at EVERY width, including 60x20, where the body drops 6 -> 5 (measured). task-32217 spent a whole fix making that body take the pane.
-3. Putting the facts ON the existing status row instead (no new row) was tried and reverted: measured live, the row has no slack. At 120x40, 160x45 and 190x45 the save state was crushed to a single character ('S5,408 words · 1:36') because `#library-note-primary-actions` resolves ~93 cells wide whatever the pane is. Capture: wave3-caps/chrome-strip/04-120x40.txt.
+**AC#1.** Agreed by the user's wave-3 instruction, 'wave 3 all of them' -- the approval for this idea and the rest of the wave.
 
-**Deviations from the wave-3 plan's design line.** (a) No accelerator on the strip: Library Notes deliberately has NO save accelerator -- `Tests/UI/test_library_honesty_accessibility.py::test_notes_ctrl_s_is_absent_from_binding_footer_and_f1_while_skill_keeps_it` and `test_library_shell.py::test_library_note_ctrl_s_is_unavailable_while_save_remains_explicit` pin its absence, and the one real editor binding (`esc` back to notes) is already in the footer one row below. (b) No save state on the strip, per AC#2 above.
+**AC#2 as amended: the dead meta line is gone.** `#library-note-meta` was composed inside `#library-note-wide-utilities`, which `apply_session_state` sets to `display = False` unconditionally, and was re-rendered on every state apply for nobody. Removed, along with its half of the two-selector meta update loop. Its muted-colour rule moved to `#library-note-context-meta` -- the meta line that actually renders in Info, which had no colour rule of its own, so the muting had been spent on an invisible widget. Four `test_library_shell.py` references became absence pins rather than deletions (two `renderable` reads retargeted to Info's line with `assert not screen.query('#library-note-meta')` beside them; the CSS-block test now asserts the old selector is absent and the new one is muted). The floating save state stays where the compact band pins it -- rider TASK-32459, with both blockers measured.
 
-**One geometry re-pin.** `test_library_note_compact_surplus_allocation_expands_only_named_owner[editor]`: the strip is a fixed row at >= 80 columns, so the 1fr body is one shorter at 80x24 and 100x30 (10 -> 9, 16 -> 15). The strip is added to that test's fixed-selector list, so it still pins exact heights and still asserts only the named owner grows, by the same 6. Below 80 the strip is hidden and the four 60x20 allocation tests are untouched.
+**No accelerator on the strip, and that is correct.** Library Notes deliberately has NO save accelerator: `action_library_notes_save` exists but is bound to no key, and two tests pin the absence -- `Tests/UI/test_library_honesty_accessibility.py::test_notes_ctrl_s_is_absent_from_binding_footer_and_f1_while_skill_keeps_it` and `test_library_shell.py::test_library_note_ctrl_s_is_unavailable_while_save_remains_explicit`. The one real editor binding (`esc` -> back to notes) is already in the footer one row below the strip, so repeating it would be noise.
 
-**Files.** `tldw_chatbook/Widgets/Library/library_notes_canvas.py` (module helper `library_note_chrome_facts`, `NOTE_CHROME_FACTS_MIN_WIDTH`, the compose line, `update_note_chrome_facts` + two handlers, the `word_count` state field), `tldw_chatbook/UI/Library_Modules/library_notes_controller.py` (one line: carry the count it already has), `tldw_chatbook/css/components/_agentic_terminal.tcss` (rule splits into the screen-owned sheet; boot bundle unchanged), `Tests/UI/test_library_notes_wave_chrome_strip.py` (new, 5 tests), `Tests/UI/test_library_shell.py` (the one re-pin), `Docs/User_Guide/library/notes.md`.
+**Rejected first attempt, kept as evidence.** Putting the facts on the existing save-state row instead of a new one was built, measured live and reverted: that row has no slack, because `#library-note-primary-actions` resolves ~93 cells wide whatever the pane is, and the save state is the row's `1fr`. At 120x40, 160x45 and 190x45 it was crushed to one character -- 'S5,408 words · 1:36'. Capture: wave3-caps/chrome-strip/93-evidence-status-crushed-at-120x40.txt.
+
+**Second rider.** TASK-32460: the editor states its save state twice in two vocabularies -- the authority line's 'Saved 16:47' (from `status_line`) versus `#library-note-status`'s plain 'Saved' (from `resolve_database_note_status_channels`, which has no timestamped form).
+
+**Test changes in `test_library_shell.py`.** (a) `test_library_note_compact_surplus_allocation_expands_only_named_owner[editor]`: the strip is a fixed row at >= 80 columns, so the 1fr body owner is one shorter at both sizes (10 -> 9, 16 -> 15); the strip joins the fixed-selector list at height 1, so the test still pins exact heights and still asserts only the named owner grows, by the same 6. Below 80 the strip is hidden and the four 60x20 allocation tests are untouched. (b) `test_library_note_css_bounds_editor_body_and_mutes_meta` was red on dev for two stale reasons and is now green: it asserted the auto/12/20 body ceiling task-32217 retired (now 1fr/6, no ceiling), and it read `tldw_cli_modular.tcss` for `#library-*` rules that task-25812/24459 split into `screen_agentic_library.tcss`. Repaired to the shipped truth, which is also what lets its meta half run at all.
+
+**Live verification** (seeded profile, real app under tmux, captures in wave3-caps/chrome-strip/): on open `6 words · 1:1`; after typing four words `10 words · 1:28`; after Down + Right x2 `10 words · 3:2` (caret only); 100x30 one row under the body; 79 columns hidden with the body taking the row back; Info shows no strip while keeping the save state and Info's own meta line; 100 -> 79 -> 100 restores it.
+
+**Files.** `tldw_chatbook/Widgets/Library/library_notes_canvas.py`, `tldw_chatbook/UI/Library_Modules/library_notes_controller.py`, `tldw_chatbook/css/components/_agentic_terminal.tcss` (+ generated `screen_agentic_library.tcss`; boot bundle unchanged), `Tests/UI/test_library_notes_wave_chrome_strip.py` (new, 5 tests), `Tests/UI/test_library_shell.py`, `Docs/User_Guide/library/notes.md`, riders `backlog/tasks/task-32459*` and `task-32460*`.
 <!-- SECTION:NOTES:END -->
+
+AC#2 was "The strip replaces the floating meta line rather than adding to it",
+amended by the coordinator on 2026-09-11 after the two blockers were measured
+(see Implementation Notes; rider TASK-32459 carries the save-state move).

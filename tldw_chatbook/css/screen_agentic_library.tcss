@@ -1822,8 +1822,15 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 /* Muted meta line: same tier as the media viewer's metadata block
-   (#library-media-viewer-meta) so both editors read consistently. */
-#library-note-meta {
+   (#library-media-viewer-meta) so both editors read consistently.
+
+   task-32143 AC#2: this rule named `#library-note-meta`, a Static whose
+   container has been `display = False` unconditionally since the utilities
+   moved into Info -- so the muting was being spent on a line nobody could
+   see while Info's `#library-note-context-meta`, the one that renders, had
+   no colour rule at all. The dead Static is gone; the rule moves to the
+   line it was always describing. */
+#library-note-context-meta {
     width: 100%;
     color: $ds-text-muted;
     margin: 0 0 1 0;
