@@ -3,7 +3,7 @@
 Date: 2026-09-11
 Status: Draft (awaiting review)
 Review basis: MCP screen UX review 2026-09-11 (Opportunity O1)
-ADR: backlog/decisions/149-mcp-hub-bulk-permission-actions.md
+ADR: backlog/decisions/150-mcp-hub-bulk-permission-actions.md (renumbered from 149: upstream took 149 while this program ran)
 Related: ADR-081 (prompt reduction; persistent changes must go through `set_tool_state`), ADR-090 (advisory lanes never alter verdicts), raw-shell two-state projection (mcp_workbench `_project_raw_shell_store_state`)
 
 ## Problem

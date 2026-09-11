@@ -1,4 +1,4 @@
-# ADR-149: MCP Hub Bulk Permission Actions
+# ADR-150: MCP Hub Bulk Permission Actions
 
 Status: Proposed
 Date: 2026-09-11
