@@ -107,6 +107,23 @@ Its **Review later rollback** flow is still under end-to-end qualification. A
 refused review is not a completed rollback; retain the existing copy and operation
 records.
 
+## Manage recovered media
+
+Open **Restored profiles → Recovered media details** for the current profile.
+The list shows each asset's catalog state, recorded size, references, and recovery
+holds. Recorded sizes remain visible after deletion; they are not a measurement
+of current disk usage.
+
+Choose **Review asset details** to see every affected reference, including aliases
+from earlier restores or other profiles. Confirm the review before choosing
+**Delete reviewed asset**. Deletion removes the payload and retains its deletion
+history. Recovery holds prevent deletion. **Clean up reviewed orphan** is available
+only when the asset has no references or holds.
+
+Changes to the selected profile, asset references, or recovery state require a new
+review. Cancel dismisses an unaccepted review; leaving the screen after accepting
+an action does not cancel the operation.
+
 ## Recovery when normal startup is unavailable
 
 The installed command is `tldw-cli`. Its recovery commands run before normal
