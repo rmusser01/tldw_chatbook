@@ -393,9 +393,9 @@ read-only snapshot of what the model has seen and is about to see. Two
 sub-tabs:
 
 - **Current** — one collapsed section per transcript message, titled with
-  its role and status; expand any to read the exact stored text. Empty
-  state: "No conversation context." (The role currently displays in its
-  internal form, e.g. "[ConsoleMessageRole.USER] complete" — task-2704.)
+  its role and status (e.g. "[User] complete"); expand any to read the
+  exact stored text. Empty state: "No conversation context."
+
 - **Next Send** — the payload the next send will carry, as collapsible
   folds: **Model**, **System**, **Messages** (one collapsed `Message N`
   per entry), **Response Prefill** (only while armed, noting "The reply
