@@ -3,10 +3,10 @@ id: TASK-32350
 title: >-
   Library Media list: the filter box and the applied filter can disagree — add a
   persistent scope line
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-11 06:15'
-updated_date: '2026-09-11 07:37'
+updated_date: '2026-09-11 08:00'
 labels:
   - library
   - media

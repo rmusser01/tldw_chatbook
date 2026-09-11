@@ -3,10 +3,10 @@ id: TASK-32364
 title: >-
   Library copy polish: 'Loaded ·' leaks into a selected row's title, hyphen vs
   middot, 'New Chat', 'Prompt · Local ·' prefix, import 'enter start'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-11 06:19'
-updated_date: '2026-09-11 07:37'
+updated_date: '2026-09-11 08:00'
 labels:
   - library
   - copy
