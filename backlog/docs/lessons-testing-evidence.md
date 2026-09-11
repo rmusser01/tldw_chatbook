@@ -9,6 +9,48 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## A shared counter's value does not name which side moved it
+
+**TASK-32302, Library Conversations entry focus, 2026-09-11.** The task's
+diagnosis was "the arm generation reaches 2 on every run, so a second arm fires
+during route entry and invalidates the first scheduled attempt", and the fix was
+scoped to re-arming. But `_disarm_library_list_entry_focus` bumps the SAME
+counter as `_arm_library_list_entry_focus`, so "generation 2" is equally one arm
+plus one disarm. Instrumenting the real route entry (arm, disarm and each focus
+attempt logged with a stack) showed ONE arm and one silently wasted attempt: the
+recovery hop repaints the rows disabled, a disabled widget is not `focusable`,
+`set_focus` on it is a no-op, and `_focus_library_list_entry` returned as if the
+landing had happened. The fix landed one branch away from where the task pointed.
+
+**What to do.** Before building on a counter reading, check every writer of that
+counter. A measurement that only pins the counter's VALUE cannot distinguish the
+paths that move it; log the transitions instead, with which call site produced
+each one.
+
+## A custom Rich renderable is not measured by Textual 8's visual protocol
+
+**TASK-32306, Library Details rail rows, 2026-09-11.** A hanging indent for the
+rail's wrapped rows was first built as a small object with `__rich_console__`
+doing the wrap at render time; printed through a Rich `Console` at 34 cells it
+produced exactly the intended four lines. Mounted, the row painted its first
+line and nothing else: Textual 8 measures a `Static`'s auto height through
+`visualize()`, which reported ONE line for the unrecognised object, so the
+remaining lines were painted into a one-line box and clipped. `get_content_height
+(..., width=32)` returned 1 for a 41-cell text. Handing Textual a plain `Text`
+with real newlines (re-wrapped on resize) measures correctly.
+
+The same change then broke two unrelated pins a second way: this repo's
+compatibility shim (`tldw_chatbook/__init__.py`) exposes `Static.renderable` as
+`self.content`, so storing the RE-WRAPPED text as content changed what every
+`.renderable.plain` assertion in the suite sees.
+
+**What to do.** For anything that changes how a widget's content is laid out,
+capture the compositor strips (`screen._compositor.render_strips()`) over the
+widget's region -- a `.renderable` probe passes on a renderable that is measured
+at one line and clipped. And when a widget re-derives what it paints, keep
+`content`/`renderable` reporting what the caller passed, or every pin that reads
+it becomes a second consumer of your paint format.
+
 ## Cancellation waiters cannot own terminal acknowledgements
 
 **TASK-32115, Buddy/TTS integration, 2026-09-09.** Replacing a Buddy utterance
