@@ -20,6 +20,7 @@ asking about.
 from __future__ import annotations
 
 import pytest
+from textual.widgets import Button
 
 from tldw_chatbook.Library.library_content_evidence import (
     LibraryContentEvidence,
@@ -151,10 +152,16 @@ async def test_explore_survives_the_next_evidence_read_in_the_same_session() -> 
             gates.release_round(0)
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_lifecycle is LibraryLifecycle.STARTER,
+                lambda: (
+                    screen._library_lifecycle is LibraryLifecycle.STARTER
+                    # the lifecycle flips before the rail recomposes compact
+                    and bool(screen.query("#library-rail-explore-all"))
+                ),
                 message="empty evidence did not land on Get started",
             )
-            await pilot.click("#library-rail-explore-all")
+            # Pressed, not clicked: a mouse click on this rail row is
+            # coordinate-dependent and missed under load.
+            screen.query_one("#library-rail-explore-all", Button).press()
             await _wait_for_condition(
                 pilot,
                 lambda: screen._library_lifecycle is LibraryLifecycle.EXPANDED,
