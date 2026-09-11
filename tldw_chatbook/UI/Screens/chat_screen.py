@@ -327,6 +327,7 @@ from ...Chat.console_chat_models import (
     FEEDBACK_ACTIVE_RUN_STATUSES,
     MessageAttachment,
     ConsoleWorkspaceContext,
+    console_pending_round_copy_for,
     derive_console_session_title,
 )
 from ...UI.character_display_text import sanitize_character_display_label
@@ -595,6 +596,7 @@ from ...Widgets.Console.console_inspector_section import (
 from ...Widgets.Console.console_command_popup import ConsoleCommandPopup
 from ...Widgets.Console.console_transcript import (
     ConsoleReviewNotesRequested,
+    ConsoleThinkingEditRequested,
     console_transcripts_on_screen,
 )
 from ...Widgets.Console.console_selection_menu import (
@@ -1327,6 +1329,20 @@ CONSOLE_FLEET_MARKER_LEGEND = (
     "Status markers: ● running · ◆ needs approval · ✓ finished · ✗ failed "
     "· ◈ sub-agent ended in background "
     "— clears once you visit that tab. Qn is the unsent prompt count."
+)
+
+#: Qodo #5: the decision cards a ◆-marked session can be waiting on, in the
+#: same kind precedence `console_chat_models.console_pending_round_copy`
+#: uses for the copy -- approval, then question, then the confirmations --
+#: so the card the user is sent to is the one the run chip named.
+#: `worktree_merge` is the fifth `KIND_SETTER_ATTRS` kind and has no entry:
+#: `set_pending_worktree_merge` is never wired on this screen, so no such
+#: card is ever mounted here. Add its selector the day it is.
+CONSOLE_DECISION_CARD_SELECTORS: tuple[str, ...] = (
+    "#chat-approval-card",
+    "#chat-question-card",
+    "#chat-skill-install-card",
+    "#chat-skill-script-card",
 )
 
 
@@ -17580,6 +17596,24 @@ class ChatScreen(BaseAppScreen):
             presentation_context.transcript_style.value,
             presentation_context.revision,
         )
+
+        def _thinking_signature(envelope: Any) -> Any:
+            # A block-text edit changes nothing else in this fingerprint, so
+            # the disclosure's projected text must join the signature or a
+            # thinking-only edit is skipped as a no-op refresh (TASK-32312).
+            return (
+                None
+                if envelope is None
+                else tuple(
+                    (
+                        block.block_id,
+                        block.status,
+                        getattr(block, "text", None),
+                    )
+                    for block in getattr(envelope, "blocks", ())
+                )
+            )
+
         message_signatures = []
         for message in messages:
             variants = getattr(message, "variants", None)
@@ -17591,6 +17625,9 @@ class ChatScreen(BaseAppScreen):
                         (
                             getattr(variant, "id", None),
                             getattr(variant, "content", ""),
+                            _thinking_signature(
+                                getattr(variant, "thinking", None)
+                            ),
                         )
                         for variant in (getattr(variants, "variants", None) or ())
                     ),
@@ -17608,6 +17645,7 @@ class ChatScreen(BaseAppScreen):
                     getattr(message, "turn_id", None),
                     getattr(message, "persisted_message_id", None),
                     terminal_receipt_id_for_message(message),
+                    _thinking_signature(getattr(message, "thinking", None)),
                     variant_signature,
                     getattr(message, "citation_presentation", None),
                 )
@@ -17899,7 +17937,7 @@ class ChatScreen(BaseAppScreen):
         if run_state.status is ConsoleRunStatus.IDLE:
             return ""
         if controller.has_pending_approval_round(session_id or ""):
-            return "Waiting for your approval."
+            return f"{console_pending_round_copy_for(controller, session_id or '')}."
         return run_state.visible_copy or run_state.status.value
 
     def _console_active_run_copy(self) -> str:
@@ -17941,15 +17979,17 @@ class ChatScreen(BaseAppScreen):
         # skill_script, worktree_merge, and question -- not just MCP
         # approvals. `_console_pending_approval_count` / `ConsoleInspector
         # State.pending_approval_count` (console_display_state.py) instead
-        # count the viewed session's mounted APPROVAL card only. So during
-        # a non-approval round (e.g. an ask_user question card) this chip
-        # says "Waiting for your approval" while the inspector correctly
-        # shows no pending approval -- imprecise copy, not a bug; a
-        # kind-aware pending registry (rider, filed as a follow-up to
-        # task program 2026-09-10-approval-card-fix-wave) would let this
-        # say "Waiting for your answer." for a question round instead.
+        # count the viewed session's mounted APPROVAL card only.
+        #
+        # Qodo #4 (the rider this comment used to describe, now done): that
+        # generic predicate answers "is anything waiting" -- right for the
+        # gate above, wrong for the copy -- so a question card used to
+        # render "Waiting for your approval" while the inspector correctly
+        # showed zero pending approvals. The KIND now picks the sentence;
+        # an approval among the outstanding rounds still wins, which is
+        # what keeps this and the inspector's count agreeing.
         if controller.has_pending_approval_round(session_id or ""):
-            return "Waiting for your approval."
+            return f"{console_pending_round_copy_for(controller, session_id or '')}."
         return run_state.visible_copy or run_state.status.value
 
     def _sync_console_mode_bar(self) -> None:
@@ -20239,8 +20279,10 @@ class ChatScreen(BaseAppScreen):
         if card.is_mounted:
             card.finish_undo_all(success=success)
 
-    def _route_console_pending_approval_focus(self) -> None:
-        """Focus the pending approval card, or notify none is pending.
+    def _route_console_pending_approval_focus(
+        self, *, notify_missing: bool = True
+    ) -> bool:
+        """Focus the pending decision card, or notify none is pending.
 
         task-32277: the single seam every approval-review entry point
         routes through -- the inspector's Review approval button, the
@@ -20248,54 +20290,92 @@ class ChatScreen(BaseAppScreen):
         NEEDS_APPROVAL (``◆``) marker. Moved out of
         ``handle_console_inspector_review_approval`` verbatim so a third
         (or fourth) caller cannot drift from it.
+
+        Qodo #5: that ``◆`` marker is worn for ALL FIVE interrupt-round
+        kinds (``console_interrupt_rounds.KIND_SETTER_ATTRS``), but this
+        knew only approvals and questions -- a pending skill-install or
+        skill-script confirm reached the "no approval" warning instead of
+        its own mounted card. The scan now walks every decision card in the
+        same kind precedence the copy uses (approval first, then question,
+        then the confirmations), so it cannot disagree with what the run
+        chip is telling the user is waiting.
+
+        Args:
+            notify_missing: Whether to warn when nothing is focusable. The
+                tab-strip caller passes ``False`` and falls back to normal
+                tab activation instead -- a stale marker must not turn a
+                tab press into an error toast.
+
+        Returns:
+            Whether a card was found and focused.
         """
-        if self._console_pending_approval_count() <= 0:
-            # PRD A4: the chip's focus action is how keyboard-only users
-            # reach a question card that deliberately never steals focus.
-            question = next(
-                (c for c in self.query("#chat-question-card") if c.display), None
+        if self._console_pending_approval_count() > 0:
+            card = self._first_displayed_console_decision_card(
+                "#chat-approval-card"
             )
-            if question is not None:
-                with contextlib.suppress(Exception):
-                    question.scroll_visible(animate=False)
-                target = next(
-                    iter(question.query("RadioSet, SelectionList, Input")), None
-                )
-                if target is not None:
-                    target.focus()
-                return
+            if card is not None:
+                self._focus_console_decision_card(card)
+                return True
+        else:
+            # PRD A4: this focus action is how keyboard-only users reach a
+            # question card that deliberately never steals focus -- and,
+            # since Qodo #5, the skill/merge confirms that never had a
+            # route at all.
+            for selector in CONSOLE_DECISION_CARD_SELECTORS:
+                card = self._first_displayed_console_decision_card(selector)
+                if card is not None:
+                    self._focus_console_decision_card(card)
+                    return True
+        if notify_missing:
             self.app_instance.notify(
                 CONSOLE_INSPECTOR_NO_APPROVAL_REASON, severity="warning"
             )
-            return
-        card = next(
-            (
-                candidate
-                for candidate in self.query("#chat-approval-card")
-                if candidate.display
-            ),
+        return False
+
+    def _first_displayed_console_decision_card(self, selector: str) -> Any | None:
+        """Return the one displayed card matching ``selector``, if any."""
+        return next(
+            (candidate for candidate in self.query(selector) if candidate.display),
             None,
         )
-        if card is None:
-            self.app_instance.notify(
-                CONSOLE_INSPECTOR_NO_APPROVAL_REASON, severity="warning"
-            )
-            return
-        try:
+
+    def _focus_console_decision_card(self, card: Any) -> None:
+        """Scroll one decision card into view and focus its first control.
+
+        `ChatApprovalCard` owns `focus_first_decision` (``set_batch``, the
+        card's sole production entry point, is the only body it ever
+        renders, so a displayed card's action is always its "Submit"
+        button). The other four kinds have no such method, so their first
+        interactive control is focused directly -- Buttons included, which
+        is what a confirm card's Approve/Deny pair is made of.
+        """
+        with contextlib.suppress(Exception):
             card.scroll_visible(animate=False)
-        except Exception:
-            pass
-        # `set_batch` (the card's sole production entry point, task-914) is
-        # the only body it ever renders, so a displayed card's action is
-        # always its "Submit" button.
-        try:
-            card.focus_first_decision()
-        except Exception:
-            pass
+        focus_first = getattr(card, "focus_first_decision", None)
+        if callable(focus_first):
+            with contextlib.suppress(Exception):
+                focus_first()
+            return
+        # Two passes, not one selector: a single "…, Button" query returns
+        # DOM order, which would hand a question card's focus to whatever
+        # button happens to be mounted above its RadioSet. The original
+        # question-card behaviour is the first pass, unchanged.
+        for selector in ("RadioSet, SelectionList, Input", "Button"):
+            with contextlib.suppress(Exception):
+                target = next(iter(card.query(selector)), None)
+                if target is not None:
+                    target.focus()
+                    return
 
     @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}")
     def handle_console_inspector_review_approval(self, event: Button.Pressed) -> None:
-        """Focus the pending approval card from the Console inspector seam."""
+        """Focus the pending approval card from the Console inspector seam.
+
+        Args:
+            event: The inspector's "Review approval" button press. Stopped
+                here so it never reaches the screen's generic
+                ``on_button_pressed`` fallback.
+        """
         event.stop()
         self._route_console_pending_approval_focus()
 
@@ -22105,6 +22185,23 @@ class ChatScreen(BaseAppScreen):
             event.action, event.quote, event.anchor_message_id
         )
 
+    @on(ConsoleThinkingEditRequested)
+    async def on_console_thinking_edit_requested(
+        self, event: ConsoleThinkingEditRequested
+    ) -> None:
+        """Open the block-scoped thinking edit modal (TASK-32312).
+
+        The transcript posts this from the thinking row's keyboard edit seam
+        (mirroring copy, which has no action buttons either);
+        ``event.stop()`` because nothing above this screen subscribes.
+
+        Args:
+            event: Thinking-row edit request carrying the projected
+                activity id of the selected disclosure row.
+        """
+        event.stop()
+        await self._message.handle_console_thinking_edit_requested(event)
+
     @on(ConsoleReviewNotesRequested)
     def on_console_review_notes_requested(
         self, event: ConsoleReviewNotesRequested
@@ -23761,10 +23858,26 @@ class ChatScreen(BaseAppScreen):
                 # `session_id` IS already the active/viewed session; the
                 # user still reaches rename for a ◆ tab via the session
                 # switcher's own rename choice
-                # (`_apply_console_switcher_choice`'s "rename" kind).
-                if controller.store.active_session_id != session_id:
+                # (`_apply_console_switcher_choice`'s "rename" kind). It
+                # pre-empts it only when there IS a card to route to,
+                # though -- see the fallback below.
+                was_active = controller.store.active_session_id == session_id
+                if not was_active:
                     await self._session._activate_native_console_session(session_id)
-                self._route_console_pending_approval_focus()
+                # Qodo #5: the ◆ marker covers every interrupt kind, so the
+                # route below now finds skill/question cards too -- but a
+                # marker can still outlive its card. When nothing is
+                # focusable, fall back to the ordinary tab press rather
+                # than warning "No approval is pending" at someone who just
+                # clicked a tab; activating the session (above) already did
+                # the normal thing for a non-viewed one.
+                if not self._route_console_pending_approval_focus(
+                    notify_missing=False
+                ):
+                    if was_active:
+                        await self._session._handle_console_session_tab_press(
+                            session_id
+                        )
                 return
             await self._session._handle_console_session_tab_press(session_id)
             return

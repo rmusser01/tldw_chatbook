@@ -115,10 +115,23 @@ the task-32043 session pins, bulk-delete, and filter-restore pins stay green.
 Live-verified in tmux at 235x52: filter to a hit, then narrow to zero — the
 Reader falls back to "Select a media item to read it here.".)*
 
-**Row markers.** An item's second row says what it is and how old it is, and
-adds **· analysed** when that item already carries an analysis — so you can
-see what is worth generating without opening anything (`document · 5m ·
-analysed`). The row re-reads its state from the database the moment an
+**Row markers.** An item's second row says what it is and when it last
+changed, and adds **· analysed** when that item already carries an analysis —
+so you can see what is worth generating without opening anything
+(`document · updated 5m · analysed`). The age is labelled, because a bare
+"10m" on an `audio` or `video` row reads as the item's *length*; under a
+minute it reads **updated just now**. The word is **updated**, not "added":
+the value is the item's last-modified time — the same one the Reader's
+preview line calls "Updated:" — so saving an analysis moves it. It shares the
+Trash list's grammar (`pdf · trashed 3m`), which is also why it is
+"updated 5m" and not "updated 5m ago": on this pane four cells are the
+difference between a keyword row showing its term and hiding it.
+
+The row that is open in the Reader ends **· loaded** (**· loading** while it
+is fetching) — the state is a fact about the row, so it sits with the other
+facts rather than in front of the title.
+
+The row re-reads its state from the database the moment an
 analysis is saved — from the Reader's Generate, or from a bulk Analyze run —
 without re-paging the list; until task-31942 lands (the save does not yet
 commit durably), the mark can lag the Reader on a real profile. Its title row
@@ -135,15 +148,20 @@ reuses that same cell for its **☑/☐**, so a row never carries two markers.
 While a filter is active, a row it found only through one of its **keywords**
 adds **· keyword: \<term\>** — the filter searches titles, item text and
 keywords, so without it a hit whose title and body hold nothing you typed
-reads as a mistake (`article · 2m · keyword: notes`). A row whose title or
-text carries the term already shows you why it is there and says nothing
+reads as a mistake (`article · updated 2m · keyword: notes`). A row whose
+title or text carries the term already shows you why it is there and says nothing
 extra. Long tags are cut to ten columns (`keyword: quokkasand…`; five
 wide CJK characters, or five flag emoji) to keep the line short — the cut
 counts a flag by the two columns it paints and never leaves half of one, so
-the row frame does not drift. It can still be too long for a narrow Items pane:
-at the pane's narrowest the row ends in an ellipsis mid-term, and a row that is
-both analysed and a keyword hit can run out of room at the default width too. The
-Reader's **Info** tab "Keywords:" line applies the same guard: it shows the
+the row frame does not drift. It can still be too long for a narrow Items
+pane, and the labelled age made that tighter: at the pane's narrowest the row
+ends in an ellipsis a few characters into `keyword:` itself, before the term
+starts. A row that is both analysed and a keyword hit can run out of room at
+the default width too, and the row open in the Reader spends a further nine
+columns on its `· loaded`, so at the automatic narrow width (100 columns) that
+row is the first to clip.
+
+The Reader's **Info** tab "Keywords:" line applies the same guard: it shows the
 full stored keyword but drops a dangling half-flag so that surface's frame
 does not drift either (the edit form still prefills the stored keyword
 verbatim).
@@ -296,7 +314,11 @@ Escape returns to the list.
 Notes on the edges: with nothing deleted the view says "Trash is empty.
 Items you delete from Media land here." and "Restore" reads "○ Restore"
 with a reason tooltip; if the trash holds more items than one fetch page,
-a status line says "showing X of N" honestly. Entering Trash clears any
+a status line says "showing X of N" honestly. The pager under the list is
+drawn **only when a second page exists**: a trash that fits on one page keeps
+the item range ("1-1 of 1") and drops "Page 1 of 1" along with both
+**Previous** / **Next**, the same rule the rest of the Library follows (see
+[Library](../library.md)), so Restore sits directly under the last row. Entering Trash clears any
 "✓ deleted…" receipt still showing on the list — the Trash view is the
 durable path that receipt pointed at. Trashed items are **excluded from
 search** (Library search and RAG keyword retrieval both skip them) until
@@ -344,6 +366,8 @@ left-margin gap).*
 
 | Control | What it does |
 |---|---|
+| Scope line | The quiet line under the "Media (N)" header states the scope the rows in front of you actually came from: the count as **N of M**, the applied filter in quotes, the type ("all types" until you pick one), and the sort — for example `Media · 1 of 11 · filter “notes” · all types · sort: Newest`. The filter box keeps a *draft* until you press Enter, so the box and the list can legitimately disagree; this line always describes the applied scope and never echoes an unsubmitted draft. |
+| "Clear" (on the scope line) | Appears only while a filter or a type is applied. It drops the whole scope this line states — filter *and* type — and empties the filter box with it, so no draft is left behind. The toolbar's "Clear filter" still clears only the filter it names. |
 | "Title/keyword…" / "Clear filter" | Searches the complete local Media source before paging — titles, item text, and the keywords an item is tagged with, so a tag you filed items under finds them even when it appears in no title. It is separate from Find in item, and "Review these" pins exactly what it returned. Clearing restores the unfiltered selection when it is still available. |
 | "type: All types" | Opens one bounded keyboard list containing the complete type set. The row your arrow keys are on carries a leading `█` bar (the same cue the list rows use); ✓ marks the value currently in force, so the row you are on and the row that is active are told apart — on opening, both marks sit on the active row (`█ ✓ All types`). "All types" means no filter; a stored type literally named "All" remains a separate selectable value. Press Escape (or pick the current choice) to cancel. |
 | "sort: Newest" | Opens the same kind of bounded keyboard list with all four orders (Newest, Oldest, Title A-Z, Title Z-A) fully visible, the same leading `█` on the row you are on and ✓ on the active one. Escape cancels. |
@@ -501,6 +525,12 @@ still spans the pane.
   a two-line analysis puts them on the next line, not at the bottom of the
   pane. A long analysis scrolls the tab, carrying its actions to the end of
   the text rather than clipping them.
+  A Markdown analysis renders like the Read tab, with the same
+  Rendered/Raw toggle. While a Find query is active the analysis shows its
+  stored text instead — only that view can mark the matches — and the strip
+  says so ("Showing the stored text so matches can be marked · clear the
+  search to read it rendered."); clearing the search hands the rendered view
+  straight back.
   Analysis is produced at import time (the "Analyze after import" option),
   written by hand here, or generated in place: **"Generate"** (**"Regenerate"**
   once one exists) calls the configured analysis provider without leaving
@@ -526,7 +556,7 @@ still spans the pane.
 
 | Button | What it does |
 |---|---|
-| "Find" | Opens the search bar for the tab you are reading — the transcript on Read, the analysis on Analysis — focused and ready to type; a second press or Escape closes it. Walking with `]`/`[` keeps an active query but never moves your cursor into the field. This never filters Items. |
+| "Find" | Opens the search bar for the tab you are reading — the transcript on Read, the analysis on Analysis — focused and ready to type; a second press or Escape closes it. Walking with `]`/`[` keeps an active query but never moves your cursor into the field. This never filters Items. `Ctrl+F` opens it from the keyboard. When the tab you are on has nothing to search — Highlights and Info have no text — it reads "○ Find" and prints that tab's own reason on the line directly under the toolbar, not only in a tooltip (task-32362). |
 | "Use in Console" | Stages this item as context for your next Console message. |
 | "Read later" ↔ "Remove later" | Toggles the loaded item's persisted reading-list state. |
 | "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. Opening it adds one toolbar row directly beneath this one — the tab row and the reading body shift down a single line (two on a Reader too narrow to fit all four actions side by side), never off the fold — the button reads "More ▴" while the row is open, and focus stays on it so a second press closes the row. |
@@ -668,8 +698,10 @@ requested load.
 | "Filter conversations… (Enter)" | Type and press Enter to search conversation titles, stable IDs, and indexed message content before the 20-item result page is chosen. Clearing it restores unfiltered page 1. |
 | "Previous" / "Next" | Moves through complete 20-item pages; the final page may contain fewer rows. Disabled buttons state why they cannot move. |
 | Row press | Selects the row and loads it into the **Conversation reader** — not a preview. See below. |
-| "Open in Console" | In the reader header, beside **Read** and **Info** (keyboard: `c`). Stages the conversation as **source context** in Console — see below. |
-| "Link to workspace" | Appears in the same header row only while the open conversation is not in the active workspace. One press links it, and "Open in Console" enables in place. |
+| "Resume conversation" / "Restore and resume" | In the reader header, beside **Read** and **Info** (keyboard: `c`). Reopens the original conversation in Console — it does **not** stage it as source context, and it does not depend on workspace membership. |
+| "Use as source" | In the reader header. Stages the open conversation as **source context** in Console. If the conversation is not in the active workspace, the press **links it first**, then continues — see below. |
+| "Link to workspace" | Appears in the same header row only while the open conversation is not in the active workspace. Press it to take on the membership **without** handing anything to Console. |
+| "Undo link" | Appears under the **"✓ linked · \<workspace\>"** receipt after a link, and removes exactly the membership that press added. |
 | "Export…" / "Select" | The shared grammar; export packages conversations into a bundle. |
 
 **The detail pane is a transcript reader.** Pressing a row loads the whole
@@ -860,20 +892,33 @@ Escape's return to the list live at 100x30).*
   collection scopes apply before paging; selections retain captured versions
   across pages, and a failed refresh keeps the last applied rows read-only with
   an exact Retry action. See [Library prompts](prompts.md).
-- **A conversation outside the active workspace says so on the button.**
-  The handoff requires the conversation to be eligible for the active
-  workspace. When it is not, the button dims to "○ Open in Console" and one
-  sentence beneath it states the reason and the remedy — "This conversation
-  is not in this workspace. Press 'Link to workspace' to add it to the
-  active workspace." — with the **"Link to workspace"** button right there
-  to perform it. (The action name is painted once, on the button; the line
-  under it is the explanation, not a second control.) Pressing `c` while it
-  is blocked says that same sentence as a message rather than doing
-  nothing. A block that linking cannot resolve states its own remedy
-  instead and offers no link (with no active workspace: "Select an active
-  workspace before using this item in Console."), never naming a button
-  that is not on screen. The same gate guards the other "Use in Console"
-  actions.
+- **A conversation outside the active workspace links itself on use.**
+  Workspace membership decides which items a Console turn may read, so a
+  conversation that is not in the active workspace cannot simply be handed
+  over in silence — but it is not refused either. **"Use as source" stays
+  pressable**, and one sentence beneath it says what the press will do:
+  "This conversation is not in this workspace. Pressing this adds it to the
+  active workspace first, and you can undo that." The press links it,
+  continues to Console, and leaves a receipt — **"✓ linked ·
+  \<workspace\> · this conversation can now be used in Console"** — with
+  **"Undo link"** beside it, which removes exactly that membership. The
+  separate **"Link to workspace"** button is still there for taking on the
+  membership without a hand-off. (The action name is painted once, on the
+  button; the line under it is the explanation, not a second control.)
+  A block that a link cannot resolve still refuses: the button dims to
+  "○ Use as source", states its own remedy (with no active workspace:
+  "Select an active workspace before using this item in Console.") and
+  offers no link, never naming a button that is not on screen. Pressing `c`
+  while the load fence blocks Resume says that same sentence as a message
+  rather than doing nothing. The rail's "Use in Console" keeps its own
+  pressable-with-reason grammar: it acts on a SET whose members can be
+  blocked for different reasons, so no single link would unblock it.
+- **The reader takes the width once a conversation is open.** With nothing
+  loaded the list absorbs the empty reader's columns (the density rule); as
+  soon as a row is open, the split is restored and the reader gets the
+  majority of a wide terminal — measured at 235x52: reader 132 columns,
+  list 49. At 100x30 the rail steps aside and the two panes share the stage
+  (reader 44, list 45); at 60x24 the reader is the single stage.
 - **Staging now actually reaches the model.** "Use in Console" (media)
   and "Open in Console" (conversations) used to stage content that
   displayed as attached but never made it into what the model was sent
@@ -1176,3 +1221,52 @@ loaded the conversation list takes the columns the empty Reader was holding).*
 (task-32228: the Conversations list takes entry focus on arrival like every
 other browse list, so Up/Down walks its rows and the Escape hop -- "focus
 Items", then "focus Library" -- is live and named from the first frame).*
+
+*Verified against fix/library-crit10-export — 2026-09-11 (task-32362: a
+blocked "○ Find" prints why on the line below the Reader toolbar, matching
+the blocked Generate action's own inline reason one pane over.)*
+
+*Verified against fix/library-crit10-viewer — 2026-09-11 (task-32348: Ctrl+F
+opens the Reader's Find bar and the footer names it, the Highlights and Info
+tabs refuse it with "This tab has no text to search · switch to Read or
+Analysis.", and "t" cannot arm the delete confirmation while Find is open;
+task-32365: a stored analysis beginning "## Key contributions" paints as a
+heading with a Rendered|Raw toggle above it, and a plain-prose analysis is
+offered no toggle).*
+
+*Verified against fix/library-crit10-viewer — 2026-09-11, fix round 1
+(task-32365 review finding 1: submitting a Find query over a rendered
+analysis now shows the stored text, where the matches are actually marked,
+with "○ Rendered" refused and its reason on the line beneath; clearing the
+query restores the rendered view).*
+
+*Verified against fix/library-crit10-pagers — 2026-09-11 (task-32354: a
+single-page Trash draws no "Page 1 of 1" and no Previous/Next, and its pager
+block is one row instead of two. Live at 235x52 on a seeded profile with one
+trashed item and with the list filtered to none.)*
+
+*Verified against fix/library-crit10-media-rows — 2026-09-11 (task-32347: a
+media row's age is labelled with the field it comes from — "audio · updated
+10m", "updated just now" under a minute — because a bare "10m" on an audio or
+video row read as the item's length, and the value is the item's last-modified
+time, not its ingest time. task-32350: a quiet scope line under the "Media (N)"
+header states the APPLIED scope ("Media · 1 of 11 · filter “notes” · all types ·
+sort: Newest"), drops its "of M" half when the screen's Media total is only a
+lower bound, and carries a "Clear" that drops filter and type and empties the
+filter box — so an unsubmitted draft can no longer be mistaken for what the rows
+came from. task-32364: the Reader's row ends "· loaded" instead of prefixing its
+title with "Loaded ·", and a conversation row reads "5 messages · 16m" with the
+same separator every other Library list uses.)*
+
+*Verified against fix/library-crit10-layout — 2026-09-11, fix round 1
+(task-32107: the refusal/promise sentence renders directly under the action it
+describes, and Undo removes the membership from the workspace its receipt
+names rather than whichever workspace is active when it is pressed; the
+Resume row above no longer claims to stage source context).*
+
+*Verified against fix/library-crit10-layout — 2026-09-11 (task-32107, user
+decision: "Use as source" links a conversation into the active workspace in
+one undoable step, with a receipt and an "Undo link" beside it, and the
+blocks a link cannot resolve keep refusing; task-32361: the reader wins the
+width once a conversation is open — measured live and in tests at 235x52,
+100x30 and 60x24).*

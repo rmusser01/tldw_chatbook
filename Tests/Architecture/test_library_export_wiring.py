@@ -73,6 +73,9 @@ _EXPORT_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "_library_export_is_server_mode",
     "_resolve_library_export_chachanotes_db",
     "_compute_library_export_counts",
+    # task-32353 AC#2: the counts helper's sibling -- same staticmethod
+    # shape, same quiet-degrade-with-a-log contract, one query over.
+    "_compute_library_export_preview",
     "handle_library_export_submit",
     "_build_library_export_payload",
     "_run_library_export_via_service",
@@ -109,7 +112,7 @@ _EXPORT_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
     }
 )
 
-#: The 5 names above that are `@staticmethod`s on `LibraryScreen`. Their
+#: The 6 names above that are `@staticmethod`s on `LibraryScreen`. Their
 #: delegators forward straight to the module-level `LibraryExportController`
 #: CLASS (per task-8-report.md's "static-method delegator pattern"
 #: correction, cited in the conversations wiring test), not through
@@ -118,6 +121,7 @@ _EXPORT_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
     {
         "_default_library_export_form",
         "_compute_library_export_counts",
+        "_compute_library_export_preview",
         "_build_library_export_payload",
         "_run_library_export_via_service",
         "_build_library_export_success_message",
@@ -127,7 +131,7 @@ _EXPORT_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
 
 @pytest.mark.unit
 def test_export_controller_owns_its_cluster() -> None:
-    """Every one of the 22 moved names is a callable on the controller.
+    """Every one of the 23 moved names is a callable on the controller.
 
     Covers the whole cluster, not a hand-picked sample -- mirrors
     `test_browse_controller_owns_its_cluster` in the conversations wiring
@@ -147,7 +151,7 @@ def test_export_controller_owns_its_cluster() -> None:
 
 @pytest.mark.unit
 def test_screen_delegates_export_handlers() -> None:
-    """Every one of the 22 moved names is a one-line screen delegator that
+    """Every one of the 23 moved names is a one-line screen delegator that
     forwards to the SAME-NAMED controller method (or, for the 5
     static/classmethods, to the module-level controller CLASS).
 
@@ -190,7 +194,7 @@ def test_screen_delegates_export_handlers() -> None:
 
 @pytest.mark.unit
 def test_export_cluster_staticmethods_forward_to_the_controller_class() -> None:
-    """The 5 staticmethod names in the cluster forward to the CLASS, not an instance."""
+    """The 6 staticmethod names in the cluster forward to the CLASS, not an instance."""
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
     not_class_forwarding = []

@@ -1465,8 +1465,9 @@ def _refusal_statuses() -> Mapping[str, ConsoleActivityStatus]:
     authority it does not have would be a lie.
 
     Built on first use so importing this module does not drag
-    `Agents.local_tool_provider` (task-24458). The values are module-level
-    string constants, so the table is computed once and never invalidated.
+    `Agents.local_tool_provider` (task-24458) -- or, since Qodo #3,
+    `Agents.raw_shell_tool_provider`. The values are module-level string
+    constants, so the table is computed once and never invalidated.
     """
     from tldw_chatbook.Agents.local_tool_provider import (
         LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
@@ -1475,7 +1476,9 @@ def _refusal_statuses() -> Mapping[str, ConsoleActivityStatus]:
         LOCAL_KILL_SWITCH_REFUSAL,
         LOCAL_ROOT_CHANGED_REFUSAL,
         LOCAL_TIMEOUT_REFUSAL,
+        LOCAL_USER_DENY_REFUSAL,
     )
+    from tldw_chatbook.Agents.raw_shell_tool_provider import RAW_SHELL_DENY_REFUSAL
 
     return MappingProxyType({
         MCP_USER_DENY_REFUSAL: "denied",
@@ -1485,13 +1488,18 @@ def _refusal_statuses() -> Mapping[str, ConsoleActivityStatus]:
         CONTROLLER_KILL_SWITCH_REFUSAL: "blocked_kill_switch",
         LOCAL_KILL_SWITCH_REFUSAL: "blocked_kill_switch",
         MCP_KILL_SWITCH_REFUSAL: "blocked_kill_switch",
-        # LOCAL_DENY_REFUSAL is returned for BOTH a configured Off and an
-        # explicit card Deny (`local_tool_provider._invoke`'s else-branch),
-        # so it cannot claim either authority. Follow-up: give the local
-        # provider its own user-deny refusal string and this row can split
-        # into `denied` + `blocked_off` like the MCP one below.
-        LOCAL_DENY_REFUSAL: "blocked",
+        # Qodo #7: that follow-up landed. `LOCAL_DENY_REFUSAL` used to be
+        # returned for BOTH a configured Off and an explicit card Deny, so
+        # it could claim neither authority and rendered the generic
+        # "blocked"; the local provider now has its own user-deny string and
+        # the row splits into `denied` + `blocked_off` like the MCP pair.
+        LOCAL_USER_DENY_REFUSAL: "denied",
+        LOCAL_DENY_REFUSAL: "blocked_off",
         MCP_DENY_REFUSAL: "blocked_off",
+        # Qodo #3: the raw-shell provider's Off refusal names the same fact
+        # MCP's does ("set to Off"), so it renders the same way -- it used to
+        # fall through to the generic `blocked` and hide the cause.
+        RAW_SHELL_DENY_REFUSAL: "blocked_off",
         LOCAL_TIMEOUT_REFUSAL: "blocked",
         LOCAL_GATE_ERROR_REFUSAL: "blocked",
         LOCAL_ROOT_CHANGED_REFUSAL: "blocked",
@@ -7764,7 +7772,16 @@ class ConsoleAgentBridge:
         )
 
     def end_setup_phase(self, conversation_id: str) -> None:
-        """Clear the setup mark; a no-op when it was never set."""
+        """Clear the pre-provider setup mark (task-32344).
+
+        A no-op when it was never set, so callers can end unconditionally
+        from a ``finally``. Once cleared, ``live_snapshot`` resolves this
+        conversation from its published steps again.
+
+        Args:
+            conversation_id: The conversation whose setup marker is
+                removed; other conversations' marks are untouched.
+        """
         self._setup_started_at.pop(conversation_id, None)
 
     def live_run_snapshot(

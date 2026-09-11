@@ -11,7 +11,7 @@ from markdown_it import MarkdownIt
 
 from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_chat_models import (
-    CONSOLE_ACTIVITY_REFUSAL_STATUSES,
+    ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
@@ -374,12 +374,6 @@ class ConsoleMessageActionService:
     _TOOL_OUTPUT_ACTIONS: tuple[tuple[str, str], ...] = (
         ("tool-output", "Full output"),
     )
-    #: task-32279: a REFUSED step never produced tool output -- what it hides
-    #: is the refusal sent to the model ("Do not retry this call..."), which
-    #: read as the tool's own result under the TASK-1860 copy.
-    _TOOL_REFUSAL_OUTPUT_ACTIONS: tuple[tuple[str, str], ...] = (
-        ("tool-output", "Sent to the model"),
-    )
     #: TASK-1366: a diff-carrying marker whose stripped result FIT the
     #: preview has no fuller text to show -- expansion reveals the inline
     #: diff row instead, so the affordance says what it opens.
@@ -455,15 +449,6 @@ class ConsoleMessageActionService:
         # inline diff row -- even when the stripped result was short enough
         # that `tool_output_full` is None (the common case for file writes).
         return bool(message.tool_output_full) or message.tool_diff is not None
-
-    @staticmethod
-    def _is_refusal_marker(message: ConsoleChatMessage) -> bool:
-        """Whether this marker's hidden text is a refusal sent to the model."""
-        presentation = message.activity_presentation
-        return (
-            presentation is not None
-            and presentation.status in CONSOLE_ACTIVITY_REFUSAL_STATUSES
-        )
 
     @staticmethod
     def _has_image(message: ConsoleChatMessage) -> bool:
@@ -607,11 +592,7 @@ class ConsoleMessageActionService:
             # way. Full-output and full-output+diff markers keep the
             # TASK-1860 copy.
             if message.tool_output_full:
-                completed_actions = completed_actions + list(
-                    self._TOOL_REFUSAL_OUTPUT_ACTIONS
-                    if self._is_refusal_marker(message)
-                    else self._TOOL_OUTPUT_ACTIONS
-                )
+                completed_actions = completed_actions + list(self._TOOL_OUTPUT_ACTIONS)
             else:
                 completed_actions = completed_actions + list(self._TOOL_DIFF_ACTIONS)
         if getattr(message, "change_review_run_id", None):
@@ -651,6 +632,19 @@ class ConsoleMessageActionService:
                 if action_id == "speak"
                 else (action_id, label)
                 for action_id, label in completed_actions
+            ]
+        presentation = message.activity_presentation
+        if (
+            isinstance(presentation, ConsoleActivityPresentation)
+            and presentation.kind == "thinking"
+            and presentation.status == "unavailable"
+        ):
+            # TASK-32312: content-free proprietary evidence has no editable
+            # text; only displayable thinking blocks offer the edit action.
+            completed_actions = [
+                (action_id, label)
+                for action_id, label in completed_actions
+                if action_id != "edit"
             ]
         if message.status == "failed" and self._is_assistant_message(message):
             # Retry regenerates a failed ASSISTANT response. A failed USER row —

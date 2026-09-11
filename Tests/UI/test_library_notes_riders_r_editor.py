@@ -47,7 +47,9 @@ async def test_new_note_view_back_cue_reads_back_to_list_when_compact():
         _first_note_row(screen).focus()
         await pilot.pause()
 
-        await pilot.press("n")
+        # task-32356: `n` creates a note now, so the New-note VIEW this pin
+        # is about is reached by the rail row that still opens it.
+        screen.query_one("#library-row-create-note").press()
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
 
         back = screen.query_one("#library-notes-create-back", Button)
@@ -64,7 +66,9 @@ async def test_new_note_view_back_cue_reads_notes_when_wide():
         _first_note_row(screen).focus()
         await pilot.pause()
 
-        await pilot.press("n")
+        # task-32356: `n` creates a note now, so the New-note VIEW this pin
+        # is about is reached by the rail row that still opens it.
+        screen.query_one("#library-row-create-note").press()
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
 
         back = screen.query_one("#library-notes-create-back", Button)
@@ -187,7 +191,9 @@ async def test_new_note_view_back_cue_follows_the_compact_breakpoint():
         _first_note_row(screen).focus()
         await pilot.pause()
 
-        await pilot.press("n")
+        # task-32356: `n` creates a note now, so the New-note VIEW this pin
+        # is about is reached by the rail row that still opens it.
+        screen.query_one("#library-row-create-note").press()
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
         assert (
             str(screen.query_one("#library-notes-create-back", Button).label)

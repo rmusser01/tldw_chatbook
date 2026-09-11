@@ -9,6 +9,7 @@ from typing import Literal
 
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     format_console_relative_age,
+    parse_browser_timestamp,
 )
 
 from tldw_chatbook.Notes.note_folder_models import (
@@ -73,6 +74,12 @@ class LibraryNotesTreeRow:
     #: beside the title so duplicate titles are not identical rows
     #: (task-32137). Empty for folder, Unfiled and pager rows.
     age_label: str = ""
+    #: Local time of day the note was last modified ("14:05"). The THIRD
+    #: key, rendered only when folder and age both tie (task-32254) --
+    #: unfiled-and-recent is the default state for the two notes a user is
+    #: most likely to have just made twice, and there folder+age is a
+    #: no-op. Empty for folder, Unfiled and pager rows.
+    clock_label: str = ""
 
 
 @dataclass(frozen=True)
@@ -639,13 +646,31 @@ def _record_title(note: Mapping[str, object]) -> str:
     return str(note.get("title", "") or "Untitled")
 
 
-def _record_age(note: Mapping[str, object], now: datetime) -> str:
-    """Return the note's relative age, or "" when it records no timestamp."""
+def _record_timestamp(note: Mapping[str, object]) -> str:
+    """Return the note's freshest recorded timestamp, or ""."""
     for key in ("last_modified", "updated_at", "created_at"):
         raw = str(note.get(key, "") or "").strip()
         if raw:
-            return format_console_relative_age(raw, now=now)
+            return raw
     return ""
+
+
+def _record_age(note: Mapping[str, object], now: datetime) -> str:
+    """Return the note's relative age, or "" when it records no timestamp."""
+    raw = _record_timestamp(note)
+    return format_console_relative_age(raw, now=now) if raw else ""
+
+
+def _record_clock(note: Mapping[str, object]) -> str:
+    """Return the local ``HH:MM`` of the note's timestamp, or "".
+
+    task-32254: the tie-break key for two rows that share a title, a
+    folder AND an age. Local time, matching the absolute-timestamp
+    convention Info already renders ("2026-09-11 08:05"); the raw ISO
+    string never reaches a row.
+    """
+    parsed = parse_browser_timestamp(_record_timestamp(note))
+    return parsed.astimezone().strftime("%H:%M") if parsed is not None else ""
 
 
 def _note_row(
@@ -660,6 +685,7 @@ def _note_row(
     note_id = _record_id(note)
     title = _record_title(note)
     age_label = _record_age(note, now)
+    clock_label = _record_clock(note)
     if folder is None:
         return LibraryNotesTreeRow(
             placement_id=FolderPlacementId.unfiled(note_id),
@@ -670,6 +696,7 @@ def _note_row(
             breadcrumb=f"Unfiled / {title}",
             unsafe_mutation_disabled=unsafe_mutation_disabled,
             age_label=age_label,
+            clock_label=clock_label,
         )
 
     assert membership is not None
@@ -704,6 +731,7 @@ def _note_row(
         version=membership.version,
         unsafe_mutation_disabled=unsafe_mutation_disabled,
         age_label=age_label,
+        clock_label=clock_label,
     )
 
 

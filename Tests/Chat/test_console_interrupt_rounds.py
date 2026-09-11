@@ -108,13 +108,19 @@ class FakeSeamsFull(FakeSeams):
         super().__init__()
         self.cancelled = False
         self.badges: list[tuple[str, str, str]] = []
+        self.added_kinds: list[str] = []
         self.park_pending_approval = None
 
     def _is_session_cancelled(self, session_id, *, cancel_event=None, visit_event=None):
         return self.cancelled
 
-    def add_pending_round(self, session_id, round_id):
+    def add_pending_round(self, session_id, round_id, kind="approval"):
+        # Qodo #4: the real controller takes the round's KIND now; the host
+        # passes it by keyword and falls back to the two-argument form for
+        # older seams. This double follows the real signature so the
+        # keyword path is the one these tests exercise.
         self.badges.append(("add", session_id, round_id))
+        self.added_kinds.append(kind)
 
     def discard_pending_round(self, session_id, round_id):
         self.badges.append(("discard", session_id, round_id))

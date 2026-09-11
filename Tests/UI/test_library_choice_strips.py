@@ -438,7 +438,8 @@ async def test_export_quality_strip_opens_picks_and_second_press_closes():
         screen = await _open_media_export(host, pilot)
 
         opener = screen.query_one("#library-export-quality", Button)
-        assert str(opener.label) == "quality: thumbnail"
+        # task-32353 AC#1: the form opens at full fidelity now, not "thumbnail".
+        assert str(opener.label) == "quality: original"
 
         opener.press()
         await _wait_for_selector(screen, pilot, "#library-export-quality-choices")
@@ -446,37 +447,37 @@ async def test_export_quality_strip_opens_picks_and_second_press_closes():
             str(button.label)
             for button in screen.query(".library-export-quality-choice")
         ]
-        assert labels == ["✓ thumbnail", "compressed", "original"]
+        assert labels == ["thumbnail", "compressed", "✓ original"]
 
         # Second press on the still-visible opener closes without change.
         screen.query_one("#library-export-quality", Button).press()
         await pilot.pause()
         await pilot.pause()
         assert not screen.query("#library-export-quality-choices")
-        assert screen._export_state.form.get("quality", "thumbnail") == "thumbnail"
+        assert screen._export_state.form.get("quality", "original") == "original"
 
         # Reopen and pick directly: value + helper line update, strip closes.
         screen.query_one("#library-export-quality", Button).press()
         await _wait_for_selector(screen, pilot, "#library-export-quality-choices")
-        original = next(
+        thumbnail = next(
             button
             for button in screen.query(".library-export-quality-choice")
-            if str(button.label) == "original"
+            if str(button.label) == "thumbnail"
         )
-        original.press()
+        thumbnail.press()
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._export_state.form["quality"] == "original"
+        assert screen._export_state.form["quality"] == "thumbnail"
         assert not screen.query("#library-export-quality-choices")
         assert (
             str(screen.query_one("#library-export-quality", Button).label)
-            == "quality: original"
+            == "quality: thumbnail"
         )
         helper = str(
             screen.query_one("#library-export-quality-helper", Static).renderable
         )
-        assert "original" in helper.lower() or "full" in helper.lower()
+        assert "preview" in helper.lower()
 
 
 @pytest.mark.asyncio

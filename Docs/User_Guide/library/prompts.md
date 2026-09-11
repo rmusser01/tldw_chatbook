@@ -37,8 +37,11 @@ Basic                                    Advanced
 - **Prompts list** — the default view: an exact "Prompts (N)" header, the
   "Filter prompts… (Enter)" field, a local collection selector, a toolbar
   ("sort: Newest" / "sort: Name", "Select", "Import…", and "Export…"), and
-  one row per prompt showing its name, artifact/source/lane summary, and
-  description and age when present.
+  one row per prompt showing its name, a source/lane summary
+  (`Local · has system and user text`), and description and age when
+  present. A plain Prompt does not repeat "Prompt" on a canvas already
+  titled Prompts; the other artifact types still name themselves
+  (`Recipe · Local · …`).
   Lists longer than one 20-row page have **Previous** and **Next** controls
   plus an exact range, total, and page line, such as **"21-40 of 45 · Page
   2 of 3"**.
@@ -246,9 +249,10 @@ to list** then reloads the current search/collection/sort/page scope before show
 it; the membership outcome never says that the Prompt itself was saved.
 
 Nothing autosaves here. While you have unsaved edits the meta line shows an "Unsaved
-changes" marker, and leaving the editor (Back, another row, another screen) is
-blocked until you save or resolve the edit. The save-status line reports the
-outcome:
+changes" marker, and leaving the editor (Back, Escape, another row, another screen)
+is blocked until you save or resolve the edit. The block is silent today — Escape
+looks like it did nothing rather than saying why it refused. The save-status line
+reports the outcome:
 
 - "Saved."
 - "Name already in use — pick another or open the existing prompt." —
@@ -510,3 +514,15 @@ renders.)*
 *Verified against fix/library-crit9-shell — 2026-09-10 (task-32217: with no
 prompt open the list takes the columns the "Select a prompt to edit it here."
 pane was holding — measured at 235 columns, list 50 → 134 cells).*
+
+*Verified against fix/library-crit10-media-rows — 2026-09-11 (task-32364: a
+row on a canvas titled Prompts no longer opens with "Prompt · " — a plain
+Prompt reads `Local · has system and user text`, while Recipe and the other
+artifact types still name themselves — and the lane summary says what the
+prompt has instead of the schema's "System + User".)*
+
+*Verified against fix/library-crit10-docs — 2026-09-11, fix round 1 (task-32366:
+the dirty-edit block now names Escape alongside Back, and says the block is
+silent today — `_exit_library_prompt_editor_guarded` returns False without
+notifying, filed as task-32393. `library.md`'s Escape section states the same
+veto in the same words.)*

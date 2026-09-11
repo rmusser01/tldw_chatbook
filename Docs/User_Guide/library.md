@@ -212,7 +212,11 @@ readable measure rather than stretched across the whole canvas.
   - a **Navigation** heading with **Collapse** at the opposite edge. Collapse
     hides the rail without changing the selected destination, search query,
     section disclosures, or canvas. The slim **Nav** handle expands it again;
-    it is keyboard-focusable and remains part of the **F6** pane cycle;
+    it is keyboard-focusable and remains part of the **F6** pane cycle. The
+    handle is five cells wide, so it spells its name **downwards** —
+    `N`/`a`/`v` down the column, with the collapse arrows below it. The
+    handle beside the list pane does the same with that pane's name
+    (**Items**, **Prompts**, **Skills**, **Folder files**);
   - the **Import…** button ("Add files, links, and transcripts to
     your Library.");
   - the **Search Library…** box — submitting it lands on the
@@ -226,13 +230,22 @@ readable measure rather than stretched across the whole canvas.
     Skills, Collections, Search / RAG), **Create** (New note, New prompt,
     New skill), **Study** (Study decks, Flashcards, Quizzes), and
     **Import / Export** (Import…, Export). Each row is one line: the
-    title with its count, plus a dim plain-language gloss on the jargon
-    rows (e.g. "Search / RAG — find all"), shown consistently across
-    visits — a row's gloss never flickers on or off just because its
-    count arrived. On narrow terminals the gloss drops first; a handful
-    of rows (Conversations, Flashcards, Collections) then fall back to a
-    short label ("Chats", "Cards", "Sets") instead of an ellipsis, so no
-    row label ever cuts off mid-word and the count always stays visible.
+    title with its count, plus a dim plain-language gloss on some of the
+    jargon rows (Media — "your files", Prompts — "reuse", Skills — "AI
+    add-ons", Search / RAG — "find all"). A gloss renders whole or not at
+    all, and never flickers on or off just because a count arrived. Two
+    rows stay bare on purpose: **Conversations** and **Notes** are
+    already plain words and carry no gloss. **Collections** does have one
+    — "saved captures" — but it is the longest, and it needs 34 cells of
+    row width where the rail's default gives it 33, so on an ordinary
+    wide terminal that row reads bare. Widen the rail past the default
+    (Settings offers up to 48 cells) and the gloss appears; so does the
+    single-pane narrow stage below 64 columns, where the rail takes the
+    whole terminal rather than a fraction of it. When a row's title and
+    count together would otherwise be cut mid-word, a handful of rows
+    (Conversations, Flashcards, Collections) fall back to a short label
+    ("Chats", "Cards", "Captures") instead of an ellipsis, so no row
+    label ever cuts off mid-word and the count always stays visible.
     The three Study rows are hand-offs (they are a
     two-step trip out of Library), so they group under their own section —
     one row each. That click opens a
@@ -256,16 +269,24 @@ readable measure rather than stretched across the whole canvas.
 - **Footer** — shows the keys that work where you are. The full rail offers
   "/ focus search"; Get started keeps focus on its visible actions. The
   landing adds "i import content"
-  and "n new note" (single-letter accelerators for the hub actions);
+  and "ctrl+n new note" (the hub's own accelerators);
   the Search / RAG canvas adds "u use Library
-  context in Console", "enter select evidence", and "o open evidence";
+  context in Console", "o open evidence", and an "enter" hint that names
+  whatever Enter does on the control you are focused on;
   a Media/Notes/Prompts/Skills/Collections list adds "esc focus rail";
   that list's item viewer/editor (or the media viewer) adds "esc back to
   list" instead; the Export canvas adds "esc back to Media" (or whichever
   canvas opened it — "esc back to hub" from the rail); and a Study
   staging canvas adds "esc back to hub". Every hint is a per-key
-  "key action" pair — the Notes editor, for example, shows "ctrl+s save
-  note | esc back to notes".
+  "key action" pair — the Notes editor, for example, shows
+  "esc back to notes" and nothing else, because the note is already
+  saved and there is no save key to advertise.
+  While a text field has focus the footer leads with `typing in field`,
+  names the Escape chip for that surface (`esc leave field` where nothing
+  else owns the key — a list canvas keeps its own `esc focus rail`), and
+  carries the canvas verbs after `after esc:` — they are not live until you
+  leave the field. Under 64 columns there is room for a single chip, so the
+  footer names only what Escape does there and the verbs are not listed.
 
 One special case: selecting **Notes** adds a
 **Library notes | Folder files** strip above the workbench. **Folder files**
@@ -274,6 +295,13 @@ the rail stays beside it; on compact terminals the canvas becomes the single
 visible stage so its controls remain on-screen. Escape (or the
 **Library notes** link) returns to the notes list — see
 [File Notes](library/file-notes.md).
+
+Opening a **note for editing** is the one place the rail steps aside on a
+wide terminal, deliberately: at 120 columns and more of editor width the
+rail collapses to its **Nav** handle so the note gets the room, and Escape
+(or **Nav**) brings it straight back. Expanding it by hand ends that for the
+rest of the visit — the rail then stays put while you open one note after
+another.
 
 ## Features & controls
 
@@ -290,7 +318,7 @@ thing, so nothing on the screen relies on colour alone:
 | `≡` | already in your Library (a duplicate the import matched) | Import queue rows |
 | `⊘` | cancelled on purpose | Import queue rows |
 | `●` (leading a queue row) | still working | Import queue rows (queued, parsing, writing) |
-| `●` (inside a line) | not a state — it marks a count, or samples a colour | the blocked count on the Workspace ▸ Handoff row; a highlight's colour swatch in the Media reader |
+| `●` (inside a line) | not a state — it samples a colour | a highlight's colour swatch in the Media reader |
 | `▸` / `▾` | disclosure | trailing on a section header, leading on a folder-tree node |
 | `○` | a blocked or disabled action | any greyed action, always beside its reason or tooltip |
 | `✓` (leading, in a chooser) | the active value of a chooser | choice strips, kept toggles ("mode: ✓ Search ⇄ RAG Answer") |
@@ -305,13 +333,13 @@ leading `▸` uses cannot collide on one control.
 | Control | What it does |
 |---|---|
 | **Collapse** | Hides the wide navigation rail in place and gives the canvas the reclaimed width. The choice lasts for the current Library screen session. |
-| **Nav** | Expands a manually collapsed rail and returns focus to **Search Library…**. On compact terminals, Library's existing one-pane routing takes precedence and the manual collapse returns when the terminal is wide again. |
+| **Nav** | Expands a collapsed rail and returns focus to **Search Library…**. The handle spells `Nav` down its five-cell column, so it is readable without hovering. On compact terminals, Library's existing one-pane routing takes precedence and the manual collapse returns when the terminal is wide again. Used on the rail a note editor collapsed, it also ends that editor's claim on the width for the rest of the visit. |
 | **Import…** | Opens the Import media canvas — see [Import & export](library/import-and-export.md). |
 | **New note** | Opens the production note-creation canvas. It is shown directly in the Get started rail. |
 | **Explore all tools** | Reveals and remembers the complete Library without changing section disclosures. |
-| **Back to Get started** | Returns an explicitly expanded, still-empty Library to the Get started landing and compact rail, with focus on **Import…**. It is never offered after graduation. |
+| **Back to Get started** | Returns an explicitly expanded, still-empty Library to the Get started landing and compact rail, with focus on **Import…**. It is offered only after you have explicitly expanded a still-empty Library from Get started, and never after graduation. |
 | **Search Library…** | Type a query and press Enter: lands on the Search / RAG canvas and runs it (empty submit just opens the canvas) — see [Search & RAG](library/search-and-rag.md). **x** beside the box empties it. The box shows the live query only on the Search / RAG canvas; every other canvas gets an empty box, and returning to Search / RAG restores the query and its results. Text typed into the box on another canvas and never submitted is discarded when you leave — it never becomes the Search / RAG query. |
-| **Chunking Lab** / **Try selected text** | Under **Details ▸ Actions**, above the line "Chunking Lab — compare how text is split for search". Opens a full-screen A/B tool; **Escape** there returns to the Library canvas you came from, including from the sample editor. |
+| **Chunking Lab** / **Try selected text** | Under **Details ▸ Actions**, below the line "Chunking Lab — compare how text is split for search". Opens a full-screen A/B tool; **Escape** there returns to the Library canvas you came from, including from the sample editor. |
 | **▾** / **▸** (section headers) | Open or collapse that rail section — see [State glyphs](#state-glyphs). |
 
 ### Browse rows
@@ -320,6 +348,13 @@ Media, Conversations, and Prompts replace an empty page's disabled paging and
 selection controls with a useful next step. The exact total remains visible in
 the title, but there is no meaningless “page 1 of 1” or “nothing to select”
 mechanic.
+
+The paging half of that rule is Library-wide: **Skills, Collections and the
+media Trash** drop “page 1 of 1”, the boundary reason and both **Previous** /
+**Next** controls too whenever everything fits on one page, keeping only the
+item range. Every part comes back the moment a second page exists. Paging that
+is *paused* rather than absent — a stale page whose totals are withheld — keeps
+its controls, disabled and carrying the reason.
 
 ```text
 source really has no items          active filter has no matches
@@ -408,18 +443,22 @@ import may skip intermediate updates and does not resume from an earlier percent
 
 Collapsed by default; click anywhere on the **Details** header — the label
 text or the **▾**/**▸** chip — to open it. Opening it recomputes the
-"DB sizes" line from disk (sidecars included), so the numbers you see are
-current as of that open, not a reading cached at some earlier repaint.
+"DB sizes" lines from disk (sidecars included), so the numbers you see are
+current as of that open, not a reading cached at some earlier repaint. Those
+sizes sit inside Details' own **Diagnostics** disclosure, closed until you
+open it (and closed again next time) — they are there when you want them and
+out of the way when you do not.
 
 | Group | Contents |
 |---|---|
-| **Status** | A "Source · Local" (or "Source · Server: \<label\>") line, a counts row ("Notes N · Media N · Conversations N"), and — once a reading exists — a "DB sizes" label with one line per database ("Prompts 180.0KB", "Chats/Notes 1.1MB", "Media 508.0KB"), a line each so no size is split across two rail lines. |
-| **Workspace** | "Active · \<workspace name\>" and a "Handoff" line. With nothing blocked it is a bare count ("0 eligible"). When something is blocked it names the reason and the next step: "2 eligible · 1 blocked · not in this workspace · Link it from the conversation's header". |
-| **Actions** | The buttons below, plus the note "Server sync WIP · local only". |
+| **Status** | A "Source · Local" (or "Source · Server: \<label\>") line and a counts row ("Notes N · Media N · Conversations N"). |
+| **Diagnostics** | A closed disclosure holding — once a reading exists — a "DB sizes" label with one line per database ("Prompts 180.0KB", "Chats/Notes 1.1MB", "Media 508.0KB"), a line each so no size is split across two rail lines. |
+| **Workspace** | "Active · \<workspace name\>" and a "Handoff" line. With nothing blocked it is a bare count ("0 eligible"). When something is blocked it says what you cannot do yet, why, and the next step: "1 item can't be used in Console yet · not in this workspace · Link it from the conversation's header". |
+| **Actions** | The buttons below, plus the note "Everything here is stored on this machine · syncing to a server isn't available yet." |
 
 | Action | What it does |
 |---|---|
-| **Create local workspace** | Opens the same "New Workspace" dialog Console and Settings use — a prefilled "Workspace N" name, optional folders to bind (validated as added, with a Browse… picker), and a "Switch to this workspace" checkbox (checked by default). Escape cancels with nothing created. Server sync and ACP handoff remain WIP. A bound folder containing a `.SKILLS/` project skills folder is annotated "— contains N project skill(s)" and, after Create, offers a chained import prompt — see [Project skills](library/skills.md#project-skills-skills). |
+| **Create local workspace** | Opens the same "New Workspace" dialog Console and Settings use — a prefilled "Workspace N" name, optional folders to bind (validated as added, with a Browse… picker), and a "Switch to this workspace" checkbox (checked by default). Escape cancels with nothing created. Server sync and agent hand-off (ACP) aren't available yet. A bound folder containing a `.SKILLS/` project skills folder is annotated "— contains N project skill(s)" and, after Create, offers a chained import prompt — see [Project skills](library/skills.md#project-skills-skills). |
 | **Import sources** | Shown only while you have no workspace-eligible sources: "Open Library Import/Export to add workspace-eligible sources." |
 | **Use in Console** | Stages a snapshot of your local Library sources ("Local Library Sources") into Console and takes you there. When it can't run yet, its tooltip says why — "Stage Library source context after Library finishes loading." or "Stage Library source context after adding notes, media, or conversations." |
 
@@ -513,17 +552,29 @@ you're on:
   Library…** box in the full Library, or **Import…** in Get started; it never
   leaves the canvas or changes what's shown.
 - **A pending bulk-delete confirmation on the Media list** (Select mode's
-  "Delete selected", which swaps the list's toolbar for "Delete N
-  selected items? This moves them to trash.") — Escape cancels it in
+  **Delete**, which puts "Delete N selected items? You can undo right
+  away, or restore later from Trash." above the list's toolbar and swaps
+  that toolbar for **Delete** / **Cancel**) — Escape cancels it in
   place, exactly like its own **Cancel** button, instead of moving focus
-  to the rail; the footer's hint reads "cancel delete" while it's armed.
+  to the rail; the footer chip reads "esc cancel delete" while it's
+  armed.
   Confirming with **Delete** when only some items can be removed leaves
   the failed one(s) checked and focuses the first of them, rather than
   leaving nothing focused or landing on an item you never selected.
 - **In an item's viewer or editor** (the media viewer; the Notes,
-  Prompts, or Skills editor) — Escape returns to that list, re-focusing
-  its first row, exactly like pressing **‹ Back to list**. A dirty note
-  or prompt edit vetoes the exit the same way Back does.
+  Prompts, or Skills editor) — Escape does exactly what **‹ Back to
+  list** does on that surface, which is not the same on every editor.
+  Notes autosave, so a note edit is already saved when you leave it:
+  Escape returns to the list at once, re-focusing its first row, the
+  editor's only footer chip is "esc back to notes", and its status line
+  reads "Next: Keep editing; changes save automatically." Only a
+  *blocked* save holds a note open, and it says what to fix — see
+  [Notes](library/notes.md). Nothing autosaves in the Prompts or Skills
+  editor: while you have unsaved edits, leaving the editor (Back,
+  Escape, another row, another screen) is blocked until you save or
+  resolve the edit. Skills says so when it refuses; Prompts refuses
+  without a message today, so Escape looks like it did nothing — see
+  [Prompts](library/prompts.md).
 - **Editing, deleting, or re-analyzing inside the media viewer** — the
   media viewer's Edit / Delete / Edit analysis forms have no dirty-edit
   guard, so a first Escape only discards that one form and returns to the
@@ -884,3 +935,39 @@ list, and the landing hub is capped at 96 cells).*
 (task-32225: the return chip stands down wherever a canvas owns Escape itself,
 so the footer never names a return the key would not perform; task-32228:
 Conversations arrives with its first row focused like every other browse list).*
+
+*Verified against fix/library-crit10-notes-details — 2026-09-11 (task-32357:
+the Details panel says what a reader can do about it — the Handoff line reads
+"1 item can't be used in Console yet · \<reason\> · \<next step\>" with
+task-32230's counts and reason untouched, "Server sync WIP · local only" is
+now "Everything here is stored on this machine · syncing to a server isn't
+available yet.", and the DB sizes moved into a closed **Diagnostics**
+disclosure inside Details. The glyph table's claim that `●` marks the blocked
+count was already stale — task-32230 retired that dot — and is corrected
+here.)*
+
+*Verified against fix/library-crit10-viewer — 2026-09-11 (task-32346: with the
+caret in the Search/RAG query box the footer reads "typing in field | esc leave
+field | after esc: u use Library context in Console · o open evidence | enter
+run search | F6 next pane"; the same shape on the Media list keeps "s select"
+behind the same gesture, and "F6 next pane" is last so a narrow footer drops it
+before any verb).*
+
+*Verified against fix/library-crit10-pagers — 2026-09-11 (task-32354: the
+single-page pager rule this page documents now holds for Skills, Collections
+and the media Trash as well as Media, Conversations and Prompts).*
+
+*Verified against fix/library-crit10-onboarding-import — 2026-09-11
+(task-32349: a Library with no content yet lands on Get started however old its
+config file is, so "Back to Get started" is offered only to someone who has
+seen Get started).*
+
+*Verified against fix/library-crit10-layout — 2026-09-11 (task-32355: both
+pane handles paint their own name down the column, and the note editor's
+deliberate claim on the rail's width is stated where the rail is described;
+task-32359: a focused rail row carries the house `█` bar, so it is no longer
+the same picture as the active destination).*
+
+*Verified against fix/library-crit10-docs — 2026-09-11 (task-32366: 14
+critique-10 claims reconciled; surface fixes in task-32346, 32348, 32349,
+32354, 32355).*

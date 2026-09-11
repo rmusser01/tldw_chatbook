@@ -4751,3 +4751,93 @@ def test_a_no_app_round_does_not_record_a_user_denial_on_the_mcp_hook():
 
     assert verdicts["call-1"] == USER_DENIED_REFUSAL.format(name="mcp__srv__tool")
     assert denials == [], "a headless fail-closed deny was audited as the user's"
+@pytest.mark.asyncio
+async def test_the_approval_route_reaches_a_pending_skill_install_card():
+    """Qodo #5: the ◆ marker and the Alt+A / Review-approval route cover ALL
+    FIVE interrupt kinds, not just approvals and questions.
+
+    A pending skill-install (or skill-script) confirm registers in the same
+    round registry and marks the tab, but the route knew only approval and
+    question cards -- so clicking that tab, or pressing Alt+A, reached the
+    "No approval is pending." warning while its decision card sat mounted on
+    screen. What this pins is the routing decision: the route finds that card
+    and declines to warn. Where focus lands inside a card is the card's own
+    contract (`test_alt_a_focuses_the_pending_approval_decision_select`).
+
+    Synced WITHOUT an intervening pause on purpose: with no real round armed,
+    the controller's next projection tick clears the pending payload again.
+    """
+    app = _build_test_app()
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
+        async with app.run_test(size=(200, 40)) as pilot:
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                screen = app.screen
+                if isinstance(screen, ChatScreen) and screen.is_mounted:
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Production Console did not finish mounting")
+
+            notifications: list[tuple[str, str | None]] = []
+            app.notify = lambda message, **kwargs: notifications.append(
+                (str(message), kwargs.get("severity"))
+            )
+
+            screen.set_task_resume_state(
+                TaskResumeState(
+                    pending_skill_install={
+                        "url": "https://example.invalid/skill.zip",
+                        "request_id": "req-skill-focus",
+                    }
+                )
+            )
+            assert (
+                screen._first_displayed_console_decision_card(
+                    "#chat-skill-install-card"
+                )
+                is not None
+            )
+            # No approval batch exists, so this is exactly the state that used
+            # to fall through to the warning.
+            assert screen._console_pending_approval_count() == 0
+
+            assert screen._route_console_pending_approval_focus() is True
+            assert (CONSOLE_INSPECTOR_NO_APPROVAL_REASON, "warning") not in notifications
+
+
+@pytest.mark.asyncio
+async def test_a_route_with_nothing_pending_can_decline_to_warn():
+    """Qodo #5: a ◆ tab whose card is already gone must fall back to the
+    ordinary tab press, not warn -- so the shared route takes
+    `notify_missing=False` and reports whether it focused anything."""
+    app = _build_test_app()
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
+        async with app.run_test(size=(200, 40)) as pilot:
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                screen = app.screen
+                if isinstance(screen, ChatScreen) and screen.is_mounted:
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Production Console did not finish mounting")
+
+            notifications: list[tuple[str, str | None]] = []
+            app.notify = lambda message, **kwargs: notifications.append(
+                (str(message), kwargs.get("severity"))
+            )
+
+            assert screen._route_console_pending_approval_focus(
+                notify_missing=False
+            ) is False
+            assert notifications == []
+
+            # The default still warns -- the inspector button and Alt+A rely
+            # on it.
+            assert screen._route_console_pending_approval_focus() is False
+            assert (CONSOLE_INSPECTOR_NO_APPROVAL_REASON, "warning") in notifications

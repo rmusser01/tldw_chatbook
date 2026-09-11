@@ -11395,6 +11395,72 @@ def test_a_finished_bootstrap_clears_the_in_flight_guard(monkeypatch):
     assert not controller_module._PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.is_set()
 
 
+def test_a_cancel_before_the_worker_starts_reopens_the_in_flight_guard(monkeypatch):
+    """Stop during the queue wait must not latch the guard for the process.
+
+    Qodo #5 on PR #2586: the guard is set before `to_thread` submits, and
+    only the callable cleared it. Cancelling the await while that callable is
+    still QUEUED cancels the executor future outright -- it never runs, never
+    clears, and every later resolution in the process returns None, silently
+    sending without profile tools forever.
+
+    The executor is pinned to one worker and that worker is occupied, so the
+    bootstrap callable provably cannot have started when the cancel lands.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    service = object()
+    calls = []
+
+    def getter():
+        calls.append(1)
+        return service
+
+    controller.app = SimpleNamespace(get_personal_context_service=getter)
+    guard = threading.Event()
+    monkeypatch.setattr(
+        controller_module, "_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT", guard
+    )
+
+    occupied = threading.Event()
+    release = threading.Event()
+
+    def occupy_the_only_worker():
+        occupied.set()
+        release.wait(30)
+
+    loop = asyncio.new_event_loop()
+    executor = ThreadPoolExecutor(max_workers=1)
+    loop.set_default_executor(executor)
+
+    async def _cancel_while_queued():
+        blocker = loop.run_in_executor(executor, occupy_the_only_worker)
+        assert occupied.wait(5), "the blocking job never took the worker"
+        task = asyncio.ensure_future(controller._personal_context_service())
+        await asyncio.sleep(0.05)
+        assert guard.is_set(), "the guard should be held across the submission"
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return blocker
+
+    try:
+        blocker = loop.run_until_complete(_cancel_while_queued())
+        assert calls == [], "the callable must not have started"
+        assert not guard.is_set(), "a cancel before the worker started latched the guard"
+        release.set()
+        loop.run_until_complete(blocker)
+        # The whole point: a later send still gets its profile tools.
+        assert loop.run_until_complete(controller._personal_context_service()) is service
+        assert calls == [1]
+    finally:
+        release.set()
+        executor.shutdown(wait=False)
+        loop.close()
+
+
 def test_a_raising_bootstrap_clears_the_in_flight_guard(monkeypatch):
     """A bootstrap that raises must not wedge the guard shut either."""
     store = ConsoleChatStore()
@@ -11425,6 +11491,62 @@ def test_personal_context_bootstrap_returns_its_service_within_budget(monkeypatc
         threading.Event(),
     )
     assert asyncio.run(controller._personal_context_service()) is service
+
+
+@pytest.mark.asyncio
+async def test_setup_state_covers_the_mcp_catalog_composition(monkeypatch):
+    """The row must say "setup" WHILE tools are being composed, not after.
+
+    Qodo #6 on PR #2586: `_compose_agent_request_providers` awaits
+    `compose_catalog()`'s discovery I/O, and the setup phase used to open
+    only once that returned -- so a slow or unreachable MCP server left the
+    assistant row blank for exactly as long as the discovery took, which is
+    the failure the setup state exists to end.
+    """
+    from unittest.mock import MagicMock
+
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=StreamingGateway(),
+        agent_runtime_enabled=True,
+    )
+    bridge_store = MagicMock()
+    bridge_store.messages_for_session.return_value = []
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=MagicMock(),
+        store=bridge_store,
+        provider_gateway=MagicMock(),
+    )
+    bridge.run_reply = lambda **_kwargs: (
+        "run-test",
+        RunOutcome(status=RUN_DONE, steps=[], final_text="ok"),
+    )
+    controller._agent_bridge = bridge
+    session = _arm_session(store)
+    conversation_id = controller._agent_conversation_id(session.id)
+    assert bridge.live_snapshot(conversation_id).status == "idle"
+
+    observed = []
+    compose = controller._compose_agent_request_providers
+
+    async def observed_compose(**kwargs):
+        observed.append(bridge.live_snapshot(conversation_id).status)
+        # Stand in for the discovery I/O: the mark must survive the await,
+        # not just the call.
+        await asyncio.sleep(0)
+        observed.append(bridge.live_snapshot(conversation_id).status)
+        return await compose(**kwargs)
+
+    monkeypatch.setattr(
+        controller, "_compose_agent_request_providers", observed_compose
+    )
+
+    await controller.submit_draft("hello")
+
+    assert observed == ["setup", "setup"], observed
+    # And the mark does not outlive the dispatch it was covering.
+    assert bridge._setup_started_at == {}
 
 
 def test_pre_provider_setup_phase_marks_and_clears_the_bridge():
