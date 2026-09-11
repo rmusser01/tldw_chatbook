@@ -862,6 +862,7 @@ async def test_tool_gate_buttons_render_under_builtin_detail_with_subheadings_an
         )
         assert "web_deep_search" in restart_note
         assert "next client launch" in restart_note
+        assert "expose_local_tools" in restart_note
         assert "read_file" not in restart_note
 
 
