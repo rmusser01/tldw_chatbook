@@ -1,6 +1,6 @@
 # PR 2427: pure Handoff formatter extraction
 
-Status: approach and independent spec review approved; user written-spec review pending.
+Status: implemented and qualified; overall PR gates remain open.
 Task: TASK-31932, step 159. Baseline: `02597164ff` on dev `3afa68f1b9`.
 
 ## Scope and decision
@@ -50,7 +50,9 @@ No state owner, service contract, storage, security or UX policy changes.
 ## Verification and acceptance
 
 1. Add a narrow support-layer location/delegation guard before moving code; see
-   it fail on the baseline. Preserve all existing behavioral assertions.
+   it fail on the baseline. Prove helper module/global residency, then patch the
+   wrapper's actual lookup to check one identical-state call and an unchanged
+   sentinel result. Preserve all existing behavioral assertions.
 2. Compare the moved body with the baseline byte-for-byte after dedenting, and
    compare ASTs. Verify the wrapper forwards the identical state object once.
 3. Run the complete affected files: `test_library_crit9_rail.py`,
@@ -61,6 +63,9 @@ No state owner, service contract, storage, security or UX policy changes.
 4. Run the complete support-layer/import-surface guard and existing Screen and
    Library-module size/private-owner guards. Report still-failing ceilings
    honestly; do not turn the expected remaining failures into skips or xfails.
+   Also run the complete Library packaging preimport and screen-preimport payload
+   guards: review reproduced the existing 504/500 module failure twice before
+   implementation. The import-cycle guard alone does not cover this budget.
 5. Run scoped lint, whitespace and all derived preflight checks, and obtain an
    independent implementation review. Preserve unrelated worktree changes.
 
@@ -75,5 +80,5 @@ Console SQLite handles and other size failures remain separately tracked.
 - [x] Record this written design; visual companion is not applicable.
 - [x] Complete independent spec review: no planning blockers; free names,
   type-only import, wrapper compatibility and retained Screen imports checked.
-- [ ] Obtain user review of the written spec before implementation planning.
-- [ ] Write and execute the bounded implementation plan after that approval.
+- [x] Obtain user review of the written spec before implementation planning.
+- [x] Write and execute the bounded implementation plan after that approval.
