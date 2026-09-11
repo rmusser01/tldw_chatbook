@@ -1916,6 +1916,8 @@ def build_summary_rows(
         raw_name = chat_defaults.get("provider")
         if isinstance(raw_name, str):
             provider_name = raw_name.strip()
+    from tldw_chatbook.Agents.builtin_tool_gate import TOOL_GATES_PANE_PATH
+
     return (
         SummaryRow(
             "Provider",
@@ -1934,7 +1936,12 @@ def build_summary_rows(
             # shows the Tools step, and a Full-setup user who left every
             # switch off has the same "nothing is enabled" state, so one
             # detail string covers both without threading `track` through.
-            else "all off; turn them on under MCP ▸ Servers ▸ Tool gates",
+            # task-32284 (Qodo #2600 #17): the path comes from
+            # `TOOL_GATES_PANE_PATH`, never retyped. The shortened
+            # "MCP ▸ Servers ▸ Tool gates" written here omitted the
+            # built-in server ROW, and the pane only exists inside that
+            # row's detail view -- so the breadcrumb did not lead anywhere.
+            else f"all off; turn them on under {TOOL_GATES_PANE_PATH}",
         ),
         SummaryRow(
             "Notes folder sync",

@@ -136,6 +136,7 @@ from tldw_chatbook.Agents.tool_catalog import (
     ToolCatalogRegistry,
     intersect_skill_tools,
 )
+from tldw_chatbook.Agents.tool_refusals import TOOL_KILL_SWITCH_REFUSAL
 from tldw_chatbook.Tools.raw_cli_executor import (
     MAX_RAW_PREVIEW_BYTES,
     RawCliResult,
@@ -1440,7 +1441,22 @@ def _thinking_round_ordinals(
     return frozenset(block.round_ordinal for block in envelope.blocks)
 
 
-_BUILTIN_KILL_SWITCH_REFUSAL = "tool execution is disabled by the kill switch"
+#: task-32285: hand-copied from `Agents.builtin_tool_gate.BuiltinToolGate.
+#: check()`'s own inline kill-switch return string -- NOT imported (this
+#: module already lazily imports `Agents.local_tool_provider` for the
+#: other four refusal strings, see `_blocked_provider_refusals()`'s own
+#: docstring; adding `Agents.builtin_tool_gate` as a module-level or
+#: lazy import here for one string is not worth a new dependency edge).
+#: `Tests/Chat/test_console_agent_bridge.py::
+#: test_kill_switch_refusal_wording_is_unified_everywhere` asserts this
+#: equals the gate's actual `check()` return value, and equals the other
+#: three kill-switch refusal constants -- see
+#: `console_chat_controller.KILL_SWITCH_REFUSAL`'s docstring for why they
+#: are all the same sentence now.
+#: Qodo #2597 #2: no longer a hand copy -- `Agents.tool_refusals` is an
+#: import-free leaf module, so taking it here costs no dependency edge
+#: (the reason the string was duplicated in the first place).
+_BUILTIN_KILL_SWITCH_REFUSAL = TOOL_KILL_SWITCH_REFUSAL
 _BUILTIN_DENY_REFUSAL_PREFIX = "tool is set to Off: "
 _BUILTIN_UNRESOLVED_REFUSAL_PREFIX = "tool requires approval and none was granted: "
 _CONTROLLER_USER_DENIED_PREFIX = CONTROLLER_USER_DENIED_REFUSAL.partition("{name}")[0]

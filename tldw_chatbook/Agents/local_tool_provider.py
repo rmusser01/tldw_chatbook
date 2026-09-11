@@ -38,6 +38,11 @@ from uuid import uuid4
 from loguru import logger
 
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import TOOL_DESCRIPTION_CAPTURE_CAP
+from tldw_chatbook.MCP.execution_log import (
+    KILL_SWITCH_DENIED_DECISION,
+    POLICY_DENIED_DECISION,
+    UNRESOLVED_DENIED_DECISION,
+)
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.local_runtime_delegate import PERMISSION_STATE_UNRESOLVED_CLAUSE
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
@@ -79,6 +84,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Tools.watchlists_command_service import WatchlistsCommandService
     from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
 from .tool_catalog import ToolExecutionPolicy, ToolPathTarget, redact_root_locator
+from .tool_refusals import TOOL_KILL_SWITCH_REFUSAL
 
 # Module-level (not the function-local imports the other `_default_specs`
 # tool modules use) SPECIFICALLY so tests can patch this one name via
@@ -132,7 +138,10 @@ LOCAL_DENY_REFUSAL = "blocked by local tool permissions (set to Off)"
 #: two providers sharing one key would silently collapse to one row.
 LOCAL_USER_DENY_REFUSAL = f"local tool call denied by the user. {DENIAL_POLICY}"
 LOCAL_TIMEOUT_REFUSAL = "user did not approve within the time limit; do not retry"
-LOCAL_KILL_SWITCH_REFUSAL = "blocked — local tools are switched off"
+#: task-32285: ONE definition of the sentence, in `Agents.tool_refusals`
+#: -- see `TOOL_KILL_SWITCH_REFUSAL`. The NAME stays (importers depend on
+#: it); only the value's source moved.
+LOCAL_KILL_SWITCH_REFUSAL = TOOL_KILL_SWITCH_REFUSAL
 # Fix Round H (PR-T3 review), Item 1. `_verdict_for()`'s permission-resolver
 # `except` used to collapse a RAISE into the SAME "deny" verdict as a
 # genuine configured Off -- which then rendered `LOCAL_DENY_REFUSAL`, a
@@ -547,7 +556,10 @@ class LocalToolProvider:
             permission-store "allow" with definition_hash); None means the
             decision executes this turn but is not persisted.
         record_decision: (HubTool, decision) -> None audit hook for refusals
-            (MCP parity: "denied" / "denied-timeout" only -- MCP records
+            (MCP parity, task-32280 fix round: "denied" for a person's card
+            Deny, "denied-policy" for a configured Off, "denied-killswitch"
+            for the kill switch, "denied-unresolved" for a gate that raised,
+            and "denied-timeout" for a card that expired -- MCP records
             successful executions service-side via execute_hub_tool, which
             has no local analogue); None means no recording.
         todo_store: Optional stable-ID task store for this Console session.
@@ -999,6 +1011,37 @@ class LocalToolProvider:
             stale=False,
             executable=True,
         )
+
+    def record_user_denial(self, name: str) -> None:
+        """Audit a card "Deny" the local review hook resolved BEFORE dispatch.
+
+        task-32280 fix round: mirrors ``MCPToolProvider.record_user_denial``.
+        ``run_agent_loop`` turns any non-"proceed" verdict from the review
+        hook straight into the call's result and skips the dispatch chain
+        entirely, so `invoke_detailed()` -- which records every refusal IT
+        reaches -- never runs for a hook-level denied call. So the denial
+        is recorded here, where it becomes final, through the same
+        ``record_decision`` seam and the same ``"denied"`` decision the
+        card-Deny branch inside ``invoke_detailed()`` writes for a stamped
+        deny (``local_tool_provider.py``'s ``APPROVAL_REFUSED`` branch).
+
+        No double-recording: the runtime never dispatches the call this
+        denial belongs to, so `invoke_detailed()` never runs for it. A
+        same-name SIBLING call the user approved is dispatched and
+        recorded on its own by `invoke_detailed()`.
+
+        Args:
+            name: The bare local tool name the card refused. A name this
+                provider does not own is silently ignored (defensive only
+                -- `build_local_review_hook`'s own `pending` list already
+                filters to names this provider owns via
+                `pending_gate_for`).
+        """
+        try:
+            hub = self.hub_tool_for(name)
+        except KeyError:
+            return
+        self._record_decision_safe(hub, "denied")
 
     def timeout_for(self, tool_id: str) -> float | None:
         """Per-call timeout override; every local tool but ``web_deep_search``
@@ -1586,11 +1629,15 @@ class LocalToolProvider:
         override when set (LOCAL_TIMEOUT_REFUSAL otherwise).
 
         Audit (MCP parity): refusals are recorded via the optional
-        ``record_decision`` seam -- "denied" for kill-switch/deny/gate_error
-        outcomes, "denied-timeout" for timeout/no_callback (matching the
-        refusal copy the model actually saw). Successful executions record
-        nothing: MCPToolProvider records those service-side via
-        execute_hub_tool, which has no local analogue.
+        ``record_decision`` seam, and task-32280's fix round gave each
+        REFUSER its own token rather than one flat "denied": ``"denied"``
+        only for a person's card Deny, ``"denied-policy"`` for a configured
+        Off, ``"denied-killswitch"`` for the kill switch,
+        ``"denied-unresolved"`` for a gate that raised instead of
+        resolving, and ``"denied-timeout"`` for timeout/no_callback
+        (matching the refusal copy the model actually saw). Successful
+        executions record nothing: MCPToolProvider records those
+        service-side via execute_hub_tool, which has no local analogue.
         """
         name = tool_id.split(":", 1)[1] if ":" in tool_id else tool_id
         spec = self._specs.get(name)
@@ -1625,7 +1672,10 @@ class LocalToolProvider:
                 provider_terminal=LocalProviderTerminal.NOT_STARTED,
             )
         if self._kill_switch_engaged():
-            self._record_decision_safe(self.hub_tool_for(name), "denied")
+            # task-32280 fix round: the switch refused, not the user.
+            self._record_decision_safe(
+                self.hub_tool_for(name), KILL_SWITCH_DENIED_DECISION
+            )
             return LocalToolInvocationResult(
                 result=ToolResult.blocked(LOCAL_KILL_SWITCH_REFUSAL),
                 final_gate="kill_switch",
@@ -1876,26 +1926,38 @@ class LocalToolProvider:
             # genuinely resolving to "deny" -- still fails closed (the tool
             # does not run), but the reason told to the model is honest:
             # the permission check itself failed, not a configured Off.
-            # Audit vocabulary is unchanged ("denied" is this seam's only
-            # refusal decision besides "denied-timeout" -- see this
-            # provider's own `record_decision` docstring); only the
-            # returned TEXT distinguishes the two cases.
-            self._record_decision_safe(self.hub_tool_for(name), "denied")
+            #
+            # task-32280 fix round: the AUDIT row now says the same thing
+            # the model was told. It used to record plain "denied", which
+            # Audit renders as "Denied by you" -- a claim about a person
+            # for a gate that never resolved at all.
+            self._record_decision_safe(
+                self.hub_tool_for(name), UNRESOLVED_DENIED_DECISION
+            )
             result = ToolResult.blocked(LOCAL_GATE_ERROR_REFUSAL)
         else:
-            # "deny" and any unrecognized verdict fail closed the same way.
-            # Qodo #7: the TEXT now names who refused -- `LOCAL_DENY_REFUSAL`
-            # only where the resolver actually said "deny" (a configured
-            # Off, `PERMISSION_OFF`), the user's own string everywhere else.
-            # Keyed on PERMISSION_OFF rather than on APPROVAL_REFUSED so an
-            # unreasoned verdict never makes the "set to Off" claim, which
-            # the bridge now renders as "blocked (Off)". The AUDIT decision
-            # is deliberately unchanged ("denied" either way) -- this seam's
-            # vocabulary, see `record_decision`.
-            self._record_decision_safe(self.hub_tool_for(name), "denied")
+            # "deny" and any unrecognized verdict fail closed the same way
+            # to the MODEL -- but not to the audit log. task-32280 fix
+            # round: `_verdict_for()` already knows which of the two this
+            # is (`refusal_reason`), and throwing that away here is what
+            # made a configured Off indistinguishable from a person
+            # pressing Deny. PERMISSION_OFF is the configured state; an
+            # unrecognized verdict resolves nothing, so it is neither.
+            # Qodo #7 (lane B): the TEXT names who refused too --
+            # `LOCAL_DENY_REFUSAL` only where the resolver actually said
+            # "deny" (a configured Off), the user's own string everywhere
+            # else, so the bridge renders "blocked (Off)" vs "denied by you".
+            reason = gate.refusal_reason
+            if reason == LocalToolInvocationReason.PERMISSION_OFF:
+                decision = POLICY_DENIED_DECISION
+            elif reason == LocalToolInvocationReason.APPROVAL_REFUSED:
+                decision = "denied"
+            else:
+                decision = UNRESOLVED_DENIED_DECISION
+            self._record_decision_safe(self.hub_tool_for(name), decision)
             result = ToolResult.blocked(
                 LOCAL_DENY_REFUSAL
-                if gate.refusal_reason is LocalToolInvocationReason.PERMISSION_OFF
+                if reason is LocalToolInvocationReason.PERMISSION_OFF
                 else LOCAL_USER_DENY_REFUSAL
             )
         return LocalToolInvocationResult(

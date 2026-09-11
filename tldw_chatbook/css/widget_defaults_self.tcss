@@ -617,9 +617,6 @@
 
 
 
-
-
-
     /* T7 (P3 UX batch): same fix as MCPServersMode.BUNDLED_CSS's
     #mcp-servers-table -- height: auto + max-height: 70% instead of height:
     1fr, so the table hugs its own row count instead of ballooning to fill

@@ -11352,13 +11352,19 @@ def test_read_class_tool_copy_mentions_per_call_approval():
     no mention that they still ask every time -- append that fact to every
     read-class tool's description instead of just the mutating ones' ⚠.
 
-    Qodo #6: the first wording ("Asks you each time before running.") was
-    unconditional, and a tool-level Allow or a session approval makes it
-    false -- a user who picks a broader scope then sees behaviour the setup
-    screen promised would not happen. The sentence now states the default
-    AND acknowledges the broader scopes the approval card offers.
+    task-32284 moved the wizard's private `_TOOL_COPY` table onto
+    `_GATEABLE_BUILTINS` (see `test_tools_step_copy_comes_from_the_shared_
+    gate_table` below), so this reads the catalog blurbs instead.
+
+    task-32284 (Qodo #2594 #6): "Asks you each time before running" was a
+    promise the approval card breaks on purpose -- "Approve for session"
+    and "Always allow" are right there on it. The sentence now names that
+    longer scope instead of denying it exists.
     """
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import ToolsStep
+    from tldw_chatbook.Agents.tool_catalog import gateable_builtin_tools
+
+    sentence = "Asks before running unless you approve a longer scope."
+    blurbs = {t.tool_name: t.blurb for t in gateable_builtin_tools()}
 
     for tool_name in (
         "read_file",
@@ -11367,11 +11373,57 @@ def test_read_class_tool_copy_mentions_per_call_approval():
         "grep_files",
         "expand_document",
     ):
-        _title, desc = ToolsStep._TOOL_COPY[tool_name]
-        assert desc.endswith(
-            "Asks before running unless you approve a longer scope."
-        ), (tool_name, desc)
-        assert "each time" not in desc.lower(), (tool_name, desc)
+        desc = blurbs[tool_name]
+        assert desc.endswith(f" {sentence}"), (tool_name, desc)
+
+    for tool_name in ("write_file", "create_note", "update_note"):
+        desc = blurbs[tool_name]
+        assert sentence not in desc, (tool_name, desc)
+        assert "asks you each time" not in desc.lower(), (tool_name, desc)
+
+
+@pytest.mark.asyncio
+async def test_tools_step_copy_comes_from_the_shared_gate_table():
+    """task-32284: ONE copy table, on `_GATEABLE_BUILTINS`.
+
+    The step used to keep its own `_TOOL_COPY` dict, which the MCP hub's
+    Tool gates pane could not see -- so the same gate read "Read file" in
+    setup and `read_file` in the hub. Both now render `GateableTool.title`
+    and `.blurb`.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.Agents.tool_catalog import gateable_builtin_tools
+    from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import ToolsStep
+
+    assert not hasattr(ToolsStep, "_TOOL_COPY"), (
+        "the local copy table is the thing this task removed"
+    )
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = ToolsStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="tools", title="Tools", step_number=5),
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        entries = list(gateable_builtin_tools())
+        names = [str(label.render()) for label in step.query(".setup-tool-name")]
+        assert names == [entry.title for entry in entries]
+        for entry in entries:
+            rendered = str(
+                step.query_one(
+                    f"#setup-tool-desc-{entry.tool_name}", Static
+                ).render()
+            )
+            assert rendered == entry.blurb
 
 
 @pytest.mark.asyncio
