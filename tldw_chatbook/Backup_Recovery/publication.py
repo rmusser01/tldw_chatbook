@@ -249,7 +249,7 @@ def finalize_candidate(candidate: Path, plan: RestorePlan, journal, *, session) 
     with pinned_directory(root) as parent:
         root_identity = (os.fstat(parent).st_dev, os.fstat(parent).st_ino)
         before = observe_artifact(root / name) if os.path.lexists(root / name) else None
-    installed = _validate_installed(journal, candidate, plan)
+    installed = _validate_installed(journal, candidate, plan, session=session)
     with journal._locked(exclusive=True) as parent:
         records = journal._records(parent)
         _finalization_session(session, context, prepared)
@@ -1663,7 +1663,7 @@ def _installed_metadata(
             os.close(fd)
 
 
-def _validate_installed(journal, candidate, plan):
+def _validate_installed(journal, candidate, plan, *, session=None):
     """Recheck published objects, validate disposable copies, then persist proof."""
     import shutil
     import tempfile
@@ -1873,6 +1873,14 @@ def _validate_installed(journal, candidate, plan):
                     destination.chmod(0o600)
                 candidates[record.logical_id] = destination
                 physical_candidates[physical_key] = destination
+            if plan.local_snapshot is not None:
+                from .later_rollback import _preserved_builtin_validation
+
+                retained_items, retained_candidates = _preserved_builtin_validation(
+                    plan, doc, receipt.manifest_digest, work, session, Event(),
+                )
+                items.update(retained_items)
+                candidates.update(retained_candidates)
             verify()
             synthetic = {row.logical_id for row in doc.directories if row.synthetic}
             # A fresh worker owns only private read probes. Executor shutdown

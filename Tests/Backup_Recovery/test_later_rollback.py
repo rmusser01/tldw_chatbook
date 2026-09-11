@@ -282,8 +282,8 @@ def test_later_installed_validation_failure_restores_post_edits(
         }
         validate = publication._validate_installed
 
-        def rejected(*args):
-            validate(*args)
+        def rejected(*args, **kwargs):
+            validate(*args, **kwargs)
             raise ValueError("actual installed validation rejected")
 
         monkeypatch.setattr(publication, "_validate_installed", rejected)

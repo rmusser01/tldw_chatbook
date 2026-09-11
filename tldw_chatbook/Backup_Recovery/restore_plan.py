@@ -511,7 +511,7 @@ def plan_restore(
             continue
         visited.add(key)
         for dependency in producer[key].dependencies:
-            if dependency not in selected:
+            if dependency not in selected and dependency not in preserved_snapshot:
                 raise ValueError("dependency_group_incomplete")
             pending.append(dependency)
     # Config selectors are installed typed fields. No original value is a key.

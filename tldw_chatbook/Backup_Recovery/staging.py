@@ -710,6 +710,15 @@ def stage_restore(
         candidate_paths.update(
             {row["logical_id"]: Path(row["candidate"]) for row in artifacts}
         )
+        if plan.local_snapshot is not None:
+            from .later_rollback import _preserved_builtin_validation
+
+            retained_items, retained_candidates = _preserved_builtin_validation(
+                plan, doc, hashlib.sha256(archive.manifest_bytes).hexdigest(),
+                stage, session, cancel,
+            )
+            items.update(retained_items)
+            candidate_paths.update(retained_candidates)
         directory_ids = {row.logical_id for row in doc.directories}
         topology = MappingProxyType(
             {

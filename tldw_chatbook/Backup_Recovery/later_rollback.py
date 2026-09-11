@@ -59,6 +59,258 @@ def _verify_snapshot_source(source, mode, archive_digest, archive=None):
     return journal, proof
 
 
+def _builtin_snapshot_target(original, proof, document, target, *, session=None):
+    """Reobserve only authenticated original builtin members for this operation."""
+    from pydantic import TypeAdapter
+
+    from tldw_chatbook.Persona_Visual.recovery import _Assets
+
+    from .generation_witnesses import _witnesses
+    from .models import DISCOVERY_CONTEXT_KEY, DiscoveryContext
+    from .owner_registry import install_adapters
+    from .storage_admission import _digest_recovery_file, acquire_storage
+
+    owner_id = "persona.visual_identity_builtin"
+    if original.target is None or target is None or not target.complete:
+        raise ValueError("local_snapshot_preservation_unverified")
+    originals = {item.logical_id: item for item in original.target.items}
+    selected = {
+        key: originals[key]
+        for key in original.safety_scope
+        if key in originals and originals[key].owner == owner_id
+    }
+    if not selected:
+        return target
+    owner = next((a for a in install_adapters() if a.owner_id == owner_id), None)
+    if type(owner) is not _Assets:
+        raise ValueError("local_snapshot_preservation_unverified")
+    saved = {item.logical_id: item for item in proof.safety_sources}
+    producers = {item.logical_id: item for item in document.producer_inventory}
+    records = {
+        item.logical_id: item for item in (*document.files, *document.directories)
+    }
+    for key, item in selected.items():
+        record, producer, source = records.get(key), producers.get(key), saved.get(key)
+        meta = item.metadata
+        if (
+            meta is None
+            or record is None
+            or producer is None
+            or source is None
+            or source.owner_id != owner_id
+            or producer.owner_id != owner_id
+            or producer.status != item.status
+            or set(producer.dependencies) != set(item.dependencies)
+            or Path(source.source.path) != item.path
+            or record.root_id != meta.root_id
+            or record.parent_id != meta.parent_id
+            or record.relative_path != meta.relative_path
+            or meta.kind
+            != ("directory" if item.status == "included_directory" else "file")
+        ):
+            raise ValueError("local_snapshot_preservation_unverified")
+    roots = [item for item in selected.values() if item.metadata.parent_id is None]
+    if not roots or any(
+        item.metadata.root_id not in {root.logical_id for root in roots}
+        for item in selected.values()
+    ):
+        raise ValueError("local_snapshot_preservation_unverified")
+    updated = list(target.items)
+    observations = []
+    for root in roots:
+        if owner._root({}) != root.path or root.status != "included_directory":
+            raise ValueError("local_snapshot_builtin_root_changed")
+        members = [
+            item
+            for item in selected.values()
+            if item.metadata.root_id == root.logical_id
+        ]
+        configs = [
+            originals[key]
+            for key in root.dependencies
+            if key in originals and originals[key].owner == "config"
+        ]
+        if len(configs) != 1:
+            raise ValueError("local_snapshot_preservation_unverified")
+        configs = [
+            item
+            for item in target.items
+            if item.path == configs[0].path
+            and item.owner == "config"
+            and item.status == "included"
+        ]
+        if len(configs) != 1:
+            raise ValueError("local_snapshot_preservation_unverified")
+        config = configs[0]
+        context = DiscoveryContext(config.path, config.logical_id.split(":", 2)[1])
+        current_roots = [item for item in updated if item.path == root.path]
+        if (
+            len(current_roots) != 1
+            or current_roots[0].owner != owner_id
+            or current_roots[0].status not in {"unused", "included_directory"}
+        ):
+            raise ValueError("local_snapshot_builtin_conflict")
+        lease = acquire_storage(root.path) if session is None else None
+        try:
+            before = _witnesses(root.path, lease) if lease is not None else None
+            _, profiles, associations = bootstrap._control_records(
+                bootstrap.default_bootstrap_root()
+            )
+            binding = next(
+                (row for row in profiles if row["selector"] == str(config.path)), None
+            )
+            if (
+                binding is None
+                or (before is not None and binding.get("activation") not in before)
+                or not any(
+                    root.path == Path(path) or Path(path) in root.path.parents
+                    for path in binding["roots"]
+                )
+            ):
+                raise ValueError("local_snapshot_builtin_scope_unverified")
+            generation = binding.get("activation")
+            if session is not None:
+                from .activation import ActivationStore, _private
+                from .storage_admission import _contains_owned_path
+
+                session._check()
+                if (
+                    session._control != bootstrap.default_bootstrap_root() / "admission"
+                    or not set(binding["namespaces"]) <= set(session._names)
+                    or not any(
+                        _contains_owned_path(path, root.path) for path in session._roots
+                    )
+                    or generation is None
+                    or [
+                        row["activation"]
+                        for row in associations
+                        if row["selector"] == str(config.path)
+                    ]
+                    != [generation]
+                ):
+                    raise ValueError("local_snapshot_builtin_scope_unverified")
+                store = ActivationStore(Path(generation["store_root"]))
+                with _private(store._generation(generation["generation"])) as parent:
+                    if (
+                        store._required(parent, generation["generation"]).owners
+                        != generation["owners"]
+                    ):
+                        raise ValueError("local_snapshot_builtin_generation_changed")
+            entries = owner._tree(
+                {DISCOVERY_CONTEXT_KEY: context},
+                root.path,
+                selected_paths=frozenset(
+                    item.metadata.relative_path
+                    for item in members
+                    if item.status == "included"
+                ),
+            )
+            if {item.path for item in entries} != {
+                item.path for item in members
+            } or any(
+                item.status not in {"included", "included_directory"}
+                for item in entries
+            ):
+                raise ValueError("local_snapshot_builtin_members_changed")
+            by_path = {item.path: item for item in entries}
+            mapped = {}
+            for item in members:
+                actual = by_path[item.path]
+                if (
+                    actual.status != item.status
+                    or actual.metadata.relative_path != item.metadata.relative_path
+                ):
+                    raise ValueError("local_snapshot_builtin_members_changed")
+                mapped[item.logical_id] = actual
+            for item in members:
+                dependencies = []
+                for key in item.dependencies:
+                    prior = originals.get(key)
+                    matches = (
+                        [mapped[key]]
+                        if key in mapped
+                        else [
+                            entry
+                            for entry in target.items
+                            if prior is not None
+                            and entry.path == prior.path
+                            and entry.owner == prior.owner
+                        ]
+                    )
+                    if len(matches) != 1:
+                        raise ValueError("local_snapshot_preservation_unverified")
+                    dependencies.append(matches[0].logical_id)
+                actual = replace(
+                    mapped[item.logical_id],
+                    dependencies=tuple(dependencies),
+                    shared_group=item.shared_group,
+                )
+                current = [
+                    entry
+                    for entry in updated
+                    if entry.path == item.path or entry.logical_id == actual.logical_id
+                ]
+                if current and (
+                    len(current) != 1
+                    or current[0].owner != owner_id
+                    or current[0].logical_id != actual.logical_id
+                    or current[0].status != "unused"
+                    and (
+                        current[0].status != actual.status
+                        or set(current[0].dependencies) != set(actual.dependencies)
+                    )
+                ):
+                    raise ValueError("local_snapshot_builtin_conflict")
+                updated = [entry for entry in updated if entry not in current]
+                updated.append(actual)
+                if actual.status == "included":
+                    observations.append(
+                        (
+                            str(actual.path),
+                            _digest_recovery_file(
+                                owner_id, actual.path, max_bytes=owner.max_bytes
+                            ),
+                        )
+                    )
+            _, after_profiles, after_associations = bootstrap._control_records(
+                bootstrap.default_bootstrap_root()
+            )
+            after_binding = next(
+                (row for row in after_profiles if row["selector"] == str(config.path)),
+                None,
+            )
+            if (
+                after_binding != binding
+                or [
+                    row["activation"]
+                    for row in after_associations
+                    if row["selector"] == str(config.path)
+                ]
+                != [generation]
+                or lease is not None
+                and _witnesses(root.path, lease) != before
+            ):
+                raise ValueError("local_snapshot_builtin_generation_changed")
+            observations.append(generation)
+        finally:
+            if lease is not None:
+                lease.close()
+    result = replace(
+        target,
+        items=tuple(sorted(updated, key=lambda item: item.logical_id)),
+        scope_digest="",
+    )
+    return replace(
+        result,
+        scope_digest=_evidence_digest(
+            {
+                "target": TypeAdapter(type(result)).dump_python(result, mode="json"),
+                "observed": observations,
+            }
+        ),
+    )
+
+
 def _preserved_snapshot_members(source, archive, target):
     """Match authenticated original safety sources to observed current owners."""
     from .restore_plan import _ancestor
@@ -136,6 +388,151 @@ def _preserved_snapshot_members(source, archive, target):
             raise ValueError("local_snapshot_preservation_unverified")
         preserved[key] = matches[0]
     return preserved
+
+
+def _builtin_sources(plan):
+    return tuple(
+        item
+        for item in plan.target.items
+        if item.owner == "persona.visual_identity_builtin"
+        and item.logical_id in plan.safety_scope
+    )
+
+
+def _builtin_stage_names(plan):
+    """Use only current native bindings containing authenticated safety sources."""
+    sources = _builtin_sources(plan)
+    if not sources:
+        return ()
+    root = bootstrap.default_bootstrap_root()
+    _, profiles, _ = bootstrap._control_records(root)
+    registry = bootstrap._registry(root)
+    names = set()
+    for item in sources:
+        bindings = [
+            row
+            for row in profiles
+            if any(
+                item.path == Path(path) or Path(path) in item.path.parents
+                for path in row["roots"]
+            )
+        ]
+        if not bindings:
+            raise ValueError("local_snapshot_builtin_scope_unverified")
+        for row in bindings:
+            binding = bootstrap._binding(Path(row["selector"]), profiles, registry)
+            if binding is None:
+                raise ValueError("local_snapshot_builtin_scope_unverified")
+            names.update(binding["namespaces"])
+    return tuple(sorted(names))
+
+
+def _preserved_builtin_validation(
+    plan, document, manifest_digest, work, session, cancel
+):
+    """Copy current authenticated preserved members only for private validation."""
+    from .journal import _Object
+    from .models import FileMetadata
+    from .publication import _observe_safety_source, _safety_source_matches
+    from .storage_admission import copy_capture_file
+
+    if plan.local_snapshot is None or not _builtin_sources(plan):
+        return {}, {}
+    journal, proof = verify_snapshot_source(plan)
+    original = load_plan(journal)
+    if manifest_digest != proof.manifest_digest:
+        raise ValueError("local_snapshot_source_changed")
+    selected = set(original.safety_scope)
+    originals = {item.logical_id: item for item in original.target.items}
+    source_evidence = {item.logical_id: item for item in proof.safety_sources}
+    records = {
+        item.logical_id: item for item in (*document.files, *document.directories)
+    }
+    producers = {item.logical_id: item for item in document.producer_inventory}
+    if session is None:
+        raise ValueError("local_snapshot_builtin_native_session_required")
+    session._check()
+    from .control_records import UNBOUND_NAMESPACE
+    from .storage_admission import _contains_owned_path
+
+    if (
+        session._control != bootstrap.default_bootstrap_root() / "admission"
+        or UNBOUND_NAMESPACE not in session._names
+    ):
+        raise ValueError("local_snapshot_builtin_scope_unverified")
+    items, candidates, observed = {}, {}, {}
+    for key in selected:
+        old = originals[key]
+        if old.owner != "persona.visual_identity_builtin":
+            continue
+        current = [
+            item
+            for item in _builtin_sources(plan)
+            if item.path == old.path and item.owner == old.owner
+        ]
+        producer, record, saved = (
+            producers.get(key),
+            records.get(key),
+            source_evidence.get(key),
+        )
+        if (
+            len(current) != 1
+            or saved is None
+            or producer is None
+            or record is None
+            or saved.owner_id != old.owner
+            or Path(saved.source.path) != old.path
+            or producer.owner_id != old.owner
+            or producer.status != old.status
+            or set(producer.dependencies) != set(old.dependencies)
+            or current[0].status != old.status
+        ):
+            raise ValueError("local_snapshot_preservation_unverified")
+        item = current[0]
+        if not any(_contains_owned_path(root, item.path) for root in session._roots):
+            raise ValueError("local_snapshot_builtin_scope_unverified")
+        observed[key] = _Object.model_validate(_observe_safety_source(item.path))
+        meta = item.metadata
+        items[key] = replace(
+            item,
+            logical_id=key,
+            dependencies=producer.dependencies,
+            metadata=FileMetadata(
+                1,
+                record.root_id,
+                record.relative_path,
+                record.parent_id,
+                meta.kind,
+                meta.mode,
+                meta.mtime_ns,
+                meta.policy,
+            ),
+        )
+    files = tuple(
+        (item.path.resolve(strict=True), observed[key].device, observed[key].inode)
+        for key, item in items.items()
+        if item.status == "included"
+    )
+    limits = ArchiveLimits()
+    # The current selector may already contain the authenticated historical bytes.
+    # Exact saved sources plus held native scope remain authority after publication.
+    with session._capture_bound_sources(files, work, limits, limits.expanded_bytes):
+        for key, item in items.items():
+            destination = work / ("builtin-" + hashlib.sha256(key.encode()).hexdigest())
+            if item.status == "included_directory":
+                create_private_directory(destination)
+            else:
+                copy_capture_file(
+                    item.owner,
+                    item.path,
+                    destination,
+                    cancel,
+                    max_bytes=limits.member_bytes,
+                )
+            candidates[key] = destination
+        if any(not _safety_source_matches(value) for value in observed.values()):
+            raise ValueError("local_snapshot_builtin_members_changed")
+    return items, candidates
 
 
 def _acquire(entry, proof, work, password, cancel):
@@ -315,7 +712,7 @@ def _known_absences(plan, original, prepared):
     return replace(plan, target_fingerprint=_fingerprint(_paths(plan), plan.target))
 
 
-def _preview(journal, proof, archive, target, acknowledged):
+def _preview(journal, proof, archive, target, acknowledged, *, session=None):
     original = load_plan(journal)
     document = archive_reader.verify_sealed(archive)
     with journal._locked(exclusive=False) as parent:
@@ -343,6 +740,10 @@ def _preview(journal, proof, archive, target, acknowledged):
     snapshot = LocalSnapshotSource(
         journal.root.parent, journal.operation_id, _evidence_digest(proof.model_dump())
     )
+    _, authenticated = _verify_snapshot_source(snapshot, "replace", archive.digest, archive)
+    if authenticated.safety_sources != prepared.safety_sources:
+        raise ValueError("local_snapshot_preservation_unverified")
+    target = _builtin_snapshot_target(original, authenticated, document, target, session=session)
     preserved = _preserved_snapshot_members(snapshot, archive, target)
     plan = plan_restore(
         archive,
@@ -438,8 +839,15 @@ def execute_rollback(
             # unbound lease pins registry geometry without acquiring live owners.
             authority = admission_authority(bootstrap.default_bootstrap_root())
             with authority.maintenance(
-                (UNBOUND_NAMESPACE,), 30, cancel=cancel
+                (UNBOUND_NAMESPACE, *_builtin_stage_names(current)), 30, cancel=cancel
             ) as session:
+                sources = tuple(item.path for item in _builtin_sources(current) if item.status == "included")
+                if sources:
+                    with session.capture_scope(sources, work, limits=ArchiveLimits()):
+                        held = _preview(journal, proof, archive, current.target,
+                            current.acknowledged_credential_issues, session=session)
+                    if held != current:
+                        raise ValueError("target_changed")
                 candidate = stage_restore(
                     archive, current, work / "candidate", cancel, session=session
                 )
