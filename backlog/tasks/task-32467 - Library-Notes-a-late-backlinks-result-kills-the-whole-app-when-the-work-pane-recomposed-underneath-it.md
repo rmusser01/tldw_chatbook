@@ -1,5 +1,5 @@
 ---
-id: TASK-32458
+id: TASK-32467
 title: >-
   Library Notes: a late backlinks result kills the whole app when the work pane
   recomposed underneath it

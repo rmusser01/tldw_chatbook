@@ -141,7 +141,7 @@ migrated v72 -> v73 on open and Info ▸ Linked from read "Linked from (40)"
 with the Slip rows listed, no re-import
 (`scratchpad/wave3-caps/backlinks-table/live-info-linked-from-40.txt`).
 
-Also fixed here, as originally assigned: **task-32458**, the app-killing
+Also fixed here, as originally assigned: **task-32467**, the app-killing
 `NoMatches` from this worker's paint. It was briefly reassigned to the
 test-health group and reverted here, then handed back when their
 controller-seam guard was found to skip work the seam owns; see that task's

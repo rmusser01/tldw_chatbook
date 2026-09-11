@@ -2513,7 +2513,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # `query_one` raised `NoMatches` on the first of them. The backlinks
         # loader reaches here from a WORKER, whose default
         # `exit_on_error=True` turns that into a dead process rather than a
-        # skipped paint (task-32458, reproduced twice live on dev).
+        # skipped paint (task-32467, reproduced twice live on dev).
         #
         # Guarded HERE, not at a caller: several callers reach this method
         # directly, and returning before it would also discard the

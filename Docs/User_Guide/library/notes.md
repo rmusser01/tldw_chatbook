@@ -1254,4 +1254,6 @@ scanning every note body on every note open. Same rows, same "checking…" /
 comes back with it when restored. Measured on throwaway vaults of 1,000 /
 3,000 / 10,000 notes: the lookup went from 0.85 / 3.07 / 8.79 ms — growing
 with the vault — to 0.08 ms flat. Upgrading an existing database backfills
-the relation from the bodies it already holds.)*
+the relation from the bodies it already holds. task-32467: a "Linked from"
+answer that lands while the work pane is mid-recompose is now held for the
+next paint instead of terminating the app.)*
