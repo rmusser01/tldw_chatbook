@@ -51,6 +51,10 @@ and setup requirements, then **Confirm reviewed restore**. After successful
 validation and publication, use **Restored profiles** to open the profile in a
 separate process. Opening it does not switch the running application's storage.
 
+For custom tokenizers, the default tokenizer directory may already exist only if
+it is empty, owned by you, and private. An isolated restore refuses an occupied
+tokenizer destination.
+
 An isolated restore retains included credentials in an encrypted recovery copy;
 they do not need a destination slot. The restored configuration is sanitized, and
 credentials still require the applicable local setup before use.

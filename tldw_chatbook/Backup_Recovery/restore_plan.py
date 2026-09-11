@@ -129,6 +129,43 @@ def _empty_private_container(path: Path) -> bool:
         return False
 
 
+def _tokenizer_root_owner(doc, key, path, owners):
+    """Match the authenticated concrete root to the installed default owner."""
+    from .config_adapter import _Definition
+    from .profile_paths import default_config_path
+
+    owner = "tokenizers.custom"
+    installed = owners.get(owner)
+    root = next((row for row in doc.directories if row.logical_id == key), None)
+    producer = {row.logical_id: row for row in doc.producer_inventory}
+    if (
+        type(installed) is not _Definition
+        or installed
+        != _Definition(owner, leaf="tokenizers", location="default_config", tree=True)
+        or root is None
+        or root.synthetic
+        or root.parent_id is not None
+        or root.root_id != key
+        or key not in producer
+        or producer[key].owner_id != owner
+        or producer[key].status != "included_directory"
+        or path != default_config_path().parent / "tokenizers"
+        or any(
+            row.logical_id not in producer or producer[row.logical_id].owner_id != owner
+            for row in (*doc.directories, *doc.files)
+            if row.root_id == key
+        )
+    ):
+        return None
+    return owner
+
+
+def _tokenizer_container_owner(doc, key, path, owners):
+    """Require an untouched private empty root before isolated publication."""
+    owner = _tokenizer_root_owner(doc, key, path, owners)
+    return owner if owner is not None and _empty_private_container(path) else None
+
+
 def _observed(path):
     ancestor = _ancestor(path)
     ancestors = []
@@ -357,7 +394,11 @@ def plan_restore(
         if (
             mode == "isolated"
             and (path.exists() or path.is_symlink())
-            and (not roots[key].synthetic or not _empty_private_container(path))
+            and not (
+                roots[key].synthetic
+                and _empty_private_container(path)
+                or _tokenizer_container_owner(doc, key, path, owners) is not None
+            )
         ):
             raise ValueError("destination_exists")
         if (

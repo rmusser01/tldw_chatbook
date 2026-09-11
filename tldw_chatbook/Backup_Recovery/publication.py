@@ -1231,6 +1231,10 @@ def _prepare(
             )
         installed_paths = []
         directory_metadata = []
+        from .restore_plan import _shared_directory_aliases, _tokenizer_container_owner
+
+        tokenizer_directories = {}
+        shared_directories = _shared_directory_aliases(doc)
         for row in [*document["artifacts"], *document.get("containers", [])]:
             target = Path(row["destination"])
             moved = any(
@@ -1245,17 +1249,44 @@ def _prepare(
             source = Path(row["candidate"]) if moved else target
             if row["kind"] == "directory" and not moved:
                 local = target_items.get(target)
-                if local is None or local.owner not in owners:
+                owner = local.owner if local is not None else None
+                tokenizer = None
+                if (
+                    plan.mode == "isolated"
+                    and plan.target is None
+                    and dict(plan.destinations).get(row["logical_id"]) == target
+                    and dict(plan.restore).get(row["logical_id"]) == target
+                ):
+                    tokenizer = _tokenizer_container_owner(
+                        doc, row["logical_id"], target, owners
+                    )
+                    owner = tokenizer
+                if owner is None or owner not in owners:
                     raise ValueError("directory_metadata_owner_required")
-                directory_metadata.append(
-                    {
-                        "logical_id": row["logical_id"],
-                        "owner_id": local.owner,
-                        "previous": _directory_state(target).model_dump(),
-                        "parent": _parent_evidence(target.parent, {}),
-                        "applied": row["applied_metadata"],
-                    }
-                )
+                intent = {
+                    "logical_id": row["logical_id"],
+                    "owner_id": owner,
+                    "previous": _directory_state(target).model_dump(),
+                    "parent": _parent_evidence(target.parent, {}),
+                    "applied": row["applied_metadata"],
+                }
+                previous = tokenizer_directories.get(target)
+                if tokenizer is not None and previous is not None:
+                    if (
+                        row.get("alias_of") != previous["logical_id"]
+                        or row["logical_id"] not in shared_directories
+                        or shared_directories[row["logical_id"]]
+                        != shared_directories.get(previous["logical_id"])
+                        or any(
+                            intent[key] != previous[key]
+                            for key in ("owner_id", "previous", "parent", "applied")
+                        )
+                    ):
+                        raise ValueError("directory_metadata_alias_changed")
+                else:
+                    directory_metadata.append(intent)
+                    if tokenizer is not None:
+                        tokenizer_directories[target] = intent
             info = source.lstat()
             installed_paths.append(
                 {"path": str(target), "device": info.st_dev, "inode": info.st_ino}
@@ -1316,6 +1347,8 @@ def _prepare(
                     "source": _observe_safety_source(item.path),
                 }
             )
+        if tokenizer_directories:
+            recheck_targets(plan)
         journal._append(
             parent,
             "prepared",
@@ -1802,13 +1835,33 @@ def _validate_installed(journal, candidate, plan, *, session=None):
         ):
             raise ValueError("installed_directory_rollback_required")
         if metadata_paths:
-            rollback = next(
-                (row for row in records if row.event == "rollback_verified"), None
-            )
-            if rollback is None or not {
-                item.logical_id for item in prepared.directory_metadata
-            } <= set(rollback.evidence["coverage"]):
-                raise ValueError("installed_directory_rollback_required")
+            if plan.mode == "isolated" and plan.target is None:
+                from .restore_plan import _tokenizer_root_owner
+
+                selected_roots = dict(plan.destinations)
+                restored = dict(plan.restore)
+                applied = {key: value for key, _, value in plan.metadata}
+                for item in prepared.directory_metadata:
+                    path = Path(item.previous.path)
+                    if (
+                        selected_roots.get(item.logical_id) != path
+                        or restored.get(item.logical_id) != path
+                        or _tokenizer_root_owner(doc, item.logical_id, path, owners)
+                        != item.owner_id
+                        or item.previous.mode & 0o077
+                        or expected.get(str(path))
+                        != (item.previous.device, item.previous.inode)
+                        or applied.get(item.logical_id) != item.applied
+                    ):
+                        raise ValueError("installed_directory_rollback_required")
+            else:
+                rollback = next(
+                    (row for row in records if row.event == "rollback_verified"), None
+                )
+                if rollback is None or not {
+                    item.logical_id for item in prepared.directory_metadata
+                } <= set(rollback.evidence["coverage"]):
+                    raise ValueError("installed_directory_rollback_required")
             _check_directory_states(prepared, records)
         prior_validation = next(
             (row for row in reversed(records) if row.event == "installed_validated"),
