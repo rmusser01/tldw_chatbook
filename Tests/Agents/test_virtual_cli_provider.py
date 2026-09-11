@@ -737,6 +737,50 @@ def test_arg_rule_allows_skips_the_card_for_a_matching_call(tmp_path):
     assert not other.ok and other.outcome == "blocked"
 
 
+def test_allow_matching_through_the_real_store_and_service_allows_next_call(tmp_path):
+    """Review round 1 (Minor 2): every other allow_matching test stubs
+    `persist_arg_rule`/`arg_rule_allows` with plain closures over a list --
+    this one wires them to the REAL `UnifiedMCPControlPlaneService` seams
+    (`add_tool_arg_rule`/`arg_rule_allows_call`) backed by a REAL
+    `MCPPermissionStore` on disk, persists an allow_matching decision on
+    one call, then makes a SECOND, independent `invoke()` call (no stamp,
+    no callback) with the identical arguments and asserts it resolves
+    allow purely from what's now on disk -- proving the whole chain
+    (provider -> service -> store -> back) actually works, not just each
+    stubbed half."""
+    from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
+
+    service = UnifiedMCPControlPlaneService.__new__(UnifiedMCPControlPlaneService)
+    service._permission_store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
+
+    def persist_arg_rule(hub, args):
+        service.add_tool_arg_rule(hub.server_key, hub.name, args=args, tool=hub)
+
+    def arg_rule_allows(hub, args):
+        return service.arg_rule_allows_call(hub, args)
+
+    provider = make_provider(
+        tmp_path,
+        persist_arg_rule=persist_arg_rule,
+        arg_rule_allows=arg_rule_allows,
+    )
+    call = ToolCall("virtual_cli", {"command": "ls", "argv": ["."]}, "c1")
+    pending = provider.pending_gate_for(call)
+    assert pending is not None
+    provider.apply_batch_decisions("run", {"c1": "allow_matching"}, [pending])
+
+    with use_run_id("run"), use_tool_call_id("c1"):
+        first = provider.invoke("virtual_cli", {"command": "ls", "argv": ["."]})
+    assert first.ok
+
+    second = provider.invoke("virtual_cli", {"command": "ls", "argv": ["."]})
+
+    assert second.ok
+
+
 def test_console_virtual_cli_callbacks_capture_the_exact_named_profile(tmp_path):
     from types import SimpleNamespace
 

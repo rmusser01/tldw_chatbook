@@ -2751,11 +2751,22 @@ class MCPWorkbench(Container):
     def _tool_has_arg_rules(
         servers_payload: Mapping[str, Any], server_key: str, tool_name: str
     ) -> bool:
-        """Whether the STORE payload carries any exact-input allow rule for
+        """Whether the STORE payload carries any EXACT-INPUT allow rule for
         one tool (task-32281) -- same raw-payload read shape as
         `_raw_tool_state()` immediately above, checked alongside it so the
         matrix's ``≡`` marker never needs its own store round-trip
-        (`servers_payload` is the caller's already-loaded profile slice)."""
+        (`servers_payload` is the caller's already-loaded profile slice).
+
+        Review round 1 (Minor 1): counts only ``args_json``-shaped rules --
+        the same filter `MCPPermissionStore.list_tool_arg_rules()` applies
+        (a hand-written ``{"field": ..., "pattern": ...}`` glob rule is
+        never returned there either). Picked over the alternative (listing
+        glob rules read-only in the inspector too) as the cheaper fix: it
+        keeps the marker and the list it's advertising in agreement without
+        adding a second rendering path for a rule shape this UI has never
+        offered a way to CREATE (only `add_tool_arg_rule()`'s exact-input
+        writer feeds this surface; glob rules are hand-edited-file-only).
+        """
         server_entry = servers_payload.get(server_key)
         if not isinstance(server_entry, Mapping):
             return False
@@ -2770,7 +2781,12 @@ class MCPWorkbench(Container):
         # inventory()`'s `read_profile_inventory_snapshot()`/`read_
         # snapshot_strict()` path, via `permission_store._freeze_snapshot()`,
         # which turns every list into a tuple) -- accept both.
-        return isinstance(rules, (list, tuple)) and bool(rules)
+        if not isinstance(rules, (list, tuple)):
+            return False
+        return any(
+            isinstance(rule, Mapping) and isinstance(rule.get("args_json"), str) and rule.get("args_json")
+            for rule in rules
+        )
 
     def _build_permission_rows(
         self,

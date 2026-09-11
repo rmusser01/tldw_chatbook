@@ -1632,8 +1632,16 @@ class MCPPermissionStore:
         """
         payload = self.load()
         profile = payload.get("profiles", {}).get(profile_id)
-        tool_entry = self._tool_entry(profile, server_key, tool_name)
-        if tool_entry is None:
+        if not isinstance(profile, Mapping):
+            return False
+        server_entry = _as_mapping(profile.get("servers")).get(server_key)
+        if not isinstance(server_entry, Mapping):
+            return False
+        tools = server_entry.get("tools")
+        if not isinstance(tools, Mapping):
+            return False
+        tool_entry = tools.get(tool_name)
+        if not isinstance(tool_entry, Mapping):
             return False
         rules = tool_entry.get("arg_rules")
         if not isinstance(rules, list):
@@ -1649,6 +1657,18 @@ class MCPPermissionStore:
             tool_entry["arg_rules"] = remaining
         else:
             tool_entry.pop("arg_rules", None)
+            if not tool_entry:
+                # Review round 1 (Critical): a state-less tool entry (only
+                # ever had arg_rules, e.g. an "always allow this exact
+                # input" with no whole-tool override) left an empty `{}`
+                # behind, which `_validate_strict_profile()` rejects (it
+                # requires "state" OR "arg_rules") -- that invalidated the
+                # WHOLE profile for `read_snapshot_strict()`/`read_profile_
+                # inventory_snapshot()` callers the moment the LAST rule
+                # was removed. Drop only the empty tool entry itself --
+                # never cascades to `tools`/`server_entry`, which may still
+                # carry sibling tools or a server-level default.
+                tools.pop(tool_name, None)
         self.save(payload)
         return True
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from pathlib import Path
 from typing import Any
@@ -4389,6 +4390,42 @@ async def test_show_permission_renders_one_row_per_arg_rule():
         ]
         assert app.query_one("#mcp-inspector-arg-rule-remove-0", Button)
         assert app.query_one("#mcp-inspector-arg-rule-remove-1", Button)
+
+
+@pytest.mark.asyncio
+async def test_arg_rule_row_redacts_a_secret_shaped_argument():
+    """Review round 1 (Important): the approval card that created this
+    rule already redacted a secret-shaped argument before ever showing
+    it (`chat_approval_card.py`); the stored, unredacted `args_json` must
+    not un-hide it on this row. `rule_id` stays the raw canonical string
+    -- Remove still targets the real rule, unaffected by display
+    redaction."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        secret = "sk-live-do-not-leak-me"
+        args_json = json.dumps({"api_key": secret, "query": "x"}, sort_keys=True)
+        await inspector.show_permission(
+            _tool(),
+            EffectiveToolState(state="ask", origin="server_default"),
+            arg_rules=[{"rule_id": args_json, "args_json": args_json}],
+        )
+        await pilot.pause()
+
+        row_text = str(app.query_one("#mcp-inspector-arg-rule-0", Static).renderable)
+
+        assert secret not in row_text
+        assert "***" in row_text
+
+        await pilot.click("#mcp-inspector-arg-rule-remove-0")
+        await pilot.pause()
+
+        events = [
+            e
+            for e in app.events
+            if isinstance(e, MCPInspector.RemoveArgRuleRequested)
+        ]
+        assert events[0].rule_id == args_json
 
 
 @pytest.mark.asyncio

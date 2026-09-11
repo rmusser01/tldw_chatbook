@@ -1133,6 +1133,36 @@ def test_remove_tool_arg_rule_round_trip_makes_the_next_call_ask_again(
     assert not arg_rule_allows(store.load(), tool, {"query": "x"})
 
 
+def test_removing_the_last_rule_of_a_state_less_tool_stays_strictly_valid(
+    tmp_path,
+) -> None:
+    """Review round 1 (Critical): a tool that only ever had `arg_rules`
+    (no whole-tool `state`) used to leave `{}` behind when its last rule
+    was removed -- `_validate_strict_profile()` rejects a tool entry with
+    neither key, invalidating the WHOLE profile for `read_snapshot_
+    strict()`/`read_profile_inventory_snapshot()` callers (the
+    Permissions-mode profile selector)."""
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+    rule_id = store.list_tool_arg_rules("srv", "search")[0]["rule_id"]
+
+    assert store.remove_tool_arg_rule("srv", "search", rule_id) is True
+
+    # The empty tool entry itself is gone -- not left behind as `{}`.
+    server_entry = store.load()["profiles"]["default"]["servers"].get("srv", {})
+    assert "search" not in server_entry.get("tools", {})
+    # Both strict-read seams still validate the store.
+    strict = store.read_snapshot_strict()
+    inventory = store.read_profile_inventory_snapshot()
+    assert inventory.payload == strict.payload
+
+
 def test_remove_tool_arg_rule_unknown_id_is_a_no_op(tmp_path) -> None:
     from tldw_chatbook.MCP.permission_store import MCPPermissionStore
 

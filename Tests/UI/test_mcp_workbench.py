@@ -6746,6 +6746,29 @@ def test_tool_has_arg_rules_reads_the_raw_payload_directly(tmp_path):
     assert has_rules(frozen_servers, "srv", "search") is True
 
 
+def test_tool_has_arg_rules_ignores_hand_written_glob_rules(tmp_path):
+    """Review round 1 (Minor 1): the marker must agree with what the
+    inspector's list actually shows -- `MCPPermissionStore.
+    list_tool_arg_rules()` returns only `args_json`-shaped rules, never a
+    hand-written `{"field": ..., "pattern": ...}` glob rule, so the ``≡``
+    marker must not fire for a tool that carries only a glob rule (it
+    would advertise a Remove-able row that doesn't exist)."""
+    store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
+    payload = store.load()
+    entry = (
+        payload["profiles"]["default"]
+        .setdefault("servers", {})
+        .setdefault("srv", {})
+        .setdefault("tools", {})
+        .setdefault("search", {})
+    )
+    entry["arg_rules"] = [{"field": "query", "pattern": "docs *"}]
+    store.save(payload)
+    servers_payload = store.load()["profiles"]["default"]["servers"]
+
+    assert MCPWorkbench._tool_has_arg_rules(servers_payload, "srv", "search") is False
+
+
 @pytest.mark.asyncio
 async def test_permissions_mode_renders_pinned_grouped_sorted_matrix(tmp_path):
     app = PermissionsApp(tmp_path / "mcp_permissions.json")
@@ -7982,6 +8005,19 @@ async def test_matrix_marks_and_inspector_lists_and_removes_arg_rules(tmp_path):
         assert not list(app.query("#mcp-inspector-arg-rule-remove-0"))
         tool_cells_after = {row[0].strip(): row[1] for row in _perm_all_rows(app)}
         assert "≡" not in tool_cells_after["search"]
+        # Review round 1 (Critical): removing the LAST rule used to leave
+        # `{}` behind for a state-less tool entry, which the strict-read
+        # seam `_tool_policy_inventory()` uses rejected as `invalid_shape`
+        # -- collapsing `profiles={} options=[] ctx=None` and closing the
+        # inspector instead of just clearing the rule row. It must stay
+        # open on the SAME tool.
+        assert app.query_one("#mcp-inspector-permission").display is True
+        assert (
+            str(
+                app.query_one("#mcp-inspector-permission-tool", Static).renderable
+            )
+            == "search — docs"
+        )
 
 
 @pytest.mark.asyncio

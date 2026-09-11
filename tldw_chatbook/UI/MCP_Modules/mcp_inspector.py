@@ -417,13 +417,35 @@ def _stale_result_toast_text(tool_name: str) -> str:
 
 def _arg_rule_summary(args_json: str, *, limit: int = _ARG_RULE_SUMMARY_LIMIT) -> str:
     """One exact-input allow rule's row text, capped at `limit` chars
-    (task-32281 AC#1). `args_json` is already the rule's canonical
-    argument rendering (`permission_store._canonical_args_json()`'s
-    output) -- shown as-is rather than re-formatted, so what's on the row
-    is exactly what the store matches calls against."""
-    if len(args_json) <= limit:
-        return args_json
-    return args_json[: limit - 1] + "…"
+    (task-32281 AC#1).
+
+    Review round 1 (Important): redacted before display -- the approval
+    card that created this rule already ran `redact_mapping()` before
+    ever showing the arguments (`chat_approval_card.py`'s redaction pass;
+    `MCP/redaction.py` states the whole-subsystem invariant that secret-
+    shaped values never reach a display or log boundary unredacted), so
+    the stored row must too, or a secret argument that was hidden on the
+    approval card comes back unredacted here. `args_json` is the rule's
+    canonical argument rendering (`permission_store._canonical_args_
+    json()`'s output); re-parsed, redacted, and re-dumped rather than
+    string-matched, so nested secret-keyed values are caught too. Falls
+    back to the raw (still capped) string only when `args_json` doesn't
+    parse back to a mapping -- `rule_id`/removal never read this text,
+    only the raw canonical string, so a fallback here never affects
+    Remove.
+    """
+    try:
+        parsed = json.loads(args_json)
+        text = (
+            json.dumps(redact_mapping(parsed), sort_keys=True)
+            if isinstance(parsed, Mapping)
+            else args_json
+        )
+    except Exception:
+        text = args_json
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "…"
 
 
 def _cascade_rungs(
