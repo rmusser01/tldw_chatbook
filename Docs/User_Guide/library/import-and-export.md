@@ -348,17 +348,22 @@ destination, or leaving the Import canvas cancels pending consent.
 Library screen (not just the landing — though never while you're typing in
 a text field, where `i` stays a letter), and entering the form always
 parks the caret in the path field, so you can type or paste a path
-immediately. **Enter** in the path field starts the import once the gate
-line clears — with "⚠" warnings outstanding, Enter,Enter carries the same
-two-press consent as the Start button. **r** re-stages your last import
-of the session ("Retry this batch") when the queue has settled — inside a
+immediately. **Enter** in the path field takes two different actions
+depending on where you are, and the footer names the one it will take: on a
+path that has not been checked yet it runs the pre-check and the footer
+reads **`enter check this path`**; once the gate line clears the footer
+reads **`enter start import`** and Enter starts the import. With "⚠"
+warnings outstanding, Enter,Enter carries the same two-press consent as the
+Start button. **r** re-stages your last import of the session ("Retry this
+batch") when the queue has settled — inside a
 text field it stays a letter. **Escape** first backs out of a pending
 "Press Start again" confirm (staying on the form), otherwise returns you
 to the Library landing (a half-filled form is kept, same as switching
 rail rows). At narrow widths the navigation rail collapses to its reachable
 **Nav** handle so the form keeps working width. The footer preserves primary
 and recovery actions first, and F1 lists the same state-derived set:
-`enter start`, `esc back`, and, when available, `r retry`.
+`enter check this path` / `enter start import`, `esc back`, and, when
+available, `r retry`.
 
 The Export form has no screen-specific shortcuts. **Escape** also closes
 the Parakeet install dialog. Global keys live in the
@@ -979,3 +984,15 @@ of a selection that may have gone stale.)*
 (task-32351: a folder batch is named after the folder you chose, not after
 whichever subfolder the recursive scan reached first; the landing's
 needs-attention card states the failed and skipped counts.)*
+
+*Verified against fix/library-crit10-media-rows — 2026-09-11 (task-32364
+AC#3: the Import footer no longer says "enter start" for both steps — on an
+unchecked path it reads "enter check this path" and only once the Start gate
+clears does it read "enter start import", derived from the same gate Enter
+itself obeys.)*
+
+*Verified against fix/library-crit10-media-rows — 2026-09-11, fix round 1
+(task-32364 AC#3 review: the Enter label now reaches the footer on a gate
+transition that does not recompose the canvas — previously only a changed
+type-group set re-registered it, so opening the gate any other way left the
+footer naming the previous step's action.)*

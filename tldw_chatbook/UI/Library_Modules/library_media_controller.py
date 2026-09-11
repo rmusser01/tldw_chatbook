@@ -929,6 +929,33 @@ class LibraryMediaController:
     def _local_source_records(self) -> Any:
         return self._local_source_records_accessor()
 
+    @property
+    def _library_media_unfiltered_total(self) -> int | None:
+        """The rail's whole-Media count, for the scope line's "N of M".
+
+        task-32350. Read straight off the screen: the accessor-injection
+        site lives in a ``library_screen.py`` range this branch does not
+        own, and these three names are getter-only shell state of exactly
+        the kind ``local_source_records_accessor`` already carries.
+
+        Returns:
+            The Library's Media count, or ``None`` while the snapshot is
+            not trustworthy -- the count's ``0`` default would otherwise
+            render as "1 of 0".
+        """
+        screen = self._screen
+        if not screen._library_loaded or screen._library_lookup_error:
+            return None
+        # Review finding 2 (fix round 1): the count is sometimes a LOWER
+        # BOUND -- a bounded preview page with no `total` -- which is why
+        # the screen keeps this flag and why every other consumer renders
+        # "5+" rather than "5". A scope line stating a flat "of 5" beside a
+        # rail saying "5+" is exactly the claim this line exists to avoid,
+        # so an unknown total drops the "of M" half instead.
+        if not screen._local_source_total_known.get("media", True):
+            return None
+        return screen._local_source_counts.get("media")
+
 
     # -- shared shell state this cluster also writes (group (b')) ----------
 
@@ -1908,6 +1935,9 @@ class LibraryMediaController:
                 else ""
             ),
             loaded_id=self._library_media_reader_session.loaded_id or "",
+            # task-32350: the rail's unfiltered Media total, for the scope
+            # line's "N of M".
+            unfiltered_total=self._library_media_unfiltered_total,
         )
         if controller.loading and controller.inflight_scope is not None:
             state = dataclasses.replace(state, query=controller.inflight_scope.query)
@@ -2206,12 +2236,33 @@ class LibraryMediaController:
             fingerprint=self._library_media_browse_controller.requested_scope.fingerprint
         )
 
-    def _request_library_media_filter(self, query: str) -> None:
-        """Request authoritative search while preserving the unfiltered anchor."""
+    def _request_library_media_filter(
+        self, query: str, *, clear_type: bool = False
+    ) -> None:
+        """Request authoritative search while preserving the unfiltered anchor.
+
+        Args:
+            query: The filter text to apply; "" restores the unfiltered
+                anchor scope and its previous selection.
+            clear_type: Also drop the applied type facet (task-32350). The
+                scope line's Clear clears the whole scope it states; the
+                toolbar's "Clear filter" clears only the filter it names.
+        """
         query = self._safe_text(query, max_length=200).strip()
         controller = self._library_media_browse_controller
         applied = controller.applied_scope or controller.mutation_refresh_scope
-        if query == controller.requested_scope.query:
+        # Qodo review: the scope line and its Clear are derived from the
+        # APPLIED result, so a failed browse leaves a visible Clear whose
+        # REQUESTED scope is already the target. Testing the requested scope
+        # alone made every later press of that still-visible button a no-op,
+        # with no way to retry. Suppress only when the page the user is
+        # actually looking at is already there too.
+        def _is_target(scope: Any) -> bool:
+            return query == scope.query and not (
+                clear_type and scope.media_type is not None
+            )
+
+        if _is_target(controller.requested_scope) and _is_target(applied):
             return
         self._clear_library_media_selection_for_scope_change()
         if query:
@@ -2226,6 +2277,8 @@ class LibraryMediaController:
             )
             self._library_media_filter_select_first = False
             scope = self._library_media_unfiltered_scope
+        if clear_type:
+            scope = dataclasses.replace(scope, media_type=None, page=1)
         self._request_library_media_browse(
             scope,
             focus_identity="#library-media-filter",
@@ -2246,11 +2299,39 @@ class LibraryMediaController:
         self._stop_library_media_filter_timer()
         self._request_library_media_filter(event.value)
 
+    def _clear_library_media_filter(self, *, clear_type: bool) -> None:
+        """Drop the applied filter, and the type facet when asked.
+
+        Args:
+            clear_type: True for the scope line's Clear, which clears the
+                whole scope that line states; False for the toolbar's
+                "Clear filter", which clears only the filter it names.
+        """
+        self._stop_library_media_filter_timer()
+        # task-32350 AC#2: clearing the APPLIED filter clears the box too --
+        # leaving a draft behind is exactly the split-brain this task closes.
+        box = self.query("#library-media-filter")
+        if box:
+            box.first(Input).value = ""
+        self._request_library_media_filter("", clear_type=clear_type)
+
     @on(Button.Pressed, "#library-media-filter-clear")
     def handle_library_media_filter_clear(self, event: Button.Pressed) -> None:
         event.stop()
-        self._stop_library_media_filter_timer()
-        self._request_library_media_filter("")
+        self._clear_library_media_filter(clear_type=False)
+
+    @on(Button.Pressed, "#library-media-scope-clear")
+    def handle_library_media_scope_clear(self, event: Button.Pressed) -> None:
+        """Clear the whole scope the scope line states (task-32350).
+
+        Args:
+            event: Press of the scope line's "Clear", routed here by the
+                canvas. Stopped so the shared list-row handlers never see
+                it; the toolbar's "Clear filter" has its own handler
+                because the two clear different things.
+        """
+        event.stop()
+        self._clear_library_media_filter(clear_type=True)
 
     def _load_library_media_list_if_needed(self) -> None:
         """Load the exact list after a direct viewer had no applied page."""

@@ -1600,7 +1600,7 @@ def test_list_state_secondary_shows_details_and_age():
         prompt_id=1,
         name="Summarize",
         secondary="Summarizes text · 3m",
-        lane_summary="System + User",
+        lane_summary="has system and user text",
         version=2,
     )
 

@@ -2889,6 +2889,22 @@ Input.library-media-speaker-input:focus {
     text-style: bold;
 }
 
+/* task-32350 (critique #10 P1): the applied-scope line under the Media
+   header. Quiet by design -- it is a statement of fact, not an action.
+   `1fr`, not `auto`: this line is long (a filter term and a sort label),
+   and an auto-width Static pushed its own Clear Button off the pane edge
+   once the Reader narrowed Items (live-verified at 235x52). The squeeze
+   lands on the Static, which ellipsises; the compact Button keeps its
+   natural width, so task-4023's zero-width-Button hazard is not in play. */
+.library-media-scope-line {
+    color: $ds-text-muted;
+    width: 1fr;
+    height: 1;
+    padding: 0 1 0 0;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
 /* TASK-716: pressable-but-blocked Library source actions render dim; the
    press handler explains the block instead of a dead disabled button. */
 .library-source-action-blocked {
