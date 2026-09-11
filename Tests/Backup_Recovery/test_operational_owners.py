@@ -298,18 +298,44 @@ def dump(path):
         return tuple(conn.iterdump())
 
 
+@pytest.mark.parametrize("name", tuple(STORES))
 def test_operational_capture_keeps_history_and_does_not_replay(
-    operational_store, tmp_path, monkeypatch
+    name, tmp_path, monkeypatch
 ):
-    name, source, store = operational_store
+    # Config-using owners must start with their actual selector. A cached config
+    # owner cannot be rebound by the parent suite's per-test environment changes.
+    source = tmp_path / (name + ".db")
+    code = """import importlib, sys
+from pathlib import Path
+from Tests.network_guard import install, blocked_attempts
+install()
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+from Tests.Backup_Recovery.test_operational_owners import STORES, seed_operational
+name, source = sys.argv[1], Path(sys.argv[2])
+module, symbol, *_ = STORES[name]
+constructor = getattr(importlib.import_module('tldw_chatbook.' + module), symbol)
+store = constructor(db_path=source) if name == 'kanban' else constructor(source)
+try:
+    if name == 'receipts':
+        with store.transaction():
+            pass
     seed_operational(name, source, store)
-    if hasattr(store, "close"):
+finally:
+    if hasattr(store, 'close'):
         store.close()
-    # Some existing BaseDB services return per-call native connections whose
-    # SQLite cycles retire at GC; drain fixture handles before binding authority.
-    import gc
-
-    gc.collect()
+assert not blocked_attempts()
+"""
+    subprocess.run(  # nosec B603: fixed interpreter/script; fixture values are argv.
+        [sys.executable, "-c", code, name, str(source)],
+        cwd=Path(__file__).resolve().parents[2],
+        env=dict(os.environ),
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=45,
+    )
     expected = dump(source)
     before = source.read_bytes()
     adapter = operational_adapter(name)
