@@ -12,7 +12,7 @@ is too big for one card, or when several conversations share a world.
 
 ## Getting there
 
-Press **Ctrl+5** to open Roleplay & Chat Dictionaries, then click the **Lore**
+Press **Ctrl+4** to open Roleplay & Chat Dictionaries, then click the **Lore**
 chip in the mode strip (or press **Ctrl+4** — on this screen Ctrl+1 to Ctrl+4
 pick the four modes instead of switching screens). The line above the rail
 confirms it: "Lore — world facts injected on keywords." With no books saved

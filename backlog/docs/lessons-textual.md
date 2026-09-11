@@ -391,7 +391,6 @@ space changing around a capped child.
 
 ---
 
-
 ## A screen-owned worker must check the active category before updating shared chrome
 
 **TASK-32189 review, 2026-09-09.** The Web Search controller kept an explicit
@@ -890,3 +889,107 @@ through the whole hazard, because the row it presses (`.library-media-row`) was
 NOT one of the migrated handlers. A guard's pin only covers the handlers that
 route through the guard; migrating a handler out from under one silently
 narrows what the pin proves without changing the pin's result.
+
+## `@on` handlers must live on the ChatScreen — `Console_Modules/message.py` is a controller, not a mixin (TASK-32312, 2026-09-10)
+
+**TASK-32312.** Wiring a `ConsoleThinkingEditRequested` event handler for the
+thinking-block edit feature, I added `@on(ConsoleThinkingEditRequested)` to a method
+in `UI/Console_Modules/message.py` — and the handler silently never ran (no modal, no
+toast, test timeout). That module's methods are not screen methods:
+`ChatScreen` constructs exactly one `ConsoleMessageController` in `__init__` (kept at
+`self._message`) and delegates specific methods into it. A plain controller object is
+not a Textual message pump, so `@on` tags on it are inert, and the controller has no
+`query_one` — `self.query_one(...)` inside it raises `AttributeError`, which a broad
+`except Exception` then swallowed into a misleading `None` return. The second trap:
+my first fix probed `hasattr(console, 'on_console_thinking_edit_requested')` via an
+**instance-attribute spy**, which stayed empty — Textual dispatch walks
+`type(self).__mro__`, so instance-attr replacement is invisible to delivery and
+"handler not called" conclusions from it are unreliable.
+
+**What to do.** Put `@on(...)` handlers on `ChatScreen` itself
+(`UI/Screens/chat_screen.py`) and delegate one line into
+`self._message.<controller_method>(event)`. Inside the controller, reach the DOM and
+screen through `self._screen` (`self._screen.query_one(...)`), never `self.` — the
+module's own header says "never a back-door through `self.screen`". When probing
+message delivery in tests, replace the handler on a subclass or count side effects
+(posted modals, store writes), not via instance attributes.
+
+## A toast belongs to the screen that is current when it FIRES, and it docks over that screen's bottom chrome (task-32266, 2026-09-11)
+
+`App.notify()` hands the notification to `self.screen`, and Textual's
+`ToastRack` is `dock: bottom; align: right bottom; layer: _toastrack`. So a
+toast raised from an ASYNC completion does not land on the surface that asked
+for it — it lands on whatever is current a second or two later, on top of that
+surface's docked footer.
+
+The incident: the first-run wizard's Voice step saves TTS settings by posting
+`STTSSettingsSaveEvent` to the app while the user presses Next. The shared
+handler announced the publication with "Settings saved successfully!". By the
+time the write settled the wizard had advanced one or two steps, so the toast
+painted over the Protect step's buttons, and — walking at normal speed — over
+the Summary's docked exit actions, "Write your first note" included. Nobody
+who read `FirstRunSetupWizard.py` would find it: the emitter is
+`Event_Handlers/STTS_Events/stts_events.py`, three modules away, and the
+wizard's own `notify()` calls are all unrelated. Three reviewers filed it as
+"the wizard's completion toast" — the wizard never raised one.
+
+**The rule:** a component that posts a work request to an app-level handler and
+then AWAITS the result renders its own outcome; the handler's toast is
+duplication that will land somewhere else. Give such requests an explicit
+opt-out (`notify_outcome=False` here) rather than repositioning the rack —
+scoped CSS only relocates a message that should not exist on that screen.
+
+**Reproduction note:** the default toast timeout is 5 s, so a scripted walk
+with 2.5 s between steps can easily capture the toast on one step and miss it
+on the next. Reproducing the Summary case needed the step advances tightened to
+~1.3 s. A single clean capture is not evidence the toast cannot reach a later
+screen.
+
+## A widget's BUNDLED_CSS cannot override an app-tier rule, and build_css.py will not put it in the screen sheet for you (task-32250, 2026-09-11)
+
+**What happened.** The Import once review collapses a run of interchangeable
+rows into one `Collapsible`, and the pager budgets a page by RENDERED rows, so
+that disclosure has to be one line. `tldw_cli_modular.tcss` styles every
+`Collapsible` app-wide (`min-height: 3`, a round border, a 3-row
+`CollapsibleTitle`, a bottom margin) — five lines of chrome for one summary.
+A `LibraryNoteImportCanvas .note-import-run { ... }` rule in the canvas's own
+`BUNDLED_CSS` changed nothing, despite far higher specificity: widget-tier CSS
+loses to app-tier CSS in Textual regardless of the selector.
+
+The obvious next move — "Library rules go in the screen-owned sheet" — does
+not work by hand either: `screen_agentic_library.tcss` is GENERATED, and
+`check_bundle_sync.py` fails the moment you edit it. Running `build_css.py`
+after adding the rule to a WIDGET's `BUNDLED_CSS` routes it to
+`widget_defaults_self.tcss`, i.e. straight back to the tier that already lost.
+Only a rule in the SCREEN's own `BUNDLED_CSS` reaches the screen sheet.
+
+**What to do.** To beat an app-wide type rule from inside a widget, either move
+the rule into the owning screen's `BUNDLED_CSS` and regenerate, or set the
+properties as inline styles on the instance (`widget.styles.min_height = 1`),
+which is the one tier above app CSS. Verify by rendering, not by reading the
+selector: the first attempt here looked correct and did nothing.
+
+---
+
+## User-visible hotkeys live in four places, not one — sweep all of them
+
+**TASK-32458, 2026-09-10 (nav renumbering).** Rebinding the shell-destination
+F-key tail (F7–F11 → F2/F3/F4/F5/F7) and re-seating Artifacts touched the
+shortcut map in `shell_destinations.py`, the label scheme in
+`UI/Navigation/main_navigation.py`, and the strip order — the easy part. A
+review pass initially claimed "no code UI copy teaches these keys" off a
+quoted-string grep, and that was wrong: the Console settings modal teaches
+"F9 Settings > Console behavior" (`Widgets/Console/console_settings_modal.py`,
+asserted by `test_console_context_controls.py`), other modules ship
+"...or in F9 Settings, before sending." style copy in multi-line constants the
+quote-anchored regex missed, and `Docs/` carries the key in 20+ files. The
+missed modal copy would have shipped a dead key in a user-facing message; it
+surfaced only because a second, looser sweep (`grep -rn "F9"` minus
+hex-color/review-round noise) ran during implementation.
+
+**What to do.** A key that users are taught (nav hotkeys, F1-help entries,
+footer hints) exists in up to four layers: (1) the binding, (2) label/copy
+strings in Python — including multi-line constants, so grep for the bare
+token, not `"quoted"` patterns, (3) tests that assert on those strings,
+(4) `Docs/`. Sweep all four with one loose grep for the token and filter
+noise by eye; a quote-anchored regex is not evidence of absence.

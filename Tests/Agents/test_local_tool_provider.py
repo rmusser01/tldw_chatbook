@@ -19,6 +19,7 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_KILL_SWITCH_REFUSAL,
     LOCAL_ROOT_CHANGED_REFUSAL,
     LOCAL_TIMEOUT_REFUSAL,
+    LOCAL_USER_DENY_REFUSAL,
     LocalApprovalEffect,
     LocalToolExposure,
     LocalToolProvider,
@@ -1360,7 +1361,10 @@ def test_watchlists_permission_allow_executes_and_ask_deny_never_invokes(tmp_pat
         approval_callback=deny,
     ).invoke("local:watchlists_search_items", {"query": "topic"})
 
-    assert refused.ok is False and refused.error == LOCAL_DENY_REFUSAL
+    # Qodo #7: the user denied this on the card, so the refusal names THEM.
+    # It used to render `LOCAL_DENY_REFUSAL`, which claims "set to Off" --
+    # a state the user never touched.
+    assert refused.ok is False and refused.error == LOCAL_USER_DENY_REFUSAL
     assert service.calls == [("search_items", {})]
     assert len(approvals) == 1
     assert approvals[0][0].server_key == "local:__local__"
@@ -1962,8 +1966,12 @@ def test_kill_switch_refuses(tmp_path):
 
 
 def test_deny_state_refuses(tmp_path):
+    """The Off half of the Qodo #7 split: this is the ONLY shape that may
+    claim "set to Off", because it is the only one where the resolver said
+    so (a user's card Deny returns `LOCAL_USER_DENY_REFUSAL` instead)."""
     r = make_provider(state=DENY, root=tmp_path).invoke("local:fs_list", {"path": "."})
     assert not r.ok and r.error == LOCAL_DENY_REFUSAL
+    assert r.error != LOCAL_USER_DENY_REFUSAL
 
 
 def test_ask_without_stamp_or_callback_fails_closed(tmp_path):
@@ -2268,7 +2276,9 @@ def test_unrecognized_callback_decision_fails_closed(tmp_path):
         approval_callback=lambda pending: {"fs_list": "yolo"},
     )
     r = p.invoke("local:fs_list", {"path": "."})
-    assert not r.ok and r.error == LOCAL_DENY_REFUSAL
+    # Qodo #7: still fails closed; the string now comes from the approval
+    # branch rather than claiming the tool is configured Off.
+    assert not r.ok and r.error == LOCAL_USER_DENY_REFUSAL
 
 
 def test_callback_returning_none_fails_closed(tmp_path):
@@ -2508,7 +2518,10 @@ def test_deny_stamp_records_denied(tmp_path):
     p, recorded = _recording_provider(tmp_path, state=ASK)
     p.apply_batch_decisions(RUN, {"fs_list": "deny"})
     r = p.invoke("local:fs_list", {"path": "."})
-    assert not r.ok and r.error == LOCAL_DENY_REFUSAL
+    assert not r.ok and r.error == LOCAL_USER_DENY_REFUSAL
+    # Qodo #7: the model-facing TEXT split; the AUDIT token did not. A user
+    # Deny on a local tool still records "denied" -- the Audit log's
+    # vocabulary is this seam's own and must not follow the copy change.
     assert [(h.name, d) for h, d in recorded] == [("fs_list", "denied")]
 
 

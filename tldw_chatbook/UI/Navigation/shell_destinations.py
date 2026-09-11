@@ -72,30 +72,6 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         navigation_priority=30,
     ),
     ShellDestination(
-        "research",
-        "Research",
-        "research_workspace",
-        "Grounded workspaces and durable research-run observation.",
-        "Open Research Workspace for grounded research and research runs.",
-        related_routes=("research",),
-        palette_aliases=(
-            "research workspace",
-            "research runs",
-            "research sessions",
-            "deep research",
-            "notebook",
-        ),
-        navigation_priority=35,
-    ),
-    ShellDestination(
-        "artifacts",
-        "Artifacts",
-        "artifacts",
-        "Generated outputs, bundles, reports, datasets, and Chatbooks.",
-        "Browse generated and portable outputs.",
-        ("chatbooks",),
-    ),
-    ShellDestination(
         "personas",
         # A roleplay-first newcomer finds characters from this label, so it has
         # to be readable cold. "RP&CD" could only be decoded after navigating
@@ -120,6 +96,14 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         navigation_priority=40,
     ),
     ShellDestination(
+        "artifacts",
+        "Artifacts",
+        "artifacts",
+        "Generated outputs, bundles, reports, datasets, and Chatbooks.",
+        "Browse generated and portable outputs.",
+        ("chatbooks",),
+    ),
+    ShellDestination(
         "schedules",
         "Schedules",
         "schedules",
@@ -132,15 +116,6 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "workflows",
         "Reusable procedures, recipes, dry-runs, and outputs.",
         "Build and launch repeatable agent workflows.",
-    ),
-    ShellDestination(
-        "meetings",
-        "Meetings",
-        "meetings",
-        "Record a call or a room with a live labelled transcript, then file it in the Library.",
-        "Record and transcribe a meeting.",
-        palette_aliases=("meeting", "record", "transcribe"),
-        navigation_priority=75,
     ),
     ShellDestination(
         "mcp",
@@ -181,6 +156,31 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "Configure application preferences.",
         ("stats",),
     ),
+    ShellDestination(
+        "research",
+        "Research",
+        "research_workspace",
+        "Grounded workspaces and durable research-run observation.",
+        "Open Research Workspace for grounded research and research runs.",
+        related_routes=("research",),
+        palette_aliases=(
+            "research workspace",
+            "research runs",
+            "research sessions",
+            "deep research",
+            "notebook",
+        ),
+        navigation_priority=35,
+    ),
+    ShellDestination(
+        "meetings",
+        "Meetings",
+        "meetings",
+        "Record a call or a room with a live labelled transcript, then file it in the Library.",
+        "Record and transcribe a meeting.",
+        palette_aliases=("meeting", "record", "transcribe"),
+        navigation_priority=75,
+    ),
 )
 
 _BY_DESTINATION_ID: Mapping[str, ShellDestination] = {
@@ -190,23 +190,32 @@ _BY_DESTINATION_ID: Mapping[str, ShellDestination] = {
 # Shortcut ownership is a destination contract, not a position in the
 # navigation strip. New destinations therefore cannot silently reassign an
 # established shortcut by changing ``SHELL_DESTINATION_ORDER``.
+# task-32458 (explicit reassignment, not a silent one): the shortcut set
+# follows one left-to-right keyboard walk so the strip reads in order --
+# ctrl+1..ctrl+9, ctrl+0 across the number row for the first ten
+# destinations, then the F-row from its left end (f2, f3, f4, f5, then f7)
+# for the rest, because f1 (Help) and f6 (Next Pane) are reserved
+# app-globals (ADR-031). Higher F-keys read as an arbitrary jump: the old
+# f7..f11 tail scanned as "9, 0, 7, 8, 9, 10, 11" with F10/F11 stranded
+# mid-strip. Any change here must update the strip ORDER in lockstep so
+# position and shortcut stay aligned.
 SHELL_DESTINATION_SHORTCUTS: Mapping[str, str] = MappingProxyType(
     {
         "home": "ctrl+1",
         "console": "ctrl+2",
         "library": "ctrl+3",
-        "artifacts": "ctrl+4",
-        "personas": "ctrl+5",
-        "watchlists_collections": "ctrl+6",
+        "personas": "ctrl+4",
+        "watchlists_collections": "ctrl+5",
+        "artifacts": "ctrl+6",
         "schedules": "ctrl+7",
         "workflows": "ctrl+8",
         "mcp": "ctrl+9",
         "acp": "ctrl+0",
-        "lab": "f7",
-        "logs": "f8",
-        "settings": "f9",
-        "research": "f10",
-        "meetings": "f11",
+        "lab": "f2",
+        "logs": "f3",
+        "settings": "f4",
+        "research": "f5",
+        "meetings": "f7",
     }
 )
 

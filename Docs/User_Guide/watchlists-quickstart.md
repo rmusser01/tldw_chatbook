@@ -104,12 +104,12 @@ opening the saved briefing.*
 
 Once the Console turn has finished, confirm the result in the dedicated views:
 
-1. Press **Ctrl+6** to open **Watchlists**.
+1. Press **Ctrl+5** to open **Watchlists**.
 2. Select the new Watchlist and confirm its sources in **Sources**.
 3. Open **Runs** and confirm each source check has a terminal result.
 4. Open **Artifacts**, select the completed briefing, and confirm the cadence
    reads **Every 24 hours**.
-5. Press **F9** to open **Settings**, expand **Domain Defaults**, and open
+5. Press **F4** to open **Settings**, expand **Domain Defaults**, and open
    **Schedules**. Confirm scheduled briefings are enabled for the app.
 
 Console, Watchlists, and Settings read the same durable local records. You do
@@ -136,7 +136,7 @@ not need to recreate anything when moving between them.
 | What you see | What to do |
 |---|---|
 | Console says **Get started** or the composer is locked | Configure a provider and model under **Settings ▸ Providers & Models**. |
-| A tool says server Watchlists search or mutation is unsupported | Open Watchlists with **Ctrl+6**, switch to **Local**, and retry. |
+| A tool says server Watchlists search or mutation is unsupported | Open Watchlists with **Ctrl+5**, switch to **Local**, and retry. |
 | A run is waiting | Answer the visible approval card. Do not navigate away from Console while the turn is active. |
 | A receipt remains pending | Ask the agent to follow that exact operation ID to a terminal status; do not repeat the mutation. |
 | A source check fails | Open its Run detail and follow the stated recovery action. Authentication, access, invalid-feed, and safety-policy failures require a change before retrying. |

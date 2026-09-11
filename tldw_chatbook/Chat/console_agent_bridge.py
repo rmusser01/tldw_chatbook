@@ -23,6 +23,7 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 from collections.abc import Collection, Mapping, Set as AbstractSet
 from dataclasses import dataclass, field, replace as dataclass_replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Callable, ContextManager, Sequence, cast
 from uuid import uuid4
 
@@ -113,7 +114,7 @@ from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator, FleetHandle
 # `Tools.{git,local,patch}_tool_impls`, `Tools.workspace_root_pin`,
 # `Tools.workspace_tool_protocol`, `Utils.filesystem_identity`) -- seven
 # modules resident at `_ui_ready` to compare a handful of strings. The set
-# they feed is now built on first use; see `_blocked_provider_refusals`.
+# they feed is now built on first use; see `_refusal_statuses`.
 from tldw_chatbook.Agents.mcp_tool_provider import (
     DENY_REFUSAL as MCP_DENY_REFUSAL,
     KILL_SWITCH_REFUSAL as MCP_KILL_SWITCH_REFUSAL,
@@ -1436,12 +1437,21 @@ _CONTROLLER_USER_DENIED_PREFIX = CONTROLLER_USER_DENIED_REFUSAL.partition("{name
 
 
 @functools.lru_cache(maxsize=1)
-def _blocked_provider_refusals() -> frozenset[str]:
-    """Canonical dispatched-provider permission-refusal copy.
+def _refusal_statuses() -> Mapping[str, ConsoleActivityStatus]:
+    """Canonical refusal copy mapped to the state it renders as.
+
+    task-32279: one table, keyed by the SAME refusal strings the audit log
+    classifies, so "who refused" cannot drift between the two surfaces. A
+    refusal the user made by hand is ``denied``; a configured Off entry is
+    ``blocked_off``; a switched-off runtime is ``blocked_kill_switch``.
+    Everything else (an unresolved decision, a timeout, a resolver failure)
+    stays the generic ``blocked`` -- it is still a refusal, but naming an
+    authority it does not have would be a lie.
 
     Built on first use so importing this module does not drag
-    `Agents.local_tool_provider` (task-24458). The values are module-level
-    string constants, so the set is computed once and never invalidated.
+    `Agents.local_tool_provider` (task-24458) -- or, since Qodo #3,
+    `Agents.raw_shell_tool_provider`. The values are module-level string
+    constants, so the table is computed once and never invalidated.
     """
     from tldw_chatbook.Agents.local_tool_provider import (
         LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
@@ -1450,45 +1460,67 @@ def _blocked_provider_refusals() -> frozenset[str]:
         LOCAL_KILL_SWITCH_REFUSAL,
         LOCAL_ROOT_CHANGED_REFUSAL,
         LOCAL_TIMEOUT_REFUSAL,
+        LOCAL_USER_DENY_REFUSAL,
     )
+    from tldw_chatbook.Agents.raw_shell_tool_provider import RAW_SHELL_DENY_REFUSAL
 
-    return frozenset(
-        {
-            _BUILTIN_KILL_SWITCH_REFUSAL,
-            LOCAL_DENY_REFUSAL,
-            LOCAL_TIMEOUT_REFUSAL,
-            LOCAL_KILL_SWITCH_REFUSAL,
-            LOCAL_GATE_ERROR_REFUSAL,
-            LOCAL_ROOT_CHANGED_REFUSAL,
-            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-            MCP_DENY_REFUSAL,
-            MCP_USER_DENY_REFUSAL,
-            MCP_UNRESOLVED_REFUSAL,
-            MCP_TIMEOUT_REFUSAL,
-            MCP_KILL_SWITCH_REFUSAL,
-        }
-    )
+    return MappingProxyType({
+        MCP_USER_DENY_REFUSAL: "denied",
+        _BUILTIN_KILL_SWITCH_REFUSAL: "blocked_kill_switch",
+        # Also reachable ERROR:-wrapped, not just as a direct pre-dispatch
+        # verdict -- `_direct_controller_block_status` only sees the raw form.
+        CONTROLLER_KILL_SWITCH_REFUSAL: "blocked_kill_switch",
+        LOCAL_KILL_SWITCH_REFUSAL: "blocked_kill_switch",
+        MCP_KILL_SWITCH_REFUSAL: "blocked_kill_switch",
+        # Qodo #7: that follow-up landed. `LOCAL_DENY_REFUSAL` used to be
+        # returned for BOTH a configured Off and an explicit card Deny, so
+        # it could claim neither authority and rendered the generic
+        # "blocked"; the local provider now has its own user-deny string and
+        # the row splits into `denied` + `blocked_off` like the MCP pair.
+        LOCAL_USER_DENY_REFUSAL: "denied",
+        LOCAL_DENY_REFUSAL: "blocked_off",
+        MCP_DENY_REFUSAL: "blocked_off",
+        # Qodo #3: the raw-shell provider's Off refusal names the same fact
+        # MCP's does ("set to Off"), so it renders the same way -- it used to
+        # fall through to the generic `blocked` and hide the cause.
+        RAW_SHELL_DENY_REFUSAL: "blocked_off",
+        LOCAL_TIMEOUT_REFUSAL: "blocked",
+        LOCAL_GATE_ERROR_REFUSAL: "blocked",
+        LOCAL_ROOT_CHANGED_REFUSAL: "blocked",
+        LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL: "blocked",
+        MCP_UNRESOLVED_REFUSAL: "blocked",
+        MCP_TIMEOUT_REFUSAL: "blocked",
+    })
 
 
-_BLOCKED_PROVIDER_REFUSAL_PREFIXES = (
-    _BUILTIN_DENY_REFUSAL_PREFIX,
-    _CONTROLLER_USER_DENIED_PREFIX,
-    _BUILTIN_UNRESOLVED_REFUSAL_PREFIX,
+#: Refusal copy whose provider-owned suffix is the runtime tool name. Same
+#: three-way vocabulary as `_refusal_statuses`; the builtin gate and the
+#: Console review hook share one user-denial prefix by construction.
+_REFUSAL_STATUS_PREFIXES: tuple[tuple[str, ConsoleActivityStatus], ...] = (
+    (_CONTROLLER_USER_DENIED_PREFIX, "denied"),
+    (_BUILTIN_DENY_REFUSAL_PREFIX, "blocked_off"),
+    (_BUILTIN_UNRESOLVED_REFUSAL_PREFIX, "blocked"),
 )
 
 
-def _is_direct_controller_block(result: str) -> bool:
-    """Return whether ``result`` is a pre-dispatch Console review refusal."""
-    return result == CONTROLLER_KILL_SWITCH_REFUSAL or result.startswith(
-        _CONTROLLER_USER_DENIED_PREFIX
-    )
+def _direct_controller_block_status(result: str) -> ConsoleActivityStatus | None:
+    """Classify a pre-dispatch Console review refusal, or return ``None``."""
+    if result == CONTROLLER_KILL_SWITCH_REFUSAL:
+        return "blocked_kill_switch"
+    if result.startswith(_CONTROLLER_USER_DENIED_PREFIX):
+        return "denied"
+    return None
 
 
-def _is_blocked_tool_refusal(error: str) -> bool:
-    """Match canonical dispatched-provider permission refusal copy."""
-    return error in _blocked_provider_refusals() or error.startswith(
-        _BLOCKED_PROVIDER_REFUSAL_PREFIXES
-    )
+def _refusal_status(error: str) -> ConsoleActivityStatus | None:
+    """Classify canonical dispatched-provider refusal copy, or ``None``."""
+    status = _refusal_statuses().get(error)
+    if status is not None:
+        return status
+    for prefix, prefix_status in _REFUSAL_STATUS_PREFIXES:
+        if error.startswith(prefix):
+            return prefix_status
+    return None
 
 
 def classify_activity_status(
@@ -1508,15 +1540,20 @@ def classify_activity_status(
         return "success"
     if tool_outcome == "failed":
         return "failed"
-    if tool_outcome == "blocked":
-        return "blocked"
     text = str(result if result is not None else "")
-    if _is_direct_controller_block(text):
-        return "blocked"
-    if not text.startswith("ERROR:"):
+    direct = _direct_controller_block_status(text)
+    if direct is not None:
+        return direct
+    wrapped = text.startswith("ERROR:")
+    refusal = _refusal_status(text.removeprefix("ERROR:").strip() if wrapped else text)
+    if tool_outcome == "blocked":
+        # task-32279: `tool_outcome` proves only THAT the call was refused.
+        # Reading the refusal text as well is what separates the user's own
+        # Deny from a policy block; an unrecognised one stays generic.
+        return refusal or "blocked"
+    if not wrapped:
         return "success"
-    error = text.removeprefix("ERROR:").strip()
-    return "blocked" if _is_blocked_tool_refusal(error) else "failed"
+    return refusal or "failed"
 
 
 def _activity_label(value: object, *, fallback: str) -> str:
@@ -1969,19 +2006,24 @@ class AgentLiveSnapshot:
     idle, so both must expose the same shape.
 
     Attributes:
-        status: Run status -- ``"idle"``, ``"running"``, or a terminal
-            ``RunOutcome.status`` value (``"done"``/``"error"``/
-            ``"cancelled"``/``"stuck"``).
+        status: Run status -- ``"idle"``, ``"running"``, ``"setup"``
+            (task-32344: the send is composing this turn's tool surface and
+            no run exists yet), or a terminal ``RunOutcome.status`` value
+            (``"done"``/``"error"``/``"cancelled"``/``"stuck"``).
         step: Total number of steps observed so far for this run.
         steps: The most recent steps (bounded to the last 5), oldest first.
         subagents: Summaries of this run's spawned sub-agents, in the order
             they were spawned/recorded.
+        setup_started_at: ``time.monotonic()`` reading the ``"setup"``
+            status began at, so the rail can time it. ``None`` in every
+            other status -- a run's own steps carry their own bases.
     """
 
     status: str = "idle"
     step: int = 0
     steps: tuple[AgentLiveStep, ...] = ()
     subagents: tuple[SubAgentSummary, ...] = ()
+    setup_started_at: float | None = None
 
 
 @dataclass
@@ -4530,6 +4572,10 @@ class ConsoleAgentBridge:
         #: Which `_live[conversation_id]` key holds the rail's summary --
         #: the newest turn's primary run. Only `run_reply` writes it.
         self._live_primary_keys: dict[str, str] = {}
+        #: task-32344: conversations currently in pre-provider setup, each
+        #: mapped to the `time.monotonic()` the phase began, so the rail
+        #: can name and time a window that publishes no step of its own.
+        self._setup_started_at: dict[str, float] = {}
         self._historical_cache: dict[str, AgentLiveSnapshot] = {}
         self._run_log_authorities: dict[str, _ConsoleRunLogAuthority] = {}
         self._run_log_authority_lock = threading.Lock()
@@ -7661,7 +7707,16 @@ class ConsoleAgentBridge:
         Falls back to the published snapshot untouched when this
         conversation has no coordinator -- the inline/kill-switch path,
         where there is no live status to read and never was.
+
+        task-32344: a conversation marked in pre-provider setup short-
+        circuits everything below it. No run exists yet, so there is
+        nothing published to merge with and no fleet to re-derive -- and
+        the PREVIOUS turn's terminal snapshot (still in ``_live``) must
+        not leak back over the turn now being set up.
         """
+        started_at = self._setup_started_at.get(conversation_id)
+        if started_at is not None:
+            return AgentLiveSnapshot(status="setup", setup_started_at=started_at)
         self._prune_settled_fleet_survivors(conversation_id)
         # PR3a-1 Task 6b (audit F1): the summary line is the NEWEST TURN's
         # primary run, resolved through `_live_primary_keys` -- never
@@ -7678,6 +7733,40 @@ class ConsoleAgentBridge:
             snapshot,
             subagents=_subagent_summaries_from_fleet(handles, list(snapshot.subagents)),
         )
+
+    def begin_setup_phase(
+        self, conversation_id: str, *, now: float | None = None
+    ) -> None:
+        """Mark this conversation as in pre-provider setup (task-32344).
+
+        The window between "send accepted" and "provider called" publishes
+        no step -- the run does not exist yet -- so the rail's snapshot was
+        idle and the assistant row rendered blank for however long that
+        setup took. On the first send of a process that is the whole lazy
+        cost of the turn's tool surface, including the Personal Context
+        bootstrap's OS credential-store round trip.
+
+        Args:
+            conversation_id: The conversation whose row should say so.
+            now: ``time.monotonic()`` base for the elapsed segment,
+                injected so the state is testable without sleeping.
+        """
+        self._setup_started_at[conversation_id] = (
+            time.monotonic() if now is None else now
+        )
+
+    def end_setup_phase(self, conversation_id: str) -> None:
+        """Clear the pre-provider setup mark (task-32344).
+
+        A no-op when it was never set, so callers can end unconditionally
+        from a ``finally``. Once cleared, ``live_snapshot`` resolves this
+        conversation from its published steps again.
+
+        Args:
+            conversation_id: The conversation whose setup marker is
+                removed; other conversations' marks are untouched.
+        """
+        self._setup_started_at.pop(conversation_id, None)
 
     def live_run_snapshot(
         self, conversation_id: str, run_id: str

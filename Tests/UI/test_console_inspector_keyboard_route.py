@@ -279,3 +279,30 @@ def test_the_inspect_route_is_in_the_f1_reference_not_only_the_footer():
     # The help panel is read, not scanned -- it gets the full phrase rather
     # than the footer's one-word "inspect".
     assert "Inspect rail" in inspect[0][1], inspect
+
+
+def test_the_approval_route_is_in_the_f1_reference_not_only_the_footer():
+    """task-32277 review (Minor, promoted): same TASK-24704 gap class as
+    Alt+I above -- the footer hint strip (`CONSOLE_WORKBENCH_SHORTCUTS`)
+    advertises Alt+A, but `CONSOLE_WORKBENCH_SHORTCUT_GROUPS` (what F1's
+    help panel actually renders) didn't. F1 never truncates, so it has to
+    carry the route too, not just the footer, which drops trailing hints
+    as width falls.
+    """
+    from tldw_chatbook.UI.Screens.chat_screen import (
+        CONSOLE_WORKBENCH_SHORTCUTS,
+        CONSOLE_WORKBENCH_SHORTCUT_GROUPS,
+    )
+
+    assert any(key == "Alt+A" for key, _ in CONSOLE_WORKBENCH_SHORTCUTS)
+
+    panes = next(
+        entries for title, entries in CONSOLE_WORKBENCH_SHORTCUT_GROUPS
+        if title == "Panes"
+    )
+    approval = [entry for entry in panes if entry[0] == "Alt+A"]
+    assert approval, (
+        "Alt+A is in the footer hints but missing from the F1 reference's "
+        f"Panes group: {panes}"
+    )
+    assert approval[0][1] == "Review pending approval", approval

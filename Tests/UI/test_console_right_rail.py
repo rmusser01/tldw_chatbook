@@ -739,6 +739,52 @@ async def test_real_inspector_producer_variants_are_strictly_owned(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_active_run_alone_never_produces_a_setup_recovery_row(monkeypatch):
+    """task-32345: an active turn is not a provider-configuration problem.
+
+    ``build_console_settings_readiness(..., active_run=True)`` blocks an
+    OTHERWISE fully-configured provider with ``recovery_action=
+    "wait_for_active_run"`` -- the same "wait, don't reconfigure" signal
+    ``_console_setup_blocked_reason``/``_console_send_blocked_reason``
+    already special-case. ``_console_provider_blocker_copy`` (which feeds
+    the Setup/Blocked-impact/Next-action inspector rows) did not, so a
+    turn with a pending approval read "Setup: Provider configuration
+    required" -- and the authority summary's ``recovery_required`` check
+    (any "Next action" row present) rendered "Recovery required" over a
+    healthy pending approval.
+    """
+    from tldw_chatbook.Chat.console_session_settings import (
+        ConsoleSessionSettings,
+        build_console_settings_readiness,
+    )
+
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        settings = ConsoleSessionSettings(
+            provider="ollama", model="model", base_url="http://127.0.0.1:11434"
+        )
+        readiness = build_console_settings_readiness(
+            settings,
+            app_config={"api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}},
+            environ={},
+            active_run=True,
+        )
+        assert readiness.operability == "not_ready"
+        assert readiness.recovery_action == "wait_for_active_run"
+        monkeypatch.setattr(
+            screen, "_active_console_settings_readiness", lambda: (settings, readiness)
+        )
+
+        assert screen._console_provider_blocker_copy() == ""
+
+        state = screen._build_console_inspector_state(None)
+        labels = {row.label for row in state.rows}
+        assert "Setup" not in labels
+        assert "Blocked impact" not in labels
+        assert "Next action" not in labels
+
+
+@pytest.mark.asyncio
 async def test_rail_recompose_retains_unknown_fingerprint_deduper(monkeypatch):
     ownership = importlib.import_module(
         "tldw_chatbook.Widgets.Console.console_inspector_ownership"

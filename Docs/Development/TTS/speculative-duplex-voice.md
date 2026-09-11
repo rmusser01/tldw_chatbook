@@ -186,7 +186,7 @@ source digest.
 
 ## Settings ownership and compatibility
 
-The only UI owner is **F9 Settings ▸ Speech & TTS ▸ Pipeline conversation**.
+The only UI owner is **F4 Settings ▸ Speech & TTS ▸ Pipeline conversation**.
 Opening the panel creates an in-memory draft and performs no config write.
 Save validates the complete draft and sends only changed keys through the
 existing atomic settings writer.

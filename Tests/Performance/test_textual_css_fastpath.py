@@ -116,7 +116,7 @@ async def test_fastpath_computes_identical_styles_for_every_node(
         for key, expected in (
             ("ctrl+2", "ChatScreen"),
             ("ctrl+3", "LibraryScreen"),
-            ("f9", "SettingsScreen"),
+            ("f4", "SettingsScreen"),
         ):
             await pilot.press(key)
             for _ in range(40):

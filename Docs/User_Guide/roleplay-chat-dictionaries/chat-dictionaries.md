@@ -16,7 +16,7 @@ For lore that is *injected* rather than substituted, see the parent
 
 ## Getting there
 
-Press **Ctrl+5** to open **Roleplay & Chat Dictionaries**, then click
+Press **Ctrl+4** to open **Roleplay & Chat Dictionaries**, then click
 **Dictionaries** in the "Modes:" strip — or press **Ctrl+3**, which picks that
 mode while this screen is open (here **Ctrl+1**–**Ctrl+4** select modes, not
 screens). The descriptor above the rail reads "Dictionaries — text find/replace

@@ -11,18 +11,18 @@ def test_master_shell_destination_order_matches_spec():
         "Home",
         "Console",
         "Library",
-        "Research",
-        "Artifacts",
         "Roleplay",
         "Watchlists",
+        "Artifacts",
         "Schedules",
         "Workflows",
-        "Meetings",
         "MCP",
         "ACP",
         "Lab",
         "Logs",
         "Settings",
+        "Research",
+        "Meetings",
     ]
 
 

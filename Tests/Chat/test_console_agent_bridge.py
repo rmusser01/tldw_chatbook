@@ -2381,6 +2381,11 @@ def test_capture_on_agent_run_reserves_each_real_gateway_call_in_stable_order(
             trace_db.get_connection().cursor(), owner.owner_id
         )
         assert calls[-1].state is TraceCallState.DISPATCH_STARTED
+        # task-32342: the trace surface issues recursively frozen rows so the
+        # verifier can prove identity; the adapter must still be handed plain
+        # JSON containers, or `requests` dies preparing the body.
+        assert all(type(row) is dict for row in kwargs["messages_payload"])
+        json.dumps(kwargs["messages_payload"])
         adapter_requests.append(tuple(kwargs["messages_payload"]))
         adapter_entries += 1
         content = (
@@ -3974,17 +3979,20 @@ def test_successful_tool_payload_collisions_stay_success_live_and_resumed(
 
 
 @pytest.mark.parametrize(
-    ("result", "expected"),
+    ("result", "tool_outcome", "activity_status"),
     [
-        (ToolResult(ok=False, error="ordinary dispatch failure"), "failed"),
+        (ToolResult(ok=False, error="ordinary dispatch failure"), "failed", "failed"),
+        # task-32279: the protocol outcome stays "blocked" -- the DISPLAY
+        # status narrows to name the authority that refused.
         (
             ToolResult.blocked("tool execution is disabled by the kill switch"),
             "blocked",
+            "blocked_kill_switch",
         ),
     ],
 )
 def test_structured_tool_failure_status_has_live_resume_parity(
-    tmp_path, result: ToolResult, expected: str
+    tmp_path, result: ToolResult, tool_outcome: str, activity_status: str
 ) -> None:
     bridge, db, store, session, aid = _bridge(
         tmp_path,
@@ -4002,8 +4010,8 @@ def test_structured_tool_failure_status_has_live_resume_parity(
     live = _tool_messages(store, session.id)
     resumed = _resume_tool_messages(db)
     tool_step = next(step for step in outcome.steps if step.kind == STEP_TOOL_RESULT)
-    assert tool_step.tool_outcome == expected
-    assert live[-1].activity_presentation.status == expected
+    assert tool_step.tool_outcome == tool_outcome
+    assert live[-1].activity_presentation.status == activity_status
     assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
 
 
@@ -6982,7 +6990,9 @@ def test_run_reply_forwards_review_tool_calls_hook_to_agent_service(tmp_path):
     ]
     assert live[0].content == "I will request approval for this calculation."
     assert any("denied" in row.content.lower() for row in live)
-    assert live[1].activity_presentation.status == "blocked"
+    # task-32279: the hook returned the Console review hook's USER-denial
+    # copy, so the marker names the user, not a policy.
+    assert live[1].activity_presentation.status == "denied"
     assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
 
 
@@ -10429,3 +10439,35 @@ def test_content_stall_surfaces_through_chat_call(tmp_path, monkeypatch):
     assert recorded, "expected the stall boundary handler to fire through chat_call"
     assert recorded[0][1] == "TestProvider"
     wd._SESSION_TRACKERS.clear()
+
+
+# --------------------------------------------------------------------------
+# task-32344: the pre-provider setup phase the rail reads off the bridge.
+# --------------------------------------------------------------------------
+
+
+def test_setup_phase_is_visible_on_the_live_snapshot_until_it_is_ended():
+    """The window between "send accepted" and "provider called" has a state.
+
+    Nothing publishes a step during pre-provider setup, so the rail's
+    snapshot is idle and the assistant row renders blank -- for as long as
+    that setup takes.
+    """
+    bridge = _make_bridge()
+    assert bridge.live_snapshot("c1").status == "idle"
+
+    bridge.begin_setup_phase("c1", now=100.0)
+    marked = bridge.live_snapshot("c1")
+    assert marked.status == "setup"
+    assert marked.setup_started_at == 100.0
+    assert bridge.live_snapshot("other").status == "idle"
+
+    bridge.end_setup_phase("c1")
+    assert bridge.live_snapshot("c1").status == "idle"
+
+
+def test_ending_an_unmarked_setup_phase_is_a_no_op():
+    """A failed send unwinds through the same clear; it must not raise."""
+    bridge = _make_bridge()
+    bridge.end_setup_phase("never-marked")
+    assert bridge.live_snapshot("never-marked").status == "idle"

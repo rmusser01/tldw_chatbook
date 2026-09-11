@@ -45,6 +45,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleCitationPhase,
     ConsoleMessageRole,
     ConsoleThinkingActivityRef,
+    console_activity_status_word,
 )
 from tldw_chatbook.Chat.console_context_compaction import (
     EffectiveMemoryKind,
@@ -2637,6 +2638,25 @@ class ConsoleTranscriptJumpPill(Static):
                 transcript.focus()
 
 
+class ConsoleThinkingEditRequested(Message):
+    """Bubbled when the user asks to edit a thinking block's text.
+
+    TASK-32312: posted by ``ConsoleTranscript.action_invoke_selected_action``
+    for a selected thinking disclosure row (the keyboard mirror of the
+    thinking-row copy seam). Anchored by projected activity id -- the owning
+    screen resolves the displayable block from the transcript's display
+    model and owns the block-scoped edit modal.
+
+    Args:
+        activity_id: Projected thinking activity row identifier (the
+            deterministic uuid5 of the owner message and block ids).
+    """
+
+    def __init__(self, activity_id: str) -> None:
+        super().__init__()
+        self.activity_id = activity_id
+
+
 class ConsoleReviewNotesRequested(Message):
     """Bubbled when the user asks to see a message's review notes.
 
@@ -5109,6 +5129,42 @@ class ConsoleTranscript(VerticalScroll):
         ref = self._thinking_activity_refs.get(activity_id)
         return ref.assistant_message_id if ref is not None else None
 
+    def thinking_editable_block(self, activity_id: str) -> tuple[str, str, str] | None:
+        """Resolve one displayable block for the block-scoped edit seam.
+
+        Args:
+            activity_id: Projected thinking activity row identifier.
+
+        Returns:
+            A ``(assistant_message_id, block_id, text)`` tuple for a
+            displayable block on a terminal (non-streaming) assistant owner,
+            or ``None`` for unknown rows, content-free proprietary evidence,
+            and live rows whose partial text must never prefill an editor.
+        """
+        ref = self._thinking_activity_refs.get(activity_id)
+        if ref is None:
+            return None
+        assistant = next(
+            (
+                message
+                for message in self._messages
+                if message.id == ref.assistant_message_id
+            ),
+            None,
+        )
+        if assistant is None or assistant.status in {"pending", "streaming"}:
+            return None
+        envelope = assistant.thinking
+        if not isinstance(envelope, ThinkingEnvelope):
+            return None
+        block = next(
+            (block for block in envelope.blocks if block.block_id == ref.block_id),
+            None,
+        )
+        if not isinstance(block, DisplayableThinkingBlock):
+            return None
+        return ref.assistant_message_id, ref.block_id, block.text
+
     def _thinking_display_message(self, activity_id: str) -> ConsoleChatMessage | None:
         """Build a bounded display-only row for selection/copy/Inspector seams."""
         ref = self._thinking_activity_refs.get(activity_id)
@@ -5335,7 +5391,7 @@ class ConsoleTranscript(VerticalScroll):
                     else:
                         activity_header = (
                             f"{activity_presentation.label} · "
-                            f"{activity_presentation.status}"
+                            f"{console_activity_status_word(activity_presentation.status)}"
                         )
                     lines.append(activity_header)
                     activity_body = _message_body(activity)
@@ -5630,6 +5686,14 @@ class ConsoleTranscript(VerticalScroll):
                 if callable(copy_to_clipboard):
                     copy_to_clipboard(thinking_detail)
                 return
+        if action_id == "edit" and (
+            self.thinking_owner_message_id(message_id) is not None
+        ):
+            # TASK-32312: thinking disclosures carry no action buttons
+            # (``action_widgets=()``); like copy, edit is a keyboard seam
+            # here and the owning screen opens the block-scoped modal.
+            self.post_message(ConsoleThinkingEditRequested(message_id))
+            return
         if action_id == "tool-output" and self._activity_can_expand(message_id):
             self.toggle_tool_output(message_id)
             return
@@ -5805,6 +5869,34 @@ class ConsoleTranscript(VerticalScroll):
             return None
         return widget
 
+    def _fold_row_action_menus_for_pointer(self) -> None:
+        """Fold rail row-action menus on a transcript press (ADR-068).
+
+        The screen-level outside-click dismissal returns early for
+        transcript targets -- this widget owns its in-area interaction --
+        and this widget's own cleanup only knew its selection UI, so a
+        press on the transcript (most of the screen) left a conversation or
+        workspace action menu floating. Fold both registries here with no
+        opener focus-restore: the press already expresses the user's focus
+        intent. Imports stay function-local per ADR-097 (this module is on
+        the boot path; the menu modules must not be).
+        """
+        try:
+            screen = self.screen
+        except Exception:
+            return
+        from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
+            conversation_action_menus_on_screen,
+        )
+        from tldw_chatbook.Widgets.Console.console_workspace_action_menu import (
+            workspace_action_menus_on_screen,
+        )
+
+        for menu in conversation_action_menus_on_screen(screen):
+            menu.dismiss_menu(restore_focus=False)
+        for menu in workspace_action_menus_on_screen(screen):
+            menu.dismiss_menu(restore_focus=False)
+
     async def on_mouse_down(self, event: MouseDown) -> None:
         """Dismiss More, then arm a drag on a left press over selectable text."""
         if self._kb_selection_row is not None:
@@ -5821,6 +5913,7 @@ class ConsoleTranscript(VerticalScroll):
         # proceeds; the active opener is exempt so its Button.Pressed can
         # keep owning the menu's open/reopen lifecycle.
         await self._dismiss_message_more_for_pointer(press_control)
+        self._fold_row_action_menus_for_pointer()
         # Click-outside dismissal, row-body half (final review): rows stop
         # their own Clicks (the message-selection toggle), so with a menu
         # open a press on another row's body never reaches this

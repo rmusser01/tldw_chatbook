@@ -304,6 +304,13 @@ to hidden chain-of-thought.
   by the adapter. Proprietary evidence is text-free and appears as
   **Thinking · unavailable**; expanding it shows exactly
   `Proprietary thinking obfuscated - not available`.
+- Select a displayable Thinking row and press **e** to edit its text in place.
+  The answer, block identity, provenance, and replay encoding stay intact.
+  Blank edits are rejected, and text containing `<think>`/`</think>` tags is
+  rejected for start-anchored blocks so replay serialization stays safe.
+  Edited thinking stays replay-eligible under the same replay policy.
+  Proprietary (**unavailable**) rows cannot be edited, and editing the answer
+  itself still clears the turn's thinking.
 - A new live disclosure opens when its first evidence arrives, then
   auto-collapses once at the first visible answer or tool event. If neither
   occurs, the terminal state is the fallback boundary. Expanding or collapsing
@@ -390,7 +397,7 @@ also appears there when an original attempt can be shown safely.
 |---|---|---|
 | Copy | Copies the message body to the clipboard. | All messages |
 | 🔊 / ⏹ | Speaks the reply aloud; playback starts automatically, and while it plays the button becomes ⏹ to stop ("Stopped speaking."). Text-to-speech provider setup lives in Settings. | Completed assistant replies |
-| Edit | Opens the "Edit Message" editor; editing one of your own messages can also fork and resend — see [branching & rewind](branching-and-rewind.md). | All messages |
+| Edit | Opens the "Edit Message" editor; editing one of your own messages can also fork and resend — see [branching & rewind](branching-and-rewind.md). On a selected displayable **Thinking** row, **e** opens the "Edit Thinking" editor for that block's text — see [model thinking disclosures](#model-thinking-disclosures). | All messages |
 | < > | Step between regenerated variants — see [branching & rewind](branching-and-rewind.md). | Messages with variants |
 | Fork | Opens a focused naming dialog, then creates a new independent chat containing the active conversation path through this message, inclusive. Press **f** for the same action — see [branching & rewind](branching-and-rewind.md). | Stable User and Assistant messages |
 | ♻ | Regenerate — fork another assistant variant for this turn; the old answer is kept, not overwritten — see [branching & rewind](branching-and-rewind.md). | Assistant replies |
@@ -477,7 +484,7 @@ Transcript:
 ### Exchange capture privacy
 
 Provider exchanges use **Safe** capture by default. The Conversation
-Inspector and live Trace use `c` for scoped future controls; F9 **Console
+Inspector and live Trace use `c` for scoped future controls; F4 **Console
 Behavior** controls the global On/Off and Safe/Full default. Next-send Full is
 one-shot and expires when consumed. Capture Off preserves dormant Full choices
 and warns before they resume. Imported Trace stays read-only.
