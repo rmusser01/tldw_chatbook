@@ -1644,6 +1644,11 @@ class ConsoleMessageController:
             controller.clear_original_attempts_for_session(session_id)
             self._console_original_attempt_previews.clear()
             store.delete_message(message_id)
+            cleanup_warning = getattr(
+                store.persistence, "recovered_media_cleanup_warning", None
+            )
+            if cleanup_warning:
+                self.app_instance.notify(cleanup_warning, severity="warning")
             # TASK-251: a deleted message can change what the browser row
             # shows for this conversation (title/updated_at) -- invalidate
             # so the next sync reflects it immediately.

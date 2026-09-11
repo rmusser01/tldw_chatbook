@@ -868,30 +868,7 @@ class RecoveredMedia:
         identity = _identity(profile, message, slug, media_type)
         with self._connection() as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                "SELECT asset_id FROM refs WHERE profile=? AND message=? AND slug=? AND media_type=?",
-                identity,
-            ).fetchone()
-            if row is None:
-                return
-            asset_id = row[0]
-            connection.execute(
-                "DELETE FROM refs WHERE profile=? AND message=? AND slug=? AND media_type=?",
-                identity,
-            )
-            if connection.execute(
-                "SELECT 1 FROM tombstones WHERE asset_id=?", (asset_id,)
-            ).fetchone():
-                remaining = list(
-                    connection.execute(
-                        "SELECT profile,message,slug,media_type FROM refs WHERE asset_id=? ORDER BY profile,message,slug,media_type",
-                        (asset_id,),
-                    )
-                )
-                connection.execute(
-                    "UPDATE tombstones SET references_json=? WHERE asset_id=?",
-                    (json.dumps(remaining), asset_id),
-                )
+            _release_reference(connection, identity)
 
     def cleanup_orphan(self, asset_id, *, review=None):
         """Explicit cleanup only, with a fresh transactional reference/hold check."""
@@ -928,6 +905,34 @@ class RecoveredMedia:
                 return True
             finally:
                 connection.rollback()
+
+
+def _release_reference(connection, identity):
+    """One owner transaction updates both the reference and any deletion receipt."""
+    row = connection.execute(
+        "SELECT asset_id FROM refs WHERE profile=? AND message=? AND slug=? AND media_type=?",
+        identity,
+    ).fetchone()
+    if row is None:
+        return
+    asset_id = row[0]
+    connection.execute(
+        "DELETE FROM refs WHERE profile=? AND message=? AND slug=? AND media_type=?",
+        identity,
+    )
+    if connection.execute(
+        "SELECT 1 FROM tombstones WHERE asset_id=?", (asset_id,)
+    ).fetchone():
+        remaining = list(
+            connection.execute(
+                "SELECT profile,message,slug,media_type FROM refs WHERE asset_id=? ORDER BY profile,message,slug,media_type",
+                (asset_id,),
+            )
+        )
+        connection.execute(
+            "UPDATE tombstones SET references_json=? WHERE asset_id=?",
+            (json.dumps(remaining), asset_id),
+        )
 
 
 @dataclass(frozen=True)
@@ -1635,3 +1640,71 @@ def resolve_message_image(message, *, root=None, profile=None):
         asset_id, media_type = rows[0]
         status, path = store._resolve(connection, asset_id)
         return status, _read(path) if path else None, media_type
+
+
+def message_reference_page(
+    root: Path, profile: str, *, after: str = ""
+) -> tuple[str, ...]:
+    """Read up to 200 exact current-profile message keys without payload access."""
+    _identity(profile, "page", "page", "image/png")
+    if type(after) is not str or len(after) > 4096:
+        raise ValueError("invalid_recovered_reference")
+    if list_recovered_media(root, limit=1) is None:
+        return ()
+    store = _existing_store(root)
+    with _inspect_catalog(store) as connection:
+        rows = connection.execute(
+            "SELECT DISTINCT substr(message,1,4097) FROM refs WHERE profile=? AND message>? ORDER BY message LIMIT 200",
+            (profile, after),
+        )
+        result = tuple(row[0] for row in rows)
+        for message in result:
+            _identity(profile, message, "page", "image/png")
+        return result
+
+
+def release_message_references(
+    root: Path, profile: str, message_ids: tuple[str, ...], *, expected_identity=None
+) -> None:
+    """Release exact committed message references, never the retained payload."""
+    if type(message_ids) is not tuple or len(message_ids) > 200:
+        raise ValueError("recovered_details_limit")
+    for message in message_ids:
+        _identity(profile, message, "release", "image/png")
+    if not message_ids or list_recovered_media(root, limit=1) is None:
+        return
+    store = _existing_store(root)
+    root_identity, catalog_identity, expected = _catalog_identity(store)
+    if expected_identity is not None and expected_identity != (
+        root_identity[:4],
+        catalog_identity,
+    ):
+        raise ValueError("recovered_message_source_changed")
+    with (
+        store._connection(must_exist=True, expected_identity=expected) as connection,
+        connection,
+    ):
+        connection.execute("BEGIN IMMEDIATE")
+        if _catalog_identity(store)[:2] != (root_identity, catalog_identity):
+            raise ValueError("recovered_message_source_changed")
+        issues = _validate_sqlite(connection, (1,), SCHEMAS)
+        if issues:
+            raise ValueError(issues[0])
+        for message in dict.fromkeys(message_ids):
+            while True:
+                # Exhaust this bounded SELECT before mutating its source table.
+                rows = connection.execute(
+                    "SELECT profile,message,substr(slug,1,4097),substr(media_type,1,4097) FROM refs WHERE profile=? AND message=? LIMIT 200",
+                    (profile, message),
+                ).fetchall()
+                if not rows:
+                    break
+                for identity in rows:
+                    _release_reference(connection, _identity(*identity))
+
+
+def _message_catalog_identity(store):
+    # APFS directory link counts change when ordinary payloads are retired.
+    # The directory's native identity and the catalog's single-link identity stay bound.
+    root, catalog, _ = _catalog_identity(store)
+    return root[:4], catalog

@@ -582,6 +582,7 @@ class ConsoleRuntime:
                 ),
                 citation_repository=citation_repository,
             )
+            persistence.retry_recovered_media_references()
         self._chat_store = ConsoleChatStore(
             persistence=persistence,
             workspace_context=workspace_context,
