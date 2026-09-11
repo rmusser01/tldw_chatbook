@@ -45,7 +45,7 @@ from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chatbooks.database_paths import get_private_chatbooks_dir
 from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
 from tldw_chatbook.Library.library_ingest_jobs import LibraryIngestJob,IngestJobState
-from tldw_chatbook.config import get_library_ingest_jobs_db_path
+from tldw_chatbook.config import get_library_ingest_jobs_db_path,get_writing_db_path,get_notifications_db_path
 async def main():
  app=TldwCli()
  try:
@@ -65,13 +65,41 @@ async def main():
   session=research.create_session(title=name+' research',query=name+' research query')
   deleted_session=research.create_session(title=name+' historical research',query='Preserved history')
   assert research.delete_session(deleted_session['id'])
+  writing=app.local_writing_service
+  assert writing is not None and not writing.is_memory_db and writing.db_path==get_writing_db_path()
+  project=writing.create_project(title=name+' writing')
+  chapter=writing.create_chapter(project['id'],title=name+' chapter')
+  scene=writing.create_scene(chapter['id'],title=name+' scene',content_markdown=name+' original scene')
+  version=writing.create_version('scene',scene['id'],label='before edit')
+  writing.update_scene(scene['id'],content_markdown=name+' revised scene')
+  assert writing.get_scene(scene['id'])['content_markdown']==name+' revised scene'
+  assert writing.get_version('scene',scene['id'],version['version_number'])['payload']['content_markdown']==name+' original scene'
+  study=app.local_study_service;quiz_service=app.local_quiz_service
+  assert study.db is core and quiz_service.db is core
+  deck=study.create_deck(name=name+' study',description='Retained local deck')
+  card=study.create_flashcard(deck_id=deck['id'],front=name+' question',back=name+' answer',tags=['retained',name],notes=name+' study note')
+  assert study.get_deck(deck['id'])['card_count']==1
+  assert study.get_flashcard(card['id'])['back']==name+' answer'
+  quiz=quiz_service.create_quiz(name=name+' quiz',description='Stored completed quiz')
+  question=quiz_service.create_question(quiz['id'],question_type='fill_blank',question_text=name+' retained answer?',correct_answer=name,points=2)
+  started=quiz_service.start_attempt(quiz['id'])
+  attempt=quiz_service.submit_attempt(started['id'],answers=[{'question_id':question['id'],'user_answer':name}])
+  assert attempt['score']==2 and attempt['total_possible']==2 and attempt['completed_at']
+  assert attempt['answers'][0]['question_id']==question['id'] and attempt['answers'][0]['is_correct'] is True
+  notifications=app.client_notifications_db
+  assert not notifications.is_memory_db and Path(notifications.db_path)==get_notifications_db_path()
+  notification=notifications.insert_notification(category='study',title=name+' completed quiz',message=name+' durable completion',source_backend='local',source_entity_kind='study_quiz_attempt',source_entity_id=attempt['id'],payload={'quiz_id':quiz['id'],'attempt_id':attempt['id']})
+  notification=app.client_notifications_service.update_notification(notification['id'],is_read=True,is_dismissed=True)
+  assert notification['is_read'] and notification['is_dismissed']
+  assert notification['payload']=={'quiz_id':quiz['id'],'attempt_id':attempt['id']}
+  domains=dict(writing=dict(path=str(writing.db_path),project=project['id'],chapter=chapter['id'],scene=scene['id'],version=version['id'],version_number=version['version_number']),study=dict(deck=deck['id'],card=card['id']),quiz=dict(quiz=quiz['id'],question=question['id'],attempt=attempt['id'],completed_at=attempt['completed_at']),notification=dict(path=str(notifications.db_path),id=notification['id'],read_at=notification['read_at'],dismissed_at=notification['dismissed_at']))
   empty=get_private_chatbooks_dir()
   assert not list(empty.iterdir())
   jobs=LibraryIngestJobsDB(get_library_ingest_jobs_db_path(),'fixture')
   try:
    jobs.upsert_job(LibraryIngestJob('ingest-job-1',str(fixture/(name+'-input.txt')),state=IngestJobState.QUEUED))
   finally:jobs.close()
-  (fixture/(name+'-seed.json')).write_text(json.dumps(dict(note=note,deleted=deleted,conversation=conversation,message=message,media=media,prompt=prompt,research=session['id'],deleted_research=deleted_session['id'],empty=str(empty))))
+  (fixture/(name+'-seed.json')).write_text(json.dumps(dict(note=note,deleted=deleted,conversation=conversation,message=message,media=media,prompt=prompt,research=session['id'],deleted_research=deleted_session['id'],empty=str(empty),domains=domains)))
   assert not blocked_attempts(),blocked_attempts()
   print('SEEDED',name,flush=True)
  finally:
@@ -199,12 +227,50 @@ async def main():
       assert db.execute('SELECT content,deleted FROM notes WHERE id=?',(seed['deleted'],)).fetchone()==('Retained soft deletion '+label,1)
       assert db.execute('SELECT content FROM messages WHERE id=? AND conversation_id=?',(seed['message'],seed['conversation'])).fetchone()==(label+' message bytes',)
       assert db.execute('SELECT 1 FROM notes WHERE id=?',(after_ids[label],)).fetchone() is None
+      study=seed['domains']['study'];quiz=seed['domains']['quiz']
+      assert db.execute('SELECT name,description,card_count,is_deleted FROM decks WHERE id=?',(study['deck'],)).fetchone()==(label+' study','Retained local deck',1,0)
+      card=db.execute('SELECT deck_id,front,back,tags,type,metadata,is_deleted FROM flashcards WHERE id=?',(study['card'],)).fetchone()
+      assert card[:5]==(study['deck'],label+' question',label+' answer','retained '+label,'basic')
+      assert json.loads(card[5])=={'notes':label+' study note'} and card[6]==0
+      assert db.execute('SELECT name,description,total_questions,deleted FROM quizzes WHERE id=?',(quiz['quiz'],)).fetchone()==(label+' quiz','Stored completed quiz',1,0)
+      question=db.execute('SELECT quiz_id,question_type,question_text,correct_answer,points,deleted FROM quiz_questions WHERE id=?',(quiz['question'],)).fetchone()
+      assert question[:3]==(quiz['quiz'],'fill_blank',label+' retained answer?')
+      assert question[3]==label and question[4:]==(2,0)
+      attempt=db.execute('SELECT quiz_id,completed_at,score,total_possible,questions_snapshot,answers FROM quiz_attempts WHERE id=?',(quiz['attempt'],)).fetchone()
+      assert attempt[:4]==(quiz['quiz'],quiz['completed_at'],2,2)
+      questions=json.loads(attempt[4]);answers=json.loads(attempt[5])
+      assert len(questions)==len(answers)==1 and questions[0]['id']==quiz['question']
+      assert questions[0]['question_text']==label+' retained answer?' and questions[0]['correct_answer']==label
+      assert answers[0]['question_id']==quiz['question'] and answers[0]['user_answer']==label
+      assert answers[0]['is_correct'] is True and answers[0]['points_awarded']==2
+      for alias_owner in ('study.local','quiz.local'):
+       alias=next(peer for peer in manifest['files'] if peer['owner_id']==alias_owner and source[peer['logical_id']].path==source[row['logical_id']].path)
+       assert row['logical_id'] in source[alias['logical_id']].dependencies
+       assert alias['sha256']==row['sha256']
      elif owner=='db.media.primary':
       assert db.execute('SELECT content FROM Media WHERE id=?',(seed['media'],)).fetchone()==(label+' media bytes',)
      else:
       assert db.execute('SELECT query FROM research_sessions WHERE id=?',(seed['research'],)).fetchone()==(label+' research query',)
       assert db.execute('SELECT deleted FROM research_sessions WHERE id=?',(seed['deleted_research'],)).fetchone()==(1,)
    assert any(row['logical_id'] in source and source[row['logical_id']].owner=='chatbooks.archives' and source[row['logical_id']].path==Path(seed['empty']) for row in manifest['directories'])
+   for owner,domain in (('writing.local','writing'),('notifications.client','notification')):
+    expected=seed['domains'][domain]
+    row=next(row for row in manifest['files'] if row['owner_id']==owner and source[row['logical_id']].path==Path(expected['path']))
+    with closing(sqlite3.connect((result.root/row['payload']).as_uri()+'?mode=ro',uri=True)) as db:
+     if domain=='writing':
+      assert db.execute('SELECT title FROM writing_projects WHERE id=?',(expected['project'],)).fetchone()==(label+' writing',)
+      assert db.execute('SELECT project_id,title FROM writing_chapters WHERE id=?',(expected['chapter'],)).fetchone()==(expected['project'],label+' chapter')
+      assert db.execute('SELECT chapter_id,project_id,content_markdown FROM writing_scenes WHERE id=?',(expected['scene'],)).fetchone()==(expected['chapter'],expected['project'],label+' revised scene')
+      version=db.execute('SELECT entity_type,entity_id,version_number,label,payload_json FROM writing_versions WHERE id=?',(expected['version'],)).fetchone()
+      assert version[:4]==('scene',expected['scene'],expected['version_number'],'before edit')
+      history=json.loads(version[4])
+      assert history['content_markdown']==label+' original scene'
+      assert history['chapter_id']==expected['chapter'] and history['project_id']==expected['project']
+     else:
+      notification=db.execute('SELECT category,title,message,source_backend,source_entity_kind,source_entity_id,payload,is_read,is_dismissed,read_at,dismissed_at FROM client_notifications WHERE id=?',(expected['id'],)).fetchone()
+      assert notification[:6]==('study',label+' completed quiz',label+' durable completion','local','study_quiz_attempt',seed['domains']['quiz']['attempt'])
+      assert json.loads(notification[6])=={'quiz_id':seed['domains']['quiz']['quiz'],'attempt_id':seed['domains']['quiz']['attempt']}
+      assert notification[7:]==(1,1,expected['read_at'],expected['dismissed_at'])
   prompt_rows=[row for row in manifest['files'] if row['owner_id']=='db.prompts.primary']
   assert len(prompt_rows)==2 and len({row['sha256'] for row in prompt_rows})==1
   with closing(sqlite3.connect(result.root/prompt_rows[0]['payload'])) as db:
@@ -429,6 +495,7 @@ def test_two_captured_profiles_plan_shared_concrete_roots_for_isolated_restore(
 
 _OPEN_RESTORED = r"""
 import asyncio,json,sys
+from datetime import datetime
 from pathlib import Path
 from Tests.network_guard import install,blocked_attempts
 install()
@@ -469,6 +536,42 @@ async def main():
   assert app.media_db.get_media_by_id(seed['media'])['content']==label+' media bytes'
   assert app.local_research_service.get_session(seed['research'])['query']==label+' research query'
   assert app.local_research_service.get_session(seed['deleted_research']) is None
+  domains=seed['domains'];writing=app.local_writing_service
+  assert writing is not None and writing.db_path!=Path(domains['writing']['path'])
+  project=writing.get_project(domains['writing']['project'])
+  chapter=writing.get_chapter(domains['writing']['chapter'])
+  scene=writing.get_scene(domains['writing']['scene'])
+  version=writing.get_version('scene',scene['id'],domains['writing']['version_number'])
+  assert project['title']==label+' writing' and chapter['project_id']==project['id']
+  assert scene['chapter_id']==chapter['id'] and scene['project_id']==project['id']
+  assert scene['content_markdown']==label+' revised scene'
+  assert version['id']==domains['writing']['version'] and version['label']=='before edit'
+  assert version['payload']['content_markdown']==label+' original scene'
+  assert version['payload']['chapter_id']==chapter['id'] and version['payload']['project_id']==project['id']
+  study=app.local_study_service;quiz_service=app.local_quiz_service
+  assert study.db is core and quiz_service.db is core
+  deck=study.get_deck(domains['study']['deck']);card=study.get_flashcard(domains['study']['card'])
+  assert deck['name']==label+' study' and deck['card_count']==1
+  assert card['deck_id']==deck['id'] and card['front']==label+' question' and card['back']==label+' answer'
+  assert card['tags']=='retained '+label and json.loads(card['metadata'])=={'notes':label+' study note'}
+  quiz=quiz_service.get_quiz(domains['quiz']['quiz'])
+  completed=quiz_service.get_attempt(domains['quiz']['attempt'],include_questions=True,include_answers=True)
+  assert quiz['name']==label+' quiz' and quiz['total_questions']==1
+  assert completed['quiz_id']==quiz['id'] and completed['completed_at']==datetime.fromisoformat(domains['quiz']['completed_at'])
+  assert completed['score']==completed['total_possible']==2
+  assert len(completed['questions'])==len(completed['answers'])==1
+  question=completed['questions'][0];answer=completed['answers'][0]
+  assert question['id']==answer['question_id']==domains['quiz']['question']
+  assert question['question_text']==label+' retained answer?' and question['correct_answer']==label
+  assert answer['user_answer']==label and answer['is_correct'] is True and answer['points_awarded']==2
+  assert Path(app.client_notifications_db.db_path)!=Path(domains['notification']['path'])
+  notification=app.client_notifications_db.get_notification(domains['notification']['id'])
+  assert notification['title']==label+' completed quiz' and notification['message']==label+' durable completion'
+  assert notification['source_backend']=='local' and notification['source_entity_kind']=='study_quiz_attempt'
+  assert notification['source_entity_id']==completed['id']
+  assert notification['payload']=={'quiz_id':quiz['id'],'attempt_id':completed['id']}
+  assert notification['is_read'] and notification['is_dismissed']
+  assert notification['read_at']==domains['notification']['read_at'] and notification['dismissed_at']==domains['notification']['dismissed_at']
   for original in ('alpha','beta'):
    identity=json.loads((fixture/(original+'-seed.json')).read_text())
    assert app.prompts_db.get_prompt_by_id(identity['prompt'])['user_prompt']==original+' prompt bytes'
