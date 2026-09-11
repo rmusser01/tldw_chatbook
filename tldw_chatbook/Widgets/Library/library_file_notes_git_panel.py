@@ -3397,14 +3397,17 @@ class LibraryFileNotesGitPanel(Vertical):
 
         * nothing moved -- the exact widget focus was on when the status
           landed still holds it; or
-        * the panel took that widget away. Trust landing hides the trust
-          button, and Textual moves focus itself the moment the focused
-          widget stops being focusable. The user's focus was yanked by US,
-          so there is no deliberate choice left to protect. Asked HERE and
-          not when the control was hidden, because Textual does not
-          guarantee it moves focus inside the same call that flipped
+        * the panel took that widget away AND focus is still in here.
+          Trust landing hides the trust button, and Textual moves focus
+          itself the moment the focused widget stops being focusable --
+          onto this panel's own next control. The user's focus was yanked
+          by US, so there is no deliberate choice left to protect. Asked
+          HERE and not when the control was hidden, because Textual does
+          not guarantee it moves focus inside the same call that flipped
           ``display`` -- and when it did not, AC#1 silently stopped firing
-          (measured: 8 of 10 runs).
+          (measured: 8 of 10 runs). Both halves are load-bearing: pressing
+          Edit ALSO hides the anchor (the whole Manage surface goes), and
+          that one is the user, which is why the landing place decides.
 
         Anything else -- the user Tabbed away, pressed Edit, focused
         another control in this panel -- is a focus move we must not undo.
@@ -3418,10 +3421,17 @@ class LibraryFileNotesGitPanel(Vertical):
         # `display`, so a hidden button still reports focusable=True. The
         # ancestors walk is the idiom `_repair_hidden_focus` and
         # `_focus_push_list_control` already use here for exactly this.
-        return any(
+        anchor_hidden = any(
             isinstance(node, Widget) and not node.display
             for node in anchor.ancestors_with_self
         )
+        # A hidden anchor is not on its own enough: pressing Edit hides the
+        # whole Manage surface the anchor sat on, and that IS the user
+        # moving focus -- to the editor, outside this panel
+        # (`test_deferred_git_row_focus_does_not_steal_retained_editor`).
+        # When the panel displaced its own control, the focus it lost lands
+        # on this panel's own fallback, which is still in here.
+        return anchor_hidden and self._focus_is_inside()
 
     def _repair_focus_to(self, target: Widget) -> None:
         """Move focus for the PANEL's own reasons, keeping the anchor true.
