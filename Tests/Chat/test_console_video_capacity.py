@@ -430,6 +430,9 @@ class _OutcomeHarness:
     """Small owner that exercises the production resolver without a full app."""
 
     def __init__(self, *, actions: list[object], video_store: object) -> None:
+        from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import ProducerLifetime
+
+        self._producer_lifetime = ProducerLifetime()
         self.actions = list(actions)
         self.video_store = video_store
         self.appended: list[tuple] = []

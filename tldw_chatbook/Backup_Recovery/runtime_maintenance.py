@@ -111,6 +111,13 @@ def _console_hooks(app, screens):
                 "maintenance",
             )
         )
+        producers.append(
+            _bind(
+                screen._video,
+                "UI.Console_Modules.video",
+                "ConsoleVideoController",
+            )
+        )
         views.extend(
             (
                 _bind(
