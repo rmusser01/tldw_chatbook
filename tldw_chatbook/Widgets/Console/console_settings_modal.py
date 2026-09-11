@@ -1753,7 +1753,11 @@ class ConsoleSettingsModal(
         legacy ``enable_streaming`` bridge only applies when the canonical key
         is absent). ``chat_defaults.provider`` is written too — the default
         provider itself resolves ONLY from that key, so omitting it would make
-        "Save as default" keep booting into the previous provider. ``None``
+        "Save as default" keep booting into the previous provider. Registry
+        entry providers (``custom-ep:<slug>``, ADR-146) write nothing under
+        ``api_settings``: the entry itself is the persisted endpoint and model
+        carrier under ``[custom_endpoints.<slug>]``, and an api_settings table
+        keyed by a custom-ep id would be stray and unresolvable. ``None``
         values are skipped rather than deleting existing defaults.
         """
         sections: dict[str, dict[str, object]] = {}
@@ -1770,11 +1774,16 @@ class ConsoleSettingsModal(
             model_source="session" if model else "none",
         )
         provider_key = effective.provider
+        provider_is_registry_entry = provider_key.startswith(CUSTOM_ENDPOINT_ID_PREFIX)
         provider_values: dict[str, object] = {}
-        if model:
+        if model and not provider_is_registry_entry:
             provider_values["model"] = model
         base_url = (draft.base_url or "").strip()
-        if base_url and self._provider_uses_base_url(provider_key):
+        if (
+            base_url
+            and not provider_is_registry_entry
+            and self._provider_uses_base_url(provider_key)
+        ):
             provider_values[self._endpoint_persist_key(provider_key)] = base_url
         saved_defaults: dict[str, object] = {}
         for field_name in PROVIDER_DEFAULT_PERSIST_FIELDS:
@@ -1785,9 +1794,9 @@ class ConsoleSettingsModal(
             sections[f"api_settings.{provider_key}"] = provider_values
         if provider_key and saved_defaults:
             sections[f"console.provider_defaults.{provider_key}"] = saved_defaults
-        canonical_defaults = build_canonical_chat_defaults_mutation(effective)[
-            "chat_defaults"
-        ]
+        canonical_defaults = build_canonical_chat_defaults_mutation(
+            effective, app_config=self._app_config
+        )["chat_defaults"]
         chat_defaults: dict[str, object] = {
             "streaming": bool(draft.streaming),
             **canonical_defaults,

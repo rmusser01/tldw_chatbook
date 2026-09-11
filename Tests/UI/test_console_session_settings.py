@@ -7298,9 +7298,9 @@ async def test_console_settings_legacy_alias_is_passive_until_canonical_default_
         captured.append(sections)
         return True
 
-    def recording_canonical_mutation(effective):
+    def recording_canonical_mutation(effective, app_config=None):
         canonical_calls.append(effective)
-        return real_canonical_mutation(effective)
+        return real_canonical_mutation(effective, app_config=app_config)
 
     monkeypatch.setattr(modal_module, "save_settings_to_cli_config", fake_save)
     monkeypatch.setattr(
@@ -7340,6 +7340,62 @@ async def test_console_settings_legacy_alias_is_passive_until_canonical_default_
         "model": "pocket-tts",
     }
     assert captured[0]["api_settings.openai"]["model"] == "pocket-tts"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_save_default_persists_custom_endpoint_entry_provider(
+    monkeypatch,
+) -> None:
+    from tldw_chatbook.Widgets.Console import console_settings_modal as modal_module
+
+    captured: list[dict[str, dict[str, object]]] = []
+
+    def fake_save(sections: dict[str, dict[str, object]]) -> bool:
+        captured.append(sections)
+        return True
+
+    monkeypatch.setattr(modal_module, "save_settings_to_cli_config", fake_save)
+    app = ModalHarness()
+    app.app_config = {
+        "api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}},
+        "custom_endpoints": {
+            "gpu": {
+                "display_name": "GPU llama",
+                "family": "llama_cpp",
+                "base_url": "http://192.168.1.5:8080",
+            }
+        },
+    }
+    settings = ConsoleSessionSettings(
+        provider="custom-ep:gpu",
+        model="qwen3.8-27b",
+        base_url="http://192.168.1.5:8080",
+        streaming=False,
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            _basic_modal(settings, app),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        assert captured == []
+        await pilot.click("#console-settings-save-default")
+
+    assert len(captured) == 1
+    sections = captured[0]
+    # The entry id round-trips exactly -- no underscore mangling, no collapse
+    # onto the generic custom slot -- so the next boot resolves the entry.
+    assert sections["chat_defaults"] == {
+        "streaming": False,
+        "provider": "custom-ep:gpu",
+        "model": "qwen3.8-27b",
+    }
+    # The registry entry owns the endpoint and model list (ADR-146), so
+    # Save-as-default must not write a stray api_settings table keyed by a
+    # custom-ep id.
+    assert not [key for key in sections if key.startswith("api_settings.")]
 
 
 @pytest.mark.asyncio
