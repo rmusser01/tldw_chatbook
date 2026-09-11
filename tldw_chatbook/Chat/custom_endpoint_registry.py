@@ -69,6 +69,11 @@ class CustomEndpointEntry:
 def split_custom_endpoint_id(provider: str | None) -> str | None:
     """Return the slug when ``provider`` is ``custom-ep:<slug>``, else None.
 
+    Accepts the canonicalized spelling ``custom_ep:<slug>`` as well:
+    ``provider_config_key`` (the readiness id canonicalizer) rewrites dashes
+    to underscores, so an id round-tripped through it reaches the registry in
+    that form (ADR-146; the defaults-mutation path is the first such caller).
+
     Args:
         provider: Candidate provider id (may be None or any string).
 
@@ -76,12 +81,13 @@ def split_custom_endpoint_id(provider: str | None) -> str | None:
         The slug after the prefix, or None when ``provider`` is not a
         registry id (including the bare prefix with an empty slug).
     """
-    if not isinstance(provider, str) or not provider.startswith(
-        CUSTOM_ENDPOINT_ID_PREFIX
-    ):
+    if not isinstance(provider, str):
         return None
-    slug = provider[len(CUSTOM_ENDPOINT_ID_PREFIX) :]
-    return slug or None
+    for prefix in (CUSTOM_ENDPOINT_ID_PREFIX, CUSTOM_ENDPOINT_ID_PREFIX.replace("-", "_")):
+        if provider.startswith(prefix):
+            slug = provider[len(prefix) :]
+            return slug or None
+    return None
 
 
 def load_custom_endpoints(

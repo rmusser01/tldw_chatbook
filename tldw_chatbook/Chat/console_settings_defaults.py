@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 import hashlib
 from ipaddress import ip_address, ip_network
@@ -1156,6 +1156,25 @@ def _build_locked_default_mutation(
 ) -> config_module.LiteralSettingsMutation:
     """Build one exact mutation from locked authoritative raw/effective views."""
 
+    # ADR-146 (registry seam): a registry-entry provider (``custom-ep:<slug>``
+    # id, canonicalized to ``custom_ep:<slug>`` by ``provider_config_key``)
+    # persists NOTHING under ``api_settings`` -- the entry itself is the
+    # endpoint and model carrier under ``[custom_endpoints.<slug>]``, and an
+    # api_settings table keyed by a custom-ep id would be stray and
+    # unresolvable. The provider id itself still lands in ``chat_defaults``
+    # (that write is what makes "Save as default" boot into the entry).
+    from tldw_chatbook.Chat.custom_endpoint_registry import (
+        CUSTOM_ENDPOINT_ID_PREFIX,
+    )
+
+    registry_entry_provider = canonical_provider.startswith(
+        CUSTOM_ENDPOINT_ID_PREFIX.replace("-", "_")
+    )
+    if registry_entry_provider:
+        intent = replace(
+            intent,
+            endpoint_patch=None,
+        )
     raw_section_name = _raw_provider_section_name(
         snapshot.raw_values,
         canonical_provider,
@@ -1212,12 +1231,11 @@ def _build_locked_default_mutation(
         "model_defaults",
         literal_model,
     )
-    section_values: dict[tuple[str, ...], Mapping[str, object]] = {
-        profile_path: profile_values
-    }
-    delete_keys: dict[tuple[str, ...], tuple[str, ...]] = {
-        profile_path: tuple(profile_deletes)
-    }
+    section_values: dict[tuple[str, ...], Mapping[str, object]] = {}
+    delete_keys: dict[tuple[str, ...], tuple[str, ...]] = {}
+    if not registry_entry_provider:
+        section_values[profile_path] = profile_values
+        delete_keys[profile_path] = tuple(profile_deletes)
     if intent.action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT:
         section_values[("chat_defaults",)] = {
             "provider": canonical_provider,
