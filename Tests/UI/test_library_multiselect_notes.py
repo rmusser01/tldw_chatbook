@@ -377,3 +377,43 @@ async def test_notes_export_label_holds_its_column_across_the_first_selection():
         assert not export.disabled
         after = _painted_word_column(app, export, "Export")
         assert after == before, (before, after)
+
+
+# ---------------------------------------------------------------------------
+# task-32272: the Notes canvas paints the selection count TWICE (the toolbar
+# counter and the status line under it). Compose reads one field for both, but
+# the in-place toggle patcher only ever updated the toolbar one, so a single
+# row press left the pane reading "1 selected" above "0 selected".
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_both_notes_selection_counts_move_together_on_one_toggle():
+    """Every visible count reads the same number after one row toggle."""
+    app = _NotesCanvasApp(selected_count=0)
+    app._notes_state = SimpleNamespace(row_selection=RowSelection("notes"))
+
+    async with app.run_test() as pilot:
+        def counts() -> list[str]:
+            return [
+                str(app.query_one(selector).renderable).strip()
+                for selector in (
+                    "#library-notes-selected-count",
+                    "#library-notes-selection-status",
+                )
+            ]
+
+        assert counts() == ["0 selected", "0 selected"]
+
+        row = app.query(".library-notes-row").first(Button)
+        app._notes_state.row_selection.toggle("n1")
+        _apply_library_row_toggle(app, "notes", row, "n1")
+        await pilot.pause()
+
+        assert counts() == ["1 selected", "1 selected"]
+
+        app._notes_state.row_selection.toggle("n1")
+        _apply_library_row_toggle(app, "notes", row, "n1")
+        await pilot.pause()
+
+        assert counts() == ["0 selected", "0 selected"]

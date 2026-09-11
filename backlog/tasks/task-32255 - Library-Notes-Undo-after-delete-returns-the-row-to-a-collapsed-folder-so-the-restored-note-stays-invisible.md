@@ -1,11 +1,13 @@
 ---
 id: TASK-32255
 title: >-
-  Library Notes Undo after delete returns the row to a collapsed folder, so
-  the restored note stays invisible
-status: To Do
-assignee: []
+  Library Notes Undo after delete returns the row to a collapsed folder, so the
+  restored note stays invisible
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-10 18:05'
+updated_date: '2026-09-11 15:10'
 labels:
   - library
   - notes
@@ -31,3 +33,12 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 - [ ] #2 Selection lands on the restored row
 - [ ] #3 Covered by a test whose starting state has the target folder collapsed
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce headlessly: rerun the 32124 undo test with the target folder COLLAPSED at start.
+2. Trace why the locator's tree_expanded_ids update does not reach the render.
+3. RED test: undo restores into a collapsed folder -> row visible in projection + selected.
+4. Fix at the seam every restore routes through; verify live (delete -> Undo on a folder row).
+<!-- SECTION:PLAN:END -->

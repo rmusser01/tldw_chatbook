@@ -267,7 +267,17 @@ def _apply_library_row_toggle(
             matching_button.label = f"{glyph}{label_rest}"
             if kind == "media":
                 matching_button._library_media_checked = checked
-        count_static.update(f"{selection.count} selected")
+        # task-32272: Notes paints this count TWICE -- the toolbar counter
+        # and the status line under it -- and compose reads one field for
+        # both. Patching only the toolbar one left the pane reading
+        # "1 selected" above "0 selected" (reproduced live at 235x52,
+        # caps/12-select-counters-before.txt). One label string, written to
+        # every count this kind renders; the `query` is empty for the kinds
+        # that have only the toolbar counter.
+        count_label = f"{selection.count} selected"
+        count_static.update(count_label)
+        for status_static in screen.query(f"#library-{kind}-selection-status"):
+            status_static.update(count_label)
         export_button.disabled = selection.count == 0
         # F-018: the reason/action tooltip flips in place with `disabled`
         # (this patcher deliberately avoids a recompose, so the compose-

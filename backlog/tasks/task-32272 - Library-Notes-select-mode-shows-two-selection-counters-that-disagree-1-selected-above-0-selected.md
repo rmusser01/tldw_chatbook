@@ -3,9 +3,11 @@ id: TASK-32272
 title: >-
   Library Notes select mode shows two selection counters that disagree: 1
   selected above 0 selected
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-10 18:05'
+updated_date: '2026-09-11 15:19'
 labels:
   - library
   - notes
@@ -33,3 +35,12 @@ Evidence: Library ▸ Notes critique snapshot `.impeccable/critique/2026-09-10T1
 - [ ] #2 There is one source of truth for the count, pinned by a test that toggles a single row and asserts both labels
 - [ ] #3 Verified live at 235x52 with a capture
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce live at 235x52: enter select mode, toggle one row, read both counts.
+2. Trace: compose reads list_state.selected_count for both, the in-place toggle patcher updates only the toolbar one.
+3. RED test in test_library_multiselect_notes.py toggling one row and asserting both labels.
+4. Fix _apply_library_row_toggle to write one label string to every count the kind renders.
+<!-- SECTION:PLAN:END -->
