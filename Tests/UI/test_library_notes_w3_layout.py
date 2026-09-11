@@ -165,6 +165,35 @@ def test_an_obsidian_callout_keeps_its_words_and_drops_its_marker():
     assert render_obsidian_callouts("# Plain\n\n> quoted\n") == "# Plain\n\n> quoted\n"
 
 
+def test_a_fenced_example_of_callout_syntax_is_left_alone():
+    """Review F8: a note that DOCUMENTS callouts kept its example verbatim."""
+    from tldw_chatbook.Utils.markdown_parsing import render_obsidian_callouts
+
+    source = (
+        "Write one like this:\n\n"
+        "```markdown\n"
+        "> [!note] Example\n"
+        "```\n\n"
+        "> [!note] A real one\n"
+    )
+    rendered = render_obsidian_callouts(source)
+
+    assert "```markdown\n> [!note] Example\n```" in rendered
+    assert "> **Note: A real one**" in rendered
+    # A tilde fence, and a fence that is itself inside a blockquote.
+    assert "[!tip]" in render_obsidian_callouts("~~~\n> [!tip] x\n~~~\n")
+    assert "[!tip]" in render_obsidian_callouts("> ```\n> > [!tip] x\n> ```\n")
+
+
+def test_a_nested_callout_and_an_acronym_type_survive_the_rewrite():
+    """Review F8: `> > [!note]` matched one `>`, and `[!TODO]` became `Todo`."""
+    from tldw_chatbook.Utils.markdown_parsing import render_obsidian_callouts
+
+    assert render_obsidian_callouts("> > [!tip] Nested\n") == "> > **Tip: Nested**\n"
+    assert render_obsidian_callouts("> [!TODO] Ship it\n") == "> **TODO: Ship it**\n"
+    assert render_obsidian_callouts("> [!todo]\n") == "> **Todo**\n"
+
+
 @pytest.mark.asyncio
 async def test_the_preview_body_renders_the_callout_not_its_marker():
     """The rewrite reaches the mounted Markdown, on compose and on sync."""
@@ -246,38 +275,75 @@ def test_the_notes_guide_does_not_promise_a_cue_the_wide_route_cannot_paint():
 # -- task-32259: a primary action stands with its content -----------------
 
 
+#: The two select-phase screens and the EXACT rows between the selection
+#: summary and the primary action on each. Both are pinned to a measured
+#: number rather than a bound (review finding F5): a bound whose ceiling is
+#: the measured value has no headroom by accident, and the whole point of
+#: this pin is that a control added to `_compose_selection` must be a
+#: deliberate change, not a silent drift back toward the pane floor.
+#:
+#: `selected` composes, in order: "Add another file", "Change selection",
+#: "Clear", the "Notes destination" label, its Input (3 rows of field
+#: chrome) and its (empty, 0-row) error line -- 8 rows, then the action.
+#: `empty` composes only "Choose a file or folder" -- 1 row.
+_IMPORT_SELECT_SCREENS = (
+    pytest.param(True, 8, id="two-files-selected"),
+    pytest.param(False, 1, id="nothing-selected"),
+)
+
+
+@pytest.mark.parametrize("selected,expected_rows", _IMPORT_SELECT_SCREENS)
+@pytest.mark.parametrize("size", [WIDE, COMPACT, (60, 24)])
 @pytest.mark.asyncio
-async def test_the_import_check_action_stands_with_the_selection_it_acts_on():
+async def test_the_import_check_action_stands_with_the_selection_it_acts_on(
+    selected: bool, expected_rows: int, size
+):
     """task-32259 AC#1/AC#4: measured rows between summary and action.
 
-    Live at 235x52 the selection summary sat at rows 7-11 and "Check
-    selection" at row 49 -- the action was floated under a `1fr` scroll
-    body that had nothing else in it.
+    Live at 235x52 with two files chosen, the selection summary sat at rows
+    7-11 and "Check selection" at row 49 -- the action was floated under a
+    `1fr` scroll body that had nothing else in it. The empty-selection
+    screen (the state `wave3-caps/layout/17-import-nosel.txt` captures) is
+    pinned beside it so a regression cannot hide in whichever one the
+    capture did not show.
     """
     from dataclasses import replace
 
-    from Tests.UI.test_library_notes_wave_import_ux import _ImportHost, _import_snapshot
+    from Tests.UI.test_library_notes_wave_import_ux import (
+        _import_snapshot,
+        _ImportHost,
+    )
 
     snapshot = _import_snapshot(
-        selected_names=("vault/Archive/note-1.md", "vault/Archive/note-2.md"),
-        selection_kind="files",
-        destination="Imported",
-        can_check=True,
-        check_disabled_reason="",
+        selected_names=(
+            ("vault/Archive/note-1.md", "vault/Archive/note-2.md")
+            if selected
+            else ()
+        ),
+        selection_kind="files" if selected else "",
+        destination="Imported" if selected else "",
+        can_check=selected,
+        check_disabled_reason="" if selected else "Choose a source first.",
     )
     app = _ImportHost(replace(snapshot))
 
-    async with app.run_test(size=WIDE) as pilot:
+    async with app.run_test(size=size) as pilot:
         await pilot.pause()
         summary = app.query_one("#note-import-source-summary")
         check = app.query_one("#note-import-check", Button)
+        body = app.query_one("#note-import-body")
 
         distance = check.region.y - summary.region.bottom
-        assert 0 <= distance <= 8, (
+        assert distance == expected_rows, (
             f"'Check selection' is painted {distance} rows below the selection "
-            f"summary it acts on (summary {summary.region!r}, action "
-            f"{check.region!r} in a {app.size.height}-row terminal)."
+            f"summary it acts on, not {expected_rows} (summary "
+            f"{summary.region!r}, action {check.region!r} in a "
+            f"{app.size.height}-row terminal)."
         )
+        # The action moved INSIDE the scroll body; the pane floor is what it
+        # was floated above before.
+        assert body in check.ancestors
+        assert check.region.bottom <= body.region.bottom
 
 
 def test_a_full_canvas_notes_task_owns_the_pane_width():

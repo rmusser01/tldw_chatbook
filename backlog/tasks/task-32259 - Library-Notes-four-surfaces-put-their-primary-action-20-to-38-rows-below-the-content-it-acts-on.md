@@ -62,7 +62,8 @@ Three of the four surfaces the description names; the fourth split by ownership 
 
 Not done here, by the wave controller's ruling and the task-file scoping above: the Session Git panel's 22-row gap (task-32248, Task 5) and the review pane's elision (task-32250).
 
-Live at 235x52: `wave3-caps/layout/14-addfiles.txt` (the chooser owns the pane, notes list collapsed to its grip) and `17-import-nosel.txt` (summary row 8, action row 10).
+Live at 235x52: `wave3-caps/layout/14-addfiles.txt` (the chooser owns the pane, notes list collapsed to its grip) and `17-import-nosel.txt` (the EMPTY-selection screen: summary row 8, action row 10). Pinned as exact row distances rather than a bound (review finding F5): 8 rows with two files chosen -- the three source buttons plus the destination label, field and error line -- and 1 row with nothing chosen, at 235x52, 100x30 and 60x24. On dev the same measurements are 48, 26 and 19-20 rows.
 
 Modified: `tldw_chatbook/Widgets/Library/library_note_import_canvas.py`, `tldw_chatbook/UI/Library_Modules/screen_constants.py`, `tldw_chatbook/UI/Library_Modules/library_notes_controller.py`, `Tests/UI/test_library_notes_w3_layout.py`, `Docs/User_Guide/library/notes.md`.
+AC ORDERING (review finding F4): the AC revision above was written and saved BEFORE the code it describes -- the task files' `updated_date: '2026-09-11 15:42'` UTC precedes the first code commit (`08:44:44 -0700` = `15:44:44` UTC) by two minutes. The commit graph cannot show it, because the six task files were staged together in one hygiene commit at the end; recorded here so the ordering is a fact in the file rather than a claim in a report.
 <!-- SECTION:NOTES:END -->

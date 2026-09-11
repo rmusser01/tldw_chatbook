@@ -13,13 +13,16 @@ from typing import Callable, Optional
 
 from tldw_chatbook.Utils.optional_deps import check_dependency
 
-#: One Obsidian callout header: ``> [!note] Title``, ``> [!warning]-`` etc.
-#: Only the header line carries the marker; the body lines under it are
-#: ordinary blockquote text and need no rewrite.
+#: One Obsidian callout header: ``> [!note] Title``, ``> [!warning]-``, and
+#: nested ``> > [!tip]``. Only the header line carries the marker; the body
+#: lines under it are ordinary blockquote text and need no rewrite.
 _CALLOUT_HEADER_RE = re.compile(
-    r"^(?P<quote>[ \t]*>[ \t]*)\[!(?P<kind>[A-Za-z][\w-]*)\][+-]?(?P<title>.*)$",
-    re.MULTILINE,
+    r"^(?P<quote>[ \t]*(?:>[ \t]*)+)\[!(?P<kind>[A-Za-z][\w-]*)\][+-]?(?P<title>.*)$"
 )
+
+#: A fenced-code delimiter, with the blockquote markers a fence inside a quote
+#: carries. Only the RUN matters, not its info string.
+_FENCE_RE = re.compile(r"^[ \t]*(?:>[ \t]*)*(?P<fence>```+|~~~+)")
 
 
 def render_obsidian_callouts(text: str) -> str:
@@ -32,21 +35,49 @@ def render_obsidian_callouts(text: str) -> str:
     bar (the callout's box), keeps the type word and the author's title,
     and drops the marker that only Obsidian can read.
 
+    Scanned line by line rather than with one ``re.MULTILINE`` pass (review
+    of the wave-3 layout branch, F8): a note that DOCUMENTS callout syntax
+    inside a fenced block had its own example rewritten in Preview.
+
+    ponytail: fence tracking is a run-length toggle, not a CommonMark
+    parser -- it does not model indented code blocks or a fence opened
+    inside one blockquote and closed in another. Both render wrong in
+    Textual's Markdown anyway; reach for a real parser only if a note ever
+    needs one.
+
     Args:
         text: The note's raw Markdown source.
 
     Returns:
-        The same source with every callout header line rewritten. Text
-        with no callout in it is returned unchanged.
+        The same source with every callout header line outside a fenced
+        block rewritten. Text with no callout in it is returned unchanged.
     """
 
     def _header(match: re.Match[str]) -> str:
-        kind = match.group("kind").replace("-", " ").strip().capitalize()
+        kind = match.group("kind").replace("-", " ").strip()
+        # ``.capitalize()`` lowercases the rest of the word, which turned an
+        # acronym type like ``[!TODO]`` into "Todo". A type the author wrote
+        # in caps is kept as written.
+        if not kind.isupper():
+            kind = kind.capitalize()
         title = match.group("title").strip()
         label = f"{kind}: {title}" if title else kind
         return f"{match.group('quote')}**{label}**"
 
-    return _CALLOUT_HEADER_RE.sub(_header, text)
+    lines = text.split("\n")
+    open_fence: str | None = None
+    for index, line in enumerate(lines):
+        fence = _FENCE_RE.match(line)
+        if fence is not None:
+            marker = fence.group("fence")
+            if open_fence is None:
+                open_fence = marker[0] * len(marker)
+            elif marker[0] == open_fence[0] and len(marker) >= len(open_fence):
+                open_fence = None
+            continue
+        if open_fence is None:
+            lines[index] = _CALLOUT_HEADER_RE.sub(_header, line)
+    return "\n".join(lines)
 
 
 def front_matter_parser_factory() -> Optional[Callable]:

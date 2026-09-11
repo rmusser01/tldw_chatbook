@@ -292,6 +292,7 @@ def resolve_adaptive_reader_layout(
 
     if (
         priority == "items"
+        and preferences.items_open
         and not reader_has_item
         and profile.list_first_when_empty
         and width < LIBRARY_EMERGENCY_WIDTH
@@ -305,6 +306,22 @@ def resolve_adaptive_reader_layout(
         # rule own the case for every caller that asks for the list first
         # (Notes' list view asks unconditionally); with something open,
         # ``reader_has_item`` is True and nothing changes.
+        #
+        # ``preferences.items_open`` is load-bearing, not a restatement
+        # (review of this branch, F3): the priority is the ONLY thing that
+        # can force a CLOSED items pane open, and task-32065's rescue
+        # branch below requires the preference. Without this clause a
+        # reopen request at 48-63 columns was discarded and the pane stayed
+        # shut -- latent today only because every production caller flips
+        # the preference before resolving.
+        #
+        # This reaches BOTH profiles that set the flag, Notes and Media
+        # (review F2). It is claimed for Media deliberately: Media Trash
+        # resolves with ``priority="items"`` and no item open
+        # (``library_screen.py``'s trash leg), which produced exactly the
+        # 32/18 shape at 60 columns that task-32065 wrote the rule to kill.
+        # Pinned for both profiles in
+        # ``Tests/Library/test_library_adaptive_reader_state.py``.
         priority = None
 
     grip_width = 2 * profile.grip_width

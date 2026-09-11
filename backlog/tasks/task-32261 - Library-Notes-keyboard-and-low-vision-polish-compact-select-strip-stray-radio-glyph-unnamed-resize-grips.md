@@ -68,4 +68,5 @@ AC#4 was already delivered by task-32355 (`LibraryAdaptiveReaderPaneGrip` sets `
 Live at 100x30: `wave3-caps/layout/22-compact-select-strip.txt`.
 
 Modified: `tldw_chatbook/Widgets/Library/library_notes_canvas.py`, `Tests/UI/test_library_notes_w3_layout.py`, `Docs/User_Guide/library/notes.md`.
+AC ORDERING (review finding F4): the AC revision above was written and saved BEFORE the code it describes -- the task files' `updated_date: '2026-09-11 15:42'` UTC precedes the first code commit (`08:44:44 -0700` = `15:44:44` UTC) by two minutes. The commit graph cannot show it, because the six task files were staged together in one hygiene commit at the end; recorded here so the ordering is a fact in the file rather than a claim in a report.
 <!-- SECTION:NOTES:END -->
