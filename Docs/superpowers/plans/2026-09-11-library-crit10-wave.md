@@ -1669,3 +1669,63 @@ Landing order for the controller: Task 1 before Task 5 (Task 5's Find-reason tes
 **File ownership.** No `.py` file is edited by two branches except `library_screen.py` and `library_media_viewer.py`, both split into disjoint, named ranges (see the ownership table and the `library_media_viewer.py` note in the wave constraints). `_agentic_terminal.tcss` is split between Tasks 2 and 6 only. `Docs/User_Guide/` pages are shared by stamp-append, per the wave rule.
 
 **Pins named and dispositioned.** `test_media_secondary_fallback_when_no_type_no_age` (32347 — read it: it pins the no-TYPE fallback, not the age format; the real pins are `test_library_media_state.py:305/306/529/534`, updated); `test_skills_canvas_renders_exact_pager_and_source_wide_trust_count` (32354 — split in two, reversal named and justified); the entry-focus/footer pins in `Tests/UI/test_library_crit8_keyboard.py` and `test_library_crit9_shell.py` (32346 — run before and after, failing-name sets compared); task-31223's printable-key suppression and task-31272's dead-key rule (32346 — **kept**, and the plan's fix is explicitly designed not to reverse them); task-32133 AC#2 (32358 — refined, intent preserved); task-31980's danger-action margin and task-31981's inline-reason shape (32362 — reused, not changed); TASK-716's pressable-with-reason rail grammar (32107 — kept, with the reason stated in the decision text).
+
+---
+
+## Landing record
+
+Eight branches, cut from `origin/dev` and landed in the order below. Ids are the
+backlog tasks each PR closed.
+
+| Task | Group | PR | Backlog ids |
+|---|---|---|---|
+| Task 3 | `onboarding-import` | #2598 | 32349, 32351 |
+| Task 4 | `pagers` | #2599 | 32352, 32354, 32363, 32057 |
+| Task 1 | `viewer` | #2602 | 32346, 32348, 32365 |
+| Task 6 | `layout` | #2603 | 32355, 32359, 32360, 32361, 32107 |
+| Task 5 | `export` | #2601 | 32353, 32362 |
+| Task 2 | `media-rows` | #2604 | 32347, 32350, 32364 |
+| Task 7 | `notes-details` | #2605 | 32356, 32357, 32358 |
+| Task 8 | `docs` | this branch | 32366 |
+
+Close-out bookkeeping on the `docs` branch: **task-32360** set Done (AC#2 landed
+with #2605); **task-32217** AC#2 ticked and the task set Done, both of its halves
+being on dev (`#library-note-body` fills its pane, and the Analysis tab overrides
+task-31237's unconditional `1fr` so its action row is not pinned to the pane
+floor).
+
+### Riders filed
+
+Carried out of the seven implementation branches and filed at the close, ids
+swept across every ref and worktree first (the backlog CLI offered 32367, which
+is held on an unmerged branch):
+
+| Id | Rider | From |
+|---|---|---|
+| 32380 | the Canvas Mermaid asset check downloads unicode.org inputs at check time | wave-wide CI flake |
+| 32381 | the Export media-quality knob is inert end to end | Task 5 |
+| 32382 | `format_export_bytes` is KB-only | Task 5 |
+| 32383 | a Trash filtered to zero says it is empty | Task 4 |
+| 32384 | Find on the Read tab marks nothing on a rendered Markdown item | Task 1 |
+| 32385 | Settings still ships the retired "Folder Files" name | Tasks 3 / 7 |
+| 32386 | `test_closeout_single_app_route_cycle` is red on dev | Tasks 6 / 7 |
+| 32387 | two declined review follow-ups from #2598 | Task 3 |
+| 32388 | a workspace hop leaves an Undo receipt naming the previous workspace | Task 6 |
+| 32389 | below 64 columns the notes reader keeps an empty work pane | Task 7 |
+| 32390 | the `#library-notes-template-section` rule is dead after task-32356 | Task 7 |
+| 32391 | Ctrl+N paints a transitional Create frame | Task 7 |
+| 32392 | stored analyses render through an unsanitized Markdown sink | Task 1 |
+| 32393 | Escape on a dirty prompt editor does nothing at all | Task 8 |
+
+Not filed, and deliberately: the Prompts-lane vocabulary and stored "New Chat"
+title riders were already filed by Task 2 as **32378** and **32379**; the three
+items in the riders list marked "open decisions for the USER" (32303 glyph legend,
+32306 Handoff row wrap, 32302 Conversations entry focus after an archive-scope hop)
+are decisions, not defects, and stay with the user.
+
+### Snapshot
+
+Critique #10:
+`.impeccable/critique/2026-09-11T06-13-11Z__tldw-chatbook-ui-screens-library-screen-py.md`
+(dual-agent live review at dev `1f3184655b`). Task 8's own reconciliation captures
+are under the session scratchpad at `crit10/wave/docs/caps/task8/`.
