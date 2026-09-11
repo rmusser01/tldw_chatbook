@@ -338,7 +338,7 @@
     },
     {
       "call_count": 65,
-      "diagnostic_digest": "123cdc7e2edfcff65576",
+      "diagnostic_digest": "bdd1f6ef2b1363b64ae2",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_chat_controller.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"

@@ -16796,8 +16796,8 @@ class ConsoleChatController:
             )
         except (asyncio.TimeoutError, TimeoutError):
             logger.warning(
-                "Console personal context bootstrap exceeded its budget; "
-                "sending without profile tools",
+                "Console personal context bootstrap exceeded its "
+                "{budget_seconds}s budget; sending without profile tools",
                 budget_seconds=CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS,
             )
             return None

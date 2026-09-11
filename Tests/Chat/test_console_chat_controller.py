@@ -11194,6 +11194,49 @@ def test_personal_context_bootstrap_cannot_hold_the_send_open(monkeypatch):
     assert elapsed < 1.0, elapsed
 
 
+def test_expired_budget_warning_names_the_budget_value(monkeypatch):
+    """The budget-exceeded WARNING must render the actual number.
+
+    loguru only substitutes kwargs that appear as ``{placeholders}`` in the
+    message string itself; ``_forward_loguru_to_standard`` forwards only
+    ``record["message"]``, never ``record["extra"]``. A message that carries
+    ``budget_seconds=...`` as a bare kwarg (with no ``{budget_seconds}`` in
+    the template) ships with no number in it at all.
+    """
+    from loguru import logger as loguru_logger
+
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    released = threading.Event()
+
+    def never_returns():
+        released.wait(30)
+        return object()
+
+    controller.app = SimpleNamespace(get_personal_context_service=never_returns)
+    monkeypatch.setattr(
+        controller_module, "CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS", 0.05
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT",
+        threading.Event(),
+    )
+    messages = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    loop = asyncio.new_event_loop()
+    try:
+        resolved = loop.run_until_complete(controller._personal_context_service())
+    finally:
+        loguru_logger.remove(sink_id)
+        released.set()
+        loop.close()
+    assert resolved is None
+    rendered = [str(m) for m in messages if "personal context bootstrap" in str(m)]
+    assert rendered, "expected a budget-exceeded WARNING"
+    assert "0.05" in rendered[0], rendered[0]
+
+
 def test_a_wedged_bootstrap_does_not_park_a_second_worker(monkeypatch):
     """The second send must not queue another thread behind the first.
 

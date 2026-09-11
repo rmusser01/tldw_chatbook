@@ -57,12 +57,13 @@ finish or interrupt it." Runs continue when you switch screens — see
 
 **In the reply row itself** — while the turn works, the unfinished
 `Assistant` row shows a live activity line in place of its (empty) text, so
-a long tool call never looks frozen: `Connecting tools… · 4s` is the
-pre-provider setup the first send after a launch pays once (assembling the
-turn's tools and your profile), `⚙ read_file · 4s` names the tool that
-is running and how long it has been running, `Thinking… · 6s` means the
-tool finished and the model is composing the next round, and `Generating…`
-is the wait for the model's first response of the turn. That setup step is
+a long tool call never looks frozen. `Connecting tools… · 4s` marks the
+pre-provider setup step. The first send after a launch pays for it once,
+assembling the turn's tools and your profile. `⚙ read_file · 4s` names the
+tool that is running and how long it has been running, `Thinking… · 6s`
+means the tool finished and the model is composing the next round, and
+`Generating…` is the wait for the model's first response of the turn. That
+setup step is
 capped at ten seconds: if something it needs — an OS keychain prompt, for
 instance — does not answer in time, the send goes ahead without profile
 tools rather than waiting. The elapsed figure
