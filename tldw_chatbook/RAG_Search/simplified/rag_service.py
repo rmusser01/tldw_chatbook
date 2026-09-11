@@ -3021,6 +3021,9 @@ class RAGService:
         await asyncio.to_thread(
             self.vector_store.add, ids, embeddings, documents, metadata
         )
+        from ..recovery import record_stored_chunks
+
+        await record_stored_chunks(self, ids, embeddings, documents, metadata)
 
     # === Management Methods ===
 

@@ -820,6 +820,58 @@ class ChromaVectorStore:
             logger.error(f"Failed to list collections: {e}")
             return []
 
+    @store_operation
+    def recovery_snapshot(self, *, written=None):
+        """Observe an existing qualified collection without creating or embedding."""
+        import chromadb
+        from chromadb.api.rust import RustBindingsAPI
+
+        from ..recovery import _LIMIT, _rows, _written_rows
+
+        if chromadb.__version__ != "1.5.8" or not (
+            self.persist_directory / "chroma.sqlite3"
+        ).is_file():
+            raise ValueError("projection_native_format_unavailable")
+        client = self.client
+        if type(client._server) is not RustBindingsAPI:
+            raise ValueError("projection_native_format_unavailable")
+        collection = client.get_collection(
+            self.collection_name, embedding_function=None, data_loader=None
+        )
+        metric = collection._model.configuration_json.get("hnsw", {}).get("space")
+        count = collection.count()
+        if count > _LIMIT:
+            raise ValueError("projection_record_limit")
+        rows = {}
+        expected_count = count if written is None else len(written[0])
+        if expected_count > _LIMIT:
+            raise ValueError("projection_record_limit")
+        for offset in range(0, expected_count, 128):
+            if written is None:
+                batch = collection.get(
+                    limit=128, offset=offset,
+                    include=["documents", "metadatas", "embeddings"],
+                )
+                observed = _rows(
+                    batch["ids"], batch["documents"], batch["metadatas"], batch["embeddings"]
+                )
+            else:
+                part = tuple(values[offset:offset + 128] for values in written)
+                batch = collection.get(
+                    ids=part[0], include=["documents", "metadatas", "embeddings"]
+                )
+                observed = _written_rows(batch, *part, metric)
+            if set(rows) & set(observed):
+                raise ValueError("projection_membership_changed")
+            rows.update(observed)
+        if len(rows) != expected_count or collection.count() != count:
+            raise ValueError("projection_membership_changed")
+        info = self.persist_directory.stat()
+        return {
+            "root": (str(self.persist_directory), info.st_dev, info.st_ino),
+            "collection": str(collection.id), "rows": rows, "metric": metric,
+        }
+
     def close(self) -> None:
         """Close the native borrower, retaining failed retirement for maintenance."""
         with self._projection_lock:

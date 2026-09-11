@@ -1540,7 +1540,7 @@ def _iter_note_entries(chachanotes_db: Any, page_size: int) -> Iterator[IndexEnt
 def _iter_conversation_entries(
     chachanotes_db: Any,
     page_size: int,
-    messages_per_conversation: int = 500,
+    messages_per_conversation: int | None = 500,
 ) -> Iterator[IndexEntry]:
     """Yield IndexEntry items for all active conversations (as transcripts), paginated."""
     offset = 0
@@ -1551,10 +1551,27 @@ def _iter_conversation_entries(
         )
         for conversation in conversations:
             try:
-                messages = chachanotes_db.get_messages_for_conversation(
-                    conversation["id"], limit=messages_per_conversation
-                )
+                if messages_per_conversation is None:
+                    messages = []
+                    while True:
+                        page = chachanotes_db.get_messages_for_conversation(
+                            conversation["id"],
+                            limit=500,
+                            offset=len(messages),
+                            include_image_data=False,
+                        )
+                        messages.extend(page)
+                        if len(messages) > 100_000:
+                            raise ValueError("projection_source_limit")
+                        if len(page) < 500:
+                            break
+                else:
+                    messages = chachanotes_db.get_messages_for_conversation(
+                        conversation["id"], limit=messages_per_conversation
+                    )
             except Exception as e:
+                if messages_per_conversation is None:
+                    raise
                 logger.warning(
                     f"Backfill: could not load messages for conversation {conversation.get('id')}: {e}"
                 )
@@ -1595,6 +1612,7 @@ async def backfill_semantic_index(
     page_size: int = 100,
     batch_size: int = 16,
     progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    reconcile_for_recovery: bool = False,
 ) -> Dict[str, Any]:
     """Bulk-index pre-existing media/notes/conversations into the vector store.
 
@@ -1614,6 +1632,8 @@ async def backfill_semantic_index(
         batch_size: Documents per indexing batch.
         progress_callback: Optional callable receiving a progress dict after
             every processed batch.
+        reconcile_for_recovery: Explicit recovery rebuild and owner verification;
+            False preserves ordinary incremental Backfill without readiness claims.
 
     Returns:
         Summary dict: {'status', 'indexed', 'skipped', 'failed', 'errors',
@@ -1644,6 +1664,18 @@ async def backfill_semantic_index(
 
     if indexing_db is None:
         indexing_db = _default_indexing_db()
+
+    if reconcile_for_recovery:
+        from .recovery import rebuild_projection
+
+        return await rebuild_projection(
+            service,
+            indexing_db,
+            media_db=media_db,
+            chachanotes_db=chachanotes_db,
+            item_types=item_types,
+            batch_size=batch_size,
+        )
 
     if ITEM_TYPE_MEDIA in item_types and media_db is not None:
         try:
