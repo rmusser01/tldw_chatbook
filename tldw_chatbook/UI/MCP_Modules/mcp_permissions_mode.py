@@ -53,7 +53,7 @@ _TOOL_ROW_INDENT = "  "
 # through `update_matrix()`.
 _LEGEND_TEXT = (
     "• override · ⚠ definition changed · ⚑ high-risk floor · "
-    "Space cycles Inherit → Allow → Ask → Off"
+    "Space cycles Inherit → Ask → Allow → Off"
 )
 
 # T8: exact copy pinned by the server-source governance section below --
