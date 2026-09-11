@@ -5,6 +5,8 @@ import pytest
 from tldw_chatbook.Library.library_pager_state import (
     LibraryPagerDisplay,
     build_library_pager_display,
+    library_pager_layout,
+    simple_library_pager_display,
 )
 
 
@@ -423,3 +425,72 @@ def test_stale_state_rejects_error_copy_even_with_meaningful_stale_copy():
             error_copy="Couldn't refresh page.",
             stale_copy="List may be out of date",
         )
+
+
+# ---------------------------------------------------------------------------
+# ``simple_library_pager_display`` (task-32354): the factory for a source
+# that pages itself and cannot satisfy ``build_library_pager_display``'s
+# row-count invariants.
+# ---------------------------------------------------------------------------
+
+
+def test_simple_display_on_one_page_is_single_page_with_both_reasons():
+    display = simple_library_pager_display(
+        range_copy="0–0 of 0",
+        page=1,
+        total_pages=1,
+        has_previous=False,
+        has_next=False,
+    )
+
+    assert display == LibraryPagerDisplay(
+        title_count=None,
+        range_copy="0–0 of 0",
+        page_copy="Page 1 of 1",
+        status_copy="",
+        previous_disabled=True,
+        next_disabled=True,
+        previous_reason="Already on the first page.",
+        next_reason="No more results.",
+        retry_visible=False,
+        single_page=True,
+    )
+    layout = library_pager_layout(display)
+    assert layout.status_parts == ("0–0 of 0",)
+    assert layout.boundary_reasons == ()
+    assert layout.controls_hidden is True
+
+
+def test_simple_display_with_a_next_page_keeps_every_part_of_the_pager():
+    display = simple_library_pager_display(
+        range_copy="1–20 of 21",
+        page=1,
+        total_pages=2,
+        has_previous=False,
+        has_next=True,
+    )
+
+    assert display.single_page is False
+    assert display.next_reason == ""
+    layout = library_pager_layout(display)
+    assert layout.status_parts == ("1–20 of 21", "Page 1 of 2")
+    assert layout.boundary_reasons == ("Already on the first page.",)
+    assert layout.controls_hidden is False
+
+
+def test_simple_display_drops_page_copy_when_the_page_count_is_unknown():
+    """A service that cannot give an exact total still gets a usable pager:
+    no "Page x of 0", and the controls stay because a next page may exist."""
+    display = simple_library_pager_display(
+        range_copy="Page 2 · total unavailable",
+        page=2,
+        total_pages=0,
+        has_previous=True,
+        has_next=True,
+    )
+
+    assert display.page_copy == ""
+    assert display.single_page is False
+    layout = library_pager_layout(display)
+    assert layout.status_parts == ("Page 2 · total unavailable",)
+    assert layout.controls_hidden is False

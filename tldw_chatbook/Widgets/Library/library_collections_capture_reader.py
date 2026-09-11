@@ -21,6 +21,7 @@ from textual.content import Content
 from textual.widgets import Button, Input, Static, TextArea
 
 from tldw_chatbook.Library.collections_capture_models import (
+    CAPTURE_PAGE_SIZE,
     CapabilityState,
     CaptureCapabilities,
     CaptureHighlight,
@@ -30,6 +31,10 @@ from tldw_chatbook.Library.collections_capture_models import (
 )
 from tldw_chatbook.Library.library_collections_service import (
     LegacyCollectionsReadOnlyError,
+)
+from tldw_chatbook.Library.library_pager_state import (
+    library_pager_layout,
+    simple_library_pager_display,
 )
 from tldw_chatbook.Library.library_shell_state import library_disabled_action_label
 from tldw_chatbook.UI.Library_Modules.library_collections_capture_controller import (
@@ -262,6 +267,18 @@ class LibraryCollectionsItemsPane(Vertical):
         """Render the reading-list surface without exposing URL queries."""
         state = self.presentation.state
         capture_enabled, capture_reason = self.presentation.capability("capture")
+        # task-32352 AC#1 / task-32057 (critique #10): the rail row says
+        # "Collections (N)" and this canvas had no heading at all, so its
+        # first painted line -- the Quick Capture button -- read as the
+        # title and the feature appeared to have two names. One name
+        # everywhere; "Quick Capture" survives only on the button below,
+        # because it is a verb (save this URL) and not a place.
+        yield Static(
+            "Collections",
+            id="library-collections-header",
+            classes="destination-section",
+            markup=False,
+        )
         with Horizontal(classes="ds-toolbar", id="library-collections-items-toolbar"):
             yield Button(
                 library_disabled_action_label("Quick Capture", not capture_enabled),
@@ -417,8 +434,26 @@ class LibraryCollectionsItemsPane(Vertical):
 
         page = state.page
         if page is None or not page.items:
+            # task-32352 AC#2 (critique #10): one sentence covered both an
+            # empty collection and a filtered-to-nothing one, so a profile
+            # that had never saved anything was told to clear filters it had
+            # never set, and pointed at an action ("Quick Capture") as if it
+            # were somewhere else on the screen.
+            scope = state.requested_scope
+            filtered = scope is not None and bool(
+                scope.search
+                or scope.tags
+                or scope.domain
+                or scope.date_from
+                or scope.date_to
+            )
+            empty_copy = (
+                "No captures match these filters · clear them to see everything saved."
+                if filtered
+                else "No saved captures yet · press Quick Capture above to save a page by URL."
+            )
             yield Static(
-                "No captures match this scope. Clear filters or save a URL with Quick Capture.",
+                empty_copy,
                 id="library-collections-items-empty",
                 classes="destination-purpose",
                 markup=False,
@@ -460,44 +495,87 @@ class LibraryCollectionsItemsPane(Vertical):
         )
         if state.exact_total is None:
             range_copy = f"Page {current_page} · total unavailable"
+            total_pages = 0
         else:
-            start = 0 if state.exact_total == 0 else (current_page - 1) * 20 + 1
-            stop = min(current_page * 20, state.exact_total)
+            start = (
+                0
+                if state.exact_total == 0
+                else (current_page - 1) * CAPTURE_PAGE_SIZE + 1
+            )
+            stop = min(current_page * CAPTURE_PAGE_SIZE, state.exact_total)
             range_copy = f"{start}–{stop} of {state.exact_total}"
-        yield Static(
-            range_copy,
-            id="library-collections-page-range",
-            markup=False,
-        )
+            total_pages = max(
+                1,
+                (state.exact_total + CAPTURE_PAGE_SIZE - 1) // CAPTURE_PAGE_SIZE,
+            )
         has_previous = state.paging_enabled and current_page > 1
         has_next = (
             state.paging_enabled
             and state.exact_total is not None
-            and current_page * 20 < state.exact_total
+            and current_page * CAPTURE_PAGE_SIZE < state.exact_total
         )
-        with Horizontal(classes="ds-toolbar", id="library-collections-page-toolbar"):
-            yield Button(
-                "Previous",
-                id="library-collections-page-previous",
-                compact=True,
-                disabled=not has_previous,
-                tooltip=(
-                    "Load the previous page."
-                    if has_previous
-                    else "No current previous page is available."
-                ),
+        # task-32352 AC#3 / task-32354 (critique #10): this pager was hand
+        # rolled -- enabled-looking Previous/Next at "0–0 of 0", and no "○"
+        # marker on a disabled one, unlike every other Library pager. It now
+        # goes through the same rule, via a display the shared builder can't
+        # produce (its row-count invariants assume a source that owns its
+        # paging end to end; this one's service can return a short page).
+        #
+        # ``bounded`` is the rule's precondition: neither direction moving
+        # because this IS the only page is the case the rule suppresses;
+        # neither direction moving because paging is PAUSED (a stale or
+        # loading page, totals withheld) is not -- the controls stay, still
+        # disabled, with the reason the old pager gave.
+        bounded = state.paging_enabled and state.exact_total is not None
+        pager = simple_library_pager_display(
+            range_copy=range_copy,
+            page=current_page,
+            total_pages=total_pages,
+            has_previous=has_previous,
+            has_next=has_next,
+        )
+        layout = library_pager_layout(pager)
+        controls_hidden = bounded and layout.controls_hidden
+        yield Static(
+            " · ".join(layout.status_parts),
+            id="library-collections-page-range",
+            markup=False,
+        )
+        if layout.boundary_reasons:
+            yield Static(
+                " · ".join(layout.boundary_reasons),
+                id="library-collections-page-reason",
+                classes="destination-purpose",
+                markup=False,
             )
-            yield Button(
-                "Next",
-                id="library-collections-page-next",
-                compact=True,
-                disabled=not has_next,
-                tooltip=(
-                    "Load the next page."
-                    if has_next
-                    else "No current next page is available."
-                ),
+        if not controls_hidden:
+            previous_reason = (
+                pager.previous_reason
+                if bounded
+                else "No current previous page is available."
             )
+            next_reason = (
+                pager.next_reason
+                if bounded
+                else "No current next page is available."
+            )
+            with Horizontal(
+                classes="ds-toolbar", id="library-collections-page-toolbar"
+            ):
+                yield Button(
+                    library_disabled_action_label("Previous", not has_previous),
+                    id="library-collections-page-previous",
+                    compact=True,
+                    disabled=not has_previous,
+                    tooltip=previous_reason or "Load the previous page.",
+                )
+                yield Button(
+                    library_disabled_action_label("Next", not has_next),
+                    id="library-collections-page-next",
+                    compact=True,
+                    disabled=not has_next,
+                    tooltip=next_reason or "Load the next page.",
+                )
 
 
 def _action_button(
