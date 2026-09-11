@@ -7854,6 +7854,13 @@ class LibraryScreen(BaseAppScreen):
         re-derived here. One no-landing case is still knowingly left
         inside "owns": a pending Find focus whose input never mounts --
         narrow, and it ends at ``None`` rather than at a wrong widget.
+
+        task-32213: that empty page now keeps its toolbar, so the shared
+        helper always finds a target for Media and the ``is None`` leg
+        below no longer fires for a filter miss. It is kept because the
+        helper still answers ``None`` for the states that compose no
+        enabled control at all (an open type/sort chooser replaces the
+        toolbar row), and because both readers must keep agreeing.
         """
         if self._media_state.find_focus_pending:
             return True
@@ -9795,25 +9802,42 @@ class LibraryScreen(BaseAppScreen):
     def _library_media_empty_list_fallback_target(self) -> Widget | None:
         """The control an EMPTY Media list can hand keyboard focus to.
 
-        The first of Media's four recovery controls that is both present
-        and enabled, or ``None`` when the page offers none. One owner for
-        both readers: ``_focus_library_list_entry`` lands on it, and
+        The first of the candidates below that is both present and
+        enabled, or ``None`` when the page offers none. One owner for both
+        readers: ``_focus_library_list_entry`` lands on it, and
         ``_library_focus_channel_owns_this_window`` asks whether there is
-        anything to land on at all -- a filter MISS composes none of these
-        four (the canvas returns right after its query-echoing status
-        line), so the answer has to be the same in both places or the seam
-        stands down for a channel that never arrives. The miss page's own
-        ``#library-media-filter-clear`` is deliberately NOT a fifth entry:
-        with nothing here the shared seam restores the filter ``Input``
-        (the right place to retype), and listing Clear would put the
-        predicate back into "owns" and re-open the gap.
+        anything to land on at all, so the answer has to be the same in
+        both places or the seam stands down for a channel that never
+        arrives (Qodo #2483).
+
+        task-32213 changed the shape of this question. The empty page used
+        to compose NONE of the four recovery controls on a filter MISS --
+        the canvas returned right after its query-echoing status line --
+        and the whole point of the shared owner was to say "nothing to
+        land on" there. The toolbar now survives that page, so
+        ``#library-media-type-filter`` is always present and enabled on it
+        (``fresh_zero`` excludes ``mutation_action_reason``, so
+        ``_gate_mutation_action`` never disables it) and this helper no
+        longer returns ``None`` for a Media miss.
+
+        That would have landed entry focus on ``type:`` -- the facet the
+        user did NOT type into, and the same symptom task-32214 was filed
+        for. The intent recorded here still stands: with a query in force
+        the filter ``Input`` is the right place to retype, so it LEADS the
+        list rather than being left to the shared seam. ``#library-media-
+        filter-clear`` is still deliberately not a candidate: Clear
+        discards the query rather than letting the user fix it.
         """
-        for selector in (
+        selectors = (
             "#library-media-type-filter",
             "#library-media-empty-clear-type",
             "#library-media-empty-import",
             "#library-media-retry",
-        ):
+        )
+        applied = self._library_media_browse_controller.applied_scope
+        if applied is not None and applied.query:
+            selectors = ("#library-media-filter", *selectors)
+        for selector in selectors:
             try:
                 control = self.query_one(selector, Widget)
             except (NoMatches, QueryError):

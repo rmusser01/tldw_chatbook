@@ -11765,7 +11765,10 @@ def _painted_rows(screen) -> list[str]:
             LIBRARY_ROW_BROWSE_MEDIA,
             "#library-media-empty-import",
             "Import media",
-            ("#library-media-pager", "#library-media-select-toggle"),
+            # task-32213: the browse toolbar (Select included, disabled)
+            # now survives a 0-row page; the LIST furniture below it is
+            # what stays away.
+            ("#library-media-pager", "#library-media-detail-empty"),
             "#library-ingest-path",
         ),
         (
@@ -35369,14 +35372,28 @@ async def test_background_recompose_restores_focus_on_an_empty_conversations_lis
 
 @pytest.mark.asyncio
 async def test_background_recompose_restores_focus_on_a_filtered_empty_media_list():
-    """Qodo #2483: the Media channel stands down when it cannot land.
+    """Qodo #2483: a background recompose never leaves a dead keyboard.
 
-    A filter MISS is the one empty Media page with no recovery action at
-    all -- the canvas returns right after its query-echoing status line,
-    so NONE of the four controls ``_focus_library_list_entry`` falls back
-    to is composed. The armed channel therefore lands nothing, and
-    standing the screen-level seam down for it left a background
-    recompose inside the settle window with a dead keyboard.
+    The original defect: on a filter-MISS page the armed channel landed
+    nothing, and standing the screen-level seam down for it left a
+    background recompose inside the settle window with no focused widget.
+
+    task-32213 (critique #9 row 10) removed this test's premise: the miss
+    page now keeps its toolbar, so ``#library-media-type-filter`` is
+    always composed and the Media channel always has somewhere to land.
+    What is still pinned here is the part that mattered -- after a
+    background recompose inside the armed window, SOMETHING attached
+    inside ``#screen-content`` holds focus.
+
+    The strict "the Media channel cannot land at all" leg is now
+    UNPINNED. The Conversations sibling directly above does not cover it:
+    that one stands down at ``library_screen.py``'s row-class lookup
+    (Conversations is absent from ``_LIBRARY_LIST_ROW_CLASS_BY_ROW_ID``),
+    a different branch from the media-specific
+    ``_library_media_empty_list_fallback_target() is None`` leg. Re-pinning
+    it needs a Media page that composes no enabled fallback at all -- an
+    empty list with the type or sort chooser OPEN is the remaining one,
+    because the chooser replaces the toolbar row. Tracked as task-32292.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
@@ -35393,16 +35410,17 @@ async def test_background_recompose_restores_focus_on_a_filtered_empty_media_lis
         await _wait_for_condition(
             pilot,
             lambda: not screen.query(".library-media-row")
+            # task-32213: the miss page keeps its toolbar, so it offers no
+            # dedicated recovery BUTTON but does keep the type facet.
             and not any(
                 screen.query(selector)
                 for selector in (
-                    "#library-media-type-filter",
                     "#library-media-empty-clear-type",
                     "#library-media-empty-import",
                     "#library-media-retry",
                 )
             ),
-            message="the filter miss never reached a recovery-less empty page",
+            message="the filter miss never reached its empty page",
         )
 
         filter_input = screen.query_one("#library-media-filter", Input)
@@ -35410,7 +35428,7 @@ async def test_background_recompose_restores_focus_on_a_filtered_empty_media_lis
         await pilot.pause()
         assert screen.focused is filter_input
 
-        # Inside the armed settle window, on a page the channel cannot serve.
+        # Inside the armed settle window, on a page with no rows to land on.
         screen._arm_library_list_entry_focus()
         assert screen._library_pending_list_entry_focus is True
 
