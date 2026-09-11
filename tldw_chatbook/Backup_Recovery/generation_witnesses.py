@@ -67,4 +67,3 @@ def _witnesses(path, lease):
         if witness not in results:
             results.append(witness)
     return results
-
