@@ -1203,8 +1203,11 @@ def test_the_review_takes_the_pane_while_it_is_the_task_in_hand() -> None:
     choosing = controller._library_notes_work_first_preferences(preferences)
 
     assert (reviewing.library_open, reviewing.items_open) == (False, False)
-    # Choosing a source is not the same task: the list stays where it was.
-    assert choosing.items_open is True
+    # task-32259 AC#2: Import once is a whole task in every phase, so choosing
+    # a source closes the list to its grip too -- only Library navigation is
+    # the review's own to take. (Was: the list stayed open while choosing;
+    # that corollary of task-32250 is superseded.)
+    assert (choosing.library_open, choosing.items_open) == (True, False)
 
 
 # --- task-32256 (relationship descriptions) --------------------------------

@@ -80,4 +80,6 @@ for. The canvas now derives its order from the shared sequence, pinned in
 200-source mount ceiling read "200 files" then "50 files" on the next page --
 the defect's own shape, one level down. `NoteImportPage.run_totals` carries each
 run's whole size, so both halves read "200 of 250 files".
+
+**Interaction with task-32259 (fixed after both merged to dev).** Was: choosing a source left the list open (`test_the_review_takes_the_pane_while_it_is_the_task_in_hand`'s second assertion) -- superseded by task-32259 AC#2 (every phase of Import once closes the list); the pin now asserts `items_open is False` for the select phase, and the review's own `(library_open, items_open) == (False, False)` assertion is unchanged.
 <!-- SECTION:NOTES:END -->

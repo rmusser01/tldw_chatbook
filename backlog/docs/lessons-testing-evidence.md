@@ -13496,3 +13496,32 @@ the_same_height_the_body_does`) against the same worktree. It passed on
 `origin/dev` and failed on the branch, which located the regression in seconds —
 whereas "the note never opens" is indistinguishable from the harness flake if
 you only look at your own new tests.
+
+### Two pins in one wave contradicted each other, and both landing passes were green (tasks 32250/32259, 2026-09-12)
+
+Wave 3 of Library ▸ Notes landed task-32250 (PR #2612: the import review owns
+the work pane) and task-32259 (PR #2618: a full-canvas task closes the items
+pane) from different groups. Each PR was green at its head. On dev at
+87f6edb4c1, `test_library_notes_wave_import_ux.py::test_the_review_takes_the_
+pane_while_it_is_the_task_in_hand` failed: its second assertion pinned "choosing
+a source leaves the list open" (task-32250's corollary), while task-32259 AC#2
+and its own pin in `test_library_notes_w3_layout.py` assert the opposite for the
+same `import`/`select` state. No ordering of the two rules in
+`_library_notes_work_first_preferences` could satisfy both — the code on dev
+was byte-identical to #2618's head, and the layout group's report that "each
+keeps its shipped behaviour" was true of the review state and false of the
+corollary.
+
+It surfaced only on dev because each group's landing test set excluded the
+other's interaction file: the import-review group ran its `wave_import_ux`
+file, the layout group ran its `w3_layout` file, and the second was written
+against the real `_import_review_owns_the_pane` precisely to prove the
+ordering — which it did, without ever exercising the sibling's negative pin.
+A green landing pass over your own pins says nothing about a pin that asserts
+the negation of your AC.
+
+Rule: when a change touches a shared decision point (here the reader-layout
+derivation), the landing pass runs the pin files of every sibling group that
+also touched it in the same wave — `git log -S'<function>' --oneline` on the
+wave's branches names them — not only your own. A contradiction between two
+pins is a product ruling to record in both task files, not a merge fix.
