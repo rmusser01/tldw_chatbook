@@ -73,12 +73,28 @@ class TestFindPlayerForFormat:
         assert audio_player.find_player_for_format("wav") is None
         assert audio_player.find_player_for_format("mp3") is None
 
-    def test_darwin_afplay_serves_every_format(
+    def test_darwin_afplay_serves_os_decodable_formats_not_ogg_opus(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # dev observed afplay exiting successfully WITHOUT decoding an
+        # Ogg/Opus body -- worse than a clean failure -- so those
+        # containers route to ffplay when installed and refuse otherwise.
+        _darwin(monkeypatch)
+        monkeypatch.setattr(audio_player.shutil, "which", lambda name: None)
+        for fmt in ("mp3", "aac", "flac", "wav"):
+            assert audio_player.find_player_for_format(fmt) == "afplay"
+        assert audio_player.find_player_for_format("opus") is None
+        assert audio_player.find_player_for_format("ogg") is None
+
+    def test_darwin_ogg_opus_routes_to_ffplay_when_installed(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _darwin(monkeypatch)
-        for fmt in ("mp3", "opus", "aac", "flac", "wav"):
-            assert audio_player.find_player_for_format(fmt) == "afplay"
+        monkeypatch.setattr(
+            audio_player.shutil, "which", lambda name: "/opt/homebrew/bin/ffplay"
+        )
+        assert audio_player.find_player_for_format("opus") == "ffplay"
+        assert audio_player.find_player_for_format("ogg") == "ffplay"
 
     def test_linux_capability_beats_list_order(
         self, monkeypatch: pytest.MonkeyPatch
