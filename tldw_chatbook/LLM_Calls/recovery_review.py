@@ -3,7 +3,6 @@
 import hashlib
 import inspect
 import json
-import os
 import stat
 import threading
 import tomllib
@@ -29,6 +28,7 @@ from tldw_chatbook.Backup_Recovery.activation import (
 from tldw_chatbook.Backup_Recovery.generation_witnesses import _witnesses
 from tldw_chatbook.Backup_Recovery.native_files import pinned_directory
 from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+from tldw_chatbook.Utils.platform_files import os
 
 
 class ProviderReconnectRequired(RuntimeError):

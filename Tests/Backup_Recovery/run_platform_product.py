@@ -59,6 +59,9 @@ _PRODUCT_TESTS = (
         "Tests/ProductionApp/test_backup_restore_composition.py::"
         "test_actual_mounted_backup_publishes_verified_archive_after_navigation"
     ),
+    "Tests/Backup_Recovery/test_mcp_recovery_native_files.py",
+    "Tests/Backup_Recovery/test_skills_recovery_native_files.py",
+    "Tests/Backup_Recovery/test_provider_recovery_native_files.py",
 )
 _RESTORE_DIAGNOSTIC_TESTS = (
     (

@@ -4,6 +4,42 @@ TASK-32496; PR2642 targets dev. This record supersedes the platform limitation i
 the earlier Python encryption verification. Work remains in progress until the
 Windows installed product cases pass.
 
+Latest full matrix [34718268264](https://github.com/rmusser01/tldw_chatbook/actions/runs/34718268264)
+at `9b643f744e5bfdcca1c54083b848c12a9e048a77` passed all 42 native tests in
+all seven jobs and 16 support cases. Six product cases failed; none skipped.
+All 105 artifact hashes match, and every source receipt identifies the same clean
+9,839-file source. The three F9 modes and two-profile case completed archive
+creation and restore validation, then failed opening the restored app because
+MCP recovery startup still used stdlib `os.geteuid` on Windows. That module now
+uses the existing native adapter for ownership and consistent descriptor/path
+identity checks. The projected-identity regression failed before correction;
+four targeted checks pass. Actual macOS plaintext create/restore/open passes
+(45.87 seconds). Broader MCP activation checks passed 65 cases and failed six;
+all six failures reproduced with the unchanged HEAD module loaded in their child
+processes, separately from the new native regressions.
+
+The same missed native interface in restored skill handling and provider
+reconnection review is corrected. Both native-parent regressions failed before
+the import changes. Provider scope passed 51 cases (58.04 seconds); skills and
+timing scope passed 27 (35.63 seconds). Independent review accepted all three
+module integrations. Ruff is clean and touched production/timing Bandit has zero
+findings. The Windows support group now includes eight focused reader regressions
+in addition to all original product cases.
+
+Replacement failed with an actual `AdmissionTimeout` after its final maintenance
+root revalidation. Rollback's seed exceeded its packaging observer while still
+performing root checks; later rollback did not start. A test-only observer now
+records bounded aggregate call counts and inclusive timings for admission and
+native metadata operations, plus numeric root/ancestor counts. It retains no
+paths, SIDs or local values. Application deadlines and checks remain unchanged.
+
+Full product verification of `9b643f744` passed on macOS (all five cases,
+340.12 seconds) and on the SSH Linux host (three F9 modes 130.52 seconds,
+two-profile 66.90 seconds, replacement/later rollback 285.86 seconds).
+Linux public codeload SHA256:
+`f7419760bc681b81f3b9509f472b01254b086f3f6bde9e5142cc72928bac2d04`.
+Windows completion remains required.
+
 Focused Windows run
 [34714728661](https://github.com/rmusser01/tldw_chatbook/actions/runs/34714728661)
 at `d0054781362b2a0a70301ef2587162a2f0aba908` passed all 42 native tests and

@@ -21,7 +21,7 @@ Root owns Linux native operations, integration imports and release contracts.
 Preserve containment, permissions, exclusive rename and failure propagation.
 
 ## Stage 3 — Actual product verification
-Status: In Progress. Linux and macOS full product flows pass at ebe861397; exact acb134a73 reruns are underway after the scratch-path correction. Windows34714728661 passed42native and created the actual backup, then exposed colon-containing scratch names during restore. Focused34715486325 verifies that correction before the next full suite. Windows-only fixture observers allow measured native capture and sequential profile opens; production deadlines remain unchanged.
+Status: In Progress. Full Linux and macOS product cases pass at 9b643f744. Windows34718268264 passed all native and support cases, and all isolated captures/restores reached validation; fresh opens fail on a missed MCP native filesystem import. Replacement exposes real maintenance AdmissionTimeout; aggregate native timings will identify its cost without changing application deadlines. Correct restored startup platform integrations and rerun all Windows product groups.
 Use installed package, private profile and synthetic data on supplied Linux host,
 GitHub Actions Windows runner and local macOS. Create and verify backups, restore
 and open them, then exercise replacement and retained-copy rollback. Fix failures.

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import stat
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
@@ -16,6 +15,7 @@ from tldw_chatbook.Backup_Recovery import bootstrap
 from tldw_chatbook.Backup_Recovery.activation import ActivationStore, _private
 from tldw_chatbook.Backup_Recovery.profile_paths import lexical_path
 from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+from tldw_chatbook.Utils.platform_files import os
 
 from .skill_trust_models import SkillDirectorySnapshot
 

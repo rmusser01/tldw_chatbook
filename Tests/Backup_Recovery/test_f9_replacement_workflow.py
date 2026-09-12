@@ -42,10 +42,12 @@ def inventory_diagnostic(inventory):
  ancestor_pairs=sorted((parent.owner,parent.logical_id,child.owner,child.logical_id) for child,child_path in observed for parent,parent_path in observed if parent_path in child_path.parents and parent.owner!=child.owner)
  return {'issues':inventory.issues,'blocking':blocking,'ancestor_pairs':ancestor_pairs}
 from Tests.Backup_Recovery.thread_diagnostics import observe_threads,observe_recovery_failures
+from Tests.Backup_Recovery.admission_diagnostics import observe_admission
 async def main():
  home=Path.home()
  stop_diagnostics=observe_threads(home/'seed-stacks.log',interval=60)
  stop_failures=observe_recovery_failures(home/'recovery-failures.log')
+ stop_timing=observe_admission(home/'admission-timing.log')
  app=TldwCli();selector=Path(os.environ['TLDW_CONFIG_PATH'])
  service=RecoveryService(default_control_root())
  from Tests.Backup_Recovery.test_restore_plan import sealed
@@ -97,7 +99,7 @@ async def main():
   await asyncio.to_thread(service.close)
   monitoring.cancel();await asyncio.gather(monitoring,return_exceptions=True)
   await app._shutdown_app_owned_lifecycles();await app.tts_service.close();await app.tts_service.wait_closed()
-  stop_diagnostics();stop_failures()
+  stop_timing();stop_diagnostics();stop_failures()
 asyncio.run(main())
 print('retired and reopened')
 """

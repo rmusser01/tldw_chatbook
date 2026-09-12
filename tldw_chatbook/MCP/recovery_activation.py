@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import stat
 import tomllib
@@ -18,6 +17,7 @@ from tldw_chatbook.Backup_Recovery import bootstrap
 from tldw_chatbook.Backup_Recovery.activation import ActivationStore, _private
 from tldw_chatbook.Backup_Recovery.profile_paths import lexical_path
 from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+from tldw_chatbook.Utils.platform_files import os
 
 _FRESH = frozenset({"mcp.local", "mcp.permissions", "mcp.context"})
 _OWNERS = _FRESH | {"mcp.targets"}
@@ -80,7 +80,7 @@ def _read(path):
             payload = stream.read(_LIMIT + 1)
             if len(payload) > _LIMIT or before != _identity(os.fstat(stream.fileno())):
                 raise ValueError("mcp_recovery_source_changed")
-        if before != _identity(path.stat(follow_symlinks=False)):
+        if before != _identity(os.stat(path, follow_symlinks=False)):
             raise ValueError("mcp_recovery_source_changed")
         return before, payload
     except FileNotFoundError:
